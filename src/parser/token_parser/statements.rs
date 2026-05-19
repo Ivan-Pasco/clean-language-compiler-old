@@ -8,7 +8,7 @@
 //! - `try_parse_on_error_block` — onError: block suffix
 
 use super::TokenParser;
-use crate::ast::{AssignmentTarget, Expression, Statement, Type};
+use crate::ast::{AssignmentTarget, Expression, ResetTarget, Statement, Type};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
 
@@ -576,6 +576,11 @@ impl TokenParser {
                     ))
                 }
             }
+            // reset_statement: "reset" , ( "state" | identifier )
+            // grammar.ebnf reset_statement production.
+            TokenKind::Reset => {
+                return self.parse_reset_statement();
+            }
             // Contextual keywords used as variable names in statements
             // (e.g., `rules = rules + ","` or `rules.trim()`)
             TokenKind::Rules
@@ -583,7 +588,6 @@ impl TokenParser {
             | TokenKind::State
             | TokenKind::Guard
             | TokenKind::Watch
-            | TokenKind::Reset
             | TokenKind::Screen
             | TokenKind::Source
             | TokenKind::Build => {
@@ -687,6 +691,34 @@ impl TokenParser {
         Ok(Statement::Ensure {
             condition,
             location: Some(ensure_token.location),
+        })
+    }
+
+    /// Parse reset statement: `reset state` or `reset <identifier>`
+    /// grammar.ebnf: reset_statement = "reset" , ( "state" | identifier ) ;
+    pub(super) fn parse_reset_statement(&mut self) -> Result<Statement, CompilerError> {
+        let reset_token = self.expect(&TokenKind::Reset)?;
+        self.skip_whitespace();
+
+        // Check what follows: "state" keyword → AllState, identifier → Named(name)
+        let target = if matches!(self.current_kind(), TokenKind::State) {
+            self.bump(); // consume "state"
+            ResetTarget::AllState
+        } else if let Some(name) = self.try_extract_var_name() {
+            let name = name.clone();
+            self.bump(); // consume identifier
+            ResetTarget::Variable(name)
+        } else {
+            return Err(CompilerError::parse_error(
+                "Expected 'state' or an identifier after 'reset'".to_string(),
+                Some(self.current().location.clone()),
+                None,
+            ));
+        };
+
+        Ok(Statement::ResetStmt {
+            target,
+            location: Some(reset_token.location),
         })
     }
 

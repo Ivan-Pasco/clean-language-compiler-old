@@ -442,6 +442,9 @@ impl super::CodeGenerator {
         self.register_import_function("env", "math_exp", &[WasmType::F64], Some(WasmType::F64))?;
         self.register_import_function("env", "math_exp2", &[WasmType::F64], Some(WasmType::F64))?;
 
+        // Random number generation — returns f64 in [0.0, 1.0)
+        self.register_import_function("env", "math_random", &[], Some(WasmType::F64))?;
+
         // THEN: Create MathClass instance which creates aliases and native functions
         let math_class = MathClass::new();
         math_class.register_functions(self)?;
@@ -624,6 +627,45 @@ impl super::CodeGenerator {
             self.add_function_alias("string.replace", idx);
             // replaceAll uses the same host function (replaces all occurrences)
             self.add_function_alias("string.replaceAll", idx);
+        }
+
+        Ok(())
+    }
+
+    /// Register string_repeat as a host import.
+    /// Signature: (str_ptr: i32, str_len: i32, count: i32) -> i32  (result ptr)
+    pub fn register_string_repeat_import(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        let idx = self.register_import_function(
+            "env",
+            "string_repeat",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+
+        if idx != u32::MAX {
+            self.add_function_alias("string.repeat", idx);
+        }
+
+        Ok(())
+    }
+
+    /// Register string_matches as a host import.
+    /// Validates a string against a named pattern (email, url, uuid, …).
+    /// Signature: (str_ptr: i32, str_len: i32, pattern_ptr: i32, pattern_len: i32) -> i32 (bool)
+    pub fn register_string_matches_import(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        let idx = self.register_import_function(
+            "env",
+            "string_matches",
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+
+        if idx != u32::MAX {
+            self.add_function_alias("string.matches", idx);
         }
 
         Ok(())

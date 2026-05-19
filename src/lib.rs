@@ -587,7 +587,7 @@ pub fn type_check_with_external_plugins(
 
     let registry = loader.load_plugins(&plugin_names).map_err(|e| {
         vec![CompilerError::PluginError {
-            message: format!("Failed to load plugins: {}", e),
+            message: format!("[PLUGIN001] Failed to load plugins: {}", e),
             location: None,
         }]
     })?;
@@ -1077,7 +1077,7 @@ pub fn compile_with_external_plugins_and_opt_level(
 
     let registry = loader.load_plugins(&plugin_names).map_err(|e| {
         vec![CompilerError::PluginError {
-            message: format!("Failed to load plugins: {}", e),
+            message: format!("[PLUGIN001] Failed to load plugins: {}", e),
             location: None,
         }]
     })?;

@@ -526,10 +526,11 @@ impl BuiltinRegistry {
                 BuiltinType::Number,
                 BuiltinCategory::Math,
             ),
-            // Constants (no parameters)
+            // Constants and random (no parameters)
             BuiltinFunction::new("pi", vec![], BuiltinType::Number, BuiltinCategory::Math),
             BuiltinFunction::new("e", vec![], BuiltinType::Number, BuiltinCategory::Math),
             BuiltinFunction::new("tau", vec![], BuiltinType::Number, BuiltinCategory::Math),
+            BuiltinFunction::new("random", vec![], BuiltinType::Number, BuiltinCategory::Math),
             // Binary operations
             BuiltinFunction::new(
                 "pow",
@@ -718,6 +719,18 @@ impl BuiltinRegistry {
                 "fromCharCode",
                 vec![BuiltinType::Integer],
                 BuiltinType::String,
+                BuiltinCategory::String,
+            ),
+            BuiltinFunction::new(
+                "repeat",
+                vec![BuiltinType::String, BuiltinType::Integer],
+                BuiltinType::String,
+                BuiltinCategory::String,
+            ),
+            BuiltinFunction::new(
+                "matches",
+                vec![BuiltinType::String, BuiltinType::String],
+                BuiltinType::Boolean,
                 BuiltinCategory::String,
             ),
         ]);

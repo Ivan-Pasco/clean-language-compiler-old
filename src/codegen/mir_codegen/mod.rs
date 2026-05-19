@@ -466,6 +466,16 @@ impl MirCodeGenerator<'_> {
                 .register_string_replace_import()
                 .map_err(|e| vec![e])?;
 
+            debug_mir!("DEBUG MIR: Registering string_repeat import");
+            self.wasm_generator
+                .register_string_repeat_import()
+                .map_err(|e| vec![e])?;
+
+            debug_mir!("DEBUG MIR: Registering string_matches import");
+            self.wasm_generator
+                .register_string_matches_import()
+                .map_err(|e| vec![e])?;
+
             // OPTIMIZATION: Only import bridge functions that are actually used in the code
             if !self.bridge_functions.is_empty() {
                 debug_mir!("DEBUG MIR: Collecting used bridge function names from MIR");

@@ -1239,3 +1239,167 @@ Three files changed:
 - `print(boolVar)` → `true`/`false` ✓
 - Full test suite: 448/448 pass (no regressions)
 - **Spec ref:** `foundation/spec/type-system.md` §61–74
+
+---
+
+## 🔴 CRITICAL: Implement async scheduling for background/later constructs
+
+**Priority**: CRITICAL — spec semantics are silently broken
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+The `background expr` and `later x = expr` constructs currently compile as synchronous calls in `src/codegen/` and `src/parser/token_parser/expressions.rs` (~line 475). The spec says:
+- `background` is fire-and-forget (async, does not block)
+- `later` awaits the result before continuing
+
+True async scheduling in WASM requires a task queue and host-side scheduling because WASM is single-threaded.
+
+### Files
+- `src/parser/token_parser/expressions.rs:475` — parsing (done correctly)
+- `src/mir/mir_builder/statements.rs` — `TastStatement::LaterAssignment` lowering
+- `src/codegen/` — code generation for both constructs
+
+### Spec Ref
+- `foundation/spec/grammar.ebnf` `background_statement`, `later_assignment`
+
+### Required
+- WASM task queue or host-side scheduling bridge in Layer 2
+- New host bridge functions: `_async_fire` (background), `_async_await` (later)
+- Coordinate with clean-server for host implementation
+
+---
+
+## 🟡 MEDIUM: Implement tests: block compilation and execution
+
+**Priority**: MEDIUM — spec-defined feature produces no WASM output
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+The parser accepts `tests:` blocks containing `named_test` and `anonymous_test` forms with assertions, but codegen produces no output for them (silently drops test blocks).
+
+### Files
+- `src/parser/token_parser/blocks.rs` — parsing (done)
+- `src/codegen/` — no codegen for test blocks
+
+### Spec Ref
+- `foundation/spec/grammar.ebnf` `tests_block`
+
+### Required
+- A test runner host bridge or built-in test harness
+- Codegen that emits test functions callable by the runtime
+- Test result reporting protocol
+
+---
+
+## 🟢 LOW: Implement --release flag to strip always: contract checks
+
+**Priority**: LOW — build mode optimization
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+The spec says `always:` invariant checks (CLASS006) are included in debug builds and stripped in release builds. Currently `always:` checks are always included regardless of build mode.
+
+### Files
+- `src/codegen/` — invariant check code generation
+- Main CLI argument parsing
+
+### Spec Ref
+- `foundation/spec/semantic-rules.md` §CLASS006
+
+---
+
+## 🟡 MEDIUM: Return type strictness for function declarations
+
+**Priority**: MEDIUM — permissiveness allows type errors to go undetected
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+In `src/parser/token_parser/declarations.rs` `parse_type()`, function return type annotations fall through to `Type::Object(name)` for any unrecognised keyword. The spec restricts function return types to concrete types only. Extra types currently accepted silently.
+
+### Files
+- `src/parser/token_parser/declarations.rs` — `parse_type()` ~line 1291
+
+### Required
+A strictness pass that rejects non-concrete return type annotations with a helpful error message.
+
+---
+
+## 🟡 MEDIUM: STATE003 circular dependency detection incomplete
+
+**Priority**: MEDIUM — circular state dependencies not caught at compile time
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+Current detection in `src/typechecker/type_inference.rs` (~line 2250) is linear (A depends on B). Full circular dependency detection requires a proper dependency graph (adjacency list from all compute blocks, then DFS for cycles). Cycles are silently compiled and produce runtime infinite loops.
+
+### Files
+- `src/typechecker/type_inference.rs` ~line 2250
+
+### Required
+- Build adjacency list from all `computed:` blocks
+- DFS cycle detection
+- Emit STATE003 when a cycle is detected
+
+### Spec Ref
+- `foundation/spec/semantic-rules.md` §STATE003
+
+---
+
+## 🟡 MEDIUM: Validate list.push routes to WASM import not native instruction
+
+**Priority**: MEDIUM — potential correctness issue
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+Need to verify that `list.push` generates a WASM import call (`_list_push`) rather than a native instruction. If routing to native, fix to emit the correct import.
+
+### Files
+- `src/builtins/registry.rs`
+- `src/codegen/` — wherever list.push is generated
+
+---
+
+## 🟢 LOW: Guard purity check STATE001 is incomplete
+
+**Priority**: LOW — guards with I/O side effects accepted silently
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+In `src/typechecker/type_inference.rs` (~line 1725), the guard expression type is checked to be boolean, but no purity check is performed. Guard expressions that contain I/O calls (file.*, db.*, http.*, console.*) should be rejected with STATE001.
+
+### Required
+Walk the guard expression AST and reject any function calls whose names start with `file.`, `db.`, `http.`, or `console.` with error STATE001: "Guard expression must be pure — found I/O call".
+
+### Files
+- `src/typechecker/type_inference.rs` ~line 1725
+
+### Spec Ref
+- `foundation/spec/semantic-rules.md` §STATE001
+
+---
+
+## 🟡 MEDIUM: validate_block constraint expression type checking
+
+**Priority**: MEDIUM — validate constraints are not type-checked
+**Discovered**: 2026-05-18
+**Status**: OPEN
+
+### Problem
+The `validate schemaName:` blocks are parsed and desugared to validator.run() calls in the HIR (done), but the constraint expressions inside (length, min, max, match conditions) are not type-checked:
+- `length` constraint: must take integer argument
+- `min`/`max`: must take number argument
+- `match`: must take string (pattern) argument
+
+### Files
+- `src/typechecker/` — add type checking for ValidateConstraint expressions
+- `src/hir/hir_builder.rs` — `desugar_validate_declaration()`
+
+### Spec Ref
+- `foundation/spec/grammar.ebnf` `validate_constraint`

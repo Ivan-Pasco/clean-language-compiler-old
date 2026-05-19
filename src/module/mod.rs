@@ -116,15 +116,21 @@ impl ModuleResolver {
                     let (module_name, symbol_name) = self.parse_single_symbol(&import_item.name)?;
                     let module = self.load_module(&module_name)?;
 
-                    // Verify the symbol exists in the module
+                    // Verify the symbol exists in the module (IMPORT003)
                     if !module.exports.has_function(&symbol_name)
                         && !module.exports.has_class(&symbol_name)
                     {
-                        return Err(CompilerError::symbol_error(
-                            format!("Symbol '{symbol_name}' not found in module '{module_name}'"),
-                            &symbol_name,
-                            Some(&module_name),
-                        ));
+                        return Err(CompilerError::Module {
+                            context: Box::new(
+                                crate::error::ErrorContext::new(
+                                    format!("Symbol '{symbol_name}' not found in module '{module_name}'"),
+                                    Some(format!("Check that '{symbol_name}' is exported from module '{module_name}'")),
+                                    crate::error::ErrorType::Import,
+                                    None,
+                                )
+                                .with_error_code("IMPORT003"),
+                            ),
+                        });
                     }
 
                     let import_name = import_item.alias.as_ref().unwrap_or(&symbol_name);
@@ -138,15 +144,21 @@ impl ModuleResolver {
                     let (module_name, symbol_name) = self.parse_single_symbol(&import_item.name)?;
                     let module = self.load_module(&module_name)?;
 
-                    // Verify the symbol exists in the module
+                    // Verify the symbol exists in the module (IMPORT003)
                     if !module.exports.has_function(&symbol_name)
                         && !module.exports.has_class(&symbol_name)
                     {
-                        return Err(CompilerError::symbol_error(
-                            format!("Symbol '{symbol_name}' not found in module '{module_name}'"),
-                            &symbol_name,
-                            Some(&module_name),
-                        ));
+                        return Err(CompilerError::Module {
+                            context: Box::new(
+                                crate::error::ErrorContext::new(
+                                    format!("Symbol '{symbol_name}' not found in module '{module_name}'"),
+                                    Some(format!("Check that '{symbol_name}' is exported from module '{module_name}'")),
+                                    crate::error::ErrorType::Import,
+                                    None,
+                                )
+                                .with_error_code("IMPORT003"),
+                            ),
+                        });
                     }
 
                     if let Some(alias) = &import_item.alias {
@@ -296,11 +308,17 @@ impl ModuleResolver {
             .collect::<Vec<_>>()
             .join(", ");
 
-        Err(CompilerError::module_error(
-            format!("Module '{module_name}' not found in search paths"),
-            Some(format!("Search paths: {search_paths_str}")),
-            None,
-        ))
+        Err(CompilerError::Module {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    format!("Module '{module_name}' not found in search paths"),
+                    Some(format!("Search paths: {search_paths_str}")),
+                    crate::error::ErrorType::Import,
+                    None,
+                )
+                .with_error_code("IMPORT002"),
+            ),
+        })
     }
 
     /// Extract exported symbols from a program

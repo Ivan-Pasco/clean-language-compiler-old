@@ -354,15 +354,52 @@ impl<'a> ConstraintSolver<'a> {
             (ConcreteType::NumberSized { .. }, ConcreteType::Number)
             | (ConcreteType::Number, ConcreteType::NumberSized { .. }) => Ok(()),
 
-            // Two NumberSized unify (wider precision wins at runtime)
-            (ConcreteType::NumberSized { .. }, ConcreteType::NumberSized { .. }) => Ok(()),
+            // Two NumberSized: reject narrowing assignments (type-system.md §sized-numbers)
+            (ConcreteType::NumberSized { bits: b1 }, ConcreteType::NumberSized { bits: b2 }) => {
+                if b1 > b2 {
+                    Err(CompilerError::type_error(
+                        format!(
+                            "Precision loss: cannot assign number:{} to number:{} without explicit cast",
+                            b1, b2
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
 
             // IntegerSized unifies with Integer
             (ConcreteType::IntegerSized { .. }, ConcreteType::Integer)
             | (ConcreteType::Integer, ConcreteType::IntegerSized { .. }) => Ok(()),
 
-            // Two IntegerSized unify
-            (ConcreteType::IntegerSized { .. }, ConcreteType::IntegerSized { .. }) => Ok(()),
+            // Two IntegerSized: enforce signedness match (type-system.md §sized-integers)
+            (
+                ConcreteType::IntegerSized {
+                    bits: b1,
+                    unsigned: u1,
+                },
+                ConcreteType::IntegerSized {
+                    bits: b2,
+                    unsigned: u2,
+                },
+            ) => {
+                if u1 != u2 {
+                    let left_desc = if *u1 { "unsigned" } else { "signed" };
+                    let right_desc = if *u2 { "unsigned" } else { "signed" };
+                    Err(CompilerError::type_error(
+                        format!(
+                            "Signedness mismatch: cannot assign {} integer:{} to {} integer:{} variable",
+                            left_desc, b1, right_desc, b2
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
 
             // Integer/IntegerSized can unify with Number/NumberSized (widening)
             (ConcreteType::Integer, ConcreteType::NumberSized { .. })

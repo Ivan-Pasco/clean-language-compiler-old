@@ -1288,6 +1288,9 @@ impl TokenParser {
                     Type::Object("pairs".to_string())
                 }
             }
+            // handler — first-class function reference (WASM i32 table index)
+            // grammar.ebnf: sized_type alternatives include handler
+            "handler" => Type::Handler,
             other => Type::Object(other.to_string()),
         };
 

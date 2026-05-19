@@ -3226,6 +3226,64 @@ impl<'a> TypeInference<'a> {
                     tast_arguments.push(self.infer_expression(arg)?);
                 }
 
+                // SEM010: string.matches() argument must be a known pattern name literal.
+                // semantic-rules.md §SEM010
+                if method == "matches" && matches!(tast_receiver.expr_type, ConcreteType::String) {
+                    const VALID_PATTERNS: &[&str] = &[
+                        "email",
+                        "url",
+                        "uuid",
+                        "phone",
+                        "date",
+                        "integer",
+                        "number",
+                        "alphanumeric",
+                    ];
+                    if let Some(first_arg) = tast_arguments.first() {
+                        let is_valid = match &first_arg.kind {
+                            crate::typechecker::tast::TastExpressionKind::Literal {
+                                value: crate::typechecker::tast::TastLiteral::String(pattern_name),
+                            } => VALID_PATTERNS.contains(&pattern_name.as_str()),
+                            _ => false, // non-literal argument also rejected
+                        };
+                        if !is_valid {
+                            let name = match &first_arg.kind {
+                                crate::typechecker::tast::TastExpressionKind::Literal {
+                                    value: crate::typechecker::tast::TastLiteral::String(s),
+                                } => s.clone(),
+                                _ => "<expression>".to_string(),
+                            };
+                            self.errors.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "Unknown pattern name '{}'. Valid patterns: email, url, uuid, phone, date, integer, number, alphanumeric",
+                                            name
+                                        ),
+                                        None,
+                                        crate::error::ErrorType::Validation,
+                                        Some(location.clone()),
+                                    )
+                                    .with_error_code("SEM010"),
+                                ),
+                            });
+                        }
+                    } else {
+                        // No argument at all — report missing argument
+                        self.errors.push(CompilerError::Validation {
+                            context: Box::new(
+                                crate::error::ErrorContext::new(
+                                    "string.matches() requires a pattern name argument (email, url, uuid, phone, date, integer, number, alphanumeric)".to_string(),
+                                    None,
+                                    crate::error::ErrorType::Validation,
+                                    Some(location.clone()),
+                                )
+                                .with_error_code("SEM010"),
+                            ),
+                        });
+                    }
+                }
+
                 // Resolve receiver type with current substitutions before method lookup
                 let resolved_receiver_type = self.resolve_type(&tast_receiver.expr_type);
 

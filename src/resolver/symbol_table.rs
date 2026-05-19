@@ -402,6 +402,14 @@ impl GlobalSymbolTable {
         symbol_id
     }
 
+    /// Look up a symbol by name only in the *current* scope (no parent traversal).
+    /// Used to detect SCOPE002 (RedeclarationInScope).
+    pub fn lookup_symbol_in_current_scope(&self, name: &str) -> Option<SymbolId> {
+        self.scopes
+            .get(&self.current_scope)
+            .and_then(|scope| scope.symbols.get(name).copied())
+    }
+
     /// Look up a symbol by name in the current scope and parent scopes
     pub fn lookup_symbol(&self, name: &str) -> Option<SymbolId> {
         self.lookup_symbol_in_scope(name, self.current_scope)

@@ -896,6 +896,43 @@ impl CompilerError {
         }
     }
 
+    /// Plugin not found error (PLUGIN001)
+    pub fn plugin_not_found_error<T: Into<String>>(plugin_name: T) -> Self {
+        let name: String = plugin_name.into();
+        CompilerError::Validation {
+            context: Box::new(
+                ErrorContext::new(
+                    format!(
+                        "Plugin '{}' not found. Install with: cleen plugin add {}",
+                        name, name
+                    ),
+                    Some(format!(
+                        "Run `cleen plugin add {}` to install the plugin",
+                        name
+                    )),
+                    ErrorType::Validation,
+                    None,
+                )
+                .with_error_code("PLUGIN001"),
+            ),
+        }
+    }
+
+    /// Plugin registration conflict error (PLUGIN002)
+    pub fn plugin_registration_conflict_error<T: Into<String>>(conflict_desc: T) -> Self {
+        CompilerError::Validation {
+            context: Box::new(
+                ErrorContext::new(
+                    format!("Plugin registration conflict: {}", conflict_desc.into()),
+                    Some("Two plugins are attempting to register the same function or block handler. Remove or reconfigure conflicting plugins.".to_string()),
+                    ErrorType::Validation,
+                    None,
+                )
+                .with_error_code("PLUGIN002"),
+            ),
+        }
+    }
+
     /// Memory allocation error
     pub fn memory_allocation_error(
         message: impl AsRef<str>,

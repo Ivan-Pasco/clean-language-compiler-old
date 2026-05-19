@@ -9,7 +9,7 @@
 use crate::ast::SourceLocation;
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Class, Constructor, Expression, Function, Parameter, Program,
-    Statement, Type, UnaryOperator, ValidateConstraint, Value,
+    ResetTarget, Statement, Type, UnaryOperator, ValidateConstraint, Value,
 };
 use crate::error::CompilerError;
 use crate::hir::*;
@@ -887,6 +887,11 @@ impl HirBuilder {
                 // unknown Named type (it falls through to the _ arm → valid).
                 Ok(HirType::Any)
             }
+            Type::Handler => {
+                // handler is a first-class function reference — at WASM level it is
+                // an i32 function-table index, so we map it to Integer in HIR.
+                Ok(HirType::Integer)
+            }
             _ => {
                 // For unsupported types, create an inferred type for now
                 self.type_inference_counter += 1;
@@ -1251,6 +1256,40 @@ impl HirBuilder {
                     condition: hir_condition,
                     location: location.clone().unwrap_or_default(),
                 })
+            }
+
+            // reset_statement — emit a host call: _state_reset_all or _state_reset_named
+            // grammar.ebnf: reset_statement = "reset" , ( "state" | identifier ) ;
+            Statement::ResetStmt { target, location } => {
+                let loc = location.clone().unwrap_or_default();
+                match target {
+                    ResetTarget::AllState => {
+                        // reset state → call _state_reset_all()
+                        Ok(HirStatement::Expression {
+                            expression: HirExpression::Call {
+                                function: "_state_reset_all".to_string(),
+                                arguments: vec![],
+                                location: loc.clone(),
+                            },
+                            location: loc,
+                        })
+                    }
+                    ResetTarget::Variable(name) => {
+                        // reset <name> → call _state_reset_named(name_ptr, name_len)
+                        // We encode the name as a string literal argument
+                        Ok(HirStatement::Expression {
+                            expression: HirExpression::Call {
+                                function: "_state_reset_named".to_string(),
+                                arguments: vec![HirExpression::Literal {
+                                    value: Value::String(name.clone()),
+                                    location: loc.clone(),
+                                }],
+                                location: loc.clone(),
+                            },
+                            location: loc,
+                        })
+                    }
+                }
             }
 
             // TypeApplyBlock is handled in build_block() where it can expand into multiple statements

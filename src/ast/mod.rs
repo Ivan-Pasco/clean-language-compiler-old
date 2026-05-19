@@ -111,6 +111,10 @@ pub enum Type {
     // Background types
     Future(Box<Type>),
 
+    // Handler — a first-class function reference passed to bridge functions
+    // At the WASM level this is an i32 function-table index.
+    Handler,
+
     Any,
 }
 
@@ -1346,6 +1350,7 @@ impl fmt::Display for Type {
             }
             Type::TypeParameter(name) => write!(f, "{name}"),
             Type::Future(inner) => write!(f, "Future<{inner}>"),
+            Type::Handler => f.write_str("handler"),
             Type::Any => f.write_str("any"),
         }
     }

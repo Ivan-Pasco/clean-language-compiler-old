@@ -2293,13 +2293,13 @@ impl MirBuilder {
                         // Methods that return String
                         "substring" | "trim" | "trimStart" | "trimEnd" | "toUpperCase"
                         | "toLowerCase" | "replace" | "replaceAll" | "padStart" | "padEnd"
-                        | "charAt" | "concat" | "split" => ConcreteType::String,
+                        | "charAt" | "concat" | "split" | "repeat" => ConcreteType::String,
                         // Methods that return Integer
                         "length" | "size" | "indexOf" | "lastIndexOf" | "charCodeAt"
                         | "toInteger" => ConcreteType::Integer,
                         // Methods that return Boolean
                         "contains" | "startsWith" | "endsWith" | "isEmpty" | "isBlank"
-                        | "toBoolean" => ConcreteType::Boolean,
+                        | "toBoolean" | "matches" => ConcreteType::Boolean,
                         // Type conversion methods that return Number
                         "toNumber" => ConcreteType::Number,
                         // Default to expression type for unknown methods

@@ -1126,13 +1126,28 @@ impl NameResolver {
                     None
                 };
 
+                // SCOPE002: check for redeclaration in the *same* scope (not shadowing).
+                // Shadowing a name from an outer scope is allowed (SCOPE003 is a warning, not an error).
+                let current_scope = self.symbol_table.current_scope_id();
+                if let Some(existing_id) = self.symbol_table.lookup_symbol_in_current_scope(name) {
+                    if let Some(existing) = self.symbol_table.get_symbol(existing_id) {
+                        if existing.scope_id == current_scope {
+                            self.error_with_code(
+                                &format!("Variable '{}' is already declared in this scope", name),
+                                "SCOPE002",
+                                location.clone(),
+                            );
+                        }
+                    }
+                }
+
                 let symbol_id = self.symbol_table.create_symbol(
                     name.clone(),
                     SymbolKind::Variable {
                         var_type: var_type.clone(),
                         is_mutable: *is_mutable,
                     },
-                    self.symbol_table.current_scope_id(),
+                    current_scope,
                     location.clone(),
                 );
 
@@ -1558,8 +1573,12 @@ impl NameResolver {
                     });
                 }
 
-                // If still not found, report error
-                self.error(&format!("Variable '{}' not found", name), location.clone());
+                // If still not found, report error (SCOPE001: UseBeforeDeclaration)
+                self.error_with_code(
+                    &format!("Variable '{}' not found", name),
+                    "SCOPE001",
+                    location.clone(),
+                );
                 Err(())
             }
 
@@ -2536,8 +2555,12 @@ impl NameResolver {
                     });
                 }
 
-                // If still not found, report error
-                self.error(&format!("Variable '{}' not found", name), location.clone());
+                // If still not found, report error (SCOPE001: UseBeforeDeclaration)
+                self.error_with_code(
+                    &format!("Variable '{}' not found", name),
+                    "SCOPE001",
+                    location.clone(),
+                );
                 Err(())
             }
 
@@ -2580,6 +2603,21 @@ impl NameResolver {
     fn error(&mut self, message: &str, location: SourceLocation) {
         self.errors
             .push(CompilerError::validation_error(message, location));
+    }
+
+    /// Report an error with a specific error code (e.g. "SCOPE001").
+    fn error_with_code(&mut self, message: &str, code: &str, location: SourceLocation) {
+        self.errors.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    message,
+                    None,
+                    crate::error::ErrorType::Validation,
+                    Some(location),
+                )
+                .with_error_code(code),
+            ),
+        });
     }
 
     /// Report a warning

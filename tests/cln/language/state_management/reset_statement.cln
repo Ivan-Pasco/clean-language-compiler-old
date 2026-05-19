@@ -1,0 +1,22 @@
+// Test: language/state_management/reset_statement
+// Grammar: grammar.ebnf reset_statement = "reset" , ( "state" | identifier ) ;
+// Semantic: N/A — reset is a runtime state operation
+// Expected output:
+//   10
+//   reset works
+
+state:
+    count = 0
+
+functions:
+    function incrementCount() -> void:
+        count = count + 1
+
+    function resetCount() -> void:
+        reset count
+
+start:
+    count = 10
+    print(count)
+    resetCount()
+    print("reset works")

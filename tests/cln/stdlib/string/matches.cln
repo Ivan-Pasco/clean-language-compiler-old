@@ -1,0 +1,10 @@
+// Test: stdlib/string/matches
+// Grammar: grammar.ebnf method_call — string.matches(pattern)
+// Semantic: SEM010 — argument must be one of the allowed pattern names
+// Expected output:
+//   matches ok
+
+start:
+    string email = "user@example.com"
+    boolean isEmail = email.matches("email")
+    print("matches ok")

@@ -216,6 +216,8 @@ impl MathClass {
         // Math.ln(number x) -> number - alias to imported math_ln
         if let Some(ln_idx) = codegen.get_function_index("math_ln") {
             codegen.add_function_alias("math.ln", ln_idx);
+            // Math.log(x) is natural log — same host function as math.ln
+            codegen.add_function_alias("math.log", ln_idx);
         }
 
         // Math.log10(number x) -> number - alias to imported math_log10
@@ -236,6 +238,11 @@ impl MathClass {
         // Math.exp2(number x) -> number - alias to imported math_exp2
         if let Some(exp2_idx) = codegen.get_function_index("math_exp2") {
             codegen.add_function_alias("math.exp2", exp2_idx);
+        }
+
+        // Math.random() -> number — alias to imported math_random (returns [0.0, 1.0))
+        if let Some(random_idx) = codegen.get_function_index("math_random") {
+            codegen.add_function_alias("math.random", random_idx);
         }
 
         // Math.pow(number base, number exponent) -> number - alias to imported math_pow
