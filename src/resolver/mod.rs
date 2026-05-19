@@ -285,6 +285,12 @@ pub enum ResolvedHirStatement {
         location: SourceLocation,
     },
 
+    /// Background statement (fire-and-forget async call) with resolved expression
+    Background {
+        expression: ResolvedHirExpression,
+        location: SourceLocation,
+    },
+
     /// Require statement - contract precondition that must be true
     /// Traps at runtime if condition is false
     Require {

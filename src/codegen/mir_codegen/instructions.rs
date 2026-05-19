@@ -793,6 +793,112 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
+            // Async host bridge: background someFunc(args)
+            // Calls _async_fire(fn_name_ptr, fn_name_len, args_ptr, args_len) -> void
+            MirOperation::AsyncFireCall { fn_name, arguments } => {
+                debug_mir!(fn_name = %fn_name, arg_count = arguments.len(), "Processing AsyncFireCall");
+
+                let fn_name_base = self.wasm_generator.get_or_create_string_offset(fn_name)?;
+                let fn_name_content_ptr = fn_name_base + 4;
+                let fn_name_len = fn_name.len() as i32;
+
+                // Static empty JSON args array "[]"
+                let args_json = "[]";
+                let args_base = self.wasm_generator.get_or_create_string_offset(args_json)?;
+                let args_content_ptr = args_base + 4;
+                let args_len = args_json.len() as i32;
+
+                // Load positional arguments so they can be evaluated (even though we pass them as
+                // a serialised JSON blob in a future full implementation, evaluation ensures
+                // side-effects still run and the compiler doesn't optimise them away).
+                for arg in arguments {
+                    self.load_operand(arg)?;
+                    // Drop the individual argument value — they are not passed to the host
+                    // bridge via the WASM stack; the host reads them from the JSON blob.
+                    self.current_instructions.push(Instruction::Drop);
+                }
+
+                // Push (fn_name_ptr, fn_name_len, args_ptr, args_len) for _async_fire
+                self.current_instructions
+                    .push(Instruction::I32Const(fn_name_content_ptr as i32));
+                self.current_instructions
+                    .push(Instruction::I32Const(fn_name_len));
+                self.current_instructions
+                    .push(Instruction::I32Const(args_content_ptr as i32));
+                self.current_instructions
+                    .push(Instruction::I32Const(args_len));
+
+                let fire_idx = *self
+                    .wasm_generator
+                    .function_map
+                    .get("_async_fire")
+                    .ok_or_else(|| CompilerError::Codegen {
+                        context: Box::new(crate::error::ErrorContext::new(
+                            "_async_fire not registered".to_string(),
+                            None,
+                            crate::error::ErrorType::Codegen,
+                            Some(instruction.location.clone()),
+                        )),
+                    })?;
+                self.current_instructions.push(Instruction::Call(fire_idx));
+
+                // _async_fire returns void — nothing to store
+            }
+
+            // Async host bridge: later x = someFunc(args)
+            // Calls _async_await(fn_name_ptr, fn_name_len, args_ptr, args_len) -> i32 (result ptr)
+            MirOperation::AsyncAwaitCall { fn_name, arguments } => {
+                debug_mir!(fn_name = %fn_name, arg_count = arguments.len(), "Processing AsyncAwaitCall");
+
+                let fn_name_base = self.wasm_generator.get_or_create_string_offset(fn_name)?;
+                let fn_name_content_ptr = fn_name_base + 4;
+                let fn_name_len = fn_name.len() as i32;
+
+                // Static empty JSON args array "[]"
+                let args_json = "[]";
+                let args_base = self.wasm_generator.get_or_create_string_offset(args_json)?;
+                let args_content_ptr = args_base + 4;
+                let args_len = args_json.len() as i32;
+
+                // Load positional arguments so side-effects are preserved.
+                for arg in arguments {
+                    self.load_operand(arg)?;
+                    self.current_instructions.push(Instruction::Drop);
+                }
+
+                // Push (fn_name_ptr, fn_name_len, args_ptr, args_len) for _async_await
+                self.current_instructions
+                    .push(Instruction::I32Const(fn_name_content_ptr as i32));
+                self.current_instructions
+                    .push(Instruction::I32Const(fn_name_len));
+                self.current_instructions
+                    .push(Instruction::I32Const(args_content_ptr as i32));
+                self.current_instructions
+                    .push(Instruction::I32Const(args_len));
+
+                let await_idx = *self
+                    .wasm_generator
+                    .function_map
+                    .get("_async_await")
+                    .ok_or_else(|| CompilerError::Codegen {
+                        context: Box::new(crate::error::ErrorContext::new(
+                            "_async_await not registered".to_string(),
+                            None,
+                            crate::error::ErrorType::Codegen,
+                            Some(instruction.location.clone()),
+                        )),
+                    })?;
+                self.current_instructions.push(Instruction::Call(await_idx));
+
+                // _async_await returns i32 (pointer to result string/value in memory)
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                } else {
+                    // No destination — drop the return value
+                    self.current_instructions.push(Instruction::Drop);
+                }
+            }
+
             _ => {
                 // Unsupported MIR operation
                 return Err(CompilerError::Codegen {

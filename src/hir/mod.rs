@@ -339,6 +339,13 @@ pub enum HirStatement {
         location: SourceLocation,
     },
 
+    /// Background statement (fire-and-forget async call)
+    /// Lowers to a call to the `_async_fire` host bridge function.
+    Background {
+        expression: HirExpression,
+        location: SourceLocation,
+    },
+
     /// Require statement - contract precondition that must be true
     /// Traps at runtime if condition is false
     Require {

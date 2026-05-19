@@ -177,6 +177,12 @@ pub enum TastStatement {
         expression: TastExpression,
         location: SourceLocation,
     },
+    /// Background statement (fire-and-forget async call).
+    /// Lowers to a `_async_fire` host bridge call in codegen.
+    Background {
+        expression: TastExpression,
+        location: SourceLocation,
+    },
     /// Require statement - contract precondition that must be true
     /// Traps at runtime if condition is false
     Require {

@@ -185,6 +185,10 @@ enum Commands {
         /// Enable external plugin loading from ~/.cleen/plugins/
         #[arg(long)]
         plugins: bool,
+
+        /// Release mode: strip always: invariant checks for smaller, faster output
+        #[arg(long)]
+        release: bool,
     },
     /// Package management commands
     #[command(subcommand)]
@@ -562,6 +566,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             test,
             include_tests,
             plugins,
+            release,
         } => {
             handle_compile(
                 input,
@@ -572,6 +577,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 test,
                 include_tests,
                 plugins,
+                release,
                 &output_config,
             )
             .await?
@@ -765,6 +771,7 @@ async fn handle_serve(
         false,                // test
         false,                // include_tests
         true,                 // plugins enabled
+        false,                // release mode: off for serve
         output_config,
     )
     .await;
@@ -1112,6 +1119,7 @@ async fn handle_compile(
     test: bool,
     _include_tests: bool,
     plugins: bool,
+    release: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !output_config.quiet {
@@ -1162,13 +1170,24 @@ async fn handle_compile(
     // This automatically handles `import "path/to/file.cln"` syntax
     // as well as module imports like `import Math`
     let _ = plugins; // Ignore the flag for now, multi-file compilation handles imports
-    let wasm_binary = match clean_language_compiler::compile_multi_file_with_memory_tier(
-        input_path,
-        search_paths,
-        opt_level,
-        explicit_tier,
-        target_default,
-    ) {
+    let wasm_binary_result = if release {
+        clean_language_compiler::compile_multi_file_release(
+            input_path,
+            search_paths,
+            opt_level,
+            explicit_tier,
+            target_default,
+        )
+    } else {
+        clean_language_compiler::compile_multi_file_with_memory_tier(
+            input_path,
+            search_paths,
+            opt_level,
+            explicit_tier,
+            target_default,
+        )
+    };
+    let wasm_binary = match wasm_binary_result {
         Ok(binary) => binary,
         Err(errors) => {
             let source = fs::read_to_string(&input).unwrap_or_default();

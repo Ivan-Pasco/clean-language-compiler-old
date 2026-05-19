@@ -479,6 +479,16 @@ impl DeadCodeEliminationPass {
             MirOperation::AsyncAssign { source } => {
                 self.mark_operand_live(source, function);
             }
+            MirOperation::AsyncFireCall { arguments, .. } => {
+                for arg in arguments {
+                    self.mark_operand_live(arg, function);
+                }
+            }
+            MirOperation::AsyncAwaitCall { arguments, .. } => {
+                for arg in arguments {
+                    self.mark_operand_live(arg, function);
+                }
+            }
             MirOperation::BoxAny { value, .. } => {
                 self.mark_operand_live(value, function);
             }

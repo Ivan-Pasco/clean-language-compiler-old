@@ -74,6 +74,11 @@ pub struct MultiFileCompilerConfig {
 
     /// Plugin registry for framework block expansion
     pub plugin_registry: Option<Arc<PluginRegistry>>,
+
+    /// Release mode: strip `always:` invariant checks from the compiled output.
+    /// When true, class `always:` block conditions are not injected before
+    /// method returns, producing smaller and faster WASM.
+    pub release_mode: bool,
 }
 
 impl std::fmt::Debug for MultiFileCompilerConfig {
@@ -89,6 +94,7 @@ impl std::fmt::Debug for MultiFileCompilerConfig {
                 "plugin_registry",
                 &self.plugin_registry.as_ref().map(|_| "..."),
             )
+            .field("release_mode", &self.release_mode)
             .finish()
     }
 }
@@ -108,6 +114,7 @@ impl Default for MultiFileCompilerConfig {
             html_pages_dir: None,
             html_components_dir: None,
             plugin_registry: None,
+            release_mode: false,
         }
     }
 }
@@ -157,6 +164,12 @@ impl MultiFileCompilerConfig {
     /// Set the plugin registry for framework block expansion
     pub fn with_plugin_registry(mut self, registry: Arc<PluginRegistry>) -> Self {
         self.plugin_registry = Some(registry);
+        self
+    }
+
+    /// Enable release mode (strips `always:` invariant checks).
+    pub fn with_release_mode(mut self, release: bool) -> Self {
+        self.release_mode = release;
         self
     }
 }
@@ -425,6 +438,7 @@ impl MultiFileCompiler {
             html_pages_dir: self.config.html_pages_dir.clone(),
             html_components_dir: self.config.html_components_dir.clone(),
             plugin_registry: self.config.plugin_registry.clone(),
+            release_mode: self.config.release_mode,
         };
 
         let compiler = MultiFileCompiler::with_config(config);

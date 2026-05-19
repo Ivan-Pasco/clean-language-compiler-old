@@ -1322,6 +1322,17 @@ impl NameResolver {
                 })
             }
 
+            HirStatement::Background {
+                expression,
+                location,
+            } => {
+                let resolved_expression = self.resolve_expression(expression)?;
+                Ok(ResolvedHirStatement::Background {
+                    expression: resolved_expression,
+                    location: location.clone(),
+                })
+            }
+
             HirStatement::Break { location } => Ok(ResolvedHirStatement::Break {
                 location: location.clone(),
             }),

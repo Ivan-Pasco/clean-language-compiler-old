@@ -1228,6 +1228,17 @@ impl HirBuilder {
                 })
             }
 
+            Statement::Background {
+                expression,
+                location,
+            } => {
+                let hir_expr = self.build_expression(expression)?;
+                Ok(HirStatement::Background {
+                    expression: hir_expr,
+                    location: location.clone().unwrap_or_default(),
+                })
+            }
+
             Statement::Break { location } => Ok(HirStatement::Break {
                 location: location.clone().unwrap_or_default(),
             }),
@@ -2076,6 +2087,48 @@ impl HirBuilder {
                         location: loc.clone(),
                     },
                     ValidateConstraint::Length { min, max } => {
+                        // Type check: length constraint arguments must be integer literals.
+                        // spec/semantic-rules.md: `length` constraint bounds must be integer.
+                        if let Expression::Literal(ref v) = **min {
+                            if !matches!(
+                                v,
+                                Value::Integer(_)
+                                    | Value::Integer8(_)
+                                    | Value::Integer8u(_)
+                                    | Value::Integer16(_)
+                                    | Value::Integer16u(_)
+                                    | Value::Integer32(_)
+                                    | Value::Integer64(_)
+                            ) {
+                                return Err(CompilerError::validation_error(
+                                    format!(
+                                        "validate length constraint: min argument must be integer, found {}",
+                                        v
+                                    ),
+                                    loc.clone(),
+                                ));
+                            }
+                        }
+                        if let Expression::Literal(ref v) = **max {
+                            if !matches!(
+                                v,
+                                Value::Integer(_)
+                                    | Value::Integer8(_)
+                                    | Value::Integer8u(_)
+                                    | Value::Integer16(_)
+                                    | Value::Integer16u(_)
+                                    | Value::Integer32(_)
+                                    | Value::Integer64(_)
+                            ) {
+                                return Err(CompilerError::validation_error(
+                                    format!(
+                                        "validate length constraint: max argument must be integer, found {}",
+                                        v
+                                    ),
+                                    loc.clone(),
+                                ));
+                            }
+                        }
                         // Emit minLength and maxLength as two separate calls.
                         let min_hir = self.build_expression(min)?;
                         let max_hir = self.build_expression(max)?;
@@ -2106,6 +2159,31 @@ impl HirBuilder {
                         }
                     }
                     ValidateConstraint::Min(expr) => {
+                        // Type check: min constraint argument must be number or integer.
+                        // spec/semantic-rules.md: `min` constraint value must be numeric.
+                        if let Expression::Literal(ref v) = **expr {
+                            if !matches!(
+                                v,
+                                Value::Integer(_)
+                                    | Value::Integer8(_)
+                                    | Value::Integer8u(_)
+                                    | Value::Integer16(_)
+                                    | Value::Integer16u(_)
+                                    | Value::Integer32(_)
+                                    | Value::Integer64(_)
+                                    | Value::Number(_)
+                                    | Value::Number32(_)
+                                    | Value::Number64(_)
+                            ) {
+                                return Err(CompilerError::validation_error(
+                                    format!(
+                                        "validate min constraint: argument must be number or integer, found {}",
+                                        v
+                                    ),
+                                    loc.clone(),
+                                ));
+                            }
+                        }
                         let hir_expr = self.build_expression(expr)?;
                         HirExpression::Call {
                             function: "validator.range".to_string(),
@@ -2124,6 +2202,31 @@ impl HirBuilder {
                         }
                     }
                     ValidateConstraint::Max(expr) => {
+                        // Type check: max constraint argument must be number or integer.
+                        // spec/semantic-rules.md: `max` constraint value must be numeric.
+                        if let Expression::Literal(ref v) = **expr {
+                            if !matches!(
+                                v,
+                                Value::Integer(_)
+                                    | Value::Integer8(_)
+                                    | Value::Integer8u(_)
+                                    | Value::Integer16(_)
+                                    | Value::Integer16u(_)
+                                    | Value::Integer32(_)
+                                    | Value::Integer64(_)
+                                    | Value::Number(_)
+                                    | Value::Number32(_)
+                                    | Value::Number64(_)
+                            ) {
+                                return Err(CompilerError::validation_error(
+                                    format!(
+                                        "validate max constraint: argument must be number or integer, found {}",
+                                        v
+                                    ),
+                                    loc.clone(),
+                                ));
+                            }
+                        }
                         let hir_expr = self.build_expression(expr)?;
                         HirExpression::Call {
                             function: "validator.range".to_string(),
@@ -2141,20 +2244,44 @@ impl HirBuilder {
                             location: loc.clone(),
                         }
                     }
-                    ValidateConstraint::Match(pattern) => HirExpression::Call {
-                        function: "validator.match".to_string(),
-                        arguments: vec![
-                            HirExpression::Variable {
-                                name: schema_name.clone(),
-                                location: loc.clone(),
-                            },
-                            HirExpression::Literal {
-                                value: Value::String(pattern.clone()),
-                                location: loc.clone(),
-                            },
-                        ],
-                        location: loc.clone(),
-                    },
+                    ValidateConstraint::Match(pattern) => {
+                        // SEM010 (validate context): match constraint argument must be a
+                        // known pattern name literal.
+                        // spec/semantic-rules.md §SEM010
+                        const VALID_PATTERNS: &[&str] = &[
+                            "email",
+                            "url",
+                            "uuid",
+                            "phone",
+                            "date",
+                            "integer",
+                            "number",
+                            "alphanumeric",
+                        ];
+                        if !VALID_PATTERNS.contains(&pattern.as_str()) {
+                            return Err(CompilerError::validation_error(
+                                format!(
+                                    "Unknown pattern name '{}' in validate match constraint. Valid patterns: email, url, uuid, phone, date, integer, number, alphanumeric",
+                                    pattern
+                                ),
+                                loc.clone(),
+                            ));
+                        }
+                        HirExpression::Call {
+                            function: "validator.match".to_string(),
+                            arguments: vec![
+                                HirExpression::Variable {
+                                    name: schema_name.clone(),
+                                    location: loc.clone(),
+                                },
+                                HirExpression::Literal {
+                                    value: Value::String(pattern.clone()),
+                                    location: loc.clone(),
+                                },
+                            ],
+                            location: loc.clone(),
+                        }
+                    }
                     ValidateConstraint::OneOf(values) => {
                         // Build a list literal expression containing the oneOf values
                         let hir_values: Result<Vec<HirExpression>, CompilerError> =

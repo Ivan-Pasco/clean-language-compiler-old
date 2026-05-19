@@ -223,11 +223,17 @@ impl MirBuilder {
         // Build all methods with class context.
         // After each method body is built, inject class always: condition checks immediately
         // before every Return terminator (debug / --contracts builds).
+        // In release mode, class_invariants are suppressed entirely.
         for method in tast_class.methods {
             // Seed the context with the class always: conditions as pre-return ensure conditions.
             // `build_function_with_class_context` picks them up from `ensure_conditions`.
             // We store them on the builder and thread them into the context there.
-            self.pending_class_invariants = class_invariants.clone();
+            // In release mode: leave pending_class_invariants empty so no checks are emitted.
+            self.pending_class_invariants = if self.release_mode {
+                Vec::new()
+            } else {
+                class_invariants.clone()
+            };
             match self.build_function_with_class_context(method, Some(&class_for_methods)) {
                 Ok(method_function) => functions.push(method_function),
                 Err(method_errors) => errors.extend(method_errors),

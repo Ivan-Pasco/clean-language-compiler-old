@@ -329,6 +329,22 @@ pub enum MirOperation {
     /// Async assignment for later variables
     AsyncAssign { source: MirOperand },
 
+    /// Fire-and-forget async call via `_async_fire` host bridge.
+    /// `fn_name` is the Clean Language function name string.
+    /// `arguments` are the WASM-level argument values to JSON-serialize.
+    AsyncFireCall {
+        fn_name: String,
+        arguments: Vec<MirOperand>,
+    },
+
+    /// Await-and-assign via `_async_await` host bridge.
+    /// `fn_name` is the Clean Language function name string.
+    /// `arguments` are the WASM-level argument values.
+    AsyncAwaitCall {
+        fn_name: String,
+        arguments: Vec<MirOperand>,
+    },
+
     /// Box a value into an `any` type with runtime type tag
     /// Memory layout: [tag:i32][value1:i32][value2:i32] = 12 bytes
     BoxAny {

@@ -611,6 +611,11 @@ impl MirCodeGenerator<'_> {
                 .register_json_operations()
                 .map_err(|e| vec![e])?;
 
+            debug_mir!("DEBUG MIR: Registering async host bridge imports");
+            self.wasm_generator
+                .register_async_operations()
+                .map_err(|e| vec![e])?;
+
             // Register pending plugin bridge wrapper functions AFTER all imports
             if !self.pending_bridge_wrappers.is_empty() {
                 debug_mir!(

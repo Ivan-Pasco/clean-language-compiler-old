@@ -1746,6 +1746,31 @@ impl<'a> TypeInference<'a> {
                     });
                 }
 
+                // STATE001: Guard expression must be pure — no I/O calls allowed.
+                // spec/semantic-rules.md STATE001: Guards are checked synchronously on
+                // every state mutation; allowing I/O calls would cause network/file
+                // side-effects on every assignment, violating the purity contract.
+                if let Some(io_call_name) = find_io_call_in_expression(&guard_condition) {
+                    self.errors.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Guard expression must be pure — found I/O call '{}'. Guards cannot have side effects.",
+                                    io_call_name
+                                ),
+                                Some(
+                                    "Remove the I/O call from the guard, or move the I/O operation outside the state declaration."
+                                        .to_string(),
+                                ),
+                                crate::error::ErrorType::Validation,
+                                Some(resolved_guard.location.clone()),
+                            )
+                            .with_severity(crate::error::ErrorSeverity::Error)
+                            .with_error_code("STATE001"),
+                        ),
+                    });
+                }
+
                 Some(TastGuardClause {
                     condition: guard_condition,
                     value_symbol_id: resolved_guard.value_symbol_id,
@@ -1913,6 +1938,7 @@ impl<'a> TypeInference<'a> {
                             ..
                         } => collect_refs_expr(init, out),
                         LaterAssignment { expression, .. } => collect_refs_expr(expression, out),
+                        Background { expression, .. } => collect_refs_expr(expression, out),
                         Require { condition, .. } => collect_refs_expr(condition, out),
                         _ => {}
                     }
@@ -1929,58 +1955,98 @@ impl<'a> TypeInference<'a> {
                 deps.insert(comp.symbol_id, computed_deps);
             }
 
-            // DFS cycle detection (3-color: white=0, grey=1, black=2)
+            // DFS cycle detection with full cycle path tracking.
+            // Uses the standard 3-color algorithm:
+            //   white (not in map) = unvisited
+            //   grey  (1)          = on the current DFS recursion stack
+            //   black (2)          = fully explored
+            //
+            // When a back-edge is found (grey → grey), we extract the cycle by
+            // finding the slice of `path` from the repeated node to the current
+            // position.  This gives the complete cycle for the error message, e.g.
+            // "a → b → c → a".
             let mut color: HashMap<SymbolId, u8> = HashMap::new();
-            let mut cycle_found: Option<(SymbolId, SymbolId)> = None;
+            // Records the full cycle path when one is found (the cycle slice is
+            // inclusive of the starting node at both ends).
+            let mut cycle_path: Option<Vec<SymbolId>> = None;
 
-            fn dfs(
+            fn dfs_with_path(
                 node: SymbolId,
                 deps: &HashMap<SymbolId, HashSet<SymbolId>>,
                 color: &mut HashMap<SymbolId, u8>,
-                cycle_found: &mut Option<(SymbolId, SymbolId)>,
+                path: &mut Vec<SymbolId>,
+                cycle_path: &mut Option<Vec<SymbolId>>,
             ) {
                 if color.get(&node) == Some(&2) {
+                    // Already fully explored — no cycle via this node.
                     return;
                 }
                 if color.get(&node) == Some(&1) {
-                    // Back-edge — cycle
-                    if cycle_found.is_none() {
-                        *cycle_found = Some((node, node));
+                    // Back-edge: `node` is already on the current recursion stack.
+                    // Extract the cycle from `path`.
+                    if cycle_path.is_none() {
+                        if let Some(start_pos) = path.iter().position(|&id| id == node) {
+                            let mut cycle = path[start_pos..].to_vec();
+                            cycle.push(node); // close the cycle: a → b → ... → a
+                            *cycle_path = Some(cycle);
+                        }
                     }
                     return;
                 }
-                color.insert(node, 1);
+                color.insert(node, 1); // mark grey
+                path.push(node);
                 if let Some(children) = deps.get(&node) {
-                    for &child in children {
-                        if color.get(&child) == Some(&1) && cycle_found.is_none() {
-                            *cycle_found = Some((node, child));
-                        } else {
-                            dfs(child, deps, color, cycle_found);
+                    // Sort children for deterministic error messages.
+                    let mut sorted_children: Vec<SymbolId> = children.iter().cloned().collect();
+                    sorted_children.sort_by_key(|id| id.0);
+                    for child in sorted_children {
+                        if cycle_path.is_some() {
+                            break;
                         }
+                        dfs_with_path(child, deps, color, path, cycle_path);
                     }
                 }
-                color.insert(node, 2);
+                path.pop();
+                color.insert(node, 2); // mark black
             }
 
+            let mut path: Vec<SymbolId> = Vec::new();
             for comp in &state_block.computed {
                 if color.get(&comp.symbol_id) != Some(&2) {
-                    dfs(comp.symbol_id, &deps, &mut color, &mut cycle_found);
+                    dfs_with_path(
+                        comp.symbol_id,
+                        &deps,
+                        &mut color,
+                        &mut path,
+                        &mut cycle_path,
+                    );
+                }
+                if cycle_path.is_some() {
+                    break;
                 }
             }
 
-            if let Some((a, _b)) = cycle_found {
-                let name = id_to_name.get(&a).copied().unwrap_or("unknown");
+            if let Some(cycle) = cycle_path {
+                // Build the human-readable path string: "a → b → c → a"
+                let path_str = cycle
+                    .iter()
+                    .map(|id| id_to_name.get(id).copied().unwrap_or("unknown").to_string())
+                    .collect::<Vec<_>>()
+                    .join(" → ");
+
+                let first_id = cycle[0];
                 let location = state_block
                     .computed
                     .iter()
-                    .find(|c| c.symbol_id == a)
+                    .find(|c| c.symbol_id == first_id)
                     .map(|c| c.location.clone());
+
                 self.errors.push(CompilerError::Validation {
                     context: Box::new(
                         crate::error::ErrorContext::new(
                             format!(
-                                "Circular dependency in computed state: '{}' depends on itself",
-                                name
+                                "Circular dependency detected in computed state: {}",
+                                path_str
                             ),
                             Some(
                                 "Computed state variables cannot form dependency cycles"
@@ -2788,6 +2854,17 @@ impl<'a> TypeInference<'a> {
                 Ok(TastStatement::LaterAssignment {
                     variable: variable.clone(),
                     symbol_id: *symbol_id,
+                    expression: tast_expression,
+                    location: location.clone(),
+                })
+            }
+
+            ResolvedHirStatement::Background {
+                expression,
+                location,
+            } => {
+                let tast_expression = self.infer_expression(expression)?;
+                Ok(TastStatement::Background {
                     expression: tast_expression,
                     location: location.clone(),
                 })
@@ -5677,6 +5754,104 @@ impl StatementLocation for ResolvedHirStatement {
             ResolvedHirStatement::LaterAssignment { location, .. } => location,
             ResolvedHirStatement::Require { location, .. } => location,
             ResolvedHirStatement::Ensure { location, .. } => location,
+            ResolvedHirStatement::Background { location, .. } => location,
         }
+    }
+}
+
+/// Walk a `TastExpression` tree and return the name of the first I/O call found,
+/// or `None` if the expression is pure.
+///
+/// An I/O call is any `MethodCall` or `FunctionCall` whose resolved name starts
+/// with one of: `file.`, `db.`, `http.`, `console.`.
+/// This is used by the STATE001 guard purity check.
+fn find_io_call_in_expression(expr: &TastExpression) -> Option<String> {
+    const IO_PREFIXES: &[&str] = &["file.", "db.", "http.", "console."];
+
+    match &expr.kind {
+        TastExpressionKind::MethodCall {
+            receiver,
+            method_name,
+            arguments,
+            ..
+        } => {
+            // Check if receiver is a namespace variable with an I/O prefix name.
+            if let TastExpressionKind::Variable { name: ns_name, .. } = &receiver.kind {
+                let qualified = format!("{}.{}", ns_name, method_name);
+                if IO_PREFIXES.iter().any(|p| qualified.starts_with(p)) {
+                    return Some(qualified);
+                }
+            }
+            // Recurse into receiver and arguments.
+            if let Some(name) = find_io_call_in_expression(receiver) {
+                return Some(name);
+            }
+            for arg in arguments {
+                if let Some(name) = find_io_call_in_expression(arg) {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        TastExpressionKind::FunctionCall {
+            function,
+            arguments,
+            ..
+        } => {
+            // Check if the function expression resolves to an I/O-prefixed name.
+            if let TastExpressionKind::Variable { name, .. } = &function.kind {
+                if IO_PREFIXES.iter().any(|p| name.starts_with(p)) {
+                    return Some(name.clone());
+                }
+            }
+            if let Some(name) = find_io_call_in_expression(function) {
+                return Some(name);
+            }
+            for arg in arguments {
+                if let Some(name) = find_io_call_in_expression(arg) {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        TastExpressionKind::BinaryOperation { left, right, .. } => {
+            find_io_call_in_expression(left).or_else(|| find_io_call_in_expression(right))
+        }
+        TastExpressionKind::UnaryOperation { operand, .. } => find_io_call_in_expression(operand),
+        TastExpressionKind::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => find_io_call_in_expression(condition)
+            .or_else(|| find_io_call_in_expression(then_expr))
+            .or_else(|| find_io_call_in_expression(else_expr)),
+        TastExpressionKind::Cast { expression, .. } => find_io_call_in_expression(expression),
+        TastExpressionKind::TypeCheck { expression, .. } => find_io_call_in_expression(expression),
+        TastExpressionKind::Await { expression } => find_io_call_in_expression(expression),
+        TastExpressionKind::OnError {
+            expression,
+            fallback,
+        } => {
+            find_io_call_in_expression(expression).or_else(|| find_io_call_in_expression(fallback))
+        }
+        TastExpressionKind::PropertyAccess { object, .. } => find_io_call_in_expression(object),
+        TastExpressionKind::ArrayLiteral { elements, .. } => {
+            elements.iter().find_map(find_io_call_in_expression)
+        }
+        TastExpressionKind::ArrayAccess { array, index } => {
+            find_io_call_in_expression(array).or_else(|| find_io_call_in_expression(index))
+        }
+        TastExpressionKind::StaticMethodCall { arguments, .. } => {
+            arguments.iter().find_map(find_io_call_in_expression)
+        }
+        TastExpressionKind::Range {
+            start, end, step, ..
+        } => find_io_call_in_expression(start)
+            .or_else(|| find_io_call_in_expression(end))
+            .or_else(|| step.as_ref().and_then(|s| find_io_call_in_expression(s))),
+        // Literals, variables, base calls, lambda, object literal, async block
+        // are all pure or do not contain I/O call sites that can be detected here.
+        _ => None,
     }
 }

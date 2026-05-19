@@ -1129,6 +1129,12 @@ impl MirCodeGenerator<'_> {
                         // codegen injects a `string_compare` call at BinaryOp
                         // code-gen time. We must mark `string_compare` reachable
                         // here so the import is not tree-shaken.
+                        MirOperation::AsyncFireCall { .. } => {
+                            names.insert("_async_fire".to_string());
+                        }
+                        MirOperation::AsyncAwaitCall { .. } => {
+                            names.insert("_async_await".to_string());
+                        }
                         MirOperation::BinaryOp {
                             op: MirBinaryOp::Eq | MirBinaryOp::Ne,
                             left,

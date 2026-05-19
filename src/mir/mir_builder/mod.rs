@@ -126,6 +126,11 @@ pub struct MirBuilder {
     /// currently-being-built class method.  Set by `build_class` before calling
     /// `build_function_with_class_context` and cleared afterwards.
     pub(super) pending_class_invariants: Vec<TastExpression>,
+
+    /// When true, `always:` invariant checks are stripped from the output.
+    /// Set via the `--release` CLI flag.  In release mode `pending_class_invariants`
+    /// is cleared immediately after being set so no invariant WASM is emitted.
+    pub(super) release_mode: bool,
 }
 
 /// Context for building a single function
@@ -215,7 +220,14 @@ impl MirBuilder {
             computed_properties: HashMap::new(),
             next_computed_symbol_id: 3000,
             pending_class_invariants: Vec::new(),
+            release_mode: false,
         }
+    }
+
+    /// Enable release mode: `always:` invariant checks will be stripped.
+    pub fn with_release_mode(mut self, release: bool) -> Self {
+        self.release_mode = release;
+        self
     }
 
     /// Build MIR from TAST program

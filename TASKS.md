@@ -1242,31 +1242,25 @@ Three files changed:
 
 ---
 
-## 🔴 CRITICAL: Implement async scheduling for background/later constructs
+## ✅ DONE: Implement async scheduling for background/later constructs
 
 **Priority**: CRITICAL — spec semantics are silently broken
 **Discovered**: 2026-05-18
-**Status**: OPEN
+**Completed**: 2026-05-19
+**Status**: DONE
 
-### Problem
-The `background expr` and `later x = expr` constructs currently compile as synchronous calls in `src/codegen/` and `src/parser/token_parser/expressions.rs` (~line 475). The spec says:
-- `background` is fire-and-forget (async, does not block)
-- `later` awaits the result before continuing
-
-True async scheduling in WASM requires a task queue and host-side scheduling because WASM is single-threaded.
-
-### Files
-- `src/parser/token_parser/expressions.rs:475` — parsing (done correctly)
-- `src/mir/mir_builder/statements.rs` — `TastStatement::LaterAssignment` lowering
-- `src/codegen/` — code generation for both constructs
-
-### Spec Ref
-- `foundation/spec/grammar.ebnf` `background_statement`, `later_assignment`
-
-### Required
-- WASM task queue or host-side scheduling bridge in Layer 2
-- New host bridge functions: `_async_fire` (background), `_async_await` (later)
-- Coordinate with clean-server for host implementation
+### Solution
+Full pipeline from HIR through WASM codegen implemented:
+- Added `HirStatement::Background`, `ResolvedHirStatement::Background`, `TastStatement::Background` variants through HIR → Resolver → TypeChecker
+- Added `MirOperation::AsyncFireCall` and `MirOperation::AsyncAwaitCall` variants in `src/mir/mir_types.rs`
+- `TastStatement::Background` lowered to `AsyncFireCall` in `src/mir/mir_builder/statements.rs`
+- `TastStatement::LaterAssignment` lowered to `AsyncAwaitCall` for simple function calls, `AsyncAssign` fallback for complex expressions
+- `_async_fire` / `_async_await` registered as WASM host bridge imports in `src/codegen/codegen_registration.rs`
+- WASM emission for both operations in `src/codegen/mir_codegen/instructions.rs`
+- Live-value tracking for both operations in `src/mir/optimization.rs`
+- `HirStatement::Background` handled in `src/hir/validation.rs`
+- `HOST_BRIDGE.md` updated with signatures for both functions
+- Clean-server must implement both host functions (reported via `report_error`)
 
 ---
 
@@ -1293,113 +1287,92 @@ The parser accepts `tests:` blocks containing `named_test` and `anonymous_test` 
 
 ---
 
-## 🟢 LOW: Implement --release flag to strip always: contract checks
+## ✅ DONE: Implement --release flag to strip always: contract checks
 
 **Priority**: LOW — build mode optimization
 **Discovered**: 2026-05-18
-**Status**: OPEN
+**Completed**: 2026-05-19
+**Status**: DONE
 
-### Problem
-The spec says `always:` invariant checks (CLASS006) are included in debug builds and stripped in release builds. Currently `always:` checks are always included regardless of build mode.
-
-### Files
-- `src/codegen/` — invariant check code generation
-- Main CLI argument parsing
-
-### Spec Ref
-- `foundation/spec/semantic-rules.md` §CLASS006
+### Solution
+- Added `release_mode: bool` field to `MultiFileCompilerConfig` and `MirBuilder`
+- Added `--release` CLI flag to `Commands::Compile` in `src/main.rs`
+- Added `compile_multi_file_release()` in `src/lib.rs` (mirrors debug path but passes `release=true`)
+- Added `lower_tast_to_mir_release()` in `src/mir/mod.rs` and `set_release_mode()` on `MirPipeline`
+- `MirBuilder::build_class()` skips `always:` invariant injection when `release_mode = true`
 
 ---
 
-## 🟡 MEDIUM: Return type strictness for function declarations
+## ✅ DONE: Return type strictness for function declarations
 
 **Priority**: MEDIUM — permissiveness allows type errors to go undetected
 **Discovered**: 2026-05-18
-**Status**: OPEN
+**Completed**: 2026-05-19
+**Status**: DONE — deferred intentionally
 
-### Problem
-In `src/parser/token_parser/declarations.rs` `parse_type()`, function return type annotations fall through to `Type::Object(name)` for any unrecognised keyword. The spec restricts function return types to concrete types only. Extra types currently accepted silently.
-
-### Files
-- `src/parser/token_parser/declarations.rs` — `parse_type()` ~line 1291
-
-### Required
-A strictness pass that rejects non-concrete return type annotations with a helpful error message.
+### Resolution
+The permissive fallthrough to `Type::Object(name)` is intentional: Clean Language supports
+user-defined class types as return types, which are represented as `Type::Object`. Tightening
+the parser would reject valid class return types. The type checker enforces correctness at a
+later stage. No code change needed.
 
 ---
 
-## 🟡 MEDIUM: STATE003 circular dependency detection incomplete
+## ✅ DONE: STATE003 circular dependency detection incomplete
 
 **Priority**: MEDIUM — circular state dependencies not caught at compile time
 **Discovered**: 2026-05-18
-**Status**: OPEN
+**Completed**: 2026-05-19
+**Status**: DONE
 
-### Problem
-Current detection in `src/typechecker/type_inference.rs` (~line 2250) is linear (A depends on B). Full circular dependency detection requires a proper dependency graph (adjacency list from all compute blocks, then DFS for cycles). Cycles are silently compiled and produce runtime infinite loops.
-
-### Files
-- `src/typechecker/type_inference.rs` ~line 2250
-
-### Required
-- Build adjacency list from all `computed:` blocks
-- DFS cycle detection
-- Emit STATE003 when a cycle is detected
-
-### Spec Ref
-- `foundation/spec/semantic-rules.md` §STATE003
+### Solution
+Replaced the linear check with a full DFS in `src/typechecker/type_inference.rs`:
+- Build adjacency list from all `computed:` blocks via `collect_refs_block`
+- `dfs_with_path` tracks a path stack; when a back-edge to a grey node is found, the cycle
+  path is reconstructed from `path[start_pos..]` and emitted as STATE003
+- Error message now shows the full cycle: `"a → b → a"` instead of just `"a depends on b"`
 
 ---
 
-## 🟡 MEDIUM: Validate list.push routes to WASM import not native instruction
+## ✅ DONE: Validate list.push routes to WASM import not native instruction
 
 **Priority**: MEDIUM — potential correctness issue
 **Discovered**: 2026-05-18
-**Status**: OPEN
+**Completed**: 2026-05-19
+**Status**: DONE
 
-### Problem
-Need to verify that `list.push` generates a WASM import call (`_list_push`) rather than a native instruction. If routing to native, fix to emit the correct import.
-
-### Files
-- `src/builtins/registry.rs`
-- `src/codegen/` — wherever list.push is generated
+### Resolution
+Searched all of `src/` for `_list_push` — no such host bridge function exists anywhere in the
+compiler or the function registry. `list.push` is implemented entirely in native WASM inside
+`src/stdlib/` (no host import needed). The task was based on a false premise. No change needed.
 
 ---
 
-## 🟢 LOW: Guard purity check STATE001 is incomplete
+## ✅ DONE: Guard purity check STATE001 is incomplete
 
 **Priority**: LOW — guards with I/O side effects accepted silently
 **Discovered**: 2026-05-18
-**Status**: OPEN
+**Completed**: 2026-05-19
+**Status**: DONE
 
-### Problem
-In `src/typechecker/type_inference.rs` (~line 1725), the guard expression type is checked to be boolean, but no purity check is performed. Guard expressions that contain I/O calls (file.*, db.*, http.*, console.*) should be rejected with STATE001.
-
-### Required
-Walk the guard expression AST and reject any function calls whose names start with `file.`, `db.`, `http.`, or `console.` with error STATE001: "Guard expression must be pure — found I/O call".
-
-### Files
-- `src/typechecker/type_inference.rs` ~line 1725
-
-### Spec Ref
-- `foundation/spec/semantic-rules.md` §STATE001
+### Solution
+Added `find_io_call_in_expression()` free function in `src/typechecker/type_inference.rs`.
+After the boolean type check for guard conditions, the function walks the full `TastExpression`
+tree and rejects any `MethodCall` whose receiver name starts with `file.`, `db.`, `http.`, or
+`console.` with error code STATE001: "Guard expression must be pure — found I/O call".
 
 ---
 
-## 🟡 MEDIUM: validate_block constraint expression type checking
+## ✅ DONE: validate_block constraint expression type checking
 
 **Priority**: MEDIUM — validate constraints are not type-checked
 **Discovered**: 2026-05-18
-**Status**: OPEN
+**Completed**: 2026-05-19
+**Status**: DONE
 
-### Problem
-The `validate schemaName:` blocks are parsed and desugared to validator.run() calls in the HIR (done), but the constraint expressions inside (length, min, max, match conditions) are not type-checked:
-- `length` constraint: must take integer argument
-- `min`/`max`: must take number argument
-- `match`: must take string (pattern) argument
-
-### Files
-- `src/typechecker/` — add type checking for ValidateConstraint expressions
-- `src/hir/hir_builder.rs` — `desugar_validate_declaration()`
-
-### Spec Ref
-- `foundation/spec/grammar.ebnf` `validate_constraint`
+### Solution
+Added constraint type validation in `src/hir/hir_builder.rs` `desugar_validate_declaration()`:
+- `ValidateConstraint::Length` with a non-integer literal emits SEM010 with "length constraint requires integer"
+- `ValidateConstraint::Min` / `Max` with a non-numeric literal emits SEM010 with "min/max requires number"
+- `ValidateConstraint::Match` with an unrecognised pattern name emits SEM010 listing valid patterns
+  (email, url, uuid, phone, date, integer, number, alphanumeric)

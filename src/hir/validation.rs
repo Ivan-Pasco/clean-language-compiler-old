@@ -691,6 +691,10 @@ impl HirValidator {
                 context.declare_variable(variable.clone(), inferred_type);
             }
 
+            HirStatement::Background { expression, .. } => {
+                Self::validate_expression(context, expression);
+            }
+
             HirStatement::Break { .. } => {
                 // Break statements are validated for loop context at compile time
                 // No additional validation needed here

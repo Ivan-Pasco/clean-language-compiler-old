@@ -713,6 +713,31 @@ impl super::CodeGenerator {
     }
 
     /// Register method-style and list-behavior operations (isEmpty, isDefined, list.size, etc.)
+    /// Register async host bridge imports: _async_fire and _async_await.
+    ///
+    /// Signatures (platform-architecture/HOST_BRIDGE.md):
+    ///   _async_fire  (fn_name_ptr: i32, fn_name_len: i32, args_ptr: i32, args_len: i32) -> void
+    ///   _async_await (fn_name_ptr: i32, fn_name_len: i32, args_ptr: i32, args_len: i32) -> i32
+    pub(crate) fn register_async_operations(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+
+        self.register_import_function(
+            "env",
+            "_async_fire",
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            None,
+        )?;
+
+        self.register_import_function(
+            "env",
+            "_async_await",
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+
+        Ok(())
+    }
+
     pub(crate) fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::memory::MemoryManager;
         use std::cell::RefCell;

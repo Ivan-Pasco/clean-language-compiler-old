@@ -1854,6 +1854,252 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     Ok(codegen_result.wasm_bytes)
 }
 
+/// Compile a Clean Language project in release mode.
+///
+/// Identical to [`compile_multi_file_with_memory_tier`] but with `release_mode` enabled:
+/// `always:` invariant checks are stripped from the compiled WASM output, producing
+/// a smaller and faster binary suitable for production deployments.
+///
+/// For development (where you want all invariant checks active), use
+/// `compile_multi_file_with_memory_tier` instead.
+pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
+    entry_path: P,
+    search_paths: Vec<std::path::PathBuf>,
+    opt_level: u8,
+    explicit_tier: Option<MemoryTier>,
+    target_default: MemoryTier,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
+    use crate::mir::lower_tast_to_mir_release;
+    use crate::resolver::NameResolver as Resolver;
+    use crate::typechecker::TypeChecker;
+    use std::sync::Arc;
+
+    tracing::info!(
+        entry = %entry_path.as_ref().display(),
+        opt_level = opt_level,
+        "Starting release-mode multi-file compilation (always: checks stripped)"
+    );
+
+    // Step 0: Read entry file to extract plugins (same as debug path)
+    let entry_source = std::fs::read_to_string(entry_path.as_ref()).map_err(|e| {
+        vec![CompilerError::io_error(
+            format!("Failed to read entry file: {}", e),
+            None,
+            None,
+        )]
+    })?;
+
+    let plugin_names = extract_plugins(&entry_source);
+    let registry = if !plugin_names.is_empty() {
+        let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
+            vec![CompilerError::PluginError {
+                message: format!("Failed to create plugin loader: {}", e),
+                location: None,
+            }]
+        })?;
+        let reg = loader.load_plugins(&plugin_names).map_err(|e| {
+            vec![CompilerError::PluginError {
+                message: format!("Failed to load plugins: {}", e),
+                location: None,
+            }]
+        })?;
+        Some(Arc::new(reg))
+    } else {
+        None
+    };
+
+    // Step 1: Build the compilation unit (identical to debug path)
+    let mut config = MultiFileCompilerConfig::default()
+        .with_search_paths(search_paths)
+        .with_opt_level(opt_level)
+        .with_release_mode(true);
+    if let Some(ref reg) = registry {
+        config = config.with_plugin_registry(Arc::clone(reg));
+    }
+    let compiler = MultiFileCompiler::with_config(config);
+    let unit = compiler.build_from_file(&entry_path)?;
+
+    // Step 2: Merge HIR programs (identical to debug path)
+    let mut merged_hir = {
+        use crate::hir::HirProgram;
+        let mut all_functions = Vec::new();
+        let mut all_classes = Vec::new();
+        let mut start_function = None;
+        let mut all_imports = Vec::new();
+        let mut all_tests = Vec::new();
+        let mut all_externals = Vec::new();
+        let mut merged_state: Option<crate::hir::HirStateBlock> = None;
+        let mut merged_screen_blocks: Vec<crate::hir::HirScreenBlock> = Vec::new();
+        let mut merged_watch_blocks: Vec<crate::hir::HirWatchBlock> = Vec::new();
+        let mut root_location = None;
+
+        for module_id in &unit.compilation_order {
+            if let Some(module) = unit.get_module(*module_id) {
+                if let Some(hir) = &module.hir {
+                    for func in &hir.functions {
+                        all_functions.push(func.clone());
+                    }
+                    for class in &hir.classes {
+                        all_classes.push(class.clone());
+                    }
+                    if module.is_entry {
+                        start_function = hir.start_function.clone();
+                        merged_state = hir.state.clone();
+                        merged_screen_blocks = hir.screen_blocks.clone();
+                        merged_watch_blocks = hir.watch_blocks.clone();
+                        root_location = Some(hir.location.clone());
+                    }
+                    for import in &hir.imports {
+                        all_imports.push(import.clone());
+                    }
+                    if module.is_entry {
+                        for test in &hir.tests {
+                            all_tests.push(test.clone());
+                        }
+                    }
+                    for external in &hir.externals {
+                        all_externals.push(external.clone());
+                    }
+                }
+            }
+        }
+
+        let location = root_location.unwrap_or_else(|| crate::ast::SourceLocation {
+            file: entry_path.as_ref().to_string_lossy().to_string(),
+            line: 1,
+            column: 1,
+            byte_start: None,
+            byte_end: None,
+        });
+
+        HirProgram {
+            functions: all_functions,
+            classes: all_classes,
+            start_function,
+            imports: all_imports,
+            tests: all_tests,
+            state: merged_state,
+            watch_blocks: merged_watch_blocks,
+            externals: all_externals,
+            screen_blocks: merged_screen_blocks,
+            location,
+        }
+    };
+
+    let bridge_functions = registry
+        .as_ref()
+        .map(|r| r.bridge_functions().to_vec())
+        .unwrap_or_default();
+    let lang_to_bridge = registry
+        .as_ref()
+        .map(|r| r.language_to_bridge_map())
+        .unwrap_or_default();
+
+    // Add language-name alias externals (identical to debug path)
+    if !lang_to_bridge.is_empty() {
+        use crate::hir::{HirExternalFunction, HirParameter, HirType};
+        let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
+            bridge_functions
+                .iter()
+                .map(|bf| (bf.name.as_str(), bf))
+                .collect();
+        for (lang_name, bridge_name) in &lang_to_bridge {
+            if merged_hir.externals.iter().any(|e| e.name == *lang_name) {
+                continue;
+            }
+            if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
+                let parameters: Vec<HirParameter> = bf
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| HirParameter {
+                        name: format!("arg{}", i),
+                        param_type: HirType::Integer,
+                        default_value: None,
+                        location: Default::default(),
+                    })
+                    .collect();
+                merged_hir.externals.push(HirExternalFunction {
+                    name: lang_name.clone(),
+                    parameters,
+                    return_type: HirType::Void,
+                    module: bf.module.clone(),
+                    location: Default::default(),
+                });
+            }
+        }
+    }
+
+    use crate::hir::validation::HirValidator;
+    HirValidator::validate(&merged_hir)?;
+
+    if !lang_to_bridge.is_empty() {
+        merged_hir
+            .externals
+            .retain(|e| !lang_to_bridge.contains_key(&e.name));
+    }
+
+    // Stage 4: Resolution (identical to debug path)
+    let resolution_result = if bridge_functions.is_empty() {
+        Resolver::resolve(merged_hir)?
+    } else if lang_to_bridge.is_empty() {
+        Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
+    } else {
+        Resolver::resolve_with_bridge_and_language_aliases(
+            merged_hir,
+            &bridge_functions,
+            &lang_to_bridge,
+        )?
+    };
+    let resolved_hir = resolution_result.resolved_hir;
+
+    // Stage 5: Type checking (identical to debug path)
+    let type_result = TypeChecker::check(resolved_hir)?;
+
+    // Stage 6: MIR lowering — RELEASE MODE strips always: invariant checks.
+    let mir_result = lower_tast_to_mir_release(type_result.tast, opt_level, true)?;
+
+    // Resolve effective memory tier (identical to debug path)
+    let memory_tier = if let Some(tier) = explicit_tier {
+        tier
+    } else {
+        let plugin_tier = registry
+            .as_ref()
+            .map(|r| r.resolve_plugin_memory_tier())
+            .transpose()
+            .map_err(|e| vec![e])?
+            .flatten();
+        if let Some(pt) = plugin_tier {
+            std::cmp::max(pt, target_default)
+        } else {
+            target_default
+        }
+    };
+
+    // Stage 7: WASM generation (identical to debug path)
+    use crate::codegen::mir_codegen::MirCodeGenerator;
+    let mut mir_codegen = MirCodeGenerator::default();
+    mir_codegen.set_memory_tier(memory_tier);
+    if !bridge_functions.is_empty() {
+        mir_codegen.set_bridge_functions(bridge_functions);
+    }
+    if !lang_to_bridge.is_empty() {
+        mir_codegen.set_language_to_bridge_map(lang_to_bridge);
+    }
+    let codegen_result = mir_codegen.generate(mir_result.program)?;
+    crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
+        .map_err(|e| vec![e])?;
+
+    tracing::info!(
+        bytes = codegen_result.wasm_bytes.len(),
+        memory_tier = %memory_tier,
+        "Release-mode compilation complete"
+    );
+
+    Ok(codegen_result.wasm_bytes)
+}
+
 /// HTML-first compilation configuration
 ///
 /// The HTML-first approach uses `.html` files for pages, optionally paired

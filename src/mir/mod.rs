@@ -137,8 +137,12 @@ impl MirPipeline {
             );
         }
 
-        // Update builder with the actual symbol table from TAST
+        // Update builder with the actual symbol table from TAST.
+        // Preserve pipeline-level configuration flags (e.g. release_mode) that
+        // were set on the old builder before this call.
+        let preserved_release_mode = self.builder.release_mode;
         self.builder = MirBuilder::new(tast.symbol_table.clone());
+        self.builder.release_mode = preserved_release_mode;
 
         // Phase 1: Lower TAST to unoptimized MIR
         let build_result = self.builder.build(tast)?;
@@ -218,6 +222,11 @@ impl MirPipeline {
         self.config.debug_info = enabled;
     }
 
+    /// Enable or disable release mode (strips `always:` invariant checks).
+    pub fn set_release_mode(&mut self, release: bool) {
+        self.builder.release_mode = release;
+    }
+
     /// Get current configuration
     pub fn config(&self) -> &MirConfig {
         &self.config
@@ -257,6 +266,19 @@ pub fn lower_tast_to_mir_with_opt_level(
 ) -> Result<MirResult, Vec<CompilerError>> {
     let mut pipeline = MirPipeline::new();
     pipeline.set_opt_level(opt_level);
+    pipeline.lower(tast)
+}
+
+/// Convenience function to lower TAST to MIR with custom optimization level and release mode.
+/// In release mode, `always:` invariant checks are stripped from the compiled output.
+pub fn lower_tast_to_mir_release(
+    tast: TastProgram,
+    opt_level: u8,
+    release_mode: bool,
+) -> Result<MirResult, Vec<CompilerError>> {
+    let mut pipeline = MirPipeline::new();
+    pipeline.set_opt_level(opt_level);
+    pipeline.set_release_mode(release_mode);
     pipeline.lower(tast)
 }
 
