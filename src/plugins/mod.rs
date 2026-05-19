@@ -434,6 +434,17 @@ pub trait FrameworkPlugin: Send + Sync {
     fn description(&self) -> &'static str {
         "A Clean Language plugin"
     }
+
+    /// Returns ORM-style expression patterns this plugin handles.
+    ///
+    /// Patterns follow the form `"*.verb:"` where `*` matches any model identifier.
+    /// For example, `"*.find:"` matches `User.find:`, `Order.find:`, etc.
+    ///
+    /// The default implementation returns an empty slice (no expression patterns).
+    /// Plugins loaded from WASM manifests override this via `[handles] expressions`.
+    fn expression_patterns(&self) -> &[String] {
+        &[]
+    }
 }
 
 /// Helper struct for creating framework blocks programmatically

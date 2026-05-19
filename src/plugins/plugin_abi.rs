@@ -77,10 +77,18 @@ fn default_min_compiler() -> String {
     "0.15.0".to_string()
 }
 
-/// Block types this plugin handles
+/// Block types and expression patterns this plugin handles.
+///
+/// `blocks` lists top-level block identifiers (e.g., `["data", "endpoints"]`).
+///
+/// `expressions` lists ORM-style expression patterns that the plugin recognises
+/// as expression initiators inside function bodies (e.g., `["*.find:", "*.insert:"]`).
+/// Patterns support a leading `*` wildcard that matches any identifier before the `.`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginHandles {
     pub blocks: Vec<String>,
+    #[serde(default)]
+    pub expressions: Vec<String>,
 }
 
 /// Exported function names

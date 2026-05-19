@@ -423,6 +423,7 @@ mod tests {
             compatibility: PluginCompatibility::default(),
             handles: PluginHandles {
                 blocks: vec!["testblock".to_string()],
+                expressions: Vec::new(),
             },
             exports: PluginExports::default(),
             bridge: Default::default(),

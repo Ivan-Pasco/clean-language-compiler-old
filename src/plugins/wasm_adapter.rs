@@ -27,6 +27,8 @@ pub struct WasmPluginAdapter {
     engine: Engine,
     /// Cached block types this plugin handles
     handles_cache: Vec<&'static str>,
+    /// Cached ORM expression patterns from `[handles] expressions`
+    expression_patterns_cache: Vec<String>,
     /// Cached name string
     name_cache: &'static str,
     /// Cached version string
@@ -61,12 +63,15 @@ impl WasmPluginAdapter {
             .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
             .collect();
 
+        let expression_patterns_cache: Vec<String> = manifest.handles.expressions.clone();
+
         let mut adapter = Self {
             name,
             manifest,
             module,
             engine,
             handles_cache,
+            expression_patterns_cache,
             name_cache,
             version_cache,
             description_cache,
@@ -3063,6 +3068,10 @@ impl FrameworkPlugin for WasmPluginAdapter {
 
     fn description(&self) -> &'static str {
         self.description_cache
+    }
+
+    fn expression_patterns(&self) -> &[String] {
+        &self.expression_patterns_cache
     }
 }
 

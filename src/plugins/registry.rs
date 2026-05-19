@@ -164,6 +164,11 @@ pub struct PluginRegistrations {
 pub struct PluginRegistry {
     /// Map from block identifier (e.g., "endpoints") to plugin
     handlers: HashMap<String, Arc<dyn FrameworkPlugin>>,
+    /// Map from ORM expression pattern (e.g., "*.find:") to the plugin that handles it.
+    ///
+    /// Patterns come from `[handles] expressions` in plugin.toml.  A leading `*`
+    /// acts as a wildcard matching any identifier before the `.`.
+    expression_handlers: HashMap<String, Arc<dyn FrameworkPlugin>>,
     /// Track plugin names for debugging
     registered_plugins: Vec<String>,
     /// Bridge functions from all loaded plugins
@@ -197,6 +202,7 @@ impl PluginRegistry {
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
+            expression_handlers: HashMap::new(),
             registered_plugins: Vec::new(),
             bridge_functions: Vec::new(),
             manifests: HashMap::new(),
@@ -247,24 +253,92 @@ impl PluginRegistry {
             }
         }
 
-        // Register all handlers
+        // Register all block handlers
         for block_name in plugin.handles() {
             self.handlers
                 .insert(block_name.to_string(), Arc::clone(&plugin));
+        }
+
+        // Register ORM expression patterns
+        for pattern in plugin.expression_patterns() {
+            self.expression_handlers
+                .insert(pattern.clone(), Arc::clone(&plugin));
         }
 
         self.registered_plugins.push(plugin_name);
         Ok(())
     }
 
-    /// Check if a block type is handled by a registered plugin
+    /// Check if a block type is handled by a registered plugin.
     ///
-    /// Extracts the block type (first word) from names like "screen RegistrationForm"
-    /// before checking the handler registry.
+    /// Extracts the block type (first word) from names like `"screen RegistrationForm"`
+    /// before checking the handler registry.  Also checks ORM expression patterns so
+    /// that `FrameworkBlock` nodes produced by the ORM path are correctly dispatched.
     pub fn handles(&self, block_name: &str) -> bool {
         // Extract block type (first word) from names like "screen RegistrationForm"
         let block_type = block_name.split_whitespace().next().unwrap_or(block_name);
-        self.handlers.contains_key(block_type)
+        self.handlers.contains_key(block_type) || self.handles_as_expression(block_name)
+    }
+
+    /// Check whether a dotted name like `"User.find"` is handled by any plugin's
+    /// ORM expression pattern (e.g., `"*.find:"`).
+    ///
+    /// Pattern matching rules:
+    /// - Exact match: `"User.find:"` matches pattern `"User.find:"`
+    /// - Glob match: pattern starting with `"*"` matches any identifier before the `.`
+    ///   e.g., pattern `"*.find:"` matches `"User.find"`, `"Order.find"`, etc.
+    ///
+    /// Both the name and pattern may optionally include a trailing `:`.
+    pub fn handles_as_expression(&self, name: &str) -> bool {
+        let name_clean = name.trim_end_matches(':');
+
+        // Exact match (strip trailing colon from both sides)
+        if self
+            .expression_handlers
+            .keys()
+            .any(|p| p.trim_end_matches(':') == name_clean)
+        {
+            return true;
+        }
+
+        // Glob match: pattern starting with '*'
+        for pattern in self.expression_handlers.keys() {
+            let pat = pattern.trim_end_matches(':');
+            if let Some(suffix) = pat.strip_prefix('*') {
+                if name_clean.ends_with(suffix) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Return the plugin that handles an ORM expression name (e.g., `"User.find"`),
+    /// or `None` if no plugin claims it.
+    ///
+    /// Uses the same pattern-matching rules as [`handles_as_expression`].
+    pub fn get_expression_handler(&self, name: &str) -> Option<&Arc<dyn FrameworkPlugin>> {
+        let name_clean = name.trim_end_matches(':');
+
+        // Exact match first
+        for (pattern, handler) in &self.expression_handlers {
+            if pattern.trim_end_matches(':') == name_clean {
+                return Some(handler);
+            }
+        }
+
+        // Glob match
+        for (pattern, handler) in &self.expression_handlers {
+            let pat = pattern.trim_end_matches(':');
+            if let Some(suffix) = pat.strip_prefix('*') {
+                if name_clean.ends_with(suffix) {
+                    return Some(handler);
+                }
+            }
+        }
+
+        None
     }
 
     /// Get the plugin that handles a specific block type
@@ -287,13 +361,15 @@ impl PluginRegistry {
     pub fn expand(&self, block: &FrameworkBlock) -> Result<Vec<Statement>, PluginError> {
         // Extract block type (first word) from names like "screen RegistrationForm"
         let block_type = block.name.split_whitespace().next().unwrap_or(&block.name);
-        let handler =
-            self.handlers
-                .get(block_type)
-                .ok_or_else(|| PluginError::UnknownBlockType {
-                    block_name: block.name.clone(),
-                    location: block.location.clone(),
-                })?;
+        // Look up by block handler first, then fall back to expression handlers (ORM queries).
+        let handler = self
+            .handlers
+            .get(block_type)
+            .or_else(|| self.get_expression_handler(&block.name))
+            .ok_or_else(|| PluginError::UnknownBlockType {
+                block_name: block.name.clone(),
+                location: block.location.clone(),
+            })?;
 
         // Validate first
         handler
@@ -324,13 +400,14 @@ impl PluginRegistry {
     ) -> Result<super::PluginExpansion, PluginError> {
         // Extract block type (first word) from names like "screen RegistrationForm"
         let block_type = block.name.split_whitespace().next().unwrap_or(&block.name);
-        let handler =
-            self.handlers
-                .get(block_type)
-                .ok_or_else(|| PluginError::UnknownBlockType {
-                    block_name: block.name.clone(),
-                    location: block.location.clone(),
-                })?;
+        let handler = self
+            .handlers
+            .get(block_type)
+            .or_else(|| self.get_expression_handler(&block.name))
+            .ok_or_else(|| PluginError::UnknownBlockType {
+                block_name: block.name.clone(),
+                location: block.location.clone(),
+            })?;
 
         // Validate first
         handler
@@ -1004,6 +1081,7 @@ impl PluginRegistryBuilder {
     /// ```
     pub fn build(self) -> Result<PluginRegistry, PluginError> {
         let mut handlers = HashMap::new();
+        let mut expression_handlers: HashMap<String, Arc<dyn FrameworkPlugin>> = HashMap::new();
         let mut registered_plugins = Vec::new();
 
         // Validate and register all plugins
@@ -1022,9 +1100,14 @@ impl PluginRegistryBuilder {
                 }
             }
 
-            // Register all handlers for this plugin
+            // Register all block handlers for this plugin
             for block_name in plugin.handles() {
                 handlers.insert(block_name.to_string(), Arc::clone(&plugin));
+            }
+
+            // Register ORM expression patterns for this plugin
+            for pattern in plugin.expression_patterns() {
+                expression_handlers.insert(pattern.clone(), Arc::clone(&plugin));
             }
 
             registered_plugins.push(plugin_name);
@@ -1032,6 +1115,7 @@ impl PluginRegistryBuilder {
 
         Ok(PluginRegistry {
             handlers,
+            expression_handlers,
             registered_plugins,
             bridge_functions: self.bridge_functions,
             manifests: self.manifests,
@@ -1186,6 +1270,7 @@ mod tests {
             compatibility: PluginCompatibility::default(),
             handles: PluginHandles {
                 blocks: vec!["data".to_string()],
+                expressions: Vec::new(),
             },
             exports: PluginExports::default(),
             bridge: PluginBridge {

@@ -360,6 +360,91 @@ impl<'a> PluginExpander<'a> {
                     });
                 }
 
+                // Variable declaration whose initializer is an ORM query block expression.
+                //
+                // `list<User> rows = User.find:\n\tjoin: ...\n\twhere: ...`
+                //
+                // Convert this to a FrameworkBlock so the frame.data plugin can expand it.
+                // The block content carries the variable binding information as a header line
+                // (`type name =`) so the plugin can emit the correct assignment statement.
+                Statement::VariableDecl {
+                    ref name,
+                    ref type_,
+                    initializer:
+                        Some(crate::ast::Expression::OrmQuery {
+                            ref model,
+                            ref verb,
+                            ref content,
+                            ref location,
+                        }),
+                    ..
+                } => {
+                    let block_name = format!("{}.{}", model, verb);
+                    // Encode the variable binding as the first line of block content so
+                    // the plugin knows the LHS name and type.
+                    let type_str = format!("{}", type_);
+                    let block_content = format!("{} {} =\n{}", type_str, name, content);
+                    let block = FrameworkBlock {
+                        name: block_name.clone(),
+                        content: block_content,
+                        attributes: Vec::new(),
+                        location: Some(location.clone()),
+                    };
+
+                    if self.registry.handles_as_expression(&block_name) {
+                        let expanded = self.registry.expand(&block)?;
+                        self.blocks_expanded += 1;
+                        self.statements_generated += expanded.len();
+
+                        tracing::trace!(
+                            block_name = %block_name,
+                            expanded_count = expanded.len(),
+                            "Expanded ORM query expression"
+                        );
+
+                        // Recursively expand any nested framework blocks
+                        let expanded = self.expand_statements(expanded)?;
+                        result.extend(expanded);
+                    } else {
+                        // No plugin registered for this expression pattern — keep the
+                        // statement as-is.  Semantic analysis will emit a helpful error.
+                        result.push(stmt);
+                    }
+                }
+
+                // Expression statement whose expression is a standalone ORM query block.
+                //
+                // `User.find:\n\twhere: ...` — used as a statement (result discarded).
+                Statement::Expression {
+                    expr:
+                        crate::ast::Expression::OrmQuery {
+                            ref model,
+                            ref verb,
+                            ref content,
+                            ref location,
+                        },
+                    ..
+                } => {
+                    let block_name = format!("{}.{}", model, verb);
+                    let block = FrameworkBlock {
+                        name: block_name.clone(),
+                        content: content.clone(),
+                        attributes: Vec::new(),
+                        location: Some(location.clone()),
+                    };
+
+                    if self.registry.handles_as_expression(&block_name) {
+                        let expanded = self.registry.expand(&block)?;
+                        self.blocks_expanded += 1;
+                        self.statements_generated += expanded.len();
+
+                        let expanded = self.expand_statements(expanded)?;
+                        result.extend(expanded);
+                    } else {
+                        result.push(stmt);
+                    }
+                }
+
                 // Pass through statements that don't contain nested statements
                 other => result.push(other),
             }

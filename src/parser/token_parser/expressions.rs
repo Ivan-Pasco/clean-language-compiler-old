@@ -407,6 +407,78 @@ impl TokenParser {
                     );
                     let _ = bang_location; // location captured in outer expression
                 }
+                TokenKind::Colon => {
+                    // Detect ORM block form: `Model.verb:` followed by an indented body of
+                    // sub-clauses (`join:`, `where:`, `order:`, ...).
+                    //
+                    // This arm only fires when the current expression is a `PropertyAccess`
+                    // whose object is a plain `Variable` (i.e., exactly `Identifier.identifier:`).
+                    // In all other contexts (named-arg labels, type annotations, etc.) the `:` is
+                    // NOT consumed here — we break out of the postfix loop so the outer parser
+                    // can handle it.
+                    //
+                    // Look ahead past the `:` to decide whether a block follows:
+                    let is_block_form = {
+                        let mut idx = self.cursor + 1; // token after ':'
+                        let len = self.tokens.len();
+                        while idx < len
+                            && matches!(
+                                self.tokens[idx].kind,
+                                TokenKind::Newline
+                                    | TokenKind::Comment(_)
+                                    | TokenKind::BlockComment(_)
+                            )
+                        {
+                            idx += 1;
+                        }
+                        idx < len && matches!(self.tokens[idx].kind, TokenKind::Indent(_))
+                    };
+
+                    if is_block_form {
+                        // Only handle the simple `Variable.property:` form — anything more
+                        // complex is left for the outer statement parser.
+                        let orm_query = if let Expression::PropertyAccess {
+                            ref object,
+                            ref property,
+                            ref location,
+                        } = expr
+                        {
+                            if let Expression::Variable(ref model_name) = **object {
+                                Some((model_name.clone(), property.clone(), location.clone()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        if let Some((model, verb, loc)) = orm_query {
+                            self.bump(); // consume ':'
+                            self.eat(&TokenKind::Newline);
+                            self.skip_whitespace();
+
+                            let block_indent_level =
+                                if let TokenKind::Indent(level) = self.current_kind() {
+                                    *level
+                                } else {
+                                    1
+                                };
+
+                            let content = self.extract_block_content_raw(block_indent_level);
+
+                            expr = Expression::OrmQuery {
+                                model,
+                                verb,
+                                content,
+                                location: loc,
+                            };
+                            break; // ORM block fully consumed — exit postfix loop
+                        }
+                    }
+                    // Not an ORM block form (or complex receiver) — leave ':' unconsumed
+                    // so the outer context (named-arg list, variable decl, etc.) can handle it.
+                    break;
+                }
                 _ => break,
             }
         }

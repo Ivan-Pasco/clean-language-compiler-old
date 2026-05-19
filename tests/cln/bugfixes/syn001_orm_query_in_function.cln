@@ -1,0 +1,37 @@
+// Test: bugfixes/syn001_orm_query_in_function
+// Grammar: frame-data.ebnf query_expression
+// Semantic: SYN001 regression — parser must not emit "Unsupported statement type: Colon"
+//           when an ORM query block (Model.verb: with sub-clauses) appears inside a
+//           functions: block.
+//
+// This file is intentionally incomplete (no start: block, uses plugins not available
+// in standalone compilation). The goal is that the PARSER does not produce SYN001.
+// If the file reaches semantic analysis or plugin expansion, that is acceptable.
+//
+// Expected behaviour: parse succeeds without SYN001.
+
+plugins:
+	frame.data
+	frame.server
+
+data User:
+	string name
+	string email
+
+data Role:
+	string label
+	integer user_id
+
+functions:
+	list<User> get_users_with_role(string role_label)
+		list<User> rows = User.find:
+			join:
+				inner Role on User.id == Role.user_id
+			where:
+				Role.label == role_label
+		return rows
+
+endpoints server:
+	GET "/users" :
+		list<User> result = get_users_with_role("admin")
+		return http.respond(200, "application/json", "[]")

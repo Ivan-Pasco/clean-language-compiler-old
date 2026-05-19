@@ -388,6 +388,27 @@ pub enum Expression {
         value: Box<Expression>,
         location: SourceLocation,
     },
+
+    /// ORM query block expression — `Model.verb:` followed by an indented block body.
+    ///
+    /// Created by the parser when a `PropertyAccess` (e.g., `User.find`) is immediately
+    /// followed by `:` and an indented block of sub-clauses (`join:`, `where:`, `order:`,
+    /// etc.).  The raw block content is preserved verbatim so that the `frame.data` plugin
+    /// can process it without loss of formatting.
+    ///
+    /// This variant MUST be expanded by the plugin expander before reaching the HIR builder.
+    /// If it reaches HIR construction, the HIR builder will emit a `SEM001` diagnostic.
+    ///
+    /// Grammar: `foundation/spec/plugins/frame-data.ebnf` `query_expression`
+    OrmQuery {
+        /// The model name, e.g. `"User"`
+        model: String,
+        /// The query verb, e.g. `"find"`, `"first"`, `"insert"`, `"update"`, `"delete"`
+        verb: String,
+        /// Raw block body (the indented sub-clauses: join:, where:, order:, etc.)
+        content: String,
+        location: SourceLocation,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

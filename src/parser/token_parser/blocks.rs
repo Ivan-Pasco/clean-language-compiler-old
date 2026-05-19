@@ -445,9 +445,68 @@ impl TokenParser {
         })
     }
 
+    /// Returns `true` when the tokens starting at `self.cursor` look like an ORM-style
+    /// indented block whose first indented line starts with `Identifier :` (a sub-clause
+    /// such as `join:`, `where:`, `order:`, `limit:`, etc.).
+    ///
+    /// This is a pure look-ahead — no tokens are consumed.
+    fn peek_has_orm_subclauses(&self) -> bool {
+        let mut idx = self.cursor;
+        let len = self.tokens.len();
+
+        // Skip optional whitespace (Newline, Comment, BlockComment)
+        while idx < len
+            && matches!(
+                self.tokens[idx].kind,
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
+            )
+        {
+            idx += 1;
+        }
+
+        // Expect Indent
+        if idx >= len || !matches!(self.tokens[idx].kind, TokenKind::Indent(_)) {
+            return false;
+        }
+        idx += 1;
+
+        // Skip optional whitespace after Indent
+        while idx < len
+            && matches!(
+                self.tokens[idx].kind,
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
+            )
+        {
+            idx += 1;
+        }
+
+        // Expect Identifier (the sub-clause keyword, e.g. "join", "where", "order")
+        if idx >= len || !matches!(self.tokens[idx].kind, TokenKind::Identifier(_)) {
+            return false;
+        }
+        idx += 1;
+
+        // Skip optional whitespace between identifier and colon
+        while idx < len
+            && matches!(
+                self.tokens[idx].kind,
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
+            )
+        {
+            idx += 1;
+        }
+
+        // If followed by Colon, this is an ORM sub-clause block
+        idx < len && matches!(self.tokens[idx].kind, TokenKind::Colon)
+    }
+
     /// Parse a method apply block: OBJECT.METHOD:\n\targ1\n\targ2
     /// Example: list.push:\n\titem1\n\titem2
     /// Equivalent to: list.push(item1), list.push(item2)
+    ///
+    /// When the indented body starts with ORM-style sub-clauses (`join:`, `where:`, etc.),
+    /// the block is captured as raw content and returned as a `FrameworkBlock` for plugin
+    /// expansion, rather than being parsed as a sequence of expressions.
     pub(super) fn parse_method_apply_block(&mut self) -> Result<Statement, CompilerError> {
         let location = self.current().location.clone();
 
@@ -471,7 +530,30 @@ impl TokenParser {
         self.eat(&TokenKind::Newline);
         self.skip_whitespace();
 
-        // Parse indented expressions
+        // Check whether the indented body starts with ORM-style sub-clauses.
+        // If so, capture the block as raw content for the frame.data plugin expander.
+        if self.peek_has_orm_subclauses() {
+            let block_indent_level = if let TokenKind::Indent(level) = self.current_kind() {
+                *level
+            } else {
+                1
+            };
+            let content = self.extract_block_content_raw(block_indent_level);
+            // Construct the block name as "Object.method" (or "Object" when no chain)
+            let block_name = if method_chain.is_empty() {
+                object_name.clone()
+            } else {
+                format!("{}.{}", object_name, method_chain.join("."))
+            };
+            return Ok(Statement::FrameworkBlock {
+                name: block_name,
+                content,
+                attributes: Vec::new(),
+                location: Some(location),
+            });
+        }
+
+        // Standard method-apply-block: parse indented expressions
         let mut expressions = Vec::new();
 
         // Determine the apply block's indentation level
