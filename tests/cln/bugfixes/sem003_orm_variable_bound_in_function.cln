@@ -1,0 +1,21 @@
+// Test: bugfixes/sem003_orm_variable_bound_in_function
+// Grammar: frame-data.ebnf query_expression
+// Semantic: SEM003/SEM007 regression — variable declared via ORM query expression
+//           (list<T> name = Model.verb: ...) must be visible in the enclosing
+//           function scope after expansion.
+//
+// Expected behaviour: compiles without SEM003 "Undefined variable 'rows'" error.
+
+plugins:
+	frame.data
+	frame.server
+
+start:
+	print("ok")
+
+functions:
+	list<string> get_items()
+		list<string> rows = Item.find:
+			where:
+				Item.active == 1
+		return rows

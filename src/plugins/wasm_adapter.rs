@@ -679,6 +679,63 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // env.string_repeat - Repeat a string N times
+        // string_repeat(str_ptr: i32, str_len: i32, count: i32) -> i32
+        linker.func_wrap(
+            "env",
+            "string_repeat",
+            |mut caller: Caller<'_, PluginState>, str_ptr: i32, _str_len: i32, count: i32| -> i32 {
+                let string_val = {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .unwrap();
+                    let data = memory.data(&caller);
+                    let len_start = str_ptr as usize;
+                    if len_start + 4 > data.len() {
+                        return 0;
+                    }
+                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = len_start + 4;
+                    if data_start + len > data.len() {
+                        return 0;
+                    }
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+
+                let repeat_count = count.max(0) as usize;
+                let result = string_val.repeat(repeat_count);
+                let result_bytes = result.as_bytes();
+                let result_len = result_bytes.len();
+                let total_size = result_len + 4;
+                let state = caller.data_mut();
+                let ptr = state.allocate(total_size);
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+
+                let current_size = memory.data_size(&caller);
+                let required_size = ptr + total_size;
+                if required_size > current_size {
+                    let pages_needed = (required_size - current_size).div_ceil(65536);
+                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        return 0;
+                    }
+                }
+
+                let len_bytes = (result_len as u32).to_le_bytes();
+                if memory.write(&mut caller, ptr, &len_bytes).is_err() {
+                    return 0;
+                }
+                if memory.write(&mut caller, ptr + 4, result_bytes).is_err() {
+                    return 0;
+                }
+                ptr as i32
+            },
+        )?;
+
         // env.string_from_char_code - Create string from character code
         // string_from_char_code(char_code: i32) -> i32
         linker.func_wrap(
@@ -2374,6 +2431,80 @@ impl WasmPluginAdapter {
         // Strip trailing colon from block name (e.g., "server:" -> "server")
         let block_name = block.name.trim_end_matches(':');
 
+        // ORM verb direct dispatch: Model.verb blocks (e.g. "User.find") are handled by
+        // calling the plugin's specific export (expand_find, expand_first, etc.) directly
+        // rather than routing through expand_block.  The frame.data expand_block dispatcher
+        // uses an inverted string_compare convention incompatible with the host's current
+        // implementation; the verb-specific exports do not have this issue.
+        //
+        // expand_find(model: string, body: string) -> string
+        //   model — the model class name (e.g. "User"), converted to snake_case inside the plugin
+        //   body  — the query sub-clauses (where:, order:, limit:, etc.)
+        //   returns the RHS query expression (e.g. _db_query("SELECT ...", "[]"))
+        //
+        // The block content carries the variable binding as a header line ("type name =")
+        // followed by the actual sub-clauses.  We strip the header, call the verb export,
+        // then reassemble the complete assignment statement for parsing.
+        if let Some(dot_pos) = block_name.rfind('.') {
+            let verb = &block_name[dot_pos + 1..];
+            let model_name = &block_name[..dot_pos];
+            if matches!(
+                verb,
+                "find" | "first" | "count" | "insert" | "update" | "delete"
+            ) {
+                let direct_fn = format!("expand_{}", verb);
+                if let Ok(expand_verb) =
+                    instance.get_typed_func::<(i32, i32), i32>(&mut store, &direct_fn)
+                {
+                    // Split block content into header ("list<User> rows =") and body subclauses
+                    let content = &block.content;
+                    let (header_line, sub_body) = if let Some(newline_pos) = content.find('\n') {
+                        (&content[..newline_pos], &content[newline_pos + 1..])
+                    } else {
+                        (content.as_str(), "")
+                    };
+
+                    let model_ptr = self.find_or_write_string(&mut store, &memory, model_name)?;
+                    let body_ptr = self.find_or_write_string(&mut store, &memory, sub_body)?;
+
+                    let result_ptr = expand_verb.call(&mut store, (model_ptr, body_ptr))?;
+
+                    if let Some(error) = store.data().last_error.clone() {
+                        return Err(anyhow!("Plugin error: {}", error));
+                    }
+
+                    let result_bytes = self.read_result(&store, &memory, result_ptr)?;
+                    let query_expr = std::str::from_utf8(&result_bytes)
+                        .map_err(|e| anyhow!("Invalid UTF-8 in plugin response: {}", e))?
+                        .trim();
+
+                    tracing::trace!(
+                        verb = verb,
+                        model = model_name,
+                        query_expr_len = query_expr.len(),
+                        "ORM verb direct dispatch result"
+                    );
+
+                    if query_expr.is_empty() {
+                        return Ok(Vec::new());
+                    }
+
+                    // Reassemble: "list<User> rows = _db_query(...)"
+                    let full_stmt = format!("{} {}", header_line, query_expr);
+                    let wrapper = format!("start:\n\t{}", full_stmt.trim().replace('\n', "\n\t"));
+                    let program = self.parse_plugin_code(&wrapper).map_err(|e| {
+                        anyhow!(
+                            "Failed to parse ORM verb plugin output '{}': {}",
+                            full_stmt.chars().take(120).collect::<String>(),
+                            e
+                        )
+                    })?;
+                    let statements = program.start_function.map(|f| f.body).unwrap_or_default();
+                    return Ok(statements);
+                }
+            }
+        }
+
         // Try to find an existing string pointer in the plugin's memory that matches
         // Clean Language uses pointer equality for string comparison, so we need
         // to return the same pointer the plugin uses for its string literals
@@ -2430,7 +2561,6 @@ impl WasmPluginAdapter {
         let generated_code = std::str::from_utf8(&result_bytes)
             .map_err(|e| anyhow!("Invalid UTF-8 in plugin response: {}", e))?;
 
-        // Log expansion result at trace level for debugging
         tracing::trace!(
             generated_code_len = generated_code.len(),
             "Plugin expansion result"
