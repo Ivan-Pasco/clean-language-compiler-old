@@ -736,6 +736,48 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // env.string_matches - Test whether a string matches a pattern (regex)
+        // string_matches(str_ptr: i32, str_len: i32, pat_ptr: i32, pat_len: i32) -> i32
+        linker.func_wrap(
+            "env",
+            "string_matches",
+            |mut caller: Caller<'_, PluginState>,
+             str_ptr: i32,
+             _str_len: i32,
+             pat_ptr: i32,
+             _pat_len: i32|
+             -> i32 {
+                let read_string = |data: &[u8], ptr: usize| -> String {
+                    if ptr + 4 > data.len() {
+                        return String::new();
+                    }
+                    let len_bytes: [u8; 4] = data[ptr..ptr + 4].try_into().unwrap();
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let data_start = ptr + 4;
+                    if data_start + len > data.len() {
+                        return String::new();
+                    }
+                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                };
+                let memory = caller
+                    .get_export("memory")
+                    .and_then(|e| e.into_memory())
+                    .unwrap();
+                let data = memory.data(&caller).to_vec();
+                let subject = read_string(&data, str_ptr as usize);
+                let pattern = read_string(&data, pat_ptr as usize);
+                if let Ok(re) = regex::Regex::new(&pattern) {
+                    if re.is_match(&subject) {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            },
+        )?;
+
         // env.string_from_char_code - Create string from character code
         // string_from_char_code(char_code: i32) -> i32
         linker.func_wrap(

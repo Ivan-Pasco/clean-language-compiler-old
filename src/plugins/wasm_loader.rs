@@ -152,7 +152,7 @@ impl WasmPluginLoader {
             .map_err(|e| anyhow!("Failed to build plugin registry: {}", e))
     }
 
-    /// Find the plugin directory, using the latest version if not specified
+    /// Find the plugin directory, respecting .active-version pin if present
     fn find_plugin_dir(&self, name: &str) -> Result<PathBuf> {
         let plugin_base = self.plugins_dir.join(name);
 
@@ -164,7 +164,24 @@ impl WasmPluginLoader {
             ));
         }
 
-        // Find the latest version
+        // Honour the pinned version written by `cleen plugin use`
+        let active_version_file = plugin_base.join(".active-version");
+        if let Ok(pinned) = std::fs::read_to_string(&active_version_file) {
+            let pinned = pinned.trim().to_string();
+            if !pinned.is_empty() {
+                let pinned_dir = plugin_base.join(&pinned);
+                if pinned_dir.is_dir() && pinned_dir.join("plugin.wasm").exists() {
+                    return Ok(pinned_dir);
+                }
+                // Pinned version directory missing — fall through to highest semver
+                eprintln!(
+                    "warning: plugin '{}' pinned version '{}' not found on disk; falling back to latest",
+                    name, pinned
+                );
+            }
+        }
+
+        // Fall back to highest semver directory
         let mut versions: Vec<_> = std::fs::read_dir(&plugin_base)?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())
@@ -174,7 +191,6 @@ impl WasmPluginLoader {
             return Err(anyhow!("Plugin '{}' has no installed versions", name));
         }
 
-        // Sort by version (semantic versioning)
         versions.sort_by(|a, b| {
             let a_name = a.file_name().to_string_lossy().to_string();
             let b_name = b.file_name().to_string_lossy().to_string();
