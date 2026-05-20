@@ -764,6 +764,7 @@ impl HirValidator {
                     "req",
                     "auth",
                     "session",
+                    "server",
                 ];
                 // Inside a class constructor or method, unqualified field names are valid
                 // as expressions (the resolver adds implicit `this.` in stage 4).

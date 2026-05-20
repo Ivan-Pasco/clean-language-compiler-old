@@ -1426,6 +1426,15 @@ impl BuiltinRegistry {
             ),
         ]);
         self.namespaces.insert("session".to_string(), session_ns);
+
+        // server namespace — Layer 3 async
+        let server_ns = BuiltinNamespace::new("server").with_functions(vec![BuiltinFunction::new(
+            "sleep",
+            vec![BuiltinType::Integer],
+            BuiltinType::Void,
+            BuiltinCategory::IO,
+        )]);
+        self.namespaces.insert("server".to_string(), server_ns);
     }
 
     // ============== Query Methods ==============

@@ -1,0 +1,11 @@
+// Test: bridge/server_sleep
+// Grammar: function_call (namespace.function form)
+// Semantic: SEM007 — server.sleep and _server_sleep must resolve without error
+// Expected output:
+//   before
+//   after
+
+start:
+	print("before")
+	server.sleep(10)
+	print("after")

@@ -533,6 +533,14 @@ impl MirCodeGenerator<'_> {
                     .register_crypto_builtin_imports()
                     .map_err(|e| vec![e])?;
             }
+            if !self.language_to_bridge_map.contains_key("server.sleep") {
+                debug_mir!(
+                    "DEBUG MIR: Registering server_sleep import (no plugin bridge for server.sleep)"
+                );
+                self.wasm_generator
+                    .register_server_sleep_import()
+                    .map_err(|e| vec![e])?;
+            }
 
             // Pre-register list.push_f64 as an import BEFORE any local functions
             {
@@ -654,6 +662,12 @@ impl MirCodeGenerator<'_> {
                 debug_mir!("DEBUG MIR: Registering crypto builtin wrappers");
                 self.wasm_generator
                     .register_crypto_builtin_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
+            if !self.language_to_bridge_map.contains_key("server.sleep") {
+                debug_mir!("DEBUG MIR: Registering server_sleep wrapper");
+                self.wasm_generator
+                    .register_server_sleep_wrapper()
                     .map_err(|e| vec![e])?;
             }
         }

@@ -1214,6 +1214,10 @@ impl GlobalSymbolTable {
             ("session.get", vec![], HirType::String),
             ("session.delete", vec![], HirType::Boolean),
             ("session.exists", vec![HirType::String], HirType::Boolean),
+            // server namespace functions — Layer 3 async
+            ("server.sleep", vec![HirType::Integer], HirType::Void),
+            // raw bridge name also callable directly (matches _req_* pattern)
+            ("_server_sleep", vec![HirType::Integer], HirType::Void),
         ];
 
         for (name, params, return_type) in namespace_functions {
@@ -1756,6 +1760,24 @@ impl GlobalSymbolTable {
             },
         );
         self.builtins.insert(session_namespace_id);
+
+        // server namespace (Layer 3 async)
+        let server_functions = vec![self.lookup_symbol("server.sleep").unwrap_or(SymbolId(0))];
+        let server_namespace_id = self.create_symbol(
+            "server".to_string(),
+            SymbolKind::Namespace {
+                functions: server_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(server_namespace_id);
     }
 }
 

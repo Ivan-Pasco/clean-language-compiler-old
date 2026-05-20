@@ -1777,6 +1777,8 @@ impl MirCodeGenerator<'_> {
                         | Some("mem_retain")
                         | Some("mem_scope_push")
                         | Some("mem_scope_pop")
+                        | Some("server.sleep")
+                        | Some("_server_sleep")
                 );
 
                 if is_known_void_builtin {

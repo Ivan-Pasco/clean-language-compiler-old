@@ -1135,6 +1135,35 @@ impl super::CodeGenerator {
         Ok(())
     }
 
+    /// Register Layer 3 host bridge import for `_server_sleep` (import only).
+    ///
+    /// Signature: `_server_sleep(ms: i64) -> void`
+    /// Call `register_server_sleep_wrapper()` AFTER all imports.
+    pub(crate) fn register_server_sleep_import(&mut self) -> Result<(), CompilerError> {
+        self.register_import_function("env", "_server_sleep", &[WasmType::I64], None)?;
+        Ok(())
+    }
+
+    /// Create local wrapper for `server.sleep(ms: i32)`. Extends i32→i64 and calls `_server_sleep`.
+    /// Must be called AFTER all imports.
+    pub(crate) fn register_server_sleep_wrapper(&mut self) -> Result<(), CompilerError> {
+        if let Some(&raw_idx) = self.function_map.get("_server_sleep") {
+            let wrap_idx = self.register_function(
+                "server.sleep",
+                &[WasmType::I32],
+                None,
+                &[
+                    Instruction::LocalGet(0),
+                    Instruction::I64ExtendI32S,
+                    Instruction::Call(raw_idx),
+                ],
+            )?;
+            self.function_map
+                .insert("server.sleep".to_string(), wrap_idx);
+        }
+        Ok(())
+    }
+
     /// Register Layer 2 host bridge imports for the `crypto` namespace (imports only).
     ///
     /// Call `register_crypto_builtin_wrappers()` AFTER all imports to create local
