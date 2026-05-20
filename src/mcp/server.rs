@@ -1139,6 +1139,15 @@ fn get_available_tools() -> Vec<Tool> {
                     "discovered_during": {
                         "type": "string",
                         "description": "Optional: the task or context in which this error was found (e.g., 'solving E0042', 'doc_coverage run', 'canvas example validation'). Records lineage without affecting component routing. Do NOT use this as a substitute for a correct component value."
+                    },
+                    "affected_component": {
+                        "type": "string",
+                        "description": "Optional: the specific component where the bug actually lives, when different from the reporting component. For example, a plugin compilation bug found while running the compiler might set component='compiler' but affected_component='framework'.",
+                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "unknown"]
+                    },
+                    "affected_version": {
+                        "type": "string",
+                        "description": "Optional: version of the affected component where the bug was observed (e.g., '2.6.1' for frame.data 2.6.1). Distinct from the compiler version, which is captured automatically."
                     }
                 }),
                 required: vec![
@@ -3613,6 +3622,32 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         }
     };
 
+    // SEC001: injection detection — reject values that look like script injection
+    {
+        let injection_patterns = [
+            "<script",
+            "javascript:",
+            "onerror=",
+            "onload=",
+            "data:text/html",
+        ];
+        let combined = format!("{error_code} {error_message}").to_lowercase();
+        if injection_patterns.iter().any(|p| combined.contains(p)) {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Invalid input: error_code or error_message contains disallowed content"
+                    .to_string(),
+            );
+        }
+    }
+    // SEC001: cap error_message at 2000 chars to prevent payload bloat
+    let error_message = if error_message.len() > 2000 {
+        format!("{}…", &error_message[..1997])
+    } else {
+        error_message
+    };
+
     let component = match args.get("component").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => {
@@ -3650,6 +3685,16 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         .map(String::from);
     let discovered_during = args
         .get("discovered_during")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    // MCP001: extract new cross-component context fields
+    let raw_affected_component = args
+        .get("affected_component")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let affected_version = args
+        .get("affected_version")
         .and_then(|v| v.as_str())
         .map(String::from);
 
@@ -3719,6 +3764,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         "parser" | "semantic" | "codegen" | "cli" | "syntax" | "system" => "compiler".to_string(),
         "runtime" => "server".to_string(),
         "plugin" => "framework".to_string(),
+        c if c.starts_with("frame.") => "framework".to_string(),
         c if VALID_COMPONENTS.contains(&c) => c.to_string(),
         _ => {
             return JsonRpcResponse::error(
@@ -3736,6 +3782,16 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         }
     };
 
+    // MCP001: normalize affected_component using the same taxonomy as component
+    let affected_component = raw_affected_component.map(|c| match c.as_str() {
+        "parser" | "semantic" | "codegen" | "cli" | "syntax" | "system" => "compiler".to_string(),
+        "runtime" => "server".to_string(),
+        "plugin" => "framework".to_string(),
+        c if c.starts_with("frame.") => "framework".to_string(),
+        c if VALID_COMPONENTS.contains(&c) => c.to_string(),
+        _ => "unknown".to_string(),
+    });
+
     // Generate report ID
     let report_id = generate_report_id();
 
@@ -3750,6 +3806,8 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             severity,
             message: error_message,
             file_context: None,
+            affected_component,
+            affected_version,
         },
         "mcp_ai",
         consent_level,
@@ -5170,6 +5228,8 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
         severity: "crash".to_string(),
         message: wasmtime_error.clone(),
         file_context: module_path.clone(),
+        affected_component: None,
+        affected_version: None,
     };
 
     let mut report = ErrorReport::new(

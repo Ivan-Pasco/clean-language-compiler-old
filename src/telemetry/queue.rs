@@ -184,6 +184,8 @@ mod tests {
                 severity: "bug".to_string(),
                 message: "Test error".to_string(),
                 file_context: None,
+                affected_component: None,
+                affected_version: None,
             },
             reproduction: None,
             ai_context: None,

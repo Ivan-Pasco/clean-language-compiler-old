@@ -45,6 +45,16 @@ pub struct ReportError {
     pub severity: String,
     pub message: String,
     pub file_context: Option<String>,
+    /// The specific component the bug actually lives in, when different from
+    /// the reporting component (e.g., component="compiler" but
+    /// affected_component="framework" for a plugin-compilation bug).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affected_component: Option<String>,
+    /// Version of the affected component where the bug was observed
+    /// (e.g., "2.6.1" for frame.data 2.6.1). Distinct from the compiler
+    /// version in ReportSource, which is always the compiler.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affected_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,6 +316,8 @@ mod tests {
                 severity: "bug".to_string(),
                 message: "Nested generic types fail to parse".to_string(),
                 file_context: None,
+                affected_component: None,
+                affected_version: None,
             },
             "mcp_ai",
             "error_with_code",

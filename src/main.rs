@@ -2720,6 +2720,8 @@ fn handle_report(
             severity: "bug".to_string(),
             message: message.clone(),
             file_context: None,
+            affected_component: None,
+            affected_version: None,
         },
         "manual",
         "error_with_code",
