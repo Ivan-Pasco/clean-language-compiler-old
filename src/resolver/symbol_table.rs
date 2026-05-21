@@ -1027,6 +1027,14 @@ impl GlobalSymbolTable {
             // JSON stringify functions take Any type and return string
             ("json.dataToText", vec![HirType::Any], HirType::String),
             ("json.prettyDataToText", vec![HirType::Any], HirType::String),
+            // Spec-canonical aliases (stdlib-reference.md §json)
+            ("json.encode", vec![HirType::Any], HirType::String),
+            ("json.decode", vec![HirType::String], HirType::Any),
+            (
+                "json.get",
+                vec![HirType::Any, HirType::String],
+                HirType::Any,
+            ),
             // Input namespace functions (input(), input.integer(), input.yesNo(), etc.)
             ("input", vec![HirType::String], HirType::String),
             ("input_string", vec![HirType::String], HirType::String),
@@ -1463,6 +1471,9 @@ impl GlobalSymbolTable {
             self.lookup_symbol("json.dataToText").unwrap_or(SymbolId(0)),
             self.lookup_symbol("json.prettyDataToText")
                 .unwrap_or(SymbolId(0)),
+            self.lookup_symbol("json.encode").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("json.decode").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("json.get").unwrap_or(SymbolId(0)),
         ];
 
         let json_namespace_id = self.create_symbol(

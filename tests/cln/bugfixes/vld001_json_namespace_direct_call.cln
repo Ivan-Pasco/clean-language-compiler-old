@@ -1,0 +1,20 @@
+// Test: bugfixes/vld001_json_namespace_direct_call
+// Grammar: function_declaration, function_call
+// Semantic: FUNC001, TYPE001
+// Bug: VLD001 "'json' is a namespace, not a function — use 'json.function_name()' syntax"
+//      When frame.data or frame.ui is loaded alongside frame.server, 'json' gets
+//      registered as a namespace (because json.get/json.encode are used). The resolver
+//      then rejects json(value) as a direct function call with the namespace error.
+//
+// Fix: In resolver HirExpression::Call handler, add json as a special case like input:
+//      json(value) is sugar for json.encode(value), which converts any value to JSON
+//      text (string). This matches stdlib-reference.md §json which lists json.encode
+//      as the canonical serialization function.
+//
+// Compile-check: must succeed without VLD001 error
+// Expected output (production runner):
+//   "hello"
+
+start:
+	string encoded = json("hello")
+	print(encoded)

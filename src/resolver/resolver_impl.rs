@@ -1697,6 +1697,23 @@ impl NameResolver {
                                 location: location.clone(),
                             });
                         }
+                        if function == "json" {
+                            // Rewrite `json(value)` → `json.encode(value)`
+                            // json is registered as a namespace (json.get, json.encode, etc.) but
+                            // calling json(x) directly is valid shorthand for json.encode(x) —
+                            // used by frame.server response helpers alongside frame.data/frame.ui.
+                            let json_encode_id = self
+                                .symbol_table
+                                .lookup_symbol("json.encode")
+                                .or_else(|| self.symbol_table.lookup_symbol("json"));
+                            let resolved_id = json_encode_id.unwrap_or(function_symbol_id);
+                            return Ok(ResolvedHirExpression::Call {
+                                function: "json.encode".to_string(),
+                                function_symbol_id: resolved_id,
+                                arguments: resolved_arguments,
+                                location: location.clone(),
+                            });
+                        }
                         self.error(
                             &format!(
                                 "'{}' is a namespace, not a function — use '{}.function_name()' syntax",

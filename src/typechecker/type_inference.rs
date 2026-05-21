@@ -5158,6 +5158,18 @@ impl<'a> TypeInference<'a> {
                 // json.prettyDataToText(any) -> string
                 Ok(ConcreteType::String)
             }
+            ("json", "encode") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::String)
+            }
+            ("json", "decode") => {
+                validate_arg_count(1, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Any)
+            }
+            ("json", "get") => {
+                validate_arg_count(2, arg_count, &full_method_name)?;
+                Ok(ConcreteType::Any)
+            }
 
             // For unknown static method/class combinations, return Unknown
             _ => Ok(ConcreteType::Unknown),
