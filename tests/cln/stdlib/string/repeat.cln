@@ -5,6 +5,6 @@
 //   repeat ok
 
 start:
-    string s = "ab"
-    string r = s.repeat(3)
-    print("repeat ok")
+	string s = "ab"
+	string r = s.repeat(3)
+	print("repeat ok")

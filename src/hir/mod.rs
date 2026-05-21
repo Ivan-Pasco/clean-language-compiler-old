@@ -142,6 +142,9 @@ pub enum HirType {
 #[derive(Debug, Clone)]
 pub struct HirClass {
     pub name: String,
+    /// Generic type parameters declared on the class (e.g. `class Stack<T>`).
+    /// Matches the `type_parameters` field on the AST `Class` node.
+    pub type_parameters: Vec<String>,
     pub parent: Option<String>,
     pub fields: Vec<HirField>,
     pub constructor: Option<HirConstructor>,

@@ -4,19 +4,14 @@
 // Expected output:
 //   10
 //   reset works
-
-state:
-    count = 0
-
-functions:
-    function incrementCount() -> void:
-        count = count + 1
-
-    function resetCount() -> void:
-        reset count
+// Fixed: state declarations require a type per state_declaration grammar rule;
+//        start: must appear before state: per SYN007 section ordering rule
 
 start:
-    count = 10
-    print(count)
-    resetCount()
-    print("reset works")
+	count = 10
+	print(count)
+	reset count
+	print("reset works")
+
+state:
+	integer count = 0

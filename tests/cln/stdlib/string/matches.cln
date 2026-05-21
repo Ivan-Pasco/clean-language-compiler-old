@@ -5,6 +5,6 @@
 //   matches ok
 
 start:
-    string email = "user@example.com"
-    boolean isEmail = email.matches("email")
-    print("matches ok")
+	string email = "user@example.com"
+	boolean isEmail = email.matches("email")
+	print("matches ok")

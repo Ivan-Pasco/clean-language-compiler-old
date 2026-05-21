@@ -714,6 +714,8 @@ impl HirBuilder {
 
         Ok(HirClass {
             name: class.name.clone(),
+            // Populate generic type parameters from the AST class definition
+            type_parameters: class.type_parameters.clone(),
             parent: class.base_class.clone(),
             fields,
             constructor,

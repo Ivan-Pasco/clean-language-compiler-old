@@ -1,5 +1,82 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟡 MEDIUM-HIGH: P02 — string.matches compile-time pattern ID resolution
+
+**Priority**: MEDIUM-HIGH — runtime host bridge contract must change together with compiler
+**Discovered**: 2026-05-20
+
+The spec (stdlib-reference.md) requires `string.matches` to resolve the pattern name to a
+compile-time integer ID before emitting the WASM call, reducing the import signature from
+4 parameters `(str_ptr, str_len, pattern_ptr, pattern_len)` to 3 parameters `(str_ptr, str_len, pattern_id)`.
+
+**Mapping**: email→1, url→2, uuid→3, slug→4, numeric→5, alpha→6, phone→7, date→8
+
+**Files to change** (compiler side):
+- `src/codegen/codegen_registration.rs` lines ~654–672 — change import signature to 3 params
+- MIR codegen call site for `string.matches` — emit `I32Const(id)` instead of string ptr+len
+
+**Cross-component prerequisite** (do NOT change before server is updated):
+- `clean-server/host-bridge` — `string_matches(str_ptr, str_len, pattern_id)` implementation
+- This is a breaking contract change; both sides must ship in the same release.
+
+**Action**: Report via `report_error` to coordinate server side, then implement compiler side.
+
+---
+
+## 🟡 MEDIUM-HIGH: P08 — SCOPE003 maximum scope nesting depth exceeded
+
+**Priority**: MEDIUM-HIGH — missing structured error code for deep nesting
+**Discovered**: 2026-05-20
+
+The spec (semantic-rules.md SCOPE003) requires the compiler to emit error code SCOPE003
+when block nesting depth exceeds the maximum allowed value.
+
+**Current state**: `src/resolver/symbol_table.rs:431-437` silently returns `None` with a
+`tracing::warn!` when scope lookup depth > 50. No SCOPE003 error is emitted to the user.
+
+**Action**: In `lookup_symbol_in_scope_with_depth`, when depth > MAX_SCOPE_DEPTH, emit a
+`CompilerError::Validation` with error code "SCOPE003" and a meaningful message. This
+requires threading a mutable error collector into the lookup path, which currently returns
+`Option<SymbolId>`.
+
+---
+
+## 🟡 MEDIUM-HIGH: P09 — PLUGIN002 plugin function signature mismatch
+
+**Priority**: MEDIUM-HIGH — missing structured error code for plugin contract violations
+**Discovered**: 2026-05-20
+
+The spec (semantic-rules.md PLUGIN002) requires a structured error when a plugin exposes
+a function with a signature that does not match what the compiler expects (e.g. wrong
+parameter count or types in plugin.toml [bridge] section).
+
+**Current state**: No detection site exists. Plugin bridge functions are loaded by name
+from the function_map without signature verification against plugin.toml declarations.
+
+**Action**: In `src/plugins/enforcement.rs` or the plugin ABI loader, add signature
+verification that compares the registered WASM function type against the expected type
+from plugin.toml, and emits a `CompilerError::Validation` with code "PLUGIN002".
+
+---
+
+## 🟢 LOW: P10 — COM002/COM006 concurrency violation error codes
+
+**Priority**: LOW — missing structured error codes for concurrency rule violations
+**Discovered**: 2026-05-20
+
+The spec (semantic-rules.md COM002/COM006) defines error codes for:
+- COM002: accessing shared state from a background task without synchronization
+- COM006: using request-context values outside a request handler
+
+**Current state**: No detection sites exist. The compiler does not currently analyse
+concurrency patterns or request-context usage.
+
+**Action**: These are new static analysis checks. Add detection in the typechecker or
+HIR validator. COM006 can be partially enforced by tracking whether a function is
+inside a `background:` block when accessing request-context builtins.
+
+---
+
 ## ✅ RESOLVED: Replace .unwrap() calls in critical pipeline paths
 
 **Priority**: MEDIUM-HIGH — panics instead of structured error propagation

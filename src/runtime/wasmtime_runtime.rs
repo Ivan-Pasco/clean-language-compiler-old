@@ -107,24 +107,29 @@ impl WebAssemblyRuntime for WasmtimeRuntime {
                 let module_name = parts[0];
                 let func_name = parts[1];
 
-                // Convert function signature
-                let _params: Vec<ValType> = host_func
+                // Build the function type from the registry signature
+                let params: Vec<ValType> = host_func
                     .signature
                     .params
                     .iter()
                     .map(|p| value_type_to_wasmtime_type(*p))
                     .collect();
 
-                let _results: Vec<ValType> = host_func
+                let results: Vec<ValType> = host_func
                     .signature
                     .results
                     .iter()
                     .map(|r| value_type_to_wasmtime_type(*r))
                     .collect();
 
-                // Create a simple host function placeholder for now
+                let func_type = wasmtime::FuncType::new(params, results);
+                let owned_name = name.clone();
                 linker
-                    .func_wrap(module_name, func_name, || -> i32 { 0 })
+                    .func_new(module_name, func_name, func_type, move |_caller, _args, _results| {
+                        panic!("WasmtimeRuntime: host function '{}' was called but is not implemented. \
+                                Wire a real implementation in src/runtime/wasmtime_runtime.rs or use the \
+                                wasmtime_runner binary which provides full host bridge support.", owned_name)
+                    })
                     .map_err(|e| {
                         CompilerError::runtime_error(
                             format!("Failed to define host function {name}: {e}"),

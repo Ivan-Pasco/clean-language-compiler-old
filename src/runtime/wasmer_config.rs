@@ -80,13 +80,14 @@ impl WebAssemblyRuntime for WasmerRuntime {
 
                 let func_type = wasmer::FunctionType::new(params, results);
 
-                // Create a simple placeholder function for now
+                let owned_name = name.clone();
                 let func = Function::new(
                     store,
                     func_type,
-                    |_args: &[Value]| -> Result<Vec<Value>, RuntimeError> {
-                        // Simple placeholder implementation
-                        Ok(vec![Value::I32(0)])
+                    move |_args: &[Value]| -> Result<Vec<Value>, RuntimeError> {
+                        panic!("WasmerRuntime: host function '{}' was called but is not implemented. \
+                                Wire a real implementation in src/runtime/wasmer_config.rs or use the \
+                                wasmtime_runner binary which provides full host bridge support.", owned_name)
                     },
                 );
 

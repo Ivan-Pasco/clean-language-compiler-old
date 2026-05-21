@@ -223,6 +223,10 @@ impl HirValidator {
             for decl in &state_block.declarations {
                 context.declare_variable(decl.name.clone(), decl.state_type.clone());
             }
+            // Computed state variables are also accessible as read-only names in the program.
+            for computed in &state_block.computed {
+                context.declare_variable(computed.name.clone(), computed.computed_type.clone());
+            }
         }
 
         // Collect screen-local state variables into global scope.
@@ -446,6 +450,33 @@ impl HirValidator {
         }
 
         context.current_class = old_class;
+    }
+
+    /// Check whether `field_name` exists on `class_name` or any ancestor class.
+    fn class_has_field_in_hierarchy(
+        classes: &HashMap<String, HirClass>,
+        class_name: &str,
+        field_name: &str,
+    ) -> bool {
+        let mut current = class_name;
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            if !visited.insert(current.to_string()) {
+                break; // cycle guard
+            }
+            if let Some(class_def) = classes.get(current) {
+                if class_def.fields.iter().any(|f| f.name == field_name) {
+                    return true;
+                }
+                match class_def.parent.as_deref() {
+                    Some(parent) => current = parent,
+                    None => break,
+                }
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     /// Check for circular inheritance
@@ -715,10 +746,13 @@ impl HirValidator {
 
             HirStatement::Ensure { condition, .. } => {
                 // Validate the postcondition expression.
-                // `result` is a special identifier in postconditions that refers to the
-                // function's return value. It is resolved during MIR lowering and does not
-                // need to be in the current variable scope for HIR validation.
+                // `result` refers to the function's return value — inject it as a synthetic
+                // variable so that `validate_expression` does not emit a false "Undefined
+                // variable 'result'" error. The actual type is resolved during MIR lowering.
+                context.push_scope();
+                context.declare_variable("result".to_string(), HirType::Any);
                 Self::validate_expression(context, condition);
+                context.pop_scope();
             }
         }
     }
@@ -771,15 +805,10 @@ impl HirValidator {
                 ];
                 // Inside a class constructor or method, unqualified field names are valid
                 // as expressions (the resolver adds implicit `this.` in stage 4).
-                let is_class_field = if let Some(ref class_name) = context.current_class {
-                    if let Some(class_def) = context.classes.get(class_name) {
-                        class_def.fields.iter().any(|f| f.name == *name)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                // Check the full inheritance chain so child methods can access parent fields.
+                let is_class_field = context.current_class.as_ref().map_or(false, |cn| {
+                    Self::class_has_field_in_hierarchy(&context.classes, cn, name)
+                });
                 if context.lookup_variable(name).is_none()
                     && !context.functions.contains_key(name)
                     && !BUILTIN_NAMESPACES.contains(&name.as_str())
@@ -842,14 +871,25 @@ impl HirValidator {
                 // context.  Emitting FUNC001 here would produce false positives for every
                 // builtin (print, math.*, string.*, input, etc.) and class constructor call.
                 if let Some(func_def) = context.functions.get(function) {
-                    // FUNC002: argument count must match the declared parameter count
-                    let expected = func_def.parameters.len();
+                    // FUNC002: argument count must be within [required, total] parameter range.
+                    // Parameters with default values are optional and need not be provided.
+                    let required = func_def
+                        .parameters
+                        .iter()
+                        .filter(|p| p.default_value.is_none())
+                        .count();
+                    let max_params = func_def.parameters.len();
                     let actual = arguments.len();
-                    if actual != expected {
+                    if actual < required || actual > max_params {
+                        let expected_msg = if required == max_params {
+                            format!("{}", required)
+                        } else {
+                            format!("{}-{}", required, max_params)
+                        };
                         context.error_with_code(
                             &format!(
                                 "Function '{}' expects {} argument(s) but {} were provided",
-                                function, expected, actual
+                                function, expected_msg, actual
                             ),
                             location.clone(),
                             "FUNC002",
@@ -996,16 +1036,10 @@ impl HirValidator {
                 // Inside a class constructor or method, unqualified field names are valid
                 // assignment targets even though they are not in the variable scope.  The
                 // resolver adds the implicit `this.` prefix in stage 4; at the HIR validation
-                // stage we accept any name that belongs to the current class's fields.
-                let is_class_field = if let Some(ref class_name) = context.current_class {
-                    if let Some(class_def) = context.classes.get(class_name) {
-                        class_def.fields.iter().any(|f| f.name == *name)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                // stage we accept any name that belongs to the class or any ancestor class.
+                let is_class_field = context.current_class.as_ref().map_or(false, |cn| {
+                    Self::class_has_field_in_hierarchy(&context.classes, cn, name)
+                });
 
                 if context.lookup_variable(name).is_none() && !is_class_field {
                     context.error(&format!("Undefined variable '{}'", name), location.clone());
@@ -1253,6 +1287,7 @@ mod tests {
             classes: vec![
                 HirClass {
                     name: "Parent".to_string(),
+                    type_parameters: vec![],
                     parent: None,
                     fields: vec![],
                     constructor: None,
@@ -1262,6 +1297,7 @@ mod tests {
                 },
                 HirClass {
                     name: "Child".to_string(),
+                    type_parameters: vec![],
                     parent: Some("Parent".to_string()),
                     fields: vec![],
                     constructor: None,
@@ -1291,6 +1327,7 @@ mod tests {
             classes: vec![
                 HirClass {
                     name: "A".to_string(),
+                    type_parameters: vec![],
                     parent: Some("B".to_string()),
                     fields: vec![],
                     constructor: None,
@@ -1300,6 +1337,7 @@ mod tests {
                 },
                 HirClass {
                     name: "B".to_string(),
+                    type_parameters: vec![],
                     parent: Some("A".to_string()),
                     fields: vec![],
                     constructor: None,

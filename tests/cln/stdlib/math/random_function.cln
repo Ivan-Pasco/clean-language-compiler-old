@@ -5,8 +5,8 @@
 //   random ok
 
 start:
-    number r = math.random()
-    // We cannot assert the exact value, but we can check it compiles and runs
-    // Verify it returns a number type by storing and using it
-    number doubled = r + r
-    print("random ok")
+	number r = math.random()
+	// We cannot assert the exact value, but we can check it compiles and runs
+	// Verify it returns a number type by storing and using it
+	number doubled = r + r
+	print("random ok")
