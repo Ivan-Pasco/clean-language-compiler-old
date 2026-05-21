@@ -1,0 +1,5 @@
+// Stub module for import_block_multiple.cln test
+
+functions:
+	string upper(string s)
+		return s

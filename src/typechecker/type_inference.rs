@@ -4466,6 +4466,31 @@ impl<'a> TypeInference<'a> {
         function_name: &str,
         arguments: &[TastExpression],
     ) -> Result<ConcreteType, CompilerError> {
+        // Numeric-polymorphic math functions: preserve the argument type so that
+        // `integer x = math.abs(integer_val)` does not produce a false SEM004 error.
+        // These checks MUST run before the type_env lookup which would return Number.
+        if function_name == "math.abs" || function_name == "math_abs" {
+            let arg_type = arguments.first().map(|a| self.resolve_type(&a.expr_type));
+            return Ok(match arg_type.as_ref() {
+                Some(ConcreteType::Integer) => ConcreteType::Integer,
+                _ => ConcreteType::Number,
+            });
+        }
+        if function_name == "math.max"
+            || function_name == "math_max"
+            || function_name == "math.min"
+            || function_name == "math_min"
+        {
+            let both_int = arguments
+                .iter()
+                .all(|a| matches!(self.resolve_type(&a.expr_type), ConcreteType::Integer));
+            return Ok(if both_int {
+                ConcreteType::Integer
+            } else {
+                ConcreteType::Number
+            });
+        }
+
         // Special handling for generic list namespace functions FIRST
         // Use the function_name parameter directly for SymbolId(0) namespace functions
         // to avoid incorrect matching with the "print" symbol at SymbolId(0)
@@ -4777,9 +4802,14 @@ impl<'a> TypeInference<'a> {
 
         match (class_name, method_name) {
             // Math static methods (lowercase to match actual namespace usage)
+            // abs is numeric-polymorphic: integer in → integer out, number in → number out.
             ("math", "abs") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Number)
+                let arg_type = arguments.first().map(|a| &a.expr_type);
+                Ok(match arg_type {
+                    Some(ConcreteType::Integer) => ConcreteType::Integer,
+                    _ => ConcreteType::Number,
+                })
             }
             ("math", "floor") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
@@ -4815,11 +4845,25 @@ impl<'a> TypeInference<'a> {
             }
             ("math", "max") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Number)
+                let both_int = arguments
+                    .iter()
+                    .all(|a| matches!(a.expr_type, ConcreteType::Integer));
+                Ok(if both_int {
+                    ConcreteType::Integer
+                } else {
+                    ConcreteType::Number
+                })
             }
             ("math", "min") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Number)
+                let both_int = arguments
+                    .iter()
+                    .all(|a| matches!(a.expr_type, ConcreteType::Integer));
+                Ok(if both_int {
+                    ConcreteType::Integer
+                } else {
+                    ConcreteType::Number
+                })
             }
 
             // String static methods

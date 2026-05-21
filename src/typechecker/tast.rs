@@ -711,6 +711,9 @@ impl ConcreteType {
             // Unknown type is assignable to anything (for error recovery)
             (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => true,
 
+            // Any type is the dynamic escape hatch — assignable to and from anything
+            (ConcreteType::Any, _) | (_, ConcreteType::Any) => true,
+
             // Optional(T) is assignable to Optional(U) if T is assignable to U
             (ConcreteType::Optional(a), ConcreteType::Optional(b)) => a.is_assignable_to(b),
 

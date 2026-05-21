@@ -1,0 +1,5 @@
+// Stub module for import_block_multiple.cln test
+
+functions:
+	integer add(integer a, integer b)
+		return a + b

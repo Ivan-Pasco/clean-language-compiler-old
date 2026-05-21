@@ -46,12 +46,12 @@ start:
 	// string conditional_str = if flag1 then "yes" else "no"
 
 	//Parenthesized expressions (test precedence override)
-	integer paren_arith = (a + b) * (x + y)
+	number paren_arith = (a + b) * (x + y)
 	boolean paren_logic = (flag1 and flag2)
 
 	//Complex expressions (single-line due to current parser limitations)
 	integer complex_arith = (a + b * 2)
-	boolean complex_logic = (flag1 and flag2 or (a > b))
+	boolean complex_logic_paren = (flag1 and flag2 or (a > b))
 
 	//Function call expressions
 	integer func_result = calculateSum(a, b)

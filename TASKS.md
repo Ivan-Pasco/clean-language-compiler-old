@@ -1,5 +1,55 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🔴 CRITICAL: Matrix type — 8 tests failing (codegen/parse gap)
+
+**Priority**: CRITICAL — matrix literals and methods not compiling
+**Discovered**: 2026-05-21
+**Files**: `tests/cln/core/types/46_matrix_literals*.cln`, `tests/cln/core/collections/matrix_operations_comprehensive.cln`, `tests/cln/ci/tier4/t4_matrix_basic.cln`, and 4 spec files
+**Error pattern**: `Matrix` type declared but matrix literal codegen or parser missing
+**Action**: Add matrix literal parsing support and MIR/codegen lowering for `Matrix<T>` creation/access.
+
+---
+
+## 🔴 CRITICAL: String WASM codegen — 5 tests failing (type mismatch i32/f64)
+
+**Priority**: CRITICAL — string functions generate invalid WASM
+**Discovered**: 2026-05-21
+**Files**: `tests/cln/stdlib/string/repeat.cln`, `matches.cln`, `77_string_module_comprehensive.cln`, `94_stdlib_string_comprehensive.cln`, `tests/cln/spec_compliance/stdlib/string_padding_spec.cln`
+**Error**: "type mismatch: expected i32 but nothing on stack" at WASM validation
+**Action**: Investigate string method codegen — likely stack balance issue in string.repeat/string.pad* call sites.
+
+---
+
+## 🟡 MEDIUM-HIGH: Class subtype polymorphism — assignment not accepted
+
+**Priority**: MEDIUM-HIGH — `Vehicle myVehicle = tesla` (tesla is Car, extends Vehicle) rejected
+**Discovered**: 2026-05-21
+**File**: `tests/cln/language/classes/16_classes_polymorphism_simple.cln:21`
+**Error**: "Type annotation 'Class#276' contradicts the inferred type 'Class#278'"
+**Root cause**: `is_assignable_to` in `src/typechecker/tast.rs` has no inheritance-aware case for `Class` types. Symbol table has parent info but is not accessible from that function.
+**Action**: Add `(ConcreteType::Class { symbol_id: s1 }, ConcreteType::Class { symbol_id: s2 })` case that walks the parent chain in the symbol table. Requires threading `symbol_table` into `is_assignable_to`, or caching parent ID in `ConcreteType::Class`.
+
+---
+
+## 🟡 MEDIUM-HIGH: Async WASM codegen — 2 tests failing
+
+**Priority**: MEDIUM-HIGH — async keywords produce invalid WASM
+**Discovered**: 2026-05-21
+**Files**: `tests/cln/advanced/async/52_async_keywords.cln`, `tests/cln/language/async/81_async_comprehensive.cln`
+**Action**: Investigate async function lowering to MIR/WASM.
+
+---
+
+## 🟡 MEDIUM-HIGH: _state_reset_named bridge not registered
+
+**Priority**: MEDIUM-HIGH — reset: statement codegen fails
+**Discovered**: 2026-05-21
+**File**: `tests/cln/language/state_management/reset_statement.cln`
+**Error**: `_state_reset_named` import not resolved by runtime
+**Action**: Register `_state_reset_named(name_ptr, name_len)` in `src/builtins/registry.rs` and `src/codegen/codegen_registration.rs`; implement in server host bridge.
+
+---
+
 ## 🟡 MEDIUM-HIGH: P02 — string.matches compile-time pattern ID resolution
 
 **Priority**: MEDIUM-HIGH — runtime host bridge contract must change together with compiler

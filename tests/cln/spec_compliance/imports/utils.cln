@@ -1,0 +1,5 @@
+// Stub module for import_block_single.cln and import_block_multiple.cln tests
+
+functions:
+	string hello()
+		return "hello"
