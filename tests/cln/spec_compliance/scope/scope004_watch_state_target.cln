@@ -1,0 +1,22 @@
+// Test: spec_compliance/scope/scope004_watch_state_target
+// Grammar: watch_block, watch_targets, state_block
+// Semantic: SCOPE004 — Watch block target must reference a declared state variable
+// Expected output:
+//   initial: 0
+//   count changed: 1
+//   count changed: 2
+
+start:
+	print("initial: " + count.toString())
+	increment()
+	increment()
+
+state:
+	integer count = 0
+
+watch count:
+	print("count changed: " + count.toString())
+
+functions:
+	void increment()
+		count = count + 1

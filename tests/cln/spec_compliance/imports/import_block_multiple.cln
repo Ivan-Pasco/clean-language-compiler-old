@@ -1,0 +1,13 @@
+// Test: spec_compliance/imports/import_block_multiple
+// Grammar: import_block, import_item, import_list
+// Semantic: IMPORT003, IMPORT004 — pending multi-file module resolver
+// Expected output:
+//   ok
+
+import:
+	utils
+	math_helpers
+	string_helpers
+
+start:
+	print("ok")

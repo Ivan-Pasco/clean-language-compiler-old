@@ -1,5 +1,7 @@
-// Spec Section: 3.10 - Type Conversions
-// Tests: .toBoolean conversion from integers
+// Test: spec_compliance/types/type_conversions_boolean_spec
+// Grammar: method_call, type_
+// Semantic: SEM001 — toBoolean: 0 → false, non-zero → true
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Zero converts to false

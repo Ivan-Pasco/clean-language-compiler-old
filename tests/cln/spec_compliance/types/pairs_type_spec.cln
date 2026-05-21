@@ -1,5 +1,7 @@
-// Spec Section: 2.2 - Composite Types
-// Tests: pairs<K,V> key-value associative container
+// Test: spec_compliance/types/pairs_type_spec
+// Grammar: pairs_type, pairs_literal, pair_element
+// Semantic: IDX003 — pairs key must be string; SEM001 — value type must match declaration
+// Expected output: (see inline comments per test)
 // STATUS: Future implementation - pairs type requires runtime hash map support
 // This file is a placeholder documenting the expected API
 

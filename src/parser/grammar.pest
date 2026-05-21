@@ -61,7 +61,9 @@ sized_type = @{ core_type ~ size_specifier }
 
 // Composite types
 matrix_type = { "matrix" ~ "<" ~ " "* ~ type_ ~ " "* ~ ">" }
-list_type = { "list" ~ "<" ~ " "* ~ type_ ~ " "* ~ ">" }
+// list_behavior suffix: .line | .pile | .unique (spec grammar.ebnf §list_behavior)
+list_behavior = { "." ~ ("line" | "pile" | "unique") }
+list_type = { "list" ~ "<" ~ " "* ~ type_ ~ " "* ~ ">" ~ list_behavior? }
 pairs_type = { "pairs" ~ "<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">" }
 
 // Generic types
@@ -718,9 +720,17 @@ screen_body_item = {
 // END STATE MANAGEMENT
 // ============================================================================
 
+// always_block - class invariants checked after every public method call (spec grammar.ebnf §always_block)
+always_block_stmt = { INDENT ~ INDENT ~ expression }
+always_block = { "always" ~ ":" ~ NEWLINE ~ always_block_stmt ~ (NEWLINE ~ always_block_stmt)* }
+
+// build_block - class construction/configuration block (spec grammar.ebnf §build_block)
+build_block_stmt = { INDENT ~ INDENT ~ statement }
+build_block = { "build" ~ ":" ~ NEWLINE ~ build_block_stmt ~ (NEWLINE ~ build_block_stmt)* }
+
 // Class definition with "is" inheritance
 class_field = { type_ ~ WHITESPACE* ~ identifier ~ ("=" ~ expression)? }
-class_body_item = { class_functions_block | constructor | class_field }
+class_body_item = { class_functions_block | constructor | always_block | build_block | class_field }
 indented_class_body = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ class_body_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ !end_of_class ~ class_body_item)* ~ (NEWLINE ~ (empty_line)*)? }
 
 // Helper to detect end of class context
@@ -804,6 +814,10 @@ external_return_type = {
 // Can only appear inside functions or class methods
 // Always checked at runtime (cannot be disabled)
 require_stmt = { "require" ~ WHITESPACE+ ~ expression }
+
+// Ensure statement - post-condition assertion (spec grammar.ebnf §ensure_statement)
+// Optional message string provides context when the assertion fails
+ensure_stmt = { "ensure" ~ WHITESPACE+ ~ expression ~ (WHITESPACE* ~ "," ~ WHITESPACE* ~ string)? }
 
 // ============================================================================
 // VALIDATE BLOCK — Named, immutable validation schema declaration
@@ -899,6 +913,7 @@ validate_check_stmt = {
 // Method calls must come before assignment to avoid grammar ambiguity with property_access
 statement = {
     (require_stmt |
+    ensure_stmt |
     print_newline_stmt |
     print_parenthesized_stmt |
     print_bare_stmt |

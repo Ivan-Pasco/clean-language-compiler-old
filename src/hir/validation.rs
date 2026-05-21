@@ -174,9 +174,11 @@ impl HirValidator {
         // Collect functions
         for function in &hir.functions {
             if context.functions.contains_key(&function.name) {
-                context.error(
+                // SEM003: FunctionRedefinition — a function with this name already exists
+                context.error_with_code(
                     &format!("Function '{}' is already defined", function.name),
                     function.location.clone(),
+                    "SEM003",
                 );
             } else {
                 context
@@ -385,9 +387,10 @@ impl HirValidator {
 
             // Check for circular inheritance (SEM008: InheritanceCycle)
             if Self::has_circular_inheritance(&context.classes, &class.name, parent_name) {
-                context.error(
+                context.error_with_code(
                     &format!("Circular inheritance detected for class '{}'", class.name),
                     class.location.clone(),
+                    "SEM008",
                 );
             }
         }

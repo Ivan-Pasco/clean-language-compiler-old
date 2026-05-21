@@ -2421,16 +2421,56 @@ impl<'a> TypeInference<'a> {
                         // Normal inference for non-empty literals
                         let tast_init = self.infer_expression(init_expr)?;
 
-                        // Add constraint that initializer type matches declared type
+                        // Add constraint that initializer type matches declared type.
+                        // SEM004: If a declared type annotation is provably incompatible
+                        // with the inferred type (e.g. integer x = "hello"), emit SEM004.
+                        // Unknown/Any/Undefined types are excluded because they participate
+                        // in error-recovery and late-binding paths.
                         tracing::debug!(
                             "DEBUG CONSTRAINT: VariableDecl '{}' at line {} - left={:?}, right={:?}",
                             name, location.line, tast_init.expr_type, declared_type
                         );
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: tast_init.expr_type.clone(),
-                            right: declared_type.clone(),
-                            location: location.clone(),
-                        });
+                        let init_ty = &tast_init.expr_type;
+                        let declared_ty = &declared_type;
+                        let types_are_concrete = !matches!(
+                            init_ty,
+                            ConcreteType::Unknown
+                                | ConcreteType::Undefined
+                                | ConcreteType::Any
+                                | ConcreteType::Generic { .. }
+                        ) && !matches!(
+                            declared_ty,
+                            ConcreteType::Unknown
+                                | ConcreteType::Undefined
+                                | ConcreteType::Any
+                                | ConcreteType::Generic { .. }
+                                | ConcreteType::Optional(_)
+                        );
+                        if types_are_concrete && !init_ty.is_assignable_to(declared_ty) {
+                            self.errors.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "Type annotation '{}' contradicts the inferred type '{}' for variable '{}'",
+                                            declared_ty, init_ty, name
+                                        ),
+                                        Some(format!(
+                                            "Change the type annotation to '{}' or change the initializer to produce a '{}'",
+                                            init_ty, declared_ty
+                                        )),
+                                        crate::error::ErrorType::Validation,
+                                        Some(location.clone()),
+                                    )
+                                    .with_error_code("SEM004"),
+                                ),
+                            });
+                        } else {
+                            self.add_constraint(TypeConstraint::Equality {
+                                left: tast_init.expr_type.clone(),
+                                right: declared_type.clone(),
+                                location: location.clone(),
+                            });
+                        }
 
                         tast_init
                     };
@@ -3305,16 +3345,10 @@ impl<'a> TypeInference<'a> {
 
                 // SEM010: string.matches() argument must be a known pattern name literal.
                 // semantic-rules.md §SEM010
+                // Valid patterns per spec: email, url, uuid, slug, numeric, alpha, phone, date
                 if method == "matches" && matches!(tast_receiver.expr_type, ConcreteType::String) {
                     const VALID_PATTERNS: &[&str] = &[
-                        "email",
-                        "url",
-                        "uuid",
-                        "phone",
-                        "date",
-                        "integer",
-                        "number",
-                        "alphanumeric",
+                        "email", "url", "uuid", "slug", "numeric", "alpha", "phone", "date",
                     ];
                     if let Some(first_arg) = tast_arguments.first() {
                         let is_valid = match &first_arg.kind {
@@ -3334,7 +3368,7 @@ impl<'a> TypeInference<'a> {
                                 context: Box::new(
                                     crate::error::ErrorContext::new(
                                         format!(
-                                            "Unknown pattern name '{}'. Valid patterns: email, url, uuid, phone, date, integer, number, alphanumeric",
+                                            "Unknown pattern name '{}'. Valid patterns: email, url, uuid, slug, numeric, alpha, phone, date",
                                             name
                                         ),
                                         None,
@@ -3350,7 +3384,7 @@ impl<'a> TypeInference<'a> {
                         self.errors.push(CompilerError::Validation {
                             context: Box::new(
                                 crate::error::ErrorContext::new(
-                                    "string.matches() requires a pattern name argument (email, url, uuid, phone, date, integer, number, alphanumeric)".to_string(),
+                                    "string.matches() requires a pattern name argument (email, url, uuid, slug, numeric, alpha, phone, date)".to_string(),
                                     None,
                                     crate::error::ErrorType::Validation,
                                     Some(location.clone()),
@@ -3469,13 +3503,20 @@ impl<'a> TypeInference<'a> {
                                 if !inside_owner {
                                     if let Some(rcn) = &receiver_class_name {
                                         if rcn == owner {
-                                            self.errors.push(CompilerError::validation_error(
-                                                format!(
-                                                    "'{}' is private and cannot be accessed from outside '{}'",
-                                                    method, owner
+                                            self.errors.push(CompilerError::Validation {
+                                                context: Box::new(
+                                                    crate::error::ErrorContext::new(
+                                                        format!(
+                                                            "'{}' is private and cannot be accessed from outside '{}'",
+                                                            method, owner
+                                                        ),
+                                                        None,
+                                                        crate::error::ErrorType::Validation,
+                                                        Some(location.clone()),
+                                                    )
+                                                    .with_error_code("SEM005"),
                                                 ),
-                                                location.clone(),
-                                            ));
+                                            });
                                         }
                                     }
                                 }
@@ -4085,6 +4126,29 @@ impl<'a> TypeInference<'a> {
             | HirBinaryOp::Divide
             | HirBinaryOp::Modulo
             | HirBinaryOp::Power => {
+                // SEM006: Incompatible operand types in binary expression.
+                // Emit up-front when both operands are concrete and non-numeric.
+                let is_concrete_non_numeric = |t: &ConcreteType| -> bool {
+                    matches!(t, ConcreteType::String | ConcreteType::Boolean)
+                };
+                if is_concrete_non_numeric(left_type) || is_concrete_non_numeric(right_type) {
+                    self.errors.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Incompatible operand types '{}' and '{}' for arithmetic operator",
+                                    left_type, right_type
+                                ),
+                                Some("Arithmetic operators require numeric operands (integer or number)".to_string()),
+                                crate::error::ErrorType::Validation,
+                                Some(location.clone()),
+                            )
+                            .with_error_code("SEM006"),
+                        ),
+                    });
+                    return Ok(ConcreteType::Unknown);
+                }
+
                 // Handle different operation combinations
                 match (left_type, right_type) {
                     // Integer-integer operations return integer

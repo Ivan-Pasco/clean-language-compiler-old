@@ -1,5 +1,7 @@
-// Spec Section: 3.10 - Type Conversions
-// Tests: Extended type conversion methods (.toInteger, .toNumber, .toBoolean)
+// Test: spec_compliance/types/type_conversions_extended_spec
+// Grammar: method_call, type_
+// Semantic: SEM001 — toInteger/toNumber/toString conversions must match declared return type
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: string.toInteger - string to integer conversion

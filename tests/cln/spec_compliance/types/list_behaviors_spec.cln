@@ -1,5 +1,7 @@
-// Spec Section: 2 - Type System
-// Tests: List behavior modifiers (line, pile, unique)
+// Test: spec_compliance/types/list_behaviors_spec
+// Grammar: list_behavior, list_type
+// Semantic: SEM001 — list behavior modifier (.line/.pile/.unique) must be assigned to list variable
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Line behavior (FIFO queue)

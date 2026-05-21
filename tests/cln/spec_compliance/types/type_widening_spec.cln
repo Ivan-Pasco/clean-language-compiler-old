@@ -1,5 +1,7 @@
-// Spec Section: 3.1 - Type Widening and Implicit Conversions
-// Tests: Automatic type promotion in mixed operations
+// Test: spec_compliance/types/type_widening_spec
+// Grammar: type_, expression
+// Semantic: SEM001 — integer widens to number in mixed arithmetic
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: integer to number widening in arithmetic

@@ -1,5 +1,7 @@
-// Spec Section: 3.1 - Core Types (boolean)
-// Tests: boolean type - logical values true/false
+// Test: spec_compliance/types/boolean_type_spec
+// Grammar: core_type, boolean_literal
+// Semantic: SEM001 — boolean expressions must be assignable to boolean variables
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Boolean declaration and initialization

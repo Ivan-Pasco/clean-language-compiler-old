@@ -1,3 +1,8 @@
+// Test: spec_compliance/types/void_type_spec
+// Grammar: core_type
+// Semantic: FUNC007 — start block should return void; functions with void return have no return value
+// Expected output: (see inline comments per test)
+
 start:
 	// Test 1: Call void function with string
 	printMessage("Hello from void function")
@@ -25,7 +30,7 @@ start:
 	printMessage("Third")
 
 	print("Void type test completed")
-// Spec Section: 3.1 - Core Types (void)
+
 // Tests: void type - functions with no return value
 
 functions:

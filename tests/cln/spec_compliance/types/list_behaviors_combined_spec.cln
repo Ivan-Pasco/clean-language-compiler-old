@@ -1,5 +1,7 @@
-// Spec Section: 2.4 - List Properties
-// Tests: Combined list behavior modifiers (line-unique, pile-unique)
+// Test: spec_compliance/types/list_behaviors_combined_spec
+// Grammar: list_behavior, list_type
+// Semantic: SEM001 — combined list behavior modes (line-unique, pile-unique) accepted
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Line-unique behavior (FIFO queue with no duplicates)

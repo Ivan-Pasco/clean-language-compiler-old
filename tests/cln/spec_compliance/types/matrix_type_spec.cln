@@ -1,5 +1,7 @@
-// Spec Section: 2 - Type System
-// Tests: matrix<any> type with operations
+// Test: spec_compliance/types/matrix_type_spec
+// Grammar: matrix_type, matrix_literal, matrix_row
+// Semantic: SEM001 — matrix element type must match declared type parameter
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Integer matrix

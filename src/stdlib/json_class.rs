@@ -11,19 +11,13 @@ use crate::types::WasmType;
 use wasm_encoder::Instruction;
 
 /// JSON Value Type Tags (stored in high bits of pointer)
-/// These tags identify the type of JSON value at runtime
-// Tags are public API; WASM codegen embeds them as i32 literals rather than importing these consts
-#[allow(dead_code)]
+/// These tags identify the type of JSON value at runtime.
+/// WASM codegen embeds these as i32 literals; they are public for external inspection tools.
 pub const JSON_TAG_NULL: i32 = 0;
-#[allow(dead_code)]
 pub const JSON_TAG_BOOLEAN: i32 = 1;
-#[allow(dead_code)]
 pub const JSON_TAG_NUMBER: i32 = 2;
-#[allow(dead_code)]
 pub const JSON_TAG_STRING: i32 = 3;
-#[allow(dead_code)]
 pub const JSON_TAG_ARRAY: i32 = 4;
-#[allow(dead_code)]
 pub const JSON_TAG_OBJECT: i32 = 5;
 
 /// JSON class implementation for Clean Language
@@ -54,6 +48,22 @@ impl JsonClass {
         self.register_parse_operations(codegen)?;
         self.register_stringify_operations(codegen)?;
         self.register_access_operations(codegen)?;
+
+        // Register spec-canonical names as aliases (spec stdlib-reference.md §json):
+        //   json.encode  ≡  json.dataToText
+        //   json.decode  ≡  json.textToData
+        //   json.get     ≡  __json_get_field (key-based access)
+        // The old names remain valid for backward compatibility.
+        if let Some(idx) = codegen.get_function_index("json.dataToText") {
+            codegen.add_function_alias("json.encode", idx);
+        }
+        if let Some(idx) = codegen.get_function_index("json.textToData") {
+            codegen.add_function_alias("json.decode", idx);
+        }
+        if let Some(idx) = codegen.get_function_index("__json_get_field") {
+            codegen.add_function_alias("json.get", idx);
+        }
+
         tracing::debug!("JSON module: All functions registered successfully");
         Ok(())
     }

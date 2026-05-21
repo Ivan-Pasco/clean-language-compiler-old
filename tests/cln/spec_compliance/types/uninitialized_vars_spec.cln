@@ -1,5 +1,7 @@
-// Spec Section: 2.5 - Type Annotations and Variable Declaration
-// Tests: Uninitialized variable declarations
+// Test: spec_compliance/types/uninitialized_vars_spec
+// Grammar: variable_type, identifier
+// Semantic: SCOPE001 — variable must be declared before use; uninitialized vars have zero/empty default
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Uninitialized integer

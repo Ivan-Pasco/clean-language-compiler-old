@@ -1,0 +1,25 @@
+// Spec Section: grammar §6.6b (build_block) + §6.8 (rules_block inside state:)
+// Feature: build: block enabling rules checking; state: with rules: invariants
+// Grammar:
+//   build_block = "build" ":" NEWLINE INDENT build_field+
+//   rules_block = NEWLINE INDENT "rules" ":" { NEWLINE INDENT INDENT expression }
+// Tests: build: rules = true enables invariant checking; state variables respect rules
+
+build:
+	rules = true
+
+start:
+	print("Initial count: " + count.toString())
+	count = 3
+	print("After set to 3: " + count.toString())
+	count = 7
+	print("After set to 7: " + count.toString())
+	print("State rules spec test passed")
+
+state:
+	integer count = 0
+	integer maxCount = 10
+
+	rules:
+		count >= 0
+		count <= maxCount

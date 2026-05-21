@@ -1,5 +1,7 @@
-// Spec Section: 3.1 - Integer Precision Modifiers
-// Tests: integer:8, integer:16, integer:32, integer:64 and unsigned variants
+// Test: spec_compliance/types/integer_precision_spec
+// Grammar: sized_type, size_specifier, core_type
+// Semantic: SEM001 — sized integer literals must fit declared precision
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Standard 32-bit integer

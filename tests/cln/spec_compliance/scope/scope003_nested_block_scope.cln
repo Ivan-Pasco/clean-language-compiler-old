@@ -1,0 +1,19 @@
+// Test: spec_compliance/scope/scope003_nested_block_scope
+// Grammar: if_statement, variable_type
+// Semantic: SCOPE003 — Nested blocks are valid scope levels; variables in each level are accessible within it
+// Expected output:
+//   level1: 10
+//   level2: 20
+//   level3: 30
+//   done
+
+start:
+	integer level1 = 10
+	print("level1: " + level1.toString())
+	if level1 > 5
+		integer level2 = 20
+		print("level2: " + level2.toString())
+		if level2 > 15
+			integer level3 = 30
+			print("level3: " + level3.toString())
+	print("done")

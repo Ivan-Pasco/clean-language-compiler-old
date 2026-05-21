@@ -1,5 +1,7 @@
-// Spec Section: 3.7 - Pairs Type
-// Tests: Basic pairs<K,V> type operations
+// Test: spec_compliance/types/pairs_basic_spec
+// Grammar: pairs_type, pairs_literal, pair_element
+// Semantic: SEM001 — pairs key must be string, value must match declared type
+// Expected output: (see inline comments per test)
 
 start:
 	pairs<string, integer> ages = {"alice": 25, "bob": 30}

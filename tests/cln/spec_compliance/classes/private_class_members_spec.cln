@@ -1,0 +1,46 @@
+// Spec Section: grammar §6.4 - private_class_fields_section + private_class_methods_section
+// Feature: private: fields section and private: methods section inside a class
+// Grammar:
+//   private_class_fields_section = "private" ":" NEWLINE class_field_line+
+//   private_class_methods_section = INDENT+ "private" ":" NEWLINE class_function_line+
+// Tests: private fields accessible from class own methods; private methods accessible internally
+
+start:
+	BankAccount account = BankAccount("Alice", 100)
+	print("Owner: " + account.getOwner())
+	print("Balance: " + account.getBalance().toString())
+
+	account.deposit(50)
+	print("After deposit 50: " + account.getBalance().toString())
+
+	account.withdraw(30)
+	print("After withdraw 30: " + account.getBalance().toString())
+
+	print("Private class members test passed")
+
+class BankAccount
+	string owner
+
+	private:
+		integer balance
+
+	constructor(string name, integer initialBalance)
+		owner = name
+		balance = initialBalance
+
+	functions:
+		string getOwner()
+			return owner
+
+		integer getBalance()
+			return balance
+
+		void deposit(integer amount)
+			balance = balance + amount
+
+		void withdraw(integer amount)
+			balance = balance - amount
+
+		private:
+			boolean hasSufficientFunds(integer amount)
+				return balance >= amount

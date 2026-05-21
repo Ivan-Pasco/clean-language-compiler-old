@@ -1,0 +1,12 @@
+// Spec Section: grammar §6.6b - Build Block
+// Feature: build: block at top level
+// Grammar: build_block = "build" ":" NEWLINE INDENT build_field+
+//          build_field = "rules" "=" build_rules_value
+// Tests: build: block with rules = true; file compiles and start: executes
+
+build:
+	rules = true
+
+start:
+	print("Build block compiled successfully")
+	print("build block test passed")

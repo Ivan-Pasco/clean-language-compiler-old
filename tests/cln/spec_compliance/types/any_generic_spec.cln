@@ -1,5 +1,7 @@
-// Spec Section: 3.7 - Generic Type `any`
-// Tests: The `any` type as universal generic placeholder
+// Test: spec_compliance/types/any_generic_spec
+// Grammar: generic_type, core_type
+// Semantic: SEM007 — any is assignable to/from all types; no type mismatch
+// Expected output: (see inline comments per test)
 // NOTE: Full any type with mixed concrete types requires runtime boxing (future work)
 // This test covers same-type any usage which works with current implementation
 

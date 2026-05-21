@@ -1319,6 +1319,45 @@ impl super::CodeGenerator {
             self.function_count += 1;
         }
 
+        // print_integer(value: i64) -> void — typed integer print (spec stdlib-reference.md §1)
+        let print_integer_type = self.add_function_type(&[WasmType::I64], None)?;
+        if self.emit_import(
+            "env",
+            "print_integer",
+            wasm_encoder::EntityType::Function(print_integer_type),
+        ) {
+            self.function_map
+                .insert("print_integer".to_string(), self.function_count);
+            self.imported_functions.insert("print_integer".to_string());
+            self.function_count += 1;
+        }
+
+        // print_float(value: f64) -> void — typed float print (spec stdlib-reference.md §1)
+        let print_float_type = self.add_function_type(&[WasmType::F64], None)?;
+        if self.emit_import(
+            "env",
+            "print_float",
+            wasm_encoder::EntityType::Function(print_float_type),
+        ) {
+            self.function_map
+                .insert("print_float".to_string(), self.function_count);
+            self.imported_functions.insert("print_float".to_string());
+            self.function_count += 1;
+        }
+
+        // print_boolean(value: i32) -> void — typed boolean print (spec stdlib-reference.md §1)
+        let print_boolean_type = self.add_function_type(&[WasmType::I32], None)?;
+        if self.emit_import(
+            "env",
+            "print_boolean",
+            wasm_encoder::EntityType::Function(print_boolean_type),
+        ) {
+            self.function_map
+                .insert("print_boolean".to_string(), self.function_count);
+            self.imported_functions.insert("print_boolean".to_string());
+            self.function_count += 1;
+        }
+
         Ok(())
     }
 

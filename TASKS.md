@@ -1376,3 +1376,109 @@ Added constraint type validation in `src/hir/hir_builder.rs` `desugar_validate_d
 - `ValidateConstraint::Min` / `Max` with a non-numeric literal emits SEM010 with "min/max requires number"
 - `ValidateConstraint::Match` with an unrecognised pattern name emits SEM010 listing valid patterns
   (email, url, uuid, phone, date, integer, number, alphanumeric)
+
+---
+
+## 🟢 LOW: Migrate block-level `#[allow(dead_code)]` to per-method attributes
+
+**Priority**: LOW — suppresses legitimate dead-code warnings, making real dead code harder to spot
+**Discovered**: 2026-05-20
+
+Two impl blocks suppress dead_code at the block level rather than per-method:
+
+- `src/resolver/resolver_impl.rs:30` — `#[allow(dead_code)]` on entire `impl NameResolver`; individual methods are live (used in `src/lib.rs`) but some inner helpers may be unused. Should be removed from the impl block and applied only to genuinely unused methods after `cargo check` identifies them.
+- `src/module/mod.rs:57` — `#[allow(dead_code)]` on entire `impl ModuleResolver`; similarly used externally (package/mod.rs), but internal helpers may be dead.
+
+**Action**: Run `cargo check` with block-level `#[allow(dead_code)]` removed, identify which specific methods warn, apply per-method attributes or delete the dead methods.
+
+---
+
+## 🟢 LOW: Remove "future use" struct fields that have had no callers since introduction
+
+**Priority**: LOW — inflates struct size; hides real dead-code warnings
+**Discovered**: 2026-05-20
+
+Fields held for future infrastructure that are written but never read:
+
+| File | Field | Struct | Note |
+|------|-------|--------|------|
+| `src/codegen/memory.rs:41` | `address` | `MemoryBlock` | ARC inspection |
+| `src/codegen/memory.rs:48` | `allocation_id` | `MemoryBlock` | use-after-free detection |
+| `src/codegen/memory.rs:50,52` | `canary_start/end` | `MemoryBlock` | not yet validated |
+| `src/codegen/memory.rs:54` | `is_poisoned` | `MemoryBlock` | freed-block detection |
+| `src/codegen/memory.rs:56` | `stack_trace` | `MemoryBlock` | debug builds |
+| `src/codegen/memory.rs:156` | `guard_page_map` | `MemoryManager` | guard page querying not wired |
+| `src/codegen/memory.rs:164` | stdlib memory manager | `MemoryManager` | bridge integration not wired |
+| `src/codegen/instruction_generator.rs:10` | `type_manager` | `InstructionGenerator` | type queries not delegated |
+| `src/stdlib/list_behavior.rs:21` | `memory_manager` | `ListBehaviorManager` | codegen uses global manager |
+| `src/stdlib/list_ops.rs:12` | `memory_manager` | `ListManager` | same |
+| `src/stdlib/validator.rs:93` | `memory_manager` | `Validator` | direct allocations not used |
+| `src/runtime/mod.rs:30,32` | `scheduler`, `resolver` | `AsyncRuntime` | not wired into `execute()` |
+| `src/package/mod.rs:108` | `module_resolver` | `PackageManager` | on-demand loading not wired |
+| `src/package/mod.rs:539` | `resolved` | `DependencyResolver` | results not read back |
+| `src/mir/mir_types.rs:49` | unnamed field | MIR type struct | not wired into codegen |
+
+**Action**: For each field, decide: implement the wiring (if the feature is imminent) or delete the field and its population code. Document the decision in a follow-up commit.
+
+---
+
+## 🟢 LOW: `CodegenModuleBuilder::finish()` returns empty vec — dead compatibility shim
+
+**Priority**: LOW — misleading: callers would silently get empty WASM
+**Discovered**: 2026-05-20
+**File**: `src/codegen/codegen_module_builder.rs:40`
+
+The method `pub fn finish(&self) -> Vec<u8>` returns `vec![]` with a comment saying "kept for compatibility, but the new approach generates binary in generate()". No callers found in the codebase. The method is dead and returns useless output.
+
+**Action**: Confirm no external callers via `cargo doc` and a repo-wide `grep`. If confirmed, delete the method. If external callers exist, make the method `#[deprecated]` and document the replacement.
+
+---
+
+## 🟡 MEDIUM-HIGH: Implement empty MIR optimization passes
+
+**Priority**: MEDIUM-HIGH — optimizer is registered but does nothing; opt_level flags have no effect
+**Discovered**: 2026-05-20
+
+Three optimization passes implement the `OptimizationPass` trait but have empty `optimize_function` bodies:
+
+- `ControlFlowSimplificationPass` (`src/mir/optimization.rs:641`) — no-op; enabled at opt_level >= 1
+- `PeepholeOptimizationPass` (`src/mir/optimization.rs:679`) — no-op; enabled at opt_level >= 2
+- `FunctionInliningPass` (`src/mir/optimization.rs:701`) — no-op; enabled at opt_level >= 2
+
+Each has a comment listing potential improvements. Implementing even one pass (e.g. dead-block removal in `ControlFlowSimplificationPass`) would improve code size.
+
+**Action**: Implement `ControlFlowSimplificationPass` first — remove MIR basic blocks that have no predecessors (unreachable code). Write a test that verifies the pass reduces block count on a program with dead branches.
+
+---
+
+## 🟡 MEDIUM-HIGH: Wasmer/Wasmtime runtime host stubs emit constant zero for all host calls
+
+**Priority**: MEDIUM-HIGH — any code path exercising the Wasmer or Wasmtime runtimes gets silent wrong results
+**Discovered**: 2026-05-20
+
+- `src/runtime/wasmer_config.rs:83-91` — all host imports resolved to `|_args| Ok(vec![Value::I32(0)])` regardless of function or return type
+- `src/runtime/wasmtime_runtime.rs:125-127` — all host imports resolved to `|| 0i32`
+
+These runtimes appear to be alternative execution paths (the production path uses `wasmtime_runner` binary). But if any code reaches these runtimes, every host call silently returns 0.
+
+**Action**: Either (a) wire actual host bridge implementations matching `foundation/platform-architecture/HOST_BRIDGE.md`, or (b) replace the stub closures with `panic!("host function {name} not implemented in WasmerRuntime")` so failures are loud rather than silent.
+
+---
+
+## 🟢 LOW: Split oversized functions for readability
+
+**Priority**: LOW — functions over 500 lines violate single-responsibility; difficult to review and test
+**Discovered**: 2026-05-20
+
+| Function | File | Lines | Suggested split |
+|----------|------|-------|-----------------|
+| `setup_linker` | `src/plugins/wasm_adapter.rs:104` | ~2314 | Extract per-namespace registration fns (console, file, http, db, etc.) |
+| `generate_parse_object_instructions` | `src/stdlib/json_class.rs:2606` | ~1258 | Extract key-scan, value-scan, object-assembly helpers |
+| `register_method_style_functions` | `src/runtime/host_functions.rs:1463` | ~1175 | Extract per-class registration fns |
+| `peek_has_orm_subclauses` | `src/parser/token_parser/blocks.rs:453` | ~1146 | Extract clause-type detectors |
+| `resolve_expression_internal` | `src/resolver/resolver_impl.rs:1428` | ~1059 | Extract per-expression-kind helpers |
+| `parse_private_state_section` | `src/parser/token_parser/blocks.rs:1599` | ~1026 | Extract field-type parsers |
+| `new_with_default` | `src/ast/mod.rs:192` | ~1012 | Extract per-node-type default builders |
+| `infer_expression` | `src/typechecker/type_inference.rs:2993` | ~944 | Extract per-expression-kind inference helpers |
+
+**Action**: Split one function at a time. Each split must keep all existing tests green. Start with `setup_linker` (highest impact — namespace registration is easily segmented).

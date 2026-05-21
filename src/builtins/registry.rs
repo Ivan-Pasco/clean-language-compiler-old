@@ -1006,6 +1006,28 @@ impl BuiltinRegistry {
                 BuiltinType::String,
                 BuiltinCategory::Json,
             ),
+            // Spec-canonical names (spec stdlib-reference.md §json):
+            // json.encode(value: any) -> string — alias for dataToText
+            BuiltinFunction::new(
+                "encode",
+                vec![BuiltinType::Any],
+                BuiltinType::String,
+                BuiltinCategory::Json,
+            ),
+            // json.decode(text: string) -> any — alias for textToData
+            BuiltinFunction::new(
+                "decode",
+                vec![BuiltinType::String],
+                BuiltinType::Any,
+                BuiltinCategory::Json,
+            ),
+            // json.get(data: any, key: string) -> any — key-based field access
+            BuiltinFunction::new(
+                "get",
+                vec![BuiltinType::Any, BuiltinType::String],
+                BuiltinType::Any,
+                BuiltinCategory::Json,
+            ),
         ]);
 
         self.namespaces.insert("json".to_string(), json_ns);

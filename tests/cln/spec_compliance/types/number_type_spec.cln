@@ -1,5 +1,7 @@
-// Spec Section: 3.1 - Core Types (number)
-// Tests: number type - 64-bit floating-point decimals
+// Test: spec_compliance/types/number_type_spec
+// Grammar: core_type, float_literal, number_literal
+// Semantic: SEM001 — number variables accept float-compatible values
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Number declaration and initialization

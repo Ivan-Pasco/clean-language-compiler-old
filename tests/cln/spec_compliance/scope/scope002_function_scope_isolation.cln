@@ -1,0 +1,19 @@
+// Test: spec_compliance/scope/scope002_function_scope_isolation
+// Grammar: functions_block, function_declaration, variable_type
+// Semantic: SCOPE002 — Each function has its own scope; same variable name in different functions does not conflict
+// Expected output:
+//   42
+//   hello
+
+start:
+	print(compute().toString())
+	print(describe())
+
+functions:
+	integer compute()
+		integer result = 42
+		return result
+
+	string describe()
+		string result = "hello"
+		return result

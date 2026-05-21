@@ -1,0 +1,21 @@
+// Spec Section: grammar §6.8 - computed_block with multiple properties
+// Feature: multiple computed declarations in one computed: block
+// Status: PENDING — parser exits computed: block after first declaration's body
+// because parse_block() consumes dedent tokens that the computed block needs
+// to continue iterating. Needs codegen fix before this can be in active tests.
+
+start:
+	print("Area: " + area.toString())
+	print("Perimeter: " + perimeter.toString())
+	print("State computed multi-property test passed")
+
+state:
+	integer width = 4
+	integer height = 5
+
+	computed:
+		integer area
+			return width * height
+
+		integer perimeter
+			return 2 * (width + height)

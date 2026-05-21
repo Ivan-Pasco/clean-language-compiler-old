@@ -1,5 +1,7 @@
-// Spec Section: 3.1 - Core Types (string)
-// Tests: string type - UTF-8 text
+// Test: spec_compliance/types/string_type_spec
+// Grammar: core_type, string_literal, string_content
+// Semantic: SEM001 — string variables only accept string-compatible values
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: String declaration and initialization

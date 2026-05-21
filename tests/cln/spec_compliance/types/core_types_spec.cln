@@ -1,5 +1,7 @@
-// Spec Section: 2.1 - Core Types
-// Tests the five core types: boolean, integer, number, string, void
+// Test: spec_compliance/types/core_types_spec
+// Grammar: core_type, type_
+// Semantic: SEM001 — each core type accepts only compatible literal values
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: boolean type

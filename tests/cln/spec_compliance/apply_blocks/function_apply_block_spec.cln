@@ -1,0 +1,23 @@
+// Spec Section: 6.12 - Apply Blocks
+// Feature: function_apply_block
+// Grammar: function_apply_block = NOT ("functions" ":") (identifier) ":" indented_expressions
+// Tests: calling a function using apply-block syntax (arguments as indented block)
+
+start:
+	// Test 1: Call a function using apply-block syntax with one argument
+	greet:
+		"Alice"
+
+	// Test 2: Call a function using apply-block syntax with two arguments
+	printSum:
+		10
+		20
+
+	print("Function apply block tests passed")
+
+functions:
+	void greet(string name)
+		print("Hello, " + name)
+
+	void printSum(integer a, integer b)
+		print("Sum: " + (a + b).toString())

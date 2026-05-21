@@ -1,0 +1,22 @@
+// Spec Section: grammar §6.8 - private_state_section inside state:
+// Feature: private: sub-section inside state: block
+// Grammar: private_state_section = "private" ":" NEWLINE INDENT state_declaration+
+// Tests: state block with a private: section; public state is readable, private state is managed internally
+
+start:
+	print("Score: " + score.toString())
+	addPoints(10)
+	print("After +10: " + score.toString())
+	addPoints(5)
+	print("After +5: " + score.toString())
+	print("State private section test passed")
+
+state:
+	integer score = 0
+
+	private:
+		integer bonus = 0
+
+functions:
+	void addPoints(integer points)
+		score = score + points

@@ -1,5 +1,7 @@
-// Spec Section: 3.4 - Type Conversions
-// Tests: Type conversion methods (.toString)
+// Test: spec_compliance/types/type_conversions_spec
+// Grammar: method_call, type_
+// Semantic: SEM001 — toString() returns string; type must be primitive
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Integer to String conversion

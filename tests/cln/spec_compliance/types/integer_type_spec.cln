@@ -1,5 +1,7 @@
-// Spec Section: 3.1 - Core Types (integer)
-// Tests: integer type - 32-bit signed whole numbers
+// Test: spec_compliance/types/integer_type_spec
+// Grammar: core_type, integer_literal, decimal_integer
+// Semantic: SEM001 — integer variables only accept integer-compatible values
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Integer declaration and initialization

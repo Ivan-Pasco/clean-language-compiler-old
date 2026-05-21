@@ -1,0 +1,16 @@
+// Test: spec_compliance/scope/scope001_declare_before_use
+// Grammar: variable_type, identifier, expression
+// Semantic: SCOPE001 — Variable must be declared before use
+// Expected output:
+//   10
+//   15
+//   hello world
+
+start:
+	integer x = 10
+	print(x.toString())
+	integer y = x + 5
+	print(y.toString())
+	string greeting = "hello"
+	string message = greeting + " world"
+	print(message)

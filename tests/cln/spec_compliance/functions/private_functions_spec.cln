@@ -1,0 +1,39 @@
+// Spec Section: grammar §6.2 - private_functions_section
+// Feature: private: sub-section inside a top-level functions: block
+// Grammar: private_functions_section = INDENT+ "private" ":" NEWLINE function_declaration_line+
+// Tests: private helper functions callable from public functions in the same file
+// Note: private: section must appear before public functions in the functions: block
+
+start:
+	// Test 1: Public function calls private helper
+	string result1 = formatGreeting("Bob")
+	print(result1)
+
+	// Test 2: Public function using private computation
+	integer doubled = doubleValue(7)
+	print("Doubled: " + doubled.toString())
+
+	// Test 3: Two public functions both use the same private helper
+	string msg1 = buildMessage("World")
+	string msg2 = buildMessage("Clean")
+	print(msg1)
+	print(msg2)
+
+	print("Private functions test passed")
+
+functions:
+	private:
+		string addPrefix(string text)
+			return "Hello, " + text
+
+		integer multiply(integer a, integer b)
+			return a * b
+
+	string formatGreeting(string name)
+		return addPrefix(name)
+
+	integer doubleValue(integer n)
+		return multiply(n, 2)
+
+	string buildMessage(string subject)
+		return addPrefix(subject)

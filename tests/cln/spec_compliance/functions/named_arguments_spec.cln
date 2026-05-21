@@ -1,0 +1,30 @@
+// Spec Section: grammar §3.5 - named_argument
+// Feature: named arguments in function calls
+// Grammar: named_argument = parameter_name ":" argument_expression
+//          argument_item = named_argument | argument_expression
+// Tests: functions called with named arguments (FUNC004 positive path)
+
+start:
+	// Test 1: single named argument
+	string g1 = greet(name: "Alice")
+	print(g1)
+
+	// Test 2: multiple named arguments
+	string g2 = createProfile(name: "Bob", age: 30)
+	print(g2)
+
+	// Test 3: named argument with integer parameter
+	integer doubled = doubleIt(value: 21)
+	print("Doubled: " + doubled.toString())
+
+	print("Named arguments test passed")
+
+functions:
+	string greet(string name)
+		return "Hello, " + name
+
+	string createProfile(string name, integer age)
+		return name + " is " + age.toString()
+
+	integer doubleIt(integer value)
+		return value * 2

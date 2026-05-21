@@ -1276,34 +1276,6 @@ fn extract_plugins(source: &str) -> Vec<String> {
     plugins
 }
 
-/// Auto-detect plugins using loaded plugin manifests.
-///
-/// Uses `[paths]` section from plugin.toml files to determine which plugins
-/// should be activated for a given file path, based on the plugin's `owns`
-/// directories and `implicit_import` flag.
-#[allow(dead_code)] // Plugin auto-detection helper — not yet called from the main compile path
-fn detect_plugins_from_manifests<P: AsRef<std::path::Path>>(
-    file_path: P,
-    manifests: &std::collections::HashMap<String, plugins::plugin_abi::PluginManifest>,
-) -> Vec<String> {
-    let path_str = file_path.as_ref().to_string_lossy();
-    let mut result = Vec::new();
-
-    for (name, manifest) in manifests {
-        if manifest.paths.implicit_import {
-            for owned_path in &manifest.paths.owns {
-                if path_str.contains(owned_path.as_str()) {
-                    result.push(name.clone());
-                    break;
-                }
-            }
-        }
-    }
-
-    result.dedup();
-    result
-}
-
 /// Compiles a multi-file Clean Language program from an entry file
 ///
 /// This function supports programs with `import:` statements that reference

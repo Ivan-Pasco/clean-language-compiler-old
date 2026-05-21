@@ -1,0 +1,16 @@
+// Test: spec_compliance/scope/scope005_screen_state_valid
+// Grammar: screen_block, state_block
+// Semantic: SCOPE005 — Screen-local state is accessible within the owning screen
+// Expected output:
+//   0
+
+screen Home:
+	state:
+		integer homeCount = 0
+
+	functions:
+		void showCount()
+			print(homeCount)
+
+start:
+	showCount()

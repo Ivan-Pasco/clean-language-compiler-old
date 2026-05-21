@@ -1,0 +1,37 @@
+// Spec Section: CLASS001 - valid inheritance (positive path)
+// Feature: class inheriting from parent; all parent methods accessible via inherited instance
+// Grammar: class_declaration = "class" identifier [ "is" type ] [ class_body ]
+// Tests: subclass calls base() constructor, inherits methods, adds own methods
+
+start:
+	// NamedCounter inherits from Counter, uses base() for parent construction
+	NamedCounter nc = NamedCounter("clicks", 0)
+	print(nc.getLabel())
+	nc.increment()
+	nc.increment()
+	print("Count: " + nc.getCount().toString())
+	print("Inheritance chain test passed")
+
+class Counter
+	integer count
+
+	constructor(integer initial)
+		count = initial
+
+	functions:
+		integer getCount()
+			return count
+
+		void increment()
+			count = count + 1
+
+class NamedCounter is Counter
+	string label
+
+	constructor(string lbl, integer initial)
+		base(initial)
+		label = lbl
+
+	functions:
+		string getLabel()
+			return label

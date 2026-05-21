@@ -1,0 +1,34 @@
+// Test: spec_compliance/types/none_literal_spec
+// Grammar: none_literal, default_op
+// Semantic: SEM001 — none is the null value; default_op provides fallback
+// Expected output: (see inline comments per test)
+// Grammar:
+//   none_literal = "none"
+//   default_expression = logical_expression { default_op logical_expression }
+// Tests: function returning none; default operator providing fallback value
+
+start:
+	// Test 1: function returns a value for known id
+	string r1 = tryFind(1)
+	print("r1: " + r1)
+
+	// Test 2: function returns none for unknown id; default provides fallback
+	string r2 = tryFind(99)
+	string display = r2 default "not found"
+	print("r2 with default: " + display)
+
+	// Test 3: none literal returned directly
+	string r3 = alwaysNone()
+	string safe = r3 default "empty"
+	print("r3 safe: " + safe)
+
+	print("None literal test passed")
+
+functions:
+	string tryFind(integer id)
+		if id == 1
+			return "Alice"
+		return none
+
+	string alwaysNone()
+		return none

@@ -1,5 +1,7 @@
-// Spec Section: 3.6 - List Type
-// Tests: List type declarations and operations
+// Test: spec_compliance/types/list_type_spec
+// Grammar: list_type, list_element, list_literal
+// Semantic: SEM001 — list element type must match declared type parameter
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Empty integer list

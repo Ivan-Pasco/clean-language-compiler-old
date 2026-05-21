@@ -1,5 +1,7 @@
-// Spec Section: 3.1 - Number Precision Modifiers
-// Tests: number:32 (single precision) and number:64 (double precision)
+// Test: spec_compliance/types/number_precision_spec
+// Grammar: sized_type, size_specifier, core_type
+// Semantic: SEM001 — sized float literals use declared precision (number:32 = f32, number:64 = f64)
+// Expected output: (see inline comments per test)
 
 start:
 	// Test 1: Standard 64-bit number

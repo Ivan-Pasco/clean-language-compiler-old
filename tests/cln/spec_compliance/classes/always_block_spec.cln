@@ -1,0 +1,36 @@
+// Spec Section: CLASS006 - always constraints
+// Feature: always: block inside class body
+// Grammar: always_block = "always" ":" NEWLINE INDENT expression+
+// Tests: class with always: invariant block; methods operate within the constraint
+
+start:
+	// Test 1: Create a Counter — always: block declares value >= 0
+	Counter c = Counter(5)
+	print("Initial: " + c.getValue().toString())
+
+	c.increment()
+	print("After increment: " + c.getValue().toString())
+
+	c.add(3)
+	print("After add 3: " + c.getValue().toString())
+
+	print("Always block test passed")
+
+class Counter
+	integer value
+
+	constructor(integer initial)
+		value = initial
+
+	always:
+		value >= 0
+
+	functions:
+		integer getValue()
+			return value
+
+		void increment()
+			value = value + 1
+
+		void add(integer n)
+			value = value + n

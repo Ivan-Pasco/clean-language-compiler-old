@@ -508,19 +508,21 @@ impl StringOperations {
             self.generate_string_is_blank(),
         )?;
 
+        // Spec (stdlib-reference.md): string_pad_start(str_ptr: i32, width: i32, pad_ptr: i32, pad_len: i32) -> i32
         register_stdlib_function(
             codegen,
             "string_pad_start",
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // string, length, padString
-            Some(WasmType::I32),                            // new string
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // str_ptr, width, pad_ptr, pad_len
+            Some(WasmType::I32),                                           // new string
             self.generate_string_pad_start(),
         )?;
 
+        // Spec (stdlib-reference.md): string_pad_end(str_ptr: i32, width: i32, pad_ptr: i32, pad_len: i32) -> i32
         register_stdlib_function(
             codegen,
             "string_pad_end",
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // string, length, padString
-            Some(WasmType::I32),                            // new string
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32], // str_ptr, width, pad_ptr, pad_len
+            Some(WasmType::I32),                                           // new string
             self.generate_string_pad_end(),
         )?;
 
