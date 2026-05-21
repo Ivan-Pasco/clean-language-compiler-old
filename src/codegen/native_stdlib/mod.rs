@@ -61,10 +61,6 @@ pub const STRING_DATA_OFFSET: u32 = 4;
 ///   - list_ops.rs generate_list_allocate()
 ///   - list_class.rs generate_push()
 ///   - mir_codegen.rs GetElementPtr for list access (offset 16)
-/// Pairs/map memory layout (matches pairs_ops.rs):
-/// - Offset 0: count (i32, 4 bytes) — number of key/value entries
-/// - Offset 4: capacity (i32, 4 bytes) — maximum entries before full
-/// - Offset 8+: entries (each 8 bytes: key_ptr i32 + val_ptr i32)
 pub const PAIRS_COUNT_OFFSET: u32 = 0;
 pub const PAIRS_CAPACITY_OFFSET: u32 = 4;
 pub const PAIRS_HEADER_SIZE: u32 = 8;
