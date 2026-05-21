@@ -171,6 +171,13 @@ impl HirValidator {
 
     /// Collect all top-level definitions (functions and classes)
     fn collect_definitions(context: &mut ValidationContext, hir: &HirProgram) {
+        // Collect imported module names so they are recognised as valid namespaces.
+        // The resolver enforces IMPORT001/IMPORT002; the HIR validator only needs to
+        // know that `ModuleName.fn()` is not a "Undefined variable" error.
+        for import in &hir.imports {
+            context.plugin_namespaces.insert(import.module_name.clone());
+        }
+
         // Collect functions
         for function in &hir.functions {
             if context.functions.contains_key(&function.name) {
@@ -806,7 +813,7 @@ impl HirValidator {
                 // Inside a class constructor or method, unqualified field names are valid
                 // as expressions (the resolver adds implicit `this.` in stage 4).
                 // Check the full inheritance chain so child methods can access parent fields.
-                let is_class_field = context.current_class.as_ref().map_or(false, |cn| {
+                let is_class_field = context.current_class.as_ref().is_some_and(|cn| {
                     Self::class_has_field_in_hierarchy(&context.classes, cn, name)
                 });
                 if context.lookup_variable(name).is_none()
@@ -1037,7 +1044,7 @@ impl HirValidator {
                 // assignment targets even though they are not in the variable scope.  The
                 // resolver adds the implicit `this.` prefix in stage 4; at the HIR validation
                 // stage we accept any name that belongs to the class or any ancestor class.
-                let is_class_field = context.current_class.as_ref().map_or(false, |cn| {
+                let is_class_field = context.current_class.as_ref().is_some_and(|cn| {
                     Self::class_has_field_in_hierarchy(&context.classes, cn, name)
                 });
 
