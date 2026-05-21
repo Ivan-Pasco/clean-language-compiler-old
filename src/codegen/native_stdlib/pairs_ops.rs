@@ -289,15 +289,16 @@ pub fn gen_pairs_set(str_eq_idx: u32) -> Vec<Instruction<'static>> {
         Instruction::End,   // end $scan loop
         Instruction::End,   // end $scan_outer
         // --- Append new entry (key not found in scan) ---
-        // capacity = mem[map_ptr + PAIRS_CAPACITY_OFFSET]
-        Instruction::LocalGet(0),
+        // if count >= capacity, skip append (map is full) — br to $outer
+        // WASM i32.ge_s: pops [LHS, RHS], returns LHS >= RHS.
+        // Push count first (LHS), then capacity (RHS) so we get count >= capacity.
+        Instruction::LocalGet(3), // push count
+        Instruction::LocalGet(0), // push map_ptr
         Instruction::I32Load(MemArg {
             offset: PAIRS_CAPACITY_OFFSET as u64,
             align: 2,
             memory_index: 0,
-        }),
-        // if count >= capacity, skip append (map is full) — br to $outer
-        Instruction::LocalGet(3),
+        }), // push capacity = mem[map_ptr + PAIRS_CAPACITY_OFFSET]
         Instruction::I32GeS,
         Instruction::If(BlockType::Empty),
         Instruction::Br(1), // break to $outer (0=if, 1=outer)
