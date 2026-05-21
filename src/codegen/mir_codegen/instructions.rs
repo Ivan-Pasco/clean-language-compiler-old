@@ -1773,6 +1773,8 @@ impl MirCodeGenerator<'_> {
                         | Some("printl")
                         | Some("list.set")
                         | Some("list.clear")
+                        | Some("pairs.set")
+                        | Some("__pairs_set")
                         | Some("mem_release")
                         | Some("mem_retain")
                         | Some("mem_scope_push")

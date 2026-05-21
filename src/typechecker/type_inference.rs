@@ -4699,6 +4699,12 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::Array(Box::new(ConcreteType::String)))
             }
 
+            // Pairs methods
+            (ConcreteType::Pairs(_, value_type), "get") => Ok((**value_type).clone()),
+            (ConcreteType::Pairs(_, _), "has") => Ok(ConcreteType::Boolean),
+            (ConcreteType::Pairs(_, _), "len" | "size") => Ok(ConcreteType::Integer),
+            (ConcreteType::Pairs(_, _), "set" | "remove") => Ok(ConcreteType::Undefined),
+
             // Array methods
             (ConcreteType::Array(_), "length") => Ok(ConcreteType::Integer),
             (ConcreteType::Array(_), "size") => Ok(ConcreteType::Integer), // Alias for length

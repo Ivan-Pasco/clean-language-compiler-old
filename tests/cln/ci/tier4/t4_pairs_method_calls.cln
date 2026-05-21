@@ -1,0 +1,13 @@
+// CI Tier 4 | t4_pairs_method_calls
+// Grammar: pairs<K,V> type, method-call syntax (set/get/has/len)
+// Expected output:
+//   world
+//   true
+//   1
+
+start:
+	pairs<string, string> p = {}
+	p.set("hello", "world")
+	print p.get("hello")
+	print p.has("hello").toString()
+	print p.len().toString()

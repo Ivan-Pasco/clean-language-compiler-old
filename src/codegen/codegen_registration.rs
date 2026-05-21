@@ -738,6 +738,98 @@ impl super::CodeGenerator {
         Ok(())
     }
 
+    /// Register native WASM pairs/map operations.
+    ///
+    /// Must be called AFTER `register_memory_operations()` so that `__malloc` is already
+    /// in the function table.
+    pub(crate) fn register_pairs_operations(&mut self) -> Result<(), CompilerError> {
+        // Resolve malloc index — required by pairs_new to allocate map storage.
+        let malloc_idx = self
+            .get_function_index("__malloc")
+            .or_else(|| self.get_function_index("malloc"))
+            .expect("malloc not registered before pairs operations");
+
+        // __pairs_str_eq(ptr_a: i32, ptr_b: i32) -> i32
+        // Returns 1 if the two Clean Language strings are byte-equal, 0 otherwise.
+        // Needs 2 extra locals: len_a (i32), i (i32).
+        let str_eq_instructions = native_stdlib::pairs_ops::gen_str_eq();
+        let str_eq_idx = self.register_function_with_locals(
+            "__pairs_str_eq",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32], // len_a, i
+            &str_eq_instructions,
+        )?;
+        self.add_function_alias("pairs.str_eq", str_eq_idx);
+
+        // __pairs_new(capacity: i32) -> i32
+        // Allocates a new empty pairs map with the given initial capacity.
+        // Uses 1 extra local: ptr (i32) to avoid stack juggling.
+        let pairs_new_instructions = native_stdlib::pairs_ops::gen_pairs_new_impl(malloc_idx);
+        let pairs_new_idx = self.register_function_with_locals(
+            "__pairs_new",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32], // ptr scratch
+            &pairs_new_instructions,
+        )?;
+        self.add_function_alias("pairs.new", pairs_new_idx);
+        self.add_function_alias("pairs.allocate", pairs_new_idx);
+
+        // __pairs_set(map_ptr: i32, key_ptr: i32, val_ptr: i32) -> void
+        // Inserts or updates a key/value pair.
+        // Needs 3 extra locals: count, i, entry_ptr.
+        let pairs_set_instructions = native_stdlib::pairs_ops::gen_pairs_set(str_eq_idx);
+        let pairs_set_idx = self.register_function_with_locals(
+            "__pairs_set",
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            None,                                           // void return
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // count, i, entry_ptr
+            &pairs_set_instructions,
+        )?;
+        self.add_function_alias("pairs.set", pairs_set_idx);
+
+        // __pairs_get(map_ptr: i32, key_ptr: i32) -> i32
+        // Returns the value pointer for the key, or 0 if not found.
+        // Needs 3 extra locals: count, i, entry_ptr.
+        let pairs_get_instructions = native_stdlib::pairs_ops::gen_pairs_get(str_eq_idx);
+        let pairs_get_idx = self.register_function_with_locals(
+            "__pairs_get",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // count, i, entry_ptr
+            &pairs_get_instructions,
+        )?;
+        self.add_function_alias("pairs.get", pairs_get_idx);
+
+        // __pairs_has(map_ptr: i32, key_ptr: i32) -> i32
+        // Returns 1 if the key exists, 0 otherwise.
+        // Needs 3 extra locals: count, i, entry_ptr.
+        let pairs_has_instructions = native_stdlib::pairs_ops::gen_pairs_has(str_eq_idx);
+        let pairs_has_idx = self.register_function_with_locals(
+            "__pairs_has",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // count, i, entry_ptr
+            &pairs_has_instructions,
+        )?;
+        self.add_function_alias("pairs.has", pairs_has_idx);
+
+        // __pairs_len(map_ptr: i32) -> i32
+        // Returns the number of entries currently stored.
+        let pairs_len_instructions = native_stdlib::pairs_ops::gen_pairs_len();
+        let pairs_len_idx = self.register_function(
+            "__pairs_len",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &pairs_len_instructions,
+        )?;
+        self.add_function_alias("pairs.len", pairs_len_idx);
+        self.add_function_alias("pairs.size", pairs_len_idx);
+
+        Ok(())
+    }
+
     pub(crate) fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::memory::MemoryManager;
         use std::cell::RefCell;

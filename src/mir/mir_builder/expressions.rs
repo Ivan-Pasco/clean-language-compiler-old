@@ -2339,6 +2339,15 @@ impl MirBuilder {
                         "rows" | "cols" | "size" => ConcreteType::Integer,
                         _ => expression.expr_type.clone(),
                     }
+                } else if let ConcreteType::Pairs(_, value_type) = &receiver.expr_type {
+                    // NOTE: Pairs methods have known return types based on the value type
+                    match method_name.as_str() {
+                        "get" => (**value_type).clone(),
+                        "has" => ConcreteType::Boolean,
+                        "len" | "size" => ConcreteType::Integer,
+                        "set" | "remove" => ConcreteType::Undefined,
+                        _ => expression.expr_type.clone(),
+                    }
                 } else if let ConcreteType::Class {
                     symbol_id: class_symbol,
                     ..
@@ -2408,6 +2417,7 @@ impl MirBuilder {
                         ConcreteType::Integer => Some("integer"),
                         ConcreteType::Number => Some("number"),
                         ConcreteType::Boolean => Some("boolean"),
+                        ConcreteType::Pairs(_, _) => Some("pairs"),
                         _ => None,
                     };
 
@@ -2931,11 +2941,20 @@ impl MirBuilder {
                 };
                 self.add_instruction(context, size_instruction);
 
-                // Call list.allocate with synthetic SymbolId(1003)
+                // Call list.allocate (for arrays) or pairs.new (for pairs) with the size hint.
+                // Pairs literals use {} syntax and have a Pairs concrete type.
+                let alloc_function = if matches!(&expression.expr_type, ConcreteType::Pairs(_, _)) {
+                    MirOperand::NamedFunction {
+                        name: "pairs.new".to_string(),
+                        symbol_id: SymbolId(1003),
+                    }
+                } else {
+                    MirOperand::Function(SymbolId(1003))
+                };
                 let alloc_instruction = MirInstruction {
                     dest: Some(list_value_id),
                     operation: MirOperation::Call {
-                        function: MirOperand::Function(SymbolId(1003)),
+                        function: alloc_function,
                         arguments: vec![MirOperand::Value(size_value_id)],
                     },
                     location: expression.location.clone(),

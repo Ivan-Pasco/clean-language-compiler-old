@@ -614,6 +614,11 @@ impl MirCodeGenerator<'_> {
                 .register_list_operations()
                 .map_err(|e| vec![e])?;
 
+            debug_mir!("DEBUG MIR: Registering native pairs operations");
+            self.wasm_generator
+                .register_pairs_operations()
+                .map_err(|e| vec![e])?;
+
             debug_mir!("DEBUG MIR: Registering JSON operations");
             self.wasm_generator
                 .register_json_operations()
