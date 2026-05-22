@@ -5622,14 +5622,15 @@ impl<'a> TypeInference<'a> {
                 break;
             }
             if let Some(sym) = self.symbol_table.get_symbol(current) {
-                if let crate::resolver::symbol_table::SymbolKind::Class { parent, .. } = &sym.kind {
-                    if let Some(p) = parent {
-                        if *p == parent_id {
-                            return true;
-                        }
-                        current = *p;
-                        continue;
+                if let crate::resolver::symbol_table::SymbolKind::Class {
+                    parent: Some(p), ..
+                } = &sym.kind
+                {
+                    if *p == parent_id {
+                        return true;
                     }
+                    current = *p;
+                    continue;
                 }
             }
             break;
