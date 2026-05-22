@@ -17,10 +17,7 @@ use clap::{Parser, Subcommand};
 use clean_language_compiler::codegen::bridge_generator::{BridgeGenerator, BridgeTarget};
 use clean_language_compiler::debug::DebugUtils;
 use clean_language_compiler::error::{CompilerError, ErrorReporter};
-use clean_language_compiler::{
-    compile_with_file, runtime::runtime_manager::RuntimeManager,
-    runtime::wasmtime_config::CleanWasmtimeConfig,
-};
+use clean_language_compiler::{compile_with_file, runtime::runtime_manager::RuntimeManager};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -1723,29 +1720,15 @@ async fn handle_run(
     }
 
     let input_path = Path::new(&input);
-    let wasm_bytes = match input_path.extension().and_then(|s| s.to_str()) {
+    match input_path.extension().and_then(|s| s.to_str()) {
         Some("cln") => {
-            // Handle Clean Language source file - compile to WASM first
             if !output_config.quiet {
                 println!("🔧 Compiling Clean Language file: {input}");
             }
 
             let source = fs::read_to_string(&input)?;
-            if debug {
-                println!("📝 Source file size: {} characters", source.len());
-            }
-
-            // Try to compile the source to WASM
             let wasm_binary = match compile_with_file(&source, &input) {
-                Ok(binary) => {
-                    if debug {
-                        println!(
-                            "✅ Compilation successful: {} bytes of WASM generated",
-                            binary.len()
-                        );
-                    }
-                    binary
-                }
+                Ok(binary) => binary,
                 Err(compile_errors) => {
                     output_config.report_errors(&compile_errors, Some(&source));
                     return Err(
@@ -1754,85 +1737,112 @@ async fn handle_run(
                 }
             };
 
+            // Write to a temp file and hand off to clean-runner
+            let file_stem = input.trim_end_matches(".cln");
+            let temp_wasm = format!("{file_stem}.temp.wasm");
+            fs::write(&temp_wasm, &wasm_binary)?;
             if !output_config.quiet {
                 println!("🚀 Running compiled WebAssembly...");
             }
-            wasm_binary
+            let result = execute_via_clean_runner(&temp_wasm, debug);
+            let _ = fs::remove_file(&temp_wasm);
+            result
         }
         Some("wasm") => {
-            // Handle WebAssembly binary file directly
-            println!("🚀 Running WebAssembly file: {input}");
-
-            let wasm_bytes = fs::read(&input)?;
             if debug {
-                println!("📦 WASM file size: {} bytes", wasm_bytes.len());
+                println!("🚀 Running WebAssembly file: {input}");
             }
-            wasm_bytes
+            execute_via_clean_runner(&input, debug)
         }
         Some(ext) => {
             eprintln!("❌ Error: Unsupported file extension '.{ext}'");
             eprintln!(
                 "   Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
             );
-            return Ok(());
+            Ok(())
         }
         None => {
             eprintln!("❌ Error: File has no extension");
             eprintln!(
                 "   Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
             );
-            return Ok(());
+            Ok(())
         }
-    };
+    }
+}
 
-    // Use wasmtime to execute the WASM file
-    use wasmtime::{Linker, Module, Store};
-
-    // Create engine and store using minimal configuration for direct execution
-    let engine = CleanWasmtimeConfig::create_minimal_engine()?;
-    let mut store = Store::new(&engine, ());
-
-    // Create module
-    let module = Module::new(&engine, &wasm_bytes)?;
-
-    // Create linker and register all host functions using centralized registry
-    let mut linker = Linker::new(&engine);
-    clean_language_compiler::runtime::host_functions::register_all_host_functions(&mut linker)?;
-
-    // Instantiate and run
-    let instance = linker.instantiate(&mut store, &module)?;
-
-    if debug {
-        println!("✅ WebAssembly module loaded successfully");
-        println!(
-            "📋 Exported functions: {:?}",
-            instance
-                .exports(&mut store)
-                .map(|e| e.name())
-                .collect::<Vec<_>>()
-        );
+fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
+    // 1. cleen-managed location: ~/.cleen/clean-runner/<version>/clean-runner (highest semver)
+    if let Some(home) = std::env::var_os("HOME") {
+        let base = std::path::Path::new(&home)
+            .join(".cleen")
+            .join("clean-runner");
+        if base.exists() {
+            if let Ok(entries) = std::fs::read_dir(&base) {
+                let mut versions: Vec<String> = entries
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .collect();
+                versions.sort_by(|a, b| {
+                    let parse = |s: &str| -> (u32, u32, u32) {
+                        let mut parts = s.trim_start_matches('v').split('.');
+                        let major = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                        let minor = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                        let patch = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                        (major, minor, patch)
+                    };
+                    parse(b).cmp(&parse(a))
+                });
+                for ver in &versions {
+                    let candidate = base.join(ver).join("clean-runner");
+                    if candidate.exists() {
+                        return Ok(candidate.to_string_lossy().into_owned());
+                    }
+                    #[cfg(windows)]
+                    {
+                        let win = base.join(ver).join("clean-runner.exe");
+                        if win.exists() {
+                            return Ok(win.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // Get and call the start function (try both "_start" and "start")
-    let start_func = instance
-        .get_func(&mut store, "_start")
-        .or_else(|| instance.get_func(&mut store, "start"));
+    // 2. Fall back to PATH
+    if std::process::Command::new("clean-runner")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some()
+    {
+        return Ok("clean-runner".to_string());
+    }
 
-    if let Some(start_func) = start_func {
-        if debug {
-            println!("🎯 Executing start function...");
-            println!("--- Output ---");
-        }
-        start_func.call(&mut store, &[], &mut [])?;
-        if debug {
-            println!("--- End Output ---");
-            println!("✅ Execution completed successfully!");
-        }
+    Err("clean-runner not found. Install it with: cleen runner install latest".into())
+}
+
+fn execute_via_clean_runner(
+    wasm_path: &str,
+    _debug: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let runner = find_clean_runner()?;
+    let status = std::process::Command::new(&runner)
+        .arg(wasm_path)
+        .status()
+        .map_err(|e| format!("Failed to launch clean-runner '{runner}': {e}"))?;
+    if status.success() {
+        Ok(())
     } else {
-        eprintln!("❌ Error: start function not found in WASM module");
+        Err(format!(
+            "clean-runner exited with code {}",
+            status.code().unwrap_or(-1)
+        )
+        .into())
     }
-
-    Ok(())
 }
 
 // Test runner removed - not compatible with 7-stage pipeline
