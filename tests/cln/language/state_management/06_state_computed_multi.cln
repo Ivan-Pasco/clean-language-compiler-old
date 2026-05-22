@@ -1,0 +1,18 @@
+// Spec Section: grammar §6.8 - computed_block with multiple properties
+// Feature: multiple computed declarations in one computed: block
+
+start:
+	print("Area: " + area.toString())
+	print("Perimeter: " + perimeter.toString())
+	print("State computed multi-property test passed")
+
+state:
+	integer width = 4
+	integer height = 5
+
+	computed:
+		integer area
+			return width * height
+
+		integer perimeter
+			return 2 * (width + height)

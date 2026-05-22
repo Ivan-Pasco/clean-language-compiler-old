@@ -1896,12 +1896,16 @@ impl TokenParser {
                 }
             }
 
-            // Dedent exits the computed block
+            // Dedent handling: exit the block only if level drops below computed_level.
+            // A Dedent at or above computed_level means a body block just ended —
+            // consume it and continue to the next declaration.
             if let TokenKind::Dedent(level) = self.current_kind() {
-                if *level < computed_level {
-                    self.bump();
+                let level = *level;
+                self.bump();
+                if level < computed_level {
                     break;
                 }
+                continue;
             }
 
             // Top-level section keywords end the computed block

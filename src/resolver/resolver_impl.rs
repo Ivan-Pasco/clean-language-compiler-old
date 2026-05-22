@@ -666,7 +666,9 @@ impl NameResolver {
             })
         };
 
-        // Resolve methods
+        // Resolve methods — two-pass to allow mutual method references.
+        // Pass 1: register all method symbols in class_scope so that any method
+        //         body can call any other method (including private ones) by name.
         let mut resolved_methods = Vec::new();
         let mut method_symbol_ids = Vec::new();
 
@@ -685,29 +687,32 @@ impl NameResolver {
                 class_scope,
                 method.location.clone(),
             );
-            // Propagate inline private: visibility (SEM005).
             if method.is_private {
                 self.symbol_table
                     .mark_as_private(method_symbol_id, class.name.clone());
             }
-
             method_symbol_ids.push(method_symbol_id);
+        }
 
+        // Update class symbol with method IDs now so lookup_class_member works
+        // during body resolution below.
+        if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
+            if let SymbolKind::Class { methods, .. } = &mut class_symbol.kind {
+                *methods = method_symbol_ids.clone();
+            }
+        }
+
+        // Pass 2: resolve method bodies (all symbols are visible in class_scope).
+        for (method, &method_symbol_id) in class.methods.iter().zip(method_symbol_ids.iter()) {
             let resolved_method =
                 self.resolve_method(method.clone(), class_symbol_id, method_symbol_id)?;
             resolved_methods.push(resolved_method);
         }
 
-        // Update class symbol with fields and methods
+        // Update class symbol with fields and parent (methods were set in pass 1 above).
         if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
-            if let SymbolKind::Class {
-                fields,
-                methods,
-                parent,
-            } = &mut class_symbol.kind
-            {
+            if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
                 *fields = field_symbol_ids.clone();
-                *methods = method_symbol_ids;
                 *parent = parent_symbol_id;
             }
         }
@@ -1632,32 +1637,49 @@ impl NameResolver {
                 // Lookup function in symbol table (includes builtin functions)
                 let function_symbol_opt = self.symbol_table.lookup_symbol(function);
 
-                // If not found as a global function and we're inside a class,
-                // check if it's a method in the current class or parent class
-                if function_symbol_opt.is_none() {
-                    if let Some(current_class_id) = self.current_class {
-                        // Try to find it as a method in the current class or parent
-                        if let Some(method_symbol_id) = self
-                            .symbol_table
-                            .lookup_class_member(current_class_id, function)
-                        {
-                            // Found as a method! Convert to implicit this.method() call
-                            let mut resolved_arguments = Vec::new();
-                            for arg in arguments {
-                                resolved_arguments.push(self.resolve_expression(arg)?);
+                // If we're inside a class, check whether the resolved symbol is a method of
+                // the current class.  Methods need `this` as an implicit first argument, so
+                // we emit MethodCall { receiver: This } rather than a bare Call.  This applies
+                // whether the method was found through scope chain walking (two-pass registration)
+                // or via the lookup_class_member fallback.
+                if let Some(current_class_id) = self.current_class {
+                    let method_symbol_id_opt = function_symbol_opt
+                        .and_then(|sym_id| {
+                            // Accept it only if it belongs to the current class.
+                            if let Some(sym) = self.symbol_table.get_symbol(sym_id) {
+                                if let crate::resolver::symbol_table::SymbolKind::Method {
+                                    class_id,
+                                    ..
+                                } = &sym.kind
+                                {
+                                    if *class_id == current_class_id {
+                                        return Some(sym_id);
+                                    }
+                                }
                             }
+                            None
+                        })
+                        .or_else(|| {
+                            // Fallback: look it up by name in case it isn't yet reachable via scope.
+                            self.symbol_table
+                                .lookup_class_member(current_class_id, function)
+                        });
 
-                            return Ok(ResolvedHirExpression::MethodCall {
-                                receiver: Box::new(ResolvedHirExpression::This {
-                                    class_symbol_id: current_class_id,
-                                    location: location.clone(),
-                                }),
-                                method: function.clone(),
-                                method_symbol_id: Some(method_symbol_id),
-                                arguments: resolved_arguments,
-                                location: location.clone(),
-                            });
+                    if let Some(method_symbol_id) = method_symbol_id_opt {
+                        let mut resolved_arguments = Vec::new();
+                        for arg in arguments {
+                            resolved_arguments.push(self.resolve_expression(arg)?);
                         }
+                        return Ok(ResolvedHirExpression::MethodCall {
+                            receiver: Box::new(ResolvedHirExpression::This {
+                                class_symbol_id: current_class_id,
+                                location: location.clone(),
+                            }),
+                            method: function.clone(),
+                            method_symbol_id: Some(method_symbol_id),
+                            arguments: resolved_arguments,
+                            location: location.clone(),
+                        });
                     }
                 }
 
