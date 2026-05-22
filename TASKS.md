@@ -1,12 +1,29 @@
 # Clean Language Compiler - Implementation Tasks
 
-## 🔴 CRITICAL: Matrix type — 8 tests failing (codegen/parse gap)
+## 🔴 CRITICAL: frame.data plugin compatibility — 4 tests failing (SYN001)
 
-**Priority**: CRITICAL — matrix literals and methods not compiling
+**Priority**: CRITICAL — ORM/data plugin tests cannot compile
+**Discovered**: 2026-05-22
+**Files**: `tests/cln/plugins/simple_data.cln`, `tests/cln/plugins/plugin_keywords.cln`,
+  `tests/cln/bugfixes/syn001_orm_query_in_function.cln`, `tests/cln/bugfixes/sem003_orm_variable_bound_in_function.cln`
+**Error**: `SYN001: Plugin 'frame.data' failed to expand 'data:'` — plugin generates garbled/wrong-syntax output
+**Root cause**: All installed frame.data versions (2.0.0–2.6.1) were compiled with older compiler
+  versions that had codegen bugs, causing the plugin to produce corrupted output at compile time.
+  Sandbox stubs for old API names (_session_create, _session_destroy, _session_set_cookie) added
+  in v0.30.151 — plugin now instantiates, but still generates invalid output.
+**Blocked on**: Cross-component fix in clean-framework. frame.data plugin source must be
+  recompiled with compiler >= 0.30.151. Bug reported: fingerprint da50fd867b8fe041.
+**Action**: clean-framework team rebuilds frame.data plugin WASM and releases updated version.
+
+---
+
+## ✅ RESOLVED: Matrix type — 8 tests failing (type annotation mismatch)
+
+**Priority**: CRITICAL — matrix literals not compiling
 **Discovered**: 2026-05-21
-**Files**: `tests/cln/core/types/46_matrix_literals*.cln`, `tests/cln/core/collections/matrix_operations_comprehensive.cln`, `tests/cln/ci/tier4/t4_matrix_basic.cln`, and 4 spec files
-**Error pattern**: `Matrix` type declared but matrix literal codegen or parser missing
-**Action**: Add matrix literal parsing support and MIR/codegen lowering for `Matrix<T>` creation/access.
+**Resolved**: 2026-05-22 (v0.30.150)
+**Root cause**: `is_assignable_to` in `tast.rs` did not handle `Array<Array<T>> ↔ Matrix<T>`.
+**Fix**: Added bidirectional assignability cases in `src/typechecker/tast.rs:681-699`.
 
 ---
 
@@ -31,12 +48,15 @@
 
 ---
 
-## 🟡 MEDIUM-HIGH: Async WASM codegen — 2 tests failing
+## ✅ RESOLVED: Async WASM codegen — 2 tests failing
 
 **Priority**: MEDIUM-HIGH — async keywords produce invalid WASM
 **Discovered**: 2026-05-21
-**Files**: `tests/cln/advanced/async/52_async_keywords.cln`, `tests/cln/language/async/81_async_comprehensive.cln`
-**Action**: Investigate async function lowering to MIR/WASM.
+**Resolved**: 2026-05-22 (v0.30.149)
+**Root cause 1**: `Expression::StartExpression` fell into wildcard in HIR builder, producing Void.
+**Root cause 2**: `register_async_operations()` called after local functions; import indices shifted.
+**Fix**: Added `StartExpression` handling in `hir_builder.rs`; moved async import registration
+  before local functions in `mir_codegen/mod.rs`; added stubs in `wasmtime_runner.rs`.
 
 ---
 
