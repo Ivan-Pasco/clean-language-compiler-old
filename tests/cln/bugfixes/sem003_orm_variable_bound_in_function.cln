@@ -5,17 +5,24 @@
 //           function scope after expansion.
 //
 // Expected behaviour: compiles without SEM003 "Undefined variable 'rows'" error.
+// Fixed: added data Item: model definition (was missing); changed list<string> to
+// list<Item> to match ORM query return type (spec §2.1 requires explicit model
+// declaration; id field must be declared pk, auto per frame-data.ebnf §2.1).
 
 plugins:
 	frame.data
 	frame.server
 
+data Item:
+	integer id : pk, auto
+	boolean active
+
 start:
 	print("ok")
 
 functions:
-	list<string> get_items()
-		list<string> rows = Item.find:
+	list<Item> get_items()
+		list<Item> rows = Item.find:
 			where:
 				Item.active == 1
 		return rows
