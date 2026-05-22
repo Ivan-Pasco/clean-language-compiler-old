@@ -93,6 +93,9 @@ impl WasmPluginLoader {
             // Check for root-level plugin.wasm that differs from the active version
             self.check_plugin_version_mismatch(plugin_name, &plugin_dir);
 
+            // Warn if this plugin was compiled with a compiler known to have codegen bugs.
+            self.check_plugin_build_compatibility(plugin_name, &manifest, &plugin_dir);
+
             // Load the plugin adapter
             let wasm_path = plugin_dir.join("plugin.wasm");
             let module = self.load_wasm_module(&wasm_path)?;
@@ -296,6 +299,60 @@ impl WasmPluginLoader {
                 plugin_name
             );
         }
+    }
+
+    /// Warn when a plugin was compiled with a compiler known to have codegen bugs.
+    ///
+    /// Plugins compiled before 0.30.96 have the string-comparison inversion bug:
+    /// any `if x == "literal"` check inside the plugin always evaluates to the wrong
+    /// branch, causing expand_block to emit garbage output instead of valid Clean code.
+    /// Plugins without a [build] stamp are also suspect and trigger a warning.
+    fn check_plugin_build_compatibility(
+        &self,
+        plugin_name: &str,
+        manifest: &super::plugin_abi::PluginManifest,
+        plugin_dir: &Path,
+    ) {
+        use super::plugin_abi::MINIMUM_SAFE_PLUGIN_COMPILER;
+        let rebuild_hint = format!(
+            "hint: rebuild with `bash {}/build.sh` then copy plugin.wasm to {}",
+            plugin_dir.display(),
+            plugin_dir.display(),
+        );
+
+        match &manifest.build.built_with_compiler {
+            None => {
+                eprintln!(
+                    "warning[{}]: plugin has no build stamp — it may have been compiled \
+                     with a compiler that has known codegen bugs.",
+                    plugin_name
+                );
+                eprintln!("{}", rebuild_hint);
+            }
+            Some(ver) => {
+                if Self::version_less_than(ver, MINIMUM_SAFE_PLUGIN_COMPILER) {
+                    eprintln!(
+                        "warning[{}]: plugin was built with compiler {} which has known \
+                         codegen bugs (minimum safe: {}). Output may be corrupted.",
+                        plugin_name, ver, MINIMUM_SAFE_PLUGIN_COMPILER
+                    );
+                    eprintln!("{}", rebuild_hint);
+                }
+            }
+        }
+    }
+
+    /// Returns true if `a` is strictly less than `b` as a semantic version triple.
+    fn version_less_than(a: &str, b: &str) -> bool {
+        let parse = |s: &str| -> (u32, u32, u32) {
+            let p: Vec<u32> = s.split('.').filter_map(|x| x.parse().ok()).collect();
+            (
+                *p.first().unwrap_or(&0),
+                *p.get(1).unwrap_or(&0),
+                *p.get(2).unwrap_or(&0),
+            )
+        };
+        parse(a) < parse(b)
     }
 
     /// List all installed plugins

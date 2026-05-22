@@ -15,7 +15,9 @@ use clean_language_compiler::codegen::bridge_generator::{BridgeGenerator, Bridge
 use clean_language_compiler::error::CompilerError;
 use clean_language_compiler::parser::CleanParser;
 use clean_language_compiler::runtime::runtime_manager::RuntimeManager;
-use clean_language_compiler::runtime::runtime_trait::{OptimizationLevel, RuntimeConfig, RuntimeType};
+use clean_language_compiler::runtime::runtime_trait::{
+    OptimizationLevel, RuntimeConfig, RuntimeType,
+};
 use clean_language_compiler::targets::{OptimizationProfile, TargetManager, TargetOptimizer};
 use std::env;
 use std::fs;
@@ -163,7 +165,9 @@ fn parse_build_args(args: &[String]) -> Result<BuildConfig, CompilerError> {
         match args[i].as_str() {
             "--include" | "-I" => {
                 if i + 1 < args.len() {
-                    config.search_paths.push(std::path::PathBuf::from(&args[i + 1]));
+                    config
+                        .search_paths
+                        .push(std::path::PathBuf::from(&args[i + 1]));
                     i += 2;
                 } else {
                     return Err(CompilerError::runtime_error(
@@ -246,7 +250,9 @@ fn build_with_config(config: &BuildConfig) -> Result<(), CompilerError> {
     println!(
         "✅ Build successful! Generated {} ({} bytes)",
         config.output_file,
-        fs::metadata(&config.output_file).map(|m| m.len()).unwrap_or(0)
+        fs::metadata(&config.output_file)
+            .map(|m| m.len())
+            .unwrap_or(0)
     );
 
     Ok(())
@@ -342,10 +348,16 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
                         "0" | "none" => config.optimization_level = OptimizationLevel::None,
                         "1" | "speed" => config.optimization_level = OptimizationLevel::Speed,
                         "2" => config.optimization_level = OptimizationLevel::Speed,
-                        "3" | "size" | "aggressive" => config.optimization_level = OptimizationLevel::SpeedAndSize,
+                        "3" | "size" | "aggressive" => {
+                            config.optimization_level = OptimizationLevel::SpeedAndSize
+                        }
                         // Profile names
-                        "development" | "dev" => config.optimization_profile = Some("development".to_string()),
-                        "production" | "prod" => config.optimization_profile = Some("production".to_string()),
+                        "development" | "dev" => {
+                            config.optimization_profile = Some("development".to_string())
+                        }
+                        "production" | "prod" => {
+                            config.optimization_profile = Some("production".to_string())
+                        }
                         "debug" => {
                             config.optimization_profile = Some("debug".to_string());
                             config.debug = true;
@@ -502,9 +514,9 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
     };
 
     // Resolve memory tier: explicit flag > target-based default > standard
-    let memory_tier = config.memory_tier.unwrap_or_else(|| {
-        clean_language_compiler::MemoryTier::default_for_target(&config.target)
-    });
+    let memory_tier = config
+        .memory_tier
+        .unwrap_or_else(|| clean_language_compiler::MemoryTier::default_for_target(&config.target));
 
     if config.verbose {
         println!("🔧 Compile Configuration:");
@@ -575,7 +587,12 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
     };
 
     // Perform compilation with external plugin support
-    compile_file_with_opt_and_tier(&config.input_file, &config.output_file, opt_level, memory_tier)?;
+    compile_file_with_opt_and_tier(
+        &config.input_file,
+        &config.output_file,
+        opt_level,
+        memory_tier,
+    )?;
 
     // Generate bridge files based on target
     let bridge_target = match config.target.to_lowercase().as_str() {
@@ -829,17 +846,18 @@ fn benchmark_runtimes(file_path: &str) -> Result<(), CompilerError> {
     // Compile with external plugin support
     // This automatically detects `import:` blocks and loads plugins from ~/.cleen/plugins/
     let wasm_bytes =
-        clean_language_compiler::compile_with_external_plugins_and_opt_level(&source, file_path, 2).map_err(|errors| {
-            if let Some(first_error) = errors.first() {
-                first_error.clone()
-            } else {
-                CompilerError::runtime_error(
-                    "Compilation failed with unknown error".to_string(),
-                    None,
-                    None,
-                )
-            }
-        })?;
+        clean_language_compiler::compile_with_external_plugins_and_opt_level(&source, file_path, 2)
+            .map_err(|errors| {
+                if let Some(first_error) = errors.first() {
+                    first_error.clone()
+                } else {
+                    CompilerError::runtime_error(
+                        "Compilation failed with unknown error".to_string(),
+                        None,
+                        None,
+                    )
+                }
+            })?;
 
     // Run benchmarks
     match RuntimeManager::benchmark_runtimes(&wasm_bytes) {
@@ -916,7 +934,9 @@ fn print_usage() {
     println!("EXAMPLES:");
     println!("    cln build main.cln                              # Build multi-file project");
     println!("    cln build main.cln app.wasm -L ./lib            # Build with custom lib path");
-    println!("    cln compile hello.cln                           # Basic compilation (default -O2)");
+    println!(
+        "    cln compile hello.cln                           # Basic compilation (default -O2)"
+    );
     println!("    cln compile hello.cln -O3                       # Aggressive optimization");
     println!("    cln compile hello.cln -O0 --debug               # Debug build, no optimization");
     println!("    cln compile hello.cln -O production             # Production profile");
@@ -943,8 +963,17 @@ fn compile_file(input_file: &str, output_file: &str) -> Result<(), CompilerError
     compile_file_with_opt(input_file, output_file, 2) // Default to -O2
 }
 
-fn compile_file_with_opt(input_file: &str, output_file: &str, opt_level: u8) -> Result<(), CompilerError> {
-    compile_file_with_opt_and_tier(input_file, output_file, opt_level, clean_language_compiler::MemoryTier::Standard)
+fn compile_file_with_opt(
+    input_file: &str,
+    output_file: &str,
+    opt_level: u8,
+) -> Result<(), CompilerError> {
+    compile_file_with_opt_and_tier(
+        input_file,
+        output_file,
+        opt_level,
+        clean_language_compiler::MemoryTier::Standard,
+    )
 }
 
 fn compile_file_with_opt_and_tier(
@@ -970,24 +999,102 @@ fn compile_file_with_opt_and_tier(
     // Use multi-file compilation to support file path imports
     // This automatically handles `import "path/to/file.cln"` syntax
     // as well as module imports like `import Math`
-    let wasm_binary =
-        clean_language_compiler::compile_multi_file_with_memory_tier(
-            input_path, search_paths, opt_level, Some(memory_tier), memory_tier,
-        ).map_err(|errors| {
-            let source = fs::read_to_string(input_file).unwrap_or_default();
-            for error in &errors {
-                display_error(error, &source, input_file);
-            }
-            errors.into_iter().next().unwrap()
-        })?;
+    let wasm_binary = clean_language_compiler::compile_multi_file_with_memory_tier(
+        input_path,
+        search_paths,
+        opt_level,
+        Some(memory_tier),
+        memory_tier,
+    )
+    .map_err(|errors| {
+        let source = fs::read_to_string(input_file).unwrap_or_default();
+        for error in &errors {
+            display_error(error, &source, input_file);
+        }
+        errors.into_iter().next().unwrap()
+    })?;
 
     // Write the output file
     fs::write(output_file, wasm_binary).map_err(|e| {
         CompilerError::io_error(format!("Failed to write output file: {e}"), None, None)
     })?;
 
+    // Stamp plugin.toml with the compiler version when compiling a plugin.
+    // Look for plugin.toml next to the output file or one directory up.
+    stamp_plugin_toml_if_present(output_file);
+
     println!("✅ Compilation successful! Generated {output_file}");
     Ok(())
+}
+
+/// After a successful compile, if a plugin.toml is found adjacent to the output
+/// WASM, stamp `built_with_compiler` into its [build] section.  This lets the
+/// loader detect stale plugins at load time.
+fn stamp_plugin_toml_if_present(output_file: &str) {
+    let out_path = std::path::Path::new(output_file);
+    let candidates = [
+        out_path.parent().and_then(|p| Some(p.join("plugin.toml"))),
+        out_path
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| Some(p.join("plugin.toml"))),
+    ];
+
+    for candidate in candidates.iter().flatten() {
+        if candidate.exists() {
+            if let Err(e) = write_build_stamp(candidate) {
+                eprintln!("warning: could not stamp {}: {}", candidate.display(), e);
+            } else {
+                eprintln!(
+                    "[Plugin Build] Stamped {} with compiler {}",
+                    candidate.display(),
+                    env!("CARGO_PKG_VERSION")
+                );
+            }
+            return;
+        }
+    }
+}
+
+/// Writes or replaces `built_with_compiler = "<ver>"` inside the [build] section
+/// of a plugin.toml without disturbing any other content or comments.
+fn write_build_stamp(toml_path: &std::path::Path) -> std::io::Result<()> {
+    let content = fs::read_to_string(toml_path)?;
+    let version = env!("CARGO_PKG_VERSION");
+    let stamp_line = format!("built_with_compiler = \"{}\"", version);
+
+    let updated = if content.contains("built_with_compiler") {
+        // Replace existing stamp line wherever it appears
+        content
+            .lines()
+            .map(|l| {
+                if l.trim_start().starts_with("built_with_compiler") {
+                    stamp_line.clone()
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else if content.contains("[build]") {
+        // Insert after [build] header
+        content
+            .lines()
+            .flat_map(|l| {
+                if l.trim() == "[build]" {
+                    vec![l.to_string(), stamp_line.clone()]
+                } else {
+                    vec![l.to_string()]
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        // Append a new [build] section at the end
+        format!("{}\n\n[build]\n{}\n", content.trim_end(), stamp_line)
+    };
+
+    fs::write(toml_path, updated)
 }
 
 fn run_file(input_file: &str) -> Result<(), CompilerError> {
@@ -1120,7 +1227,9 @@ fn execute_wasm_file(wasm_file: &str) -> Result<(), CompilerError> {
 fn find_clean_runner() -> Result<String, CompilerError> {
     // 1. cleen-managed location: ~/.cleen/clean-runner/<version>/clean-runner
     if let Some(home) = std::env::var_os("HOME") {
-        let base = std::path::Path::new(&home).join(".cleen").join("clean-runner");
+        let base = std::path::Path::new(&home)
+            .join(".cleen")
+            .join("clean-runner");
         if base.exists() {
             // Pick the highest semver directory present
             if let Ok(entries) = std::fs::read_dir(&base) {

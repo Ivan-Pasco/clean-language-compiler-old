@@ -31,7 +31,26 @@ pub struct PluginManifest {
     /// Memory budget tier requested by this plugin (MEMORY_POLICY.md §3.1 rule 3)
     #[serde(default)]
     pub memory: PluginMemory,
+    /// Build provenance — stamped automatically by `cln compile` when building a plugin
+    #[serde(default)]
+    pub build: PluginBuildMeta,
 }
+
+/// Stamped by `cln compile` into plugin.toml after a successful plugin build.
+/// Used at load time to detect plugins built with compilers that had known codegen bugs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginBuildMeta {
+    /// Compiler version that produced plugin.wasm (e.g. "0.30.154").
+    /// Absent on plugins that predate this field.
+    #[serde(default)]
+    pub built_with_compiler: Option<String>,
+}
+
+/// Compiler version below which plugin WASM may be corrupted by known codegen bugs.
+/// - 0.30.96: string comparison inversion fix (plugins built before this return
+///   wrong results from any `if x == "literal"` check, causing expand_block to
+///   emit garbage or nothing).
+pub const MINIMUM_SAFE_PLUGIN_COMPILER: &str = "0.30.96";
 
 /// Memory configuration declared in a plugin's `[memory]` section.
 ///
