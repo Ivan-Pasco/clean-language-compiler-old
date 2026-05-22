@@ -542,6 +542,12 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
+            // State reset bridge — always registered (the reset statement may appear anywhere)
+            debug_mir!("DEBUG MIR: Registering state reset imports");
+            self.wasm_generator
+                .register_state_reset_imports()
+                .map_err(|e| vec![e])?;
+
             // Pre-register list.push_f64 as an import BEFORE any local functions
             {
                 use crate::types::WasmType;
@@ -675,6 +681,16 @@ impl MirCodeGenerator<'_> {
                     .register_server_sleep_wrapper()
                     .map_err(|e| vec![e])?;
             }
+
+            // String operation wrappers — always register to support string.repeat / string.matches
+            debug_mir!("DEBUG MIR: Registering string_repeat wrapper");
+            self.wasm_generator
+                .register_string_repeat_wrapper()
+                .map_err(|e| vec![e])?;
+            debug_mir!("DEBUG MIR: Registering string_matches wrapper");
+            self.wasm_generator
+                .register_string_matches_wrapper()
+                .map_err(|e| vec![e])?;
         }
 
         // Set up memory section

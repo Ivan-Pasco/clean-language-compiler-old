@@ -634,40 +634,101 @@ impl super::CodeGenerator {
 
     /// Register string_repeat as a host import.
     /// Signature: (str_ptr: i32, str_len: i32, count: i32) -> i32  (result ptr)
+    /// Register the raw `string_repeat` host import (imports phase only).
+    /// Call `register_string_repeat_wrapper()` AFTER all imports.
     pub fn register_string_repeat_import(&mut self) -> Result<(), CompilerError> {
         use crate::types::WasmType;
-
-        let idx = self.register_import_function(
+        self.register_import_function(
             "env",
             "string_repeat",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-
-        if idx != u32::MAX {
-            self.add_function_alias("string.repeat", idx);
-        }
-
         Ok(())
     }
 
-    /// Register string_matches as a host import.
-    /// Validates a string against a named pattern (email, url, uuid, …).
-    /// Signature: (str_ptr: i32, str_len: i32, pattern_ptr: i32, pattern_len: i32) -> i32 (bool)
+    /// Create the `string.repeat(str_ptr, count)` WASM wrapper that reads the
+    /// length from memory and calls the raw `string_repeat(ptr, len, count)` host.
+    /// Must be called AFTER all imports.
+    pub fn register_string_repeat_wrapper(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+        use wasm_encoder::Instruction;
+
+        let raw_idx = match self.function_map.get("string_repeat").copied() {
+            Some(idx) => idx,
+            None => return Ok(()), // import not registered
+        };
+
+        let wrapper_instructions = vec![
+            Instruction::LocalGet(0), // str_ptr
+            Instruction::LocalGet(0), // str_ptr again — to load len
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }), // len = i32.load(str_ptr)
+            Instruction::LocalGet(1), // count
+            Instruction::Call(raw_idx),
+        ];
+        let wrapper_idx = self.register_function(
+            "__string_repeat_wrapper",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &wrapper_instructions,
+        )?;
+        self.add_function_alias("string.repeat", wrapper_idx);
+        Ok(())
+    }
+
+    /// Register the raw `string_matches` host import (imports phase only).
+    /// Call `register_string_matches_wrapper()` AFTER all imports.
     pub fn register_string_matches_import(&mut self) -> Result<(), CompilerError> {
         use crate::types::WasmType;
-
-        let idx = self.register_import_function(
+        self.register_import_function(
             "env",
             "string_matches",
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
+        Ok(())
+    }
 
-        if idx != u32::MAX {
-            self.add_function_alias("string.matches", idx);
-        }
+    /// Create the `string.matches(str_ptr, pat_ptr)` WASM wrapper that reads both
+    /// lengths from memory and calls the raw `string_matches(ptr, len, pat_ptr, pat_len)` host.
+    /// Must be called AFTER all imports.
+    pub fn register_string_matches_wrapper(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+        use wasm_encoder::Instruction;
 
+        let raw_idx = match self.function_map.get("string_matches").copied() {
+            Some(idx) => idx,
+            None => return Ok(()),
+        };
+
+        let wrapper_instructions = vec![
+            Instruction::LocalGet(0), // str_ptr
+            Instruction::LocalGet(0), // str_ptr for len load
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }), // str_len
+            Instruction::LocalGet(1), // pat_ptr
+            Instruction::LocalGet(1), // pat_ptr for len load
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }), // pat_len
+            Instruction::Call(raw_idx),
+        ];
+        let wrapper_idx = self.register_function(
+            "__string_matches_wrapper",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &wrapper_instructions,
+        )?;
+        self.add_function_alias("string.matches", wrapper_idx);
         Ok(())
     }
 

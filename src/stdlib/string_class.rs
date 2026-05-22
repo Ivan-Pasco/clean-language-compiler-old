@@ -218,22 +218,22 @@ impl StringClass {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // String.padStart(str_ptr: i32, width: i32, pad_ptr: i32, pad_len: i32) -> i32
-        // Spec (stdlib-reference.md): 4 WASM-level parameters — pad string is split into ptr+len
+        // String.padStart(str_ptr: i32, width: i32, pad_ptr: i32) -> i32
+        // MIR builder passes 3 arguments: (receiver_ptr, width_i32, pad_ptr).
+        // The pad_len can be read from memory at pad_ptr when a full implementation is needed.
         register_stdlib_function(
             codegen,
             "string.padStart",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_pad_start(),
         )?;
 
-        // String.padEnd(str_ptr: i32, width: i32, pad_ptr: i32, pad_len: i32) -> i32
-        // Spec (stdlib-reference.md): 4 WASM-level parameters — pad string is split into ptr+len
+        // String.padEnd(str_ptr: i32, width: i32, pad_ptr: i32) -> i32
         register_stdlib_function(
             codegen,
             "string.padEnd",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             self.generate_pad_end(),
         )?;

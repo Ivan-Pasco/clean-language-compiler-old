@@ -1135,6 +1135,17 @@ impl super::CodeGenerator {
         Ok(())
     }
 
+    /// Register host bridge imports for state reset operations.
+    ///
+    /// `_state_reset_all()` — reset all declared state to defaults
+    /// `_state_reset_named(base_ptr: i32)` — reset a single named state variable.
+    ///   `base_ptr` points to a `[4-byte len][content bytes]` string structure.
+    pub(crate) fn register_state_reset_imports(&mut self) -> Result<(), CompilerError> {
+        self.register_import_function("env", "_state_reset_all", &[], None)?;
+        self.register_import_function("env", "_state_reset_named", &[WasmType::I32], None)?;
+        Ok(())
+    }
+
     /// Register Layer 3 host bridge import for `_server_sleep` (import only).
     ///
     /// Signature: `_server_sleep(ms: i64) -> void`

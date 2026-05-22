@@ -164,6 +164,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    // Add print_integer function: print_integer(value: i64) -> void
+    linker.func_wrap("env", "print_integer", |value: i64| {
+        print!("{}", value);
+    })?;
+
+    // Add print_float function: print_float(value: f64) -> void
+    linker.func_wrap("env", "print_float", |value: f64| {
+        print!("{}", value);
+    })?;
+
+    // Add print_boolean function: print_boolean(value: i32) -> void
+    linker.func_wrap("env", "print_boolean", |value: i32| {
+        print!("{}", if value != 0 { "true" } else { "false" });
+    })?;
+
     // Add print_simple function: print_simple(value: i32) -> void
     linker.func_wrap("env", "print_simple", |value: i32| {
         print!("{}", value);
@@ -265,6 +280,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
     )?;
     linker.func_wrap("env", "_http_listen", |_: i32| -> i32 { 0 })?;
+    // State reset stubs (runtime resets are no-ops in standalone test runner)
+    linker.func_wrap("env", "_state_reset_all", || {})?;
+    linker.func_wrap("env", "_state_reset_named", |_: i32| {})?;
+
+    // Server sleep stub
+    linker.func_wrap("env", "_server_sleep", |_: i64| {})?;
+
     linker.func_wrap("env", "_req_param", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_query", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_body", || -> i32 { 0 })?;
@@ -590,6 +612,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     linker.func_wrap("env", "string_to_int", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string_to_float", |_: i32| -> f64 { 0.0 })?;
+    linker.func_wrap(
+        "env",
+        "string_matches",
+        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+    )?;
+    linker.func_wrap("env", "string_repeat", |_: i32, _: i32, _: i32| -> i32 {
+        0
+    })?;
+    linker.func_wrap("env", "string.repeat", |_: i32, _: i32, _: i32| -> i32 {
+        0
+    })?;
 
     // String trim functions
     linker.func_wrap(

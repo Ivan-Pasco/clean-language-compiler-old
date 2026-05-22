@@ -2446,7 +2446,24 @@ impl<'a> TypeInference<'a> {
                                 | ConcreteType::Generic { .. }
                                 | ConcreteType::Optional(_)
                         );
-                        if types_are_concrete && !init_ty.is_assignable_to(declared_ty) {
+                        // For class types, also allow subclass → parent assignment (polymorphism)
+                        let class_subtype_ok = match (init_ty, declared_ty) {
+                            (
+                                ConcreteType::Class {
+                                    symbol_id: child_id,
+                                    ..
+                                },
+                                ConcreteType::Class {
+                                    symbol_id: parent_id,
+                                    ..
+                                },
+                            ) => self.class_is_subclass_of(*child_id, *parent_id),
+                            _ => false,
+                        };
+                        if types_are_concrete
+                            && !init_ty.is_assignable_to(declared_ty)
+                            && !class_subtype_ok
+                        {
                             self.errors.push(CompilerError::Validation {
                                 context: Box::new(
                                     crate::error::ErrorContext::new(
@@ -5591,6 +5608,33 @@ impl<'a> TypeInference<'a> {
     /// Apply current substitution to resolve a type
     fn resolve_type(&self, type_: &ConcreteType) -> ConcreteType {
         self.constraint_solver.apply_substitution(type_)
+    }
+
+    /// Check whether `child_id` is the same as or a subclass (transitively) of `parent_id`.
+    fn class_is_subclass_of(&self, child_id: SymbolId, parent_id: SymbolId) -> bool {
+        if child_id == parent_id {
+            return true;
+        }
+        let mut current = child_id;
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            if !visited.insert(current) {
+                break;
+            }
+            if let Some(sym) = self.symbol_table.get_symbol(current) {
+                if let crate::resolver::symbol_table::SymbolKind::Class { parent, .. } = &sym.kind {
+                    if let Some(p) = parent {
+                        if *p == parent_id {
+                            return true;
+                        }
+                        current = *p;
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+        false
     }
 
     /// Find a common type between two types for control flow branches
