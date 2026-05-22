@@ -2322,6 +2322,14 @@ impl WasmPluginAdapter {
                 caller.data_mut().allocate(4) as i32
             },
         )?;
+        // _session_create: same signature as _session_store (old API name used by frame.data <=2.0.0)
+        linker.func_wrap(
+            "env",
+            "_session_create",
+            |mut caller: Caller<'_, PluginState>, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
+                caller.data_mut().allocate(4) as i32
+            },
+        )?;
         // _session_get: () -> i32 (no params - returns session JSON pointer)
         linker.func_wrap("env", "_session_get", |_: Caller<'_, PluginState>| -> i32 {
             0
@@ -2331,6 +2339,18 @@ impl WasmPluginAdapter {
             "env",
             "_session_delete",
             |_: Caller<'_, PluginState>| -> i32 { 0 },
+        )?;
+        // _session_destroy: old API name for _session_delete (used by frame.data <=2.0.0)
+        linker.func_wrap(
+            "env",
+            "_session_destroy",
+            |_: Caller<'_, PluginState>| -> i32 { 0 },
+        )?;
+        // _session_set_cookie: old API name for _http_set_cookie (used by frame.data <=2.0.0)
+        linker.func_wrap(
+            "env",
+            "_session_set_cookie",
+            |_: Caller<'_, PluginState>, _: i32, _: i32| -> i32 { 0 },
         )?;
         // _http_set_cookie: (cookie_ptr: i32, cookie_len: i32) -> i32
         linker.func_wrap(
