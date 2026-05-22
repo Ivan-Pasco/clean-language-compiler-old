@@ -1090,70 +1090,91 @@ fn parse_source(
 }
 
 fn execute_wasm_file(wasm_file: &str) -> Result<(), CompilerError> {
-    println!("⚡ Executing {wasm_file}");
+    let runner = find_clean_runner()?;
 
-    // Read the WASM file
-    let wasm_bytes = fs::read(wasm_file).map_err(|e| {
-        CompilerError::io_error(format!("Failed to read WASM file: {e}"), None, None)
-    })?;
-
-    // Use synchronous execution with standardized wasmtime configuration
-    run_wasm_sync(&wasm_bytes)
-}
-
-fn run_wasm_sync(wasm_bytes: &[u8]) -> Result<(), CompilerError> {
-    use wasmtime::{Linker, Module, Store};
-
-    // Use full Clean Language wasmtime configuration for execution
-    let engine =
-        clean_language_compiler::runtime::wasmtime_config::CleanWasmtimeConfig::create_engine()?;
-
-    // Create store
-    let mut store = Store::new(&engine, ());
-
-    // Create linker and register host functions FIRST
-    let mut linker = Linker::new(&engine);
-    clean_language_compiler::runtime::host_functions::register_all_host_functions(&mut linker)
+    let status = std::process::Command::new(&runner)
+        .arg(wasm_file)
+        .status()
         .map_err(|e| {
             CompilerError::runtime_error(
-                format!("Failed to register host functions: {e}"),
+                format!("Failed to launch clean-runner '{runner}': {e}"),
                 None,
                 None,
             )
         })?;
 
-    // Create a module from the bytes
-    let module = Module::new(&engine, wasm_bytes).map_err(|e| {
-        CompilerError::runtime_error(
-            format!("Failed to create WebAssembly module: {e}"),
-            None,
-            None,
-        )
-    })?;
-
-    // Instantiate the module
-    let instance = linker.instantiate(&mut store, &module).map_err(|e| {
-        CompilerError::runtime_error(
-            format!("Failed to instantiate WebAssembly module: {e}"),
-            None,
-            None,
-        )
-    })?;
-
-    // Call the _start function (Clean Language entry point)
-    if let Some(start_func) = instance.get_func(&mut store, "_start") {
-        start_func
-            .call(&mut store, &[], &mut [])
-            .map_err(|e| CompilerError::runtime_error(format!("Runtime error: {e}"), None, None))?;
+    if status.success() {
+        Ok(())
     } else {
-        return Err(CompilerError::runtime_error(
-            "No '_start' function found in WebAssembly module".to_string(),
+        Err(CompilerError::runtime_error(
+            format!(
+                "clean-runner exited with code {}",
+                status.code().unwrap_or(-1)
+            ),
             None,
             None,
-        ));
+        ))
+    }
+}
+
+fn find_clean_runner() -> Result<String, CompilerError> {
+    // 1. cleen-managed location: ~/.cleen/clean-runner/<version>/clean-runner
+    if let Some(home) = std::env::var_os("HOME") {
+        let base = std::path::Path::new(&home).join(".cleen").join("clean-runner");
+        if base.exists() {
+            // Pick the highest semver directory present
+            if let Ok(entries) = std::fs::read_dir(&base) {
+                let mut versions: Vec<String> = entries
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .collect();
+                versions.sort_by(|a, b| {
+                    let parse = |s: &str| -> (u32, u32, u32) {
+                        let mut parts = s.trim_start_matches('v').split('.');
+                        let major = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                        let minor = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                        let patch = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                        (major, minor, patch)
+                    };
+                    parse(b).cmp(&parse(a))
+                });
+                for ver in &versions {
+                    let candidate = base.join(ver).join("clean-runner");
+                    if candidate.exists() {
+                        return Ok(candidate.to_string_lossy().into_owned());
+                    }
+                    #[cfg(windows)]
+                    {
+                        let win = base.join(ver).join("clean-runner.exe");
+                        if win.exists() {
+                            return Ok(win.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    Ok(())
+    // 2. Fall back to PATH
+    if which_clean_runner().is_some() {
+        return Ok("clean-runner".to_string());
+    }
+
+    Err(CompilerError::runtime_error(
+        "clean-runner not found. Install it with: cleen runner install latest".to_string(),
+        None,
+        None,
+    ))
+}
+
+fn which_clean_runner() -> Option<()> {
+    std::process::Command::new("clean-runner")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|_| ())
 }
 
 fn display_error(error: &CompilerError, _source: &str, file_path: &str) {
