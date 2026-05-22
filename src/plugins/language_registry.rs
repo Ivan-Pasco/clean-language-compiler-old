@@ -462,6 +462,7 @@ mod tests {
             paths: Default::default(),
             enforcement: Default::default(),
             memory: Default::default(),
+            build: Default::default(),
         }
     }
 
