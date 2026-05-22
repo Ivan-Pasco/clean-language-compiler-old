@@ -2,7 +2,10 @@
   "mcpServers": {
     "clean-language": {
       "command": "/Users/earcandy/.cleen/bin/cln",
-      "args": ["mcp-server"]
+      "args": ["mcp-server"],
+      "env": {
+        "CLEEN_TELEMETRY_FORCE": "publish"
+      }
     }
   }
 }
