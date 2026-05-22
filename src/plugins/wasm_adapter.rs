@@ -140,6 +140,27 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // env.print_integer - Print integer value (i64) without newline
+        linker.func_wrap(
+            "env",
+            "print_integer",
+            |_: Caller<'_, PluginState>, _value: i64| {},
+        )?;
+
+        // env.print_float - Print float value without newline
+        linker.func_wrap(
+            "env",
+            "print_float",
+            |_: Caller<'_, PluginState>, _value: f64| {},
+        )?;
+
+        // env.print_boolean - Print boolean value without newline
+        linker.func_wrap(
+            "env",
+            "print_boolean",
+            |_: Caller<'_, PluginState>, _value: i32| {},
+        )?;
+
         // env.input - Read user input (stub - returns empty string)
         linker.func_wrap(
             "env",
@@ -2357,6 +2378,22 @@ impl WasmPluginAdapter {
             "env",
             "_http_set_cookie",
             |_: Caller<'_, PluginState>, _: i32, _: i32| -> i32 { 0 },
+        )?;
+
+        // Server and state stubs (Layer 3 — runtime-only, no-op during compilation)
+        // _server_sleep: (ms: i64) -> void
+        linker.func_wrap(
+            "env",
+            "_server_sleep",
+            |_: Caller<'_, PluginState>, _: i64| {},
+        )?;
+        // _state_reset_all: () -> void
+        linker.func_wrap("env", "_state_reset_all", |_: Caller<'_, PluginState>| {})?;
+        // _state_reset_named: (name_ptr: i32) -> void
+        linker.func_wrap(
+            "env",
+            "_state_reset_named",
+            |_: Caller<'_, PluginState>, _: i32| {},
         )?;
 
         // Response manipulation stubs (Layer 3 — runtime-only, no-op during compilation)
