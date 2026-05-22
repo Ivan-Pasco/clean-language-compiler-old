@@ -124,4 +124,4 @@ Codex/
 llm-sessions/
 ai-sessions/
 *-session-*.md
-*_session_*.md
+*_session_*.md.playwright-mcp/

@@ -287,6 +287,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Server sleep stub
     linker.func_wrap("env", "_server_sleep", |_: i64| {})?;
 
+    // Async bridge stubs — fire-and-forget and await-result are no-ops in standalone runner
+    linker.func_wrap("env", "_async_fire", |_: i32, _: i32, _: i32, _: i32| {})?;
+    linker.func_wrap(
+        "env",
+        "_async_await",
+        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+    )?;
+
     linker.func_wrap("env", "_req_param", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_query", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_body", || -> i32 { 0 })?;

@@ -548,6 +548,15 @@ impl MirCodeGenerator<'_> {
                 .register_state_reset_imports()
                 .map_err(|e| vec![e])?;
 
+            // Async host bridge imports — MUST be registered before any local (non-import)
+            // functions so that WASM function indices stay consistent with binary layout.
+            // These are reachability-gated: only emitted when the module uses
+            // `background` / `later` statements.
+            debug_mir!("DEBUG MIR: Registering async host bridge imports");
+            self.wasm_generator
+                .register_async_operations()
+                .map_err(|e| vec![e])?;
+
             // Pre-register list.push_f64 as an import BEFORE any local functions
             {
                 use crate::types::WasmType;
@@ -628,11 +637,6 @@ impl MirCodeGenerator<'_> {
             debug_mir!("DEBUG MIR: Registering JSON operations");
             self.wasm_generator
                 .register_json_operations()
-                .map_err(|e| vec![e])?;
-
-            debug_mir!("DEBUG MIR: Registering async host bridge imports");
-            self.wasm_generator
-                .register_async_operations()
                 .map_err(|e| vec![e])?;
 
             // Register pending plugin bridge wrapper functions AFTER all imports

@@ -31,7 +31,8 @@
       "Bash(sed -n '88,97p' src/typechecker/mod.rs)",
       "Bash(./target/release/debug_wasm tests/output/00_minimal.wasm)",
       "Bash(sed -n '765,775p' src/error/recovery.rs)",
-      "Bash(sed -n '976,984p' src/error/mod.rs)"
+      "Bash(sed -n '976,984p' src/error/mod.rs)",
+      "Bash(./target/release/debug_wasm tests/output/vld001_json_namespace_direct_call.wasm)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

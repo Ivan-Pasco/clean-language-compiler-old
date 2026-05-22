@@ -1753,6 +1753,10 @@ impl HirBuilder {
                 })
             }
 
+            // `start expr` — async launch marker; strip the wrapper and build the inner call.
+            // The async dispatch is handled at statement level (LaterAssignment / Background).
+            Expression::StartExpression { expression, .. } => self.build_expression(expression),
+
             // NamedArgBinding is consumed entirely within build_call_args.
             // If we reach here it means the parser emitted a NamedArgBinding in a
             // position that is not a call argument list (e.g. a standalone expression).
