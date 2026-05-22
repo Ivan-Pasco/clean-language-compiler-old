@@ -680,6 +680,24 @@ impl ConcreteType {
             // Matrix covariance (if element types are assignable)
             (ConcreteType::Matrix(a), ConcreteType::Matrix(b)) => a.is_assignable_to(b),
 
+            // Array<Array<T>> is assignable to Matrix<T> (2D array literal assigned to matrix var)
+            (ConcreteType::Array(outer), ConcreteType::Matrix(element_type)) => {
+                if let ConcreteType::Array(inner) = outer.as_ref() {
+                    inner.is_assignable_to(element_type)
+                } else {
+                    false
+                }
+            }
+
+            // Matrix<T> is assignable to Array<Array<T>>
+            (ConcreteType::Matrix(element_type), ConcreteType::Array(outer)) => {
+                if let ConcreteType::Array(inner) = outer.as_ref() {
+                    element_type.is_assignable_to(inner)
+                } else {
+                    false
+                }
+            }
+
             // Function type compatibility
             (
                 ConcreteType::Function {

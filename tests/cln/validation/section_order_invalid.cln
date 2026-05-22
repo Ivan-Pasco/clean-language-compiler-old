@@ -1,3 +1,8 @@
+// Test: validation/section_order_invalid
+// Grammar: program_structure
+// Semantic: SYN007
+// Expected: compile error SYN007 — sections must appear in order: start: before functions:, import: is deprecated
+
 functions:
 	integer add(integer a, integer b)
 		return a + b
