@@ -190,11 +190,14 @@ enum Commands {
     /// Package management commands
     #[command(subcommand)]
     Package(PackageCommands),
-    /// Run the Clean Language test suite
+    /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
-        /// Additional test directories to include
+        /// .cln files (or directories) containing tests: blocks to run
         #[arg(short, long)]
         dirs: Vec<String>,
+        /// .cln test files to run directly (positional)
+        #[arg(value_name = "FILE")]
+        files: Vec<String>,
     },
     /// Run simple compilation tests
     SimpleTest {},
@@ -580,7 +583,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?
         }
         Commands::Package(package_cmd) => handle_package(package_cmd).await?,
-        Commands::Test { dirs } => handle_test(args.verbose > 0, dirs).await?,
+        Commands::Test { dirs, files } => handle_test(args.verbose > 0, dirs, files).await?,
         Commands::SimpleTest {} => handle_simple_test(args.verbose > 0).await?,
         Commands::Debug {
             input,
@@ -1455,30 +1458,95 @@ async fn handle_package(package_cmd: PackageCommands) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-async fn handle_test(verbose: bool, dirs: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Running Clean Language test suite...");
-    if verbose {
-        println!("Verbose output enabled");
-    }
-    if !dirs.is_empty() {
-        println!("Additional test directories: {dirs:?}");
+async fn handle_test(
+    verbose: bool,
+    dirs: Vec<String>,
+    files: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Collect .cln files from positional args and --dirs flag
+    let mut cln_files: Vec<String> = files;
+    for dir in &dirs {
+        let p = Path::new(dir);
+        if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("cln") {
+            cln_files.push(dir.clone());
+        } else if p.is_dir() {
+            if let Ok(entries) = fs::read_dir(p) {
+                for entry in entries.flatten() {
+                    let ep = entry.path();
+                    if ep.extension().and_then(|s| s.to_str()) == Some("cln") {
+                        if let Some(s) = ep.to_str() {
+                            cln_files.push(s.to_string());
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    let mut cmd = std::process::Command::new("cargo");
-    cmd.arg("test");
-    if verbose {
-        cmd.arg("--verbose");
+    if cln_files.is_empty() {
+        // No .cln files given — fall back to compiler unit tests
+        println!("Running compiler test suite...");
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.arg("test");
+        if verbose {
+            cmd.arg("--verbose");
+        }
+        let status = cmd.status()?;
+        if status.success() {
+            println!("All tests passed!");
+        } else {
+            eprintln!("Some tests failed");
+        }
+        return Ok(());
     }
 
-    let status = cmd.status()?;
-    if status.success() {
-        println!("✓ All tests passed!");
+    let mut any_failed = false;
+    for cln_path in &cln_files {
+        println!("Running tests in: {cln_path}");
+        let source = match fs::read_to_string(cln_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("  Cannot read '{cln_path}': {e}");
+                any_failed = true;
+                continue;
+            }
+        };
+
+        let wasm_binary = match clean_language_compiler::compile_with_file(&source, cln_path) {
+            Ok(b) => b,
+            Err(errors) => {
+                eprintln!("  Compilation failed ({} errors):", errors.len());
+                for err in &errors {
+                    eprintln!("    {err}");
+                }
+                any_failed = true;
+                continue;
+            }
+        };
+
+        // Write to a temp file and run via clean-runner (_start calls _run_tests)
+        let stem = cln_path.trim_end_matches(".cln");
+        let temp_wasm = format!("{stem}.test.tmp.wasm");
+        if let Err(e) = fs::write(&temp_wasm, &wasm_binary) {
+            eprintln!("  Cannot write temp WASM: {e}");
+            any_failed = true;
+            continue;
+        }
+
+        let result = execute_via_clean_runner(&temp_wasm, verbose);
+        let _ = fs::remove_file(&temp_wasm);
+
+        if let Err(e) = result {
+            eprintln!("  {e}");
+            any_failed = true;
+        }
+    }
+
+    if any_failed {
+        Err("One or more test files had failures".into())
     } else {
-        eprintln!("✗ Some tests failed");
-        // Don't return error for test failures - just report them
-        println!("Note: Test failures reported but not treating as critical error");
+        Ok(())
     }
-    Ok(())
 }
 
 async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {

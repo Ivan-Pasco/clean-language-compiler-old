@@ -788,6 +788,224 @@ impl MirCodeGenerator<'_> {
     }
 
     // -------------------------------------------------------------------------
+    // Test runner export
+    // -------------------------------------------------------------------------
+
+    /// Generate and export a `_run_tests` WASM function.
+    ///
+    /// The function calls each `__test_*` function in order, prints
+    /// `PASS: <name>` or `FAIL: <name>` for each result, and returns
+    /// the total failure count as an i32.
+    ///
+    /// This is a raw WASM instruction emitter, similar to
+    /// `generate_start_function_export`, but builds a real function body.
+    pub(super) fn generate_run_tests_export(
+        &mut self,
+        test_functions: &[(crate::resolver::SymbolId, String)],
+    ) -> Result<(), CompilerError> {
+        if test_functions.is_empty() {
+            return Ok(());
+        }
+
+        // Look up the `printl` host import index.  The import must have been
+        // registered already (happens at the start of `generate()`).
+        let printl_idx = match self.wasm_generator.function_map.get("printl").copied() {
+            Some(idx) => idx,
+            None => {
+                return Err(CompilerError::codegen_error(
+                    "_run_tests: 'printl' host import not found in function_map".to_string(),
+                    None,
+                    None,
+                ));
+            }
+        };
+
+        // Pre-compute PASS/FAIL string offsets for each test.
+        // String format expected by `printl`: (content_ptr: i32, length: i32)
+        // The `get_or_create_string_offset` stores [4-byte-len][content] and
+        // returns the base offset.  We pass `base + 4` as content_ptr.
+        struct TestEntry {
+            func_index: u32,
+            pass_content_ptr: i32,
+            pass_len: i32,
+            fail_content_ptr: i32,
+            fail_len: i32,
+        }
+
+        let mut entries: Vec<TestEntry> = Vec::with_capacity(test_functions.len());
+
+        for (symbol_id, test_name) in test_functions {
+            // Look up the pre-registered function index for this test.
+            let func_index = match self.symbol_to_function_index.get(symbol_id).copied() {
+                Some(idx) => idx,
+                None => {
+                    tracing::warn!(
+                        test_name = %test_name,
+                        symbol_id = symbol_id.0,
+                        "Test function not found in symbol_to_function_index, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let pass_str = format!("PASS: {}", test_name);
+            let fail_str = format!("FAIL: {}", test_name);
+
+            let pass_base = self.wasm_generator.get_or_create_string_offset(&pass_str)? as i32;
+            let fail_base = self.wasm_generator.get_or_create_string_offset(&fail_str)? as i32;
+
+            entries.push(TestEntry {
+                func_index,
+                pass_content_ptr: pass_base + 4,
+                pass_len: pass_str.len() as i32,
+                fail_content_ptr: fail_base + 4,
+                fail_len: fail_str.len() as i32,
+            });
+        }
+
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        // ----------------------------------------------------------------
+        // Build the WASM function body for `_run_tests`.
+        //
+        // Locals:
+        //   local[0] = failure_count (i32)
+        //   local[1] = test_result   (i32, receives boolean from __test_*)
+        //
+        // Pseudo-code:
+        //   let failure_count = 0
+        //   for each test:
+        //       test_result = __test_N()
+        //       if test_result != 0:
+        //           printl(pass_content_ptr, pass_len)
+        //       else:
+        //           printl(fail_content_ptr, fail_len)
+        //           failure_count += 1
+        //   return failure_count
+        // ----------------------------------------------------------------
+
+        let mut f = WasmFunction::new(vec![
+            (2_u32, ValType::I32), // 2 locals of type i32 (failure_count, test_result)
+        ]);
+
+        // local[0] = 0 (failure_count starts at 0)
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalSet(0));
+
+        for entry in &entries {
+            // Call the test function -> pushes i32 result on stack
+            f.instruction(&Instruction::Call(entry.func_index));
+            // Store result in local[1]
+            f.instruction(&Instruction::LocalSet(1));
+
+            // if local[1] != 0 { printl(pass); } else { printl(fail); failure_count++ }
+            f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+            f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+
+            // Check if result is zero (test failed)
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::I32Eqz);
+            // If zero (failed), break to the outer block (else branch)
+            f.instruction(&Instruction::BrIf(0));
+
+            // PASS branch: call printl(pass_content_ptr, pass_len)
+            f.instruction(&Instruction::I32Const(entry.pass_content_ptr));
+            f.instruction(&Instruction::I32Const(entry.pass_len));
+            f.instruction(&Instruction::Call(printl_idx));
+            f.instruction(&Instruction::Br(1)); // jump past the outer block
+
+            f.instruction(&Instruction::End); // end inner block
+
+            // FAIL branch: call printl(fail_content_ptr, fail_len) + increment failure_count
+            f.instruction(&Instruction::I32Const(entry.fail_content_ptr));
+            f.instruction(&Instruction::I32Const(entry.fail_len));
+            f.instruction(&Instruction::Call(printl_idx));
+            // failure_count += 1
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::I32Const(1));
+            f.instruction(&Instruction::I32Add);
+            f.instruction(&Instruction::LocalSet(0));
+
+            f.instruction(&Instruction::End); // end outer block
+        }
+
+        // Return failure_count
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::End);
+
+        // Register the function type: () -> i32
+        let type_index = self
+            .wasm_generator
+            .type_manager
+            .add_function_type_single(&[], Some(crate::types::WasmType::I32))?;
+
+        self.wasm_generator.function_section.function(type_index);
+        self.wasm_generator.code_section.function(&f);
+
+        let run_tests_index = self.wasm_generator.function_count;
+        self.wasm_generator
+            .function_map
+            .insert("_run_tests".to_string(), run_tests_index);
+        self.wasm_generator
+            .function_names
+            .push("_run_tests".to_string());
+        self.wasm_generator.function_count += 1;
+
+        tracing::debug!(
+            func_index = run_tests_index,
+            test_count = entries.len(),
+            "_run_tests function generated and registered"
+        );
+
+        Ok(())
+    }
+
+    /// Generate a `_start` WASM function that calls `_run_tests` and drops the result.
+    ///
+    /// Used when a file has only a `tests:` block and no `start:` function.  The
+    /// clean-runner always invokes `_start`; this wrapper makes test-only files runnable.
+    pub(super) fn generate_test_start_export(&mut self) -> Result<(), CompilerError> {
+        let run_tests_idx = match self.wasm_generator.function_map.get("_run_tests").copied() {
+            Some(idx) => idx,
+            None => {
+                return Err(CompilerError::codegen_error(
+                    "generate_test_start_export: '_run_tests' not found in function_map"
+                        .to_string(),
+                    None,
+                    None,
+                ));
+            }
+        };
+
+        let type_index = self
+            .wasm_generator
+            .type_manager
+            .add_function_type_single(&[], None)?;
+        self.wasm_generator.function_section.function(type_index);
+
+        let mut f = WasmFunction::new(vec![]);
+        f.instruction(&Instruction::Call(run_tests_idx));
+        f.instruction(&Instruction::Drop);
+        f.instruction(&Instruction::End);
+        self.wasm_generator.code_section.function(&f);
+
+        let start_index = self.wasm_generator.function_count;
+        self.wasm_generator.export_section.export(
+            "_start",
+            wasm_encoder::ExportKind::Func,
+            start_index,
+        );
+        self.wasm_generator
+            .function_names
+            .push("_start".to_string());
+        self.wasm_generator.function_count += 1;
+
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
     // JSON helpers
     // -------------------------------------------------------------------------
 

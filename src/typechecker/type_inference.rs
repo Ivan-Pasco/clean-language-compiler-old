@@ -1131,6 +1131,32 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        // Type-check top-level test blocks.
+        //
+        // Each test body is a single Return statement that evaluates (lhs == rhs).
+        // The body is inferred using the standard block inference path.
+        let mut tast_tests: Vec<crate::typechecker::tast::TastTest> = Vec::new();
+        for test in &program.tests {
+            match self.infer_block(&test.body) {
+                Ok(tast_body) => {
+                    tast_tests.push(crate::typechecker::tast::TastTest {
+                        name: test.name.clone(),
+                        body: tast_body,
+                        is_background: false,
+                        location: test.location.clone(),
+                    });
+                }
+                Err(error) => {
+                    tracing::trace!(
+                        name = %test.name,
+                        "ERROR: Failed to infer test block: {:?}",
+                        error
+                    );
+                    self.errors.push(error);
+                }
+            }
+        }
+
         // Type inference completed successfully
 
         TastProgram {
@@ -1138,7 +1164,7 @@ impl<'a> TypeInference<'a> {
             classes: tast_classes,
             start_function: tast_start_function,
             imports: Vec::new(), // Would convert imports here
-            tests: Vec::new(),   // Would convert tests here
+            tests: tast_tests,
             state: tast_state,
             watch_blocks: tast_watch_blocks,
             type_env: self.type_env.clone(),

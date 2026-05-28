@@ -1427,5 +1427,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(anyhow::anyhow!("No start/main function found").into());
     }
 
+    // If the module exports _run_tests, invoke it and report results.
+    if let Some(func) = instance.get_func(&mut store, "_run_tests") {
+        println!("🧪 Running tests (_run_tests)...");
+        println!("--- Test Output ---");
+        let mut results = vec![wasmtime::Val::I32(0)];
+        func.call(&mut store, &[], &mut results)?;
+        println!("--- End Test Output ---");
+        if let Some(wasmtime::Val::I32(failures)) = results.first() {
+            if *failures == 0 {
+                println!("✅ All tests passed!");
+            } else {
+                println!("❌ {} test(s) failed.", failures);
+                return Err(anyhow::anyhow!("{} test(s) failed", failures).into());
+            }
+        }
+    }
+
     Ok(())
 }

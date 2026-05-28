@@ -60,6 +60,11 @@ pub struct MirProgram {
     /// External functions (WASM imports from host)
     /// These generate import entries during code generation
     pub externals: Vec<MirExternalFunction>,
+
+    /// Test functions lowered from `tests:` blocks.
+    /// Each entry is (SymbolId of the `__test_*` function, human-readable test name).
+    /// Consumed by the codegen phase to emit the `_run_tests` exported function.
+    pub test_functions: Vec<(crate::resolver::SymbolId, String)>,
 }
 
 /// MIR External Function - a function provided by the WASM host (imported)

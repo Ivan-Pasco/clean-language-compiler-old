@@ -1,0 +1,28 @@
+// Test: testing/tests_block_basic
+// Grammar: grammar.ebnf tests_block, named_test, anonymous_test
+// Expected output:
+//   PASS: integer equality
+//   PASS: string equality
+//   PASS: boolean true
+//   PASS: addition
+//   PASS: subtraction
+//   PASS: multiplication
+//   PASS: negation
+//   PASS: anonymous integer check
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+	boolean negate(boolean b)
+		return not b
+
+tests:
+	"integer equality": 1 = 1
+	"string equality": "hello" = "hello"
+	"boolean true": true = true
+	"addition": add(3, 4) = 7
+	"subtraction": add(10, -3) = 7
+	"multiplication": 2 * 6 = 12
+	"negation": negate(false) = true
+	1 + 1 = 2

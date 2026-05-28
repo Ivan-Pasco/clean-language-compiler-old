@@ -880,6 +880,18 @@ impl MirCodeGenerator<'_> {
                 .map_err(|e| vec![e])?;
         }
 
+        // Generate _run_tests export if any test functions were compiled.
+        if !mir_program.test_functions.is_empty() {
+            self.generate_run_tests_export(&mir_program.test_functions)
+                .map_err(|e| vec![e])?;
+
+            // When there is no regular entry point (test-only file), generate a thin
+            // _start wrapper so that clean-runner can execute the test suite.
+            if mir_program.entry_point.is_none() {
+                self.generate_test_start_export().map_err(|e| vec![e])?;
+            }
+        }
+
         // Finalise WASM module
         let wasm_bytes = self.finalize_module().map_err(|e| vec![e])?;
 

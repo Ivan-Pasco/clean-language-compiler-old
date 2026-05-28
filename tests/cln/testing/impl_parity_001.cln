@@ -1,0 +1,19 @@
+// Test: testing/impl_parity_001
+// Grammar: tests_block production rule
+// Semantic: FUNC001 (function calls in test expressions)
+// Expected output (start:):
+//   app running
+// Expected output (_run_tests):
+//   PASS: addition
+//   PASS: subtraction
+
+start:
+	print("app running")
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+tests:
+	"addition": add(1, 1) = 2
+	"subtraction": add(5, 3) = 8

@@ -348,6 +348,7 @@ impl MirBuilder {
             state_rules: Vec::new(),
             state_guards: Vec::new(),
             externals: Vec::new(),
+            test_functions: Vec::new(),
         };
 
         // NOTE: Populate symbol_name_map from SymbolTable for dynamic resolution
@@ -624,6 +625,84 @@ impl MirBuilder {
                 }
             }
         }
+
+        // Lower test functions.
+        //
+        // Each TastTest is lowered into a synthetic TastFunction named `__test_{name}`
+        // with return type Boolean.  The function body contains a single Return statement
+        // that evaluates (lhs == rhs) and returns the boolean result.  A later codegen
+        // pass collects all `__test_*` functions and emits a `_run_tests` export that
+        // calls each one, prints PASS/FAIL, and returns the failure count.
+        let mut test_symbol_ids: Vec<(SymbolId, String)> = Vec::new();
+        // Synthetic SymbolIds for test functions start at 4000 to avoid clashing with
+        // builtins (1000–1011), watch handlers (2000+), and computed getters (3000+).
+        let mut next_test_symbol_id: usize = 4000;
+        let tast_tests = tast.tests.clone();
+        for test in &tast_tests {
+            let symbol_id = SymbolId(next_test_symbol_id);
+            next_test_symbol_id += 1;
+            // Sanitize the test name for use as a function name identifier.
+            let safe_name: String = test
+                .name
+                .chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let fn_name = format!("__test_{}", safe_name);
+
+            debug!(
+                test_name = %test.name,
+                fn_name = %fn_name,
+                symbol_id = symbol_id.0,
+                "Lowering test to MIR function"
+            );
+
+            let synthetic_function = TastFunction {
+                symbol_id,
+                name: fn_name.clone(),
+                parameters: Vec::new(),
+                return_type: ConcreteType::Boolean,
+                body: test.body.clone(),
+                generic_params: Vec::new(),
+                constraints: Vec::new(),
+                is_background: false,
+                is_static: false,
+                visibility: Visibility::Private,
+                location: test.location.clone(),
+            };
+
+            match self.build_function(synthetic_function) {
+                Ok(mir_function) => {
+                    mir_program
+                        .symbol_name_map
+                        .insert(symbol_id, fn_name.clone());
+                    mir_program.functions.insert(symbol_id, mir_function);
+                    test_symbol_ids.push((symbol_id, test.name.clone()));
+                    self.stats.functions_lowered += 1;
+                    debug!(
+                        test_name = %test.name,
+                        symbol_id = symbol_id.0,
+                        "Test function built and registered"
+                    );
+                }
+                Err(errors) => {
+                    warn!(
+                        test_name = %test.name,
+                        error_count = errors.len(),
+                        "Failed to lower test function"
+                    );
+                    self.warnings.extend(errors);
+                }
+            }
+        }
+
+        // Store test symbol IDs for the codegen phase to use when generating _run_tests.
+        mir_program.test_functions = test_symbol_ids;
 
         // Transfer string pool
         mir_program.string_pool = self.string_pool.clone();

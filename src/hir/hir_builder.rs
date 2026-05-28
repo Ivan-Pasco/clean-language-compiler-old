@@ -425,7 +425,7 @@ impl HirBuilder {
         let mut classes = Vec::new();
         let mut start_function = None;
         let mut imports = Vec::new();
-        let tests = Vec::new();
+        let mut tests: Vec<HirTest> = Vec::new();
         // Top-level `validate name:` blocks are desugared into HIR statements that must be
         // prepended to the start function's body (schemas are initialized before first use).
         let mut validate_preamble: Vec<HirStatement> = Vec::new();
@@ -494,6 +494,44 @@ impl HirBuilder {
                     let mut expanded = self.desugar_validate_declaration(schema, &loc)?;
                     validate_preamble.append(&mut expanded);
                 }
+                Statement::TestsBlock {
+                    tests: test_cases,
+                    location,
+                } => {
+                    // Lower each test case into a HirTest node whose body returns
+                    // (test_expression == expected_value) as a boolean.
+                    let loc = location.clone().unwrap_or_default();
+                    for (idx, test_case) in test_cases.iter().enumerate() {
+                        let test_loc = test_case.location.clone().unwrap_or_else(|| loc.clone());
+                        let lhs = self.build_expression(&test_case.test_expression)?;
+                        let rhs = self.build_expression(&test_case.expected_value)?;
+                        // The test body is: return lhs == rhs
+                        let equality = HirExpression::BinaryOp {
+                            left: Box::new(lhs),
+                            op: HirBinaryOp::Equal,
+                            right: Box::new(rhs),
+                            location: test_loc.clone(),
+                        };
+                        let body = HirBlock {
+                            statements: vec![HirStatement::Return {
+                                value: Some(equality),
+                                location: test_loc.clone(),
+                            }],
+                            location: test_loc.clone(),
+                        };
+                        // Use the description as the name, or a positional fallback.
+                        let name = test_case
+                            .description
+                            .clone()
+                            .unwrap_or_else(|| format!("test_{}", idx));
+                        tests.push(HirTest {
+                            name,
+                            description: test_case.description.clone(),
+                            body,
+                            location: test_loc,
+                        });
+                    }
+                }
                 _ => {
                     // Handle other top-level statements if needed
                 }
@@ -541,6 +579,37 @@ impl HirBuilder {
         // Handle the start function if it exists
         if let Some(start_func) = &program.start_function {
             start_function = Some(self.build_function(start_func)?);
+        }
+
+        // Process test cases from program.tests (parser stores them directly, not in statements).
+        // Each TestCase becomes a HirTest whose body is a single Return(lhs == rhs).
+        for (idx, test_case) in program.tests.iter().enumerate() {
+            let test_loc = test_case.location.clone().unwrap_or_default();
+            let lhs = self.build_expression(&test_case.test_expression)?;
+            let rhs = self.build_expression(&test_case.expected_value)?;
+            let equality = HirExpression::BinaryOp {
+                left: Box::new(lhs),
+                op: HirBinaryOp::Equal,
+                right: Box::new(rhs),
+                location: test_loc.clone(),
+            };
+            let body = HirBlock {
+                statements: vec![HirStatement::Return {
+                    value: Some(equality),
+                    location: test_loc.clone(),
+                }],
+                location: test_loc.clone(),
+            };
+            let name = test_case
+                .description
+                .clone()
+                .unwrap_or_else(|| format!("test_{}", idx));
+            tests.push(HirTest {
+                name,
+                description: test_case.description.clone(),
+                body,
+                location: test_loc,
+            });
         }
 
         // Process state block if present
