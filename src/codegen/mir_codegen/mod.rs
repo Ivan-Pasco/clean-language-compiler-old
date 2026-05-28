@@ -466,15 +466,23 @@ impl MirCodeGenerator<'_> {
                 .register_string_replace_import()
                 .map_err(|e| vec![e])?;
 
-            debug_mir!("DEBUG MIR: Registering string_repeat import");
-            self.wasm_generator
-                .register_string_repeat_import()
-                .map_err(|e| vec![e])?;
+            if self.wasm_generator.has_reachable_prefix("string.repeat")
+                || self.wasm_generator.has_reachable_prefix("string_repeat")
+            {
+                debug_mir!("DEBUG MIR: Registering string_repeat import (used in code)");
+                self.wasm_generator
+                    .register_string_repeat_import()
+                    .map_err(|e| vec![e])?;
+            }
 
-            debug_mir!("DEBUG MIR: Registering string_matches import");
-            self.wasm_generator
-                .register_string_matches_import()
-                .map_err(|e| vec![e])?;
+            if self.wasm_generator.has_reachable_prefix("string.matches")
+                || self.wasm_generator.has_reachable_prefix("string_matches")
+            {
+                debug_mir!("DEBUG MIR: Registering string_matches import (used in code)");
+                self.wasm_generator
+                    .register_string_matches_import()
+                    .map_err(|e| vec![e])?;
+            }
 
             // OPTIMIZATION: Only import bridge functions that are actually used in the code
             if !self.bridge_functions.is_empty() {
@@ -686,15 +694,22 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
-            // String operation wrappers — always register to support string.repeat / string.matches
-            debug_mir!("DEBUG MIR: Registering string_repeat wrapper");
-            self.wasm_generator
-                .register_string_repeat_wrapper()
-                .map_err(|e| vec![e])?;
-            debug_mir!("DEBUG MIR: Registering string_matches wrapper");
-            self.wasm_generator
-                .register_string_matches_wrapper()
-                .map_err(|e| vec![e])?;
+            if self.wasm_generator.has_reachable_prefix("string.repeat")
+                || self.wasm_generator.has_reachable_prefix("string_repeat")
+            {
+                debug_mir!("DEBUG MIR: Registering string_repeat wrapper (used in code)");
+                self.wasm_generator
+                    .register_string_repeat_wrapper()
+                    .map_err(|e| vec![e])?;
+            }
+            if self.wasm_generator.has_reachable_prefix("string.matches")
+                || self.wasm_generator.has_reachable_prefix("string_matches")
+            {
+                debug_mir!("DEBUG MIR: Registering string_matches wrapper (used in code)");
+                self.wasm_generator
+                    .register_string_matches_wrapper()
+                    .map_err(|e| vec![e])?;
+            }
         }
 
         // Set up memory section
