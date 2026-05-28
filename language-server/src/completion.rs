@@ -457,7 +457,7 @@ impl CompletionProvider {
 
     fn get_string_methods(&self) -> Vec<CompletionItem> {
         vec![
-            self.create_method_completion("length", "Get the length of the string", "property"),
+            self.create_method_completion("length", "Get the length of the string", "length()"),
             self.create_method_completion("charAt", "Get character at index", "charAt(${1:index})"),
             self.create_method_completion(
                 "substring",
@@ -508,33 +508,15 @@ impl CompletionProvider {
 
     fn get_list_methods(&self) -> Vec<CompletionItem> {
         vec![
-            self.create_method_completion("length", "Get the number of items in the list", "property"),
+            self.create_method_completion("length", "Get the number of items in the list", "length()"),
             self.create_method_completion("add", "Add element to end", "add(${1:element})"),
-            self.create_method_completion("removeLast", "Remove and return last element", "removeLast()"),
-            self.create_method_completion("get", "Get element at index", "get(${1:index})"),
-            self.create_method_completion(
-                "set",
-                "Set element at index",
-                "set(${1:index}, ${2:value})",
-            ),
-            self.create_method_completion(
-                "indexOf",
-                "Find index of element",
-                "indexOf(${1:element})",
-            ),
+            self.create_method_completion("remove", "Remove element at index", "remove(${1:index})"),
             self.create_method_completion(
                 "contains",
                 "Check if contains element",
                 "contains(${1:element})",
             ),
-            self.create_method_completion("clear", "Remove all elements", "clear()"),
-            self.create_method_completion(
-                "slice",
-                "Extract portion of list",
-                "slice(${1:start}, ${2:end})",
-            ),
-            self.create_method_completion("sort", "Sort the list", "sort()"),
-            self.create_method_completion("reverse", "Reverse the list", "reverse()"),
+            self.create_method_completion("sort", "Return sorted list", "sort()"),
         ]
     }
 
@@ -631,22 +613,27 @@ impl CompletionProvider {
             ("else", "Else statement", "else\n\t${1:body}"),
             (
                 "iterate",
-                "Iterate loop",
-                "iterate ${1:variable} in ${2:collection}\n\t${3:body}",
+                "Iterate over range or list",
+                "iterate ${1:i} in ${2:1} to ${3:10}\n\t${4:body}",
             ),
-            ("repeat", "Repeat loop", "repeat\n\t${1:body}"),
+            (
+                "while",
+                "While loop — condition-based",
+                "while ${1:condition}\n\t${2:body}",
+            ),
+            ("repeat", "Repeat loop until break", "repeat\n\t${1:body}"),
             ("return", "Return statement", "return ${1:value}"),
-            ("extends", "Class inheritance", "extends ${1:BaseClass}"),
+            ("is", "Class inheritance", "is ${1:BaseClass}"),
             ("base", "Base constructor call", "base(${1:arguments})"),
             (
                 "onError",
-                "Error handling",
-                "onError ${1:error_variable}\n\t${2:error_handling}",
+                "Inline error fallback",
+                "onError ${1:fallback_value}",
             ),
             (
                 "state",
                 "State management block",
-                "state:\n\t${1:variable_declarations}",
+                "state:\n\t${1:type} ${2:name} = ${3:value}",
             ),
             (
                 "watch",
@@ -655,13 +642,13 @@ impl CompletionProvider {
             ),
             (
                 "computed",
-                "Computed property — derived from state",
-                "computed ${1:type} ${2:name}:\n\t${3:expression}",
+                "Computed block — derived values",
+                "computed:\n\t${1:type} ${2:name}\n\t\treturn ${3:expression}",
             ),
             (
                 "rules",
                 "Rules block — validation constraints",
-                "rules:\n\t${1:constraints}",
+                "rules:\n\t${1:constraint}",
             ),
             (
                 "tests",
