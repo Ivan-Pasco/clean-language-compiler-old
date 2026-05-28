@@ -617,9 +617,34 @@ function_type = {
 // Tests block
 tests_block = { "tests" ~ ":" ~ indented_tests_block }
 indented_tests_block = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ test_case ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ test_case)* }
-test_case = { named_test | anonymous_test }
+test_case = { endpoint_test | named_test | anonymous_test }
 named_test = { string ~ ":" ~ expression ~ "=" ~ expression }
 anonymous_test = { expression ~ "=" ~ expression }
+
+// Endpoint test inside tests: block
+// HTTP method keywords are contextual — they only have special meaning here.
+endpoint_test = {
+    "test" ~ WHITESPACE+ ~ string ~ NEWLINE
+    ~ (empty_line)*
+    ~ INDENT+ ~ http_test_request
+    ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ http_test_assertion)*
+}
+http_test_request = {
+    http_method ~ WHITESPACE+ ~ string
+    ~ (WHITESPACE+ ~ http_test_body)?
+    ~ (WHITESPACE+ ~ http_test_header)?
+}
+http_method = { "GET" | "POST" | "PUT" | "DELETE" | "PATCH" }
+http_test_body = { "json" ~ "(" ~ (argument_item ~ ("," ~ WHITESPACE* ~ argument_item)*)? ~ ")" }
+http_test_header = { "header" ~ "(" ~ string ~ ":" ~ WHITESPACE* ~ string ~ ")" }
+http_test_assertion = { status_assertion | json_assertion }
+// Uses the comparison_op rule already defined above (supports ==, !=, <, >, <=, >=)
+status_assertion = { "status" ~ WHITESPACE* ~ comparison_op ~ WHITESPACE* ~ integer }
+json_assertion = {
+    "json" ~ ("." ~ identifier)+
+    ~ WHITESPACE* ~ comparison_op ~ WHITESPACE*
+    ~ (expression | "null")
+}
 
 // ============================================================================
 // STATE MANAGEMENT

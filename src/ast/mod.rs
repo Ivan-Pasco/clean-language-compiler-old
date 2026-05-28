@@ -841,11 +841,79 @@ pub struct ImportItem {
     pub is_file_import: bool,
 }
 
+// ============================================================================
+// Endpoint Test AST Types (tests: block endpoint syntax)
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Patch,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct HttpTestRequest {
+    pub method: HttpMethod,
+    pub path: String,
+    pub body: Option<Vec<(String, Expression)>>,
+    pub header: Option<(String, String)>,
+}
+
+/// Comparison operator for endpoint test assertions.
+/// Distinct from BinaryOperator to keep the test AST self-contained.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum HttpComparisonOp {
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum HttpTestAssertion {
+    Status {
+        op: HttpComparisonOp,
+        value: i64,
+    },
+    JsonField {
+        path: Vec<String>,
+        op: HttpComparisonOp,
+        value: Expression,
+    },
+    JsonFieldNotNull {
+        path: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct EndpointTest {
+    pub name: String,
+    pub request: HttpTestRequest,
+    pub assertions: Vec<HttpTestAssertion>,
+    pub location: Option<SourceLocation>,
+}
+
+/// The two kinds of test case inside a `tests:` block.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum TestCaseKind {
+    /// `"desc": expr = expected`  or  `expr = expected`
+    Expression {
+        test_expression: Expression,
+        expected_value: Expression,
+    },
+    /// `test "name"\n    METHOD "path"\n    assertions…`
+    Endpoint(EndpointTest),
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TestCase {
-    pub description: Option<String>, // None for anonymous tests
-    pub test_expression: Expression,
-    pub expected_value: Expression,
+    pub description: Option<String>,
+    pub kind: TestCaseKind,
     pub location: Option<SourceLocation>,
 }
 

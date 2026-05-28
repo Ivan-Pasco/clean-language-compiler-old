@@ -1076,8 +1076,10 @@ pub fn parse_test_case(test_pair: Pair<Rule>) -> Result<TestCase, CompilerError>
                 if let (Some(test_expr), Some(expected)) = (test_expression, expected_value) {
                     return Ok(TestCase {
                         description,
-                        test_expression: test_expr,
-                        expected_value: expected,
+                        kind: crate::ast::TestCaseKind::Expression {
+                            test_expression: test_expr,
+                            expected_value: expected,
+                        },
                         location,
                     });
                 }
@@ -1099,8 +1101,10 @@ pub fn parse_test_case(test_pair: Pair<Rule>) -> Result<TestCase, CompilerError>
                 if let (Some(test_expr), Some(expected)) = (test_expression, expected_value) {
                     return Ok(TestCase {
                         description: None,
-                        test_expression: test_expr,
-                        expected_value: expected,
+                        kind: crate::ast::TestCaseKind::Expression {
+                            test_expression: test_expr,
+                            expected_value: expected,
+                        },
                         location,
                     });
                 }
