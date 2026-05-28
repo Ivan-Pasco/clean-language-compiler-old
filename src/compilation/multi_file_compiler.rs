@@ -51,6 +51,15 @@ struct ExtractedImport {
     is_file_import: bool,
 }
 
+/// Metadata extracted from a project manifest (main.cln with package: block)
+#[derive(Debug, Default)]
+struct ManifestInfo {
+    /// The declared entry file for the first target (e.g. app/web/pages/home.cln)
+    entry_path: Option<PathBuf>,
+    /// Folders declared in shared: [...] that should be compiled for every target
+    shared_folders: Vec<PathBuf>,
+}
+
 /// Configuration for the multi-file compiler
 #[derive(Clone)]
 pub struct MultiFileCompilerConfig {
@@ -331,7 +340,7 @@ impl MultiFileCompiler {
         }
 
         // Read entry file
-        let entry_source = fs::read_to_string(entry_path).map_err(|e| {
+        let manifest_source = fs::read_to_string(entry_path).map_err(|e| {
             vec![CompilerError::io_error(
                 format!("Failed to read entry file {}: {}", entry_path.display(), e),
                 None,
@@ -340,9 +349,45 @@ impl MultiFileCompiler {
         })?;
 
         // Get the canonical path for the entry file
-        let canonical_path = entry_path
+        let manifest_canonical = entry_path
             .canonicalize()
             .unwrap_or_else(|_| entry_path.to_path_buf());
+
+        // If this is a project manifest (package: block), extract entry: and shared: info
+        // and redirect to the declared entry file.
+        let manifest_root: Option<PathBuf> = if Self::is_manifest_file(&manifest_source) {
+            Some(
+                manifest_canonical
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .to_path_buf(),
+            )
+        } else {
+            None
+        };
+
+        let (manifest_info, entry_source, canonical_path) =
+            if let Some(ref manifest_dir) = manifest_root {
+                let info = Self::parse_manifest_info(&manifest_source, manifest_dir);
+
+                // Resolve the actual entry file if declared
+                if let Some(ref ep) = info.entry_path {
+                    match fs::read_to_string(ep) {
+                        Ok(src) => {
+                            let ep_canonical = ep.canonicalize().unwrap_or_else(|_| ep.clone());
+                            (Some(info), src, ep_canonical)
+                        }
+                        Err(_) => {
+                            // Entry file not found — fall back to compiling the manifest itself
+                            (Some(info), manifest_source, manifest_canonical)
+                        }
+                    }
+                } else {
+                    (Some(info), manifest_source, manifest_canonical.clone())
+                }
+            } else {
+                (None, manifest_source, manifest_canonical.clone())
+            };
 
         // Derive module name from file path
         let entry_name = Self::derive_module_name(&canonical_path);
@@ -354,14 +399,46 @@ impl MultiFileCompiler {
         let mut graph = ModuleGraph::new();
         graph.add_module(unit.entry_module);
 
-        // Add the entry file's directory to search paths
+        // Add the entry file's directory to search paths.
+        // When a manifest is present, also add the manifest's directory (project root)
+        // so that imports like `import "app/logic/utils"` resolve from the root.
         let mut search_paths = self.config.search_paths.clone();
         if let Some(parent) = canonical_path.parent() {
             search_paths.insert(0, parent.to_path_buf());
         }
+        if let (Some(ref info), Some(ref manifest_dir)) = (&manifest_info, &manifest_root) {
+            // Add project root (manifest dir) so all app/ paths resolve
+            if !search_paths.contains(manifest_dir) {
+                search_paths.push(manifest_dir.clone());
+            }
+            // Also add each shared folder itself as a search root for bare-name imports
+            for shared in &info.shared_folders {
+                if !search_paths.contains(shared) {
+                    search_paths.push(shared.clone());
+                }
+            }
+        }
 
-        // Discover and load all modules
+        // Discover and load all modules via explicit import: statements
         self.discover_modules(&mut unit, &mut graph, &search_paths)?;
+
+        // If a manifest declared shared: folders, scan them and add any .cln files
+        // that were not already discovered via imports.  These files compile as part of
+        // every target even when no other module explicitly imports them.
+        if let Some(ref info) = manifest_info {
+            for shared_dir in &info.shared_folders {
+                for file_path in Self::collect_cln_files(shared_dir) {
+                    if unit.module_id_for_path(&file_path).is_none() {
+                        if let Ok(source) = fs::read_to_string(&file_path) {
+                            let name = Self::derive_module_name(&file_path);
+                            let id = unit.add_module(name, file_path, source);
+                            // Add as a standalone node; the topological sort includes all nodes
+                            graph.add_module(id);
+                        }
+                    }
+                }
+            }
+        }
 
         // Determine compilation order
         let order = graph
@@ -1091,6 +1168,71 @@ impl MultiFileCompiler {
         } else {
             Err(errors)
         }
+    }
+
+    // =========================================================================
+    // Project Manifest Support
+    // =========================================================================
+
+    /// Returns true if the source file is a project manifest (starts with "package:")
+    fn is_manifest_file(source: &str) -> bool {
+        source.trim_start().starts_with("package:")
+    }
+
+    /// Extract entry: and shared: declarations from a manifest file.
+    ///
+    /// This is a line-level parser — it does not tokenize the full file. It only
+    /// extracts the two fields needed to drive multi-file discovery.
+    fn parse_manifest_info(source: &str, manifest_dir: &Path) -> ManifestInfo {
+        let mut info = ManifestInfo::default();
+
+        for line in source.lines() {
+            let trimmed = line.trim();
+
+            // shared: [path1, path2, ...]
+            if let Some(rest) = trimmed.strip_prefix("shared:") {
+                let rest = rest.trim();
+                if rest.starts_with('[') {
+                    let end = rest.find(']').unwrap_or(rest.len());
+                    let inner = &rest[1..end];
+                    for path_str in inner.split(',') {
+                        let p = path_str.trim().trim_matches('"');
+                        if !p.is_empty() {
+                            info.shared_folders.push(manifest_dir.join(p));
+                        }
+                    }
+                }
+            }
+
+            // entry: path  (first occurrence wins)
+            if info.entry_path.is_none() {
+                if let Some(rest) = trimmed.strip_prefix("entry:") {
+                    let p = rest.trim().trim_matches('"');
+                    if !p.is_empty() {
+                        info.entry_path = Some(manifest_dir.join(p));
+                    }
+                }
+            }
+        }
+
+        info
+    }
+
+    /// Recursively collect all .cln files under a directory.
+    fn collect_cln_files(dir: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    files.extend(Self::collect_cln_files(&path));
+                } else if path.extension().and_then(|e| e.to_str()) == Some("cln") {
+                    let canonical = path.canonicalize().unwrap_or(path);
+                    files.push(canonical);
+                }
+            }
+        }
+        files
     }
 
     // =========================================================================
