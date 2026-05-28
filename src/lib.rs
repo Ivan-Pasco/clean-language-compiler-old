@@ -658,7 +658,7 @@ fn parse_bridge_type(type_str: &str) -> ast::Type {
 /// HIR validator's `context.classes` lookup, causing a spurious "Undefined type" error
 /// whenever a `functions:` block uses a plugin type as a parameter type.
 fn inject_plugin_type_stubs(ast: &mut ast::Program, registry: &plugins::PluginRegistry) {
-    for (_plugin_name, manifest) in registry.loaded_manifests() {
+    for manifest in registry.loaded_manifests().values() {
         for type_def in &manifest.language.types {
             if ast.classes.iter().any(|c| c.name == type_def.name) {
                 continue;
