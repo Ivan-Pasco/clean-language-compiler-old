@@ -1,5 +1,25 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟡 MEDIUM-HIGH: Endpoint test codegen — missing test.http_request host bridge
+
+**Priority**: MEDIUM-HIGH — endpoint tests parse correctly but cannot execute without host bridge
+**Discovered**: 2026-05-28
+**Files**: `tests/cln/testing/endpoint_test_syntax.cln`, `src/parser/token_parser/blocks.rs`
+**Context**: The `endpoint_test` syntax in `tests:` blocks is fully parsed and represented in the AST
+  (`TestCaseKind::Endpoint`). HIR generation for endpoint tests is skipped — they require a live server.
+**Missing**: Host bridge function `test.http_request` in `clean-server`. The call signature expected is:
+  ```
+  test.http_request(method: string, path: string, body_json: string | null, header_key: string | null, header_val: string | null) -> HttpTestResponse
+  ```
+  where `HttpTestResponse` exposes `.status: integer`, `.body_json: string`, and `.ok: boolean`.
+**Action**:
+  1. Add `test.http_request` to `clean-server` host bridge (report_error filed for cross-component request)
+  2. Add codegen in `src/codegen/mod.rs` to lower `TestCaseKind::Endpoint` to a sequence of
+     `test.http_request(...)` calls + assertion checks that print `PASS / FAIL <name>: <assertion>`
+  3. Update HIR builder (`src/hir/hir_builder.rs`) to build HirTest for endpoint cases once bridge is available
+
+---
+
 ## 🔴 CRITICAL: frame.data plugin compatibility — 4 tests failing (SYN001)
 
 **Priority**: CRITICAL — ORM/data plugin tests cannot compile

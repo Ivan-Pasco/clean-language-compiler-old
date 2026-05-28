@@ -1,0 +1,70 @@
+// Test: testing/endpoint_test_syntax
+// Grammar: endpoint_test, http_test_request, http_test_assertion
+// Semantic: endpoint tests compile without error; runtime requires live server
+// Expected output:
+//   endpoint_test_syntax: compile-only check
+
+start:
+	print("endpoint_test_syntax: compile-only check") +
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+tests:
+	// Existing expression-test syntax must still work
+	"adds numbers": add(2, 3) = 5
+
+	// Endpoint test syntax: simple GET
+	test "health check"
+		GET "/api/health"
+		status = 200
+
+	// Endpoint test: GET with status check
+	test "lists users"
+		GET "/api/users"
+		status = 200
+
+	// Endpoint test: POST with JSON body
+	test "creates user"
+		POST "/api/users" json(name: "Alice", email: "alice@test.com")
+		status = 201
+		json.name = "Alice"
+		json.id != null
+
+	// Endpoint test: POST — validation failure
+	test "rejects bad input"
+		POST "/api/users" json(name: "")
+		status = 400
+		json.error != null
+
+	// Endpoint test: GET — not found
+	test "not found"
+		GET "/api/users/99999"
+		status = 404
+
+	// Endpoint test: GET with Authorization header
+	test "with header"
+		GET "/api/profile" header("Authorization": "Bearer token")
+		status = 200
+
+	// Endpoint test: PUT
+	test "updates user"
+		PUT "/api/users/1" json(name: "Bob")
+		status = 200
+		json.name = "Bob"
+
+	// Endpoint test: DELETE
+	test "deletes user"
+		DELETE "/api/users/1"
+		status = 204
+
+	// Endpoint test: query params in path
+	test "query params"
+		GET "/api/users?active=true"
+		status = 200
+
+	// Endpoint test: requires auth
+	test "requires auth"
+		GET "/api/admin/users"
+		status = 401
