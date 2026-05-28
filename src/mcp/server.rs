@@ -3316,43 +3316,34 @@ Use from page templates:
 
 ### Page File Structure
 
-Each page should be a separate .cln file in app/pages/:
+Pages live in app/web/pages/ — HTML templates with optional .cln companion adapters:
 
-    app/pages/
-        helpers.cln      — shared HTML helpers (build_head, build_nav, component renderers)
-        home.cln         — render_home() function
-        about.cln        — render_about() function
-        ...
+    app/web/pages/
+        home.cln         — companion adapter (load() returns context data, optional guard())
+        about.html       — HTML template ({var} escaped, {!var} raw HTML)
+        about.cln        — companion adapter for about.html
+        blog/
+            [slug].html  — dynamic route (/blog/:slug)
+            [slug].cln   — companion adapter for dynamic page
 
-Each page function:
-1. Fetches data from database (data-only SQL)
-2. Extracts values with json_get() or json.get()
-3. Builds section HTML via iterate loops + component helpers
-4. Returns full page via html: block at end of function
+Companion .cln example (delegates data-fetching, never queries DB directly):
+    // app/web/pages/blog/[slug].cln
+    functions:
+        any load(Request request)
+            string slug = request.params.slug
+            Post post = posts.getBySlug(slug)
+            return { post: post }
 
-    string render_home()
-        string lang = get_lang()
-        // ... fetch data, build section HTML fragments ...
-        string head = build_head(lang, title, desc, "/")
-        string nav = build_nav(lang, "home")
-        string footer = build_footer(lang)
-        string scripts = build_page_scripts()
+HTML template example:
+    <!-- app/web/pages/blog/[slug].html -->
+    <page layout="main"></page>
+    <article>
+        <h1>{post.title}</h1>
+        <p>{post.content}</p>
+    </article>
 
-        html:
-            {!head}
-            {!nav}
-            <main>
-                <section class="hero">
-                    <h1>{hero_title}</h1>
-                </section>
-                <section class="section">
-                    <div class="container">
-                        {!features_html}
-                    </div>
-                </section>
-            </main>
-            {!footer}
-            {!scripts}
+Note: app/server/api/ endpoints that return full HTML pages still use html: blocks
+(endpoint-level SSR). Page companions use return { key: value } — the template handles HTML.
 
 ### HTTP Response Pattern
 
@@ -3540,12 +3531,18 @@ fn tool_get_stack_recommendation(
         "web-app" => (
             vec!["frame.server", "frame.data", "frame.ui", "frame.auth"],
             json!({
-                "app/server/main.cln": "Server entry point with routes and middleware",
-                "app/client/main.cln": "Client-side interactivity (compiled to WASM, served to browser)",
-                "app/data/models.cln": "Data models and database schema",
-                "app/auth/auth.cln": "Authentication configuration and guards",
-                "public/css/": "Stylesheets (CSS is acceptable, it's not logic)",
-                "public/images/": "Static assets"
+                "main.cln": "Package manifest — declares shared: folders and target: blocks with plugins (REQUIRED)",
+                "app/server/api/": "HTTP endpoint handlers (endpoints: blocks) — owned by frame.server",
+                "app/server/middleware/": "Request filters — owned by frame.server",
+                "app/data/models/": "Data model definitions — one .cln file per model — owned by frame.data",
+                "app/data/migrations/": "Schema migration files — owned by frame.data",
+                "app/logic/": "Shared business logic — no plugin, compiled for every target",
+                "app/web/pages/": "HTML templates (.html) with .cln companion adapters — auto-routed by filename — owned by frame.ui",
+                "app/web/components/": "Reusable HTML components (component: blocks) — owned by frame.ui",
+                "app/web/layouts/": "Page layout wrappers referenced via <page layout=\"name\"> — owned by frame.ui",
+                "app/auth/": "Authentication configuration and guards — owned by frame.auth",
+                "public/css/": "Stylesheets served directly (no compilation)",
+                "public/images/": "Static image assets"
             }),
             vec![
                 "JavaScript for DOM manipulation — use frame.ui (ui.update, ui.onEvent)",
@@ -3559,16 +3556,15 @@ fn tool_get_stack_recommendation(
             ],
             "Full-stack web application with server, database, authentication, and client-side UI — all in Clean Language",
             Some(vec![
-                "ALWAYS use html: blocks for HTML generation — NEVER build HTML via string concatenation",
-                "Use {var} for escaped text interpolation, {!var} for raw HTML insertion in html: blocks",
-                "html: block at end of function is the implicit return value",
-                "SQL queries must return DATA only — NEVER generate HTML inside SQL queries",
-                "For repeating items: query data, query count, iterate with helper functions, insert with {!html_var}",
-                "Create small functions with html: blocks for reusable UI components (render_card, render_nav, etc.)",
-                "Each page should be a separate .cln file in app/pages/ with a render_pagename() function",
-                "Page functions: fetch data → extract values → build section HTML → return full page via html: block",
+                "ALWAYS create main.cln first — it declares shared: folders and target: blocks. Without it, frame.ui/frame.server silently ignore all your files",
+                "Pages go in app/web/pages/ as .html templates with .cln companion adapters (load() returns { key: value } context)",
+                "Companion load() delegates to app/logic/ — never queries the database directly",
+                "Use {var} for HTML-escaped interpolation, {!var} for raw HTML in templates",
+                "app/server/api/ endpoints that return full HTML still use html: blocks (endpoint-level SSR)",
+                "SQL queries must return DATA only — NEVER generate HTML inside data queries",
+                "Reusable HTML components go in app/web/components/ as component: blocks — referenced as custom HTML tags",
                 "Double quotes for HTML attributes inside html: blocks (single quotes cause lexer errors)",
-                "For JSON API responses use return json(body), for HTML pages use html: block as implicit return",
+                "For JSON API responses use return json(body); for full HTML pages use html: block as implicit return",
             ]),
         ),
         "api" => (
