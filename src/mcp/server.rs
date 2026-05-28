@@ -3022,6 +3022,8 @@ watch (firstName, lastName):
 ```
 
 ## Tests Block
+
+### Expression tests (unit / pure-function)
 ```
 tests:
 	"adds numbers": add(2, 3) = 5
@@ -3029,6 +3031,54 @@ tests:
 	"hi".toUpperCase() = "HI"
 	math.abs(-42) = 42
 ```
+
+### Endpoint tests (HTTP — requires live server via `cleen serve`)
+Each `test "name"` block declares one HTTP test case.
+First line: METHOD "path" with optional `json(...)` body and `header(...)`.
+Subsequent lines: assertions against the response.
+
+```
+tests:
+	test "health check"
+		GET "/api/health"
+		status = 200
+
+	test "creates user"
+		POST "/api/users" json(name: "Alice", email: "alice@test.com")
+		status = 201
+		json.name = "Alice"
+		json.id != null
+
+	test "rejects missing email"
+		POST "/api/users" json(name: "Alice")
+		status = 400
+		json.error != null
+
+	test "with auth header"
+		GET "/api/profile" header("Authorization": "Bearer abc123")
+		status = 200
+		json.email != null
+
+	test "updates user"
+		PUT "/api/users/1" json(name: "Bob")
+		status = 200
+		json.name = "Bob"
+
+	test "deletes user"
+		DELETE "/api/users/1"
+		status = 204
+
+	test "query params"
+		GET "/api/users?active=true"
+		status = 200
+		json.length > 0
+```
+
+**HTTP methods**: `GET` `POST` `PUT` `DELETE` `PATCH` (contextual — not global reserved words)
+**Assertion operators**: `=` `!=` `<` `>` `<=` `>=`
+**Special assertion**: `json.field != null` — field must be present and non-null
+**Body syntax**: `json(key: value, key2: value2)` — inline JSON object
+**Header syntax**: `header("Key": "Value")` — single header per request
 
 ## Contracts (require)
 ```
