@@ -12,7 +12,8 @@
 
 use super::TokenParser;
 use crate::ast::{
-    ConstantAssignment, Expression, FrameworkAttribute, Statement, TestCase, Type, Value,
+    ConstantAssignment, EndpointTest, Expression, FrameworkAttribute, HttpComparisonOp, HttpMethod,
+    HttpTestAssertion, HttpTestRequest, Statement, TestCase, TestCaseKind, Type, Value,
     VariableAssignment,
 };
 use crate::error::{CompilerError, ErrorContext, ErrorType};
@@ -1060,13 +1061,17 @@ impl TokenParser {
 
     /// Parse a test case in a `tests:` block.
     ///
-    /// Supports two formats:
+    /// Supports three formats:
+    /// - Endpoint:  `test "name"\n    METHOD "path"\n    assertions…`
     /// - Named:     `"description": expr = expected`
     /// - Anonymous: `expr = expected`
-    ///
-    /// The `=` here is the assertion operator (TokenKind::Assign), not `==`.
     pub(super) fn parse_test_case_in_block(&mut self) -> Result<TestCase, CompilerError> {
         let start_location = self.current().location.clone();
+
+        // If the line starts with `test`, parse as an endpoint test.
+        if self.check(&TokenKind::Test) {
+            return self.parse_endpoint_test();
+        }
 
         // Attempt to parse an optional description string followed by ':'
         let description = if let TokenKind::StringLiteral(desc) = self.current_kind() {
@@ -1080,8 +1085,7 @@ impl TokenParser {
                 self.skip_whitespace();
                 Some(desc_text)
             } else {
-                // No colon after the string — this string is not a description;
-                // restore cursor and parse the whole line as an anonymous test.
+                // No colon — restore and parse the whole line as an anonymous test.
                 self.cursor = saved;
                 None
             }
@@ -1089,11 +1093,9 @@ impl TokenParser {
             None
         };
 
-        // Parse the test expression (left-hand side of the assertion)
         let test_expression = self.parse_expression()?;
         self.skip_whitespace();
 
-        // Expect the assertion `=` operator (TokenKind::Assign, not `==`)
         if !self.check(&TokenKind::Assign) {
             return Err(CompilerError::syntax_error(
                 "Expected '=' in test assertion (format: expr = expected)",
@@ -1104,15 +1106,407 @@ impl TokenParser {
         self.bump(); // consume '='
         self.skip_whitespace();
 
-        // Parse the expected value expression (right-hand side)
         let expected_value = self.parse_expression()?;
 
         Ok(TestCase {
             description,
-            test_expression,
-            expected_value,
+            kind: TestCaseKind::Expression {
+                test_expression,
+                expected_value,
+            },
             location: Some(start_location),
         })
+    }
+
+    /// Parse an endpoint test:
+    ///
+    /// ```text
+    /// test "name"
+    ///     METHOD "path" [json(...)] [header(...)]
+    ///     status = N
+    ///     json.field = value
+    ///     json.field != null
+    /// ```
+    fn parse_endpoint_test(&mut self) -> Result<TestCase, CompilerError> {
+        let start_location = self.current().location.clone();
+        self.bump(); // consume `test`
+        self.skip_whitespace();
+
+        // Test name (string literal)
+        let name = match self.current_kind() {
+            TokenKind::StringLiteral(s) => {
+                let s = s.clone();
+                self.bump();
+                s
+            }
+            _ => {
+                return Err(CompilerError::syntax_error(
+                    "Expected string literal after `test` in endpoint test",
+                    Some("Use: test \"name\"".to_string()),
+                    Some(self.current().location.clone()),
+                ));
+            }
+        };
+
+        // Consume newline after the test name
+        self.skip_whitespace();
+        self.eat(&TokenKind::Newline);
+
+        // Skip blank lines and indents to reach the HTTP request line
+        while matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+        while matches!(self.current_kind(), TokenKind::Indent(_)) {
+            self.bump();
+        }
+        self.skip_whitespace();
+
+        let request = self.parse_http_test_request()?;
+
+        let mut assertions = Vec::new();
+
+        // Parse zero or more assertion lines
+        loop {
+            // Consume trailing whitespace / newlines
+            let saved = self.cursor;
+            self.skip_whitespace();
+
+            if matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            } else {
+                // No newline — end of this test case
+                self.cursor = saved;
+                break;
+            }
+
+            // Skip blank lines
+            while matches!(self.current_kind(), TokenKind::Newline) {
+                self.bump();
+            }
+
+            // Skip indent tokens
+            while matches!(self.current_kind(), TokenKind::Indent(_)) {
+                self.bump();
+            }
+            self.skip_whitespace();
+
+            // Check whether the next token starts an assertion or something else
+            if !self.is_http_assertion_start() {
+                // Next line is a new test case or end of tests block — put cursor back
+                // We can't un-consume the indent/newline tokens, but the outer loop in
+                // parse_tests_block will handle re-synchronisation on the next token.
+                break;
+            }
+
+            match self.parse_http_test_assertion() {
+                Ok(assertion) => assertions.push(assertion),
+                Err(_) => break,
+            }
+        }
+
+        let endpoint = EndpointTest {
+            name: name.clone(),
+            request,
+            assertions,
+            location: Some(start_location.clone()),
+        };
+
+        Ok(TestCase {
+            description: Some(name),
+            kind: TestCaseKind::Endpoint(endpoint),
+            location: Some(start_location),
+        })
+    }
+
+    /// Return true if the current token can start an HTTP test assertion
+    /// (`status` identifier or `json` identifier).
+    fn is_http_assertion_start(&self) -> bool {
+        match self.current_kind() {
+            TokenKind::Identifier(name) => name == "status" || name == "json",
+            _ => false,
+        }
+    }
+
+    /// Parse a single HTTP test request line:
+    /// `METHOD "path" [json(...)] [header(...)]`
+    ///
+    /// HTTP methods are uppercase identifiers — they are NOT global reserved words.
+    fn parse_http_test_request(&mut self) -> Result<HttpTestRequest, CompilerError> {
+        let method = match self.current_kind() {
+            TokenKind::Identifier(name) => {
+                let m = match name.as_str() {
+                    "GET" => HttpMethod::Get,
+                    "POST" => HttpMethod::Post,
+                    "PUT" => HttpMethod::Put,
+                    "DELETE" => HttpMethod::Delete,
+                    "PATCH" => HttpMethod::Patch,
+                    other => {
+                        return Err(CompilerError::syntax_error(
+                            format!("Unknown HTTP method '{}' in endpoint test", other),
+                            Some("Valid methods: GET POST PUT DELETE PATCH".to_string()),
+                            Some(self.current().location.clone()),
+                        ));
+                    }
+                };
+                self.bump();
+                m
+            }
+            _ => {
+                return Err(CompilerError::syntax_error(
+                    "Expected HTTP method (GET POST PUT DELETE PATCH) in endpoint test",
+                    None,
+                    Some(self.current().location.clone()),
+                ));
+            }
+        };
+
+        self.skip_whitespace();
+
+        let path = match self.current_kind() {
+            TokenKind::StringLiteral(s) => {
+                let s = s.clone();
+                self.bump();
+                s
+            }
+            _ => {
+                return Err(CompilerError::syntax_error(
+                    "Expected path string after HTTP method",
+                    None,
+                    Some(self.current().location.clone()),
+                ));
+            }
+        };
+
+        self.skip_whitespace();
+
+        // Optional body: json(key: value, ...)
+        let body = if let TokenKind::Identifier(name) = self.current_kind() {
+            if name == "json" {
+                self.bump(); // consume `json`
+                self.skip_whitespace();
+                self.expect(&TokenKind::LeftParen)?;
+                self.skip_whitespace();
+
+                let mut fields: Vec<(String, Expression)> = Vec::new();
+                while !self.check(&TokenKind::RightParen) && !self.is_at_end() {
+                    self.skip_whitespace();
+                    let key = match self.current_kind() {
+                        TokenKind::Identifier(k) => {
+                            let k = k.clone();
+                            self.bump();
+                            k
+                        }
+                        _ => break,
+                    };
+                    self.skip_whitespace();
+                    self.expect(&TokenKind::Colon)?;
+                    self.skip_whitespace();
+                    let val = self.parse_expression()?;
+                    fields.push((key, val));
+                    self.skip_whitespace();
+                    if self.check(&TokenKind::Comma) {
+                        self.bump();
+                    }
+                }
+                self.expect(&TokenKind::RightParen)?;
+                self.skip_whitespace();
+                Some(fields)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Optional header: header("key": "value")
+        let header = if let TokenKind::Identifier(name) = self.current_kind() {
+            if name == "header" {
+                self.bump(); // consume `header`
+                self.skip_whitespace();
+                self.expect(&TokenKind::LeftParen)?;
+                self.skip_whitespace();
+                let key = match self.current_kind() {
+                    TokenKind::StringLiteral(k) => {
+                        let k = k.clone();
+                        self.bump();
+                        k
+                    }
+                    _ => {
+                        return Err(CompilerError::syntax_error(
+                            "Expected string key in header(...)",
+                            None,
+                            Some(self.current().location.clone()),
+                        ));
+                    }
+                };
+                self.skip_whitespace();
+                self.expect(&TokenKind::Colon)?;
+                self.skip_whitespace();
+                let value = match self.current_kind() {
+                    TokenKind::StringLiteral(v) => {
+                        let v = v.clone();
+                        self.bump();
+                        v
+                    }
+                    _ => {
+                        return Err(CompilerError::syntax_error(
+                            "Expected string value in header(...)",
+                            None,
+                            Some(self.current().location.clone()),
+                        ));
+                    }
+                };
+                self.skip_whitespace();
+                self.expect(&TokenKind::RightParen)?;
+                Some((key, value))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(HttpTestRequest {
+            method,
+            path,
+            body,
+            header,
+        })
+    }
+
+    /// Parse a single HTTP test assertion line:
+    /// - `status = N`
+    /// - `json.field = value`
+    /// - `json.field != null`
+    /// - `json.field > N`
+    fn parse_http_test_assertion(&mut self) -> Result<HttpTestAssertion, CompilerError> {
+        let ident = match self.current_kind() {
+            TokenKind::Identifier(name) => {
+                let name = name.clone();
+                self.bump();
+                name
+            }
+            _ => {
+                return Err(CompilerError::syntax_error(
+                    "Expected assertion keyword (status or json)",
+                    None,
+                    Some(self.current().location.clone()),
+                ));
+            }
+        };
+
+        match ident.as_str() {
+            "status" => {
+                self.skip_whitespace();
+                let op = self.parse_http_comparison_op()?;
+                self.skip_whitespace();
+                let value = match self.current_kind() {
+                    TokenKind::IntegerLiteral(n) => {
+                        let n = *n;
+                        self.bump();
+                        n
+                    }
+                    _ => {
+                        return Err(CompilerError::syntax_error(
+                            "Expected integer status code after comparison operator",
+                            None,
+                            Some(self.current().location.clone()),
+                        ));
+                    }
+                };
+                Ok(HttpTestAssertion::Status { op, value })
+            }
+            "json" => {
+                // Parse dot-separated path: json.field  or  json.nested.field
+                let mut path = Vec::new();
+                while self.check(&TokenKind::Dot) {
+                    self.bump(); // consume '.'
+                    match self.current_kind() {
+                        TokenKind::Identifier(seg) => {
+                            path.push(seg.clone());
+                            self.bump();
+                        }
+                        _ => break,
+                    }
+                }
+
+                self.skip_whitespace();
+
+                // `!= null` shorthand
+                if self.check(&TokenKind::NotEqual) {
+                    self.bump(); // consume `!=`
+                    self.skip_whitespace();
+                    if let TokenKind::Identifier(kw) = self.current_kind() {
+                        if kw == "null" || kw == "none" {
+                            self.bump();
+                            return Ok(HttpTestAssertion::JsonFieldNotNull { path });
+                        }
+                    }
+                    if matches!(self.current_kind(), TokenKind::None) {
+                        self.bump();
+                        return Ok(HttpTestAssertion::JsonFieldNotNull { path });
+                    }
+                    // Fall through: treat as a regular comparison
+                    let value = self.parse_expression()?;
+                    return Ok(HttpTestAssertion::JsonField {
+                        path,
+                        op: HttpComparisonOp::NotEqual,
+                        value,
+                    });
+                }
+
+                let op = self.parse_http_comparison_op()?;
+                self.skip_whitespace();
+
+                // Check for `null` / `none` literal on the right side
+                let is_null = match self.current_kind() {
+                    TokenKind::Identifier(kw) => kw == "null" || kw == "none",
+                    TokenKind::None => true,
+                    _ => false,
+                };
+
+                if is_null && matches!(op, HttpComparisonOp::Equal) {
+                    self.bump();
+                    // json.field = null means "field must be null" — expressed as equality
+                    let null_expr = Expression::Literal(crate::ast::Value::None);
+                    return Ok(HttpTestAssertion::JsonField {
+                        path,
+                        op: HttpComparisonOp::Equal,
+                        value: null_expr,
+                    });
+                }
+
+                let value = self.parse_expression()?;
+                Ok(HttpTestAssertion::JsonField { path, op, value })
+            }
+            other => Err(CompilerError::syntax_error(
+                format!("Unknown assertion keyword '{}' in endpoint test", other),
+                Some("Valid keywords: status, json".to_string()),
+                Some(self.current().location.clone()),
+            )),
+        }
+    }
+
+    /// Parse a comparison operator token for endpoint test assertions.
+    fn parse_http_comparison_op(&mut self) -> Result<HttpComparisonOp, CompilerError> {
+        let op = match self.current_kind() {
+            TokenKind::Assign => HttpComparisonOp::Equal,
+            TokenKind::Equal => HttpComparisonOp::Equal,
+            TokenKind::NotEqual => HttpComparisonOp::NotEqual,
+            TokenKind::Less => HttpComparisonOp::Less,
+            TokenKind::Greater => HttpComparisonOp::Greater,
+            TokenKind::LessEqual => HttpComparisonOp::LessEqual,
+            TokenKind::GreaterEqual => HttpComparisonOp::GreaterEqual,
+            _ => {
+                return Err(CompilerError::syntax_error(
+                    "Expected comparison operator (= != < > <= >=) in assertion",
+                    None,
+                    Some(self.current().location.clone()),
+                ));
+            }
+        };
+        self.bump();
+        Ok(op)
     }
 
     /// Parse spec statement: spec "path/to/spec"

@@ -636,11 +636,9 @@ impl MirBuilder {
         let mut test_symbol_ids: Vec<(SymbolId, String)> = Vec::new();
         // Synthetic SymbolIds for test functions start at 4000 to avoid clashing with
         // builtins (1000–1011), watch handlers (2000+), and computed getters (3000+).
-        let mut next_test_symbol_id: usize = 4000;
         let tast_tests = tast.tests.clone();
-        for test in &tast_tests {
-            let symbol_id = SymbolId(next_test_symbol_id);
-            next_test_symbol_id += 1;
+        for (test_idx, test) in tast_tests.iter().enumerate() {
+            let symbol_id = SymbolId(4000 + test_idx);
             // Sanitize the test name for use as a function name identifier.
             let safe_name: String = test
                 .name

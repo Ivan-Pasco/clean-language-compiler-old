@@ -503,33 +503,42 @@ impl HirBuilder {
                     let loc = location.clone().unwrap_or_default();
                     for (idx, test_case) in test_cases.iter().enumerate() {
                         let test_loc = test_case.location.clone().unwrap_or_else(|| loc.clone());
-                        let lhs = self.build_expression(&test_case.test_expression)?;
-                        let rhs = self.build_expression(&test_case.expected_value)?;
-                        // The test body is: return lhs == rhs
-                        let equality = HirExpression::BinaryOp {
-                            left: Box::new(lhs),
-                            op: HirBinaryOp::Equal,
-                            right: Box::new(rhs),
-                            location: test_loc.clone(),
-                        };
-                        let body = HirBlock {
-                            statements: vec![HirStatement::Return {
-                                value: Some(equality),
-                                location: test_loc.clone(),
-                            }],
-                            location: test_loc.clone(),
-                        };
-                        // Use the description as the name, or a positional fallback.
-                        let name = test_case
-                            .description
-                            .clone()
-                            .unwrap_or_else(|| format!("test_{}", idx));
-                        tests.push(HirTest {
-                            name,
-                            description: test_case.description.clone(),
-                            body,
-                            location: test_loc,
-                        });
+                        match &test_case.kind {
+                            crate::ast::TestCaseKind::Expression {
+                                test_expression,
+                                expected_value,
+                            } => {
+                                let lhs = self.build_expression(test_expression)?;
+                                let rhs = self.build_expression(expected_value)?;
+                                let equality = HirExpression::BinaryOp {
+                                    left: Box::new(lhs),
+                                    op: HirBinaryOp::Equal,
+                                    right: Box::new(rhs),
+                                    location: test_loc.clone(),
+                                };
+                                let body = HirBlock {
+                                    statements: vec![HirStatement::Return {
+                                        value: Some(equality),
+                                        location: test_loc.clone(),
+                                    }],
+                                    location: test_loc.clone(),
+                                };
+                                let name = test_case
+                                    .description
+                                    .clone()
+                                    .unwrap_or_else(|| format!("test_{}", idx));
+                                tests.push(HirTest {
+                                    name,
+                                    description: test_case.description.clone(),
+                                    body,
+                                    location: test_loc,
+                                });
+                            }
+                            crate::ast::TestCaseKind::Endpoint(_) => {
+                                // Endpoint tests require a live server via test.http_request.
+                                // HIR generation is deferred; see TASKS.md.
+                            }
+                        }
                     }
                 }
                 _ => {
@@ -585,31 +594,42 @@ impl HirBuilder {
         // Each TestCase becomes a HirTest whose body is a single Return(lhs == rhs).
         for (idx, test_case) in program.tests.iter().enumerate() {
             let test_loc = test_case.location.clone().unwrap_or_default();
-            let lhs = self.build_expression(&test_case.test_expression)?;
-            let rhs = self.build_expression(&test_case.expected_value)?;
-            let equality = HirExpression::BinaryOp {
-                left: Box::new(lhs),
-                op: HirBinaryOp::Equal,
-                right: Box::new(rhs),
-                location: test_loc.clone(),
-            };
-            let body = HirBlock {
-                statements: vec![HirStatement::Return {
-                    value: Some(equality),
-                    location: test_loc.clone(),
-                }],
-                location: test_loc.clone(),
-            };
-            let name = test_case
-                .description
-                .clone()
-                .unwrap_or_else(|| format!("test_{}", idx));
-            tests.push(HirTest {
-                name,
-                description: test_case.description.clone(),
-                body,
-                location: test_loc,
-            });
+            match &test_case.kind {
+                crate::ast::TestCaseKind::Expression {
+                    test_expression,
+                    expected_value,
+                } => {
+                    let lhs = self.build_expression(test_expression)?;
+                    let rhs = self.build_expression(expected_value)?;
+                    let equality = HirExpression::BinaryOp {
+                        left: Box::new(lhs),
+                        op: HirBinaryOp::Equal,
+                        right: Box::new(rhs),
+                        location: test_loc.clone(),
+                    };
+                    let body = HirBlock {
+                        statements: vec![HirStatement::Return {
+                            value: Some(equality),
+                            location: test_loc.clone(),
+                        }],
+                        location: test_loc.clone(),
+                    };
+                    let name = test_case
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| format!("test_{}", idx));
+                    tests.push(HirTest {
+                        name,
+                        description: test_case.description.clone(),
+                        body,
+                        location: test_loc,
+                    });
+                }
+                crate::ast::TestCaseKind::Endpoint(_) => {
+                    // Endpoint tests require a live server via test.http_request.
+                    // HIR generation is deferred; see TASKS.md.
+                }
+            }
         }
 
         // Process state block if present
