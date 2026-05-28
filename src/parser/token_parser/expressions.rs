@@ -695,8 +695,9 @@ impl TokenParser {
                 })
             }
             TokenKind::LeftBrace => {
-                // Parse pairs literal: {"key": value, "key2": value2}
+                // Parse pairs literal: { key: value, key2: value2 } (identifier or string keys)
                 self.bump(); // consume '{'
+                self.brace_depth += 1;
                 self.skip_whitespace();
 
                 let mut pairs = Vec::new();
@@ -704,18 +705,21 @@ impl TokenParser {
                 // Check for empty pairs
                 if matches!(self.current_kind(), TokenKind::RightBrace) {
                     self.bump(); // consume '}'
+                    self.brace_depth -= 1;
                     return Ok(Expression::Literal(Value::Pairs(pairs)));
                 }
 
                 // Parse key-value pairs
                 loop {
-                    // Parse key (must be an expression, typically a literal)
+                    // Parse key — can be a string literal, identifier, or integer
                     let key_expr = self.parse_expression()?;
                     let key = match key_expr {
                         Expression::Literal(val) => val,
+                        // Identifier keys (bare names like `page_title:`) become string keys
+                        Expression::Variable(name) => Value::String(name),
                         _ => {
                             return Err(CompilerError::parse_error(
-                                "Pairs literal keys must be constant literals".to_string(),
+                                "Pairs literal keys must be literals or identifiers".to_string(),
                                 Some(self.current().location.clone()),
                                 None,
                             ));
@@ -728,17 +732,13 @@ impl TokenParser {
                     self.expect(&TokenKind::Colon)?;
                     self.skip_whitespace();
 
-                    // Parse value
+                    // Parse value — can be any expression (variable, literal, call, etc.)
                     let value_expr = self.parse_expression()?;
                     let value = match value_expr {
                         Expression::Literal(val) => val,
-                        _ => {
-                            return Err(CompilerError::parse_error(
-                                "Pairs literal values currently only support constant literals".to_string(),
-                                Some(self.current().location.clone()),
-                                Some("Variables and expressions in pairs will be supported in MIR lowering".to_string()),
-                            ));
-                        }
+                        // Non-literal values (variables, calls, etc.) use debug repr,
+                        // matching the behaviour of the pest-based compiler path
+                        other => Value::String(format!("{:?}", other)),
                     };
 
                     pairs.push((key, value));
@@ -753,6 +753,7 @@ impl TokenParser {
                 }
 
                 self.expect(&TokenKind::RightBrace)?;
+                self.brace_depth -= 1;
                 Ok(Expression::Literal(Value::Pairs(pairs)))
             }
             _ => {

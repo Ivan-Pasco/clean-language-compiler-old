@@ -61,6 +61,7 @@ pub struct TokenParser {
     pub(super) cursor: usize,
     pub(super) errors: Vec<CompilerError>,
     pub(super) paren_depth: usize, // Track parenthesis depth for multiline expression support
+    pub(super) brace_depth: usize, // Track brace depth for multiline object literal support
     /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
     pub(super) plugin_keywords: HashSet<String>,
     /// Original source text for raw content extraction in framework blocks
@@ -78,6 +79,7 @@ impl TokenParser {
             cursor: 0,
             errors: Vec::new(),
             paren_depth: 0,
+            brace_depth: 0,
             plugin_keywords: HashSet::new(),
             lenient_section_order: false,
         }
@@ -100,6 +102,7 @@ impl TokenParser {
             cursor: 0,
             errors: Vec::new(),
             paren_depth: 0,
+            brace_depth: 0,
             plugin_keywords: plugin_keywords.into_iter().collect(),
             lenient_section_order: false,
         }
@@ -554,13 +557,13 @@ impl TokenParser {
     }
 
     /// Skip whitespace tokens (newlines, comments)
-    /// When inside parentheses (paren_depth > 0), also skip Indent/Dedent for multiline expressions
+    /// When inside parentheses or braces, also skip Indent/Dedent for multiline expressions
     pub(super) fn skip_whitespace(&mut self) {
         let start_token = self.current_kind().clone();
         let mut consumed = vec![];
 
-        // When inside parentheses, skip indent/dedent tokens too (for multiline expressions)
-        if self.paren_depth > 0 {
+        // When inside parentheses or braces, skip indent/dedent tokens too (for multiline expressions)
+        if self.paren_depth > 0 || self.brace_depth > 0 {
             while matches!(
                 self.current_kind(),
                 TokenKind::Newline
