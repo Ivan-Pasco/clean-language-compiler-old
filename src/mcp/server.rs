@@ -3080,6 +3080,27 @@ tests:
 **Body syntax**: `json(key: value, key2: value2)` — inline JSON object
 **Header syntax**: `header("Key": "Value")` — single header per request
 
+## Running Tests
+
+### Expression tests (no server needed)
+```
+cln test file.cln              # run all tests: blocks in one file
+cln test src/                  # run all .cln files in a directory
+```
+Output:
+```
+PASS: addition works
+PASS: string length
+FAIL: divide by zero
+Tests: 2 passed, 1 failed
+```
+
+### Endpoint tests (requires live server)
+```
+cleen serve                    # start the dev server in one terminal
+cln test file.cln              # run endpoint tests against it
+```
+
 ## Contracts (require)
 ```
 functions:

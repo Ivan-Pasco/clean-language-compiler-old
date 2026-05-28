@@ -82,6 +82,8 @@ impl CompletionProvider {
         if self.is_after_dot(prefix) {
             // Method completion after dot (e.g., "string.len")
             completions.extend(self.get_method_completions(prefix));
+        } else if self.is_inside_tests_block(&text_str, line_idx) {
+            completions.extend(self.get_tests_block_completions(prefix));
         } else if self.is_apply_block_context(prefix) {
             // Apply-block completions (e.g., after "identifier:")
             completions.extend(self.get_apply_block_completions());
@@ -331,6 +333,95 @@ impl CompletionProvider {
 
     fn is_after_dot(&self, prefix: &str) -> bool {
         prefix.trim_end().ends_with('.')
+    }
+
+    /// Returns true when the cursor is inside a `tests:` block (but not inside a `test "name"` sub-block).
+    fn is_inside_tests_block(&self, text: &str, current_line: usize) -> bool {
+        let lines: Vec<&str> = text.lines().collect();
+        for i in (0..=current_line.min(lines.len().saturating_sub(1))).rev() {
+            let trimmed = lines[i].trim();
+            if trimmed == "tests:" {
+                return true;
+            }
+            // A top-level non-indented, non-empty line that isn't tests: ends the search
+            if !lines[i].starts_with('\t') && !lines[i].starts_with("    ") && !trimmed.is_empty() {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Completions offered when the cursor is inside a `tests:` block.
+    fn get_tests_block_completions(&self, prefix: &str) -> Vec<CompletionItem> {
+        let trimmed = prefix.trim();
+
+        // Inside a `test "name"` sub-block — offer HTTP assertion keywords
+        if trimmed.starts_with("test ") || trimmed == "test" {
+            return vec![];
+        }
+
+        let mut items = vec![
+            // Expression test (named)
+            CompletionItem {
+                label: "\"name\": expr = expected".to_string(),
+                kind: Some(CompletionItemKind::SNIPPET),
+                detail: Some("Named expression test".to_string()),
+                documentation: Some(Documentation::String(
+                    "Assert that an expression equals an expected value.".to_string(),
+                )),
+                insert_text: Some("\"${1:description}\": ${2:expression} = ${3:expected}".to_string()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("0_expr_named".to_string()),
+                ..Default::default()
+            },
+            // HTTP test sub-block
+            CompletionItem {
+                label: "test \"name\" (HTTP endpoint test)".to_string(),
+                kind: Some(CompletionItemKind::SNIPPET),
+                detail: Some("HTTP endpoint test case".to_string()),
+                documentation: Some(Documentation::String(
+                    "Declare an HTTP endpoint test. Requires a live server (`cleen serve`).\n\nAssertions: `status = 200`, `json.field = value`, `json.field != null`".to_string(),
+                )),
+                insert_text: Some(
+                    "test \"${1:test name}\"\n\t\t${2|GET,POST,PUT,DELETE,PATCH|} \"${3:/path}\"\n\t\tstatus = ${4:200}".to_string(),
+                ),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("1_http_test".to_string()),
+                ..Default::default()
+            },
+            // GET request
+            CompletionItem {
+                label: "test GET".to_string(),
+                kind: Some(CompletionItemKind::SNIPPET),
+                detail: Some("HTTP GET test".to_string()),
+                insert_text: Some(
+                    "test \"${1:description}\"\n\t\tGET \"${2:/path}\"\n\t\tstatus = ${3:200}".to_string(),
+                ),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("2_get".to_string()),
+                ..Default::default()
+            },
+            // POST with JSON body
+            CompletionItem {
+                label: "test POST json(...)".to_string(),
+                kind: Some(CompletionItemKind::SNIPPET),
+                detail: Some("HTTP POST test with JSON body".to_string()),
+                insert_text: Some(
+                    "test \"${1:description}\"\n\t\tPOST \"${2:/path}\" json(${3:field}: ${4:value})\n\t\tstatus = ${5:201}".to_string(),
+                ),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some("3_post".to_string()),
+                ..Default::default()
+            },
+        ];
+
+        if !trimmed.is_empty() {
+            items.retain(|item| {
+                item.label.to_lowercase().contains(&trimmed.to_lowercase())
+            });
+        }
+
+        items
     }
 
     fn is_apply_block_context(&self, prefix: &str) -> bool {
