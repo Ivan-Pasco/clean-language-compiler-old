@@ -507,6 +507,10 @@ pub fn type_check_with_plugins(
         }
     }
 
+    // Stage 2.7: Inject phantom class stubs for plugin-declared types so that
+    // HIR validation accepts them as valid named types in functions: blocks.
+    inject_plugin_type_stubs(&mut ast, registry);
+
     // Stage 3: AST to HIR
     use crate::hir::hir_builder::HirBuilder;
     let mut hir_builder = HirBuilder::new();
@@ -644,6 +648,34 @@ fn parse_bridge_type(type_str: &str) -> ast::Type {
         }
         // Default to Any for unknown types
         _ => ast::Type::Any,
+    }
+}
+
+/// Injects synthetic phantom class stubs for types declared in loaded plugin manifests.
+///
+/// Plugin manifests list their custom types (e.g. `Request`, `Response` from frame.server)
+/// under `[[language.types]]`. Without this step those type names are invisible to the
+/// HIR validator's `context.classes` lookup, causing a spurious "Undefined type" error
+/// whenever a `functions:` block uses a plugin type as a parameter type.
+fn inject_plugin_type_stubs(ast: &mut ast::Program, registry: &plugins::PluginRegistry) {
+    for (_plugin_name, manifest) in registry.loaded_manifests() {
+        for type_def in &manifest.language.types {
+            if ast.classes.iter().any(|c| c.name == type_def.name) {
+                continue;
+            }
+            ast.classes.push(ast::Class {
+                name: type_def.name.clone(),
+                type_parameters: Vec::new(),
+                description: Some(type_def.description.clone()),
+                base_class: None,
+                base_class_type_args: Vec::new(),
+                fields: Vec::new(),
+                methods: Vec::new(),
+                constructor: None,
+                invariants: Vec::new(),
+                location: None,
+            });
+        }
     }
 }
 
@@ -890,6 +922,10 @@ pub fn compile_with_plugins_and_opt_level(
             "Stage 2.6 complete: Bridge functions and language aliases converted to externals"
         );
     }
+
+    // Stage 2.7: Inject phantom class stubs for plugin-declared types so that
+    // HIR validation accepts them as valid named types in functions: blocks.
+    inject_plugin_type_stubs(&mut ast, registry);
 
     // Stage 3: AST to HIR - validation and desugaring per specification
     tracing::debug!("Starting Stage 3: AST to HIR");
