@@ -1524,7 +1524,8 @@ async fn handle_test(
             }
         };
 
-        // Write to a temp file and run via clean-runner (_start calls _run_tests)
+        // Write to a temp file and execute via wasmtime_runner (which provides all
+        // required host imports including _state_reset_all) or fall back to clean-runner.
         let stem = cln_path.trim_end_matches(".cln");
         let temp_wasm = format!("{stem}.test.tmp.wasm");
         if let Err(e) = fs::write(&temp_wasm, &wasm_binary) {
@@ -1533,7 +1534,7 @@ async fn handle_test(
             continue;
         }
 
-        let result = execute_via_clean_runner(&temp_wasm, verbose);
+        let result = execute_via_local_runner(&temp_wasm, verbose);
         let _ = fs::remove_file(&temp_wasm);
 
         if let Err(e) = result {
@@ -1837,6 +1838,74 @@ async fn handle_run(
             Ok(())
         }
     }
+}
+
+/// Locate the `wasmtime_runner` binary that ships alongside `cln`.
+///
+/// The runner is looked up in the following order:
+/// 1. Same directory as the current executable (production install)
+/// 2. Sibling `wasmtime_runner` on PATH
+///
+/// Returns the path string if found, or an error describing where to get it.
+fn find_wasmtime_runner() -> Result<String, Box<dyn std::error::Error>> {
+    // 1. Sibling of the currently-running binary (covers dev builds and production installs)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join("wasmtime_runner");
+            if candidate.exists() {
+                return Ok(candidate.to_string_lossy().into_owned());
+            }
+            #[cfg(windows)]
+            {
+                let win = dir.join("wasmtime_runner.exe");
+                if win.exists() {
+                    return Ok(win.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
+    // 2. Fall back to PATH
+    if std::process::Command::new("wasmtime_runner")
+        .arg("--help")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some()
+    {
+        return Ok("wasmtime_runner".to_string());
+    }
+
+    Err("wasmtime_runner not found next to the cln binary".into())
+}
+
+/// Execute a WASM file using the bundled wasmtime_runner (preferred) or fall back to clean-runner.
+///
+/// wasmtime_runner is preferred because it ships with the compiler and provides all required
+/// host imports (including _state_reset_all) and natively supports the _run_tests export.
+fn execute_via_local_runner(
+    wasm_path: &str,
+    debug: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Prefer the bundled wasmtime_runner for standalone test execution.
+    if let Ok(runner) = find_wasmtime_runner() {
+        let status = std::process::Command::new(&runner)
+            .arg(wasm_path)
+            .status()
+            .map_err(|e| format!("Failed to launch wasmtime_runner '{runner}': {e}"))?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "wasmtime_runner exited with code {}",
+                status.code().unwrap_or(-1)
+            )
+            .into())
+        };
+    }
+
+    // Fall back to clean-runner if wasmtime_runner is not available.
+    execute_via_clean_runner(wasm_path, debug)
 }
 
 fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
