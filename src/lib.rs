@@ -487,6 +487,12 @@ pub fn type_check_with_plugins(
             if ast.externals.iter().any(|e| e.name == *lang_name) {
                 continue;
             }
+            // Skip if plugin expansion already generated a function with this name —
+            // registering it again as an external would cause a duplicate-symbol conflict
+            // in the resolver's register_top_level_symbols pass.
+            if ast.functions.iter().any(|f| f.name == *lang_name) {
+                continue;
+            }
             if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
                 let lang_def = lang_fn_defs.get(lang_name.as_str());
 
@@ -565,16 +571,55 @@ pub fn type_check_with_plugins(
     } else if lang_to_bridge.is_empty() {
         Resolver::resolve_with_bridge_functions(hir_result.hir, bridge_functions)?
     } else {
-        Resolver::resolve_with_bridge_and_language_aliases(
+        let lang_fn_defs_owned: std::collections::HashMap<
+            String,
+            crate::plugins::plugin_abi::PluginFunctionDef,
+        > = registry
+            .language_function_defs()
+            .into_iter()
+            .map(|(k, v)| (k, v.clone()))
+            .collect();
+        Resolver::resolve_with_bridge_aliases_and_fn_defs(
             hir_result.hir,
             bridge_functions,
             &lang_to_bridge,
+            lang_fn_defs_owned,
         )?
     };
     let resolved_hir = resolution_result.resolved_hir;
 
     // Stage 5: Type Inference and Checking
-    let _type_result = TypeChecker::check(resolved_hir)?;
+    // Compute required-param-count overrides for language alias functions that declare
+    // param_defaults — the resolver encodes param types but not optionality, so we
+    // must pass the counts explicitly so optional-param calls are not rejected.
+    let required_counts = {
+        use crate::resolver::SymbolId;
+        let mut counts: std::collections::HashMap<SymbolId, usize> =
+            std::collections::HashMap::new();
+        let alias_fn_defs = registry.language_function_defs();
+        for (lang_name, lang_def) in &alias_fn_defs {
+            if lang_def.param_defaults.is_empty() {
+                continue;
+            }
+            let required = lang_def
+                .param_defaults
+                .iter()
+                .filter(|s| s.is_empty())
+                .count();
+            let total = lang_def
+                .params
+                .as_ref()
+                .map(|p| p.len())
+                .unwrap_or(lang_def.param_defaults.len());
+            if required < total {
+                if let Some(sym_id) = resolved_hir.symbol_table.lookup_symbol(lang_name.as_str()) {
+                    counts.insert(sym_id, required);
+                }
+            }
+        }
+        counts
+    };
+    let _type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
 
@@ -934,6 +979,12 @@ pub fn compile_with_plugins_and_opt_level(
         for (lang_name, bridge_name) in &lang_to_bridge {
             // Skip if already declared
             if ast.externals.iter().any(|e| e.name == *lang_name) {
+                continue;
+            }
+            // Skip if plugin expansion already generated a function with this name —
+            // registering it again as an external would cause a duplicate-symbol conflict
+            // in the resolver's register_top_level_symbols pass.
+            if ast.functions.iter().any(|f| f.name == *lang_name) {
                 continue;
             }
 
