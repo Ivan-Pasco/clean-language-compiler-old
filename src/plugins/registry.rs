@@ -451,9 +451,8 @@ impl PluginRegistry {
                     attributes: Vec::new(),
                     location: None,
                 };
-                match plugin.expand_full(&preamble_block) {
-                    Ok(expansion) => results.push(expansion),
-                    Err(_) => {}
+                if let Ok(expansion) = plugin.expand_full(&preamble_block) {
+                    results.push(expansion);
                 }
             }
         }
