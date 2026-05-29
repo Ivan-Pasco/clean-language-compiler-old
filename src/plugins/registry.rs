@@ -434,6 +434,32 @@ impl PluginRegistry {
         &self.registered_plugins
     }
 
+    /// Emit preamble code from every registered plugin.
+    ///
+    /// Each unique WASM plugin is called with `expand_block("__preamble", "", "")`.
+    /// Plugins that do not handle `"__preamble"` return empty output — this is safe.
+    /// Results are returned in registration order; the caller is responsible for
+    /// deduplicating functions before merging into the AST.
+    pub fn expand_preambles(&self) -> Vec<super::PluginExpansion> {
+        let mut seen = std::collections::HashSet::new();
+        let mut results = Vec::new();
+        for plugin in self.handlers.values() {
+            if seen.insert(plugin.name().to_string()) {
+                let preamble_block = crate::plugins::FrameworkBlock {
+                    name: "__preamble".to_string(),
+                    content: String::new(),
+                    attributes: Vec::new(),
+                    location: None,
+                };
+                match plugin.expand_full(&preamble_block) {
+                    Ok(expansion) => results.push(expansion),
+                    Err(_) => {}
+                }
+            }
+        }
+        results
+    }
+
     /// Get list of handled block types
     pub fn handled_block_types(&self) -> Vec<&str> {
         self.handlers.keys().map(|s| s.as_str()).collect()

@@ -90,6 +90,41 @@ impl<'a> PluginExpander<'a> {
             }
         }
 
+        // Inject preamble helper functions from each registered plugin.
+        // Preambles emit helpers (e.g. response helpers from frame.server) that must
+        // be available in every file that loads the plugin, including files that only
+        // contain functions: blocks and have no plugin-owned block to trigger expansion.
+        // Deduplication prevents conflicts when a plugin block was already expanded
+        // in this file (e.g. endpoints: already generated redirect()).
+        for preamble in self.registry.expand_preambles() {
+            // Merge start function body
+            if let Some(start_fn) = preamble.start_function {
+                if program.start_function.is_none() {
+                    program.start_function = Some(start_fn);
+                } else if let Some(ref mut existing) = program.start_function {
+                    existing.body.extend(start_fn.body);
+                }
+            }
+            // Merge functions (skip duplicates that endpoints: already generated)
+            for func in preamble.functions {
+                if !program.functions.iter().any(|f| f.name == func.name) {
+                    program.functions.push(func);
+                }
+            }
+            // Merge classes (skip duplicates)
+            for class in preamble.classes {
+                if !program.classes.iter().any(|c| c.name == class.name) {
+                    program.classes.push(class);
+                }
+            }
+            // Merge externals (skip duplicates)
+            for ext in preamble.externals {
+                if !program.externals.iter().any(|e| e.name == ext.name) {
+                    program.externals.push(ext);
+                }
+            }
+        }
+
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
             statements_generated = self.statements_generated,

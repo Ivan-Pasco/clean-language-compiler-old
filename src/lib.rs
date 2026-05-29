@@ -1625,10 +1625,29 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         lang_alias_count = lang_to_bridge_multifile.len(),
         "Starting Stage 4: Resolution"
     );
+    let lang_fn_defs_multi: std::collections::HashMap<
+        String,
+        crate::plugins::plugin_abi::PluginFunctionDef,
+    > = registry
+        .as_ref()
+        .map(|r| {
+            r.language_function_defs()
+                .into_iter()
+                .map(|(k, v)| (k, v.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(merged_hir)?
     } else if lang_to_bridge_multifile.is_empty() {
         Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
+    } else if !lang_fn_defs_multi.is_empty() {
+        Resolver::resolve_with_bridge_aliases_and_fn_defs(
+            merged_hir,
+            &bridge_functions,
+            &lang_to_bridge_multifile,
+            lang_fn_defs_multi,
+        )?
     } else {
         Resolver::resolve_with_bridge_and_language_aliases(
             merged_hir,
