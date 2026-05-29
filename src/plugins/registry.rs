@@ -621,6 +621,20 @@ impl PluginRegistry {
         map
     }
 
+    /// Returns all `[[language.functions]]` entries across loaded plugins,
+    /// keyed by the language function name.  Used by the compiler to apply
+    /// `params`, `returns`, and `param_defaults` overrides when registering
+    /// language-alias external functions.
+    pub fn language_function_defs(&self) -> HashMap<String, &crate::plugins::PluginFunctionDef> {
+        let mut map = HashMap::new();
+        for manifest in self.manifests.values() {
+            for func in &manifest.language.functions {
+                map.entry(func.name.clone()).or_insert(func);
+            }
+        }
+        map
+    }
+
     /// Look up which plugin declared ownership of a given bridge function.
     ///
     /// Scans all manifests and returns the first plugin name whose `[bridge]`
@@ -1304,6 +1318,9 @@ mod tests {
                         signature: "db.query(sql, params) -> string".to_string(),
                         description: "Execute SELECT query".to_string(),
                         maps_to: None,
+                        params: None,
+                        returns: None,
+                        param_defaults: vec![],
                     },
                     // Explicit override: "db.run" -> "_db_execute"
                     PluginFunctionDef {
@@ -1311,6 +1328,9 @@ mod tests {
                         signature: "db.run(sql, params) -> integer".to_string(),
                         description: "Execute INSERT/UPDATE/DELETE".to_string(),
                         maps_to: Some("_db_execute".to_string()),
+                        params: None,
+                        returns: None,
+                        param_defaults: vec![],
                     },
                     // No matching bridge: should not appear in the map
                     PluginFunctionDef {
@@ -1318,6 +1338,9 @@ mod tests {
                         signature: "db.nonexistent() -> void".to_string(),
                         description: "No bridge counterpart".to_string(),
                         maps_to: None,
+                        params: None,
+                        returns: None,
+                        param_defaults: vec![],
                     },
                 ],
                 completions: vec![],

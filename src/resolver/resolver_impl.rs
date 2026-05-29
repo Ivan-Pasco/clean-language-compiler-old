@@ -25,6 +25,13 @@ pub struct NameResolver {
     pending_bridge_functions: Vec<crate::plugins::BridgeFunction>,
     /// Language-name aliases deferred alongside `pending_bridge_functions`.
     pending_language_aliases: std::collections::HashMap<String, String>,
+    /// Optional language-function definitions (from plugin.toml `[language].functions`)
+    /// used to override bridge return types and param lists for language aliases.
+    pending_language_fn_defs:
+        std::collections::HashMap<String, crate::plugins::plugin_abi::PluginFunctionDef>,
+    /// Default argument values for language alias functions that have `param_defaults`.
+    /// Keyed by language function name. Values are per-param default strings (empty = required).
+    language_fn_defaults: std::collections::HashMap<String, Vec<String>>,
 }
 
 #[allow(dead_code)] // NameResolver not yet wired into the main compilation pipeline
@@ -42,6 +49,8 @@ impl NameResolver {
             expression_recursion_depth: 0,
             pending_bridge_functions: Vec::new(),
             pending_language_aliases: std::collections::HashMap::new(),
+            pending_language_fn_defs: std::collections::HashMap::new(),
+            language_fn_defaults: std::collections::HashMap::new(),
         }
     }
 
@@ -1708,6 +1717,36 @@ impl NameResolver {
                     resolved_arguments.push(self.resolve_expression(arg)?);
                 }
 
+                // Inject default arguments for language-alias bridge functions that declare
+                // `param_defaults` in their plugin.toml `[language].functions` section.
+                // When a caller passes fewer args than the max param count, fill the gap with
+                // the declared default values (integer literals or string literals).
+                if let Some(defaults) = self.language_fn_defaults.get(function.as_str()).cloned() {
+                    let provided = resolved_arguments.len();
+                    let expected = defaults.len();
+                    if provided < expected {
+                        for i in provided..expected {
+                            let default_str = defaults.get(i).map(|s| s.as_str()).unwrap_or("");
+                            if default_str.is_empty() {
+                                // Required parameter — do not inject; type checker will flag it
+                                break;
+                            }
+                            let default_expr = if let Ok(n) = default_str.parse::<i64>() {
+                                ResolvedHirExpression::Literal {
+                                    value: crate::ast::Value::Integer(n),
+                                    location: location.clone(),
+                                }
+                            } else {
+                                ResolvedHirExpression::Literal {
+                                    value: crate::ast::Value::String(default_str.to_string()),
+                                    location: location.clone(),
+                                }
+                            };
+                            resolved_arguments.push(default_expr);
+                        }
+                    }
+                }
+
                 // Check if this is actually a namespace (cannot be called directly).
                 //
                 // Special case: `input(prompt)` is sugar for `input.string(prompt)` per
@@ -3268,19 +3307,57 @@ impl NameResolver {
 
         for (lang_name, bridge_name) in language_to_bridge {
             if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
-                let parameters: Vec<HirType> = bf
-                    .get_param_types()
-                    .iter()
-                    .map(Self::builtin_type_to_hir_type)
-                    .collect();
+                let lang_def = self.pending_language_fn_defs.get(lang_name.as_str());
 
-                let return_type = {
+                // Use the language def's param types if declared, else bridge params
+                let parameters: Vec<HirType> = if let Some(def) = lang_def {
+                    if let Some(ref param_types) = def.params {
+                        param_types
+                            .iter()
+                            .map(|s| Self::parse_bridge_hir_type(s))
+                            .collect()
+                    } else {
+                        bf.get_param_types()
+                            .iter()
+                            .map(Self::builtin_type_to_hir_type)
+                            .collect()
+                    }
+                } else {
+                    bf.get_param_types()
+                        .iter()
+                        .map(Self::builtin_type_to_hir_type)
+                        .collect()
+                };
+
+                // Use the language def's return type if declared, else bridge return
+                let return_type = if let Some(def) = lang_def {
+                    if let Some(ref ret_str) = def.returns {
+                        let ht = Self::parse_bridge_hir_type(ret_str);
+                        if matches!(ht, HirType::Void) {
+                            None
+                        } else {
+                            Some(ht)
+                        }
+                    } else {
+                        let ret = bf.get_return_type();
+                        match ret {
+                            BuiltinType::Void => None,
+                            _ => Some(Self::builtin_type_to_hir_type(&ret)),
+                        }
+                    }
+                } else {
                     let ret = bf.get_return_type();
                     match ret {
                         BuiltinType::Void => None,
                         _ => Some(Self::builtin_type_to_hir_type(&ret)),
                     }
                 };
+
+                // Extract param_defaults now while lang_def borrow is still live,
+                // before the mutable borrow from register_builtin_fn.
+                let param_defaults_opt: Option<Vec<String>> = lang_def
+                    .filter(|def| !def.param_defaults.is_empty())
+                    .map(|def| def.param_defaults.clone());
 
                 tracing::debug!(
                     lang_name = %lang_name,
@@ -3296,6 +3373,12 @@ impl NameResolver {
                     return_type,
                     builtin_location.clone(),
                 );
+
+                // Store param_defaults so call-site injection can fill in missing optional args.
+                if let Some(defaults) = param_defaults_opt {
+                    self.language_fn_defaults
+                        .insert(lang_name.clone(), defaults);
+                }
             }
         }
 
@@ -3414,6 +3497,45 @@ impl NameResolver {
             BuiltinType::Namespace => HirType::Integer, // Namespace is internal, use Integer as placeholder
             BuiltinType::Any => HirType::Any,           // Any type for dynamic/JSON values
             BuiltinType::Handler => HirType::Integer,   // Handler is an i32 index at WASM level
+        }
+    }
+
+    /// Parse a type string from plugin.toml into a `HirType`.
+    fn parse_bridge_hir_type(s: &str) -> HirType {
+        match s.to_lowercase().as_str() {
+            "string" => HirType::String,
+            "integer" | "int" | "i32" | "i64" => HirType::Integer,
+            "number" | "float" | "f64" | "f32" => HirType::Number,
+            "boolean" | "bool" => HirType::Boolean,
+            "void" | "()" => HirType::Void,
+            "any" => HirType::Any,
+            _ => HirType::Any,
+        }
+    }
+
+    /// Like `resolve_with_bridge_and_language_aliases` but also accepts the
+    /// language function definitions so that return-type and param-type overrides
+    /// declared in `[language].functions` of `plugin.toml` are honoured.
+    pub fn resolve_with_bridge_aliases_and_fn_defs(
+        hir: crate::hir::HirProgram,
+        bridge_functions: &[crate::plugins::BridgeFunction],
+        language_to_bridge: &std::collections::HashMap<String, String>,
+        language_fn_defs: std::collections::HashMap<
+            String,
+            crate::plugins::plugin_abi::PluginFunctionDef,
+        >,
+    ) -> Result<ResolutionResult, Vec<CompilerError>> {
+        let mut resolver = Self::new();
+        resolver.pending_bridge_functions = bridge_functions.to_vec();
+        resolver.pending_language_aliases = language_to_bridge.clone();
+        resolver.pending_language_fn_defs = language_fn_defs;
+
+        match resolver.resolve_program(hir) {
+            Ok(resolved_hir) => Ok(ResolutionResult {
+                resolved_hir,
+                warnings: resolver.warnings,
+            }),
+            Err(_) => Err(resolver.errors),
         }
     }
 }

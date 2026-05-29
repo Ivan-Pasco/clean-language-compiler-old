@@ -480,25 +480,63 @@ pub fn type_check_with_plugins(
 
         // Register language-name aliases (e.g. "req.query", "db.query") so that
         // the resolver recognises dot-notation calls as valid external functions.
+        // Language function defs may carry `params`/`returns`/`param_defaults`
+        // overrides that take precedence over the bridge function's own signature.
+        let lang_fn_defs = registry.language_function_defs();
         for (lang_name, bridge_name) in &lang_to_bridge {
             if ast.externals.iter().any(|e| e.name == *lang_name) {
                 continue;
             }
             if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
-                let parameters: Vec<crate::ast::Parameter> = bf
-                    .params
+                let lang_def = lang_fn_defs.get(lang_name.as_str());
+
+                // Use the language-def's param list if it declared one, otherwise
+                // fall back to the bridge function's param types.
+                let param_types: Vec<String> = lang_def
+                    .and_then(|d| d.params.as_ref())
+                    .cloned()
+                    .unwrap_or_else(|| bf.params.clone());
+
+                let param_defaults: Vec<String> = lang_def
+                    .map(|d| d.param_defaults.clone())
+                    .unwrap_or_default();
+
+                let parameters: Vec<crate::ast::Parameter> = param_types
                     .iter()
                     .enumerate()
-                    .map(|(i, type_str)| crate::ast::Parameter {
-                        name: format!("arg{}", i),
-                        type_: parse_bridge_type(type_str),
-                        default_value: None,
+                    .map(|(i, type_str)| {
+                        // Empty string means "required" (no default); any other value is a literal default.
+                        let default_value = param_defaults
+                            .get(i)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.as_str())
+                            .map(|s| {
+                                // Parse simple literal defaults: integer or string
+                                if let Ok(n) = s.parse::<i64>() {
+                                    crate::ast::Expression::Literal(crate::ast::Value::Integer(n))
+                                } else {
+                                    crate::ast::Expression::Literal(crate::ast::Value::String(
+                                        s.to_string(),
+                                    ))
+                                }
+                            });
+                        crate::ast::Parameter {
+                            name: format!("arg{}", i),
+                            type_: parse_bridge_type(type_str),
+                            default_value,
+                        }
                     })
                     .collect();
+
+                let return_type = lang_def
+                    .and_then(|d| d.returns.as_deref())
+                    .map(parse_bridge_type)
+                    .unwrap_or_else(|| parse_bridge_type(&bf.returns));
+
                 let external_fn = crate::ast::ExternalFunction {
                     name: lang_name.clone(),
                     parameters,
-                    return_type: parse_bridge_type(&bf.returns),
+                    return_type,
                     module: bf.module.clone(),
                     location: None,
                 };
@@ -663,13 +701,24 @@ fn inject_plugin_type_stubs(ast: &mut ast::Program, registry: &plugins::PluginRe
             if ast.classes.iter().any(|c| c.name == type_def.name) {
                 continue;
             }
+            let fields = type_def
+                .fields
+                .iter()
+                .map(|f| ast::Field {
+                    name: f.name.clone(),
+                    type_: parse_bridge_type(&f.type_),
+                    visibility: ast::Visibility::Public,
+                    is_static: false,
+                    default_value: None,
+                })
+                .collect();
             ast.classes.push(ast::Class {
                 name: type_def.name.clone(),
                 type_parameters: Vec::new(),
                 description: Some(type_def.description.clone()),
                 base_class: None,
                 base_class_type_args: Vec::new(),
-                fields: Vec::new(),
+                fields,
                 methods: Vec::new(),
                 constructor: None,
                 invariants: Vec::new(),
@@ -1734,6 +1783,51 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
 
+    // Inject phantom HIR class stubs for every type declared in loaded plugin manifests.
+    // Without this, HirValidator rejects named types like `Request` as "Undefined type"
+    // because they are not present in any source file — they are provided by the plugin.
+    if let Some(ref reg) = registry {
+        use crate::hir::{HirClass, HirField, HirType as HT};
+        let parse_hir_type = |s: &str| -> HT {
+            match s.to_lowercase().as_str() {
+                "string" => HT::String,
+                "integer" | "int" | "i32" | "i64" => HT::Integer,
+                "number" | "float" | "f64" => HT::Number,
+                "boolean" | "bool" => HT::Boolean,
+                "void" | "()" => HT::Void,
+                _ => HT::Any,
+            }
+        };
+        for manifest in reg.loaded_manifests().values() {
+            for type_def in &manifest.language.types {
+                if merged_hir.classes.iter().any(|c| c.name == type_def.name) {
+                    continue;
+                }
+                let fields: Vec<HirField> = type_def
+                    .fields
+                    .iter()
+                    .map(|f| HirField {
+                        name: f.name.clone(),
+                        field_type: parse_hir_type(&f.type_),
+                        initializer: None,
+                        is_private: false,
+                        location: Default::default(),
+                    })
+                    .collect();
+                merged_hir.classes.push(HirClass {
+                    name: type_def.name.clone(),
+                    type_parameters: Vec::new(),
+                    parent: None,
+                    fields,
+                    constructor: None,
+                    methods: Vec::new(),
+                    invariants: Vec::new(),
+                    location: Default::default(),
+                });
+            }
+        }
+    }
+
     // Add language-name alias externals to merged_hir BEFORE validation so the
     // HIR validator can derive plugin namespaces (e.g. "req.query" → "req").
     if !lang_to_bridge.is_empty() {
@@ -1785,21 +1879,69 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     }
 
     // Stage 4: Resolution
+    // Collect language function defs (for return-type/param overrides in language aliases)
+    let lang_fn_defs_owned: std::collections::HashMap<
+        String,
+        crate::plugins::plugin_abi::PluginFunctionDef,
+    > = registry
+        .as_ref()
+        .map(|r| {
+            r.language_function_defs()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(merged_hir)?
     } else if lang_to_bridge.is_empty() {
         Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
     } else {
-        Resolver::resolve_with_bridge_and_language_aliases(
+        Resolver::resolve_with_bridge_aliases_and_fn_defs(
             merged_hir,
             &bridge_functions,
             &lang_to_bridge,
+            lang_fn_defs_owned,
         )?
     };
     let resolved_hir = resolution_result.resolved_hir;
 
     // Stage 5: Type checking
-    let type_result = TypeChecker::check(resolved_hir)?;
+    // Compute required-param-count overrides for language alias functions that have
+    // param_defaults — the resolver encodes param types but not optionality.
+    let required_counts = {
+        use crate::resolver::SymbolId;
+        let mut counts: std::collections::HashMap<SymbolId, usize> =
+            std::collections::HashMap::new();
+        if let Some(ref reg) = registry {
+            let lang_fn_defs_multi = reg.language_function_defs();
+            for (lang_name, lang_def) in &lang_fn_defs_multi {
+                if lang_def.param_defaults.is_empty() {
+                    continue;
+                }
+                let required = lang_def
+                    .param_defaults
+                    .iter()
+                    .filter(|s| s.is_empty())
+                    .count();
+                let total = lang_def
+                    .params
+                    .as_ref()
+                    .map(|p| p.len())
+                    .unwrap_or(lang_def.param_defaults.len());
+                if required < total {
+                    if let Some(sym_id) =
+                        resolved_hir.symbol_table.lookup_symbol(lang_name.as_str())
+                    {
+                        counts.insert(sym_id, required);
+                    }
+                }
+            }
+        }
+        counts
+    };
+    let type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
 
     // Stage 6: TAST to MIR
     let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;

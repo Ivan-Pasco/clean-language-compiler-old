@@ -91,7 +91,7 @@ pub use language_registry::{
 };
 pub use plugin_abi::{
     BridgeFunction, PluginAbi, PluginBridge, PluginCompletionDef, PluginFunctionDef, PluginKeyword,
-    PluginLanguage, PluginManifest, PluginTypeDef, PLUGIN_ABI_VERSION,
+    PluginLanguage, PluginManifest, PluginTypeDef, PluginTypeField, PLUGIN_ABI_VERSION,
 };
 pub use plugin_abi::{
     BuildRegistration, CliCommand, CliRegistration, DataRegistration, ServerRegistration,

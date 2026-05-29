@@ -1,0 +1,22 @@
+// Test: bugfixes/e010_redirect_in_functions_block
+// Grammar: function_call
+// Semantic: FUNC001 regression — response helpers (redirect, json, html) not available in functions: blocks
+//
+// Bug: E010 "Function 'redirect' not found in functions: block"
+//      When frame.server is loaded, response helpers like redirect/json/html
+//      were not registered in the resolver's symbol table for functions: blocks.
+//      The fix adds maps_to, params, param_defaults, and returns to the
+//      [language].functions entries in plugin.toml so register_language_function_aliases
+//      can wire them as callable builtins.
+//
+// Compile-check: must succeed without E010 "Function 'redirect' not found" error.
+
+plugins:
+	frame.server
+
+start:
+	print("ok")
+
+functions:
+	string login_redirect()
+		return redirect("/dashboard")

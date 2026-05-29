@@ -56,12 +56,27 @@ impl TypeChecker {
 
     /// Type check a resolved HIR program using constraint-based type inference
     pub fn check(resolved_hir: ResolvedHirProgram) -> Result<TypeCheckResult, Vec<CompilerError>> {
+        Self::check_with_required_counts(resolved_hir, HashMap::new())
+    }
+
+    /// Like `check`, but pre-seeds the required parameter count map.
+    ///
+    /// Use this when bridge language aliases have optional parameters (param_defaults)
+    /// that the resolver cannot encode in `SymbolKind::Function` alone.
+    pub fn check_with_required_counts(
+        resolved_hir: ResolvedHirProgram,
+        required_counts: HashMap<crate::resolver::SymbolId, usize>,
+    ) -> Result<TypeCheckResult, Vec<CompilerError>> {
         // Clone symbol table to satisfy borrow checker (TypeInference needs a reference
         // but infer_types consumes the resolved_hir)
         let symbol_table = resolved_hir.symbol_table.clone();
 
         // Create type inference engine with symbol table from resolution
-        let inference_engine = TypeInference::new(&symbol_table);
+        let mut inference_engine = TypeInference::new(&symbol_table);
+
+        if !required_counts.is_empty() {
+            inference_engine.seed_required_param_counts(required_counts);
+        }
 
         // Perform type inference
         let inference_result = inference_engine.infer_types(resolved_hir);

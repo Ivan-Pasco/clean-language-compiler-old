@@ -406,7 +406,7 @@ impl MirCodeGenerator<'_> {
             // filter Layer 2/3 external-I/O imports to those actually
             // reachable from the MIR call graph. Must happen BEFORE any
             // register_*_imports() / register_*_operations() call.
-            let reachable = Self::collect_all_called_names_from_mir(&mir_program);
+            let reachable = self.collect_all_called_names_from_mir(&mir_program);
             self.wasm_generator.set_reachable_imports(reachable);
 
             self.wasm_generator

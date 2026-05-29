@@ -94,6 +94,14 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// Pre-seed required parameter counts for functions that are known to have
+    /// optional parameters (e.g. language alias bridge functions with param_defaults).
+    pub fn seed_required_param_counts(&mut self, counts: HashMap<SymbolId, usize>) {
+        for (id, count) in counts {
+            self.required_param_counts.insert(id, count);
+        }
+    }
+
     /// Perform type inference on a resolved HIR program
     pub fn infer_types(mut self, program: ResolvedHirProgram) -> InferenceResult {
         // Initialize built-in types in type environment

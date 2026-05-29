@@ -1313,7 +1313,10 @@ impl MirCodeGenerator<'_> {
     /// MIR program, expanded with common import-name aliases so that
     /// language-level names (`http.get`) match WASM import field names
     /// (`http_get`).
-    pub(super) fn collect_all_called_names_from_mir(mir_program: &MirProgram) -> HashSet<String> {
+    pub(super) fn collect_all_called_names_from_mir(
+        &self,
+        mir_program: &MirProgram,
+    ) -> HashSet<String> {
         use crate::mir::mir_types::{MirBinaryOp, MirOperand, MirOperation, MirType};
 
         let mut names: HashSet<String> = HashSet::new();
@@ -1327,17 +1330,27 @@ impl MirCodeGenerator<'_> {
             )
         }
 
+        // Helper: insert a function name AND expand language aliases to bridge names so
+        // that bridge imports whose names start with `_res_`, `_req_`, etc. are not
+        // incorrectly tree-shaken when only the alias appears in the MIR call graph.
+        let insert_name = |names: &mut HashSet<String>, name: &str| {
+            names.insert(name.to_string());
+            if let Some(bridge_name) = self.language_to_bridge_map.get(name) {
+                names.insert(bridge_name.clone());
+            }
+        };
+
         for function in mir_program.functions.values() {
             for block in function.blocks.values() {
                 for instruction in &block.instructions {
                     match &instruction.operation {
                         MirOperation::Call { function, .. } => match function {
                             MirOperand::NamedFunction { name, .. } => {
-                                names.insert(name.clone());
+                                insert_name(&mut names, name);
                             }
                             MirOperand::Function(symbol_id) => {
                                 if let Some(name) = mir_program.symbol_name_map.get(symbol_id) {
-                                    names.insert(name.clone());
+                                    insert_name(&mut names, name);
                                 }
                             }
                             _ => {}

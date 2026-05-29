@@ -1,0 +1,26 @@
+// Test: bugfixes/sem001_request_query_in_functions_block
+// Grammar: function_declaration, member_access
+// Semantic: SEM001 regression — Request.query dot-notation broken in functions: blocks
+//
+// Bug: SEM001 "Field 'query' not found in class 'Request'"
+//      When frame.server is loaded and a functions: block declares a function
+//      that receives a Request parameter, accessing request.query caused a
+//      SEM001 error because the Request type stubs were not injected into the
+//      HIR classes list before type-checking.
+//
+// Fix: lib.rs compile_multi_file_with_memory_tier — inject plugin type stubs
+//      (HirClass entries with declared fields) before HirValidator::validate
+//      runs, so the resolver and type-checker see Request with its fields.
+//
+// Compile-check: must succeed without SEM001 "Field 'query' not found" error.
+
+plugins:
+	frame.server
+
+start:
+	print("ok")
+
+functions:
+	string get_search(Request req)
+		string q = req.query
+		return q

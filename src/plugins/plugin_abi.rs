@@ -498,6 +498,20 @@ fn default_keyword_context() -> String {
     "any".to_string()
 }
 
+/// A field on a plugin-declared type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginTypeField {
+    pub name: String,
+    #[serde(rename = "type", default = "default_field_type")]
+    pub type_: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+fn default_field_type() -> String {
+    "any".to_string()
+}
+
 /// A type definition for the plugin's DSL
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginTypeDef {
@@ -505,6 +519,10 @@ pub struct PluginTypeDef {
     pub name: String,
     /// Human-readable description for hover and documentation
     pub description: String,
+    /// Optional field declarations so the type checker can resolve member access.
+    /// Fields not listed here are implicitly typed as `any`.
+    #[serde(default)]
+    pub fields: Vec<PluginTypeField>,
 }
 
 /// A function definition for the plugin's DSL
@@ -528,6 +546,20 @@ pub struct PluginFunctionDef {
     /// is treated as purely informational (LSP only, not callable).
     #[serde(default)]
     pub maps_to: Option<String>,
+    /// Override the bridge function's parameter type list.
+    /// When present, the registered external function uses these param types
+    /// instead of the bridge function's declared params. Useful when the
+    /// language-level function signature differs (e.g. optional args).
+    #[serde(default)]
+    pub params: Option<Vec<String>>,
+    /// Override the bridge function's return type.
+    #[serde(default)]
+    pub returns: Option<String>,
+    /// Per-parameter default values (as literal strings: "302", "{}", etc.).
+    /// Parallel to `params`: index N is the default for param N.
+    /// Empty string `""` means the param is required (no default).
+    #[serde(default)]
+    pub param_defaults: Vec<String>,
 }
 
 /// A completion snippet defined by the plugin
@@ -980,5 +1012,44 @@ mod tests {
         assert_eq!(manifest.memory.tier, Some("gigantic".to_string()));
         // Validation that "gigantic" is invalid happens at resolve time, not parse time
         assert!(crate::MemoryTier::from_str("gigantic").is_none());
+    }
+
+    #[test]
+    fn test_plugin_type_fields_inline() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.server"
+            version = "2.3.0"
+
+            [handles]
+            blocks = ["endpoints"]
+
+            [language]
+            types = [
+              { name = "Request", description = "HTTP request context", fields = [{ name = "query", type = "any", description = "Query params" }, { name = "auth", type = "any" }] },
+              { name = "Response", description = "HTTP response object" },
+            ]
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.language.types.len(), 2);
+        let request_type = &manifest.language.types[0];
+        assert_eq!(request_type.name, "Request");
+        assert_eq!(
+            request_type.fields.len(),
+            2,
+            "Request should have 2 fields but got {}; fields: {:?}",
+            request_type.fields.len(),
+            request_type
+                .fields
+                .iter()
+                .map(|f| &f.name)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(request_type.fields[0].name, "query");
+        assert_eq!(request_type.fields[0].type_, "any");
+        let response_type = &manifest.language.types[1];
+        assert_eq!(response_type.name, "Response");
+        assert_eq!(response_type.fields.len(), 0);
     }
 }

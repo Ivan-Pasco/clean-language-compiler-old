@@ -444,12 +444,16 @@ mod tests {
                 types: vec![PluginTypeDef {
                     name: "Model".to_string(),
                     description: "Data model type".to_string(),
+                    fields: vec![],
                 }],
                 functions: vec![PluginFunctionDef {
                     name: "Data.tx".to_string(),
                     signature: "Data.tx: block -> Result".to_string(),
                     description: "Execute in transaction".to_string(),
                     maps_to: None,
+                    params: None,
+                    returns: None,
+                    param_defaults: vec![],
                 }],
                 completions: vec![PluginCompletionDef {
                     trigger: "data ".to_string(),
