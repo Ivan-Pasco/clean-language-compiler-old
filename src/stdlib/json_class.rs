@@ -6,9 +6,9 @@
 
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::register_stdlib_function_with_locals;
+use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
-use wasm_encoder::Instruction;
+use wasm_encoder::{Instruction, MemArg};
 
 /// JSON Value Type Tags (stored in high bits of pointer)
 /// These tags identify the type of JSON value at runtime.
@@ -60,8 +60,33 @@ impl JsonClass {
         if let Some(idx) = codegen.get_function_index("json.textToData") {
             codegen.add_function_alias("json.decode", idx);
         }
-        if let Some(idx) = codegen.get_function_index("__json_get_field") {
-            codegen.add_function_alias("json.get", idx);
+        // json.get(json_ptr: i32, key_ptr: i32) -> i32
+        // Adapts the 2-arg language calling convention to the 3-arg internal
+        // __json_get_field(any_ptr, key_content_ptr, key_len) convention.
+        // The key_ptr is a Clean Language string (4-byte length prefix + content);
+        // this wrapper expands it to (key_ptr+4, mem[key_ptr]) before the call.
+        // Note: when a plugin bridge (e.g. frame.auth) provides json.get, its
+        // wrapper registration runs after this and overwrites this entry.
+        if let Some(raw_idx) = codegen.get_function_index("__json_get_field") {
+            register_stdlib_function(
+                codegen,
+                "json.get",
+                &[WasmType::I32, WasmType::I32], // (json_ptr, key_ptr)
+                Some(WasmType::I32),
+                vec![
+                    Instruction::LocalGet(0), // any_ptr = json_ptr
+                    Instruction::LocalGet(1), // key_ptr
+                    Instruction::I32Const(4),
+                    Instruction::I32Add, // key content start = key_ptr + 4
+                    Instruction::LocalGet(1),
+                    Instruction::I32Load(MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }), // key length = mem[key_ptr]
+                    Instruction::Call(raw_idx),
+                ],
+            )?;
         }
 
         tracing::debug!("JSON module: All functions registered successfully");

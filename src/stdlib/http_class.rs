@@ -273,6 +273,7 @@ impl HttpClass {
         }
 
         // http.getResponseCode() -> integer
+        // Also registered as http.responseCode (shorter canonical name).
         if codegen
             .get_http_import_index("http_get_response_code")
             .is_some()
@@ -284,6 +285,27 @@ impl HttpClass {
                 Some(WasmType::I32),
                 self.generate_no_params_host_call(codegen, "http_get_response_code")?,
             )?;
+            if let Some(idx) = codegen.get_function_index("http.getResponseCode") {
+                codegen.add_function_alias("http.responseCode", idx);
+            }
+        }
+
+        // http.getResponseBody() -> string
+        // Also registered as http.responseBody (shorter canonical name).
+        if codegen
+            .get_http_import_index("http_get_response_body")
+            .is_some()
+        {
+            register_stdlib_function(
+                codegen,
+                "http.getResponseBody",
+                &[],
+                Some(WasmType::I32),
+                self.generate_no_params_host_call(codegen, "http_get_response_body")?,
+            )?;
+            if let Some(idx) = codegen.get_function_index("http.getResponseBody") {
+                codegen.add_function_alias("http.responseBody", idx);
+            }
         }
 
         // http.getResponseHeaders() -> array<string>

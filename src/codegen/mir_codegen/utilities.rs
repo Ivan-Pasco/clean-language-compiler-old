@@ -1433,6 +1433,21 @@ impl MirCodeGenerator<'_> {
             .collect();
         names.extend(expansions);
 
+        // camelCase crypto methods → snake_case host bridge builtin names.
+        // The generic dot→underscore expansion produces "crypto_randomHex" but the
+        // import field name registered by register_crypto_builtin_imports is
+        // "crypto_random_hex". Without this mapping those imports are tree-shaken
+        // even when the language-level names appear in the MIR call graph.
+        let camel_to_builtin: &[(&str, &str)] = &[
+            ("crypto.randomHex", "crypto_random_hex"),
+            ("crypto.randomBytes", "crypto_random_bytes"),
+        ];
+        for (lang, builtin) in camel_to_builtin {
+            if names.contains(*lang) {
+                names.insert(builtin.to_string());
+            }
+        }
+
         tracing::debug!(
             total_called_names = names.len(),
             "Collected reachable call names from MIR"

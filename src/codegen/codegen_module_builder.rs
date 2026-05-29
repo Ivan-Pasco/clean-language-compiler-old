@@ -455,6 +455,18 @@ impl super::CodeGenerator {
             self.function_count += 1;
         }
 
+        // http_get_response_body() -> i32 (returns string pointer)
+        let get_body_type = self.add_function_type(&[], Some(WasmType::I32))?;
+        if self.emit_import(
+            "env",
+            "http_get_response_body",
+            wasm_encoder::EntityType::Function(get_body_type),
+        ) {
+            self.http_import_indices
+                .insert("http_get_response_body".to_string(), self.function_count);
+            self.function_count += 1;
+        }
+
         // http_get_response_headers() -> i32 (returns string pointer)
         let get_headers_type = self.add_function_type(&[], Some(WasmType::I32))?;
         if self.emit_import(
