@@ -1433,18 +1433,26 @@ impl MirCodeGenerator<'_> {
             .collect();
         names.extend(expansions);
 
-        // camelCase crypto methods → snake_case host bridge builtin names.
-        // The generic dot→underscore expansion produces "crypto_randomHex" but the
-        // import field name registered by register_crypto_builtin_imports is
-        // "crypto_random_hex". Without this mapping those imports are tree-shaken
-        // even when the language-level names appear in the MIR call graph.
-        let camel_to_builtin: &[(&str, &str)] = &[
+        // Language names whose dot→underscore expansion does NOT match the
+        // actual host bridge import field name (different naming convention or
+        // "get" prefix in the import name). Without this table those imports
+        // are tree-shaken even when the language-level name is in the MIR call
+        // graph, and the wrapper that registers the alias is never created.
+        let explicit_reachable: &[(&str, &str)] = &[
+            // camelCase crypto: "crypto.randomHex" → "crypto_randomHex" (wrong)
+            //                   actual import:       "crypto_random_hex"
             ("crypto.randomHex", "crypto_random_hex"),
             ("crypto.randomBytes", "crypto_random_bytes"),
+            // http response accessors: "http.responseCode" → "http_responseCode" (wrong)
+            //                          actual import:        "http_get_response_code"
+            ("http.responseCode", "http_get_response_code"),
+            ("http.getResponseCode", "http_get_response_code"),
+            ("http.responseBody", "http_get_response_body"),
+            ("http.getResponseBody", "http_get_response_body"),
         ];
-        for (lang, builtin) in camel_to_builtin {
+        for (lang, import_field) in explicit_reachable {
             if names.contains(*lang) {
-                names.insert(builtin.to_string());
+                names.insert(import_field.to_string());
             }
         }
 
