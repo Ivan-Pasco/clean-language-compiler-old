@@ -1548,7 +1548,8 @@ impl MultiFileCompiler {
         let order = unit.compilation_order.clone();
         for module_id in order {
             if let Some(module) = unit.get_module_mut(module_id) {
-                match self.parse_module_to_hir(&module.source, &module.file_path) {
+                let is_entry = module.is_entry;
+                match self.parse_module_to_hir(&module.source, &module.file_path, is_entry) {
                     Ok(hir) => {
                         module.set_hir(hir);
                     }
@@ -1567,10 +1568,15 @@ impl MultiFileCompiler {
     }
 
     /// Parse a single module through Stages 1-3 (with optional plugin expansion at Stage 2.5)
+    ///
+    /// `is_entry` controls preamble injection: only the entry module receives
+    /// plugin preamble helpers (e.g. `redirect`).  Shared modules only get their
+    /// own framework blocks expanded so the merged HIR never contains duplicates.
     fn parse_module_to_hir(
         &self,
         source: &str,
         file_path: &Path,
+        is_entry: bool,
     ) -> Result<HirProgram, CompilerError> {
         // Stage 1: Tokenize
         let source_code =
@@ -1640,13 +1646,23 @@ impl MultiFileCompiler {
         }
 
         // Stage 2.5b: Plugin Expansion - transform framework blocks into Clean AST
+        // Preamble helpers (e.g. redirect, json, error from frame.server) are only
+        // injected for the entry module.  Shared modules get their own framework
+        // blocks expanded but no preambles, preventing duplicate symbols in the
+        // merged HIR (E001).
         let ast = if let Some(ref registry) = self.config.plugin_registry {
             tracing::debug!(
                 file = %file_path.display(),
+                is_entry = is_entry,
                 "Starting Stage 2.5: Plugin Expansion for module"
             );
             let mut expander = PluginExpander::new(registry.as_ref());
-            expander.expand_program(parsed_ast).map_err(|e| {
+            let expand_result = if is_entry {
+                expander.expand_program(parsed_ast)
+            } else {
+                expander.expand_program_without_preambles(parsed_ast)
+            };
+            expand_result.map_err(|e| {
                 CompilerError::syntax_error(
                     e.to_string(),
                     Some("Plugin expansion failed".to_string()),

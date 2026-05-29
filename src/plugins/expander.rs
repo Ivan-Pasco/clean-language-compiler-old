@@ -135,6 +135,50 @@ impl<'a> PluginExpander<'a> {
         Ok(program)
     }
 
+    /// Like `expand_program` but skips preamble injection.
+    ///
+    /// Used for shared/non-entry modules in a multi-file build.  Preambles
+    /// (e.g. `redirect`, `json`, `error` from frame.server) are program-level
+    /// helpers that must appear exactly once in the merged HIR.  Injecting
+    /// them into every module causes N duplicate symbols in the resolver (E001).
+    /// The entry module calls `expand_program` (with preambles); all other
+    /// modules call this variant so framework blocks are still expanded but
+    /// no preamble helpers are duplicated.
+    pub fn expand_program_without_preambles(
+        &mut self,
+        mut program: Program,
+    ) -> Result<Program, PluginError> {
+        program.statements = self.expand_statements_full(program.statements)?;
+        program.functions = self.expand_functions(program.functions)?;
+        program.classes = self.expand_classes(program.classes)?;
+
+        if let Some(start_fn) = self.pending_start.take() {
+            if program.start_function.is_none() {
+                program.start_function = Some(start_fn);
+            } else if let Some(ref mut existing) = program.start_function {
+                existing.body.extend(start_fn.body);
+            }
+        }
+
+        program.functions.append(&mut self.pending_functions);
+        program.classes.append(&mut self.pending_classes);
+
+        for ext in self.pending_externals.drain(..) {
+            if !program.externals.iter().any(|e| e.name == ext.name) {
+                program.externals.push(ext);
+            }
+        }
+
+        tracing::debug!(
+            blocks_expanded = self.blocks_expanded,
+            statements_generated = self.statements_generated,
+            externals_added = program.externals.len(),
+            "Plugin expansion complete (no preambles — shared module)"
+        );
+
+        Ok(program)
+    }
+
     /// Expand framework blocks using full expansion (preserves start functions)
     fn expand_statements_full(
         &mut self,
