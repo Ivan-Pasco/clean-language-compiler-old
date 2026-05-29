@@ -1375,6 +1375,24 @@ pub fn compile_for_plugin_with_opt_level(
 ///
 /// # Returns
 /// Vector of plugin names (e.g., ["frame.web", "frame.data"])
+/// When `source` is a package manifest (starts with `package:`), return the path of
+/// the entry `.cln` file declared under the first `entry:` key.
+fn extract_manifest_entry(
+    source: &str,
+    manifest_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("entry:") {
+            let p = rest.trim().trim_matches('"');
+            if !p.is_empty() {
+                return Some(manifest_dir.join(p));
+            }
+        }
+    }
+    None
+}
+
 fn extract_plugins(source: &str) -> Vec<String> {
     let mut plugins = Vec::new();
     let mut in_plugins_block = false;
@@ -1467,7 +1485,19 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     })?;
 
     // Extract plugin names from plugins: block
-    let plugin_names = extract_plugins(&entry_source);
+    let mut plugin_names = extract_plugins(&entry_source);
+
+    // Package manifests declare plugins in the actual source entry file, not in
+    // the manifest itself — re-extract from the entry file if none were found.
+    if plugin_names.is_empty() && entry_source.trim_start().starts_with("package:") {
+        if let Some(manifest_dir) = entry_path.as_ref().parent() {
+            if let Some(actual_entry) = extract_manifest_entry(&entry_source, manifest_dir) {
+                if let Ok(actual_source) = std::fs::read_to_string(&actual_entry) {
+                    plugin_names = extract_plugins(&actual_source);
+                }
+            }
+        }
+    }
 
     // Load plugins if any are declared
     let registry = if !plugin_names.is_empty() {
@@ -1740,7 +1770,20 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         )]
     })?;
 
-    let plugin_names = extract_plugins(&entry_source);
+    let mut plugin_names = extract_plugins(&entry_source);
+
+    // If this is a package manifest (package: block), the `plugins:` declarations live
+    // in the actual source entry file, not in the manifest itself.  Re-extract from
+    // the entry file declared in the manifest so the registry is populated correctly.
+    if plugin_names.is_empty() && entry_source.trim_start().starts_with("package:") {
+        if let Some(manifest_dir) = entry_path.as_ref().parent() {
+            if let Some(actual_entry) = extract_manifest_entry(&entry_source, manifest_dir) {
+                if let Ok(actual_source) = std::fs::read_to_string(&actual_entry) {
+                    plugin_names = extract_plugins(&actual_source);
+                }
+            }
+        }
+    }
 
     let registry = if !plugin_names.is_empty() {
         tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
