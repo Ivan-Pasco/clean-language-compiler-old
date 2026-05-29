@@ -3359,6 +3359,29 @@ impl NameResolver {
                     .filter(|def| !def.param_defaults.is_empty())
                     .map(|def| def.param_defaults.clone());
 
+                // Skip if this name already refers to a builtin namespace.
+                // A plugin language alias (e.g. frame.server's `json -> _res_json`) must
+                // not overwrite the `json` built-in namespace — doing so would cause
+                // `json.get(...)` calls in shared modules to be misresolved as method
+                // calls on a variable instead of namespace calls (SEM001).
+                // Direct `json(data)` calls still work through the call-site rewrite at
+                // the `function == "json"` branch in the Call handler above.
+                if let Some(existing_id) = self
+                    .symbol_table
+                    .lookup_symbol_in_scope(lang_name, ScopeId(0))
+                {
+                    if let Some(existing_sym) = self.symbol_table.get_symbol(existing_id) {
+                        if matches!(existing_sym.kind, SymbolKind::Namespace { .. }) {
+                            tracing::debug!(
+                                lang_name = %lang_name,
+                                bridge_name = %bridge_name,
+                                "Skipping language alias — would shadow builtin namespace"
+                            );
+                            continue;
+                        }
+                    }
+                }
+
                 tracing::debug!(
                     lang_name = %lang_name,
                     bridge_name = %bridge_name,
