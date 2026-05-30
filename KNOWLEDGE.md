@@ -75,6 +75,21 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 - All renamed to `NOTE:` (design documentation) or removed with dead code
 - 39 `CRITICAL` occurrences remain — these are in error messages and priority labels, not code markers
 
+## 9. Codegen Bug Verification Protocol
+
+**What:** When a bug report describes a wrong WASM type, wrong instruction, or missing wrap/extend, source code inspection is not sufficient proof of fix. The emitted binary must be inspected directly.
+
+**Rule:** Before calling `/resolve-fix` on any codegen/type bug:
+1. Compile the minimal repro: `cln compile repro.cln -o repro.wasm`
+2. Inspect the actual emitted type: `wasm-objdump -x repro.wasm | grep "type\[N\]"`
+3. Confirm the type matches the spec (e.g. `() -> i64` not `() -> i32`)
+
+**Why this matters:** `WasmType::I64` in source does not guarantee `() -> i64` in the binary — the code path exercised at runtime may differ from the code you read. A successful `cln compile` only proves the file compiles, not that the type table is correct.
+
+**Also verify:** that the tag actually points to the fix commit before running comita. Use `gh release list` to see which commit a published release was built from — a local tag may point to a different commit than what GitHub published.
+
+---
+
 ## 8. Remaining Design Notes in mir_codegen.rs (UPDATED 2026-04-12)
 
 Three workarounds assessed and resolved, two remain as known limitations:
