@@ -1449,6 +1449,9 @@ impl MirCodeGenerator<'_> {
             ("http.getResponseCode", "http_get_response_code"),
             ("http.responseBody", "http_get_response_body"),
             ("http.getResponseBody", "http_get_response_body"),
+            // camelCase http: "http.postWithHeaders" → "http_postWithHeaders" (wrong)
+            //                 actual import:           "http_post_with_headers"
+            ("http.postWithHeaders", "http_post_with_headers"),
         ];
         for (lang, import_field) in explicit_reachable {
             if names.contains(*lang) {

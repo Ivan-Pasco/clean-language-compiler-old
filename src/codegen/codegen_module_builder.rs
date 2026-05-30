@@ -324,6 +324,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_post_with_headers".to_string(), self.function_count);
+            self.function_map
+                .insert("http.postWithHeaders".to_string(), self.function_count);
             self.function_count += 1;
         }
 
