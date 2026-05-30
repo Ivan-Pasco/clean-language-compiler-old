@@ -302,6 +302,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_get_with_headers".to_string(), self.function_count);
+            self.function_map
+                .insert("http.getWithHeaders".to_string(), self.function_count);
             self.function_count += 1;
         }
 
@@ -343,6 +345,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_post_json".to_string(), self.function_count);
+            self.function_map
+                .insert("http.postJson".to_string(), self.function_count);
             self.function_count += 1;
         }
 
@@ -358,6 +362,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_put_json".to_string(), self.function_count);
+            self.function_map
+                .insert("http.putJson".to_string(), self.function_count);
             self.function_count += 1;
         }
 
@@ -390,6 +396,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_post_form".to_string(), self.function_count);
+            self.function_map
+                .insert("http.postForm".to_string(), self.function_count);
             self.function_count += 1;
         }
 
@@ -493,6 +501,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_encode_url".to_string(), self.function_count);
+            self.function_map
+                .insert("http.encodeUrl".to_string(), self.function_count);
             self.function_count += 1;
         }
 
@@ -506,6 +516,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_decode_url".to_string(), self.function_count);
+            self.function_map
+                .insert("http.decodeUrl".to_string(), self.function_count);
             self.function_count += 1;
         }
 
@@ -519,6 +531,8 @@ impl super::CodeGenerator {
         ) {
             self.http_import_indices
                 .insert("http_build_query".to_string(), self.function_count);
+            self.function_map
+                .insert("http.buildQuery".to_string(), self.function_count);
             self.function_count += 1;
         }
 
