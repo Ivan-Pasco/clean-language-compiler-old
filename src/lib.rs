@@ -1628,7 +1628,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
                 });
             match start_function {
                 Some(ref mut sf) => {
-                    extra_start_stmts.extend(sf.body.statements.drain(..));
+                    extra_start_stmts.append(&mut sf.body.statements);
                     sf.body.statements = extra_start_stmts;
                 }
                 None => {
@@ -1924,7 +1924,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
                 });
             match start_function {
                 Some(ref mut sf) => {
-                    extra_start_stmts.extend(sf.body.statements.drain(..));
+                    extra_start_stmts.append(&mut sf.body.statements);
                     sf.body.statements = extra_start_stmts;
                 }
                 None => {
