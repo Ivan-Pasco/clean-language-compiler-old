@@ -986,19 +986,19 @@ impl super::CodeGenerator {
     pub(crate) fn register_db_builtin_imports(&mut self) -> Result<(), CompilerError> {
         self.register_import_function(
             "env",
-            "db_query",
+            "_db_query",
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
         self.register_import_function(
             "env",
-            "db_execute",
+            "_db_execute",
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
-        self.register_import_function("env", "db_begin", &[], Some(WasmType::I32))?;
-        self.register_import_function("env", "db_commit", &[], Some(WasmType::I32))?;
-        self.register_import_function("env", "db_rollback", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "_db_begin", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "_db_commit", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "_db_rollback", &[], Some(WasmType::I32))?;
         Ok(())
     }
 
@@ -1007,7 +1007,7 @@ impl super::CodeGenerator {
     /// MUST be called AFTER all imports are registered. Wrappers expand Clean
     /// length-prefixed string pointers to the (ptr+4, len) pair the host bridge expects.
     pub(crate) fn register_db_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
-        if let Some(&raw_idx) = self.function_map.get("db_query") {
+        if let Some(&raw_idx) = self.function_map.get("_db_query") {
             let wrap_idx = self.register_function(
                 "db.query",
                 &[WasmType::I32, WasmType::I32],
@@ -1037,7 +1037,7 @@ impl super::CodeGenerator {
             self.function_map.insert("db.query".to_string(), wrap_idx);
         }
 
-        if let Some(&raw_idx) = self.function_map.get("db_execute") {
+        if let Some(&raw_idx) = self.function_map.get("_db_execute") {
             let wrap_idx = self.register_function(
                 "db.execute",
                 &[WasmType::I32, WasmType::I32],
@@ -1067,7 +1067,7 @@ impl super::CodeGenerator {
             self.function_map.insert("db.execute".to_string(), wrap_idx);
         }
 
-        if let Some(&raw_idx) = self.function_map.get("db_begin") {
+        if let Some(&raw_idx) = self.function_map.get("_db_begin") {
             let wrap_idx = self.register_function(
                 "db.begin",
                 &[],
@@ -1077,7 +1077,7 @@ impl super::CodeGenerator {
             self.function_map.insert("db.begin".to_string(), wrap_idx);
         }
 
-        if let Some(&raw_idx) = self.function_map.get("db_commit") {
+        if let Some(&raw_idx) = self.function_map.get("_db_commit") {
             let wrap_idx = self.register_function(
                 "db.commit",
                 &[],
@@ -1087,7 +1087,7 @@ impl super::CodeGenerator {
             self.function_map.insert("db.commit".to_string(), wrap_idx);
         }
 
-        if let Some(&raw_idx) = self.function_map.get("db_rollback") {
+        if let Some(&raw_idx) = self.function_map.get("_db_rollback") {
             let wrap_idx = self.register_function(
                 "db.rollback",
                 &[],
@@ -1210,37 +1210,37 @@ impl super::CodeGenerator {
     pub(crate) fn register_crypto_builtin_imports(&mut self) -> Result<(), CompilerError> {
         self.register_import_function(
             "env",
-            "crypto_hash_password",
+            "_crypto_hash_password",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
         self.register_import_function(
             "env",
-            "crypto_random_bytes",
+            "_crypto_random_bytes",
             &[WasmType::I32],
             Some(WasmType::I32),
         )?;
         self.register_import_function(
             "env",
-            "crypto_random_hex",
+            "_crypto_random_hex",
             &[WasmType::I32],
             Some(WasmType::I32),
         )?;
         self.register_import_function(
             "env",
-            "crypto_hash_sha256",
+            "_crypto_hash_sha256",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
         self.register_import_function(
             "env",
-            "crypto_hash_sha512",
+            "_crypto_hash_sha512",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
         self.register_import_function(
             "env",
-            "crypto_verify_password",
+            "_crypto_verify_password",
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
@@ -1252,9 +1252,9 @@ impl super::CodeGenerator {
     pub(crate) fn register_crypto_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
         // Single-string-param wrappers (expand ptr → ptr+4, len)
         for (raw_name, lang_name) in &[
-            ("crypto_hash_password", "crypto.hashPassword"),
-            ("crypto_hash_sha256", "crypto.sha256"),
-            ("crypto_hash_sha512", "crypto.sha512"),
+            ("_crypto_hash_password", "crypto.hashPassword"),
+            ("_crypto_hash_sha256", "crypto.sha256"),
+            ("_crypto_hash_sha512", "crypto.sha512"),
         ] {
             if let Some(&raw_idx) = self.function_map.get(*raw_name) {
                 let wrap_idx = self.register_function(
@@ -1280,8 +1280,8 @@ impl super::CodeGenerator {
 
         // Pass-through wrappers (no string expansion needed)
         for (raw_name, lang_name) in &[
-            ("crypto_random_bytes", "crypto.randomBytes"),
-            ("crypto_random_hex", "crypto.randomHex"),
+            ("_crypto_random_bytes", "crypto.randomBytes"),
+            ("_crypto_random_hex", "crypto.randomHex"),
         ] {
             if let Some(&raw_idx) = self.function_map.get(*raw_name) {
                 let wrap_idx = self.register_function(
@@ -1295,7 +1295,7 @@ impl super::CodeGenerator {
         }
 
         // Two-string-param wrapper for verifyPassword
-        if let Some(&raw_idx) = self.function_map.get("crypto_verify_password") {
+        if let Some(&raw_idx) = self.function_map.get("_crypto_verify_password") {
             let wrap_idx = self.register_function(
                 "crypto.verifyPassword",
                 &[WasmType::I32, WasmType::I32],

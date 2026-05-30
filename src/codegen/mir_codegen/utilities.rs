@@ -1440,14 +1440,14 @@ impl MirCodeGenerator<'_> {
         // graph, and the wrapper that registers the alias is never created.
         let explicit_reachable: &[(&str, &str)] = &[
             // camelCase crypto: dot→underscore expansion produces wrong import name
-            ("crypto.randomHex", "crypto_random_hex"),
-            ("crypto.randomBytes", "crypto_random_bytes"),
-            // prefixed crypto: "crypto.sha256" → "crypto_sha256" (wrong)
-            //                   actual import:   "crypto_hash_sha256"
-            ("crypto.sha256", "crypto_hash_sha256"),
-            ("crypto.sha512", "crypto_hash_sha512"),
-            ("crypto.hashPassword", "crypto_hash_password"),
-            ("crypto.verifyPassword", "crypto_verify_password"),
+            ("crypto.randomHex", "_crypto_random_hex"),
+            ("crypto.randomBytes", "_crypto_random_bytes"),
+            // prefixed crypto: "crypto.sha256" → "_crypto_sha256" (wrong)
+            //                   actual import:   "_crypto_hash_sha256"
+            ("crypto.sha256", "_crypto_hash_sha256"),
+            ("crypto.sha512", "_crypto_hash_sha512"),
+            ("crypto.hashPassword", "_crypto_hash_password"),
+            ("crypto.verifyPassword", "_crypto_verify_password"),
             // http response accessors: "http.responseCode" → "http_responseCode" (wrong)
             //                          actual import:        "http_get_response_code"
             ("http.responseCode", "http_get_response_code"),
