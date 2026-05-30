@@ -101,6 +101,8 @@ pub(super) struct PendingBridgeWrapper {
     pub(super) wasm_return: Option<crate::types::WasmType>,
     pub(super) raw_func_index: u32,
     pub(super) param_types: Vec<crate::builtins::registry::BuiltinType>,
+    /// When true, emit `i32.wrap_i64` after the call (host returns i64, Clean caller expects i32).
+    pub(super) wrap_i64: bool,
 }
 
 /// Per-function generation statistics (internal).

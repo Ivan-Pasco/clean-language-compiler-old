@@ -1636,7 +1636,44 @@ impl MirCodeGenerator<'_> {
                     wasm_return,
                     raw_func_index,
                     param_types: param_types.clone(),
+                    wrap_i64: false,
                 });
+            } else if func.name == "_time_now" {
+                // _time_now is a special case: the host bridge contract specifies () -> i64
+                // (Unix timestamp), but Clean's integer type is i32. Register the import with
+                // the correct i64 return type, then defer a wrapper that applies i32.wrap_i64
+                // so callers receive a Clean integer. This mirrors register_time_builtin_imports
+                // + register_time_builtin_wrappers but handles the plugin-bridge code path
+                // where language_to_bridge_map already maps "time.now" → "_time_now".
+                let raw_index = self.wasm_generator.register_import_function(
+                    module,
+                    "_time_now",
+                    &[],
+                    Some(WasmType::I64),
+                )?;
+
+                if raw_index == u32::MAX {
+                    continue;
+                }
+
+                tracing::debug!(
+                    raw_index = raw_index,
+                    "Registered _time_now as () -> i64 via plugin bridge path; deferring i32.wrap_i64 wrapper"
+                );
+
+                // Defer a wrapper: () -> i32, body = [call _time_now, i32.wrap_i64].
+                // The wrapper is registered as "time.now" after all imports, and the
+                // language alias is set to the wrapper index (not the raw import).
+                self.pending_bridge_wrappers.push(
+                    crate::codegen::mir_codegen::PendingBridgeWrapper {
+                        name: func.name.clone(), // "_time_now" — wrapper phase maps alias to this
+                        params: vec![],
+                        wasm_return: Some(WasmType::I32),
+                        raw_func_index: raw_index,
+                        param_types: vec![],
+                        wrap_i64: true,
+                    },
+                );
             } else {
                 let wasm_params: Vec<WasmType> = param_types
                     .iter()
@@ -1732,24 +1769,35 @@ impl MirCodeGenerator<'_> {
 
             wrapper_instructions.push(Instruction::Call(wrapper.raw_func_index));
 
+            // _time_now: host returns i64, Clean integer is i32 — wrap before returning.
+            if wrapper.wrap_i64 {
+                wrapper_instructions.push(Instruction::I32WrapI64);
+            }
+
+            // For the _time_now i64-wrap case the public name is "time.now" (not "_time_now").
+            let public_name = if wrapper.name == "_time_now" {
+                "time.now".to_string()
+            } else {
+                wrapper.name.clone()
+            };
+
             tracing::debug!(
-                name = %wrapper.name,
+                name = %public_name,
                 params = ?wrapper.params,
                 returns = ?wrapper.wasm_return,
                 raw_func_index = wrapper.raw_func_index,
-                function_count = self.wasm_generator.function_count,
-                "Registering wrapper function for expand_strings bridge (after all imports)"
+                "Registering wrapper function for bridge (after all imports)"
             );
 
             self.wasm_generator.register_function(
-                &wrapper.name,
+                &public_name,
                 &wrapper.params,
                 wrapper.wasm_return,
                 &wrapper_instructions,
             )?;
 
             // Register language-name aliases for the wrapper
-            if let Some(&wrapper_index) = self.wasm_generator.function_map.get(&wrapper.name) {
+            if let Some(&wrapper_index) = self.wasm_generator.function_map.get(&public_name) {
                 for (lang_name, bridge_name) in &self.language_to_bridge_map {
                     if bridge_name == &wrapper.name {
                         tracing::debug!(
