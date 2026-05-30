@@ -1145,18 +1145,19 @@ impl super::CodeGenerator {
     /// Call `register_time_builtin_wrappers()` AFTER all imports to create the
     /// local passthrough wrapper.
     pub(crate) fn register_time_builtin_imports(&mut self) -> Result<(), CompilerError> {
-        self.register_import_function("env", "time_now", &[], Some(WasmType::I32))?;
+        // Host bridge returns i64 (Unix timestamp); wrapper truncates to i32 for Clean integer
+        self.register_import_function("env", "_time_now", &[], Some(WasmType::I64))?;
         Ok(())
     }
 
     /// Create local wrapper function for `time.now`. Must be called AFTER all imports.
     pub(crate) fn register_time_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
-        if let Some(&raw_idx) = self.function_map.get("time_now") {
+        if let Some(&raw_idx) = self.function_map.get("_time_now") {
             let wrap_idx = self.register_function(
                 "time.now",
                 &[],
                 Some(WasmType::I32),
-                &[Instruction::Call(raw_idx)],
+                &[Instruction::Call(raw_idx), Instruction::I32WrapI64],
             )?;
             self.function_map.insert("time.now".to_string(), wrap_idx);
         }
