@@ -1439,10 +1439,15 @@ impl MirCodeGenerator<'_> {
         // are tree-shaken even when the language-level name is in the MIR call
         // graph, and the wrapper that registers the alias is never created.
         let explicit_reachable: &[(&str, &str)] = &[
-            // camelCase crypto: "crypto.randomHex" → "crypto_randomHex" (wrong)
-            //                   actual import:       "crypto_random_hex"
+            // camelCase crypto: dot→underscore expansion produces wrong import name
             ("crypto.randomHex", "crypto_random_hex"),
             ("crypto.randomBytes", "crypto_random_bytes"),
+            // prefixed crypto: "crypto.sha256" → "crypto_sha256" (wrong)
+            //                   actual import:   "crypto_hash_sha256"
+            ("crypto.sha256", "crypto_hash_sha256"),
+            ("crypto.sha512", "crypto_hash_sha512"),
+            ("crypto.hashPassword", "crypto_hash_password"),
+            ("crypto.verifyPassword", "crypto_verify_password"),
             // http response accessors: "http.responseCode" → "http_responseCode" (wrong)
             //                          actual import:        "http_get_response_code"
             ("http.responseCode", "http_get_response_code"),
