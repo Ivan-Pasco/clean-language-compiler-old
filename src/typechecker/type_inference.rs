@@ -1656,13 +1656,22 @@ impl<'a> TypeInference<'a> {
             }
         }
 
-        // Convert methods
+        // Convert methods — propagate errors so codegen never sees a missing method body.
         let mut tast_methods = Vec::new();
         let has_parent = class.parent.is_some();
         let has_fields = !class.fields.is_empty();
         for method in &class.methods {
-            if let Ok(tast_method) = self.infer_method(method, has_parent, has_fields) {
-                tast_methods.push(tast_method);
+            match self.infer_method(method, has_parent, has_fields) {
+                Ok(tast_method) => tast_methods.push(tast_method),
+                Err(e) => {
+                    tracing::warn!(
+                        class = %class.name,
+                        method = %method.name,
+                        error = ?e,
+                        "Method type inference failed — propagating error"
+                    );
+                    return Err(e);
+                }
             }
         }
 

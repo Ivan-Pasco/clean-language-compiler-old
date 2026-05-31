@@ -20,7 +20,7 @@ mod declarations;
 mod expressions;
 mod statements;
 
-use crate::ast::Program;
+use crate::ast::{Class, Program};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
 use std::collections::HashSet;
@@ -69,6 +69,9 @@ pub struct TokenParser {
     /// When true, skip section ordering enforcement (used for plugin output parsing
     /// where generated sections may appear in any order)
     pub(super) lenient_section_order: bool,
+    /// Synthetic classes generated from plugin sub-section blocks (e.g. `inputs:` → `Inputs`).
+    /// Populated by `parse_class_body` and drained into `classes` after each `parse_class` call.
+    pub(super) pending_synthetic_classes: Vec<Class>,
 }
 
 impl TokenParser {
@@ -82,6 +85,7 @@ impl TokenParser {
             brace_depth: 0,
             plugin_keywords: HashSet::new(),
             lenient_section_order: false,
+            pending_synthetic_classes: Vec::new(),
         }
     }
 
@@ -105,6 +109,7 @@ impl TokenParser {
             brace_depth: 0,
             plugin_keywords: plugin_keywords.into_iter().collect(),
             lenient_section_order: false,
+            pending_synthetic_classes: Vec::new(),
         }
     }
 
@@ -218,7 +223,12 @@ impl TokenParser {
                     Err(e) => self.errors.push(e),
                 },
                 TokenKind::Class => match self.parse_class() {
-                    Ok(class) => classes.push(class),
+                    Ok(class) => {
+                        classes.push(class);
+                        // Drain any synthetic classes created from plugin sub-section blocks
+                        // (e.g. `inputs:` inside a class body generates a synthetic `Inputs` class)
+                        classes.extend(self.pending_synthetic_classes.drain(..));
+                    }
                     Err(e) => self.errors.push(e),
                 },
                 TokenKind::Tests => {
