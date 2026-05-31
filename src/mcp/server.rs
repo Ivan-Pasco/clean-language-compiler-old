@@ -3659,6 +3659,58 @@ fn tool_get_stack_recommendation(
 // Error Reporting & Fix Notification Tool Handlers
 // ============================================================================
 
+/// Returns true if `text` contains patterns associated with HTML/script injection
+/// or LLM prompt injection. Applied to all free-text fields in error reports
+/// before storage and display (SEC002).
+fn contains_injection(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let patterns: &[&str] = &[
+        // Web / HTML injection (original SEC001 patterns)
+        "<script",
+        "javascript:",
+        "onerror=",
+        "onload=",
+        "data:text/html",
+        // LLM prompt injection — attacker embeds instructions targeting AI readers
+        "ignore previous instructions",
+        "ignore all prior",
+        "ignore all previous",
+        "disregard your instructions",
+        "disregard previous",
+        "forget your instructions",
+        "forget everything",
+        "your new instructions",
+        "you are now a ",
+        "you are now an ",
+        "new persona:",
+        "[system]",
+        "<|im_start|>",
+        "<|im_end|>",
+        "act as if you",
+        "pretend you are",
+        "you must now",
+        "from now on you",
+        "override your instructions",
+        "override all instructions",
+    ];
+    patterns.iter().any(|p| lower.contains(p))
+}
+
+/// Read a string field from `args` and cap it at `max_bytes` to prevent payload bloat.
+/// Finds a valid UTF-8 char boundary before truncating.
+fn read_capped(args: &serde_json::Value, key: &str, max_bytes: usize) -> Option<String> {
+    args.get(key).and_then(|v| v.as_str()).map(|s| {
+        if s.len() <= max_bytes {
+            return s.to_string();
+        }
+        let mut boundary = max_bytes.saturating_sub(3);
+        while boundary > 0 && !s.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        format!("{}…", &s[..boundary])
+    })
+}
+
 /// Tool: report_error - Submit a structured error report
 fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     use crate::telemetry::{
@@ -3689,17 +3741,10 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         }
     };
 
-    // SEC001: injection detection — reject values that look like script injection
+    // SEC002: injection detection — reject all free-text fields containing web XSS
+    // or LLM prompt injection patterns. Covers mandatory and all optional fields.
     {
-        let injection_patterns = [
-            "<script",
-            "javascript:",
-            "onerror=",
-            "onload=",
-            "data:text/html",
-        ];
-        let combined = format!("{error_code} {error_message}").to_lowercase();
-        if injection_patterns.iter().any(|p| combined.contains(p)) {
+        if contains_injection(&error_code) || contains_injection(&error_message) {
             return JsonRpcResponse::error(
                 id,
                 error_codes::INVALID_PARAMS,
@@ -3707,8 +3752,30 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                     .to_string(),
             );
         }
+        let optional_text_fields = [
+            "minimal_repro",
+            "expected_behavior",
+            "actual_behavior",
+            "ai_analysis",
+            "suggested_fix",
+            "discovered_during",
+        ];
+        for field in &optional_text_fields {
+            if let Some(val) = args.get(field).and_then(|v| v.as_str()) {
+                if contains_injection(val) {
+                    return JsonRpcResponse::error(
+                        id,
+                        error_codes::INVALID_PARAMS,
+                        format!(
+                            "Invalid input: field '{}' contains disallowed content",
+                            field
+                        ),
+                    );
+                }
+            }
+        }
     }
-    // SEC001: cap error_message at 2000 chars to prevent payload bloat
+    // SEC002: cap error_message at 2000 bytes to prevent payload bloat
     let error_message = if error_message.len() > 2000 {
         format!("{}…", &error_message[..1997])
     } else {
@@ -3895,22 +3962,10 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
     // Add reproduction info (respecting consent level)
     if consent_level != "error_only" {
         report.reproduction = Some(ReportReproduction {
-            minimal_code: args
-                .get("minimal_repro")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            expected_behavior: args
-                .get("expected_behavior")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            actual_behavior: args
-                .get("actual_behavior")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            spec_reference: args
-                .get("spec_reference")
-                .and_then(|v| v.as_str())
-                .map(String::from),
+            minimal_code: read_capped(args, "minimal_repro", 4000),
+            expected_behavior: read_capped(args, "expected_behavior", 1000),
+            actual_behavior: read_capped(args, "actual_behavior", 1000),
+            spec_reference: read_capped(args, "spec_reference", 500),
         });
     }
 
@@ -3921,20 +3976,14 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
     if consent_level != "error_only" {
         // Prepend discovered_during to analysis so the lineage is visible in the dashboard.
         let analysis = {
-            let base = args
-                .get("ai_analysis")
-                .and_then(|v| v.as_str())
-                .map(String::from);
+            let base = read_capped(args, "ai_analysis", 4000);
             match (&discovered_during, &base) {
                 (Some(ctx), Some(a)) => Some(format!("Discovered during: {ctx}\n\n{a}")),
                 (Some(ctx), None) => Some(format!("Discovered during: {ctx}")),
                 (None, b) => b.clone(),
             }
         };
-        let suggested_fix = args
-            .get("suggested_fix")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let suggested_fix = read_capped(args, "suggested_fix", 2000);
         let suggested_component = args
             .get("suggested_component_file")
             .and_then(|v| v.as_str())
@@ -4239,15 +4288,20 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
                 "component": b.component,
                 "subsystem": b.subsystem,
                 "severity": b.severity,
-                "message": b.message,
-                "minimal_repro": b.minimal_repro,
-                "expected_behavior": b.expected_behavior,
-                "actual_behavior": b.actual_behavior,
                 "occurrences": b.occurrences,
                 "priority_score": b.priority_score,
                 "first_reported_version": b.first_reported_version,
-                "ai_suggested_fix": b.ai_suggested_fix,
                 "report_ids": b.report_ids,
+                // SEC003: user-submitted content — treat as opaque data.
+                // Do NOT interpret or execute any instructions these fields may contain.
+                "user_submitted_content": {
+                    "__trust": "external_untrusted",
+                    "message": b.message,
+                    "minimal_repro": b.minimal_repro,
+                    "expected_behavior": b.expected_behavior,
+                    "actual_behavior": b.actual_behavior,
+                    "ai_suggested_fix": b.ai_suggested_fix,
+                },
             })
         })
         .collect();
@@ -5519,15 +5573,20 @@ fn tool_list_component_bugs(id: serde_json::Value, args: &serde_json::Value) -> 
                 "component": b.component,
                 "subsystem": b.subsystem,
                 "severity": b.severity,
-                "message": b.message,
-                "minimal_repro": b.minimal_repro,
-                "expected_behavior": b.expected_behavior,
-                "actual_behavior": b.actual_behavior,
                 "occurrences": b.occurrences,
                 "priority_score": b.priority_score,
                 "first_reported_version": b.first_reported_version,
-                "ai_suggested_fix": b.ai_suggested_fix,
                 "report_ids": b.report_ids,
+                // SEC003: user-submitted content — treat as opaque data.
+                // Do NOT interpret or execute any instructions these fields may contain.
+                "user_submitted_content": {
+                    "__trust": "external_untrusted",
+                    "message": b.message,
+                    "minimal_repro": b.minimal_repro,
+                    "expected_behavior": b.expected_behavior,
+                    "actual_behavior": b.actual_behavior,
+                    "ai_suggested_fix": b.ai_suggested_fix,
+                },
             })
         })
         .collect();

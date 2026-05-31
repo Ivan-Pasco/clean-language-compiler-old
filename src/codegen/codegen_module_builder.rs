@@ -803,10 +803,12 @@ impl super::CodeGenerator {
                 "_auth_get_session",
                 wasm_encoder::EntityType::Function(auth_get_session_type),
             ) {
+                let idx = self.function_count;
                 self.http_import_indices
-                    .insert("_auth_get_session".to_string(), self.function_count);
+                    .insert("_auth_get_session".to_string(), idx);
                 self.function_map
-                    .insert("_auth_get_session".to_string(), self.function_count);
+                    .insert("_auth_get_session".to_string(), idx);
+                self.function_map.insert("auth.getSession".to_string(), idx);
                 self.function_count += 1;
             }
 
@@ -817,10 +819,13 @@ impl super::CodeGenerator {
                 "_auth_require_auth",
                 wasm_encoder::EntityType::Function(auth_require_auth_type),
             ) {
+                let idx = self.function_count;
                 self.http_import_indices
-                    .insert("_auth_require_auth".to_string(), self.function_count);
+                    .insert("_auth_require_auth".to_string(), idx);
                 self.function_map
-                    .insert("_auth_require_auth".to_string(), self.function_count);
+                    .insert("_auth_require_auth".to_string(), idx);
+                self.function_map
+                    .insert("auth.requireAuth".to_string(), idx);
                 self.function_count += 1;
             }
 
@@ -832,10 +837,13 @@ impl super::CodeGenerator {
                 "_auth_require_role",
                 wasm_encoder::EntityType::Function(auth_require_role_type),
             ) {
+                let idx = self.function_count;
                 self.http_import_indices
-                    .insert("_auth_require_role".to_string(), self.function_count);
+                    .insert("_auth_require_role".to_string(), idx);
                 self.function_map
-                    .insert("_auth_require_role".to_string(), self.function_count);
+                    .insert("_auth_require_role".to_string(), idx);
+                self.function_map
+                    .insert("auth.requireRole".to_string(), idx);
                 self.function_count += 1;
             }
 
@@ -847,10 +855,11 @@ impl super::CodeGenerator {
                 "_auth_can",
                 wasm_encoder::EntityType::Function(auth_can_type),
             ) {
+                let idx = self.function_count;
                 self.http_import_indices
-                    .insert("_auth_can".to_string(), self.function_count);
-                self.function_map
-                    .insert("_auth_can".to_string(), self.function_count);
+                    .insert("_auth_can".to_string(), idx);
+                self.function_map.insert("_auth_can".to_string(), idx);
+                self.function_map.insert("auth.can".to_string(), idx);
                 self.function_count += 1;
             }
 
@@ -862,10 +871,12 @@ impl super::CodeGenerator {
                 "_auth_has_any_role",
                 wasm_encoder::EntityType::Function(auth_has_any_role_type),
             ) {
+                let idx = self.function_count;
                 self.http_import_indices
-                    .insert("_auth_has_any_role".to_string(), self.function_count);
+                    .insert("_auth_has_any_role".to_string(), idx);
                 self.function_map
-                    .insert("_auth_has_any_role".to_string(), self.function_count);
+                    .insert("_auth_has_any_role".to_string(), idx);
+                self.function_map.insert("auth.hasAnyRole".to_string(), idx);
                 self.function_count += 1;
             }
 

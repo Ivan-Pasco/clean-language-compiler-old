@@ -493,7 +493,9 @@ impl MirBuilder {
         }
 
         // Lower all classes (as constructor functions and method functions)
+        let mut class_errors: Vec<CompilerError> = Vec::new();
         for class in tast.classes {
+            let class_name = class.name.clone();
             match self.build_class(class) {
                 Ok(class_functions) => {
                     for function in class_functions {
@@ -506,9 +508,20 @@ impl MirBuilder {
                     }
                 }
                 Err(errors) => {
-                    self.warnings.extend(errors);
+                    // NOTE: Class lowering failures must be fatal errors, not warnings.
+                    // Silent swallowing leads to confusing downstream codegen errors when
+                    // methods of the failed class are called ("Function not found in function map").
+                    tracing::error!(
+                        class_name = %class_name,
+                        error_count = errors.len(),
+                        "Class lowering failed — propagating as fatal errors"
+                    );
+                    class_errors.extend(errors);
                 }
             }
+        }
+        if !class_errors.is_empty() {
+            return Err(class_errors);
         }
 
         // Phase 2: build the watch handler function bodies using the registrations

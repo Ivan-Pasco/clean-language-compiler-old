@@ -196,6 +196,24 @@ impl Default for PluginRegistry {
     }
 }
 
+/// Convert a snake_case string to camelCase.
+/// e.g. "get_session" → "getSession", "has_any_role" → "hasAnyRole"
+fn snake_to_camel(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = false;
+    for ch in s.chars() {
+        if ch == '_' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.extend(ch.to_uppercase());
+            capitalize_next = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 impl PluginRegistry {
     /// Create a new empty plugin registry
     #[deprecated(note = "Use PluginRegistry::builder() instead")]
@@ -629,15 +647,22 @@ impl PluginRegistry {
             // Phase 2: Auto-derive dot-notation aliases from ALL bridge functions
             // whose names follow the "_namespace_method" convention.
             // e.g. "_http_respond" → "http.respond", "_json_get" → "json.get"
+            // Also generate camelCase variants: "_auth_get_session" → "auth.getSession"
             // Skip if already mapped in phase 1.
             for bf in &manifest.bridge.functions {
                 if let Some(stripped) = bf.name.strip_prefix('_') {
                     if let Some(underscore_pos) = stripped.find('_') {
                         let namespace = &stripped[..underscore_pos];
                         let method = &stripped[underscore_pos + 1..];
+                        // snake_case variant: "auth.get_session"
                         let dot_name = format!("{}.{}", namespace, method);
-                        // Don't override explicit mappings from phase 1
                         map.entry(dot_name).or_insert_with(|| bf.name.clone());
+                        // camelCase variant: "auth.getSession"
+                        if method.contains('_') {
+                            let camel_method = snake_to_camel(method);
+                            let camel_dot_name = format!("{}.{}", namespace, camel_method);
+                            map.entry(camel_dot_name).or_insert_with(|| bf.name.clone());
+                        }
                     }
                 }
             }
