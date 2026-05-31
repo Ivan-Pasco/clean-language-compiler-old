@@ -227,7 +227,7 @@ impl TokenParser {
                         classes.push(class);
                         // Drain any synthetic classes created from plugin sub-section blocks
                         // (e.g. `inputs:` inside a class body generates a synthetic `Inputs` class)
-                        classes.extend(self.pending_synthetic_classes.drain(..));
+                        classes.append(&mut self.pending_synthetic_classes);
                     }
                     Err(e) => self.errors.push(e),
                 },
