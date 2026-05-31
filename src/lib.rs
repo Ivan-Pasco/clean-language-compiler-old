@@ -2233,7 +2233,21 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
         )]
     })?;
 
-    let plugin_names = extract_plugins(&entry_source);
+    let mut plugin_names = extract_plugins(&entry_source);
+
+    // Package manifests declare plugins in the actual source entry file, not in
+    // the manifest itself — re-extract from the entry file declared in the manifest
+    // so the registry is populated correctly.
+    if plugin_names.is_empty() && entry_source.trim_start().starts_with("package:") {
+        if let Some(manifest_dir) = entry_path.as_ref().parent() {
+            if let Some(actual_entry) = extract_manifest_entry(&entry_source, manifest_dir) {
+                if let Ok(actual_source) = std::fs::read_to_string(&actual_entry) {
+                    plugin_names = extract_plugins(&actual_source);
+                }
+            }
+        }
+    }
+
     let registry = if !plugin_names.is_empty() {
         let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
             vec![CompilerError::PluginError {
@@ -2269,6 +2283,7 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
         let mut all_functions = Vec::new();
         let mut all_classes = Vec::new();
         let mut start_function = None;
+        let mut extra_start_stmts: Vec<crate::hir::HirStatement> = Vec::new();
         let mut all_imports = Vec::new();
         let mut all_tests = Vec::new();
         let mut all_externals = Vec::new();
@@ -2292,6 +2307,8 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
                         merged_screen_blocks = hir.screen_blocks.clone();
                         merged_watch_blocks = hir.watch_blocks.clone();
                         root_location = Some(hir.location.clone());
+                    } else if let Some(ref module_start) = hir.start_function {
+                        extra_start_stmts.extend(module_start.body.statements.iter().cloned());
                     }
                     for import in &hir.imports {
                         all_imports.push(import.clone());
@@ -2304,6 +2321,39 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
                     for external in &hir.externals {
                         all_externals.push(external.clone());
                     }
+                }
+            }
+        }
+
+        if !extra_start_stmts.is_empty() {
+            let loc = root_location
+                .clone()
+                .unwrap_or_else(|| crate::ast::SourceLocation {
+                    file: entry_path.as_ref().to_string_lossy().to_string(),
+                    line: 1,
+                    column: 1,
+                    byte_start: None,
+                    byte_end: None,
+                });
+            match start_function {
+                Some(ref mut sf) => {
+                    extra_start_stmts.append(&mut sf.body.statements);
+                    sf.body.statements = extra_start_stmts;
+                }
+                None => {
+                    start_function = Some(crate::hir::HirFunction {
+                        name: "start".to_string(),
+                        parameters: Vec::new(),
+                        return_type: None,
+                        body: crate::hir::HirBlock {
+                            statements: extra_start_stmts,
+                            location: loc.clone(),
+                        },
+                        is_start: true,
+                        is_private: false,
+                        owner_screen: None,
+                        location: loc,
+                    });
                 }
             }
         }
