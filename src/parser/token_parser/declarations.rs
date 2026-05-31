@@ -729,8 +729,89 @@ impl TokenParser {
                     }
                 }
                 TokenKind::Identifier(_) => {
-                    // Could be a field (type name) - parse it
-                    fields.push(self.parse_field()?);
+                    // Look ahead to distinguish three cases:
+                    //   1. `identifier ":" newline/indent`  → plugin-injected sub-section header
+                    //      (e.g. `inputs:`, `state:`, `events:` from frame.ui).
+                    //      Consume the header and parse the indented field block beneath it.
+                    //   2. `identifier ":" type-token`  → name-colon-type field
+                    //      (e.g. `id: integer`, `email: string` as emitted by some plugin expanders).
+                    //      Parse as a reversed field declaration.
+                    //   3. Otherwise → normal `type name` field — delegate to parse_field().
+                    if matches!(self.look_ahead(1).kind, TokenKind::Colon) {
+                        let token_after_colon = &self.look_ahead(2).kind;
+                        if matches!(
+                            token_after_colon,
+                            TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Eof
+                        ) {
+                            // Case 1: sub-section header like `inputs:`
+                            // Consume the identifier (section name) and the colon, then parse
+                            // the indented block of fields that follows.
+                            self.bump(); // consume identifier (section name)
+                            self.bump(); // consume ':'
+                                         // Consume optional trailing newline after the colon
+                            if matches!(self.current_kind(), TokenKind::Newline) {
+                                self.bump();
+                            }
+                            // Consume the opening Indent token and record the section's indent level
+                            let section_indent_level =
+                                if let TokenKind::Indent(level) = self.current_kind() {
+                                    let level = *level;
+                                    self.bump();
+                                    level
+                                } else {
+                                    1
+                                };
+                            // Parse field declarations inside the sub-section block
+                            loop {
+                                self.skip_whitespace();
+                                if self.is_at_end() {
+                                    break;
+                                }
+                                if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                                    if *dedent_level < section_indent_level {
+                                        break;
+                                    }
+                                    self.bump();
+                                    self.skip_whitespace();
+                                    continue;
+                                }
+                                if let TokenKind::Indent(indent_level) = self.current_kind() {
+                                    if *indent_level < section_indent_level {
+                                        break;
+                                    }
+                                    self.bump();
+                                }
+                                self.skip_whitespace();
+                                if self.is_at_end() {
+                                    break;
+                                }
+                                // Stop at class-level section keywords or top-level declarations
+                                if matches!(
+                                    self.current_kind(),
+                                    TokenKind::Functions
+                                        | TokenKind::Constructor
+                                        | TokenKind::Always
+                                        | TokenKind::Private
+                                        | TokenKind::Class
+                                        | TokenKind::Start
+                                        | TokenKind::Dedent(_)
+                                ) {
+                                    break;
+                                }
+                                if matches!(self.current_kind(), TokenKind::Identifier(_)) {
+                                    fields.push(self.parse_field()?);
+                                } else {
+                                    break;
+                                }
+                            }
+                        } else {
+                            // Case 2: name-colon-type field declaration (e.g. `id: integer`)
+                            fields.push(self.parse_field_name_colon_type()?);
+                        }
+                    } else {
+                        // Case 3: normal type-first field declaration (e.g. `integer id`)
+                        fields.push(self.parse_field()?);
+                    }
                 }
                 TokenKind::Dedent(level) => {
                     // Dedent within the class body - consume it and continue
@@ -846,6 +927,48 @@ impl TokenParser {
         // Parse field name
         let name_token = self.expect_identifier()?;
         let name = name_token.text.clone();
+
+        self.skip_whitespace();
+
+        // Optional default value
+        let default_value = if self.eat(&TokenKind::Assign) {
+            self.skip_whitespace();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(Field {
+            name,
+            type_,
+            visibility: Visibility::Public,
+            is_static: false,
+            default_value,
+        })
+    }
+
+    /// Parse a field declaration in `name: type` format.
+    ///
+    /// This handles plugin-generated code where the field name comes first and the
+    /// type follows after a colon (e.g. `id: integer`, `email: string`).
+    /// The frame.ui plugin emits this format for `inputs:` sub-section fields.
+    ///
+    /// Grammar (plugin extension):
+    ///   name_colon_type_field = identifier ":" type [ "=" expression ]
+    pub(super) fn parse_field_name_colon_type(&mut self) -> Result<Field, CompilerError> {
+        // Parse field name
+        let name_token = self.expect_identifier()?;
+        let name = name_token.text.clone();
+
+        self.skip_whitespace();
+
+        // Consume ':'
+        self.expect(&TokenKind::Colon)?;
+
+        self.skip_whitespace();
+
+        // Parse type (e.g., "string", "integer", "list<integer>")
+        let type_ = self.parse_type()?;
 
         self.skip_whitespace();
 
