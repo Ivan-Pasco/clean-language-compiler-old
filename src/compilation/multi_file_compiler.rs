@@ -1185,9 +1185,15 @@ impl MultiFileCompiler {
     /// extracts the two fields needed to drive multi-file discovery.
     fn parse_manifest_info(source: &str, manifest_dir: &Path) -> ManifestInfo {
         let mut info = ManifestInfo::default();
+        let mut has_web_target = false;
 
         for line in source.lines() {
             let trimmed = line.trim();
+
+            // Detect `target: web` so we can auto-add the web root as a shared folder
+            if trimmed == "target: web" || trimmed == "target:web" {
+                has_web_target = true;
+            }
 
             // shared: [path1, path2, ...]
             if let Some(rest) = trimmed.strip_prefix("shared:") {
@@ -1210,6 +1216,25 @@ impl MultiFileCompiler {
                     let p = rest.trim().trim_matches('"');
                     if !p.is_empty() {
                         info.entry_path = Some(manifest_dir.join(p));
+                    }
+                }
+            }
+        }
+
+        // When `target: web` is declared, auto-add the web root as a shared folder
+        // so companion files like routes.cln are discovered without requiring an
+        // explicit shared: declaration.  Convention: entry lives in <web_root>/pages/,
+        // so routes.cln and other companions sit at <web_root>/ (one level above pages/).
+        if has_web_target {
+            if let Some(ref ep) = info.entry_path {
+                if let Some(pages_dir) = ep.parent() {
+                    if pages_dir.file_name().and_then(|n| n.to_str()) == Some("pages") {
+                        if let Some(web_root) = pages_dir.parent() {
+                            let web_root = web_root.to_path_buf();
+                            if web_root.exists() && !info.shared_folders.contains(&web_root) {
+                                info.shared_folders.push(web_root);
+                            }
+                        }
                     }
                 }
             }
@@ -2073,5 +2098,38 @@ posts = Post.findAll()
         assert!(body.contains("string html = \"\""));
         assert!(body.contains("return html"));
         assert!(body.contains("<h1>Hello World</h1>"));
+    }
+
+    #[test]
+    fn test_parse_manifest_info_web_target_adds_web_root_as_shared() {
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/web/pages/index.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+
+        // Create the pages directory so web_root.exists() returns true
+        let web_root = manifest_dir.join("app").join("web");
+        std::fs::create_dir_all(web_root.join("pages")).unwrap();
+
+        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+
+        assert!(
+            info.shared_folders.contains(&web_root),
+            "web root app/web/ should be auto-added as shared folder for target: web"
+        );
+    }
+
+    #[test]
+    fn test_parse_manifest_info_no_web_target_no_auto_shared() {
+        let manifest = "package: Test\n\tentry: src/main.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+        std::fs::create_dir_all(manifest_dir.join("src")).unwrap();
+
+        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+
+        assert!(
+            info.shared_folders.is_empty(),
+            "no target: web means no auto-shared folder"
+        );
     }
 }
