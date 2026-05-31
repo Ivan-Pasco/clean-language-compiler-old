@@ -1396,32 +1396,51 @@ fn extract_manifest_entry(
 fn extract_plugins(source: &str) -> Vec<String> {
     let mut plugins = Vec::new();
     let mut in_plugins_block = false;
+    let mut plugins_indent: usize = 0;
 
     for line in source.lines() {
         let trimmed = line.trim();
+        let indent = line.len() - line.trim_start().len();
 
-        // Check for plugins: block start
-        if trimmed == "plugins:" {
-            in_plugins_block = true;
-            continue;
-        }
-
-        // If in plugins block, collect plugin names
-        if in_plugins_block {
-            // Empty line or new block ends the plugins block
-            if trimmed.is_empty() || (trimmed.ends_with(':') && !trimmed.starts_with('\t')) {
-                in_plugins_block = false;
+        // Handle inline list syntax at any indentation: `plugins: [frame.ui, frame.server]`
+        if let Some(rest) = trimmed.strip_prefix("plugins:") {
+            let rest = rest.trim();
+            if rest.starts_with('[') {
+                let end = rest.find(']').unwrap_or(rest.len());
+                let inner = &rest[1..end];
+                for name in inner.split(',') {
+                    let name = name.trim();
+                    if !name.is_empty() && !name.starts_with('#') {
+                        plugins.push(name.to_string());
+                    }
+                }
                 continue;
             }
 
-            // Lines starting with whitespace are part of the block
-            if line.starts_with('\t') || line.starts_with("    ") {
-                let plugin_name = trimmed.to_string();
-                if !plugin_name.is_empty() && !plugin_name.starts_with('#') {
-                    plugins.push(plugin_name);
+            // Multi-line block: `plugins:` alone (at any indentation)
+            if rest.is_empty() {
+                in_plugins_block = true;
+                plugins_indent = indent;
+                continue;
+            }
+        }
+
+        // Collect multi-line plugin entries
+        if in_plugins_block {
+            if trimmed.is_empty() {
+                continue;
+            }
+            // A line at the same or lesser indentation as the plugins: header ends the block
+            if indent <= plugins_indent && trimmed.ends_with(':') {
+                in_plugins_block = false;
+                continue;
+            }
+            // Lines indented deeper than the plugins: header are entries
+            if indent > plugins_indent {
+                if !trimmed.starts_with('#') {
+                    plugins.push(trimmed.to_string());
                 }
             } else {
-                // Non-indented line ends the block
                 in_plugins_block = false;
             }
         }
@@ -2919,5 +2938,26 @@ start:
         );
         assert_eq!(MemoryTier::default_for_target("wasi"), MemoryTier::Minimal);
         assert_eq!(MemoryTier::default_for_target("auto"), MemoryTier::Standard);
+    }
+
+    #[test]
+    fn test_extract_plugins_multiline() {
+        let source = "plugins:\n\tframe.server\n\tframe.ui\n";
+        let plugins = extract_plugins(source);
+        assert_eq!(plugins, vec!["frame.server", "frame.ui"]);
+    }
+
+    #[test]
+    fn test_extract_plugins_inline_list() {
+        let source = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/main.cln\n";
+        let plugins = extract_plugins(source);
+        assert_eq!(plugins, vec!["frame.ui", "frame.server"]);
+    }
+
+    #[test]
+    fn test_extract_plugins_inline_top_level() {
+        let source = "plugins: [frame.data, frame.auth]\n\nstart:\n\tprint(\"hello\")\n";
+        let plugins = extract_plugins(source);
+        assert_eq!(plugins, vec!["frame.data", "frame.auth"]);
     }
 }
