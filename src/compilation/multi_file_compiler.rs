@@ -429,8 +429,36 @@ impl MultiFileCompiler {
             for shared_dir in &info.shared_folders {
                 for file_path in Self::collect_cln_files(shared_dir) {
                     if unit.module_id_for_path(&file_path).is_none() {
-                        if let Ok(source) = fs::read_to_string(&file_path) {
-                            let name = Self::derive_module_name(&file_path);
+                        if let Ok(raw_source) = fs::read_to_string(&file_path) {
+                            // Page companion files (files under a pages/ subdirectory that
+                            // declare load() or guard()) must be prefixed with a unique
+                            // module name so that multiple pages can coexist in one binary
+                            // without colliding in the global symbol table.
+                            let is_page_companion = {
+                                let relative =
+                                    file_path.strip_prefix(shared_dir).unwrap_or(&file_path);
+                                relative.components().any(|c| {
+                                    matches!(
+                                        c,
+                                        std::path::Component::Normal(n)
+                                        if n == "pages"
+                                    )
+                                })
+                            };
+
+                            let (name, source) = if is_page_companion
+                                && (raw_source.contains("any load(")
+                                    || raw_source.contains("any guard("))
+                            {
+                                let module_name =
+                                    derive_companion_module_name(&file_path, shared_dir);
+                                let prefixed =
+                                    prefix_companion_functions(&raw_source, &module_name);
+                                (module_name, prefixed)
+                            } else {
+                                (Self::derive_module_name(&file_path), raw_source)
+                            };
+
                             let id = unit.add_module(name, file_path, source);
                             // Add as a standalone node; the topological sort includes all nodes
                             graph.add_module(id);
@@ -2130,6 +2158,62 @@ posts = Post.findAll()
         assert!(
             info.shared_folders.is_empty(),
             "no target: web means no auto-shared folder"
+        );
+    }
+
+    #[test]
+    fn test_page_companion_load_functions_are_prefixed_to_avoid_collision() {
+        // Regression: multiple page companion files each defining load()/guard()
+        // must not collide in the merged symbol table.  The shared-folder scanner
+        // should prefix them with a unique module name derived from their path.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Manifest
+        let manifest_source =
+            "package: TestApp\n\tversion: \"1.0.0\"\n\ttarget: web\n\t\tplugins: []\n\t\tentry: app/web/pages/page_a.cln\n";
+        std::fs::write(root.join("main.cln"), manifest_source).unwrap();
+
+        // Page files
+        let pages_dir = root.join("app").join("web").join("pages");
+        std::fs::create_dir_all(&pages_dir).unwrap();
+
+        std::fs::write(
+            pages_dir.join("page_a.cln"),
+            "functions:\n\tany load(string req)\n\t\treturn \"Page A\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pages_dir.join("page_b.cln"),
+            "functions:\n\tany load(string req)\n\t\treturn \"Page B\"\n",
+        )
+        .unwrap();
+
+        let compiler = MultiFileCompiler::new();
+        let unit = compiler.build_from_file(root.join("main.cln")).expect(
+            "build_from_file should succeed — page companion load() functions must not collide",
+        );
+
+        // page_b.cln is auto-discovered via the shared web root folder.
+        // Its load() must have been prefixed to pages_page_b_load().
+        let page_b_module = unit
+            .modules
+            .values()
+            .find(|m| m.file_path.file_name().and_then(|n| n.to_str()) == Some("page_b.cln"));
+
+        assert!(
+            page_b_module.is_some(),
+            "page_b.cln should be discovered as a shared module"
+        );
+        let source = &page_b_module.unwrap().source;
+        assert!(
+            source.contains("pages_page_b_load("),
+            "load() in page_b.cln should be prefixed to pages_page_b_load(); got:\n{}",
+            source
+        );
+        assert!(
+            !source.contains("any load("),
+            "original unprefixed load() should not remain in page_b.cln source"
         );
     }
 }
