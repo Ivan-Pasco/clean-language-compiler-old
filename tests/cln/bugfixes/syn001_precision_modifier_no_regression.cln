@@ -1,0 +1,14 @@
+// Test: bugfixes/syn001_precision_modifier_no_regression
+// Grammar: grammar.ebnf sized_type, core_type
+// Semantic: SYN001 regression — precision modifiers (integer:8, number:32) must parse correctly
+//           AND parse_type() must NOT consume a trailing ':' that is NOT a precision modifier.
+//           Before the fix, parse_type() eagerly consumed ':' and errored on non-digit tokens.
+//
+// Expected output:
+//   ok
+
+start:
+	integer:8 x = 42
+	integer:16 y = 1000
+	number:32 z = 3.14
+	print("ok")

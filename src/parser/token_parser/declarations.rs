@@ -1295,10 +1295,13 @@ impl TokenParser {
         };
 
         // Check for precision modifiers (e.g., integer:8, number:32u)
+        // Lookahead: only treat colon as precision modifier if followed by an integer literal.
+        // Without this guard, `field: type` patterns (where colon is a field separator, not a
+        // precision modifier) would be consumed and then fail on the identifier that follows.
         if self.check(&TokenKind::Colon) {
-            self.bump(); // consume ':'
+            let saved_cursor = self.cursor;
+            self.bump(); // tentatively consume ':'
 
-            // Expect an integer literal for the bit size
             if let TokenKind::IntegerLiteral(size) = self.current_kind() {
                 let bits = *size as u8;
                 self.bump(); // consume the size
@@ -1326,11 +1329,9 @@ impl TokenParser {
                     ))
                 }
             } else {
-                Err(CompilerError::parse_error(
-                    "Expected integer literal for precision modifier".to_string(),
-                    Some(self.current().location.clone()),
-                    Some("Precision modifiers should be in format 'type:bits' (e.g., 'integer:8', 'number:32')".to_string()),
-                ))
+                // Not a precision modifier — restore cursor so the colon stays for the caller
+                self.cursor = saved_cursor;
+                Ok(base_type)
             }
         } else {
             Ok(base_type)
