@@ -42,6 +42,150 @@ fn prefix_companion_functions(source: &str, module_name: &str) -> String {
         .replace("load()", &format!("{}_load()", module_name))
 }
 
+/// Derive the URL route path from a .cln page companion file.
+///
+/// The shared_dir is the base that contains the `pages/` sub-folder.
+/// Examples (shared_dir = "app/web/"):
+/// - `app/web/pages/login.cln`      → `/login`
+/// - `app/web/pages/index.cln`      → `/`
+/// - `app/web/pages/blog/post.cln`  → `/blog/post`
+/// - `app/web/pages/[id].cln`       → `/:id`
+fn derive_page_route_from_cln(file_path: &Path, shared_dir: &Path) -> String {
+    let relative = file_path.strip_prefix(shared_dir).unwrap_or(file_path);
+    let mut route = String::from("/");
+    let mut past_pages = false;
+
+    for component in relative.components() {
+        if let std::path::Component::Normal(name) = component {
+            let name_str = name.to_string_lossy();
+
+            if !past_pages {
+                if name_str == "pages" {
+                    past_pages = true;
+                }
+                continue;
+            }
+
+            // Strip .cln extension
+            let name_str = name_str.trim_end_matches(".cln");
+
+            // Skip index files — they map to the parent path
+            if name_str == "index" {
+                continue;
+            }
+
+            // Convert [param] to :param for dynamic segments
+            let segment = if name_str.starts_with('[') && name_str.ends_with(']') {
+                format!(":{}", &name_str[1..name_str.len() - 1])
+            } else {
+                name_str.to_string()
+            };
+
+            if !route.ends_with('/') {
+                route.push('/');
+            }
+            route.push_str(&segment);
+        }
+    }
+
+    // Normalise trailing slash
+    if route != "/" && route.ends_with('/') {
+        route.pop();
+    }
+
+    route
+}
+
+/// Derive the page name (relative to the pages/ directory) for use with _ui_render_page.
+///
+/// Examples (shared_dir = "app/web/"):
+/// - `app/web/pages/login.cln`     → `"login"`
+/// - `app/web/pages/blog/post.cln` → `"blog/post"`
+fn derive_page_name_from_cln(file_path: &Path, shared_dir: &Path) -> String {
+    let relative = file_path.strip_prefix(shared_dir).unwrap_or(file_path);
+    let mut parts: Vec<String> = Vec::new();
+    let mut past_pages = false;
+
+    for component in relative.components() {
+        if let std::path::Component::Normal(name) = component {
+            let name_str = name.to_string_lossy();
+            if !past_pages {
+                if name_str == "pages" {
+                    past_pages = true;
+                }
+                continue;
+            }
+            let segment = name_str.trim_end_matches(".cln").to_string();
+            parts.push(segment);
+        }
+    }
+
+    if parts.is_empty() {
+        "index".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
+/// Generate a synthetic Clean Language module that registers `_http_route` calls
+/// for all discovered page companions.
+///
+/// Section order follows the language spec: `start:` appears before `functions:`.
+/// The generated module's `start:` block will be merged into the entry module's
+/// `start:` by the HIR merger in `lib.rs`.  Handler functions use the
+/// `__page_handler_` prefix so the WASM export rule in `utilities.rs` exports them.
+fn generate_page_route_source(records: &[PageCompanionRecord]) -> String {
+    let mut src = String::new();
+
+    // start: must appear before functions: (spec section order: import, start, state, class, functions)
+    src.push_str("start:\n");
+    src.push_str("\tinteger page_route_status = 0\n");
+
+    for record in records {
+        let handler_name = format!("__page_handler_{}", record.module_name);
+        src.push_str(&format!(
+            "\tpage_route_status = _http_route(\"GET\", \"{}\", {})\n",
+            record.route_path, handler_name
+        ));
+    }
+
+    src.push('\n');
+    src.push_str("functions:\n");
+
+    for record in records {
+        let handler_name = format!("__page_handler_{}", record.module_name);
+
+        src.push_str(&format!("\tstring {}()\n", handler_name));
+
+        if record.has_guard {
+            src.push_str(&format!(
+                "\t\tany guard_result = {}_guard()\n",
+                record.module_name
+            ));
+            src.push_str("\t\tif guard_result != null\n");
+            src.push_str("\t\t\treturn \"\"\n");
+        }
+
+        if record.has_load {
+            src.push_str(&format!("\t\tany data = {}_load()\n", record.module_name));
+            src.push_str("\t\tstring page_json = json.encode(data)\n");
+            src.push_str(&format!(
+                "\t\treturn _ui_render_page(\"{}\", page_json)\n",
+                record.page_name
+            ));
+        } else {
+            src.push_str(&format!(
+                "\t\treturn _ui_render_page(\"{}\", \"{{}}\")\n",
+                record.page_name
+            ));
+        }
+
+        src.push('\n');
+    }
+
+    src
+}
+
 /// Represents an extracted import with additional metadata
 #[derive(Debug, Clone)]
 struct ExtractedImport {
@@ -58,6 +202,25 @@ struct ManifestInfo {
     entry_path: Option<PathBuf>,
     /// Folders declared in shared: [...] that should be compiled for every target
     shared_folders: Vec<PathBuf>,
+    /// True when `frame.server` is listed in the manifest's plugins declaration
+    has_frame_server: bool,
+}
+
+/// Record of a page companion .cln file discovered during shared folder scan.
+///
+/// Used to generate synthetic route registration code after scanning is complete.
+#[derive(Debug, Clone)]
+struct PageCompanionRecord {
+    /// Unique module name derived from file path (e.g., "pages_login")
+    module_name: String,
+    /// URL route path (e.g., "/login")
+    route_path: String,
+    /// Page name for _ui_render_page (e.g., "login" or "blog/post")
+    page_name: String,
+    /// Whether the companion defines a guard() function
+    has_guard: bool,
+    /// Whether the companion defines a load() function
+    has_load: bool,
 }
 
 /// Configuration for the multi-file compiler
@@ -425,6 +588,10 @@ impl MultiFileCompiler {
         // If a manifest declared shared: folders, scan them and add any .cln files
         // that were not already discovered via imports.  These files compile as part of
         // every target even when no other module explicitly imports them.
+        //
+        // While scanning, collect page companion records so we can generate synthetic
+        // _http_route registrations after the scan is complete (fix for E-PGREG).
+        let mut page_companion_records: Vec<PageCompanionRecord> = Vec::new();
         if let Some(ref info) = manifest_info {
             for shared_dir in &info.shared_folders {
                 for file_path in Self::collect_cln_files(shared_dir) {
@@ -446,14 +613,27 @@ impl MultiFileCompiler {
                                 })
                             };
 
-                            let (name, source) = if is_page_companion
+                            let is_active_companion = is_page_companion
                                 && (raw_source.contains("any load(")
-                                    || raw_source.contains("any guard("))
-                            {
+                                    || raw_source.contains("any guard("));
+
+                            let (name, source) = if is_active_companion {
                                 let module_name =
                                     derive_companion_module_name(&file_path, shared_dir);
                                 let prefixed =
                                     prefix_companion_functions(&raw_source, &module_name);
+
+                                // Capture route registration info for later synthetic generation
+                                let route = derive_page_route_from_cln(&file_path, shared_dir);
+                                let page_name = derive_page_name_from_cln(&file_path, shared_dir);
+                                page_companion_records.push(PageCompanionRecord {
+                                    module_name: module_name.clone(),
+                                    route_path: route,
+                                    page_name,
+                                    has_guard: raw_source.contains("any guard("),
+                                    has_load: raw_source.contains("any load("),
+                                });
+
                                 (module_name, prefixed)
                             } else {
                                 (Self::derive_module_name(&file_path), raw_source)
@@ -465,6 +645,32 @@ impl MultiFileCompiler {
                         }
                     }
                 }
+            }
+        }
+
+        // Generate a synthetic Clean module that registers _http_route calls for every
+        // page companion discovered above.  This is only emitted when frame.server is
+        // declared (the bridge function _http_route is only available in that context).
+        // The synthetic module's start: block will be merged into the entry module's
+        // start: by the HIR merger in lib.rs (the standard non-entry-module path).
+        if let (Some(ref info), Some(ref manifest_dir)) = (&manifest_info, &manifest_root) {
+            if info.has_frame_server && !page_companion_records.is_empty() {
+                let synthetic_source = generate_page_route_source(&page_companion_records);
+                // Use a virtual path that cannot exist on disk so path-based dedup is safe.
+                let synthetic_path = PathBuf::from(format!(
+                    "{}/__page_routes_generated.cln",
+                    manifest_dir.display()
+                ));
+                let id = unit.add_module(
+                    "__page_routes_generated".to_string(),
+                    synthetic_path,
+                    synthetic_source,
+                );
+                graph.add_module(id);
+                tracing::debug!(
+                    companions = page_companion_records.len(),
+                    "Generated synthetic page route registrations (E-PGREG fix)"
+                );
             }
         }
 
@@ -1297,6 +1503,9 @@ impl MultiFileCompiler {
                 }
             }
         }
+
+        // Propagate the frame.server flag so build_from_file can generate route registrations.
+        info.has_frame_server = has_frame_server;
 
         info
     }
@@ -2282,6 +2491,259 @@ posts = Post.findAll()
         assert!(
             !source.contains("any load("),
             "original unprefixed load() should not remain in page_b.cln source"
+        );
+    }
+
+    // =========================================================================
+    // Page companion route registration tests (E-PGREG fix)
+    // =========================================================================
+
+    #[test]
+    fn test_derive_page_route_from_cln() {
+        let shared = Path::new("app/web");
+
+        assert_eq!(
+            derive_page_route_from_cln(Path::new("app/web/pages/login.cln"), shared),
+            "/login"
+        );
+        assert_eq!(
+            derive_page_route_from_cln(Path::new("app/web/pages/index.cln"), shared),
+            "/"
+        );
+        assert_eq!(
+            derive_page_route_from_cln(Path::new("app/web/pages/blog/post.cln"), shared),
+            "/blog/post"
+        );
+        assert_eq!(
+            derive_page_route_from_cln(Path::new("app/web/pages/[id].cln"), shared),
+            "/:id"
+        );
+    }
+
+    #[test]
+    fn test_derive_page_name_from_cln() {
+        let shared = Path::new("app/web");
+
+        assert_eq!(
+            derive_page_name_from_cln(Path::new("app/web/pages/login.cln"), shared),
+            "login"
+        );
+        assert_eq!(
+            derive_page_name_from_cln(Path::new("app/web/pages/blog/post.cln"), shared),
+            "blog/post"
+        );
+    }
+
+    #[test]
+    fn test_page_companion_route_registration_generated() {
+        // Verifies that generate_page_route_source produces the expected synthetic
+        // Clean Language module content for a page companion with a load() function.
+        let records = vec![PageCompanionRecord {
+            module_name: "pages_login".to_string(),
+            route_path: "/login".to_string(),
+            page_name: "login".to_string(),
+            has_guard: false,
+            has_load: true,
+        }];
+
+        let source = generate_page_route_source(&records);
+
+        assert!(
+            source.contains("__page_handler_pages_login"),
+            "should generate handler function; got:\n{}",
+            source
+        );
+        assert!(
+            source.contains("_http_route(\"GET\", \"/login\""),
+            "should register GET /login route; got:\n{}",
+            source
+        );
+        assert!(
+            source.contains("pages_login_load()"),
+            "should call pages_login_load(); got:\n{}",
+            source
+        );
+        assert!(
+            source.contains("_ui_render_page(\"login\""),
+            "should call _ui_render_page with page name; got:\n{}",
+            source
+        );
+        assert!(
+            source.contains("json.encode(data)"),
+            "should encode data as JSON; got:\n{}",
+            source
+        );
+    }
+
+    #[test]
+    fn test_page_companion_route_registration_with_guard() {
+        // Verifies guard() call is emitted before load() when the companion has_guard=true.
+        let records = vec![PageCompanionRecord {
+            module_name: "pages_dashboard".to_string(),
+            route_path: "/dashboard".to_string(),
+            page_name: "dashboard".to_string(),
+            has_guard: true,
+            has_load: true,
+        }];
+
+        let source = generate_page_route_source(&records);
+
+        assert!(
+            source.contains("pages_dashboard_guard()"),
+            "should call pages_dashboard_guard(); got:\n{}",
+            source
+        );
+        assert!(
+            source.contains("guard_result != null"),
+            "should have null-check on guard result; got:\n{}",
+            source
+        );
+        assert!(
+            source.contains("pages_dashboard_load()"),
+            "should call pages_dashboard_load(); got:\n{}",
+            source
+        );
+    }
+
+    #[test]
+    fn test_page_companion_route_registration_no_load() {
+        // When has_load=false the handler should render the page with an empty JSON object.
+        let records = vec![PageCompanionRecord {
+            module_name: "pages_about".to_string(),
+            route_path: "/about".to_string(),
+            page_name: "about".to_string(),
+            has_guard: false,
+            has_load: false,
+        }];
+
+        let source = generate_page_route_source(&records);
+
+        assert!(
+            source.contains("_ui_render_page(\"about\", \"{}\""),
+            "should render with empty JSON when no load(); got:\n{}",
+            source
+        );
+        assert!(
+            !source.contains("_load()"),
+            "should not emit a load call when has_load=false; got:\n{}",
+            source
+        );
+    }
+
+    #[test]
+    fn test_build_from_file_generates_route_module_for_page_companions() {
+        // End-to-end: when frame.server is declared in the manifest and page companion
+        // files exist, build_from_file must add a synthetic route-registration module.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Write a manifest declaring frame.server and a web target
+        let manifest_source = concat!(
+            "package: TestApp\n",
+            "\tversion: \"1.0.0\"\n",
+            "\ttarget: web\n",
+            "\t\tplugins: [frame.ui, frame.server]\n",
+            "\t\tentry: app/web/pages/home.cln\n",
+        );
+        std::fs::write(root.join("main.cln"), manifest_source).unwrap();
+
+        // Create directory structure
+        let pages_dir = root.join("app").join("web").join("pages");
+        std::fs::create_dir_all(&pages_dir).unwrap();
+        std::fs::create_dir_all(root.join("app").join("server")).unwrap();
+
+        // Entry page (home.cln)
+        std::fs::write(
+            pages_dir.join("home.cln"),
+            "functions:\n\tany load(string req)\n\t\treturn \"Home\"\n",
+        )
+        .unwrap();
+
+        // Second page companion (login.cln)
+        std::fs::write(
+            pages_dir.join("login.cln"),
+            "functions:\n\tany load(string req)\n\t\treturn \"Login\"\n",
+        )
+        .unwrap();
+
+        let compiler = MultiFileCompiler::new();
+        let unit = compiler
+            .build_from_file(root.join("main.cln"))
+            .expect("build_from_file should succeed with page companions");
+
+        // There must be a synthetic __page_routes_generated module
+        let has_synthetic = unit.modules.values().any(|m| {
+            m.file_path
+                .to_string_lossy()
+                .contains("__page_routes_generated")
+        });
+
+        assert!(
+            has_synthetic,
+            "build_from_file should generate __page_routes_generated module when frame.server \
+             is declared and page companions exist; modules present: {:?}",
+            unit.modules
+                .values()
+                .map(|m| m.file_path.display().to_string())
+                .collect::<Vec<_>>()
+        );
+
+        // The synthetic module's source must register routes
+        let synthetic = unit
+            .modules
+            .values()
+            .find(|m| {
+                m.file_path
+                    .to_string_lossy()
+                    .contains("__page_routes_generated")
+            })
+            .unwrap();
+
+        assert!(
+            synthetic.source.contains("_http_route"),
+            "synthetic module should contain _http_route calls; got:\n{}",
+            synthetic.source
+        );
+    }
+
+    #[test]
+    fn test_build_from_file_no_route_module_without_frame_server() {
+        // When frame.server is NOT declared, no synthetic route module should be generated.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        let manifest_source = concat!(
+            "package: TestApp\n",
+            "\tversion: \"1.0.0\"\n",
+            "\ttarget: web\n",
+            "\t\tplugins: [frame.ui]\n",
+            "\t\tentry: app/web/pages/home.cln\n",
+        );
+        std::fs::write(root.join("main.cln"), manifest_source).unwrap();
+
+        let pages_dir = root.join("app").join("web").join("pages");
+        std::fs::create_dir_all(&pages_dir).unwrap();
+
+        std::fs::write(
+            pages_dir.join("home.cln"),
+            "functions:\n\tany load(string req)\n\t\treturn \"Home\"\n",
+        )
+        .unwrap();
+
+        let compiler = MultiFileCompiler::new();
+        let unit = compiler
+            .build_from_file(root.join("main.cln"))
+            .expect("build_from_file should succeed without frame.server");
+
+        let has_synthetic = unit.modules.values().any(|m| {
+            m.file_path
+                .to_string_lossy()
+                .contains("__page_routes_generated")
+        });
+
+        assert!(
+            !has_synthetic,
+            "should NOT generate __page_routes_generated module when frame.server is absent"
         );
     }
 }
