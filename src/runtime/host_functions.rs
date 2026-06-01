@@ -1461,6 +1461,18 @@ fn register_async_functions(linker: &mut Linker<()>) -> Result<(), CompilerError
 
 /// Method-Style Function Imports
 fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+    register_integer_methods(linker)?;
+    register_number_methods(linker)?;
+    register_boolean_methods(linker)?;
+    register_string_conversion_methods(linker)?;
+    register_list_methods(linker)?;
+    register_string_manipulation_methods(linker)?;
+    register_http_server_stubs(linker)?;
+    Ok(())
+}
+
+/// integer.* method registrations
+fn register_integer_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // integer.toString() - Converts integer to string
     linker
         .func_wrap(
@@ -1479,6 +1491,78 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
+    // integer.toInteger() - Identity conversion
+    linker
+        .func_wrap("env", "integer.toInteger", |value: i32| -> i32 { value })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create integer.toInteger function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // integer.toNumber() - Convert integer to float
+    linker
+        .func_wrap("env", "integer.toNumber", |value: i32| -> f64 {
+            value as f64
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create integer.toNumber function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // integer.toBoolean() - Convert integer to boolean
+    linker
+        .func_wrap("env", "integer.toBoolean", |value: i32| -> i32 {
+            if value != 0 {
+                1
+            } else {
+                0
+            }
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create integer.toBoolean function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // integer.length() - Returns number of digits in integer
+    linker
+        .func_wrap("env", "integer.length", |value: i32| -> i32 {
+            if value == 0 {
+                return 1; // Zero has 1 digit
+            }
+
+            let abs_value = value.unsigned_abs();
+            let mut digit_count = 0;
+            let mut temp = abs_value;
+
+            while temp > 0 {
+                digit_count += 1;
+                temp /= 10;
+            }
+
+            digit_count
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create integer.length function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    Ok(())
+}
+
+/// number.* method registrations
+fn register_number_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // number.toString() - Converts float to string
     linker
         .func_wrap(
@@ -1497,6 +1581,80 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
+    // number.toNumber() - Identity conversion
+    linker
+        .func_wrap("env", "number.toNumber", |value: f64| -> f64 { value })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create number.toNumber function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // number.toInteger() - Convert float to integer
+    linker
+        .func_wrap("env", "number.toInteger", |value: f64| -> i32 {
+            value as i32
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create number.toInteger function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // number.toBoolean() - Convert float to boolean
+    linker
+        .func_wrap("env", "number.toBoolean", |value: f64| -> i32 {
+            if value != 0.0 {
+                1
+            } else {
+                0
+            }
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create number.toBoolean function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // number.length() - Returns number of digits in float
+    linker
+        .func_wrap("env", "number.length", |value: f64| -> i32 {
+            if value.is_nan() || value.is_infinite() {
+                return 0; // Special values have no meaningful digit count
+            }
+
+            // Convert to string representation and count significant digits
+            let string_repr = value.to_string();
+            let mut digit_count = 0;
+
+            for ch in string_repr.chars() {
+                if ch.is_ascii_digit() {
+                    digit_count += 1;
+                }
+            }
+
+            // Ensure at least 1 for zero
+            digit_count.max(1)
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create number.length function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    Ok(())
+}
+
+/// boolean.* method registrations
+fn register_boolean_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // boolean.toString() - Converts boolean to string
     linker
         .func_wrap(
@@ -1515,6 +1673,80 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
+    // boolean.toBoolean() - Identity conversion
+    linker
+        .func_wrap("env", "boolean.toBoolean", |value: i32| -> i32 {
+            if value != 0 {
+                1
+            } else {
+                0
+            }
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create boolean.toBoolean function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // boolean.toInteger() - Convert boolean to integer
+    linker
+        .func_wrap("env", "boolean.toInteger", |value: i32| -> i32 {
+            if value != 0 {
+                1
+            } else {
+                0
+            }
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create boolean.toInteger function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // boolean.toNumber() - Convert boolean to float
+    linker
+        .func_wrap("env", "boolean.toNumber", |value: i32| -> f64 {
+            if value != 0 {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create boolean.toNumber function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    // boolean.length() - Returns the string length of the boolean representation
+    // true -> 4 ("true"), false -> 5 ("false")
+    linker
+        .func_wrap("env", "boolean.length", |value: i32| -> i32 {
+            if value != 0 {
+                4
+            } else {
+                5
+            }
+        })
+        .map_err(|e| {
+            CompilerError::runtime_error(
+                format!("Failed to create boolean.length function: {e}"),
+                None,
+                None,
+            )
+        })?;
+
+    Ok(())
+}
+
+/// string.* type-conversion and length method registrations
+fn register_string_conversion_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // string.length() - Returns string length
     linker
         .func_wrap(
@@ -1694,6 +1926,11 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
+    Ok(())
+}
+
+/// list.* method registrations
+fn register_list_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // list.length() - Returns list length
     linker
         .func_wrap(
@@ -1738,217 +1975,11 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
-    // Type conversion methods
+    Ok(())
+}
 
-    // integer.toInteger() - Identity conversion
-    linker
-        .func_wrap("env", "integer.toInteger", |value: i32| -> i32 { value })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create integer.toInteger function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // integer.toNumber() - Convert integer to float
-    linker
-        .func_wrap("env", "integer.toNumber", |value: i32| -> f64 {
-            value as f64
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create integer.toNumber function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // integer.toBoolean() - Convert integer to boolean
-    linker
-        .func_wrap("env", "integer.toBoolean", |value: i32| -> i32 {
-            if value != 0 {
-                1
-            } else {
-                0
-            }
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create integer.toBoolean function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // number.toNumber() - Identity conversion
-    linker
-        .func_wrap("env", "number.toNumber", |value: f64| -> f64 { value })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create number.toNumber function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // number.toInteger() - Convert float to integer
-    linker
-        .func_wrap("env", "number.toInteger", |value: f64| -> i32 {
-            value as i32
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create number.toInteger function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // number.toBoolean() - Convert float to boolean
-    linker
-        .func_wrap("env", "number.toBoolean", |value: f64| -> i32 {
-            if value != 0.0 {
-                1
-            } else {
-                0
-            }
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create number.toBoolean function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // boolean.toBoolean() - Identity conversion
-    linker
-        .func_wrap("env", "boolean.toBoolean", |value: i32| -> i32 {
-            if value != 0 {
-                1
-            } else {
-                0
-            }
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create boolean.toBoolean function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // boolean.toInteger() - Convert boolean to integer
-    linker
-        .func_wrap("env", "boolean.toInteger", |value: i32| -> i32 {
-            if value != 0 {
-                1
-            } else {
-                0
-            }
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create boolean.toInteger function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // boolean.toNumber() - Convert boolean to float
-    linker
-        .func_wrap("env", "boolean.toNumber", |value: i32| -> f64 {
-            if value != 0 {
-                1.0
-            } else {
-                0.0
-            }
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create boolean.toNumber function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // Additional method-style functions
-
-    // integer.length() - Returns number of digits in integer
-    linker
-        .func_wrap("env", "integer.length", |value: i32| -> i32 {
-            if value == 0 {
-                return 1; // Zero has 1 digit
-            }
-
-            let abs_value = value.unsigned_abs();
-            let mut digit_count = 0;
-            let mut temp = abs_value;
-
-            while temp > 0 {
-                digit_count += 1;
-                temp /= 10;
-            }
-
-            digit_count
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create integer.length function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // number.length() - Returns number of digits in float
-    linker
-        .func_wrap("env", "number.length", |value: f64| -> i32 {
-            if value.is_nan() || value.is_infinite() {
-                return 0; // Special values have no meaningful digit count
-            }
-
-            // Convert to string representation and count significant digits
-            let string_repr = value.to_string();
-            let mut digit_count = 0;
-
-            for ch in string_repr.chars() {
-                if ch.is_ascii_digit() {
-                    digit_count += 1;
-                }
-            }
-
-            // Ensure at least 1 for zero
-            digit_count.max(1)
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create number.length function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // boolean.length() - Returns the string length of the boolean representation
-    // true -> 4 ("true"), false -> 5 ("false")
-    linker
-        .func_wrap("env", "boolean.length", |value: i32| -> i32 {
-            if value != 0 {
-                4
-            } else {
-                5
-            }
-        })
-        .map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create boolean.length function: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-    // String manipulation methods
-
+/// string manipulation method registrations (case, search, split, trim, compare, etc.)
+fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // string.toUpperCase() - Convert string to uppercase
     linker
         .func_wrap(
@@ -2556,7 +2587,11 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
             )
         })?;
 
-    // HTTP server stub functions (required for compilation but not implemented in standalone runner)
+    Ok(())
+}
+
+/// HTTP server stub registrations (required for compilation but not implemented in standalone runner)
+fn register_http_server_stubs(linker: &mut Linker<()>) -> Result<(), CompilerError> {
     // Signatures must match what the codegen produces
     linker
         .func_wrap(
