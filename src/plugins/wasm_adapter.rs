@@ -103,11 +103,24 @@ impl WasmPluginAdapter {
     /// Provides the full Clean Language runtime environment
     fn setup_linker(&self) -> Result<Linker<PluginState>> {
         let mut linker = Linker::new(&self.engine);
+        self.register_env_core_functions(&mut linker)?;
+        self.register_string_dot_functions(&mut linker)?;
+        self.register_string_underscore_functions(&mut linker)?;
+        self.register_list_functions(&mut linker)?;
+        self.register_memory_runtime_functions(&mut linker)?;
+        self.register_http_client_functions(&mut linker)?;
+        self.register_http_server_functions(&mut linker)?;
+        self.register_request_context_functions(&mut linker)?;
+        self.register_file_functions(&mut linker)?;
+        self.register_math_functions(&mut linker)?;
+        self.register_http_auth_stubs(&mut linker)?;
+        Ok(linker)
+    }
 
-        // =========================================
-        // ENV NAMESPACE - Core I/O and conversions
-        // =========================================
-
+    // =========================================
+    // ENV NAMESPACE - Core I/O and conversions
+    // =========================================
+    fn register_env_core_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // env.print - Print without newline
         linker.func_wrap(
             "env",
@@ -534,6 +547,14 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        Ok(())
+    }
+
+    // =========================================
+    // DOT-NOTATION TRIM ALIASES + string dot-methods
+    // For compatibility with WASM modules using dot notation
+    // =========================================
+    fn register_string_dot_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // =========================================
         // DOT-NOTATION TRIM ALIASES
         // For compatibility with WASM modules using dot notation
@@ -1366,11 +1387,14 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // =========================================
-        // UNDERSCORE-STYLE STRING ALIASES
-        // For compatibility with different WASM naming conventions
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // UNDERSCORE-STYLE STRING ALIASES
+    // For compatibility with different WASM naming conventions
+    // =========================================
+    fn register_string_underscore_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // env.string_substring - Alias for string.substring
         linker.func_wrap(
             "env",
@@ -1612,10 +1636,13 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // =========================================
-        // LIST NAMESPACE - List/array operations
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // LIST NAMESPACE - List/array operations
+    // =========================================
+    fn register_list_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // env.list.push_f64 - Push an f64 element to a list
         // List header: [length: i32, capacity: i32, type_tag: i32, flags: i32] (16 bytes)
         // Data starts at offset 16, each f64 element is 8 bytes
@@ -1665,10 +1692,13 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // =========================================
-        // MEMORY_RUNTIME NAMESPACE - Memory management
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // MEMORY_RUNTIME NAMESPACE - Memory management
+    // =========================================
+    fn register_memory_runtime_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // memory_runtime.mem_alloc - Allocate memory
         linker.func_wrap(
             "memory_runtime",
@@ -1707,10 +1737,13 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>| {},
         )?;
 
-        // =========================================
-        // HTTP NAMESPACE - Network operations (stubs)
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // HTTP NAMESPACE - Network operations (stubs)
+    // =========================================
+    fn register_http_client_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // env.http_get
         linker.func_wrap(
             "env",
@@ -1958,11 +1991,14 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // =========================================
-        // HTTP SERVER NAMESPACE - Server functions (stubs)
-        // These are for Frame runtime, stubbed for plugin execution
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // HTTP SERVER NAMESPACE - Server functions (stubs)
+    // These are for Frame runtime, stubbed for plugin execution
+    // =========================================
+    fn register_http_server_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // env._http_route - Register route handler (stub)
         linker.func_wrap(
             "env",
@@ -1987,10 +2023,13 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // =========================================
-        // REQUEST CONTEXT ACCESS - Stubs for plugins
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // REQUEST CONTEXT ACCESS - Stubs for plugins
+    // =========================================
+    fn register_request_context_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // env._req_param - Get path parameter (stub)
         linker.func_wrap(
             "env",
@@ -2052,10 +2091,13 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // =========================================
-        // FILE NAMESPACE - File operations (stubs)
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // FILE NAMESPACE - File operations (stubs)
+    // =========================================
+    fn register_file_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // env.file_write
         linker.func_wrap(
             "env",
@@ -2117,11 +2159,14 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // =========================================
-        // MATH NAMESPACE - Math operations
-        // Required by compiled WASM modules for stdlib functions
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // MATH NAMESPACE - Math operations
+    // Required by compiled WASM modules for stdlib functions
+    // =========================================
+    fn register_math_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // math_pow - Power function (base^exp)
         linker.func_wrap(
             "env",
@@ -2283,11 +2328,14 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, a: f64, b: f64| -> f64 { a.max(b) },
         )?;
 
-        // =========================================
-        // ADDITIONAL HTTP/AUTH STUBS - These are functions that plugins generate
-        // as OUTPUT but don't actually call. Only add ones not already defined above.
-        // =========================================
+        Ok(())
+    }
 
+    // =========================================
+    // ADDITIONAL HTTP/AUTH STUBS - These are functions that plugins generate
+    // as OUTPUT but don't actually call. Only add ones not already defined above.
+    // =========================================
+    fn register_http_auth_stubs(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // Additional HTTP request stubs (not defined above)
         linker.func_wrap(
             "env",
@@ -2462,7 +2510,7 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        Ok(linker)
+        Ok(())
     }
 
     /// Parse plugin-generated Clean Language source code using the production parser pipeline.

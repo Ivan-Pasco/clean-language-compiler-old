@@ -111,12 +111,12 @@ Implemented static analysis in `src/hir/validation.rs`:
 
 **Priority**: LOW — functions over 500 lines; difficult to review and test
 **Discovered**: 2026-05-20
-**Design**: Split is straightforward — extract per-namespace helper functions from `setup_linker`,
-  then apply the same pattern to the other candidates below.
+**✅ setup_linker done** — split into 11 per-namespace helpers on 2026-06-01; body reduced from ~2370 to 15 lines.
+
+Remaining candidates:
 
 | Function | File | Lines | Suggested split |
 |----------|------|-------|-----------------|
-| `setup_linker` | `src/plugins/wasm_adapter.rs:104` | ~2370 | Extract per-namespace registration fns (console, file, http, db, etc.) |
 | `generate_parse_object_instructions` | `src/stdlib/json_class.rs:2606` | ~1258 | Extract key-scan, value-scan, object-assembly helpers |
 | `register_method_style_functions` | `src/runtime/host_functions.rs:1463` | ~1175 | Extract per-class registration fns |
 | `peek_has_orm_subclauses` | `src/parser/token_parser/blocks.rs:453` | ~1146 | Extract clause-type detectors |
@@ -125,17 +125,14 @@ Implemented static analysis in `src/hir/validation.rs`:
 | `new_with_default` | `src/ast/mod.rs:192` | ~1012 | Extract per-node-type default builders |
 | `infer_expression` | `src/typechecker/type_inference.rs:2993` | ~944 | Extract per-expression-kind inference helpers |
 
-**Action**: Split one function at a time. Each split must keep all tests green. Start with `setup_linker`.
+**Action**: Split one function at a time. Each split must keep all tests green.
 
 ---
 
-## 🟢 LOW: padStart / padEnd return original string (semantic placeholder)
+## ✅ COMPLETED: padStart / padEnd proper WASM implementation
 
-**Priority**: LOW — functions compile correctly but return original string unchanged
-**Discovered**: 2026-06-01
-**File**: `src/stdlib/string_class.rs:342-360` — `generate_pad_start` and `generate_pad_end` emit
-  only `Instruction::LocalGet(0)` (return receiver as-is). WASM validation passes, but no padding occurs.
-**Action**: Implement proper padding loops:
-  - `padStart(str, width, pad)`: prepend `pad` chars until `str.length() >= width`, then return
-  - `padEnd(str, width, pad)`: append `pad` chars until `str.length() >= width`, then return
-  - Both require memory allocation via `mem_alloc` and string copy instructions in WASM
+**Completed**: 2026-06-01
+**File**: `src/stdlib/string_class.rs` — `generate_pad_start` and `generate_pad_end`
+Implemented full WASM instruction sequences: early-out if `str_len >= width`, allocate `4 + width`
+bytes via `__malloc`, cyclically fill pad bytes, copy original string, return new pointer.
+Falls back to returning original string if malloc is unavailable or width already satisfied.
