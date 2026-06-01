@@ -1966,7 +1966,7 @@ impl TokenParser {
     /// * `is_private`     – set on the returned `StateDeclaration::is_private` field
     /// * `guard_level`    – indent level passed to `try_parse_guard_clause`
     /// * `context_label`  – human-readable label used in the "expected variable name"
-    ///                      error message (e.g. `"state"` or `"private state"`)
+    ///   error message (e.g. `"state"` or `"private state"`)
     fn parse_one_state_declaration(
         &mut self,
         is_private: bool,
