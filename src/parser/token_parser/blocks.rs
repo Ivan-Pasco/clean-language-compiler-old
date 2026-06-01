@@ -446,59 +446,69 @@ impl TokenParser {
         })
     }
 
+    /// Advance `idx` past any run of Newline, Comment, or BlockComment tokens.
+    ///
+    /// This is a pure look-ahead helper — no parser state is mutated.
+    fn peek_advance_past_whitespace(&self, mut idx: usize, len: usize) -> usize {
+        while idx < len
+            && matches!(
+                self.tokens[idx].kind,
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
+            )
+        {
+            idx += 1;
+        }
+        idx
+    }
+
+    /// Return `Some(idx + 1)` when an `Indent` token sits at position `idx`,
+    /// or `None` when no `Indent` is present.
+    ///
+    /// This is a pure look-ahead helper — no parser state is mutated.
+    fn peek_advance_past_indent(&self, idx: usize, len: usize) -> Option<usize> {
+        if idx < len && matches!(self.tokens[idx].kind, TokenKind::Indent(_)) {
+            Some(idx + 1)
+        } else {
+            None
+        }
+    }
+
+    /// Return `true` when the tokens starting at `idx` look like a sub-clause keyword:
+    /// an `Identifier` optionally followed by whitespace trivia and then a `Colon`.
+    ///
+    /// Examples that match: `join:`, `where :`, `order:`, `limit:`.
+    ///
+    /// This is a pure look-ahead helper — no parser state is mutated.
+    fn peek_has_identifier_then_colon(&self, idx: usize, len: usize) -> bool {
+        if idx >= len || !matches!(self.tokens[idx].kind, TokenKind::Identifier(_)) {
+            return false;
+        }
+        let after_ident = self.peek_advance_past_whitespace(idx + 1, len);
+        after_ident < len && matches!(self.tokens[after_ident].kind, TokenKind::Colon)
+    }
+
     /// Returns `true` when the tokens starting at `self.cursor` look like an ORM-style
     /// indented block whose first indented line starts with `Identifier :` (a sub-clause
     /// such as `join:`, `where:`, `order:`, `limit:`, etc.).
     ///
     /// This is a pure look-ahead — no tokens are consumed.
     fn peek_has_orm_subclauses(&self) -> bool {
-        let mut idx = self.cursor;
         let len = self.tokens.len();
 
-        // Skip optional whitespace (Newline, Comment, BlockComment)
-        while idx < len
-            && matches!(
-                self.tokens[idx].kind,
-                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
-            )
-        {
-            idx += 1;
-        }
+        // Skip optional whitespace before the indent token.
+        let idx = self.peek_advance_past_whitespace(self.cursor, len);
 
-        // Expect Indent
-        if idx >= len || !matches!(self.tokens[idx].kind, TokenKind::Indent(_)) {
-            return false;
-        }
-        idx += 1;
+        // Expect an Indent token; advance past it.
+        let idx = match self.peek_advance_past_indent(idx, len) {
+            Some(next) => next,
+            None => return false,
+        };
 
-        // Skip optional whitespace after Indent
-        while idx < len
-            && matches!(
-                self.tokens[idx].kind,
-                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
-            )
-        {
-            idx += 1;
-        }
+        // Skip optional whitespace inside the indented block.
+        let idx = self.peek_advance_past_whitespace(idx, len);
 
-        // Expect Identifier (the sub-clause keyword, e.g. "join", "where", "order")
-        if idx >= len || !matches!(self.tokens[idx].kind, TokenKind::Identifier(_)) {
-            return false;
-        }
-        idx += 1;
-
-        // Skip optional whitespace between identifier and colon
-        while idx < len
-            && matches!(
-                self.tokens[idx].kind,
-                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
-            )
-        {
-            idx += 1;
-        }
-
-        // If followed by Colon, this is an ORM sub-clause block
-        idx < len && matches!(self.tokens[idx].kind, TokenKind::Colon)
+        // Expect an Identifier followed (after optional trivia) by a Colon.
+        self.peek_has_identifier_then_colon(idx, len)
     }
 
     /// Parse a method apply block: OBJECT.METHOD:\n\targ1\n\targ2
@@ -1860,59 +1870,9 @@ impl TokenParser {
             // Parse a state declaration: type name = value
             // Look for a type identifier (integer, string, number, boolean, etc.)
             match self.current_kind() {
-                TokenKind::Identifier(type_name) => {
-                    let location = self.current().location.clone();
-                    let type_str = type_name.clone();
-                    self.bump(); // consume type
-
-                    self.skip_whitespace();
-
-                    // Get variable name
-                    let var_name = if let TokenKind::Identifier(name) = self.current_kind() {
-                        let name = name.clone();
-                        self.bump();
-                        name
-                    } else {
-                        return Err(CompilerError::parse_error(
-                            "Expected variable name in state declaration".to_string(),
-                            Some(self.current().location.clone()),
-                            Some(
-                                "State declarations must have format: type name = value"
-                                    .to_string(),
-                            ),
-                        ));
-                    };
-
-                    self.skip_whitespace();
-
-                    // Expect = sign
-                    self.expect(&TokenKind::Assign)?;
-                    self.skip_whitespace();
-
-                    // Parse initializer expression
-                    let initializer = self.parse_expression()?;
-
-                    // Convert type string to Type
-                    let type_ = match type_str.as_str() {
-                        "integer" => crate::ast::Type::Integer,
-                        "number" => crate::ast::Type::Number,
-                        "string" => crate::ast::Type::String,
-                        "boolean" => crate::ast::Type::Boolean,
-                        other => crate::ast::Type::Object(other.to_string()),
-                    };
-
-                    // Check for guard clause on next line
-                    // Guard syntax: guard <condition> else "message"
-                    let guard = self.try_parse_guard_clause(block_level)?;
-
-                    declarations.push(StateDeclaration {
-                        name: var_name,
-                        type_,
-                        initializer,
-                        guard,
-                        is_private: false,
-                        location: Some(location),
-                    });
+                TokenKind::Identifier(_) => {
+                    let decl = self.parse_one_state_declaration(false, block_level, "state")?;
+                    declarations.push(decl);
 
                     // Skip newline after declaration (if guard didn't consume it)
                     if matches!(self.current_kind(), TokenKind::Newline) {
@@ -1980,6 +1940,84 @@ impl TokenParser {
         })
     }
 
+    /// Convert a type-name string to the corresponding AST `Type` variant.
+    ///
+    /// Handles the four primitive types (`integer`, `number`, `string`, `boolean`) and
+    /// falls back to `Type::Object` for user-defined class names.  This is a pure
+    /// mapping with no parser state side-effects.
+    fn parse_state_type(type_str: &str) -> crate::ast::Type {
+        match type_str {
+            "integer" => crate::ast::Type::Integer,
+            "number" => crate::ast::Type::Number,
+            "string" => crate::ast::Type::String,
+            "boolean" => crate::ast::Type::Boolean,
+            other => crate::ast::Type::Object(other.to_string()),
+        }
+    }
+
+    /// Parse one state declaration of the form `type_name var_name = initializer [guard]`.
+    ///
+    /// The caller must ensure that the current token is `TokenKind::Identifier(type_name)`.
+    /// After this call the parser cursor is positioned immediately after the initializer
+    /// expression (and optional guard clause); any trailing newline / indent tokens are
+    /// left for the caller to handle as required by its loop invariant.
+    ///
+    /// # Parameters
+    /// * `is_private`     – set on the returned `StateDeclaration::is_private` field
+    /// * `guard_level`    – indent level passed to `try_parse_guard_clause`
+    /// * `context_label`  – human-readable label used in the "expected variable name"
+    ///                      error message (e.g. `"state"` or `"private state"`)
+    fn parse_one_state_declaration(
+        &mut self,
+        is_private: bool,
+        guard_level: usize,
+        context_label: &str,
+    ) -> Result<crate::ast::StateDeclaration, CompilerError> {
+        use crate::ast::StateDeclaration;
+
+        let location = self.current().location.clone();
+        let type_str = if let TokenKind::Identifier(n) = self.current_kind() {
+            n.clone()
+        } else {
+            return Err(CompilerError::parse_error(
+                format!("Expected type identifier in {} declaration", context_label),
+                Some(self.current().location.clone()),
+                None,
+            ));
+        };
+        self.bump(); // consume type identifier
+        self.skip_whitespace();
+
+        let var_name = if let TokenKind::Identifier(name) = self.current_kind() {
+            let name = name.clone();
+            self.bump();
+            name
+        } else {
+            return Err(CompilerError::parse_error(
+                format!("Expected variable name in {} declaration", context_label),
+                Some(self.current().location.clone()),
+                Some("State declarations must have format: type name = value".to_string()),
+            ));
+        };
+
+        self.skip_whitespace();
+        self.expect(&TokenKind::Assign)?;
+        self.skip_whitespace();
+
+        let initializer = self.parse_expression()?;
+        let type_ = Self::parse_state_type(&type_str);
+        let guard = self.try_parse_guard_clause(guard_level)?;
+
+        Ok(StateDeclaration {
+            name: var_name,
+            type_,
+            initializer,
+            guard,
+            is_private,
+            location: Some(location),
+        })
+    }
+
     /// Parse an inline `private:` sub-section inside a `state:` block.
     ///
     /// Called when `TokenKind::Private` is encountered while parsing state declarations.
@@ -1994,7 +2032,7 @@ impl TokenParser {
         &mut self,
         parent_block_level: usize,
     ) -> Result<Vec<crate::ast::StateDeclaration>, CompilerError> {
-        use crate::ast::{StateDeclaration, Type};
+        use crate::ast::StateDeclaration;
 
         // Consume "private"
         self.expect(&TokenKind::Private)?;
@@ -2058,52 +2096,13 @@ impl TokenParser {
 
             // Parse a state declaration: type name = value [guard]
             match self.current_kind() {
-                TokenKind::Identifier(type_name) => {
-                    let location = self.current().location.clone();
-                    let type_str = type_name.clone();
-                    self.bump(); // consume type
-
-                    self.skip_whitespace();
-
-                    let var_name = if let TokenKind::Identifier(name) = self.current_kind() {
-                        let name = name.clone();
-                        self.bump();
-                        name
-                    } else {
-                        return Err(CompilerError::parse_error(
-                            "Expected variable name in private state declaration".to_string(),
-                            Some(self.current().location.clone()),
-                            Some(
-                                "State declarations must have format: type name = value"
-                                    .to_string(),
-                            ),
-                        ));
-                    };
-
-                    self.skip_whitespace();
-                    self.expect(&TokenKind::Assign)?;
-                    self.skip_whitespace();
-
-                    let initializer = self.parse_expression()?;
-
-                    let type_ = match type_str.as_str() {
-                        "integer" => Type::Integer,
-                        "number" => Type::Number,
-                        "string" => Type::String,
-                        "boolean" => Type::Boolean,
-                        other => Type::Object(other.to_string()),
-                    };
-
-                    let guard = self.try_parse_guard_clause(parent_block_level + 1)?;
-
-                    private_decls.push(StateDeclaration {
-                        name: var_name,
-                        type_,
-                        initializer,
-                        guard,
-                        is_private: true,
-                        location: Some(location),
-                    });
+                TokenKind::Identifier(_) => {
+                    let decl = self.parse_one_state_declaration(
+                        true,
+                        parent_block_level + 1,
+                        "private state",
+                    )?;
+                    private_decls.push(decl);
 
                     // Consume trailing newline and check next indent.
                     if matches!(self.current_kind(), TokenKind::Newline) {
