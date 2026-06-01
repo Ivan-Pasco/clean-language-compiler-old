@@ -2638,29 +2638,45 @@ impl JsonClass {
     ///
     /// Returns:
     /// - i32: Pointer to object or 0 on error
+    ///
+    /// Local variable layout:
+    /// - Local 0: string_ptr (parameter)
+    /// - Local 1: position_ptr (parameter - memory location)
+    /// - Local 2: length (parameter)
+    /// - Local 3: position (cached from position_ptr)
+    /// - Local 4: current_character
+    /// - Local 5: pair_count
+    /// - Local 6: object_ptr (allocated memory)
+    /// - Local 7: loop counter i
+    /// - Local 8: start_position / key_start / num_start / str_start
+    /// - Local 9: key_len / str_len / parse_pos
+    /// - Local 10: key_ptr / is_negative / temp / depth
+    /// - Local 11: value_ptr / str_ptr
+    /// - Local 12: temp
+    /// - Local 13: temp
+    /// - Local 14: decimal_divisor (F64)
     fn generate_parse_object_instructions(
         &self,
         parse_value_index: u32,
         malloc_index: u32,
     ) -> Vec<Instruction<'static>> {
-        vec![
-            // Local variable declarations:
-            // Local 0: string_ptr (parameter)
-            // Local 1: position_ptr (parameter - memory location)
-            // Local 2: length (parameter)
-            // Local 3: position (cached from position_ptr)
-            // Local 4: current_character
-            // Local 5: pair_count
-            // Local 6: object_ptr (allocated memory)
-            // Local 7: loop counter i
-            // Local 8: start_position / key_start / num_start / str_start
-            // Local 9: key_len / str_len / parse_pos
-            // Local 10: key_ptr / is_negative / temp / depth
-            // Local 11: value_ptr / str_ptr
-            // Local 12: temp
-            // Local 13: temp
-            // Local 14: decimal_divisor (F64)
+        let mut instrs = Vec::new();
+        instrs.extend(self.generate_parse_object_init_instructions());
+        instrs.extend(self.generate_parse_object_count_pairs_instructions());
+        instrs.extend(self.generate_parse_object_alloc_instructions(malloc_index));
+        instrs.extend(
+            self.generate_parse_object_parse_pairs_instructions(parse_value_index, malloc_index),
+        );
+        instrs.extend(self.generate_parse_object_finalize_instructions());
+        instrs
+    }
 
+    /// Phase 1: Read position from memory into local cache and skip the opening '{'.
+    ///
+    /// Reads: Local 1 (position_ptr), Local 2 (length)
+    /// Writes: Local 3 (position), Local 8 (start_position), Local 5 (pair_count)
+    fn generate_parse_object_init_instructions(&self) -> Vec<Instruction<'static>> {
+        vec![
             // Read position from memory into cache
             Instruction::LocalGet(1), // position_ptr
             Instruction::I32Load(wasm_encoder::MemArg {
@@ -2691,6 +2707,19 @@ impl JsonClass {
             // Initialize pair count to 0
             Instruction::I32Const(0),
             Instruction::LocalSet(5), // pair_count = 0
+        ]
+    }
+
+    /// Phase 2: Scan forward from current position to count the number of key-value pairs.
+    ///
+    /// Uses depth tracking and quote-awareness to correctly skip over nested objects/arrays
+    /// and string values, counting only top-level key-value pairs.
+    ///
+    /// Reads: Local 0 (string_ptr), Local 2 (length), Local 3 (position), Local 5 (pair_count)
+    /// Writes: Local 3 (position advanced past object), Local 4 (char), Local 5 (pair_count),
+    ///         Local 10 (depth), Local 12 (in_string)
+    fn generate_parse_object_count_pairs_instructions(&self) -> Vec<Instruction<'static>> {
+        vec![
             // Scan to count pairs
             Instruction::Block(wasm_encoder::BlockType::Empty),
             Instruction::Loop(wasm_encoder::BlockType::Empty),
@@ -2859,6 +2888,22 @@ impl JsonClass {
             Instruction::Br(0),   // Continue counting loop
             Instruction::End,     // End counting loop
             Instruction::End,     // End counting block
+        ]
+    }
+
+    /// Phase 3: Allocate object memory and reset position for the parse pass.
+    ///
+    /// Allocates `4 + pair_count * 8` bytes (count header + key/value pointer pairs),
+    /// stores the pair count at offset 0, resets position to `start_position`, and
+    /// initialises the loop counter `i = 0`.
+    ///
+    /// Reads: Local 5 (pair_count), Local 8 (start_position)
+    /// Writes: Local 6 (object_ptr), Local 3 (position reset), Local 7 (i = 0)
+    fn generate_parse_object_alloc_instructions(
+        &self,
+        malloc_index: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
             // Step 3: Allocate memory for object
             // Size = 4 (count) + pair_count * 8 (key ptr + val ptr)
             Instruction::I32Const(4),
@@ -2882,6 +2927,25 @@ impl JsonClass {
             // Initialize loop counter
             Instruction::I32Const(0),
             Instruction::LocalSet(7), // i = 0
+        ]
+    }
+
+    /// Phase 4: Outer loop that parses each key-value pair and stores pointers in the object.
+    ///
+    /// For each pair: skips leading whitespace and any preceding comma, parses the key string
+    /// (allocates and copies it), skips `:`, then dispatches on the first byte of the value
+    /// to parse numbers (integer/float), strings, booleans, null, or nested structures via a
+    /// recursive call to `parse_value`. After storing the value pointer, advances past any
+    /// trailing separator before incrementing the loop counter.
+    ///
+    /// This block must remain monolithic because all `BrIf` depth offsets are relative to
+    /// the nesting established by the enclosing `Block + Loop` opened here.
+    fn generate_parse_object_parse_pairs_instructions(
+        &self,
+        parse_value_index: u32,
+        malloc_index: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
             // Parse each key-value pair
             Instruction::Block(wasm_encoder::BlockType::Empty),
             Instruction::Loop(wasm_encoder::BlockType::Empty),
@@ -3873,6 +3937,15 @@ impl JsonClass {
             Instruction::Br(0),       // Continue parse loop
             Instruction::End,         // End parse loop
             Instruction::End,         // End parse block
+        ]
+    }
+
+    /// Phase 5: Write the final position back to the position_ptr memory location and return
+    /// the object pointer.
+    ///
+    /// Reads: Local 1 (position_ptr), Local 3 (cached position), Local 6 (object_ptr)
+    fn generate_parse_object_finalize_instructions(&self) -> Vec<Instruction<'static>> {
+        vec![
             // Write final position back to memory
             Instruction::LocalGet(1), // position_ptr
             Instruction::LocalGet(3), // cached position
