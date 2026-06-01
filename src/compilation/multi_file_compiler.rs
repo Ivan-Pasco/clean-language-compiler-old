@@ -1214,6 +1214,7 @@ impl MultiFileCompiler {
     fn parse_manifest_info(source: &str, manifest_dir: &Path) -> ManifestInfo {
         let mut info = ManifestInfo::default();
         let mut has_web_target = false;
+        let mut has_frame_server = false;
 
         for line in source.lines() {
             let trimmed = line.trim();
@@ -1221,6 +1222,11 @@ impl MultiFileCompiler {
             // Detect `target: web` so we can auto-add the web root as a shared folder
             if trimmed == "target: web" || trimmed == "target:web" {
                 has_web_target = true;
+            }
+
+            // Detect frame.server in any plugins: block (at any indentation)
+            if trimmed.contains("frame.server") {
+                has_frame_server = true;
             }
 
             // shared: [path1, path2, ...]
@@ -1261,6 +1267,30 @@ impl MultiFileCompiler {
                             let web_root = web_root.to_path_buf();
                             if web_root.exists() && !info.shared_folders.contains(&web_root) {
                                 info.shared_folders.push(web_root);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // When `frame.server` is declared in a `target: web` manifest, auto-add the
+        // server root as a shared folder so API/middleware files are discovered without
+        // requiring an explicit shared: declaration.
+        // Convention: entry lives in <app_root>/web/pages/, server files live in
+        // <app_root>/server/ (sibling of web/).  Derived as web_root.parent()/server.
+        if has_web_target && has_frame_server {
+            if let Some(ref ep) = info.entry_path {
+                if let Some(pages_dir) = ep.parent() {
+                    if pages_dir.file_name().and_then(|n| n.to_str()) == Some("pages") {
+                        if let Some(web_root) = pages_dir.parent() {
+                            if let Some(app_root) = web_root.parent() {
+                                let server_root = app_root.join("server");
+                                if server_root.exists()
+                                    && !info.shared_folders.contains(&server_root)
+                                {
+                                    info.shared_folders.push(server_root);
+                                }
                             }
                         }
                     }
@@ -2158,6 +2188,44 @@ posts = Post.findAll()
         assert!(
             info.shared_folders.is_empty(),
             "no target: web means no auto-shared folder"
+        );
+    }
+
+    #[test]
+    fn test_parse_manifest_info_frame_server_adds_server_root_as_shared() {
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/web/pages/index.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+
+        // Create the directory structure so exists() checks pass
+        std::fs::create_dir_all(manifest_dir.join("app").join("web").join("pages")).unwrap();
+        let server_root = manifest_dir.join("app").join("server");
+        std::fs::create_dir_all(&server_root).unwrap();
+
+        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+
+        assert!(
+            info.shared_folders.contains(&server_root),
+            "app/server/ should be auto-added as shared folder when frame.server is declared"
+        );
+    }
+
+    #[test]
+    fn test_parse_manifest_info_no_frame_server_no_server_root() {
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.data]\n\t\tentry: app/web/pages/index.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+
+        std::fs::create_dir_all(manifest_dir.join("app").join("web").join("pages")).unwrap();
+        // Create the server dir so existence isn't the deciding factor
+        let server_root = manifest_dir.join("app").join("server");
+        std::fs::create_dir_all(&server_root).unwrap();
+
+        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+
+        assert!(
+            !info.shared_folders.contains(&server_root),
+            "app/server/ should NOT be auto-added when frame.server is not declared"
         );
     }
 
