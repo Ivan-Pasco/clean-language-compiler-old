@@ -35,7 +35,8 @@ compile-time integer ID before emitting the WASM call, reducing the import signa
 - `clean-server/host-bridge` — `string_matches(str_ptr, str_len, pattern_id)` implementation
 - This is a breaking contract change; both sides must ship in the same release.
 
-**Action**: Report via `report_error` to coordinate server side, then implement compiler side.
+**Reported**: 2026-06-01 — report ID `24d6ea05-fac4-408f-86bb-38854659fd80`
+**Action**: Once server ships updated bridge, implement compiler side (codegen_registration.rs ~654–672).
 
 ---
 
@@ -50,9 +51,10 @@ compile-time integer ID before emitting the WASM call, reducing the import signa
   test.http_request(method: string, path: string, body_json: string | null, header_key: string | null, header_val: string | null) -> HttpTestResponse
   ```
   where `HttpTestResponse` exposes `.status: integer`, `.body_json: string`, `.ok: boolean`.
+**Reported**: 2026-06-01 — report ID `4a51fd68-4d43-4cea-9c58-3d959c35552b`
 **Action**:
-  1. Add `test.http_request` to `clean-server` host bridge (cross-component)
-  2. Once bridge exists: add HIR/codegen for `TestCaseKind::Endpoint` to emit actual HTTP calls
+  1. Server team adds `test.http_request` to `clean-server` host bridge
+  2. Once bridge exists: implement HIR/codegen for `TestCaseKind::Endpoint` in `src/codegen/`
 
 ---
 
