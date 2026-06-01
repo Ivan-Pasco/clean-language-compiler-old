@@ -1313,7 +1313,7 @@ impl MirBuilder {
                                 "alphanumeric" => 7,
                                 other => {
                                     return Err(vec![crate::error::CompilerError::semantic_error(
-                                        &format!(
+                                        format!(
                                             "string.matches(): unknown pattern '{}'. \
                                              Valid: email, url, uuid, phone, date, integer, number, alphanumeric",
                                             other
