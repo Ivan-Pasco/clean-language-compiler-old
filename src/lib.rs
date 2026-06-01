@@ -1449,6 +1449,78 @@ fn extract_plugins(source: &str) -> Vec<String> {
     plugins
 }
 
+/// Collect all plugin names required by a package.
+///
+/// For a single-file build: returns plugins declared in that file.
+/// For a package manifest (starts with `package:`): reads the declared entry
+/// file AND recursively scans every `.cln` file in every `shared:` folder,
+/// merging all unique plugin names.  This ensures that plugins declared only
+/// in shared source files (e.g. `frame.server` in routes.cln) are loaded into
+/// the registry even when the manifest entry file does not re-declare them.
+fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> Vec<String> {
+    let mut plugins: Vec<String> = extract_plugins(entry_source);
+
+    if !entry_source.trim_start().starts_with("package:") {
+        return plugins;
+    }
+
+    let manifest_dir = match entry_path.parent() {
+        Some(d) => d,
+        None => return plugins,
+    };
+
+    // Read plugins from the declared entry .cln file (may differ from manifest).
+    if let Some(actual_entry) = extract_manifest_entry(entry_source, manifest_dir) {
+        if let Ok(src) = std::fs::read_to_string(&actual_entry) {
+            for p in extract_plugins(&src) {
+                if !plugins.contains(&p) {
+                    plugins.push(p);
+                }
+            }
+        }
+    }
+
+    // Scan all .cln files in every shared: folder.
+    fn scan_cln_dir(dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan_cln_dir(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("cln") {
+                if let Ok(src) = std::fs::read_to_string(&path) {
+                    for p in extract_plugins(&src) {
+                        if !out.contains(&p) {
+                            out.push(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Parse shared: [...] from manifest
+    for line in entry_source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("shared:") {
+            let rest = rest.trim();
+            if rest.starts_with('[') {
+                let end = rest.find(']').unwrap_or(rest.len());
+                for path_str in rest[1..end].split(',') {
+                    let p = path_str.trim().trim_matches('"');
+                    if !p.is_empty() {
+                        scan_cln_dir(&manifest_dir.join(p), &mut plugins);
+                    }
+                }
+            }
+        }
+    }
+
+    plugins
+}
+
 /// Compiles a multi-file Clean Language program from an entry file
 ///
 /// This function supports programs with `import:` statements that reference
@@ -1503,20 +1575,8 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         )]
     })?;
 
-    // Extract plugin names from plugins: block
-    let mut plugin_names = extract_plugins(&entry_source);
-
-    // Package manifests declare plugins in the actual source entry file, not in
-    // the manifest itself — re-extract from the entry file if none were found.
-    if plugin_names.is_empty() && entry_source.trim_start().starts_with("package:") {
-        if let Some(manifest_dir) = entry_path.as_ref().parent() {
-            if let Some(actual_entry) = extract_manifest_entry(&entry_source, manifest_dir) {
-                if let Ok(actual_source) = std::fs::read_to_string(&actual_entry) {
-                    plugin_names = extract_plugins(&actual_source);
-                }
-            }
-        }
-    }
+    // Collect plugin names from all package files (entry, manifest entry, shared folders).
+    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
 
     // Load plugins if any are declared
     let registry = if !plugin_names.is_empty() {
@@ -1833,20 +1893,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         )]
     })?;
 
-    let mut plugin_names = extract_plugins(&entry_source);
-
-    // If this is a package manifest (package: block), the `plugins:` declarations live
-    // in the actual source entry file, not in the manifest itself.  Re-extract from
-    // the entry file declared in the manifest so the registry is populated correctly.
-    if plugin_names.is_empty() && entry_source.trim_start().starts_with("package:") {
-        if let Some(manifest_dir) = entry_path.as_ref().parent() {
-            if let Some(actual_entry) = extract_manifest_entry(&entry_source, manifest_dir) {
-                if let Ok(actual_source) = std::fs::read_to_string(&actual_entry) {
-                    plugin_names = extract_plugins(&actual_source);
-                }
-            }
-        }
-    }
+    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
 
     let registry = if !plugin_names.is_empty() {
         tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
@@ -2252,20 +2299,7 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
         )]
     })?;
 
-    let mut plugin_names = extract_plugins(&entry_source);
-
-    // Package manifests declare plugins in the actual source entry file, not in
-    // the manifest itself — re-extract from the entry file declared in the manifest
-    // so the registry is populated correctly.
-    if plugin_names.is_empty() && entry_source.trim_start().starts_with("package:") {
-        if let Some(manifest_dir) = entry_path.as_ref().parent() {
-            if let Some(actual_entry) = extract_manifest_entry(&entry_source, manifest_dir) {
-                if let Ok(actual_source) = std::fs::read_to_string(&actual_entry) {
-                    plugin_names = extract_plugins(&actual_source);
-                }
-            }
-        }
-    }
+    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
 
     let registry = if !plugin_names.is_empty() {
         let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
