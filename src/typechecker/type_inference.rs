@@ -3106,498 +3106,43 @@ impl<'a> TypeInference<'a> {
         self.recursion_depth += 1;
         let (kind, expr_type, location) = match expression {
             ResolvedHirExpression::Literal { value, location } => {
-                let (tast_literal, literal_type) = self.infer_literal(value);
-                (
-                    TastExpressionKind::Literal {
-                        value: tast_literal,
-                    },
-                    literal_type,
-                    location.clone(),
-                )
+                self.infer_literal_expression(value, location)?
             }
-
             ResolvedHirExpression::Variable {
                 symbol_id,
                 name,
                 location,
-            } => {
-                let var_type = self.type_env.get(symbol_id).cloned().unwrap_or_else(|| {
-                    self.errors.push(CompilerError::type_error(
-                        format!("Variable {} not found in type environment", name),
-                        None,
-                        Some(location.clone()),
-                    ));
-                    ConcreteType::Unknown
-                });
-
-                (
-                    TastExpressionKind::Variable {
-                        symbol_id: *symbol_id,
-                        name: name.clone(),
-                    },
-                    var_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_variable_expression(symbol_id, name, location)?,
             ResolvedHirExpression::BinaryOp {
                 left,
                 op,
                 right,
                 location,
-            } => {
-                let tast_left = self.infer_expression(left)?;
-                let tast_right = self.infer_expression(right)?;
-
-                // Resolve types with current substitutions before binary operation type inference
-                let resolved_left_type = self.resolve_type(&tast_left.expr_type);
-                let resolved_right_type = self.resolve_type(&tast_right.expr_type);
-
-                let result_type = self.infer_binary_operation(
-                    op,
-                    &resolved_left_type,
-                    &resolved_right_type,
-                    location,
-                )?;
-
-                (
-                    TastExpressionKind::BinaryOperation {
-                        operator: self.convert_binary_operator(op),
-                        left: Box::new(tast_left),
-                        right: Box::new(tast_right),
-                    },
-                    result_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_binary_op_expression(left, op, right, location)?,
             ResolvedHirExpression::Call {
                 function,
                 function_symbol_id,
                 arguments,
                 location,
-            } => {
-                let mut tast_arguments = Vec::new();
-
-                for arg in arguments {
-                    tast_arguments.push(self.infer_expression(arg)?);
-                }
-
-                // Get the function type and add parameter type constraints.
-                // Skip constraint check for namespace symbols — these resolve by name
-                // in infer_function_return_type, not by symbol type.
-                if let Some(function_type) = self.type_env.get(function_symbol_id).cloned() {
-                    if matches!(function_type, ConcreteType::Namespace) {
-                        return Err(CompilerError::type_error(
-                            format!(
-                                "'{}' is a namespace, not a function — use '{}.function_name()' syntax",
-                                function, function
-                            ),
-                            None,
-                            Some(location.clone()),
-                        ));
-                    }
-                    let _constraint_check = self.infer_function_call(
-                        &function_type,
-                        &tast_arguments,
-                        *function_symbol_id,
-                        location,
-                    )?;
-                }
-
-                // Look up function type and determine return type
-                let return_type = self.infer_function_return_type(
-                    *function_symbol_id,
-                    function,
-                    &tast_arguments,
-                )?;
-
-                // Use SymbolId(0) for namespace functions (string.*, math.*, req.*, etc.)
-                // This ensures MIR builder creates NamedFunction operands for proper symbol resolution
-                // Any dotted function name is a namespace function (no hardcoded list needed)
-                let is_namespace_function = function.contains('.');
-
-                let resolved_symbol_id = if is_namespace_function {
-                    tracing::trace!(
-                        "DEBUG CALL: Using SymbolId(0) for namespace function '{}'",
-                        function
-                    );
-                    crate::resolver::symbol_table::SymbolId(0)
-                } else {
-                    *function_symbol_id
-                };
-
-                (
-                    TastExpressionKind::FunctionCall {
-                        function: Box::new(TastExpression {
-                            kind: TastExpressionKind::Variable {
-                                symbol_id: resolved_symbol_id,
-                                name: function.clone(),
-                            },
-                            expr_type: ConcreteType::Function {
-                                parameters: tast_arguments
-                                    .iter()
-                                    .map(|a| a.expr_type.clone())
-                                    .collect(),
-                                return_type: Box::new(return_type.clone()),
-                                is_background: false,
-                            },
-                            location: location.clone(),
-                        }),
-                        arguments: tast_arguments,
-                        type_args: Vec::new(),
-                    },
-                    return_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_call_expression(function, function_symbol_id, arguments, location)?,
             ResolvedHirExpression::Index {
                 array,
                 index,
                 location,
-            } => {
-                let tast_array = self.infer_expression(array)?;
-                let tast_index = self.infer_expression(index)?;
-
-                // Extract element type based on array type and index type
-                let element_type = match &tast_array.expr_type {
-                    // Any type supports both string (object access) and integer (array access)
-                    ConcreteType::Any => match &tast_index.expr_type {
-                        ConcreteType::String | ConcreteType::Integer => ConcreteType::Any,
-                        other => {
-                            // IDX004: wrong index type on Any — emit warning, not error
-                            self.warnings.push(
-                                CompilerError::Validation {
-                                    context: Box::new(
-                                        crate::error::ErrorContext::new(
-                                            format!(
-                                                "Index type {:?} is unusual for Any: expected string (object access) or integer (array access)",
-                                                other
-                                            ),
-                                            Some("Use data[\"field\"] for object access or data[0] for array access".to_string()),
-                                            crate::error::ErrorType::Validation,
-                                            Some(location.clone()),
-                                        )
-                                        .with_severity(crate::error::ErrorSeverity::Warning)
-                                        .with_error_code("IDX004"),
-                                    ),
-                                }
-                            );
-                            ConcreteType::Any
-                        }
-                    },
-                    // Array requires integer index (IDX001)
-                    ConcreteType::Array(element_type) => {
-                        if !matches!(tast_index.expr_type, ConcreteType::Integer) {
-                            self.warnings.push(CompilerError::Validation {
-                                context: Box::new(
-                                    crate::error::ErrorContext::new(
-                                        format!(
-                                            "Array index should be integer, found {}",
-                                            tast_index.expr_type
-                                        ),
-                                        Some(
-                                            "Use an integer expression to index into an array"
-                                                .to_string(),
-                                        ),
-                                        crate::error::ErrorType::Validation,
-                                        Some(location.clone()),
-                                    )
-                                    .with_severity(crate::error::ErrorSeverity::Warning)
-                                    .with_error_code("IDX001"),
-                                ),
-                            });
-                        }
-                        (**element_type).clone()
-                    }
-                    // Matrix indexing: matrix<T>[i] returns Array<T> (IDX002)
-                    ConcreteType::Matrix(element_type) => {
-                        if !matches!(tast_index.expr_type, ConcreteType::Integer) {
-                            self.warnings.push(CompilerError::Validation {
-                                context: Box::new(
-                                    crate::error::ErrorContext::new(
-                                        format!(
-                                            "Matrix index should be integer, found {}",
-                                            tast_index.expr_type
-                                        ),
-                                        Some(
-                                            "Use an integer expression to index into a matrix"
-                                                .to_string(),
-                                        ),
-                                        crate::error::ErrorType::Validation,
-                                        Some(location.clone()),
-                                    )
-                                    .with_severity(crate::error::ErrorSeverity::Warning)
-                                    .with_error_code("IDX002"),
-                                ),
-                            });
-                        }
-                        ConcreteType::Array(Box::new((**element_type).clone()))
-                    }
-                    // Pairs type supports string key access (IDX003)
-                    ConcreteType::Pairs(_, value_type) => {
-                        if !matches!(tast_index.expr_type, ConcreteType::String) {
-                            self.warnings.push(CompilerError::Validation {
-                                context: Box::new(
-                                    crate::error::ErrorContext::new(
-                                        format!(
-                                            "Pairs key should be string, found {}",
-                                            tast_index.expr_type
-                                        ),
-                                        Some("Use pairs[\"key\"] for pairs access".to_string()),
-                                        crate::error::ErrorType::Validation,
-                                        Some(location.clone()),
-                                    )
-                                    .with_severity(crate::error::ErrorSeverity::Warning)
-                                    .with_error_code("IDX003"),
-                                ),
-                            });
-                        }
-                        (**value_type).clone()
-                    }
-                    other_type => {
-                        // IDX004: indexing into a non-indexable type — warn only
-                        self.warnings.push(
-                            CompilerError::Validation {
-                                context: Box::new(
-                                    crate::error::ErrorContext::new(
-                                        format!("Cannot index into type: {}", other_type),
-                                        Some(
-                                            "Bracket access is only supported on list, matrix, pairs, or any types"
-                                                .to_string(),
-                                        ),
-                                        crate::error::ErrorType::Validation,
-                                        Some(location.clone()),
-                                    )
-                                    .with_severity(crate::error::ErrorSeverity::Warning)
-                                    .with_error_code("IDX004"),
-                                ),
-                            }
-                        );
-                        ConcreteType::Unknown
-                    }
-                };
-
-                (
-                    TastExpressionKind::ArrayAccess {
-                        array: Box::new(tast_array),
-                        index: Box::new(tast_index),
-                    },
-                    element_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_index_expression(array, index, location)?,
             ResolvedHirExpression::MethodCall {
                 receiver,
                 method,
                 method_symbol_id,
                 arguments,
                 location,
-            } => {
-                let tast_receiver = self.infer_expression(receiver)?;
-
-                let mut tast_arguments = Vec::new();
-                for arg in arguments {
-                    tast_arguments.push(self.infer_expression(arg)?);
-                }
-
-                // SEM010: string.matches() argument must be a known pattern name literal.
-                // semantic-rules.md §SEM010
-                // Valid patterns per spec: email, url, uuid, slug, numeric, alpha, phone, date
-                if method == "matches" && matches!(tast_receiver.expr_type, ConcreteType::String) {
-                    const VALID_PATTERNS: &[&str] = &[
-                        "email", "url", "uuid", "slug", "numeric", "alpha", "phone", "date",
-                    ];
-                    if let Some(first_arg) = tast_arguments.first() {
-                        let is_valid = match &first_arg.kind {
-                            crate::typechecker::tast::TastExpressionKind::Literal {
-                                value: crate::typechecker::tast::TastLiteral::String(pattern_name),
-                            } => VALID_PATTERNS.contains(&pattern_name.as_str()),
-                            _ => false, // non-literal argument also rejected
-                        };
-                        if !is_valid {
-                            let name = match &first_arg.kind {
-                                crate::typechecker::tast::TastExpressionKind::Literal {
-                                    value: crate::typechecker::tast::TastLiteral::String(s),
-                                } => s.clone(),
-                                _ => "<expression>".to_string(),
-                            };
-                            self.errors.push(CompilerError::Validation {
-                                context: Box::new(
-                                    crate::error::ErrorContext::new(
-                                        format!(
-                                            "Unknown pattern name '{}'. Valid patterns: email, url, uuid, slug, numeric, alpha, phone, date",
-                                            name
-                                        ),
-                                        None,
-                                        crate::error::ErrorType::Validation,
-                                        Some(location.clone()),
-                                    )
-                                    .with_error_code("SEM010"),
-                                ),
-                            });
-                        }
-                    } else {
-                        // No argument at all — report missing argument
-                        self.errors.push(CompilerError::Validation {
-                            context: Box::new(
-                                crate::error::ErrorContext::new(
-                                    "string.matches() requires a pattern name argument (email, url, uuid, slug, numeric, alpha, phone, date)".to_string(),
-                                    None,
-                                    crate::error::ErrorType::Validation,
-                                    Some(location.clone()),
-                                )
-                                .with_error_code("SEM010"),
-                            ),
-                        });
-                    }
-                }
-
-                // Resolve receiver type with current substitutions before method lookup
-                let resolved_receiver_type = self.resolve_type(&tast_receiver.expr_type);
-
-                // Use resolved type for method resolution
-                let return_type = self.infer_method_return_type(
-                    method,
-                    &resolved_receiver_type,
-                    &tast_arguments,
-                )?;
-
-                // NOTE: Resolve method symbol from receiver's class type or primitive type
-                // The resolver sets method_symbol_id = None because it doesn't have type info
-                // Now we have the receiver's type, so we can look up the method
-                let resolved_method_symbol = method_symbol_id
-                    .or_else(|| {
-                        // Extract class symbol ID from receiver type
-                        match &resolved_receiver_type {
-                            ConcreteType::Class { symbol_id, .. } => {
-                                // Look up the method in the class's symbol table
-                                if let Some(method_sym) =
-                                    self.symbol_table.lookup_class_member(*symbol_id, method)
-                                {
-                                    tracing::debug!(
-                                        class_symbol = symbol_id.0,
-                                        method = %method,
-                                        method_symbol = method_sym.0,
-                                        "Resolved instance method symbol from class type"
-                                    );
-                                    Some(method_sym)
-                                } else {
-                                    tracing::warn!(
-                                        class_symbol = symbol_id.0,
-                                        method = %method,
-                                        "Method not found in class - using SymbolId(0) fallback"
-                                    );
-                                    None
-                                }
-                            }
-                            _ => {
-                                // Not a class type - might be built-in method on primitive type
-                                // Try to resolve as built-in method (e.g., "string.toString")
-                                let type_name =
-                                    Self::get_builtin_type_name(&resolved_receiver_type);
-                                if let Some(type_name) = type_name {
-                                    let builtin_method_name = format!("{}.{}", type_name, method);
-                                    if let Some(method_sym) =
-                                        self.symbol_table.lookup_symbol(&builtin_method_name)
-                                    {
-                                        tracing::debug!(
-                                            type_name = %type_name,
-                                            method = %method,
-                                            builtin_name = %builtin_method_name,
-                                            method_symbol = method_sym.0,
-                                            "Resolved built-in method symbol from primitive type"
-                                        );
-                                        Some(method_sym)
-                                    } else {
-                                        // NOTE: Built-in methods like integer.toString, boolean.toString, etc.
-                                        // are not registered in the symbol table - they're resolved at codegen time
-                                        // via the function_map. Using SymbolId(0) is expected for these methods.
-                                        tracing::debug!(
-                                            type_name = %type_name,
-                                            method = %method,
-                                            builtin_name = %builtin_method_name,
-                                            "Built-in method resolved at codegen time - using SymbolId(0)"
-                                        );
-                                        None
-                                    }
-                                } else {
-                                    // Complex type without built-in methods
-                                    None
-                                }
-                            }
-                        }
-                    })
-                    .unwrap_or(crate::resolver::symbol_table::SymbolId(0)); // SymbolId(0) for built-in methods
-
-                // SEM005: Private method access check.
-                // If the method is private, it may only be called from within the class that
-                // owns it.  We know the receiver's class (from resolved_receiver_type) and the
-                // current class (from self.current_class).  A violation is when:
-                //   - the method symbol is known (not the SymbolId(0) placeholder),
-                //   - the method is private,
-                //   - and the receiver's class differs from the currently executing class.
-                if resolved_method_symbol.0 != 0 {
-                    if let Some(method_sym) = self.symbol_table.get_symbol(resolved_method_symbol) {
-                        if method_sym.is_private {
-                            if let Some(owner) = &method_sym.owner_scope_name {
-                                // Determine the receiver's class name via its symbol.
-                                let receiver_class_name = match &resolved_receiver_type {
-                                    ConcreteType::Class { symbol_id, .. } => self
-                                        .symbol_table
-                                        .get_symbol(*symbol_id)
-                                        .map(|s| s.name.clone()),
-                                    _ => None,
-                                };
-                                // Determine the current execution class name.
-                                let current_class_name = self.current_class.and_then(|cid| {
-                                    self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
-                                });
-                                // Violation: receiver class matches owner AND we're not inside that class.
-                                let inside_owner = current_class_name
-                                    .as_deref()
-                                    .map(|cn| cn == owner)
-                                    .unwrap_or(false);
-                                if !inside_owner {
-                                    if let Some(rcn) = &receiver_class_name {
-                                        if rcn == owner {
-                                            self.errors.push(CompilerError::Validation {
-                                                context: Box::new(
-                                                    crate::error::ErrorContext::new(
-                                                        format!(
-                                                            "'{}' is private and cannot be accessed from outside '{}'",
-                                                            method, owner
-                                                        ),
-                                                        None,
-                                                        crate::error::ErrorType::Validation,
-                                                        Some(location.clone()),
-                                                    )
-                                                    .with_error_code("SEM005"),
-                                                ),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                (
-                    TastExpressionKind::MethodCall {
-                        receiver: Box::new(tast_receiver),
-                        method_name: method.clone(),
-                        method_symbol: resolved_method_symbol,
-                        arguments: tast_arguments,
-                        type_args: Vec::new(),
-                    },
-                    return_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_method_call_expression(
+                receiver,
+                method,
+                method_symbol_id,
+                arguments,
+                location,
+            )?,
             ResolvedHirExpression::StaticMethodCall {
                 namespace,
                 class_name,
@@ -3606,424 +3151,80 @@ impl<'a> TypeInference<'a> {
                 method_symbol_id,
                 arguments,
                 location,
-            } => {
-                tracing::debug!("DEBUG STATIC METHOD CALL: class_name='{}', method='{}', method_symbol_id=SymbolId({})",
-                          class_name, method, method_symbol_id.0);
-
-                let mut tast_arguments = Vec::new();
-                for arg in arguments {
-                    tast_arguments.push(self.infer_expression(arg)?);
-                }
-
-                // Handle namespace.class.method() calls
-                let full_class_name = if !namespace.is_empty() {
-                    format!("{}.{}", namespace.join("."), class_name)
-                } else {
-                    class_name.clone()
-                };
-
-                // For now, use simple static method resolution based on class and method name
-                tracing::debug!("DEBUG TypeChecker: Calling infer_static_method_return_type for {}.{} with {} args",
-                          full_class_name, method, tast_arguments.len());
-                let return_type = self.infer_static_method_return_type(
-                    &full_class_name,
-                    method,
-                    &tast_arguments,
-                )?;
-
-                // NOTE: Use SymbolId(0) for built-in namespace methods
-                // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
-                // For user-defined static methods, keep the actual method_symbol_id
-                let is_builtin_namespace = [
-                    "string",
-                    "math",
-                    "list",
-                    "array",
-                    "compare",
-                    "file",
-                    "http",
-                    "json",
-                    "input",
-                    "validator",
-                ]
-                .iter()
-                .any(|ns| {
-                    full_class_name.eq(*ns) || full_class_name.starts_with(&format!("{}.", ns))
-                });
-
-                tracing::debug!("DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
-                          full_class_name, method, is_builtin_namespace, method_symbol_id.0);
-
-                let resolved_method_symbol = if is_builtin_namespace {
-                    tracing::trace!(
-                        "DEBUG TYPE INF STATIC: Setting SymbolId(0) for namespace method {}.{}",
-                        full_class_name,
-                        method
-                    );
-                    crate::resolver::symbol_table::SymbolId(0) // Force NamedFunction in MIR
-                } else {
-                    tracing::debug!("DEBUG TYPE INF STATIC: Keeping SymbolId({}) for user-defined static method", method_symbol_id.0);
-                    *method_symbol_id // Use actual symbol for user-defined static methods
-                };
-
-                // Use StaticMethodCall to properly represent static method calls
-                // This prevents incorrectly adding a 'this' parameter
-                (
-                    TastExpressionKind::StaticMethodCall {
-                        class_name: full_class_name,
-                        method_name: method.clone(),
-                        method_symbol: resolved_method_symbol,
-                        arguments: tast_arguments,
-                        type_args: Vec::new(),
-                    },
-                    return_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_static_method_call_expression(
+                namespace,
+                class_name,
+                method,
+                method_symbol_id,
+                arguments,
+                location,
+            )?,
             ResolvedHirExpression::FieldAccess {
                 object,
                 field,
                 field_symbol_id: _hir_field_symbol_id,
                 location,
-            } => {
-                let tast_object = self.infer_expression(object)?;
-
-                // NOTE: Resolve the field type AND symbol ID based on the object's actual type
-                // This enables inherited field access - we look up the field in the object's class hierarchy
-                let (field_type, resolved_field_symbol_id) =
-                    self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
-
-                // SEM005: Private field access check.
-                // A private class field may only be read/written from within the class that
-                // owns it.  resolved_field_symbol_id (when != SymbolId(0)) is the actual
-                // field symbol, which carries is_private and owner_scope_name.
-                if resolved_field_symbol_id.0 != 0 {
-                    if let Some(field_sym) = self.symbol_table.get_symbol(resolved_field_symbol_id)
-                    {
-                        if field_sym.is_private {
-                            if let Some(owner) = &field_sym.owner_scope_name {
-                                let current_class_name = self.current_class.and_then(|cid| {
-                                    self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
-                                });
-                                let inside_owner = current_class_name
-                                    .as_deref()
-                                    .map(|cn| cn == owner)
-                                    .unwrap_or(false);
-                                if !inside_owner {
-                                    self.errors.push(CompilerError::validation_error(
-                                        format!(
-                                            "'{}' is private and cannot be accessed from outside '{}'",
-                                            field, owner
-                                        ),
-                                        location.clone(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                (
-                    TastExpressionKind::PropertyAccess {
-                        object: Box::new(tast_object),
-                        property_name: field.clone(),
-                        property_symbol: resolved_field_symbol_id, // Use resolved symbol, not HIR placeholder
-                    },
-                    field_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_field_access_expression(object, field, location)?,
             ResolvedHirExpression::Array {
                 elements,
                 element_type,
                 location,
-            } => {
-                let mut tast_elements = Vec::new();
-                let concrete_element_type = self.hir_type_to_concrete(element_type);
-
-                for element in elements {
-                    let tast_element = self.infer_expression(element)?;
-                    tast_elements.push(tast_element);
-                }
-
-                let array_type = ConcreteType::Array(Box::new(concrete_element_type.clone()));
-
-                (
-                    TastExpressionKind::ArrayLiteral {
-                        elements: tast_elements,
-                        element_type: concrete_element_type,
-                    },
-                    array_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_array_expression(elements, element_type, location)?,
             ResolvedHirExpression::UnaryOp {
                 op,
                 operand,
                 location,
-            } => {
-                let tast_operand = self.infer_expression(operand)?;
-
-                let result_type =
-                    self.infer_unary_operation(op, &tast_operand.expr_type, location)?;
-
-                (
-                    TastExpressionKind::UnaryOperation {
-                        operator: self.convert_unary_operator(op),
-                        operand: Box::new(tast_operand),
-                    },
-                    result_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_unary_op_expression(op, operand, location)?,
             ResolvedHirExpression::Assignment {
                 target,
                 value,
                 location,
-            } => {
-                let tast_value = self.infer_expression(value)?;
-
-                // For assignment expressions, the type is the type of the assigned value
-                let assignment_type = tast_value.expr_type.clone();
-
-                // Validate assignment target - complex LValues not yet fully supported
-                match target {
-                    ResolvedHirLValue::Variable { .. } => {
-                        // Simple variable assignment is supported
-                    }
-                    _ => {
-                        // For complex LValues (field access, array indexing, etc.), emit error
-                        self.errors.push(CompilerError::type_error(
-                            "Complex assignment targets not yet fully supported in type inference",
-                            None,
-                            Some(location.clone()),
-                        ));
-                    }
-                }
-
-                // Assignment expressions return the assigned value in Clean Language
-                (tast_value.kind, assignment_type, location.clone())
-            }
-
+            } => self.infer_assignment_expression(target, value, location)?,
             ResolvedHirExpression::Constructor {
                 class_name,
                 class_symbol_id,
                 constructor_symbol_id,
                 arguments,
                 location,
-            } => {
-                let mut tast_arguments = Vec::new();
-                for arg in arguments {
-                    tast_arguments.push(self.infer_expression(arg)?);
-                }
-
-                // The constructor returns an instance of the class
-                let instance_type = ConcreteType::Class {
-                    symbol_id: *class_symbol_id,
-                    type_args: Vec::new(),
-                };
-
-                // For now, represent constructor calls as function calls
-                (
-                    TastExpressionKind::FunctionCall {
-                        function: Box::new(TastExpression {
-                            kind: TastExpressionKind::Variable {
-                                symbol_id: *constructor_symbol_id, // Use constructor's SymbolId, not class's
-                                name: format!("{}.constructor", class_name),
-                            },
-                            expr_type: ConcreteType::Function {
-                                parameters: tast_arguments
-                                    .iter()
-                                    .map(|a| a.expr_type.clone())
-                                    .collect(),
-                                return_type: Box::new(instance_type.clone()),
-                                is_background: false,
-                            },
-                            location: location.clone(),
-                        }),
-                        arguments: tast_arguments,
-                        type_args: Vec::new(),
-                    },
-                    instance_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_constructor_expression(
+                class_name,
+                class_symbol_id,
+                constructor_symbol_id,
+                arguments,
+                location,
+            )?,
             ResolvedHirExpression::This {
                 class_symbol_id,
                 location,
-            } => {
-                // `this` refers to the current instance of the class
-                let instance_type = ConcreteType::Class {
-                    symbol_id: *class_symbol_id,
-                    type_args: Vec::new(),
-                };
-
-                (
-                    TastExpressionKind::Variable {
-                        symbol_id: *class_symbol_id,
-                        name: "this".to_string(),
-                    },
-                    instance_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_this_expression(class_symbol_id, location)?,
             ResolvedHirExpression::Cast {
                 expression,
                 target_type,
                 location,
-            } => {
-                let tast_expression = self.infer_expression(expression)?;
-                let target_concrete_type = self.hir_type_to_concrete(target_type);
-
-                // Cast operations validated at compile time via type constraints
-                (
-                    TastExpressionKind::FunctionCall {
-                        function: Box::new(TastExpression {
-                            kind: TastExpressionKind::Variable {
-                                symbol_id: crate::resolver::symbol_table::SymbolId(0), // Dummy symbol
-                                name: format!("cast_to_{:?}", target_concrete_type),
-                            },
-                            expr_type: ConcreteType::Function {
-                                parameters: vec![tast_expression.expr_type.clone()],
-                                return_type: Box::new(target_concrete_type.clone()),
-                                is_background: false,
-                            },
-                            location: location.clone(),
-                        }),
-                        arguments: vec![tast_expression],
-                        type_args: Vec::new(),
-                    },
-                    target_concrete_type,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_cast_expression(expression, target_type, location)?,
             ResolvedHirExpression::OnError {
                 expression,
                 fallback,
                 location,
-            } => {
-                // Infer types for both the expression and fallback
-                let tast_expression = self.infer_expression(expression)?;
-                let tast_fallback = self.infer_expression(fallback)?;
-
-                // The onError expression returns the type of the main expression
-                // The fallback should be compatible with the expression type
-                self.add_constraint(TypeConstraint::Equality {
-                    left: tast_expression.expr_type.clone(),
-                    right: tast_fallback.expr_type.clone(),
-                    location: location.clone(),
-                });
-
-                let result_type = tast_expression.expr_type.clone();
-
-                // Create OnError TAST node
-                let kind = TastExpressionKind::OnError {
-                    expression: Box::new(tast_expression),
-                    fallback: Box::new(tast_fallback),
-                };
-
-                (kind, result_type, location.clone())
-            }
-
+            } => self.infer_on_error_expression(expression, fallback, location)?,
             ResolvedHirExpression::Conditional {
                 condition,
                 then_expr,
                 else_expr,
                 location,
-            } => {
-                // Infer condition type and ensure it's boolean
-                let tast_condition = self.infer_expression(condition)?;
-                self.add_constraint(TypeConstraint::Equality {
-                    left: tast_condition.expr_type.clone(),
-                    right: ConcreteType::Boolean,
-                    location: location.clone(),
-                });
-
-                // Infer types for both branches
-                let tast_then = self.infer_expression(then_expr)?;
-                let tast_else = self.infer_expression(else_expr)?;
-
-                // Both branches must have compatible types
-                self.add_constraint(TypeConstraint::Equality {
-                    left: tast_then.expr_type.clone(),
-                    right: tast_else.expr_type.clone(),
-                    location: location.clone(),
-                });
-
-                // Result type is the unified type of both branches
-                let result_type = tast_then.expr_type.clone();
-
-                // Create conditional TAST node
-                let kind = TastExpressionKind::Conditional {
-                    condition: Box::new(tast_condition),
-                    then_expr: Box::new(tast_then),
-                    else_expr: Box::new(tast_else),
-                };
-
-                (kind, result_type, location.clone())
-            }
-
+            } => self.infer_conditional_expression(condition, then_expr, else_expr, location)?,
             ResolvedHirExpression::BaseCall {
                 parent_class_symbol_id,
                 arguments,
                 location,
-            } => {
-                // Infer types for all arguments
-                let mut tast_arguments = Vec::new();
-                for arg in arguments {
-                    let tast_arg = self.infer_expression(arg)?;
-                    tast_arguments.push(tast_arg);
-                }
-
-                // BaseCall returns null/void (it's a statement-like expression)
-                (
-                    TastExpressionKind::BaseCall {
-                        parent_class_symbol_id: *parent_class_symbol_id,
-                        arguments: tast_arguments,
-                    },
-                    ConcreteType::Null,
-                    location.clone(),
-                )
-            }
-
+            } => self.infer_base_call_expression(parent_class_symbol_id, arguments, location)?,
             ResolvedHirExpression::Range {
                 start,
                 end,
                 step,
                 inclusive,
                 location,
-            } => {
-                // Infer types for start, end, and optionally step
-                let tast_start = self.infer_expression(start)?;
-                let tast_end = self.infer_expression(end)?;
-                let tast_step = if let Some(s) = step {
-                    Some(Box::new(self.infer_expression(s)?))
-                } else {
-                    None
-                };
-
-                // Both start and end should be integers
-                // For now, we'll type the range as an Array<Integer>
-                // The MIR/codegen will handle actually generating the range values
-
-                (
-                    TastExpressionKind::Range {
-                        start: Box::new(tast_start),
-                        end: Box::new(tast_end),
-                        step: tast_step,
-                        inclusive: *inclusive,
-                    },
-                    ConcreteType::Array(Box::new(ConcreteType::Integer)),
-                    location.clone(),
-                )
-            }
+            } => self.infer_range_expression(start, end, step, inclusive, location)?,
         };
 
         self.recursion_depth -= 1;
@@ -4032,6 +3233,944 @@ impl<'a> TypeInference<'a> {
             expr_type,
             location,
         })
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-expression-kind inference helpers
+    // -------------------------------------------------------------------------
+
+    /// Helper: infer a `Literal` expression.
+    fn infer_literal_expression(
+        &mut self,
+        value: &crate::ast::Value,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let (tast_literal, literal_type) = self.infer_literal(value);
+        Ok((
+            TastExpressionKind::Literal {
+                value: tast_literal,
+            },
+            literal_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `Variable` expression.
+    fn infer_variable_expression(
+        &mut self,
+        symbol_id: &SymbolId,
+        name: &str,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let var_type = self.type_env.get(symbol_id).cloned().unwrap_or_else(|| {
+            self.errors.push(CompilerError::type_error(
+                format!("Variable {} not found in type environment", name),
+                None,
+                Some(location.clone()),
+            ));
+            ConcreteType::Unknown
+        });
+
+        Ok((
+            TastExpressionKind::Variable {
+                symbol_id: *symbol_id,
+                name: name.to_string(),
+            },
+            var_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `BinaryOp` expression.
+    fn infer_binary_op_expression(
+        &mut self,
+        left: &ResolvedHirExpression,
+        op: &HirBinaryOp,
+        right: &ResolvedHirExpression,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let tast_left = self.infer_expression(left)?;
+        let tast_right = self.infer_expression(right)?;
+
+        // Resolve types with current substitutions before binary operation type inference
+        let resolved_left_type = self.resolve_type(&tast_left.expr_type);
+        let resolved_right_type = self.resolve_type(&tast_right.expr_type);
+
+        let result_type =
+            self.infer_binary_operation(op, &resolved_left_type, &resolved_right_type, location)?;
+
+        Ok((
+            TastExpressionKind::BinaryOperation {
+                operator: self.convert_binary_operator(op),
+                left: Box::new(tast_left),
+                right: Box::new(tast_right),
+            },
+            result_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `Call` (free function call) expression.
+    fn infer_call_expression(
+        &mut self,
+        function: &str,
+        function_symbol_id: &SymbolId,
+        arguments: &[ResolvedHirExpression],
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let mut tast_arguments = Vec::new();
+        for arg in arguments {
+            tast_arguments.push(self.infer_expression(arg)?);
+        }
+
+        // Get the function type and add parameter type constraints.
+        // Skip constraint check for namespace symbols — these resolve by name
+        // in infer_function_return_type, not by symbol type.
+        if let Some(function_type) = self.type_env.get(function_symbol_id).cloned() {
+            if matches!(function_type, ConcreteType::Namespace) {
+                return Err(CompilerError::type_error(
+                    format!(
+                        "'{}' is a namespace, not a function — use '{}.function_name()' syntax",
+                        function, function
+                    ),
+                    None,
+                    Some(location.clone()),
+                ));
+            }
+            let _constraint_check = self.infer_function_call(
+                &function_type,
+                &tast_arguments,
+                *function_symbol_id,
+                location,
+            )?;
+        }
+
+        // Look up function type and determine return type
+        let return_type =
+            self.infer_function_return_type(*function_symbol_id, function, &tast_arguments)?;
+
+        // Use SymbolId(0) for namespace functions (string.*, math.*, req.*, etc.)
+        // This ensures MIR builder creates NamedFunction operands for proper symbol resolution
+        // Any dotted function name is a namespace function (no hardcoded list needed)
+        let is_namespace_function = function.contains('.');
+
+        let resolved_symbol_id = if is_namespace_function {
+            tracing::trace!(
+                "DEBUG CALL: Using SymbolId(0) for namespace function '{}'",
+                function
+            );
+            crate::resolver::symbol_table::SymbolId(0)
+        } else {
+            *function_symbol_id
+        };
+
+        Ok((
+            TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: resolved_symbol_id,
+                        name: function.to_string(),
+                    },
+                    expr_type: ConcreteType::Function {
+                        parameters: tast_arguments.iter().map(|a| a.expr_type.clone()).collect(),
+                        return_type: Box::new(return_type.clone()),
+                        is_background: false,
+                    },
+                    location: location.clone(),
+                }),
+                arguments: tast_arguments,
+                type_args: Vec::new(),
+            },
+            return_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer an `Index` (bracket access) expression.
+    fn infer_index_expression(
+        &mut self,
+        array: &ResolvedHirExpression,
+        index: &ResolvedHirExpression,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let tast_array = self.infer_expression(array)?;
+        let tast_index = self.infer_expression(index)?;
+
+        // Extract element type based on array type and index type
+        let element_type = match &tast_array.expr_type {
+            // Any type supports both string (object access) and integer (array access)
+            ConcreteType::Any => match &tast_index.expr_type {
+                ConcreteType::String | ConcreteType::Integer => ConcreteType::Any,
+                other => {
+                    // IDX004: wrong index type on Any — emit warning, not error
+                    self.warnings.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Index type {:?} is unusual for Any: expected string (object access) or integer (array access)",
+                                    other
+                                ),
+                                Some(
+                                    "Use data[\"field\"] for object access or data[0] for array access"
+                                        .to_string(),
+                                ),
+                                crate::error::ErrorType::Validation,
+                                Some(location.clone()),
+                            )
+                            .with_severity(crate::error::ErrorSeverity::Warning)
+                            .with_error_code("IDX004"),
+                        ),
+                    });
+                    ConcreteType::Any
+                }
+            },
+            // Array requires integer index (IDX001)
+            ConcreteType::Array(element_type) => {
+                if !matches!(tast_index.expr_type, ConcreteType::Integer) {
+                    self.warnings.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Array index should be integer, found {}",
+                                    tast_index.expr_type
+                                ),
+                                Some(
+                                    "Use an integer expression to index into an array".to_string(),
+                                ),
+                                crate::error::ErrorType::Validation,
+                                Some(location.clone()),
+                            )
+                            .with_severity(crate::error::ErrorSeverity::Warning)
+                            .with_error_code("IDX001"),
+                        ),
+                    });
+                }
+                (**element_type).clone()
+            }
+            // Matrix indexing: matrix<T>[i] returns Array<T> (IDX002)
+            ConcreteType::Matrix(element_type) => {
+                if !matches!(tast_index.expr_type, ConcreteType::Integer) {
+                    self.warnings.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Matrix index should be integer, found {}",
+                                    tast_index.expr_type
+                                ),
+                                Some(
+                                    "Use an integer expression to index into a matrix".to_string(),
+                                ),
+                                crate::error::ErrorType::Validation,
+                                Some(location.clone()),
+                            )
+                            .with_severity(crate::error::ErrorSeverity::Warning)
+                            .with_error_code("IDX002"),
+                        ),
+                    });
+                }
+                ConcreteType::Array(Box::new((**element_type).clone()))
+            }
+            // Pairs type supports string key access (IDX003)
+            ConcreteType::Pairs(_, value_type) => {
+                if !matches!(tast_index.expr_type, ConcreteType::String) {
+                    self.warnings.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Pairs key should be string, found {}",
+                                    tast_index.expr_type
+                                ),
+                                Some("Use pairs[\"key\"] for pairs access".to_string()),
+                                crate::error::ErrorType::Validation,
+                                Some(location.clone()),
+                            )
+                            .with_severity(crate::error::ErrorSeverity::Warning)
+                            .with_error_code("IDX003"),
+                        ),
+                    });
+                }
+                (**value_type).clone()
+            }
+            other_type => {
+                // IDX004: indexing into a non-indexable type — warn only
+                self.warnings.push(CompilerError::Validation {
+                    context: Box::new(
+                        crate::error::ErrorContext::new(
+                            format!("Cannot index into type: {}", other_type),
+                            Some(
+                                "Bracket access is only supported on list, matrix, pairs, or any types"
+                                    .to_string(),
+                            ),
+                            crate::error::ErrorType::Validation,
+                            Some(location.clone()),
+                        )
+                        .with_severity(crate::error::ErrorSeverity::Warning)
+                        .with_error_code("IDX004"),
+                    ),
+                });
+                ConcreteType::Unknown
+            }
+        };
+
+        Ok((
+            TastExpressionKind::ArrayAccess {
+                array: Box::new(tast_array),
+                index: Box::new(tast_index),
+            },
+            element_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `MethodCall` (instance method call) expression.
+    fn infer_method_call_expression(
+        &mut self,
+        receiver: &ResolvedHirExpression,
+        method: &str,
+        method_symbol_id: &Option<SymbolId>,
+        arguments: &[ResolvedHirExpression],
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let tast_receiver = self.infer_expression(receiver)?;
+
+        let mut tast_arguments = Vec::new();
+        for arg in arguments {
+            tast_arguments.push(self.infer_expression(arg)?);
+        }
+
+        // SEM010: string.matches() argument must be a known pattern name literal.
+        // semantic-rules.md §SEM010
+        // Valid patterns per spec: email, url, uuid, slug, numeric, alpha, phone, date
+        if method == "matches" && matches!(tast_receiver.expr_type, ConcreteType::String) {
+            const VALID_PATTERNS: &[&str] = &[
+                "email", "url", "uuid", "slug", "numeric", "alpha", "phone", "date",
+            ];
+            if let Some(first_arg) = tast_arguments.first() {
+                let is_valid = match &first_arg.kind {
+                    crate::typechecker::tast::TastExpressionKind::Literal {
+                        value: crate::typechecker::tast::TastLiteral::String(pattern_name),
+                    } => VALID_PATTERNS.contains(&pattern_name.as_str()),
+                    _ => false, // non-literal argument also rejected
+                };
+                if !is_valid {
+                    let name = match &first_arg.kind {
+                        crate::typechecker::tast::TastExpressionKind::Literal {
+                            value: crate::typechecker::tast::TastLiteral::String(s),
+                        } => s.clone(),
+                        _ => "<expression>".to_string(),
+                    };
+                    self.errors.push(CompilerError::Validation {
+                        context: Box::new(
+                            crate::error::ErrorContext::new(
+                                format!(
+                                    "Unknown pattern name '{}'. Valid patterns: email, url, uuid, slug, numeric, alpha, phone, date",
+                                    name
+                                ),
+                                None,
+                                crate::error::ErrorType::Validation,
+                                Some(location.clone()),
+                            )
+                            .with_error_code("SEM010"),
+                        ),
+                    });
+                }
+            } else {
+                // No argument at all — report missing argument
+                self.errors.push(CompilerError::Validation {
+                    context: Box::new(
+                        crate::error::ErrorContext::new(
+                            "string.matches() requires a pattern name argument (email, url, uuid, slug, numeric, alpha, phone, date)".to_string(),
+                            None,
+                            crate::error::ErrorType::Validation,
+                            Some(location.clone()),
+                        )
+                        .with_error_code("SEM010"),
+                    ),
+                });
+            }
+        }
+
+        // Resolve receiver type with current substitutions before method lookup
+        let resolved_receiver_type = self.resolve_type(&tast_receiver.expr_type);
+
+        // Use resolved type for method resolution
+        let return_type =
+            self.infer_method_return_type(method, &resolved_receiver_type, &tast_arguments)?;
+
+        // NOTE: Resolve method symbol from receiver's class type or primitive type
+        // The resolver sets method_symbol_id = None because it doesn't have type info
+        // Now we have the receiver's type, so we can look up the method
+        let resolved_method_symbol = method_symbol_id
+            .or_else(|| {
+                match &resolved_receiver_type {
+                    ConcreteType::Class { symbol_id, .. } => {
+                        if let Some(method_sym) =
+                            self.symbol_table.lookup_class_member(*symbol_id, method)
+                        {
+                            tracing::debug!(
+                                class_symbol = symbol_id.0,
+                                method = %method,
+                                method_symbol = method_sym.0,
+                                "Resolved instance method symbol from class type"
+                            );
+                            Some(method_sym)
+                        } else {
+                            tracing::warn!(
+                                class_symbol = symbol_id.0,
+                                method = %method,
+                                "Method not found in class - using SymbolId(0) fallback"
+                            );
+                            None
+                        }
+                    }
+                    _ => {
+                        // Not a class type - might be built-in method on primitive type
+                        let type_name = Self::get_builtin_type_name(&resolved_receiver_type);
+                        if let Some(type_name) = type_name {
+                            let builtin_method_name = format!("{}.{}", type_name, method);
+                            if let Some(method_sym) =
+                                self.symbol_table.lookup_symbol(&builtin_method_name)
+                            {
+                                tracing::debug!(
+                                    type_name = %type_name,
+                                    method = %method,
+                                    builtin_name = %builtin_method_name,
+                                    method_symbol = method_sym.0,
+                                    "Resolved built-in method symbol from primitive type"
+                                );
+                                Some(method_sym)
+                            } else {
+                                // NOTE: Built-in methods like integer.toString, boolean.toString, etc.
+                                // are not registered in the symbol table - they're resolved at codegen time
+                                // via the function_map. Using SymbolId(0) is expected for these methods.
+                                tracing::debug!(
+                                    type_name = %type_name,
+                                    method = %method,
+                                    builtin_name = %builtin_method_name,
+                                    "Built-in method resolved at codegen time - using SymbolId(0)"
+                                );
+                                None
+                            }
+                        } else {
+                            // Complex type without built-in methods
+                            None
+                        }
+                    }
+                }
+            })
+            .unwrap_or(crate::resolver::symbol_table::SymbolId(0)); // SymbolId(0) for built-in methods
+
+        // SEM005: Private method access check.
+        // If the method is private, it may only be called from within the class that
+        // owns it.  We know the receiver's class (from resolved_receiver_type) and the
+        // current class (from self.current_class).  A violation is when:
+        //   - the method symbol is known (not the SymbolId(0) placeholder),
+        //   - the method is private,
+        //   - and the receiver's class differs from the currently executing class.
+        if resolved_method_symbol.0 != 0 {
+            if let Some(method_sym) = self.symbol_table.get_symbol(resolved_method_symbol) {
+                if method_sym.is_private {
+                    if let Some(owner) = &method_sym.owner_scope_name.clone() {
+                        let receiver_class_name = match &resolved_receiver_type {
+                            ConcreteType::Class { symbol_id, .. } => self
+                                .symbol_table
+                                .get_symbol(*symbol_id)
+                                .map(|s| s.name.clone()),
+                            _ => None,
+                        };
+                        let current_class_name = self.current_class.and_then(|cid| {
+                            self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
+                        });
+                        let inside_owner = current_class_name
+                            .as_deref()
+                            .map(|cn| cn == owner)
+                            .unwrap_or(false);
+                        if !inside_owner {
+                            if let Some(rcn) = &receiver_class_name {
+                                if rcn == owner {
+                                    self.errors.push(CompilerError::Validation {
+                                        context: Box::new(
+                                            crate::error::ErrorContext::new(
+                                                format!(
+                                                    "'{}' is private and cannot be accessed from outside '{}'",
+                                                    method, owner
+                                                ),
+                                                None,
+                                                crate::error::ErrorType::Validation,
+                                                Some(location.clone()),
+                                            )
+                                            .with_error_code("SEM005"),
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((
+            TastExpressionKind::MethodCall {
+                receiver: Box::new(tast_receiver),
+                method_name: method.to_string(),
+                method_symbol: resolved_method_symbol,
+                arguments: tast_arguments,
+                type_args: Vec::new(),
+            },
+            return_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `StaticMethodCall` expression.
+    fn infer_static_method_call_expression(
+        &mut self,
+        namespace: &[String],
+        class_name: &str,
+        method: &str,
+        method_symbol_id: &SymbolId,
+        arguments: &[ResolvedHirExpression],
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        tracing::debug!(
+            "DEBUG STATIC METHOD CALL: class_name='{}', method='{}', method_symbol_id=SymbolId({})",
+            class_name,
+            method,
+            method_symbol_id.0
+        );
+
+        let mut tast_arguments = Vec::new();
+        for arg in arguments {
+            tast_arguments.push(self.infer_expression(arg)?);
+        }
+
+        // Handle namespace.class.method() calls
+        let full_class_name = if !namespace.is_empty() {
+            format!("{}.{}", namespace.join("."), class_name)
+        } else {
+            class_name.to_string()
+        };
+
+        tracing::debug!(
+            "DEBUG TypeChecker: Calling infer_static_method_return_type for {}.{} with {} args",
+            full_class_name,
+            method,
+            tast_arguments.len()
+        );
+        let return_type =
+            self.infer_static_method_return_type(&full_class_name, method, &tast_arguments)?;
+
+        // NOTE: Use SymbolId(0) for built-in namespace methods
+        // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
+        // For user-defined static methods, keep the actual method_symbol_id
+        let is_builtin_namespace = [
+            "string",
+            "math",
+            "list",
+            "array",
+            "compare",
+            "file",
+            "http",
+            "json",
+            "input",
+            "validator",
+        ]
+        .iter()
+        .any(|ns| full_class_name.eq(*ns) || full_class_name.starts_with(&format!("{}.", ns)));
+
+        tracing::debug!(
+            "DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
+            full_class_name,
+            method,
+            is_builtin_namespace,
+            method_symbol_id.0
+        );
+
+        let resolved_method_symbol = if is_builtin_namespace {
+            tracing::trace!(
+                "DEBUG TYPE INF STATIC: Setting SymbolId(0) for namespace method {}.{}",
+                full_class_name,
+                method
+            );
+            crate::resolver::symbol_table::SymbolId(0) // Force NamedFunction in MIR
+        } else {
+            tracing::debug!(
+                "DEBUG TYPE INF STATIC: Keeping SymbolId({}) for user-defined static method",
+                method_symbol_id.0
+            );
+            *method_symbol_id // Use actual symbol for user-defined static methods
+        };
+
+        Ok((
+            TastExpressionKind::StaticMethodCall {
+                class_name: full_class_name,
+                method_name: method.to_string(),
+                method_symbol: resolved_method_symbol,
+                arguments: tast_arguments,
+                type_args: Vec::new(),
+            },
+            return_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `FieldAccess` expression.
+    fn infer_field_access_expression(
+        &mut self,
+        object: &ResolvedHirExpression,
+        field: &str,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let tast_object = self.infer_expression(object)?;
+
+        // NOTE: Resolve the field type AND symbol ID based on the object's actual type
+        // This enables inherited field access - we look up the field in the object's class hierarchy
+        let (field_type, resolved_field_symbol_id) =
+            self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
+
+        // SEM005: Private field access check.
+        // A private class field may only be read/written from within the class that
+        // owns it.  resolved_field_symbol_id (when != SymbolId(0)) is the actual
+        // field symbol, which carries is_private and owner_scope_name.
+        if resolved_field_symbol_id.0 != 0 {
+            if let Some(field_sym) = self.symbol_table.get_symbol(resolved_field_symbol_id) {
+                if field_sym.is_private {
+                    if let Some(owner) = &field_sym.owner_scope_name.clone() {
+                        let current_class_name = self.current_class.and_then(|cid| {
+                            self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
+                        });
+                        let inside_owner = current_class_name
+                            .as_deref()
+                            .map(|cn| cn == owner)
+                            .unwrap_or(false);
+                        if !inside_owner {
+                            self.errors.push(CompilerError::validation_error(
+                                format!(
+                                    "'{}' is private and cannot be accessed from outside '{}'",
+                                    field, owner
+                                ),
+                                location.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((
+            TastExpressionKind::PropertyAccess {
+                object: Box::new(tast_object),
+                property_name: field.to_string(),
+                property_symbol: resolved_field_symbol_id,
+            },
+            field_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer an `Array` literal expression.
+    fn infer_array_expression(
+        &mut self,
+        elements: &[ResolvedHirExpression],
+        element_type: &HirType,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let mut tast_elements = Vec::new();
+        let concrete_element_type = self.hir_type_to_concrete(element_type);
+
+        for element in elements {
+            let tast_element = self.infer_expression(element)?;
+            tast_elements.push(tast_element);
+        }
+
+        let array_type = ConcreteType::Array(Box::new(concrete_element_type.clone()));
+
+        Ok((
+            TastExpressionKind::ArrayLiteral {
+                elements: tast_elements,
+                element_type: concrete_element_type,
+            },
+            array_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `UnaryOp` expression.
+    fn infer_unary_op_expression(
+        &mut self,
+        op: &HirUnaryOp,
+        operand: &ResolvedHirExpression,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let tast_operand = self.infer_expression(operand)?;
+        let result_type = self.infer_unary_operation(op, &tast_operand.expr_type, location)?;
+
+        Ok((
+            TastExpressionKind::UnaryOperation {
+                operator: self.convert_unary_operator(op),
+                operand: Box::new(tast_operand),
+            },
+            result_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer an `Assignment` expression.
+    fn infer_assignment_expression(
+        &mut self,
+        target: &ResolvedHirLValue,
+        value: &ResolvedHirExpression,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let tast_value = self.infer_expression(value)?;
+
+        // For assignment expressions, the type is the type of the assigned value
+        let assignment_type = tast_value.expr_type.clone();
+
+        // Validate assignment target - complex LValues not yet fully supported
+        match target {
+            ResolvedHirLValue::Variable { .. } => {
+                // Simple variable assignment is supported
+            }
+            _ => {
+                // For complex LValues (field access, array indexing, etc.), emit error
+                self.errors.push(CompilerError::type_error(
+                    "Complex assignment targets not yet fully supported in type inference",
+                    None,
+                    Some(location.clone()),
+                ));
+            }
+        }
+
+        // Assignment expressions return the assigned value in Clean Language
+        Ok((tast_value.kind, assignment_type, location.clone()))
+    }
+
+    /// Helper: infer a `Constructor` expression.
+    fn infer_constructor_expression(
+        &mut self,
+        class_name: &str,
+        class_symbol_id: &SymbolId,
+        constructor_symbol_id: &SymbolId,
+        arguments: &[ResolvedHirExpression],
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let mut tast_arguments = Vec::new();
+        for arg in arguments {
+            tast_arguments.push(self.infer_expression(arg)?);
+        }
+
+        // The constructor returns an instance of the class
+        let instance_type = ConcreteType::Class {
+            symbol_id: *class_symbol_id,
+            type_args: Vec::new(),
+        };
+
+        // Represent constructor calls as function calls
+        Ok((
+            TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: *constructor_symbol_id, // Use constructor's SymbolId, not class's
+                        name: format!("{}.constructor", class_name),
+                    },
+                    expr_type: ConcreteType::Function {
+                        parameters: tast_arguments.iter().map(|a| a.expr_type.clone()).collect(),
+                        return_type: Box::new(instance_type.clone()),
+                        is_background: false,
+                    },
+                    location: location.clone(),
+                }),
+                arguments: tast_arguments,
+                type_args: Vec::new(),
+            },
+            instance_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `This` expression.
+    fn infer_this_expression(
+        &mut self,
+        class_symbol_id: &SymbolId,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        // `this` refers to the current instance of the class
+        let instance_type = ConcreteType::Class {
+            symbol_id: *class_symbol_id,
+            type_args: Vec::new(),
+        };
+
+        Ok((
+            TastExpressionKind::Variable {
+                symbol_id: *class_symbol_id,
+                name: "this".to_string(),
+            },
+            instance_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `Cast` expression.
+    fn infer_cast_expression(
+        &mut self,
+        expression: &ResolvedHirExpression,
+        target_type: &HirType,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let tast_expression = self.infer_expression(expression)?;
+        let target_concrete_type = self.hir_type_to_concrete(target_type);
+
+        // Cast operations validated at compile time via type constraints
+        Ok((
+            TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: crate::resolver::symbol_table::SymbolId(0), // Dummy symbol
+                        name: format!("cast_to_{:?}", target_concrete_type),
+                    },
+                    expr_type: ConcreteType::Function {
+                        parameters: vec![tast_expression.expr_type.clone()],
+                        return_type: Box::new(target_concrete_type.clone()),
+                        is_background: false,
+                    },
+                    location: location.clone(),
+                }),
+                arguments: vec![tast_expression],
+                type_args: Vec::new(),
+            },
+            target_concrete_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer an `OnError` expression.
+    fn infer_on_error_expression(
+        &mut self,
+        expression: &ResolvedHirExpression,
+        fallback: &ResolvedHirExpression,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        // Infer types for both the expression and fallback
+        let tast_expression = self.infer_expression(expression)?;
+        let tast_fallback = self.infer_expression(fallback)?;
+
+        // The onError expression returns the type of the main expression
+        // The fallback should be compatible with the expression type
+        self.add_constraint(TypeConstraint::Equality {
+            left: tast_expression.expr_type.clone(),
+            right: tast_fallback.expr_type.clone(),
+            location: location.clone(),
+        });
+
+        let result_type = tast_expression.expr_type.clone();
+
+        Ok((
+            TastExpressionKind::OnError {
+                expression: Box::new(tast_expression),
+                fallback: Box::new(tast_fallback),
+            },
+            result_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `Conditional` (ternary) expression.
+    fn infer_conditional_expression(
+        &mut self,
+        condition: &ResolvedHirExpression,
+        then_expr: &ResolvedHirExpression,
+        else_expr: &ResolvedHirExpression,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        // Infer condition type and ensure it's boolean
+        let tast_condition = self.infer_expression(condition)?;
+        self.add_constraint(TypeConstraint::Equality {
+            left: tast_condition.expr_type.clone(),
+            right: ConcreteType::Boolean,
+            location: location.clone(),
+        });
+
+        // Infer types for both branches
+        let tast_then = self.infer_expression(then_expr)?;
+        let tast_else = self.infer_expression(else_expr)?;
+
+        // Both branches must have compatible types
+        self.add_constraint(TypeConstraint::Equality {
+            left: tast_then.expr_type.clone(),
+            right: tast_else.expr_type.clone(),
+            location: location.clone(),
+        });
+
+        // Result type is the unified type of both branches
+        let result_type = tast_then.expr_type.clone();
+
+        Ok((
+            TastExpressionKind::Conditional {
+                condition: Box::new(tast_condition),
+                then_expr: Box::new(tast_then),
+                else_expr: Box::new(tast_else),
+            },
+            result_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `BaseCall` expression.
+    fn infer_base_call_expression(
+        &mut self,
+        parent_class_symbol_id: &SymbolId,
+        arguments: &[ResolvedHirExpression],
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let mut tast_arguments = Vec::new();
+        for arg in arguments {
+            let tast_arg = self.infer_expression(arg)?;
+            tast_arguments.push(tast_arg);
+        }
+
+        // BaseCall returns null/void (it's a statement-like expression)
+        Ok((
+            TastExpressionKind::BaseCall {
+                parent_class_symbol_id: *parent_class_symbol_id,
+                arguments: tast_arguments,
+            },
+            ConcreteType::Null,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer a `Range` expression.
+    fn infer_range_expression(
+        &mut self,
+        start: &ResolvedHirExpression,
+        end: &ResolvedHirExpression,
+        step: &Option<Box<ResolvedHirExpression>>,
+        inclusive: &bool,
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        // Infer types for start, end, and optionally step
+        let tast_start = self.infer_expression(start)?;
+        let tast_end = self.infer_expression(end)?;
+        let tast_step = if let Some(s) = step {
+            Some(Box::new(self.infer_expression(s)?))
+        } else {
+            None
+        };
+
+        // Both start and end should be integers
+        // The range is typed as an Array<Integer>; the MIR/codegen generates actual range values
+        Ok((
+            TastExpressionKind::Range {
+                start: Box::new(tast_start),
+                end: Box::new(tast_end),
+                step: tast_step,
+                inclusive: *inclusive,
+            },
+            ConcreteType::Array(Box::new(ConcreteType::Integer)),
+            location.clone(),
+        ))
     }
 
     /// Infer type for a literal

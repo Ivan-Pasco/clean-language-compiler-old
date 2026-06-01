@@ -752,6 +752,17 @@ pub struct ValidateBlock {
     pub messages: Option<ValidateMessages>,
 }
 
+impl ValidateBlock {
+    /// Create a new named validation schema with no fields or messages.
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            fields: Vec::new(),
+            messages: None,
+        }
+    }
+}
+
 /// A single field entry inside a `validate` block.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ValidateField {
@@ -813,6 +824,23 @@ pub struct ValidateCheckBlock {
     pub ok_branch: Vec<Statement>,
     /// Body executed when validation fails; `errors` (list<string>) is implicitly bound.
     pub error_branch: Vec<Statement>,
+}
+
+impl ValidateCheckBlock {
+    /// Create a new validate check block.
+    pub fn new(
+        schema_name: String,
+        input: Expression,
+        ok_branch: Vec<Statement>,
+        error_branch: Vec<Statement>,
+    ) -> Self {
+        Self {
+            schema_name,
+            input: Box::new(input),
+            ok_branch,
+            error_branch,
+        }
+    }
 }
 
 // ============================================================================
@@ -936,6 +964,18 @@ pub struct Screen {
     pub state: Option<Vec<StateVariable>>,
     pub body: Vec<UiNode>,
     pub location: Option<SourceLocation>,
+}
+
+impl Screen {
+    /// Create a new screen with the given name and no state or body nodes.
+    pub fn new(name: String, location: Option<SourceLocation>) -> Self {
+        Self {
+            name,
+            state: None,
+            body: Vec::new(),
+            location,
+        }
+    }
 }
 
 /// State variable in a screen: count: integer = 0
@@ -1151,6 +1191,19 @@ pub struct StateBlock {
     pub location: Option<SourceLocation>,
 }
 
+impl StateBlock {
+    /// Create a new state block with no declarations, computed values, or rules.
+    pub fn new(scope: StateScope, location: Option<SourceLocation>) -> Self {
+        Self {
+            declarations: Vec::new(),
+            computed: Vec::new(),
+            rules: None,
+            scope,
+            location,
+        }
+    }
+}
+
 /// Individual state declaration with type, name, initial value, and optional guard
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct StateDeclaration {
@@ -1165,6 +1218,42 @@ pub struct StateDeclaration {
     pub location: Option<SourceLocation>,
 }
 
+impl StateDeclaration {
+    /// Create a public state declaration with no guard clause.
+    pub fn new(
+        name: String,
+        type_: Type,
+        initializer: Expression,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        Self {
+            name,
+            type_,
+            initializer,
+            guard: None,
+            is_private: false,
+            location,
+        }
+    }
+
+    /// Create a private state declaration with no guard clause.
+    pub fn new_private(
+        name: String,
+        type_: Type,
+        initializer: Expression,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        Self {
+            name,
+            type_,
+            initializer,
+            guard: None,
+            is_private: true,
+            location,
+        }
+    }
+}
+
 /// Guard clause - validates state before mutation
 /// Example: guard value >= 0 else "Count cannot be negative"
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -1172,6 +1261,21 @@ pub struct GuardClause {
     pub condition: Expression, // Condition to validate (uses 'value' for proposed new value)
     pub error_message: String, // Error message if validation fails
     pub location: Option<SourceLocation>,
+}
+
+impl GuardClause {
+    /// Create a new guard clause.
+    pub fn new(
+        condition: Expression,
+        error_message: String,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        Self {
+            condition,
+            error_message,
+            location,
+        }
+    }
 }
 
 /// Computed state declaration - derived values that auto-update when dependencies change
@@ -1190,6 +1294,21 @@ pub struct WatchBlock {
     pub targets: Vec<String>, // State variable names to watch
     pub body: Vec<Statement>, // Code to execute when state changes
     pub location: Option<SourceLocation>,
+}
+
+impl WatchBlock {
+    /// Create a new watch block.
+    pub fn new(
+        targets: Vec<String>,
+        body: Vec<Statement>,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        Self {
+            targets,
+            body,
+            location,
+        }
+    }
 }
 
 /// Reset target - what to reset
@@ -1307,6 +1426,30 @@ pub struct Field {
     pub default_value: Option<Expression>,
 }
 
+impl Field {
+    /// Create a public, non-static field with no default value.
+    pub fn new(name: String, type_: Type) -> Self {
+        Self {
+            name,
+            type_,
+            visibility: Visibility::Public,
+            is_static: false,
+            default_value: None,
+        }
+    }
+
+    /// Create a public, non-static field with a default value.
+    pub fn new_with_default(name: String, type_: Type, default_value: Expression) -> Self {
+        Self {
+            name,
+            type_,
+            visibility: Visibility::Public,
+            is_static: false,
+            default_value: Some(default_value),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Constructor {
     pub parameters: Vec<Parameter>,
@@ -1345,6 +1488,24 @@ pub struct Class {
     pub location: Option<SourceLocation>,
 }
 
+impl Class {
+    /// Create a bare class with no fields, methods, constructor, or invariants.
+    pub fn new(name: String, location: Option<SourceLocation>) -> Self {
+        Self {
+            name,
+            type_parameters: Vec::new(),
+            description: None,
+            base_class: None,
+            base_class_type_args: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            constructor: None,
+            invariants: Vec::new(),
+            location,
+        }
+    }
+}
+
 /// External function declaration - a function provided by the WASM host (imported)
 /// These functions are declared in external: blocks and generate WASM import entries
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -1359,6 +1520,41 @@ pub struct ExternalFunction {
     pub module: String,
     /// Source location for error reporting
     pub location: Option<SourceLocation>,
+}
+
+impl ExternalFunction {
+    /// Create an external function declaration in the default `"env"` WASM module.
+    pub fn new(
+        name: String,
+        parameters: Vec<Parameter>,
+        return_type: Type,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        Self {
+            name,
+            parameters,
+            return_type,
+            module: "env".to_string(),
+            location,
+        }
+    }
+
+    /// Create an external function declaration with an explicit WASM module name.
+    pub fn new_in_module(
+        name: String,
+        parameters: Vec<Parameter>,
+        return_type: Type,
+        module: String,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        Self {
+            name,
+            parameters,
+            return_type,
+            module,
+            location,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -1377,6 +1573,34 @@ pub struct Program {
     pub externals: Vec<ExternalFunction>, // External functions (WASM imports)
     pub source_block: Option<Statement>,  // AI metadata: source: block
     pub location: Option<SourceLocation>,
+}
+
+impl Program {
+    /// Create an empty program with the given source location.
+    /// All collections are empty and optional fields are None.
+    pub fn new(location: Option<SourceLocation>) -> Self {
+        Self {
+            imports: Vec::new(),
+            plugins: Vec::new(),
+            statements: Vec::new(),
+            functions: Vec::new(),
+            classes: Vec::new(),
+            start_function: None,
+            tests: Vec::new(),
+            screens: Vec::new(),
+            state: None,
+            watch_blocks: Vec::new(),
+            screen_blocks: Vec::new(),
+            externals: Vec::new(),
+            source_block: None,
+            location,
+        }
+    }
+
+    /// Create an empty program with no location information.
+    pub fn empty() -> Self {
+        Self::new(None)
+    }
 }
 
 // Display implementations for better error messages
