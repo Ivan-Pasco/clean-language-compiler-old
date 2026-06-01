@@ -35,11 +35,15 @@ fn derive_companion_module_name(path: &Path, base_dir: &Path) -> String {
 ///
 /// Transforms `any guard()` → `any {module}_guard()` and `any load()` → `any {module}_load()`.
 fn prefix_companion_functions(source: &str, module_name: &str) -> String {
+    // Call-site replacements must happen BEFORE declaration replacements.
+    // If declarations are replaced first, `any load(` becomes `any pages_login_load(`,
+    // and the subsequent call-site pass then finds `load()` as a suffix of
+    // `pages_login_load()` and produces `pages_login_pages_login_load()`.
     source
-        .replace("any guard(", &format!("any {}_guard(", module_name))
-        .replace("any load(", &format!("any {}_load(", module_name))
         .replace("guard()", &format!("{}_guard()", module_name))
         .replace("load()", &format!("{}_load()", module_name))
+        .replace("any guard(", &format!("any {}_guard(", module_name))
+        .replace("any load(", &format!("any {}_load(", module_name))
 }
 
 /// Derive the URL route path from a .cln page companion file.
@@ -144,7 +148,7 @@ fn generate_page_route_source(records: &[PageCompanionRecord]) -> String {
     for record in records {
         let handler_name = format!("__page_handler_{}", record.module_name);
         src.push_str(&format!(
-            "\tpage_route_status = _http_route(\"GET\", \"{}\", {})\n",
+            "\tpage_route_status = _http_route(\"GET\", \"{}\", \"{}\")\n",
             record.route_path, handler_name
         ));
     }
