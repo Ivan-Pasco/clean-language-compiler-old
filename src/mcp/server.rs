@@ -1494,8 +1494,20 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
     };
 
     // Wrap tool result in MCP content format: {content: [{type: "text", text: "..."}]}
-    // Per MCP spec, tools/call results must use this format
+    // Per MCP spec, tools/call results must use this format.
+    // If the result already has a proper MCP content array (type+text items), pass it through
+    // without re-serialising — re-wrapping embeds the JSON as a string in `text`, which causes
+    // AI clients to do naive string extraction and pick up trailing JSON characters like `"}`.
     if let Some(result) = response.result {
+        let already_formatted = result
+            .get("content")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("type"))
+            .is_some();
+        if already_formatted {
+            return JsonRpcResponse::success(response.id, result);
+        }
         let text = serde_json::to_string(&result).unwrap_or_default();
         let is_error = result
             .get("success")
@@ -4105,16 +4117,28 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             report_id,
             fingerprint,
             tracking_url,
-        } => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true,
-                "report_id": report_id,
-                "fingerprint": fingerprint,
-                "tracking_url": tracking_url,
-                "message": "Error report submitted successfully. Thank you for helping improve Clean Language!"
-            }),
-        ),
+        } => {
+            let fp_line = fingerprint
+                .as_deref()
+                .map(|fp| format!("\nFingerprint: {}", fp))
+                .unwrap_or_default();
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": format!(
+                            "Error report submitted successfully.\nReport ID: {}{}\nTracking URL: {}\n\nThank you for helping improve Clean Language!",
+                            report_id, fp_line, tracking_url
+                        )
+                    }],
+                    "success": true,
+                    "report_id": report_id,
+                    "fingerprint": fingerprint,
+                    "tracking_url": tracking_url
+                }),
+            )
+        }
         crate::telemetry::SubmitResult::Queued {
             report_id,
             local_path,
@@ -5458,13 +5482,23 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
             let published_dir = diag_path.join("published").join(&full_sha);
             let _ = std::fs::create_dir_all(published_dir.parent().unwrap());
             let _ = std::fs::rename(&diag_entry_path, &published_dir);
+            let fp_line = fingerprint
+                .as_deref()
+                .map(|fp| format!("\nFingerprint: {}", fp))
+                .unwrap_or_default();
             JsonRpcResponse::success(
                 id,
                 json!({
+                    "content": [{
+                        "type": "text",
+                        "text": format!(
+                            "Diagnostic published to the error server.\nReport ID: {}{}\nTracking URL: {}\nSHA: {}\n\nThe Clean Language team will be notified.",
+                            rid, fp_line, tracking_url, full_sha
+                        )
+                    }],
                     "success": true, "status": "published", "report_id": rid,
                     "fingerprint": fingerprint,
-                    "tracking_url": tracking_url, "sha": full_sha,
-                    "message": "Diagnostic published to the error server. The Clean Language team will be notified."
+                    "tracking_url": tracking_url, "sha": full_sha
                 }),
             )
         }
