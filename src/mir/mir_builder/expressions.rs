@@ -1291,6 +1291,81 @@ impl MirBuilder {
                     }
                 }
 
+                // NOTE: Handle String.matches EARLY — pattern name is resolved to a compile-time
+                // integer ID so the host bridge receives (str_ptr, str_len, pattern_id: i32).
+                // ID mapping matches server v1.9.27+: email=0 url=1 uuid=2 phone=3 date=4
+                //   integer=5 number=6 alphanumeric=7
+                if matches!(&receiver.expr_type, ConcreteType::String) && method_name == "matches" {
+                    use crate::typechecker::tast::{TastExpressionKind, TastLiteral};
+
+                    let pattern_id: i64 = if let Some(arg) = arguments.first() {
+                        match &arg.kind {
+                            TastExpressionKind::Literal {
+                                value: TastLiteral::String(pattern),
+                            } => match pattern.as_str() {
+                                "email" => 0,
+                                "url" => 1,
+                                "uuid" => 2,
+                                "phone" => 3,
+                                "date" => 4,
+                                "integer" => 5,
+                                "number" => 6,
+                                "alphanumeric" => 7,
+                                other => {
+                                    return Err(vec![crate::error::CompilerError::semantic_error(
+                                        &format!(
+                                            "string.matches(): unknown pattern '{}'. \
+                                             Valid: email, url, uuid, phone, date, integer, number, alphanumeric",
+                                            other
+                                        ),
+                                        None,
+                                        Some(expression.location.clone()),
+                                    )]);
+                                }
+                            },
+                            _ => {
+                                return Err(vec![crate::error::CompilerError::semantic_error(
+                                    "string.matches(): pattern argument must be a string literal",
+                                    None,
+                                    Some(expression.location.clone()),
+                                )]);
+                            }
+                        }
+                    } else {
+                        return Err(vec![crate::error::CompilerError::semantic_error(
+                            "string.matches() requires a pattern name argument",
+                            None,
+                            Some(expression.location.clone()),
+                        )]);
+                    };
+
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::I32,
+                        expression.location.clone(),
+                    );
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: "string.matches".to_string(),
+                                symbol_id: SymbolId(0),
+                            },
+                            arguments: vec![
+                                MirOperand::Value(receiver_id),
+                                MirOperand::Constant(MirConstant::Integer(pattern_id)),
+                            ],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
                 // NOTE: Handle String.indexOf methods EARLY, regardless of method_symbol
                 // indexOf has a non-zero method_symbol (e.g., 71) but needs special handling
                 // to dispatch to the correct function based on argument count

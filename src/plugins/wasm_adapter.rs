@@ -779,45 +779,103 @@ impl WasmPluginAdapter {
         )?;
 
         // env.string_matches - Test whether a string matches a pattern (regex)
-        // string_matches(str_ptr: i32, str_len: i32, pat_ptr: i32, pat_len: i32) -> i32
+        // string_matches(str_ptr: i32, str_len: i32, pattern_id: i32) -> i32
+        // pattern_id is a compile-time constant: email=0 url=1 uuid=2 phone=3 date=4
+        //   integer=5 number=6 alphanumeric=7
         linker.func_wrap(
             "env",
             "string_matches",
             |mut caller: Caller<'_, PluginState>,
              str_ptr: i32,
              _str_len: i32,
-             pat_ptr: i32,
-             _pat_len: i32|
+             pattern_id: i32|
              -> i32 {
-                let read_string = |data: &[u8], ptr: usize| -> String {
-                    if ptr + 4 > data.len() {
-                        return String::new();
-                    }
-                    let len_bytes: [u8; 4] = data[ptr..ptr + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = ptr + 4;
-                    if data_start + len > data.len() {
-                        return String::new();
-                    }
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
-                };
                 let memory = caller
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
                     .unwrap();
                 let data = memory.data(&caller).to_vec();
-                let subject = read_string(&data, str_ptr as usize);
-                let pattern = read_string(&data, pat_ptr as usize);
-                if let Ok(re) = regex::Regex::new(&pattern) {
-                    if re.is_match(&subject) {
-                        1
-                    } else {
-                        0
+                let ptr = str_ptr as usize;
+                if ptr + 4 > data.len() {
+                    return 0;
+                }
+                let len = u32::from_le_bytes(data[ptr..ptr + 4].try_into().unwrap()) as usize;
+                let s = if ptr + 4 + len <= data.len() {
+                    String::from_utf8_lossy(&data[ptr + 4..ptr + 4 + len]).to_string()
+                } else {
+                    return 0;
+                };
+                let matched = match pattern_id {
+                    0 => {
+                        let p: Vec<&str> = s.splitn(2, '@').collect();
+                        p.len() == 2 && !p[0].is_empty() && p[1].contains('.')
                     }
+                    1 => s.starts_with("http://") || s.starts_with("https://"),
+                    2 => {
+                        let b = s.as_bytes();
+                        b.len() == 36
+                            && b[8] == b'-'
+                            && b[13] == b'-'
+                            && b[18] == b'-'
+                            && b[23] == b'-'
+                            && b.iter().enumerate().all(|(i, &c)| {
+                                if i == 8 || i == 13 || i == 18 || i == 23 {
+                                    c == b'-'
+                                } else {
+                                    c.is_ascii_hexdigit()
+                                }
+                            })
+                    }
+                    3 => {
+                        let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+                        d.len() >= 7 && d.len() <= 15
+                    }
+                    4 => {
+                        let p: Vec<&str> = s.splitn(3, '-').collect();
+                        p.len() == 3
+                            && p[0].len() == 4
+                            && p[1].len() == 2
+                            && p[2].len() == 2
+                            && p.iter().all(|x| x.chars().all(|c| c.is_ascii_digit()))
+                    }
+                    5 => !s.is_empty() && s.parse::<i64>().is_ok(),
+                    6 => !s.is_empty() && s.parse::<f64>().is_ok(),
+                    7 => !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()),
+                    _ => false,
+                };
+                if matched {
+                    1
                 } else {
                     0
                 }
             },
+        )?;
+
+        // Endpoint test bridge stubs (plugin sandbox has no live server)
+        linker.func_wrap(
+            "env",
+            "_test_http_request_raw",
+            |_: i32,
+             _: i32,
+             _: i32,
+             _: i32,
+             _: i32,
+             _: i32,
+             _: i32,
+             _: i32,
+             _: i32,
+             _: i32|
+             -> i32 { 0 },
+        )?;
+        linker.func_wrap(
+            "env",
+            "_test_response_status",
+            |_caller: Caller<'_, PluginState>, _: i32| -> i32 { 0 },
+        )?;
+        linker.func_wrap(
+            "env",
+            "_test_response_body",
+            |_caller: Caller<'_, PluginState>, _: i32| -> i32 { 0 },
         )?;
 
         // env.string_from_char_code - Create string from character code

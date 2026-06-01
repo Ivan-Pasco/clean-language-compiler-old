@@ -681,20 +681,22 @@ impl super::CodeGenerator {
     }
 
     /// Register the raw `string_matches` host import (imports phase only).
+    /// Signature: (str_ptr: i32, str_len: i32, pattern_id: i32) -> i32
+    /// pattern_id is resolved at compile time: email=0 url=1 uuid=2 phone=3 date=4 integer=5 number=6 alphanumeric=7
     /// Call `register_string_matches_wrapper()` AFTER all imports.
     pub fn register_string_matches_import(&mut self) -> Result<(), CompilerError> {
         use crate::types::WasmType;
         self.register_import_function(
             "env",
             "string_matches",
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
         Ok(())
     }
 
-    /// Create the `string.matches(str_ptr, pat_ptr)` WASM wrapper that reads both
-    /// lengths from memory and calls the raw `string_matches(ptr, len, pat_ptr, pat_len)` host.
+    /// Create the `string.matches(str_ptr, pattern_id)` WASM wrapper.
+    /// Reads str_len from memory at str_ptr[0] and calls the 3-param host import.
     /// Must be called AFTER all imports.
     pub fn register_string_matches_wrapper(&mut self) -> Result<(), CompilerError> {
         use crate::types::WasmType;
@@ -712,14 +714,8 @@ impl super::CodeGenerator {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
-            }), // str_len
-            Instruction::LocalGet(1), // pat_ptr
-            Instruction::LocalGet(1), // pat_ptr for len load
-            Instruction::I32Load(wasm_encoder::MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // pat_len
+            }), // str_len from memory
+            Instruction::LocalGet(1), // pattern_id (compile-time integer)
             Instruction::Call(raw_idx),
         ];
         let wrapper_idx = self.register_function(
@@ -729,6 +725,96 @@ impl super::CodeGenerator {
             &wrapper_instructions,
         )?;
         self.add_function_alias("string.matches", wrapper_idx);
+        Ok(())
+    }
+
+    /// Register raw imports for the endpoint-test bridge functions (imports phase only).
+    /// `_test_http_request_raw`: 10 x i32 (5 str ptr+len pairs) -> i32 handle
+    /// `_test_response_status`: (handle: i32) -> i32
+    /// `_test_response_body`:   (handle: i32) -> i32 (string structure ptr)
+    /// Call `register_test_bridge_wrappers()` AFTER all imports.
+    pub fn register_test_bridge_imports(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+        self.register_import_function(
+            "env",
+            "_test_http_request_raw",
+            &[
+                WasmType::I32,
+                WasmType::I32, // method ptr+len
+                WasmType::I32,
+                WasmType::I32, // path ptr+len
+                WasmType::I32,
+                WasmType::I32, // body ptr+len
+                WasmType::I32,
+                WasmType::I32, // header-key ptr+len
+                WasmType::I32,
+                WasmType::I32, // header-value ptr+len
+            ],
+            Some(WasmType::I32),
+        )?;
+        self.register_import_function(
+            "env",
+            "_test_response_status",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        self.register_import_function(
+            "env",
+            "_test_response_body",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        Ok(())
+    }
+
+    /// Create the `_test_http_request` WASM wrapper.
+    /// Takes 5 string structure pointers (each pointing to [len:4][data]), reads their
+    /// lengths from memory, and calls `_test_http_request_raw` with 10 i32 params.
+    /// Must be called AFTER all imports.
+    pub fn register_test_bridge_wrappers(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+        use wasm_encoder::Instruction;
+
+        let raw_idx = match self.function_map.get("_test_http_request_raw").copied() {
+            Some(idx) => idx,
+            None => return Ok(()),
+        };
+
+        // Wrapper: (method_ptr, path_ptr, body_ptr, hk_ptr, hv_ptr) -> handle
+        // For each string ptr N: push ptr+4 (content), push mem[ptr] (len)
+        let expand = |local: u32| {
+            vec![
+                Instruction::LocalGet(local),
+                Instruction::I32Const(4),
+                Instruction::I32Add, // content_ptr = ptr + 4
+                Instruction::LocalGet(local),
+                Instruction::I32Load(wasm_encoder::MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }), // len = mem[ptr]
+            ]
+        };
+
+        let mut instructions: Vec<Instruction> = Vec::new();
+        for local in 0u32..5 {
+            instructions.extend(expand(local));
+        }
+        instructions.push(Instruction::Call(raw_idx));
+
+        let wrapper_idx = self.register_function(
+            "_test_http_request",
+            &[
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+            ],
+            Some(WasmType::I32),
+            &instructions,
+        )?;
+        self.add_function_alias("_test_http_request", wrapper_idx);
         Ok(())
     }
 

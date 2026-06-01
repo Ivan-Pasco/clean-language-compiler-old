@@ -620,17 +620,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     linker.func_wrap("env", "string_to_int", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "string_to_float", |_: i32| -> f64 { 0.0 })?;
-    linker.func_wrap(
-        "env",
-        "string_matches",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
-    )?;
+    linker.func_wrap("env", "string_matches", |_: i32, _: i32, _: i32| -> i32 {
+        0
+    })?;
     linker.func_wrap("env", "string_repeat", |_: i32, _: i32, _: i32| -> i32 {
         0
     })?;
     linker.func_wrap("env", "string.repeat", |_: i32, _: i32, _: i32| -> i32 {
         0
     })?;
+
+    // Endpoint test bridge stubs (no live server in runner — always return 0)
+    linker.func_wrap(
+        "env",
+        "_test_http_request_raw",
+        |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
+            0
+        },
+    )?;
+    linker.func_wrap("env", "_test_response_status", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_test_response_body", |_: i32| -> i32 { 0 })?;
 
     // String trim functions
     linker.func_wrap(

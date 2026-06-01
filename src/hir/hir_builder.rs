@@ -534,9 +534,19 @@ impl HirBuilder {
                                     location: test_loc,
                                 });
                             }
-                            crate::ast::TestCaseKind::Endpoint(_) => {
-                                // Endpoint tests require a live server via test.http_request.
-                                // HIR generation is deferred; see TASKS.md.
+                            crate::ast::TestCaseKind::Endpoint(endpoint) => {
+                                let name = test_case
+                                    .description
+                                    .clone()
+                                    .unwrap_or_else(|| format!("test_{}", idx));
+                                let body =
+                                    self.build_endpoint_test_body(endpoint, test_loc.clone())?;
+                                tests.push(HirTest {
+                                    name,
+                                    description: test_case.description.clone(),
+                                    body,
+                                    location: test_loc,
+                                });
                             }
                         }
                     }
@@ -625,9 +635,18 @@ impl HirBuilder {
                         location: test_loc,
                     });
                 }
-                crate::ast::TestCaseKind::Endpoint(_) => {
-                    // Endpoint tests require a live server via test.http_request.
-                    // HIR generation is deferred; see TASKS.md.
+                crate::ast::TestCaseKind::Endpoint(endpoint) => {
+                    let name = test_case
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| format!("test_{}", idx));
+                    let body = self.build_endpoint_test_body(endpoint, test_loc.clone())?;
+                    tests.push(HirTest {
+                        name,
+                        description: test_case.description.clone(),
+                        body,
+                        location: test_loc,
+                    });
                 }
             }
         }
@@ -2632,5 +2651,207 @@ impl HirBuilder {
 impl Default for HirBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl HirBuilder {
+    /// Build a HirTest body for an endpoint test case.
+    ///
+    /// Generates:
+    ///   integer __handle = _test_http_request(method, path, body, "", "", "")
+    ///   boolean __ok = true
+    ///   for each assertion:
+    ///     Status   → __ok = __ok && (_test_response_status(__handle) op value)
+    ///     JsonField → __ok = __ok && (json.get(json.decode(_test_response_body(__handle)), path) op value)
+    ///   return __ok
+    pub(crate) fn build_endpoint_test_body(
+        &mut self,
+        endpoint: &crate::ast::EndpointTest,
+        loc: SourceLocation,
+    ) -> Result<HirBlock, CompilerError> {
+        use crate::ast::{HttpComparisonOp, HttpMethod, HttpTestAssertion};
+
+        let empty_str = || HirExpression::Literal {
+            value: Value::String(String::new()),
+            location: loc.clone(),
+        };
+
+        let method_str = match endpoint.request.method {
+            HttpMethod::Get => "GET",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Patch => "PATCH",
+        };
+
+        // _test_http_request(method, path, body, "", "", "")
+        // body: use empty string for now (body key/value pairs require serialization)
+        let handle_call = HirExpression::Call {
+            function: "_test_http_request".to_string(),
+            arguments: vec![
+                HirExpression::Literal {
+                    value: Value::String(method_str.to_string()),
+                    location: loc.clone(),
+                },
+                HirExpression::Literal {
+                    value: Value::String(endpoint.request.path.clone()),
+                    location: loc.clone(),
+                },
+                empty_str(), // body
+                empty_str(), // header key
+                empty_str(), // header value
+            ],
+            location: loc.clone(),
+        };
+
+        let mut stmts: Vec<HirStatement> = vec![
+            HirStatement::VariableDeclaration {
+                name: "__handle".to_string(),
+                var_type: HirType::Integer,
+                initializer: Some(handle_call),
+                is_mutable: false,
+                location: loc.clone(),
+            },
+            HirStatement::VariableDeclaration {
+                name: "__ok".to_string(),
+                var_type: HirType::Boolean,
+                initializer: Some(HirExpression::Literal {
+                    value: Value::Boolean(true),
+                    location: loc.clone(),
+                }),
+                is_mutable: true,
+                location: loc.clone(),
+            },
+        ];
+
+        let hir_op = |op: &HttpComparisonOp| match op {
+            HttpComparisonOp::Equal => HirBinaryOp::Equal,
+            HttpComparisonOp::NotEqual => HirBinaryOp::NotEqual,
+            HttpComparisonOp::Less => HirBinaryOp::Less,
+            HttpComparisonOp::Greater => HirBinaryOp::Greater,
+            HttpComparisonOp::LessEqual => HirBinaryOp::LessEqual,
+            HttpComparisonOp::GreaterEqual => HirBinaryOp::GreaterEqual,
+        };
+
+        for assertion in &endpoint.assertions {
+            let check = match assertion {
+                HttpTestAssertion::Status { op, value } => HirExpression::BinaryOp {
+                    left: Box::new(HirExpression::Call {
+                        function: "_test_response_status".to_string(),
+                        arguments: vec![HirExpression::Variable {
+                            name: "__handle".to_string(),
+                            location: loc.clone(),
+                        }],
+                        location: loc.clone(),
+                    }),
+                    op: hir_op(op),
+                    right: Box::new(HirExpression::Literal {
+                        value: Value::Integer(*value),
+                        location: loc.clone(),
+                    }),
+                    location: loc.clone(),
+                },
+                HttpTestAssertion::JsonField { path, op, value } => {
+                    let body_expr = HirExpression::Call {
+                        function: "_test_response_body".to_string(),
+                        arguments: vec![HirExpression::Variable {
+                            name: "__handle".to_string(),
+                            location: loc.clone(),
+                        }],
+                        location: loc.clone(),
+                    };
+                    let decoded = HirExpression::Call {
+                        function: "json.decode".to_string(),
+                        arguments: vec![body_expr],
+                        location: loc.clone(),
+                    };
+                    // Chain json.get calls for each path segment
+                    let field_expr = path.iter().fold(decoded, |acc, seg| HirExpression::Call {
+                        function: "json.get".to_string(),
+                        arguments: vec![
+                            acc,
+                            HirExpression::Literal {
+                                value: Value::String(seg.clone()),
+                                location: loc.clone(),
+                            },
+                        ],
+                        location: loc.clone(),
+                    });
+                    let rhs = self.build_expression(value)?;
+                    HirExpression::BinaryOp {
+                        left: Box::new(field_expr),
+                        op: hir_op(op),
+                        right: Box::new(rhs),
+                        location: loc.clone(),
+                    }
+                }
+                HttpTestAssertion::JsonFieldNotNull { path } => {
+                    let body_expr = HirExpression::Call {
+                        function: "_test_response_body".to_string(),
+                        arguments: vec![HirExpression::Variable {
+                            name: "__handle".to_string(),
+                            location: loc.clone(),
+                        }],
+                        location: loc.clone(),
+                    };
+                    let decoded = HirExpression::Call {
+                        function: "json.decode".to_string(),
+                        arguments: vec![body_expr],
+                        location: loc.clone(),
+                    };
+                    let field_expr = path.iter().fold(decoded, |acc, seg| HirExpression::Call {
+                        function: "json.get".to_string(),
+                        arguments: vec![
+                            acc,
+                            HirExpression::Literal {
+                                value: Value::String(seg.clone()),
+                                location: loc.clone(),
+                            },
+                        ],
+                        location: loc.clone(),
+                    });
+                    HirExpression::BinaryOp {
+                        left: Box::new(field_expr),
+                        op: HirBinaryOp::NotEqual,
+                        right: Box::new(HirExpression::Literal {
+                            value: Value::None,
+                            location: loc.clone(),
+                        }),
+                        location: loc.clone(),
+                    }
+                }
+            };
+
+            // __ok = __ok && check
+            stmts.push(HirStatement::Assignment {
+                target: HirLValue::Variable {
+                    name: "__ok".to_string(),
+                    location: loc.clone(),
+                },
+                value: HirExpression::BinaryOp {
+                    left: Box::new(HirExpression::Variable {
+                        name: "__ok".to_string(),
+                        location: loc.clone(),
+                    }),
+                    op: HirBinaryOp::And,
+                    right: Box::new(check),
+                    location: loc.clone(),
+                },
+                location: loc.clone(),
+            });
+        }
+
+        stmts.push(HirStatement::Return {
+            value: Some(HirExpression::Variable {
+                name: "__ok".to_string(),
+                location: loc.clone(),
+            }),
+            location: loc.clone(),
+        });
+
+        Ok(HirBlock {
+            statements: stmts,
+            location: loc,
+        })
     }
 }

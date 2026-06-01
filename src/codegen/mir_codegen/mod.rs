@@ -486,6 +486,17 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
+            if self
+                .wasm_generator
+                .has_reachable_prefix("_test_http_request")
+                || self.wasm_generator.has_reachable_prefix("_test_response_")
+            {
+                debug_mir!("DEBUG MIR: Registering test bridge imports (endpoint tests)");
+                self.wasm_generator
+                    .register_test_bridge_imports()
+                    .map_err(|e| vec![e])?;
+            }
+
             // OPTIMIZATION: Only import bridge functions that are actually used in the code
             if !self.bridge_functions.is_empty() {
                 debug_mir!("DEBUG MIR: Collecting used bridge function names from MIR");
@@ -710,6 +721,17 @@ impl MirCodeGenerator<'_> {
                 debug_mir!("DEBUG MIR: Registering string_matches wrapper (used in code)");
                 self.wasm_generator
                     .register_string_matches_wrapper()
+                    .map_err(|e| vec![e])?;
+            }
+
+            if self
+                .wasm_generator
+                .has_reachable_prefix("_test_http_request")
+                || self.wasm_generator.has_reachable_prefix("_test_response_")
+            {
+                debug_mir!("DEBUG MIR: Registering test bridge wrappers (endpoint tests)");
+                self.wasm_generator
+                    .register_test_bridge_wrappers()
                     .map_err(|e| vec![e])?;
             }
         }
