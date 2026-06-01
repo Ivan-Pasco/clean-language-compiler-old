@@ -5,8 +5,8 @@
 
 use crate::ast::SourceLocation;
 use crate::hir::*;
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 /// Unique identifier for symbols
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -139,7 +139,7 @@ pub struct Module {
 }
 
 /// Global symbol table managing all symbols and scopes
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GlobalSymbolTable {
     symbols: HashMap<SymbolId, Symbol>,
     scopes: HashMap<ScopeId, Scope>,
@@ -158,7 +158,24 @@ pub struct GlobalSymbolTable {
     pub(crate) builtins: HashSet<SymbolId>,
 
     /// Accumulated SCOPE003 errors (scope depth exceeded). Drained by the resolver.
-    pub(crate) scope_depth_errors: RefCell<Vec<String>>,
+    pub(crate) scope_depth_errors: Mutex<Vec<String>>,
+}
+
+impl Clone for GlobalSymbolTable {
+    fn clone(&self) -> Self {
+        Self {
+            symbols: self.symbols.clone(),
+            scopes: self.scopes.clone(),
+            modules: self.modules.clone(),
+            next_symbol_id: self.next_symbol_id,
+            next_scope_id: self.next_scope_id,
+            next_module_id: self.next_module_id,
+            current_scope: self.current_scope,
+            current_module: self.current_module,
+            builtins: self.builtins.clone(),
+            scope_depth_errors: Mutex::new(self.scope_depth_errors.lock().unwrap().clone()),
+        }
+    }
 }
 
 impl GlobalSymbolTable {
@@ -174,7 +191,7 @@ impl GlobalSymbolTable {
             current_scope: ScopeId(0),
             current_module: None,
             builtins: HashSet::new(),
-            scope_depth_errors: RefCell::new(Vec::new()),
+            scope_depth_errors: Mutex::new(Vec::new()),
         };
 
         // Create global scope
@@ -423,7 +440,7 @@ impl GlobalSymbolTable {
     /// Drain and return any SCOPE003 errors accumulated during symbol lookup.
     /// Call this after each resolution pass to surface depth-exceeded errors.
     pub fn take_scope_depth_errors(&self) -> Vec<String> {
-        self.scope_depth_errors.borrow_mut().drain(..).collect()
+        self.scope_depth_errors.lock().unwrap().drain(..).collect()
     }
 
     /// Look up a symbol by name starting from a specific scope
@@ -445,7 +462,7 @@ impl GlobalSymbolTable {
                 MAX_SCOPE_DEPTH, name
             );
             tracing::warn!("{}", msg);
-            self.scope_depth_errors.borrow_mut().push(msg);
+            self.scope_depth_errors.lock().unwrap().push(msg);
             return None;
         }
 
