@@ -34,7 +34,6 @@ pub struct NameResolver {
     language_fn_defaults: std::collections::HashMap<String, Vec<String>>,
 }
 
-#[allow(dead_code)] // NameResolver not yet wired into the main compilation pipeline
 impl NameResolver {
     /// Create a new name resolver
     pub fn new() -> Self {
@@ -160,6 +159,22 @@ impl NameResolver {
                 let _ = self.resolve_function(func.clone());
             }
             self.current_screen = None;
+        }
+
+        // Surface any SCOPE003 (max nesting depth exceeded) errors accumulated
+        // during symbol lookups into the resolver error list.
+        for msg in self.symbol_table.take_scope_depth_errors() {
+            self.errors.push(CompilerError::Validation {
+                context: Box::new(
+                    crate::error::ErrorContext::new(
+                        msg,
+                        Some("Reduce block nesting depth — maximum is 50 levels.".to_string()),
+                        crate::error::ErrorType::Validation,
+                        None,
+                    )
+                    .with_error_code("SCOPE003"),
+                ),
+            });
         }
 
         Ok(ResolvedHirProgram {
@@ -2739,6 +2754,7 @@ impl NameResolver {
     }
 
     /// Report a warning
+    #[allow(dead_code)]
     fn warning(&mut self, message: &str, location: SourceLocation) {
         self.warnings
             .push(CompilerError::validation_warning(message, location));
@@ -2751,6 +2767,7 @@ impl NameResolver {
     ///
     /// This value is compared against `Symbol::owner_scope_name` to decide
     /// whether a private-symbol access is permitted.
+    #[allow(dead_code)]
     fn current_class_name(&self) -> String {
         if let Some(class_id) = self.current_class {
             if let Some(symbol) = self.symbol_table.get_symbol(class_id) {
@@ -3481,6 +3498,45 @@ impl NameResolver {
                     _ => Some(Self::builtin_type_to_hir_type(&ret)),
                 }
             };
+
+            // PLUGIN002: detect signature mismatch with an already-registered function.
+            // When two plugins declare the same bridge name with different parameter
+            // counts, the second registration would silently shadow the first. Emit an
+            // error instead so the developer can reconcile the conflict.
+            if let Some(existing_id) = self.symbol_table.lookup_symbol(&func.name) {
+                if let Some(existing_sym) = self.symbol_table.get_symbol(existing_id) {
+                    if let SymbolKind::Function {
+                        parameters: ref existing_params,
+                        ..
+                    } = existing_sym.kind
+                    {
+                        if existing_params.len() != parameters.len() {
+                            self.errors.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "PLUGIN002: Bridge function '{}' is declared with {} parameter(s) \
+                                             in plugin.toml but a conflicting declaration with {} parameter(s) \
+                                             is already registered. Reconcile the signatures.",
+                                            func.name,
+                                            parameters.len(),
+                                            existing_params.len()
+                                        ),
+                                        Some(format!(
+                                            "Check all plugin.toml [bridge] sections that declare '{}'",
+                                            func.name
+                                        )),
+                                        crate::error::ErrorType::Validation,
+                                        None,
+                                    )
+                                    .with_error_code("PLUGIN002"),
+                                ),
+                            });
+                            continue;
+                        }
+                    }
+                }
+            }
 
             tracing::debug!(
                 name = %func.name,

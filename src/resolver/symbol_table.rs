@@ -5,6 +5,7 @@
 
 use crate::ast::SourceLocation;
 use crate::hir::*;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 /// Unique identifier for symbols
@@ -155,6 +156,9 @@ pub struct GlobalSymbolTable {
 
     // Built-in symbols (populated during initialization)
     pub(crate) builtins: HashSet<SymbolId>,
+
+    /// Accumulated SCOPE003 errors (scope depth exceeded). Drained by the resolver.
+    pub(crate) scope_depth_errors: RefCell<Vec<String>>,
 }
 
 impl GlobalSymbolTable {
@@ -170,6 +174,7 @@ impl GlobalSymbolTable {
             current_scope: ScopeId(0),
             current_module: None,
             builtins: HashSet::new(),
+            scope_depth_errors: RefCell::new(Vec::new()),
         };
 
         // Create global scope
@@ -415,6 +420,12 @@ impl GlobalSymbolTable {
         self.lookup_symbol_in_scope(name, self.current_scope)
     }
 
+    /// Drain and return any SCOPE003 errors accumulated during symbol lookup.
+    /// Call this after each resolution pass to surface depth-exceeded errors.
+    pub fn take_scope_depth_errors(&self) -> Vec<String> {
+        self.scope_depth_errors.borrow_mut().drain(..).collect()
+    }
+
     /// Look up a symbol by name starting from a specific scope
     pub fn lookup_symbol_in_scope(&self, name: &str, scope_id: ScopeId) -> Option<SymbolId> {
         self.lookup_symbol_in_scope_with_depth(name, scope_id, 0)
@@ -429,11 +440,12 @@ impl GlobalSymbolTable {
         const MAX_SCOPE_DEPTH: usize = 50; // Prevent infinite recursion in scope chains
 
         if depth > MAX_SCOPE_DEPTH {
-            tracing::warn!(
-                symbol_name = %name,
-                max_depth = MAX_SCOPE_DEPTH,
-                "Maximum scope depth exceeded looking up symbol"
+            let msg = format!(
+                "SCOPE003: Maximum scope nesting depth ({}) exceeded while looking up symbol '{}'",
+                MAX_SCOPE_DEPTH, name
             );
+            tracing::warn!("{}", msg);
+            self.scope_depth_errors.borrow_mut().push(msg);
             return None;
         }
 

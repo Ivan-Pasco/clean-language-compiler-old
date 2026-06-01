@@ -9,8 +9,8 @@
 
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
-    MirBinaryOp, MirConstant, MirFunction, MirOperand, MirOperation, MirProgram, MirTerminator,
-    MirUnaryOp, ValueId,
+    BasicBlockId, MirBinaryOp, MirConstant, MirFunction, MirOperand, MirOperation, MirProgram,
+    MirTerminator, MirUnaryOp, ValueId,
 };
 use crate::mir::MirConfig;
 use std::collections::{HashMap, HashSet};
@@ -645,18 +645,60 @@ impl OptimizationPass for ControlFlowSimplificationPass {
 
     fn optimize_function(
         &mut self,
-        _function: &mut MirFunction,
+        function: &mut MirFunction,
     ) -> Result<PassStats, CompilerError> {
-        let stats = PassStats::default();
+        let mut stats = PassStats::default();
 
-        // Control flow simplification (placeholder for future optimization)
-        // Potential improvements: unreachable block removal, block merging, branch simplification
+        // Dead block removal: collect all blocks reachable from the entry block
+        // via a DFS through successor edges, then delete everything unreachable.
+        let reachable = Self::reachable_blocks(function);
+
+        let unreachable: Vec<BasicBlockId> = function
+            .blocks
+            .keys()
+            .filter(|id| !reachable.contains(id))
+            .copied()
+            .collect();
+
+        for id in &unreachable {
+            function.blocks.remove(id);
+            stats.blocks_eliminated += 1;
+        }
+
+        // Remove the unreachable ids from every surviving block's predecessor set.
+        if !unreachable.is_empty() {
+            let dead_set: HashSet<BasicBlockId> = unreachable.into_iter().collect();
+            for block in function.blocks.values_mut() {
+                block.predecessors.retain(|p| !dead_set.contains(p));
+            }
+        }
 
         Ok(stats)
     }
 
     fn is_enabled(&self, config: &MirConfig) -> bool {
         config.optimize && config.opt_level >= 1
+    }
+}
+
+impl ControlFlowSimplificationPass {
+    /// BFS/DFS from the entry block; returns the set of reachable BasicBlockIds.
+    fn reachable_blocks(function: &MirFunction) -> HashSet<BasicBlockId> {
+        let mut visited = HashSet::new();
+        let mut stack = vec![function.entry_block];
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(block) = function.blocks.get(&id) {
+                for &succ in &block.successors {
+                    if !visited.contains(&succ) {
+                        stack.push(succ);
+                    }
+                }
+            }
+        }
+        visited
     }
 }
 

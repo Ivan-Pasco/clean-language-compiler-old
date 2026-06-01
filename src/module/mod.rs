@@ -54,7 +54,6 @@ impl Default for ModuleResolver {
     }
 }
 
-#[allow(dead_code)] // ModuleResolver not yet wired into the main compilation pipeline
 impl ModuleResolver {
     /// Create a new module resolver
     pub fn new() -> Self {
@@ -323,6 +322,7 @@ impl ModuleResolver {
 
     /// Extract exported symbols from a program
     /// According to specification: public by default, private when marked
+    #[allow(dead_code)]
     fn extract_exports(&self, program: &Program) -> ModuleExports {
         let mut exports = ModuleExports {
             functions: HashMap::new(),

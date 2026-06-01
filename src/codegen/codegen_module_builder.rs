@@ -36,14 +36,6 @@ impl super::CodeGenerator {
         true
     }
 
-    /// Finalize and return the WebAssembly binary
-    pub fn finish(&self) -> Vec<u8> {
-        // This method is kept for compatibility, but the new approach
-        // generates the binary directly in the generate() method
-        // For now, return an empty vector as a placeholder
-        vec![]
-    }
-
     /// Add a string to the string pool and return its pointer
     pub fn add_string_to_pool(&mut self, string: &str) -> u32 {
         self.memory_utils
