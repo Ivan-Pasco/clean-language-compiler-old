@@ -36,6 +36,23 @@ pub struct ValidationContext {
     /// These are valid as method-call receivers without being declared variables.
     pub plugin_namespaces: HashSet<String>,
 
+    /// Names of all module-level mutable state variables (from the top-level `state:` block).
+    /// Used by the CONC001 check to detect unsynchronised shared-state access from
+    /// inside `background:` expressions.
+    pub state_var_names: HashSet<String>,
+
+    /// Set to `true` while validating the expression of a `background:` statement.
+    /// Any access to a module-level state variable in this context triggers CONC001.
+    pub inside_background: bool,
+
+    /// Set to `true` while validating a function that is a request handler.
+    /// Request handlers are identified by: a parameter named `req` or `request`,
+    /// a parameter whose type is named `Request`, or a function whose name starts
+    /// with `__route_handler_` (the compiler-generated route handler prefix).
+    /// Any use of request-context builtins (req.*, session.*, res.*) outside a
+    /// request handler triggers CONC002.
+    pub inside_request_handler: bool,
+
     /// Validation errors and warnings
     pub errors: Vec<CompilerError>,
     pub warnings: Vec<CompilerError>,
@@ -56,6 +73,9 @@ impl ValidationContext {
             current_class: None,
             current_return_type: None,
             plugin_namespaces: HashSet::new(),
+            state_var_names: HashSet::new(),
+            inside_background: false,
+            inside_request_handler: false,
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -88,6 +108,29 @@ impl ValidationContext {
             }
         }
         None
+    }
+
+    /// Determine whether `function` qualifies as a request handler for CONC002 purposes.
+    ///
+    /// A function is a request handler when ANY of the following hold:
+    /// - Its name starts with `__route_handler_` (compiler-generated route wrapper)
+    /// - It has a parameter named exactly `req` or `request`
+    /// - It has a parameter whose type is `HirType::Named { name: "Request", .. }`
+    pub fn function_is_request_handler(function: &HirFunction) -> bool {
+        if function.name.starts_with("__route_handler_") {
+            return true;
+        }
+        for param in &function.parameters {
+            if param.name == "req" || param.name == "request" {
+                return true;
+            }
+            if let HirType::Named { ref name, .. } = param.param_type {
+                if name == "Request" {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Add an error
@@ -217,9 +260,13 @@ impl HirValidator {
         // Collect top-level state variables into global scope so expressions
         // referencing them do not produce spurious "Undefined variable" errors.
         // (SCOPE005 enforcement is handled later by the resolver.)
+        // Also record all mutable state variable names for the CONC001 check —
+        // accessing these from inside a `background:` block without synchronisation
+        // is a concurrency violation.
         if let Some(ref state_block) = hir.state {
             for decl in &state_block.declarations {
                 context.declare_variable(decl.name.clone(), decl.state_type.clone());
+                context.state_var_names.insert(decl.name.clone());
             }
         }
 
@@ -323,6 +370,14 @@ impl HirValidator {
         let old_return_type = context.current_return_type.clone();
         context.current_return_type = function.return_type.clone();
 
+        // CONC002: track whether we are inside a request handler so that uses of
+        // request-context builtins (req.*, session.*, res.*) are only allowed in
+        // handler bodies.
+        let old_inside_handler = context.inside_request_handler;
+        if ValidationContext::function_is_request_handler(function) {
+            context.inside_request_handler = true;
+        }
+
         // Create new scope for function parameters and body
         context.push_scope();
 
@@ -351,6 +406,7 @@ impl HirValidator {
         // Restore context
         context.pop_scope();
         context.current_return_type = old_return_type;
+        context.inside_request_handler = old_inside_handler;
     }
 
     /// Validate the start function
@@ -717,8 +773,19 @@ impl HirValidator {
                 context.declare_variable(variable.clone(), inferred_type);
             }
 
-            HirStatement::Background { expression, .. } => {
+            HirStatement::Background {
+                expression,
+                location,
+            } => {
+                // CONC001: expressions inside a `background:` statement run asynchronously
+                // in a fire-and-forget task.  Direct reads or writes of module-level mutable
+                // state variables without synchronisation are a data-race hazard.
+                // Flag every state-variable access found within this expression.
+                let was_inside_background = context.inside_background;
+                context.inside_background = true;
                 Self::validate_expression(context, expression);
+                context.inside_background = was_inside_background;
+                let _ = location; // location used by error messages inside validate_expression
             }
 
             HirStatement::Break { .. } => {
@@ -757,6 +824,24 @@ impl HirValidator {
             }
 
             HirExpression::Variable { name, location } => {
+                // CONC001: accessing a module-level mutable state variable from inside a
+                // `background:` expression is unsynchronised shared-state access.
+                // The background task runs concurrently with the main execution and any other
+                // tasks; without a mutex or atomic operation the access is a data race.
+                if context.inside_background && context.state_var_names.contains(name.as_str()) {
+                    context.error_with_code(
+                        &format!(
+                            "Shared state variable '{}' is accessed inside a `background:` block \
+                             without synchronisation — this is an unsynchronised concurrent \
+                             access (CONC001). Capture the value before the `background:` call \
+                             or use an atomic/mutex wrapper.",
+                            name
+                        ),
+                        location.clone(),
+                        "CONC001",
+                    );
+                }
+
                 // Check if it's a variable or a function reference.
                 // Builtin namespaces (string, list, math, etc.) are valid as receiver
                 // expressions in method calls even though they are not declared as local
@@ -902,6 +987,33 @@ impl HirValidator {
                 arguments,
                 location,
             } => {
+                // CONC002: detect `req.method(...)`, `session.method(...)`, etc. expressed
+                // as MethodCall nodes (some parser paths produce these instead of NamespaceCall).
+                // Inspect the receiver: if it is a plain variable reference whose name is a
+                // request-context namespace and we are outside a request handler, emit CONC002.
+                if !context.inside_request_handler {
+                    if let HirExpression::Variable {
+                        name: recv_name, ..
+                    } = receiver.as_ref()
+                    {
+                        if Self::is_request_context_namespace(recv_name) {
+                            context.error_with_code(
+                                &format!(
+                                    "Request-context builtin '{}.{}' is used outside a request \
+                                     handler (CONC002). Request-context values are only available \
+                                     inside endpoint handler functions (e.g. `GET /path:`, \
+                                     `POST /path:`, or functions that receive a `Request` \
+                                     parameter). Move this call into a handler or pass the needed \
+                                     value as a parameter.",
+                                    recv_name, method
+                                ),
+                                location.clone(),
+                                "CONC002",
+                            );
+                        }
+                    }
+                }
+
                 Self::validate_expression(context, receiver);
 
                 for arg in arguments {
@@ -969,12 +1081,63 @@ impl HirValidator {
                 Self::validate_type(context, target_type, location);
             }
 
-            HirExpression::Assignment { target, value, .. } => {
+            HirExpression::Assignment {
+                target,
+                value,
+                location,
+            } => {
+                // CONC001: writing to a module-level state variable inside a `background:`
+                // expression is an unsynchronised write.  Flag it the same way as a read.
+                if context.inside_background {
+                    if let HirLValue::Variable {
+                        name: lval_name, ..
+                    } = target
+                    {
+                        if context.state_var_names.contains(lval_name.as_str()) {
+                            context.error_with_code(
+                                &format!(
+                                    "Shared state variable '{}' is assigned inside a \
+                                     `background:` block without synchronisation — this is \
+                                     an unsynchronised concurrent write (CONC001). Use an \
+                                     atomic/mutex wrapper or perform the mutation before \
+                                     scheduling the background task.",
+                                    lval_name
+                                ),
+                                location.clone(),
+                                "CONC001",
+                            );
+                        }
+                    }
+                }
                 Self::validate_lvalue(context, target);
                 Self::validate_expression(context, value);
             }
 
-            HirExpression::NamespaceCall { arguments, .. } => {
+            HirExpression::NamespaceCall {
+                namespace,
+                function,
+                arguments,
+                location,
+            } => {
+                // CONC002: request-context builtins (req.*, session.*, res.*) are only
+                // valid inside a request handler function.  Calling them from non-handler
+                // functions (e.g. utility functions, start:, tests) produces undefined
+                // behaviour at runtime because no request is active in those contexts.
+                if !context.inside_request_handler && Self::is_request_context_namespace(namespace)
+                {
+                    context.error_with_code(
+                        &format!(
+                            "Request-context builtin '{}.{}' is used outside a request handler \
+                             (CONC002). Request-context values are only available inside \
+                             endpoint handler functions (e.g. `GET /path:`, `POST /path:`, or \
+                             functions that receive a `Request` parameter). Move this call into \
+                             a handler or pass the needed value as a parameter.",
+                            namespace, function
+                        ),
+                        location.clone(),
+                        "CONC002",
+                    );
+                }
                 for arg in arguments {
                     Self::validate_expression(context, arg);
                 }
@@ -1101,6 +1264,16 @@ impl HirValidator {
             }
         }
         false
+    }
+
+    /// Return `true` when `namespace` is a request-context namespace.
+    ///
+    /// These namespaces (`req`, `res`, `session`, `auth`) provide access to live
+    /// HTTP request/response objects and are only valid inside a request handler.
+    /// Using them elsewhere (start:, utility functions, background tasks, tests) is
+    /// a CONC002 violation: no active request context exists at those call sites.
+    fn is_request_context_namespace(namespace: &str) -> bool {
+        matches!(namespace, "req" | "res" | "session" | "auth")
     }
 
     /// Walk the class inheritance chain to check whether `field_name` is declared
@@ -1465,5 +1638,443 @@ mod class005_tests {
                 );
             }
         }
+    }
+}
+
+/// Unit tests for CONC001 (unsynchronised shared-state access from background) and
+/// CONC002 (request-context builtins used outside a request handler).
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+
+    fn loc() -> SourceLocation {
+        SourceLocation {
+            file: "test.cln".to_string(),
+            line: 1,
+            column: 1,
+            byte_start: None,
+            byte_end: None,
+        }
+    }
+
+    /// Build the minimal HirProgram structure shared across tests:
+    /// a program with one module-level state variable `counter` of type `integer`.
+    fn program_with_state(functions: Vec<HirFunction>, start: Option<HirFunction>) -> HirProgram {
+        HirProgram {
+            functions,
+            classes: vec![],
+            start_function: start,
+            imports: vec![],
+            tests: vec![],
+            state: Some(HirStateBlock {
+                declarations: vec![HirStateDeclaration {
+                    name: "counter".to_string(),
+                    state_type: HirType::Integer,
+                    initializer: HirExpression::Literal {
+                        value: crate::ast::Value::Integer(0),
+                        location: loc(),
+                    },
+                    guard: None,
+                    is_private: false,
+                    location: loc(),
+                }],
+                computed: vec![],
+                rules: vec![],
+                scope: HirStateScope::App,
+                location: loc(),
+            }),
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        }
+    }
+
+    /// CONC001 positive: a `background:` statement that reads a state variable directly
+    /// must be rejected with a CONC001 error.
+    #[test]
+    fn test_conc001_background_reads_state_var() {
+        // Simulate: background someFunc(counter)
+        // `counter` is a state variable — reading it inside background is CONC001.
+        let bg_stmt = HirStatement::Background {
+            expression: HirExpression::Call {
+                function: "someFunc".to_string(),
+                arguments: vec![HirExpression::Variable {
+                    name: "counter".to_string(),
+                    location: loc(),
+                }],
+                location: loc(),
+            },
+            location: loc(),
+        };
+
+        // Register someFunc so it is known and doesn't produce FUNC002 noise.
+        let some_func = HirFunction {
+            name: "someFunc".to_string(),
+            parameters: vec![HirParameter {
+                name: "x".to_string(),
+                param_type: HirType::Integer,
+                default_value: None,
+                location: loc(),
+            }],
+            return_type: Some(HirType::Void),
+            body: HirBlock {
+                statements: vec![],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let start = HirFunction {
+            name: "__start".to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::Void),
+            body: HirBlock {
+                statements: vec![bg_stmt],
+                location: loc(),
+            },
+            is_start: true,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let program = program_with_state(vec![some_func], Some(start));
+        let result = HirValidator::validate(&program);
+        assert!(
+            result.is_err(),
+            "CONC001: background accessing state var should fail"
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.to_string().contains("CONC001")),
+            "Expected CONC001 error, got: {:?}",
+            errors
+        );
+    }
+
+    /// CONC001 negative: a `background:` statement that does NOT access state variables
+    /// must pass without error.
+    #[test]
+    fn test_conc001_background_no_state_var_is_valid() {
+        // Simulate: background someFunc(42) — 42 is a literal, not a state var
+        let bg_stmt = HirStatement::Background {
+            expression: HirExpression::Call {
+                function: "someFunc".to_string(),
+                arguments: vec![HirExpression::Literal {
+                    value: crate::ast::Value::Integer(42),
+                    location: loc(),
+                }],
+                location: loc(),
+            },
+            location: loc(),
+        };
+
+        let some_func = HirFunction {
+            name: "someFunc".to_string(),
+            parameters: vec![HirParameter {
+                name: "x".to_string(),
+                param_type: HirType::Integer,
+                default_value: None,
+                location: loc(),
+            }],
+            return_type: Some(HirType::Void),
+            body: HirBlock {
+                statements: vec![],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let start = HirFunction {
+            name: "__start".to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::Void),
+            body: HirBlock {
+                statements: vec![bg_stmt],
+                location: loc(),
+            },
+            is_start: true,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let program = program_with_state(vec![some_func], Some(start));
+        let result = HirValidator::validate(&program);
+        // May have other unrelated warnings but must not have CONC001.
+        if let Err(ref errors) = result {
+            assert!(
+                !errors.iter().any(|e| e.to_string().contains("CONC001")),
+                "Unexpected CONC001 when no state var is accessed: {:?}",
+                errors
+            );
+        }
+    }
+
+    /// CONC002 positive: a `NamespaceCall` on `req` outside a request handler must
+    /// be rejected with a CONC002 error.
+    #[test]
+    fn test_conc002_req_namespace_call_outside_handler() {
+        // Simulate: req.param("id") inside a regular (non-handler) function.
+        let req_call = HirExpression::NamespaceCall {
+            namespace: "req".to_string(),
+            function: "param".to_string(),
+            arguments: vec![HirExpression::Literal {
+                value: crate::ast::Value::String("id".to_string()),
+                location: loc(),
+            }],
+            location: loc(),
+        };
+
+        let utility_fn = HirFunction {
+            name: "utilFn".to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::String),
+            body: HirBlock {
+                statements: vec![HirStatement::Return {
+                    value: Some(req_call),
+                    location: loc(),
+                }],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let program = HirProgram {
+            functions: vec![utility_fn],
+            classes: vec![],
+            start_function: None,
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+        let result = HirValidator::validate(&program);
+        assert!(
+            result.is_err(),
+            "CONC002: req call outside handler should fail"
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.to_string().contains("CONC002")),
+            "Expected CONC002 error, got: {:?}",
+            errors
+        );
+    }
+
+    /// CONC002 negative: a `NamespaceCall` on `req` inside a function identified as a
+    /// request handler (has a parameter named `req`) must NOT produce a CONC002 error.
+    #[test]
+    fn test_conc002_req_call_inside_handler_is_valid() {
+        // A function with a parameter named `req` is a request handler.
+        let req_call = HirExpression::NamespaceCall {
+            namespace: "req".to_string(),
+            function: "param".to_string(),
+            arguments: vec![HirExpression::Literal {
+                value: crate::ast::Value::String("id".to_string()),
+                location: loc(),
+            }],
+            location: loc(),
+        };
+
+        let handler_fn = HirFunction {
+            name: "handleRequest".to_string(),
+            parameters: vec![HirParameter {
+                name: "req".to_string(),
+                param_type: HirType::Any,
+                default_value: None,
+                location: loc(),
+            }],
+            return_type: Some(HirType::String),
+            body: HirBlock {
+                statements: vec![HirStatement::Return {
+                    value: Some(req_call),
+                    location: loc(),
+                }],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let program = HirProgram {
+            functions: vec![handler_fn],
+            classes: vec![],
+            start_function: None,
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+        let result = HirValidator::validate(&program);
+        if let Err(ref errors) = result {
+            assert!(
+                !errors.iter().any(|e| e.to_string().contains("CONC002")),
+                "Unexpected CONC002 inside a legitimate request handler: {:?}",
+                errors
+            );
+        }
+    }
+
+    /// CONC002 negative: a function whose name starts with `__route_handler_` is
+    /// automatically identified as a request handler.
+    #[test]
+    fn test_conc002_route_handler_prefix_is_valid() {
+        let session_call = HirExpression::NamespaceCall {
+            namespace: "session".to_string(),
+            function: "get".to_string(),
+            arguments: vec![],
+            location: loc(),
+        };
+
+        let route_handler = HirFunction {
+            name: "__route_handler_0".to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::String),
+            body: HirBlock {
+                statements: vec![HirStatement::Return {
+                    value: Some(session_call),
+                    location: loc(),
+                }],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let program = HirProgram {
+            functions: vec![route_handler],
+            classes: vec![],
+            start_function: None,
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+        let result = HirValidator::validate(&program);
+        if let Err(ref errors) = result {
+            assert!(
+                !errors.iter().any(|e| e.to_string().contains("CONC002")),
+                "Unexpected CONC002 inside a route handler: {:?}",
+                errors
+            );
+        }
+    }
+
+    /// Verify the helper `function_is_request_handler` for all three detection paths.
+    #[test]
+    fn test_function_is_request_handler_detection() {
+        let route_fn = HirFunction {
+            name: "__route_handler_5".to_string(),
+            parameters: vec![],
+            return_type: None,
+            body: HirBlock {
+                statements: vec![],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+        assert!(
+            ValidationContext::function_is_request_handler(&route_fn),
+            "Route handler prefix must be detected"
+        );
+
+        let req_param_fn = HirFunction {
+            name: "myHandler".to_string(),
+            parameters: vec![HirParameter {
+                name: "req".to_string(),
+                param_type: HirType::Any,
+                default_value: None,
+                location: loc(),
+            }],
+            return_type: None,
+            body: HirBlock {
+                statements: vec![],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+        assert!(
+            ValidationContext::function_is_request_handler(&req_param_fn),
+            "Parameter named 'req' must be detected"
+        );
+
+        let request_type_fn = HirFunction {
+            name: "anotherHandler".to_string(),
+            parameters: vec![HirParameter {
+                name: "r".to_string(),
+                param_type: HirType::Named {
+                    name: "Request".to_string(),
+                    location: loc(),
+                },
+                default_value: None,
+                location: loc(),
+            }],
+            return_type: None,
+            body: HirBlock {
+                statements: vec![],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+        assert!(
+            ValidationContext::function_is_request_handler(&request_type_fn),
+            "Parameter of type 'Request' must be detected"
+        );
+
+        let non_handler = HirFunction {
+            name: "utilityFn".to_string(),
+            parameters: vec![HirParameter {
+                name: "x".to_string(),
+                param_type: HirType::Integer,
+                default_value: None,
+                location: loc(),
+            }],
+            return_type: None,
+            body: HirBlock {
+                statements: vec![],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+        assert!(
+            !ValidationContext::function_is_request_handler(&non_handler),
+            "Regular function must NOT be detected as handler"
+        );
     }
 }

@@ -682,7 +682,8 @@ impl OptimizationPass for ControlFlowSimplificationPass {
 }
 
 impl ControlFlowSimplificationPass {
-    /// BFS/DFS from the entry block; returns the set of reachable BasicBlockIds.
+    /// DFS from the entry block; derives successors from each block's terminator
+    /// because `BasicBlock::successors` is never populated by the MIR builder.
     fn reachable_blocks(function: &MirFunction) -> HashSet<BasicBlockId> {
         let mut visited = HashSet::new();
         let mut stack = vec![function.entry_block];
@@ -691,10 +692,27 @@ impl ControlFlowSimplificationPass {
                 continue;
             }
             if let Some(block) = function.blocks.get(&id) {
-                for &succ in &block.successors {
-                    if !visited.contains(&succ) {
-                        stack.push(succ);
+                match &block.terminator {
+                    MirTerminator::Jump { target } => {
+                        if !visited.contains(target) {
+                            stack.push(*target);
+                        }
                     }
+                    MirTerminator::Branch {
+                        true_block,
+                        false_block,
+                        ..
+                    } => {
+                        if !visited.contains(true_block) {
+                            stack.push(*true_block);
+                        }
+                        if !visited.contains(false_block) {
+                            stack.push(*false_block);
+                        }
+                    }
+                    MirTerminator::Return { .. }
+                    | MirTerminator::Unreachable
+                    | MirTerminator::Trap => {}
                 }
             }
         }
@@ -793,5 +811,126 @@ impl OptimizationPass for FunctionInliningPass {
 impl Default for MirOptimizer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::SourceLocation;
+    use crate::mir::mir_types::{
+        BasicBlockId, MirBasicBlock, MirConstant, MirFunction, MirFunctionAttributes, MirOperand,
+        MirTerminator, MirType,
+    };
+    use crate::resolver::SymbolId;
+    use std::collections::{HashMap, HashSet};
+
+    fn dummy_loc() -> SourceLocation {
+        SourceLocation::new(1, 1, "test")
+    }
+
+    fn make_block(id: BasicBlockId, terminator: MirTerminator) -> MirBasicBlock {
+        MirBasicBlock {
+            id,
+            label: None,
+            instructions: vec![],
+            terminator,
+            predecessors: HashSet::new(),
+            successors: HashSet::new(),
+            location: dummy_loc(),
+        }
+    }
+
+    fn make_function(
+        entry: BasicBlockId,
+        blocks: HashMap<BasicBlockId, MirBasicBlock>,
+    ) -> MirFunction {
+        let block_count = blocks.len();
+        MirFunction {
+            symbol_id: SymbolId(0),
+            name: "test".to_string(),
+            parameters: vec![],
+            return_type: MirType::Void,
+            blocks,
+            entry_block: entry,
+            locals: HashMap::new(),
+            next_value_id: 0,
+            next_block_id: block_count,
+            attributes: MirFunctionAttributes {
+                inline: false,
+                pure: false,
+                entry_point: false,
+                exported: false,
+            },
+            location: dummy_loc(),
+        }
+    }
+
+    // Regression: before the fix, reachable_blocks read block.successors (always empty),
+    // so only the entry block survived and every other block was deleted.
+    #[test]
+    fn test_dead_block_removal_keeps_reachable_blocks() {
+        let b0 = BasicBlockId(0); // entry — branches to b1 / b2
+        let b1 = BasicBlockId(1); // reachable via true branch → jumps to b3
+        let b2 = BasicBlockId(2); // reachable via false branch → returns
+        let b3 = BasicBlockId(3); // reachable via b1 → returns
+        let b4 = BasicBlockId(4); // unreachable
+
+        let mut blocks = HashMap::new();
+        blocks.insert(
+            b0,
+            make_block(
+                b0,
+                MirTerminator::Branch {
+                    condition: MirOperand::Constant(MirConstant::Boolean(true)),
+                    true_block: b1,
+                    false_block: b2,
+                },
+            ),
+        );
+        blocks.insert(b1, make_block(b1, MirTerminator::Jump { target: b3 }));
+        blocks.insert(b2, make_block(b2, MirTerminator::Return { value: None }));
+        blocks.insert(b3, make_block(b3, MirTerminator::Return { value: None }));
+        blocks.insert(b4, make_block(b4, MirTerminator::Return { value: None }));
+
+        let mut function = make_function(b0, blocks);
+        let mut pass = ControlFlowSimplificationPass::new();
+        let stats = pass.optimize_function(&mut function).unwrap();
+
+        assert_eq!(stats.blocks_eliminated, 1, "only b4 is unreachable");
+        assert!(function.blocks.contains_key(&b0), "entry must survive");
+        assert!(
+            function.blocks.contains_key(&b1),
+            "true branch must survive"
+        );
+        assert!(
+            function.blocks.contains_key(&b2),
+            "false branch must survive"
+        );
+        assert!(
+            function.blocks.contains_key(&b3),
+            "successor of b1 must survive"
+        );
+        assert!(
+            !function.blocks.contains_key(&b4),
+            "unreachable block must be removed"
+        );
+    }
+
+    #[test]
+    fn test_all_reachable_no_blocks_removed() {
+        let b0 = BasicBlockId(0);
+        let b1 = BasicBlockId(1);
+
+        let mut blocks = HashMap::new();
+        blocks.insert(b0, make_block(b0, MirTerminator::Jump { target: b1 }));
+        blocks.insert(b1, make_block(b1, MirTerminator::Return { value: None }));
+
+        let mut function = make_function(b0, blocks);
+        let mut pass = ControlFlowSimplificationPass::new();
+        let stats = pass.optimize_function(&mut function).unwrap();
+
+        assert_eq!(stats.blocks_eliminated, 0);
+        assert_eq!(function.blocks.len(), 2);
     }
 }

@@ -56,21 +56,35 @@ compile-time integer ID before emitting the WASM call, reducing the import signa
 
 ---
 
-## 🟢 LOW: P10 — COM002/COM006 concurrency violation error codes
+## ✅ COMPLETED: P10 — Concurrency violation static analysis (CONC001/CONC002)
 
-**Priority**: LOW — missing structured error codes for concurrency rule violations
+**Priority**: LOW — was missing structured error codes for concurrency rule violations
 **Discovered**: 2026-05-20
+**Completed**: 2026-06-01
 
-The spec (semantic-rules.md COM002/COM006) defines error codes for:
-- COM002: accessing shared state from a background task without synchronization
-- COM006: using request-context values outside a request handler
+Implemented static analysis in `src/hir/validation.rs`:
 
-**Current state**: No detection sites exist. Requires new static analysis tracking
-  whether a function is inside a `background:` block or request handler context.
+- **CONC001**: `background:` expression that directly reads or writes a module-level state
+  variable is now flagged at HIR validation time. The `ValidationContext` tracks all
+  state variable names from the top-level `state:` block and sets `inside_background = true`
+  while recursing into `HirStatement::Background`. Any `Variable` reference or
+  `Assignment` targeting a state var inside that context emits CONC001.
 
-**Action**: Add detection in the typechecker or HIR validator. COM006 can be partially
-  enforced by tracking whether a function is inside `background:` when accessing
-  request-context builtins.
+- **CONC002**: Any `NamespaceCall` or `MethodCall` on a request-context namespace
+  (`req`, `res`, `session`, `auth`) that occurs outside a recognised request handler is
+  flagged as CONC002. Request handlers are identified by: function name starting with
+  `__route_handler_`, a parameter named `req` or `request`, or a parameter of type `Request`.
+  The `inside_request_handler` flag is set when entering such functions.
+
+**Note on error codes**: The existing `foundation/spec/semantic-rules.md` defines COM002 as
+  "Optimization Error" and COM006 as "Function Not Found During Compilation" — both already
+  have different meanings. New codes `CONC001` and `CONC002` were used to avoid conflicting
+  with the spec (Principle 25: no spec changes without developer approval). The developer
+  should add a CONC range to `foundation/spec/semantic-rules.md` to formalise these codes.
+
+**Files changed**: `src/hir/validation.rs`
+**Tests added**: 6 new unit tests in `hir::validation::concurrency_tests`
+  — all pass (`cargo test --lib`: 344 passed)
 
 ---
 
