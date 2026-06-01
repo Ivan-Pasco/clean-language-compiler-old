@@ -34,7 +34,17 @@ fn derive_companion_module_name(path: &Path, base_dir: &Path) -> String {
 /// Prefix companion functions with the module name to avoid conflicts.
 ///
 /// Transforms `any guard()` → `any {module}_guard()` and `any load()` → `any {module}_load()`.
+/// Also rewrites `(Request X)` parameter types to `(any X)` so the WASM parameter layout
+/// matches the `any`-typed request object the generated page handler passes in.
 fn prefix_companion_functions(source: &str, module_name: &str) -> String {
+    // Normalize `Request X` parameter type → `any X` before prefixing.
+    // `Request` resolves to ConcreteType::Unknown (4-byte pointer) in the type checker, but the
+    // generated page handler passes an `any`-typed object (12-byte boxed value). Mismatched WASM
+    // parameter widths cause a validation error at runtime; rewriting to `any` keeps sizes aligned.
+    let source = source
+        .replace("any load(Request ", "any load(any ")
+        .replace("any guard(Request ", "any guard(any ");
+
     // Call-site replacements must happen BEFORE declaration replacements.
     // If declarations are replaced first, `any load(` becomes `any pages_login_load(`,
     // and the subsequent call-site pass then finds `load()` as a suffix of
@@ -131,6 +141,25 @@ fn derive_page_name_from_cln(file_path: &Path, shared_dir: &Path) -> String {
     }
 }
 
+/// Build the params object literal for a page handler based on the route path.
+///
+/// For static routes (no `:name` segments) this returns `{}`.
+/// For dynamic routes it returns `{ name: _req_param("name"), ... }` so that
+/// `request.params.name` works inside load/guard functions.
+fn route_path_to_params_literal(route_path: &str) -> String {
+    let params: Vec<String> = route_path
+        .split('/')
+        .filter_map(|seg| seg.strip_prefix(':'))
+        .map(|name| format!("{}: _req_param(\"{}\")", name, name))
+        .collect();
+
+    if params.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{ {} }}", params.join(", "))
+    }
+}
+
 /// Generate a synthetic Clean Language module that registers `_http_route` calls
 /// for all discovered page companions.
 ///
@@ -138,6 +167,10 @@ fn derive_page_name_from_cln(file_path: &Path, shared_dir: &Path) -> String {
 /// The generated module's `start:` block will be merged into the entry module's
 /// `start:` by the HIR merger in `lib.rs`.  Handler functions use the
 /// `__page_handler_` prefix so the WASM export rule in `utilities.rs` exports them.
+///
+/// Each handler constructs a Request-compatible `any` object from the current
+/// request context bridge functions and passes it to load/guard, satisfying the
+/// `any load(any request)` signature produced by `prefix_companion_functions`.
 fn generate_page_route_source(records: &[PageCompanionRecord]) -> String {
     let mut src = String::new();
 
@@ -158,12 +191,21 @@ fn generate_page_route_source(records: &[PageCompanionRecord]) -> String {
 
     for record in records {
         let handler_name = format!("__page_handler_{}", record.module_name);
+        let params_lit = route_path_to_params_literal(&record.route_path);
 
         src.push_str(&format!("\tstring {}()\n", handler_name));
 
+        // Build a Request-compatible any object from current request context bridge functions.
+        // `prefix_companion_functions` rewrites `(Request X)` → `(any X)` so the WASM types align.
+        // params: populated from known route segments so request.params.name works for dynamic routes.
+        // query/headers: left empty — use _req_query("name") / _req_header("name") for direct access.
+        src.push_str("\t\tany __req_auth = { loggedIn: _auth_require_auth() == 1, userId: \"\", role: \"\", roles: \"[]\" }\n");
+        src.push_str(&format!("\t\tany __req_params = {}\n", params_lit));
+        src.push_str("\t\tany __page_req = { auth: __req_auth, params: __req_params, query: {}, body: _req_body(), headers: {}, method: _req_method(), path: _req_path(), ip: _req_ip() }\n");
+
         if record.has_guard {
             src.push_str(&format!(
-                "\t\tany guard_result = {}_guard()\n",
+                "\t\tany guard_result = {}_guard(__page_req)\n",
                 record.module_name
             ));
             src.push_str("\t\tif guard_result != null\n");
@@ -171,7 +213,10 @@ fn generate_page_route_source(records: &[PageCompanionRecord]) -> String {
         }
 
         if record.has_load {
-            src.push_str(&format!("\t\tany data = {}_load()\n", record.module_name));
+            src.push_str(&format!(
+                "\t\tany data = {}_load(__page_req)\n",
+                record.module_name
+            ));
             src.push_str("\t\tstring page_json = json.encode(data)\n");
             src.push_str(&format!(
                 "\t\treturn _ui_render_page(\"{}\", page_json)\n",
@@ -2562,9 +2607,16 @@ posts = Post.findAll()
             "should register GET /login route; got:\n{}",
             source
         );
+        // Fixed: was asserting 0-arg call pages_login_load(); spec requires Request parameter,
+        // so the handler now passes a constructed any request object.
         assert!(
-            source.contains("pages_login_load()"),
-            "should call pages_login_load(); got:\n{}",
+            source.contains("pages_login_load(__page_req)"),
+            "should call pages_login_load with request arg; got:\n{}",
+            source
+        );
+        assert!(
+            source.contains("__page_req"),
+            "should build a page request object; got:\n{}",
             source
         );
         assert!(
@@ -2592,9 +2644,11 @@ posts = Post.findAll()
 
         let source = generate_page_route_source(&records);
 
+        // Fixed: was asserting 0-arg calls; spec requires Request parameter so both
+        // guard and load now receive the constructed any request object.
         assert!(
-            source.contains("pages_dashboard_guard()"),
-            "should call pages_dashboard_guard(); got:\n{}",
+            source.contains("pages_dashboard_guard(__page_req)"),
+            "should call pages_dashboard_guard with request arg; got:\n{}",
             source
         );
         assert!(
@@ -2603,8 +2657,8 @@ posts = Post.findAll()
             source
         );
         assert!(
-            source.contains("pages_dashboard_load()"),
-            "should call pages_dashboard_load(); got:\n{}",
+            source.contains("pages_dashboard_load(__page_req)"),
+            "should call pages_dashboard_load with request arg; got:\n{}",
             source
         );
     }
