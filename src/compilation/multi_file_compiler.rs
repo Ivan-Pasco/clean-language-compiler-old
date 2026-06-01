@@ -110,35 +110,34 @@ fn derive_page_route_from_cln(file_path: &Path, shared_dir: &Path) -> String {
     route
 }
 
-/// Derive the page name (relative to the pages/ directory) for use with _ui_render_page.
+/// Derive the template path relative to the project root for use with _ui_render_page.
 ///
-/// Examples (shared_dir = "app/web/"):
-/// - `app/web/pages/login.cln`     → `"login"`
-/// - `app/web/pages/blog/post.cln` → `"blog/post"`
-fn derive_page_name_from_cln(file_path: &Path, shared_dir: &Path) -> String {
-    let relative = file_path.strip_prefix(shared_dir).unwrap_or(file_path);
-    let mut parts: Vec<String> = Vec::new();
-    let mut past_pages = false;
-
-    for component in relative.components() {
-        if let std::path::Component::Normal(name) = component {
-            let name_str = name.to_string_lossy();
-            if !past_pages {
-                if name_str == "pages" {
-                    past_pages = true;
-                }
-                continue;
+/// Examples (project_root = "/abs/path/to/project"):
+/// - `{project_root}/app/web/pages/login.cln`     → `"app/web/pages/login.html"`
+/// - `{project_root}/app/web/pages/blog/post.cln` → `"app/web/pages/blog/post.html"`
+fn derive_page_name_from_cln(file_path: &Path, project_root: &Path) -> String {
+    let relative = file_path.strip_prefix(project_root).unwrap_or(file_path);
+    let mut parts: Vec<String> = relative
+        .components()
+        .filter_map(|c| {
+            if let std::path::Component::Normal(name) = c {
+                Some(name.to_string_lossy().into_owned())
+            } else {
+                None
             }
-            let segment = name_str.trim_end_matches(".cln").to_string();
-            parts.push(segment);
-        }
-    }
+        })
+        .collect();
 
     if parts.is_empty() {
-        "index".to_string()
-    } else {
-        parts.join("/")
+        return "index.html".to_string();
     }
+
+    if let Some(last) = parts.last_mut() {
+        if last.ends_with(".cln") {
+            *last = format!("{}.html", &last[..last.len() - 4]);
+        }
+    }
+    parts.join("/")
 }
 
 /// Build the params object literal for a page handler based on the route path.
@@ -264,7 +263,7 @@ struct PageCompanionRecord {
     module_name: String,
     /// URL route path (e.g., "/login")
     route_path: String,
-    /// Page name for _ui_render_page (e.g., "login" or "blog/post")
+    /// Template path for _ui_render_page relative to project root (e.g., "app/web/pages/login.html")
     page_name: String,
     /// Whether the companion defines a guard() function
     has_guard: bool,
@@ -641,57 +640,80 @@ impl MultiFileCompiler {
         // While scanning, collect page companion records so we can generate synthetic
         // _http_route registrations after the scan is complete (fix for E-PGREG).
         let mut page_companion_records: Vec<PageCompanionRecord> = Vec::new();
-        if let Some(ref info) = manifest_info {
+        if let (Some(ref info), Some(ref project_root)) = (&manifest_info, &manifest_root) {
             for shared_dir in &info.shared_folders {
                 for file_path in Self::collect_cln_files(shared_dir) {
-                    if unit.module_id_for_path(&file_path).is_none() {
-                        if let Ok(raw_source) = fs::read_to_string(&file_path) {
-                            // Page companion files (files under a pages/ subdirectory that
-                            // declare load() or guard()) must be prefixed with a unique
-                            // module name so that multiple pages can coexist in one binary
-                            // without colliding in the global symbol table.
-                            let is_page_companion = {
-                                let relative =
-                                    file_path.strip_prefix(shared_dir).unwrap_or(&file_path);
-                                relative.components().any(|c| {
-                                    matches!(
-                                        c,
-                                        std::path::Component::Normal(n)
-                                        if n == "pages"
-                                    )
-                                })
-                            };
+                    // Determine if this file lives under a pages/ subdirectory.
+                    let is_page_companion = {
+                        let relative = file_path.strip_prefix(shared_dir).unwrap_or(&file_path);
+                        relative.components().any(|c| {
+                            matches!(
+                                c,
+                                std::path::Component::Normal(n)
+                                if n == "pages"
+                            )
+                        })
+                    };
 
-                            let is_active_companion = is_page_companion
-                                && (raw_source.contains("any load(")
-                                    || raw_source.contains("any guard("));
-
-                            let (name, source) = if is_active_companion {
-                                let module_name =
-                                    derive_companion_module_name(&file_path, shared_dir);
-                                let prefixed =
-                                    prefix_companion_functions(&raw_source, &module_name);
-
-                                // Capture route registration info for later synthetic generation
-                                let route = derive_page_route_from_cln(&file_path, shared_dir);
-                                let page_name = derive_page_name_from_cln(&file_path, shared_dir);
-                                page_companion_records.push(PageCompanionRecord {
-                                    module_name: module_name.clone(),
-                                    route_path: route,
-                                    page_name,
-                                    has_guard: raw_source.contains("any guard("),
-                                    has_load: raw_source.contains("any load("),
-                                });
-
-                                (module_name, prefixed)
-                            } else {
-                                (Self::derive_module_name(&file_path), raw_source)
-                            };
-
-                            let id = unit.add_module(name, file_path, source);
-                            // Add as a standalone node; the topological sort includes all nodes
-                            graph.add_module(id);
+                    if let Some(existing_id) = unit.module_id_for_path(&file_path) {
+                        // File already loaded (the entry file) — if it is a page companion,
+                        // prefix its source in-place and register its route (GEN002 fix).
+                        if is_page_companion {
+                            if let Some(module) = unit.get_module_mut(existing_id) {
+                                let raw_source = module.source.clone();
+                                let is_active = raw_source.contains("any load(")
+                                    || raw_source.contains("any guard(");
+                                if is_active {
+                                    let module_name =
+                                        derive_companion_module_name(&file_path, shared_dir);
+                                    let prefixed =
+                                        prefix_companion_functions(&raw_source, &module_name);
+                                    module.source = prefixed;
+                                    let route = derive_page_route_from_cln(&file_path, shared_dir);
+                                    let page_name =
+                                        derive_page_name_from_cln(&file_path, project_root);
+                                    page_companion_records.push(PageCompanionRecord {
+                                        module_name,
+                                        route_path: route,
+                                        page_name,
+                                        has_guard: raw_source.contains("any guard("),
+                                        has_load: raw_source.contains("any load("),
+                                    });
+                                }
+                            }
                         }
+                    } else if let Ok(raw_source) = fs::read_to_string(&file_path) {
+                        // Page companion files (files under a pages/ subdirectory that
+                        // declare load() or guard()) must be prefixed with a unique
+                        // module name so that multiple pages can coexist in one binary
+                        // without colliding in the global symbol table.
+                        let is_active_companion = is_page_companion
+                            && (raw_source.contains("any load(")
+                                || raw_source.contains("any guard("));
+
+                        let (name, source) = if is_active_companion {
+                            let module_name = derive_companion_module_name(&file_path, shared_dir);
+                            let prefixed = prefix_companion_functions(&raw_source, &module_name);
+
+                            // Capture route registration info for later synthetic generation
+                            let route = derive_page_route_from_cln(&file_path, shared_dir);
+                            let page_name = derive_page_name_from_cln(&file_path, project_root);
+                            page_companion_records.push(PageCompanionRecord {
+                                module_name: module_name.clone(),
+                                route_path: route,
+                                page_name,
+                                has_guard: raw_source.contains("any guard("),
+                                has_load: raw_source.contains("any load("),
+                            });
+
+                            (module_name, prefixed)
+                        } else {
+                            (Self::derive_module_name(&file_path), raw_source)
+                        };
+
+                        let id = unit.add_module(name, file_path, source);
+                        // Add as a standalone node; the topological sort includes all nodes
+                        graph.add_module(id);
                     }
                 }
             }
@@ -2571,15 +2593,21 @@ posts = Post.findAll()
 
     #[test]
     fn test_derive_page_name_from_cln() {
-        let shared = Path::new("app/web");
+        // Fixed: was using shared_dir and returning bare stem; now uses project_root
+        // and returns full relative path with .html so _ui_render_page can locate
+        // the template on disk (GEN001).
+        let project_root = Path::new("/project");
 
         assert_eq!(
-            derive_page_name_from_cln(Path::new("app/web/pages/login.cln"), shared),
-            "login"
+            derive_page_name_from_cln(Path::new("/project/app/web/pages/login.cln"), project_root),
+            "app/web/pages/login.html"
         );
         assert_eq!(
-            derive_page_name_from_cln(Path::new("app/web/pages/blog/post.cln"), shared),
-            "blog/post"
+            derive_page_name_from_cln(
+                Path::new("/project/app/web/pages/blog/post.cln"),
+                project_root
+            ),
+            "app/web/pages/blog/post.html"
         );
     }
 
