@@ -11,8 +11,8 @@
   - `sem003`: plugin-generated code declares `list<User>` but type checker infers `Array<string>` — plugin output type mismatch
 **Root cause**: frame.data plugin was compiled with older compiler versions with codegen bugs.
   Plugin WASM crashes or generates wrong-typed output during expansion.
-**Blocked on**: Cross-component fix in clean-framework. Bug fingerprint: da50fd867b8fe041.
-**Action**: clean-framework team rebuilds frame.data plugin WASM with compiler >= 0.30.151.
+**Reported**: 2026-06-01 — report ID `39d16ea8-432c-4ea8-b846-14aa066c8d99`
+**Action**: clean-framework team rebuilds frame.data plugin WASM with compiler >= 0.30.209.
 
 ---
 
@@ -109,25 +109,20 @@ Implemented static analysis in `src/hir/validation.rs`:
 
 ---
 
-## 🟢 LOW: Split oversized functions for readability
+## ✅ COMPLETED: Split oversized functions for readability
 
-**Priority**: LOW — functions over 500 lines; difficult to review and test
-**Discovered**: 2026-05-20
-**✅ setup_linker done** — split into 11 per-namespace helpers on 2026-06-01; body reduced from ~2370 to 15 lines.
+**Completed**: 2026-06-01 — all 8 functions split, all tests green (346 passing).
 
-Remaining candidates:
-
-| Function | File | Lines | Suggested split |
-|----------|------|-------|-----------------|
-| `generate_parse_object_instructions` | `src/stdlib/json_class.rs:2606` | ~1258 | Extract key-scan, value-scan, object-assembly helpers |
-| `register_method_style_functions` | `src/runtime/host_functions.rs:1463` | ~1175 | Extract per-class registration fns |
-| `peek_has_orm_subclauses` | `src/parser/token_parser/blocks.rs:453` | ~1146 | Extract clause-type detectors |
-| `resolve_expression_internal` | `src/resolver/resolver_impl.rs:1428` | ~1059 | Extract per-expression-kind helpers |
-| `parse_private_state_section` | `src/parser/token_parser/blocks.rs:1599` | ~1026 | Extract field-type parsers |
-| `new_with_default` | `src/ast/mod.rs:192` | ~1012 | Extract per-node-type default builders |
-| `infer_expression` | `src/typechecker/type_inference.rs:2993` | ~944 | Extract per-expression-kind inference helpers |
-
-**Action**: Split one function at a time. Each split must keep all tests green.
+| Function | File | Before | After |
+|----------|------|--------|-------|
+| `setup_linker` | `src/plugins/wasm_adapter.rs` | ~2370 | 15 lines, 11 helpers |
+| `generate_parse_object_instructions` | `src/stdlib/json_class.rs` | ~1258 | 13 lines, 5 helpers |
+| `register_method_style_functions` | `src/runtime/host_functions.rs` | ~1175 | 11 lines, 7 helpers |
+| `peek_has_orm_subclauses` | `src/parser/token_parser/blocks.rs` | ~1146 | 17 lines, 3 helpers |
+| `resolve_expression_internal` | `src/resolver/resolver_impl.rs` | ~1059 | 102 lines, 18 helpers |
+| `parse_private_state_section` | `src/parser/token_parser/blocks.rs` | ~1026 | 108 lines, 2 helpers |
+| `new_with_default` | `src/ast/mod.rs` | ~1012 | Added 11 named builders |
+| `infer_expression` | `src/typechecker/type_inference.rs` | ~944 | 145 lines, 18 helpers |
 
 ---
 
