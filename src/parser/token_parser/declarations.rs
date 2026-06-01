@@ -510,8 +510,28 @@ impl TokenParser {
         self.skip_whitespace();
         // DON'T skip indentation here - let parse_class_body handle it
 
+        // Record how many synthetic classes exist before parsing this class body.
+        // Any new ones added are from this class's sub-sections.
+        let synthetic_count_before = self.pending_synthetic_classes.len();
+
         // Class body
-        let (fields, methods, constructor, invariants) = self.parse_class_body()?;
+        let (mut fields, methods, constructor, invariants) = self.parse_class_body()?;
+
+        // Rename any `Inputs` synthetic class created for this class to `<Name>Inputs`
+        // so that multiple components in the same file don't collide on the type name.
+        // Also update the corresponding `Inputs inputs` field type in this class.
+        for synthetic in self.pending_synthetic_classes[synthetic_count_before..].iter_mut() {
+            let unique_name = format!("{}Inputs", name);
+            if synthetic.name == "Inputs" {
+                synthetic.name = unique_name.clone();
+                // Update the matching field in the parent class (Type::Object("Inputs") → unique)
+                for field in fields.iter_mut() {
+                    if field.type_ == Type::Object("Inputs".to_string()) {
+                        field.type_ = Type::Object(unique_name.clone());
+                    }
+                }
+            }
+        }
 
         Ok(Class {
             name,
