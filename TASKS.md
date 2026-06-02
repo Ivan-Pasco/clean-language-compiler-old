@@ -1,62 +1,37 @@
 # Clean Language Compiler - Implementation Tasks
 
-## 🔴 CRITICAL: frame.data plugin compatibility — 2 tests failing (SYN001)
+## ✅ COMPLETED: frame.data plugin compatibility — SYN001 + SEM003
 
 **Priority**: CRITICAL — ORM/data plugin tests cannot compile
 **Discovered**: 2026-05-22
-**Verified**: 2026-06-01 — simple_data.cln and plugin_keywords.cln now pass; 2 remain broken
+**Completed**: 2026-06-02 — fixed in frame 2.10.90; both tests compile and produce valid WASM
 **Files**: `tests/cln/bugfixes/syn001_orm_query_in_function.cln`, `tests/cln/bugfixes/sem003_orm_variable_bound_in_function.cln`
-**Errors**:
-  - `syn001`: plugin WASM traps at runtime (wasm function 262) on complex join/where queries
-  - `sem003`: plugin-generated code declares `list<User>` but type checker infers `Array<string>` — plugin output type mismatch
-**Root cause**: Bug in frame.data plugin Clean Language source logic (not the compiler version).
-  Rebuilding with compiler 0.30.211 does not resolve — plugin source must be fixed in clean-framework.
-**Reported**: 2026-06-01 (framework component); re-confirmed 2026-06-01
-  - SYN001 report ID `9733d4ca-a91b-49ce-b064-c8ff817ab242`
-  - SEM003 report ID `db4a99f3-fa7e-4902-95df-ffefde3d2393`
-**Action**: clean-framework team fixes expand logic in frame.data/src/main.cln for complex where/join queries and ORM result type propagation.
+**Fix**: clean-framework team fixed expand_block logic in frame.data for complex join/where queries
+  and ORM result type propagation in frame 2.10.90.
+**Resolved**: 2026-06-02 — SYN001 fp `812a478e`, SEM003 fp `f3f43fcd`
 
 ---
 
-## 🟡 MEDIUM-HIGH: P02 — string.matches compile-time pattern ID resolution
+## ✅ COMPLETED: P02 — string.matches compile-time pattern ID resolution
 
-**Priority**: MEDIUM-HIGH — runtime host bridge contract must change together with compiler
+**Priority**: MEDIUM-HIGH
 **Discovered**: 2026-05-20
-
-The spec (stdlib-reference.md) requires `string.matches` to resolve the pattern name to a
-compile-time integer ID before emitting the WASM call, reducing the import signature from
-4 parameters `(str_ptr, str_len, pattern_ptr, pattern_len)` to 3 parameters `(str_ptr, str_len, pattern_id)`.
-
-**Mapping**: email→1, url→2, uuid→3, slug→4, numeric→5, alpha→6, phone→7, date→8
-
-**Files to change** (compiler side):
-- `src/codegen/codegen_registration.rs` lines ~654–672 — change import signature to 3 params
-- MIR codegen call site for `string.matches` — emit `I32Const(id)` instead of string ptr+len
-
-**Cross-component prerequisite** (do NOT change before server is updated):
-- `clean-server/host-bridge` — `string_matches(str_ptr, str_len, pattern_id)` implementation
-- This is a breaking contract change; both sides must ship in the same release.
-
-**Reported**: 2026-06-01; re-confirmed 2026-06-01 — report ID `90bf180e-097d-4c6e-9a80-84e5675ead10`
-**Action**: Once server ships updated bridge, implement compiler side (codegen_registration.rs ~654–672).
+**Completed**: 2026-06-02 — compiler emits 3-param call (str_ptr, str_len, pattern_id); server bridge updated
+**Fix**: Compiler side implemented in `src/mir/mir_builder/expressions.rs` (pattern→ID at compile time)
+  and `src/codegen/codegen_registration.rs` (3-param import + wrapper). Server bridge updated to match.
+**Resolved**: 2026-06-02 — BRIDGE001 fp `8d790e29`
 
 ---
 
-## 🟡 MEDIUM-HIGH: Endpoint test codegen — missing test.http_request host bridge
+## ✅ COMPLETED: Endpoint test codegen — test.http_request bridge
 
-**Priority**: MEDIUM-HIGH — endpoint tests compile but cannot execute without host bridge
+**Priority**: MEDIUM-HIGH
 **Discovered**: 2026-05-28
-**Verified**: 2026-06-01 — compiler side parses and compiles endpoint test syntax correctly
-**Files**: `tests/cln/testing/endpoint_test_syntax.cln`, `src/parser/token_parser/blocks.rs`
-**Missing**: Host bridge function `test.http_request` in `clean-server`. Expected signature:
-  ```
-  test.http_request(method: string, path: string, body_json: string | null, header_key: string | null, header_val: string | null) -> HttpTestResponse
-  ```
-  where `HttpTestResponse` exposes `.status: integer`, `.body_json: string`, `.ok: boolean`.
-**Reported**: 2026-06-01; re-confirmed 2026-06-01 — report ID `8b7276e6-70b3-4717-99a4-0f46cfe4863b`
-**Action**:
-  1. Server team adds `test.http_request` to `clean-server` host bridge
-  2. Once bridge exists: implement HIR/codegen for `TestCaseKind::Endpoint` in `src/codegen/`
+**Completed**: 2026-06-02 — compiler side fixed in 0.30.213; server bridge added by server team
+**Fix**: Registered `_test_http_request`, `_test_response_status`, `_test_response_body` as builtins
+  in resolver (`src/resolver/resolver_impl.rs`) so endpoint test blocks pass name resolution.
+  Codegen bridge registration already existed in `src/codegen/codegen_registration.rs`.
+**Resolved**: 2026-06-02 — BRIDGE002 fp `c8a02821`
 
 ---
 
