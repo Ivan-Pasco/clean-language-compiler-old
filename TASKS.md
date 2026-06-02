@@ -11,9 +11,9 @@
   - `sem003`: plugin-generated code declares `list<User>` but type checker infers `Array<string>` — plugin output type mismatch
 **Root cause**: Bug in frame.data plugin Clean Language source logic (not the compiler version).
   Rebuilding with compiler 0.30.211 does not resolve — plugin source must be fixed in clean-framework.
-**Reported**: 2026-06-01 (framework component)
-  - SYN001 report ID `7b4c60bd-5bef-4f4f-a885-b80caf496164`
-  - SEM003 report ID `54e673ed-fc1f-4293-9b0d-02c6b5d1e087`
+**Reported**: 2026-06-01 (framework component); re-confirmed 2026-06-01
+  - SYN001 report ID `9733d4ca-a91b-49ce-b064-c8ff817ab242`
+  - SEM003 report ID `db4a99f3-fa7e-4902-95df-ffefde3d2393`
 **Action**: clean-framework team fixes expand logic in frame.data/src/main.cln for complex where/join queries and ORM result type propagation.
 
 ---
@@ -37,7 +37,7 @@ compile-time integer ID before emitting the WASM call, reducing the import signa
 - `clean-server/host-bridge` — `string_matches(str_ptr, str_len, pattern_id)` implementation
 - This is a breaking contract change; both sides must ship in the same release.
 
-**Reported**: 2026-06-01 — report ID `24d6ea05-fac4-408f-86bb-38854659fd80`
+**Reported**: 2026-06-01; re-confirmed 2026-06-01 — report ID `90bf180e-097d-4c6e-9a80-84e5675ead10`
 **Action**: Once server ships updated bridge, implement compiler side (codegen_registration.rs ~654–672).
 
 ---
@@ -53,7 +53,7 @@ compile-time integer ID before emitting the WASM call, reducing the import signa
   test.http_request(method: string, path: string, body_json: string | null, header_key: string | null, header_val: string | null) -> HttpTestResponse
   ```
   where `HttpTestResponse` exposes `.status: integer`, `.body_json: string`, `.ok: boolean`.
-**Reported**: 2026-06-01 — report ID `4a51fd68-4d43-4cea-9c58-3d959c35552b`
+**Reported**: 2026-06-01; re-confirmed 2026-06-01 — report ID `8b7276e6-70b3-4717-99a4-0f46cfe4863b`
 **Action**:
   1. Server team adds `test.http_request` to `clean-server` host bridge
   2. Once bridge exists: implement HIR/codegen for `TestCaseKind::Endpoint` in `src/codegen/`
