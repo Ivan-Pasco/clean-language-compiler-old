@@ -537,7 +537,7 @@ impl PluginRegistry {
         // even when registered under multiple block names.
         let mut seen: HashSet<*const dyn FrameworkPlugin> = HashSet::new();
         for plugin in self.handlers.values() {
-            let ptr = Arc::as_ptr(plugin) as *const dyn FrameworkPlugin;
+            let ptr = Arc::as_ptr(plugin);
             if seen.insert(ptr) {
                 if let Ok(output) = plugin.assemble(input) {
                     combined.injected_sources.extend(output.injected_sources);

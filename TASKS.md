@@ -67,22 +67,18 @@ Implemented static analysis in `src/hir/validation.rs`:
 
 ---
 
-## 🟢 LOW: Refactor — move page-companion assembly logic out of compiler into framework plugin hook
+## ✅ COMPLETED: Refactor — move page-companion assembly logic out of compiler into framework plugin hook
 
-**Priority**: LOW — architectural hygiene, no user-visible breakage today
-**Discovered**: 2026-06-01
-**Files**: `src/compilation/multi_file_compiler.rs` (functions: `prefix_companion_functions`,
-  `derive_page_route_from_cln`, `derive_page_name_from_cln`, `generate_page_route_source`,
-  `route_path_to_params_literal`, and `PageCompanionRecord`)
-**Problem**: The compiler encodes frame.ui/frame.server-specific knowledge that violates
-  the "No Plugin Logic in the Compiler" rule. These concepts should live in the framework.
-**Root cause**: No plugin hook exists for "transform sources before multi-file assembly."
-**Ideal fix**: Add a first-class `PluginAssemblyHook` trait to the plugin system:
-  1. Define `fn on_assemble(sources: &[SourceFile]) -> AssemblyResult`
-  2. frame.ui implements the hook: detects page companions, prefixes load/guard, generates route module
-  3. Compiler calls `plugin.on_assemble(...)` and merges results, with no framework knowledge
-  4. Remove the six frame-specific functions from `multi_file_compiler.rs`
-**Blocked on**: Plugin system needs a compile-time (not runtime) hook surface — design required.
+**Completed**: 2026-06-02 — shipped in v0.30.214.
+**What was done**:
+  - Added `assemble()` hook to `FrameworkPlugin` trait (default no-op)
+  - Added `AssembleInput`, `AssembleOutput`, `AssembleSourceFile`, `InjectedSource`, `TransformedSource` to `plugin_abi.rs`
+  - Added `PluginRegistry::run_assemble_hooks()` to call all registered plugin assemblers
+  - Created `src/plugins/builtin_assemblers.rs` with `PageCompanionAssembler` Rust shim containing the 6 migrated functions
+  - Removed 6 hardcoded functions and `PageCompanionRecord` from `multi_file_compiler.rs`
+  - `build_from_file()` now routes through the hook; WASM plugins that export `assemble` will also participate
+  - Cross-component report PLUGIN001 filed for frame.ui to implement WASM `assemble` export
+  - All 346 tests pass
 
 ---
 
