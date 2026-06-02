@@ -520,6 +520,36 @@ impl PluginRegistry {
         self.bridge_functions.iter().find(|f| f.name == name)
     }
 
+    /// Run all registered assemble hooks, merging their outputs.
+    ///
+    /// Called once per compilation after source discovery but before parsing.
+    /// Results from all plugins are combined: injected sources are appended,
+    /// transformed sources are merged (last write wins for duplicate paths).
+    pub fn run_assemble_hooks(
+        &self,
+        input: &crate::plugins::plugin_abi::AssembleInput,
+    ) -> crate::plugins::plugin_abi::AssembleOutput {
+        use crate::plugins::plugin_abi::AssembleOutput;
+        use std::collections::HashSet;
+
+        let mut combined = AssembleOutput::default();
+        // Deduplicate by raw pointer so each plugin is called exactly once
+        // even when registered under multiple block names.
+        let mut seen: HashSet<*const dyn FrameworkPlugin> = HashSet::new();
+        for plugin in self.handlers.values() {
+            let ptr = Arc::as_ptr(plugin) as *const dyn FrameworkPlugin;
+            if seen.insert(ptr) {
+                if let Ok(output) = plugin.assemble(input) {
+                    combined.injected_sources.extend(output.injected_sources);
+                    combined
+                        .transformed_sources
+                        .extend(output.transformed_sources);
+                }
+            }
+        }
+        combined
+    }
+
     /// Get all loaded plugin manifests
     ///
     /// Returns the full manifests for enforcement rules, path detection, etc.

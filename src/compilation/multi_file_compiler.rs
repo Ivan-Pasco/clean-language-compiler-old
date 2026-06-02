@@ -10,229 +10,11 @@ use crate::hir::hir_builder::HirBuilder;
 use crate::hir::HirProgram;
 use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
 use crate::parser::SpecificationParser;
-use crate::plugins::{PluginExpander, PluginRegistry};
+use crate::plugins::{FrameworkPlugin, PluginExpander, PluginRegistry};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-/// Derive a unique module name from a companion file path relative to the pages directory.
-///
-/// Examples:
-/// - `app/pages/dashboard.cln` → `pages_dashboard`
-/// - `app/pages/blog/[slug].cln` → `pages_blog_slug`
-fn derive_companion_module_name(path: &Path, base_dir: &Path) -> String {
-    let relative = path.strip_prefix(base_dir).unwrap_or(path);
-    relative
-        .to_str()
-        .unwrap_or("")
-        .trim_end_matches(".cln")
-        .replace('/', "_")
-        .replace(['[', ']'], "")
-}
-
-/// Prefix companion functions with the module name to avoid conflicts.
-///
-/// Transforms `any guard()` → `any {module}_guard()` and `any load()` → `any {module}_load()`.
-/// Also rewrites `(Request X)` parameter types to `(any X)` so the WASM parameter layout
-/// matches the `any`-typed request object the generated page handler passes in.
-fn prefix_companion_functions(source: &str, module_name: &str) -> String {
-    // Normalize `Request X` parameter type → `any X` before prefixing.
-    // `Request` resolves to ConcreteType::Unknown (4-byte pointer) in the type checker, but the
-    // generated page handler passes an `any`-typed object (12-byte boxed value). Mismatched WASM
-    // parameter widths cause a validation error at runtime; rewriting to `any` keeps sizes aligned.
-    let source = source
-        .replace("any load(Request ", "any load(any ")
-        .replace("any guard(Request ", "any guard(any ");
-
-    // Call-site replacements must happen BEFORE declaration replacements.
-    // If declarations are replaced first, `any load(` becomes `any pages_login_load(`,
-    // and the subsequent call-site pass then finds `load()` as a suffix of
-    // `pages_login_load()` and produces `pages_login_pages_login_load()`.
-    source
-        .replace("guard()", &format!("{}_guard()", module_name))
-        .replace("load()", &format!("{}_load()", module_name))
-        .replace("any guard(", &format!("any {}_guard(", module_name))
-        .replace("any load(", &format!("any {}_load(", module_name))
-}
-
-/// Derive the URL route path from a .cln page companion file.
-///
-/// The shared_dir is the base that contains the `pages/` sub-folder.
-/// Examples (shared_dir = "app/web/"):
-/// - `app/web/pages/login.cln`      → `/login`
-/// - `app/web/pages/index.cln`      → `/`
-/// - `app/web/pages/blog/post.cln`  → `/blog/post`
-/// - `app/web/pages/[id].cln`       → `/:id`
-fn derive_page_route_from_cln(file_path: &Path, shared_dir: &Path) -> String {
-    let relative = file_path.strip_prefix(shared_dir).unwrap_or(file_path);
-    let mut route = String::from("/");
-    let mut past_pages = false;
-
-    for component in relative.components() {
-        if let std::path::Component::Normal(name) = component {
-            let name_str = name.to_string_lossy();
-
-            if !past_pages {
-                if name_str == "pages" {
-                    past_pages = true;
-                }
-                continue;
-            }
-
-            // Strip .cln extension
-            let name_str = name_str.trim_end_matches(".cln");
-
-            // Skip index files — they map to the parent path
-            if name_str == "index" {
-                continue;
-            }
-
-            // Convert [param] to :param for dynamic segments
-            let segment = if name_str.starts_with('[') && name_str.ends_with(']') {
-                format!(":{}", &name_str[1..name_str.len() - 1])
-            } else {
-                name_str.to_string()
-            };
-
-            if !route.ends_with('/') {
-                route.push('/');
-            }
-            route.push_str(&segment);
-        }
-    }
-
-    // Normalise trailing slash
-    if route != "/" && route.ends_with('/') {
-        route.pop();
-    }
-
-    route
-}
-
-/// Derive the template path relative to the project root for use with _ui_render_page.
-///
-/// Examples (project_root = "/abs/path/to/project"):
-/// - `{project_root}/app/web/pages/login.cln`     → `"app/web/pages/login.html"`
-/// - `{project_root}/app/web/pages/blog/post.cln` → `"app/web/pages/blog/post.html"`
-fn derive_page_name_from_cln(file_path: &Path, project_root: &Path) -> String {
-    let relative = file_path.strip_prefix(project_root).unwrap_or(file_path);
-    let mut parts: Vec<String> = relative
-        .components()
-        .filter_map(|c| {
-            if let std::path::Component::Normal(name) = c {
-                Some(name.to_string_lossy().into_owned())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if parts.is_empty() {
-        return "index.html".to_string();
-    }
-
-    if let Some(last) = parts.last_mut() {
-        if last.ends_with(".cln") {
-            *last = format!("{}.html", &last[..last.len() - 4]);
-        }
-    }
-    parts.join("/")
-}
-
-/// Build the params object literal for a page handler based on the route path.
-///
-/// For static routes (no `:name` segments) this returns `{}`.
-/// For dynamic routes it returns `{ name: _req_param("name"), ... }` so that
-/// `request.params.name` works inside load/guard functions.
-fn route_path_to_params_literal(route_path: &str) -> String {
-    let params: Vec<String> = route_path
-        .split('/')
-        .filter_map(|seg| seg.strip_prefix(':'))
-        .map(|name| format!("{}: _req_param(\"{}\")", name, name))
-        .collect();
-
-    if params.is_empty() {
-        "{}".to_string()
-    } else {
-        format!("{{ {} }}", params.join(", "))
-    }
-}
-
-/// Generate a synthetic Clean Language module that registers `_http_route` calls
-/// for all discovered page companions.
-///
-/// Section order follows the language spec: `start:` appears before `functions:`.
-/// The generated module's `start:` block will be merged into the entry module's
-/// `start:` by the HIR merger in `lib.rs`.  Handler functions use the
-/// `__page_handler_` prefix so the WASM export rule in `utilities.rs` exports them.
-///
-/// Each handler constructs a Request-compatible `any` object from the current
-/// request context bridge functions and passes it to load/guard, satisfying the
-/// `any load(any request)` signature produced by `prefix_companion_functions`.
-fn generate_page_route_source(records: &[PageCompanionRecord]) -> String {
-    let mut src = String::new();
-
-    // start: must appear before functions: (spec section order: import, start, state, class, functions)
-    src.push_str("start:\n");
-    src.push_str("\tinteger page_route_status = 0\n");
-
-    for record in records {
-        let handler_name = format!("__page_handler_{}", record.module_name);
-        src.push_str(&format!(
-            "\tpage_route_status = _http_route(\"GET\", \"{}\", \"{}\")\n",
-            record.route_path, handler_name
-        ));
-    }
-
-    src.push('\n');
-    src.push_str("functions:\n");
-
-    for record in records {
-        let handler_name = format!("__page_handler_{}", record.module_name);
-        let params_lit = route_path_to_params_literal(&record.route_path);
-
-        src.push_str(&format!("\tstring {}()\n", handler_name));
-
-        // Build a Request-compatible any object from current request context bridge functions.
-        // `prefix_companion_functions` rewrites `(Request X)` → `(any X)` so the WASM types align.
-        // params: populated from known route segments so request.params.name works for dynamic routes.
-        // query/headers: left empty — use _req_query("name") / _req_header("name") for direct access.
-        src.push_str("\t\tany __req_auth = { loggedIn: _auth_require_auth() == 1, userId: \"\", role: \"\", roles: \"[]\" }\n");
-        src.push_str(&format!("\t\tany __req_params = {}\n", params_lit));
-        src.push_str("\t\tany __page_req = { auth: __req_auth, params: __req_params, query: {}, body: _req_body(), headers: {}, method: _req_method(), path: _req_path(), ip: _req_ip() }\n");
-
-        if record.has_guard {
-            src.push_str(&format!(
-                "\t\tany guard_result = {}_guard(__page_req)\n",
-                record.module_name
-            ));
-            src.push_str("\t\tif guard_result != null\n");
-            src.push_str("\t\t\treturn \"\"\n");
-        }
-
-        if record.has_load {
-            src.push_str(&format!(
-                "\t\tany data = {}_load(__page_req)\n",
-                record.module_name
-            ));
-            src.push_str("\t\tstring page_json = json.encode(data)\n");
-            src.push_str(&format!(
-                "\t\treturn _ui_render_page(\"{}\", page_json)\n",
-                record.page_name
-            ));
-        } else {
-            src.push_str(&format!(
-                "\t\treturn _ui_render_page(\"{}\", \"{{}}\")\n",
-                record.page_name
-            ));
-        }
-
-        src.push('\n');
-    }
-
-    src
-}
 
 /// Represents an extracted import with additional metadata
 #[derive(Debug, Clone)]
@@ -252,23 +34,6 @@ struct ManifestInfo {
     shared_folders: Vec<PathBuf>,
     /// True when `frame.server` is listed in the manifest's plugins declaration
     has_frame_server: bool,
-}
-
-/// Record of a page companion .cln file discovered during shared folder scan.
-///
-/// Used to generate synthetic route registration code after scanning is complete.
-#[derive(Debug, Clone)]
-struct PageCompanionRecord {
-    /// Unique module name derived from file path (e.g., "pages_login")
-    module_name: String,
-    /// URL route path (e.g., "/login")
-    route_path: String,
-    /// Template path for _ui_render_page relative to project root (e.g., "app/web/pages/login.html")
-    page_name: String,
-    /// Whether the companion defines a guard() function
-    has_guard: bool,
-    /// Whether the companion defines a load() function
-    has_load: bool,
 }
 
 /// Configuration for the multi-file compiler
@@ -637,111 +402,99 @@ impl MultiFileCompiler {
         // that were not already discovered via imports.  These files compile as part of
         // every target even when no other module explicitly imports them.
         //
-        // While scanning, collect page companion records so we can generate synthetic
-        // _http_route registrations after the scan is complete (fix for E-PGREG).
-        let mut page_companion_records: Vec<PageCompanionRecord> = Vec::new();
-        if let (Some(ref info), Some(ref project_root)) = (&manifest_info, &manifest_root) {
+        // Collect all shared files first, then run the assemble hook to let the
+        // PageCompanionAssembler handle page companion detection, function prefixing,
+        // and synthetic route module generation (replaces 6 hardcoded functions).
+        if let (Some(ref info), Some(ref project_root), Some(ref manifest_dir)) =
+            (&manifest_info, &manifest_root, &manifest_root)
+        {
+            // Pass 1: collect (file_path, shared_dir, raw_content) for every shared file.
+            let mut shared_files: Vec<(PathBuf, PathBuf, String)> = Vec::new();
             for shared_dir in &info.shared_folders {
                 for file_path in Self::collect_cln_files(shared_dir) {
-                    // Determine if this file lives under a pages/ subdirectory.
-                    let is_page_companion = {
-                        let relative = file_path.strip_prefix(shared_dir).unwrap_or(&file_path);
-                        relative.components().any(|c| {
-                            matches!(
-                                c,
-                                std::path::Component::Normal(n)
-                                if n == "pages"
-                            )
-                        })
+                    let content = if let Some(id) = unit.module_id_for_path(&file_path) {
+                        unit.get_module(id).map(|m| m.source.clone())
+                    } else {
+                        fs::read_to_string(&file_path).ok()
                     };
-
-                    if let Some(existing_id) = unit.module_id_for_path(&file_path) {
-                        // File already loaded (the entry file) — if it is a page companion,
-                        // prefix its source in-place and register its route (GEN002 fix).
-                        if is_page_companion {
-                            if let Some(module) = unit.get_module_mut(existing_id) {
-                                let raw_source = module.source.clone();
-                                let is_active = raw_source.contains("any load(")
-                                    || raw_source.contains("any guard(");
-                                if is_active {
-                                    let module_name =
-                                        derive_companion_module_name(&file_path, shared_dir);
-                                    let prefixed =
-                                        prefix_companion_functions(&raw_source, &module_name);
-                                    module.source = prefixed;
-                                    let route = derive_page_route_from_cln(&file_path, shared_dir);
-                                    let page_name =
-                                        derive_page_name_from_cln(&file_path, project_root);
-                                    page_companion_records.push(PageCompanionRecord {
-                                        module_name,
-                                        route_path: route,
-                                        page_name,
-                                        has_guard: raw_source.contains("any guard("),
-                                        has_load: raw_source.contains("any load("),
-                                    });
-                                }
-                            }
-                        }
-                    } else if let Ok(raw_source) = fs::read_to_string(&file_path) {
-                        // Page companion files (files under a pages/ subdirectory that
-                        // declare load() or guard()) must be prefixed with a unique
-                        // module name so that multiple pages can coexist in one binary
-                        // without colliding in the global symbol table.
-                        let is_active_companion = is_page_companion
-                            && (raw_source.contains("any load(")
-                                || raw_source.contains("any guard("));
-
-                        let (name, source) = if is_active_companion {
-                            let module_name = derive_companion_module_name(&file_path, shared_dir);
-                            let prefixed = prefix_companion_functions(&raw_source, &module_name);
-
-                            // Capture route registration info for later synthetic generation
-                            let route = derive_page_route_from_cln(&file_path, shared_dir);
-                            let page_name = derive_page_name_from_cln(&file_path, project_root);
-                            page_companion_records.push(PageCompanionRecord {
-                                module_name: module_name.clone(),
-                                route_path: route,
-                                page_name,
-                                has_guard: raw_source.contains("any guard("),
-                                has_load: raw_source.contains("any load("),
-                            });
-
-                            (module_name, prefixed)
-                        } else {
-                            (Self::derive_module_name(&file_path), raw_source)
-                        };
-
-                        let id = unit.add_module(name, file_path, source);
-                        // Add as a standalone node; the topological sort includes all nodes
-                        graph.add_module(id);
+                    if let Some(content) = content {
+                        shared_files.push((file_path, shared_dir.clone(), content));
                     }
                 }
             }
-        }
 
-        // Generate a synthetic Clean module that registers _http_route calls for every
-        // page companion discovered above.  This is only emitted when frame.server is
-        // declared (the bridge function _http_route is only available in that context).
-        // The synthetic module's start: block will be merged into the entry module's
-        // start: by the HIR merger in lib.rs (the standard non-entry-module path).
-        if let (Some(ref info), Some(ref manifest_dir)) = (&manifest_info, &manifest_root) {
-            if info.has_frame_server && !page_companion_records.is_empty() {
-                let synthetic_source = generate_page_route_source(&page_companion_records);
-                // Use a virtual path that cannot exist on disk so path-based dedup is safe.
-                let synthetic_path = PathBuf::from(format!(
-                    "{}/__page_routes_generated.cln",
-                    manifest_dir.display()
-                ));
+            // Pass 2: run assemble hooks.
+            // The built-in PageCompanionAssembler shim always runs first.
+            // Any WASM plugins that implement the assemble hook are called next via
+            // the registry, enabling future frame.ui WASM exports to participate.
+            let assemble_input = crate::plugins::AssembleInput {
+                source_files: shared_files
+                    .iter()
+                    .map(|(p, _, c)| crate::plugins::AssembleSourceFile {
+                        path: p.to_string_lossy().into_owned(),
+                        content: c.clone(),
+                    })
+                    .collect(),
+                project_root: project_root.to_string_lossy().into_owned(),
+                manifest_dir: manifest_dir.to_string_lossy().into_owned(),
+                has_frame_server: info.has_frame_server,
+            };
+            let mut assemble_output = crate::plugins::builtin_assemblers::PageCompanionAssembler
+                .assemble(&assemble_input)
+                .unwrap_or_default();
+            // Merge any outputs from WASM plugin assemblers registered in the registry.
+            if let Some(ref registry) = self.config.plugin_registry {
+                let hook_output = registry.run_assemble_hooks(&assemble_input);
+                assemble_output
+                    .injected_sources
+                    .extend(hook_output.injected_sources);
+                assemble_output
+                    .transformed_sources
+                    .extend(hook_output.transformed_sources);
+            }
+
+            let transformed_map: HashMap<String, String> = assemble_output
+                .transformed_sources
+                .into_iter()
+                .map(|t| (t.path, t.content))
+                .collect();
+
+            // Pass 3: add files to the compilation unit with transformations applied.
+            for (file_path, shared_dir, raw_source) in shared_files {
+                let path_str = file_path.to_string_lossy().into_owned();
+                if let Some(existing_id) = unit.module_id_for_path(&file_path) {
+                    // Already in unit (e.g. the entry file) — apply transformation if any.
+                    if let Some(transformed) = transformed_map.get(&path_str) {
+                        if let Some(module) = unit.get_module_mut(existing_id) {
+                            module.source = transformed.clone();
+                        }
+                    }
+                } else {
+                    let (name, source) = if let Some(transformed) = transformed_map.get(&path_str) {
+                        let module_name =
+                            crate::plugins::builtin_assemblers::derive_companion_module_name(
+                                &file_path,
+                                &shared_dir,
+                            );
+                        (module_name, transformed.clone())
+                    } else {
+                        (Self::derive_module_name(&file_path), raw_source)
+                    };
+                    let id = unit.add_module(name, file_path, source);
+                    graph.add_module(id);
+                }
+            }
+
+            // Pass 4: inject synthetic sources produced by assemble hooks.
+            for injected in assemble_output.injected_sources {
+                let synthetic_path = PathBuf::from(&injected.virtual_path);
                 let id = unit.add_module(
                     "__page_routes_generated".to_string(),
                     synthetic_path,
-                    synthetic_source,
+                    injected.content,
                 );
                 graph.add_module(id);
-                tracing::debug!(
-                    companions = page_companion_records.len(),
-                    "Generated synthetic page route registrations (E-PGREG fix)"
-                );
+                tracing::debug!("Generated synthetic page route registrations (E-PGREG fix)");
             }
         }
 
@@ -926,7 +679,10 @@ impl MultiFileCompiler {
 
         let has_guard = source.contains("any guard(") || source.contains("guard()");
         let has_load = source.contains("any load(") || source.contains("load()");
-        let module_name = derive_companion_module_name(&companion_path, base_dir);
+        let module_name = crate::plugins::builtin_assemblers::derive_companion_module_name(
+            &companion_path,
+            base_dir,
+        );
 
         Some(CompanionFile {
             file_path: companion_path,
@@ -1284,8 +1040,10 @@ impl MultiFileCompiler {
         // If companion file exists, include prefixed functions after the class
         if let Some(ref companion) = page.companion {
             code.push_str("\n\n");
-            let prefixed_source =
-                prefix_companion_functions(&companion.source, &companion.module_name);
+            let prefixed_source = crate::plugins::builtin_assemblers::prefix_companion_functions(
+                &companion.source,
+                &companion.module_name,
+            );
             code.push_str(&prefixed_source);
         }
 
@@ -2074,6 +1832,10 @@ impl Default for MultiFileCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::builtin_assemblers::{
+        derive_companion_module_name, derive_page_name_from_cln, derive_page_route_from_cln,
+        generate_page_route_source, PageCompanionRecord,
+    };
 
     #[test]
     fn test_single_file_compilation() {

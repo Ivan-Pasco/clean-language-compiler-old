@@ -145,6 +145,12 @@ pub struct PluginExports {
     /// length-prefixed JSON string containing a serialized `BuildRegistration`.
     #[serde(default)]
     pub register_build: Option<String>,
+    /// WASM export name for the assemble hook.
+    /// Called once before parsing with the full list of source files.
+    /// Signature: `(input_ptr: i32, input_len: i32) -> i32` where the returned
+    /// pointer is a length-prefixed JSON string containing a serialized `AssembleOutput`.
+    #[serde(default)]
+    pub assemble: Option<String>,
 }
 
 impl Default for PluginExports {
@@ -160,6 +166,7 @@ impl Default for PluginExports {
             register_cli: None,
             register_data: None,
             register_build: None,
+            assemble: None,
         }
     }
 }
@@ -245,6 +252,57 @@ pub struct BuildRegistration {
     /// Asset processor function names that transform or copy static assets.
     #[serde(default)]
     pub asset_processors: Vec<String>,
+}
+
+// ============================================================================
+// Plugin Assemble Hook Types
+// ============================================================================
+
+/// Input passed to a plugin's `assemble` hook.
+///
+/// The hook runs once per compilation, after all source files have been
+/// discovered but before any parsing. Plugins can inject synthetic sources or
+/// transform existing ones.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AssembleInput {
+    /// All source files in the compilation unit (path + raw content).
+    #[serde(default)]
+    pub source_files: Vec<AssembleSourceFile>,
+    pub project_root: String,
+    pub manifest_dir: String,
+    pub has_frame_server: bool,
+}
+
+/// A single source file passed to the assemble hook.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssembleSourceFile {
+    pub path: String,
+    pub content: String,
+}
+
+/// What the assemble hook returns.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AssembleOutput {
+    /// New virtual sources to inject into the compilation unit.
+    #[serde(default)]
+    pub injected_sources: Vec<InjectedSource>,
+    /// Transformed versions of existing files (path → new content).
+    #[serde(default)]
+    pub transformed_sources: Vec<TransformedSource>,
+}
+
+/// A synthetic source file injected by a plugin's assemble hook.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InjectedSource {
+    pub virtual_path: String,
+    pub content: String,
+}
+
+/// A transformed version of an existing source file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransformedSource {
+    pub path: String,
+    pub content: String,
 }
 
 fn default_expand() -> String {

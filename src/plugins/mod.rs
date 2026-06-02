@@ -74,6 +74,7 @@
  */
 
 mod app_config;
+pub mod builtin_assemblers;
 mod discovery;
 pub mod enforcement;
 mod expander;
@@ -84,10 +85,14 @@ mod wasm_adapter;
 mod wasm_loader;
 
 pub use app_config::AppConfig;
+pub use builtin_assemblers::page_companion_assembler;
 pub use discovery::{DiscoveryError, PluginDiscovery};
 pub use expander::PluginExpander;
 pub use language_registry::{
     BlockInfo, CompletionSnippet, FunctionInfo, KeywordInfo, LanguageRegistry, TypeInfo,
+};
+pub use plugin_abi::{
+    AssembleInput, AssembleOutput, AssembleSourceFile, InjectedSource, TransformedSource,
 };
 pub use plugin_abi::{
     BridgeFunction, PluginAbi, PluginBridge, PluginCompletionDef, PluginFunctionDef, PluginKeyword,
@@ -444,6 +449,21 @@ pub trait FrameworkPlugin: Send + Sync {
     /// Plugins loaded from WASM manifests override this via `[handles] expressions`.
     fn expression_patterns(&self) -> &[String] {
         &[]
+    }
+
+    /// Compile-time source assembly hook.
+    ///
+    /// Called once per compilation after all source files are discovered but
+    /// before any parsing. A plugin may inspect the file list and return:
+    /// - `injected_sources`: synthetic `.cln` files to add to the compilation unit
+    /// - `transformed_sources`: modified content for existing files
+    ///
+    /// The default implementation is a no-op (returns empty output).
+    fn assemble(
+        &self,
+        _input: &crate::plugins::plugin_abi::AssembleInput,
+    ) -> PluginResult<crate::plugins::plugin_abi::AssembleOutput> {
+        Ok(crate::plugins::plugin_abi::AssembleOutput::default())
     }
 }
 
