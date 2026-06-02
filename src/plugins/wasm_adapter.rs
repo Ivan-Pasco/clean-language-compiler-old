@@ -3408,6 +3408,127 @@ impl FrameworkPlugin for WasmPluginAdapter {
     fn expression_patterns(&self) -> &[String] {
         &self.expression_patterns_cache
     }
+
+    fn assemble(
+        &self,
+        input: &crate::plugins::plugin_abi::AssembleInput,
+    ) -> crate::plugins::PluginResult<crate::plugins::plugin_abi::AssembleOutput> {
+        use crate::plugins::plugin_abi::AssembleOutput;
+
+        let export_name = match self.manifest.exports.assemble.as_deref() {
+            Some(name) => name.to_owned(),
+            None => return Ok(AssembleOutput::default()),
+        };
+
+        let input_json = serde_json::to_string(input).map_err(|e| {
+            crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("Failed to serialize AssembleInput: {}", e),
+                location: None,
+            }
+        })?;
+
+        let mut store = self.create_store();
+        let linker =
+            self.get_linker()
+                .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: e.to_string(),
+                    location: None,
+                })?;
+
+        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
+            crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("Failed to instantiate plugin: {}", e),
+                location: None,
+            }
+        })?;
+
+        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
+            crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: "Plugin does not export memory".to_string(),
+                location: None,
+            }
+        })?;
+
+        let input_ptr = self
+            .find_or_write_string(&mut store, &memory, &input_json)
+            .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("Failed to write input to WASM memory: {}", e),
+                location: None,
+            })?;
+
+        let assemble_fn: wasmtime::TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, &export_name)
+            .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!(
+                    "Plugin does not export assemble function '{}': {}",
+                    export_name, e
+                ),
+                location: None,
+            })?;
+
+        let result_ptr = assemble_fn.call(&mut store, input_ptr).map_err(|e| {
+            crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("assemble() call failed: {}", e),
+                location: None,
+            }
+        })?;
+
+        if let Some(error) = store.data().last_error.clone() {
+            return Err(crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("Plugin error in assemble: {}", error),
+                location: None,
+            });
+        }
+
+        let result_bytes = self.read_result(&store, &memory, result_ptr).map_err(|e| {
+            crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("Failed to read assemble result: {}", e),
+                location: None,
+            }
+        })?;
+
+        if result_bytes.is_empty() {
+            return Ok(AssembleOutput::default());
+        }
+
+        let json_str = std::str::from_utf8(&result_bytes).map_err(|e| {
+            crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("Non-UTF-8 response from assemble: {}", e),
+                location: None,
+            }
+        })?;
+
+        serde_json::from_str(json_str).map_err(|e| crate::plugins::PluginError::ExpansionFailed {
+            plugin_name: self.name.clone(),
+            block_name: "assemble".to_string(),
+            message: format!(
+                "Failed to parse assemble JSON response: {} — raw: {}",
+                e,
+                &json_str[..json_str.len().min(256)]
+            ),
+            location: None,
+        })
+    }
 }
 
 /// State held by the WASM store
