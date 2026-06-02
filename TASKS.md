@@ -9,10 +9,12 @@
 **Errors**:
   - `syn001`: plugin WASM traps at runtime (wasm function 262) on complex join/where queries
   - `sem003`: plugin-generated code declares `list<User>` but type checker infers `Array<string>` — plugin output type mismatch
-**Root cause**: frame.data plugin was compiled with older compiler versions with codegen bugs.
-  Plugin WASM crashes or generates wrong-typed output during expansion.
-**Reported**: 2026-06-01 — report ID `39d16ea8-432c-4ea8-b846-14aa066c8d99`
-**Action**: clean-framework team rebuilds frame.data plugin WASM with compiler >= 0.30.209.
+**Root cause**: Bug in frame.data plugin Clean Language source logic (not the compiler version).
+  Rebuilding with compiler 0.30.211 does not resolve — plugin source must be fixed in clean-framework.
+**Reported**: 2026-06-01 (framework component)
+  - SYN001 report ID `7b4c60bd-5bef-4f4f-a885-b80caf496164`
+  - SEM003 report ID `54e673ed-fc1f-4293-9b0d-02c6b5d1e087`
+**Action**: clean-framework team fixes expand logic in frame.data/src/main.cln for complex where/join queries and ORM result type propagation.
 
 ---
 

@@ -1,0 +1,35 @@
+// Test: control/conditionals/07_consecutive_if_return
+// Grammar: IfStatement IfStatement ReturnStatement (sequential, not nested)
+// Semantic: SEM-CTRL-01 — consecutive if blocks must not suppress the trailing return
+// Expected output:
+//   hello_a_b
+//   hello_a
+//   _b
+//   (empty)
+//   _a_b
+//   (empty)
+
+start:
+	print(test_two_ifs("hello", "world"))
+	print(test_two_ifs("hello", ""))
+	print(test_two_ifs("", "world"))
+	print(test_two_ifs("", ""))
+	print(test_two_ifs_integer(1, 1))
+	print(test_two_ifs_integer(0, 0))
+
+functions:
+	string test_two_ifs(string a, string b)
+		string result = a
+		if a.length() > 0
+			result = result + "_a"
+		if b.length() > 0
+			result = result + "_b"
+		return result
+
+	string test_two_ifs_integer(integer x, integer y)
+		string result = ""
+		if x > 0
+			result = result + "_a"
+		if y > 0
+			result = result + "_b"
+		return result
