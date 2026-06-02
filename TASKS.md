@@ -1,5 +1,21 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ COMPLETED: CODEGEN001 — Object literals `{ key: value }` compiled to `return 0`
+
+**Priority**: CRITICAL
+**Discovered**: 2026-06-02
+**Completed**: 2026-06-02 — fixed in v0.30.217
+**Files**: `src/typechecker/type_inference.rs`, `src/mir/mir_builder/expressions.rs`, `src/codegen/mir_codegen/operands.rs`
+**Root cause**: `infer_literal_expression` forwarded `Value::Pairs` to `infer_literal` which returned
+  `(TastLiteral::Null, ConcreteType::Unknown)` — the object literal was erased to `i32.const 0`.
+  `TastExpressionKind::ObjectLiteral` also had no handler in the MIR builder (fell to error).
+  `load_string_argument_for_print` had no `MirType::Any` case, treating boxed values as raw strings.
+**Fix**: (1) `infer_literal_expression` intercepts `Value::Pairs` → `ObjectLiteral` w/ `ConcreteType::Any`;
+  (2) MIR builder `ObjectLiteral` handler allocates raw JSON-format object and boxes as `AnyTypeTag::Object`;
+  (3) `load_string_argument_for_print` adds `MirType::Any` branch via `emit_any_to_string` dispatch.
+
+---
+
 ## ✅ COMPLETED: frame.data plugin compatibility — SYN001 + SEM003
 
 **Priority**: CRITICAL — ORM/data plugin tests cannot compile
