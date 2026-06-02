@@ -3106,6 +3106,153 @@ impl MirBuilder {
                 Ok(list_value_id)
             }
 
+            TastExpressionKind::ObjectLiteral { fields } => {
+                let n = fields.len();
+                let loc = expression.location.clone();
+                trace!(field_count = n, "Creating object literal");
+
+                // Allocate raw object memory: 4 bytes for count + 8 bytes per entry (key_ptr, val_ptr)
+                let alloc_size = (4 + n * 8) as i64;
+                let raw_obj_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(context, raw_obj_id, MirType::I32, loc.clone());
+
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: Some(raw_obj_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: "mem_alloc".to_string(),
+                                symbol_id: SymbolId(0),
+                            },
+                            arguments: vec![
+                                MirOperand::Constant(MirConstant::Integer(0)),
+                                MirOperand::Constant(MirConstant::Integer(alloc_size)),
+                            ],
+                        },
+                        location: loc.clone(),
+                    },
+                );
+
+                // Write field count at offset 0
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: None,
+                        operation: MirOperation::Store {
+                            destination: MirOperand::Value(raw_obj_id),
+                            value: MirOperand::Constant(MirConstant::Integer(n as i64)),
+                        },
+                        location: loc.clone(),
+                    },
+                );
+
+                // For each field: write key_ptr at offset 4+i*8, boxed val_ptr at offset 4+i*8+4
+                for (i, field) in fields.iter().enumerate() {
+                    let key_byte_offset = (4 + i * 8) as i64;
+                    let val_byte_offset = (4 + i * 8 + 4) as i64;
+
+                    // Key: build as a string literal — produces the [len|content] struct pointer
+                    let key_str_expr = TastExpression {
+                        kind: TastExpressionKind::Literal {
+                            value: TastLiteral::String(field.key.clone()),
+                        },
+                        expr_type: ConcreteType::String,
+                        location: field.location.clone(),
+                    };
+                    let key_id = self.build_expression(context, &key_str_expr)?;
+
+                    // Value: build expression, then box to Any (unless already Any-typed)
+                    let field_val_id = self.build_expression(context, &field.value)?;
+                    let boxed_val_id = if matches!(field.value.expr_type, ConcreteType::Any) {
+                        field_val_id
+                    } else {
+                        self.emit_box_any(
+                            context,
+                            field_val_id,
+                            &field.value.expr_type,
+                            &field.location,
+                        )
+                    };
+
+                    // Compute offset pointers via Add
+                    let key_ptr_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(context, key_ptr_id, MirType::I32, loc.clone());
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: Some(key_ptr_id),
+                            operation: MirOperation::BinaryOp {
+                                op: MirBinaryOp::Add,
+                                left: MirOperand::Value(raw_obj_id),
+                                right: MirOperand::Constant(MirConstant::Integer(key_byte_offset)),
+                            },
+                            location: loc.clone(),
+                        },
+                    );
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: None,
+                            operation: MirOperation::Store {
+                                destination: MirOperand::Value(key_ptr_id),
+                                value: MirOperand::Value(key_id),
+                            },
+                            location: loc.clone(),
+                        },
+                    );
+
+                    let val_ptr_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(context, val_ptr_id, MirType::I32, loc.clone());
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: Some(val_ptr_id),
+                            operation: MirOperation::BinaryOp {
+                                op: MirBinaryOp::Add,
+                                left: MirOperand::Value(raw_obj_id),
+                                right: MirOperand::Constant(MirConstant::Integer(val_byte_offset)),
+                            },
+                            location: loc.clone(),
+                        },
+                    );
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: None,
+                            operation: MirOperation::Store {
+                                destination: MirOperand::Value(val_ptr_id),
+                                value: MirOperand::Value(boxed_val_id),
+                            },
+                            location: loc.clone(),
+                        },
+                    );
+                }
+
+                // Box raw_obj_id as an Object-typed Any value: [tag=6][raw_obj_id][0]
+                let boxed_obj_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(context, boxed_obj_id, MirType::Any, loc.clone());
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: Some(boxed_obj_id),
+                        operation: MirOperation::BoxAny {
+                            value: MirOperand::Value(raw_obj_id),
+                            type_tag: AnyTypeTag::Object,
+                            source_type: MirType::I32,
+                        },
+                        location: loc,
+                    },
+                );
+
+                trace!(boxed_obj_id = ?boxed_obj_id, "Object literal created");
+                Ok(boxed_obj_id)
+            }
+
             TastExpressionKind::Range {
                 start,
                 end,

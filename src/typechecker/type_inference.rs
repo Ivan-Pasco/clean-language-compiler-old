@@ -6,9 +6,9 @@
 use super::constraint_solver::{ConstraintSolver, SolverResult};
 use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
-    TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastParameter,
-    TastProgram, TastStateBlock, TastStateDeclaration, TastStateScope, TastStatement,
-    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
+    TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
+    TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStateScope,
+    TastStatement, TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -3245,6 +3245,31 @@ impl<'a> TypeInference<'a> {
         value: &crate::ast::Value,
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        // Object literals { key: value, ... } must produce ObjectLiteral, not Literal(Null)
+        if let crate::ast::Value::Pairs(pairs) = value {
+            let mut fields = Vec::new();
+            for (key_val, field_val) in pairs {
+                let key = match key_val {
+                    crate::ast::Value::String(s) => s.clone(),
+                    other => format!("{}", other),
+                };
+                let (lit, ty) = self.infer_literal(field_val);
+                fields.push(TastObjectField {
+                    key,
+                    value: TastExpression {
+                        kind: TastExpressionKind::Literal { value: lit },
+                        expr_type: ty,
+                        location: location.clone(),
+                    },
+                    location: location.clone(),
+                });
+            }
+            return Ok((
+                TastExpressionKind::ObjectLiteral { fields },
+                ConcreteType::Any,
+                location.clone(),
+            ));
+        }
         let (tast_literal, literal_type) = self.infer_literal(value);
         Ok((
             TastExpressionKind::Literal {

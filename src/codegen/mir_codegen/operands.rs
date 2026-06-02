@@ -462,6 +462,32 @@ impl MirCodeGenerator<'_> {
                             align: 2,
                             memory_index: 0,
                         }));
+                } else if matches!(value_type, Some(MirType::Any)) {
+                    // Any-typed value (boxed pointer): convert to string via type dispatch,
+                    // then expand the resulting string pointer to (content_ptr, length).
+                    debug_mir!(" LOAD_STRING: Value is Any, converting via any_to_string dispatch");
+                    self.load_operand(operand)?;
+                    self.emit_any_to_string()?;
+                    // emit_any_to_string leaves a string pointer on the stack
+                    let temp_local = self.next_local_index;
+                    self.next_local_index += 1;
+                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    self.current_instructions
+                        .push(Instruction::LocalSet(temp_local));
+                    // content_ptr = str_ptr + 4
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(4));
+                    self.current_instructions.push(Instruction::I32Add);
+                    // length = mem[str_ptr]
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions
+                        .push(Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }));
                 } else {
                     // String or other pointer type - load and expand normally
                     // NOTE: Always load values from their local variable and expand
