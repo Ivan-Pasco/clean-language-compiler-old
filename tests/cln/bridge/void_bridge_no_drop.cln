@@ -1,0 +1,11 @@
+// Test: bridge/void_bridge_no_drop
+// Grammar: function_call (bridge function used as statement)
+// Semantic: GEN001 — void-return bridge functions called as statements must NOT emit DROP
+// Expected output:
+//   ok
+
+start:
+	// server.sleep is a void-return bridge function.  Calling it as a statement must
+	// compile to WASM without a spurious 'drop' instruction after the call.
+	server.sleep(0)
+	print("ok")

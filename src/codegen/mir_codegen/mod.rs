@@ -230,6 +230,13 @@ pub struct MirCodeGenerator<'a> {
     /// and populated with these entries so hosts can invoke referenced functions
     /// via `call_indirect` using the i32 value as the table index.
     pub(super) referenced_function_indices: HashSet<u32>,
+
+    /// Names of functions that originate from the user program (including plugin-generated
+    /// functions from `expand_block`). These are always exported regardless of naming
+    /// convention — including double-underscore route handler stubs like `__redirect_0`.
+    /// Compiler-internal helpers (`__malloc`, `__string_concat`, etc.) are NOT in this
+    /// set because they are registered via `register_function`, not from `mir_program.functions`.
+    pub(super) user_defined_function_names: HashSet<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +277,7 @@ impl MirCodeGenerator<'_> {
             bridge_param_types: HashMap::new(),
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
+            user_defined_function_names: HashSet::new(),
         }
     }
 
@@ -306,6 +314,7 @@ impl MirCodeGenerator<'_> {
             bridge_param_types: HashMap::new(),
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
+            user_defined_function_names: HashSet::new(),
         }
     }
 
@@ -342,6 +351,7 @@ impl MirCodeGenerator<'_> {
             bridge_param_types: HashMap::new(),
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
+            user_defined_function_names: HashSet::new(),
         }
     }
 
@@ -833,6 +843,9 @@ impl MirCodeGenerator<'_> {
             self.wasm_generator
                 .function_map
                 .insert(function.name.clone(), function_index);
+
+            self.user_defined_function_names
+                .insert(function.name.clone());
 
             self.function_symbol_map
                 .insert(*symbol_id, function.name.clone());

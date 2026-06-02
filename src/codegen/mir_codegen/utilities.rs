@@ -1195,16 +1195,20 @@ impl MirCodeGenerator<'_> {
             //     with "__".  These are the plugin-facing ABI surface; the host calls them directly
             //     by name so they must all be exported.
             //   - Regular user functions (no leading underscore): always exported.
+            //   - Plugin-generated functions in user_defined_function_names: always exported,
+            //     including those with double-underscore prefix (e.g. __redirect_0 from expand_block).
             //   - Internal compiler helpers (double underscore, not __route_handler_ or
-            //     __page_handler_): NOT exported.
+            //     __page_handler_, not in user_defined_function_names): NOT exported.
             let is_route_handler = name.starts_with("__route_handler_");
             let is_page_handler = name.starts_with("__page_handler_");
             let is_single_underscore_callback = name.starts_with('_') && !name.starts_with("__");
             let is_regular_function = !name.starts_with('_');
+            let is_user_defined = self.user_defined_function_names.contains(name.as_str());
             if is_route_handler
                 || is_page_handler
                 || is_single_underscore_callback
                 || is_regular_function
+                || is_user_defined
             {
                 self.wasm_generator.export_section.export(
                     name,
@@ -1577,6 +1581,30 @@ impl MirCodeGenerator<'_> {
             let param_types = func.get_param_types();
             let return_type = func.get_return_type();
             let module = &func.module;
+
+            // Register the bridge function's return type so that no-destination call sites
+            // (expression statements) can determine whether to emit DROP. Without this, the
+            // fallback path defaults to non-void and emits a spurious DROP after a void-return
+            // bridge call, causing "type mismatch: nothing on stack" at WASM validation time.
+            let mir_return = match &return_type {
+                BuiltinType::Void => MirType::Void,
+                BuiltinType::Integer | BuiltinType::Boolean => MirType::I32,
+                BuiltinType::Number => MirType::F64,
+                BuiltinType::String => MirType::Ptr(Box::new(MirType::I8)),
+                _ => MirType::I32,
+            };
+            // Collect language aliases first to avoid borrow conflicts.
+            let aliases: Vec<String> = self
+                .language_to_bridge_map
+                .iter()
+                .filter(|(_, bridge)| **bridge == func.name)
+                .map(|(lang, _)| lang.clone())
+                .collect();
+            self.function_return_types
+                .insert(func.name.clone(), mir_return.clone());
+            for alias in aliases {
+                self.function_return_types.insert(alias, mir_return.clone());
+            }
 
             let needs_wrapper =
                 func.expand_strings && param_types.iter().any(|t| matches!(t, BuiltinType::String));
