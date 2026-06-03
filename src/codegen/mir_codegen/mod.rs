@@ -841,6 +841,23 @@ impl MirCodeGenerator<'_> {
             sorted_functions.retain(|(_, f)| seen.insert(f.name.clone()));
         }
 
+        // Dead-code elimination for plugin preamble functions (GEN003).
+        //
+        // Plugin preamble functions (location.file == "<plugin-output>") are
+        // generated for every import of a plugin, even when the user's code does
+        // not call them. Their bodies reference bridge imports. If those imports are
+        // tree-shaken (not reachable from user code), compiling the preamble function
+        // would produce Call(u32::MAX) or "not found in function map".
+        //
+        // We skip preamble functions whose names are not in the BFS reachable set.
+        // User-defined functions are always kept (they are seeded by the BFS).
+        if let Some(reachable) = &self.wasm_generator.reachable_imports {
+            let reachable_snap = reachable.clone();
+            sorted_functions.retain(|(_, f)| {
+                f.location.file != "<plugin-output>" || reachable_snap.contains(&f.name)
+            });
+        }
+
         for (i, (symbol_id, function)) in sorted_functions.iter().enumerate() {
             let function_index = self.wasm_generator.function_count + i as u32;
             debug_mir!(

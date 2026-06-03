@@ -1380,7 +1380,33 @@ impl MirCodeGenerator<'_> {
                 seed(ep);
             }
             for (sym, f) in &mir_program.functions {
-                if f.attributes.entry_point || f.attributes.exported {
+                let is_exported_by_attr = f.attributes.entry_point || f.attributes.exported;
+                // Route handlers (__route_handler_*) and page handlers (__page_handler_*)
+                // are called by the HTTP server runtime when requests arrive — they are
+                // never invoked from start:, so BFS from start: alone never reaches
+                // bridge functions used only inside a route handler → helper chain.
+                // Single-underscore callbacks (_on_event, _frame_callback, etc.) face
+                // the same problem: called by plugin hosts, not from start:.
+                // These naming patterns mirror the WASM export-section rules in
+                // utilities.rs — the same functions that are exported so hosts can
+                // dispatch to them must also be seeded so their bridge imports are
+                // registered. (GEN003 follow-up)
+                let is_external_call_target = f.name.starts_with("__route_handler_")
+                    || f.name.starts_with("__page_handler_")
+                    || (f.name.starts_with('_') && !f.name.starts_with("__"));
+                // User-defined functions are called directly by the HTTP server runtime
+                // when they are registered as endpoint handlers (e.g. via frame.server
+                // endpoints:). The plugin uses integer table indices to register them,
+                // so the BFS cannot follow the call chain from start: through the
+                // registration call. Instead we seed user-defined functions directly
+                // so their bridge imports (Layer2/3) are found reachable.
+                // Plugin-generated preamble functions have location.file == "<plugin-output>";
+                // we deliberately exclude them here to preserve the Import Minimality Rule
+                // — preamble helpers like resDownload must not drag in _res_download unless
+                // user code actually calls them.
+                let is_user_defined =
+                    !f.location.file.is_empty() && f.location.file != "<plugin-output>";
+                if is_exported_by_attr || is_external_call_target || is_user_defined {
                     seed(*sym);
                 }
             }
@@ -1403,7 +1429,9 @@ impl MirCodeGenerator<'_> {
         while let Some(sym) = worklist.pop() {
             let current_func = match mir_program.functions.get(&sym) {
                 Some(f) => f,
-                None => continue,
+                None => {
+                    continue;
+                }
             };
             for block in current_func.blocks.values() {
                 for instruction in &block.instructions {
@@ -1439,6 +1467,23 @@ impl MirCodeGenerator<'_> {
                         // codegen injects a `string_compare` call at BinaryOp
                         // code-gen time. We must mark `string_compare` reachable
                         // here so the import is not tree-shaken.
+                        // Function references used as handler arguments (e.g. passed to
+                        // _http_route). The MIR builder emits:
+                        //   Copy { source: Function(symbol_id) }
+                        // with a local named "funcref_<name>". The BFS must follow these
+                        // just like direct calls — otherwise bridge imports used inside
+                        // the referenced function are not found reachable and the import
+                        // is stripped. (GEN003: route handler → helper → bridge import)
+                        MirOperation::Copy {
+                            source: MirOperand::Function(callee_sym),
+                        } => {
+                            if let Some(name) = mir_program.symbol_name_map.get(callee_sym) {
+                                insert_name(&mut names, name);
+                            }
+                            if visited.insert(*callee_sym) {
+                                worklist.push(*callee_sym);
+                            }
+                        }
                         MirOperation::AsyncFireCall { fn_name, .. } => {
                             names.insert("_async_fire".to_string());
                             if let Some(s) = name_to_symbol.get(fn_name.as_str()) {
@@ -1501,15 +1546,24 @@ impl MirCodeGenerator<'_> {
         // Flat scan for synthetic utility imports (SymbolId >= 1000).
         //
         // The BFS above only visits functions reachable from entry points. But
-        // codegen generates ALL functions in mir_program.functions, including
-        // dead ones (unreachable from start). A dead function that calls
+        // codegen generates ALL non-preamble functions in mir_program.functions,
+        // including dead ones (unreachable from start). A dead function that calls
         // string.concat still needs the import registered — otherwise codegen
         // fails with "Function 'string.concat' not found in function map".
+        //
+        // Plugin preamble functions (location.file == "<plugin-output>") are
+        // excluded here: they are dead-code eliminated from sorted_functions when
+        // not reachable from the BFS (GEN003). We must not add their bridge imports
+        // to the reachable set — otherwise ungated imports like _email_send leak
+        // into the WASM import section even when no user code ever calls email.
         //
         // Layer 3 server imports (_http_*, _req_*, etc.) are NOT affected here
         // because those are never emitted as synthetic SymbolId calls; they come
         // from NamedFunction operands and are correctly gated by the BFS above.
         for function in mir_program.functions.values() {
+            if function.location.file == "<plugin-output>" {
+                continue; // dead-code eliminated when unreachable; don't register their imports
+            }
             for block in function.blocks.values() {
                 for instruction in &block.instructions {
                     match &instruction.operation {
@@ -1520,6 +1574,26 @@ impl MirCodeGenerator<'_> {
                             if let Some(name) = mir_program.symbol_name_map.get(sym) {
                                 insert_name(&mut names, name);
                             }
+                        }
+                        // NamedFunction calls to non-Layer3 functions in dead code.
+                        //
+                        // User endpoint handlers (e.g. getTimestamp) may call Layer2
+                        // bridge functions (time.now, db.query) without being reachable
+                        // from start: via BFS. We include these here so their imports
+                        // are registered. Layer3 server imports (_http_*, _req_*,
+                        // _res_*, _session_*, _auth_*) are intentionally excluded —
+                        // they are only registered when reachable from a seeded entry
+                        // point (Import Minimality Rule, GEN003).
+                        MirOperation::Call {
+                            function: MirOperand::NamedFunction { name, .. },
+                            ..
+                        } if !name.starts_with("_http_")
+                            && !name.starts_with("_req_")
+                            && !name.starts_with("_res_")
+                            && !name.starts_with("_session_")
+                            && !name.starts_with("_auth_") =>
+                        {
+                            insert_name(&mut names, name);
                         }
                         MirOperation::BinaryOp {
                             op: MirBinaryOp::Eq | MirBinaryOp::Ne,
@@ -1615,6 +1689,17 @@ impl MirCodeGenerator<'_> {
             }
         }
 
+        // Include the names of every function that the BFS visited (seeded or
+        // called from a seed). This ensures that plugin-generated functions such as
+        // `start` (which is never *called* — it's the entry point) are in the
+        // reachable set, so the dead-code elimination filter in `generate()` does
+        // not accidentally drop them (GEN003).
+        for sym in &visited {
+            if let Some(f) = mir_program.functions.get(sym) {
+                names.insert(f.name.clone());
+            }
+        }
+
         tracing::debug!(
             total_called_names = names.len(),
             "Collected reachable call names from MIR"
@@ -1649,6 +1734,13 @@ impl MirCodeGenerator<'_> {
         };
 
         for function in mir_program.functions.values() {
+            // Skip plugin preamble functions that are not reachable from user code
+            // (they will be dead-code eliminated from codegen). Scanning them would
+            // add bridge imports like _email_send to used_bridge_function_names, causing
+            // those imports to be registered even when no user code calls them (GEN003).
+            if function.location.file == "<plugin-output>" {
+                continue;
+            }
             for block in function.blocks.values() {
                 for instruction in &block.instructions {
                     if let MirOperation::Call { function, .. } = &instruction.operation {
@@ -1935,6 +2027,9 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
+            if wrapper.raw_func_index == u32::MAX {
+                continue; // import was tree-shaken, no wrapper needed
+            }
             wrapper_instructions.push(Instruction::Call(wrapper.raw_func_index));
 
             // _time_now: host returns i64, Clean integer is i32 — wrap before returning.
@@ -2091,6 +2186,9 @@ impl MirCodeGenerator<'_> {
                     continue;
                 }
             };
+            if raw_func_index == u32::MAX {
+                continue; // import was tree-shaken, no wrapper needed
+            }
 
             let wrapper_params: Vec<WasmType> = param_types
                 .iter()
@@ -2245,6 +2343,26 @@ impl MirCodeGenerator<'_> {
                 continue;
             }
 
+            // Plugin bridge functions that come from plugin.toml are added to
+            // ast.externals by lib.rs Stage 2.6 for all plugins, even when user
+            // code never calls them (e.g. _email_send for a non-email app).
+            // is_reachability_gated_import() only covers the platform-level
+            // Layer 2/3 functions — not plugin-specific bridge functions like
+            // _email_send or any future plugin-defined imports.
+            //
+            // Gate ALL externals by the BFS reachable set: if the function is
+            // not in the reachable set and reachability filtering is active, skip it.
+            // This preserves the Import Minimality Rule for plugin bridge functions.
+            if let Some(reachable) = &self.wasm_generator.reachable_imports {
+                if !reachable.contains(&external.name) {
+                    tracing::debug!(
+                        name = %external.name,
+                        "Skipping unreachable external function (Import Minimality Rule)"
+                    );
+                    continue;
+                }
+            }
+
             let wasm_params: Vec<WasmType> = external
                 .parameters
                 .iter()
@@ -2270,6 +2388,18 @@ impl MirCodeGenerator<'_> {
                 &wasm_params,
                 wasm_return,
             )?;
+
+            // register_import_function returns u32::MAX when the import is
+            // tree-shaken (Import Minimality Rule). Never store the sentinel
+            // in function_map — it propagates to symbol_to_function_index
+            // and produces Call(u32::MAX) in function bodies (GEN003).
+            if func_index == u32::MAX {
+                tracing::debug!(
+                    name = %external.name,
+                    "Skipping tree-shaken external function (not reachable)"
+                );
+                continue;
+            }
 
             self.external_function_indices
                 .insert(external.name.clone(), func_index);

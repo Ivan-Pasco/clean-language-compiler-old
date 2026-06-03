@@ -24,12 +24,20 @@ pub fn validate_generated_wasm(bytes: &[u8]) -> Result<(), CompilerError> {
         let section = locate_section(bytes, offset);
         let context = hex_window(bytes, offset, 8);
 
+        // Diagnostic dump: write bytes to /tmp so offset can be analyzed externally.
+        if std::env::var("CLN_DUMP_INVALID_WASM").is_ok() {
+            let _ = std::fs::write("/tmp/cln_invalid.wasm", bytes);
+        }
+
+        // Find which function contains the bad offset.
+        let func_hint = locate_function(bytes, offset);
         let msg = format!(
-            "generated WebAssembly is invalid: {}; offset=0x{:x} ({}), section={}, bytes near offset=[{}]",
+            "generated WebAssembly is invalid: {}; offset=0x{:x} ({}), section={}, function={}, bytes near offset=[{}]",
             err.message(),
             offset,
             offset,
             section,
+            func_hint,
             context,
         );
 
@@ -94,6 +102,48 @@ fn locate_section(bytes: &[u8], target_offset: usize) -> String {
         last = name.to_string();
     }
     last
+}
+
+/// Walk the Code section to find which function body contains `target_offset`.
+/// Returns a string like "func[42]" or "unknown" if the offset is not in any body.
+fn locate_function(bytes: &[u8], target_offset: usize) -> String {
+    let mut import_count = 0u32;
+    let mut func_count_before_code = 0u32;
+    let mut in_code = false;
+    let mut body_index = 0u32;
+
+    for payload in Parser::new(0).parse_all(bytes) {
+        let payload = match payload {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        match payload {
+            Payload::ImportSection(r) => {
+                for imp in r {
+                    if let Ok(imp) = imp {
+                        if matches!(imp.ty, wasmparser::TypeRef::Func(_)) {
+                            import_count += 1;
+                        }
+                    }
+                }
+            }
+            Payload::CodeSectionStart { .. } => {
+                func_count_before_code = import_count;
+                in_code = true;
+            }
+            Payload::CodeSectionEntry(body) => {
+                if in_code {
+                    let range = body.range();
+                    if range.contains(&target_offset) {
+                        return format!("func[{}]", func_count_before_code + body_index);
+                    }
+                    body_index += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    "unknown".to_string()
 }
 
 /// Produce a short hex window of bytes around `offset` for the diagnostic.

@@ -1834,6 +1834,14 @@ impl super::CodeGenerator {
         };
         let mut func = Function::new(locals_needed);
         for inst in instructions {
+            if let Instruction::Call(idx) = inst {
+                if *idx == u32::MAX {
+                    panic!(
+                        "BUG: register_function('{}') contains Call(u32::MAX) — tree-shaken import index leaked into function body",
+                        name
+                    );
+                }
+            }
             func.instruction(inst);
         }
         func.instruction(&Instruction::End);

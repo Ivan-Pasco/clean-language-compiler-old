@@ -201,6 +201,12 @@ impl MirCodeGenerator<'_> {
             }
             if let Instruction::Call(func_idx) = instruction {
                 debug_mir!(idx = idx, func_idx = func_idx, "Instruction: Call");
+                if *func_idx == u32::MAX {
+                    panic!(
+                        "BUG: Call(u32::MAX) in function '{}' at instruction index {} — tree-shaken import index leaked into MIR function body",
+                        function.name, idx
+                    );
+                }
             }
             wasm_function.instruction(instruction);
             instruction_count += 1;

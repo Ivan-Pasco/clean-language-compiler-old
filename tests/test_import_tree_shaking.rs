@@ -224,3 +224,52 @@ fn user_app_with_unreachable_function_using_string_concat() {
         result.err()
     );
 }
+
+/// GEN003 regression: route handler → user helper → bridge import chain.
+///
+/// Route handlers (__route_handler_*) are called by the HTTP server runtime,
+/// not from start:. Before this fix the BFS only seeded from start:, so bridge
+/// imports reachable only through a route handler → helper function chain were
+/// never found and the import was not registered, causing "Function 'X' not
+/// found in function map" at codegen time.
+///
+/// This test requires frame.server to be installed. It is skipped otherwise.
+#[test]
+fn route_handler_to_helper_bridge_import_is_registered() {
+    let mut loader = match clean_language_compiler::plugins::WasmPluginLoader::new() {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let registry = match loader.load_plugins(&["frame.server".to_string()]) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Skipping GEN003 route-handler regression: frame.server not installed ({e})");
+            return;
+        }
+    };
+
+    // App with an endpoint whose handler calls a helper that uses time.now.
+    // time.now maps to the reachability-gated import _time_now.
+    // Before the fix: BFS seeded from start: only → route handler not visited →
+    // getTimestamp not visited → _time_now not in reachable set → import stripped →
+    // codegen error "Function 'time.now' not found in function map".
+    let source = "plugins:\n\tframe.server\n\nendpoints:\n\tGET /ts -> getTimestamp()\n\nfunctions:\n\tstring getTimestamp()\n\t\treturn time.now().toString()\n";
+    let result = clean_language_compiler::compile_with_plugins(source, "entry.cln", &registry);
+    assert!(
+        result.is_ok(),
+        "GEN003 route-handler regression: route handler → helper → time.now chain \
+         caused compile failure: {:?}",
+        result.err()
+    );
+
+    let wasm = result.unwrap();
+    let imports = list_imports(&wasm);
+    assert!(
+        imports
+            .iter()
+            .any(|n| n == "_time_now" || n == "time.now" || n.starts_with("time")),
+        "GEN003 route-handler regression: time import was tree-shaken even though \
+         it is called from a route handler → helper chain; imports present: {:?}",
+        imports
+    );
+}
