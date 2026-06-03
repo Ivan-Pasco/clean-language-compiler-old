@@ -1409,6 +1409,14 @@ impl MirCodeGenerator<'_> {
                 if is_exported_by_attr || is_external_call_target || is_user_defined {
                     seed(*sym);
                 }
+                // Page handlers call json.encode(data) to serialize load() return values.
+                // json.encode is a pure WASM function that requires string.concat to be
+                // registered (register_stringify_operations gates on string.concat). Force
+                // string.concat into the reachable set whenever a page handler is present
+                // so the pure WASM path is always available (GEN004).
+                if f.name.starts_with("__page_handler_") {
+                    names.insert("string.concat".to_string());
+                }
             }
         } // seed closure dropped here, releasing borrows on visited/worklist
 

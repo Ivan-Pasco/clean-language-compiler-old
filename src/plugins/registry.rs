@@ -679,6 +679,15 @@ impl PluginRegistry {
             // e.g. "_http_respond" → "http.respond", "_json_get" → "json.get"
             // Also generate camelCase variants: "_auth_get_session" → "auth.getSession"
             // Skip if already mapped in phase 1.
+            //
+            // IMPORTANT: Some names are intentionally excluded because they are
+            // implemented as pure WASM functions (registered by json_class.rs) and
+            // must never be redirected to a bridge. Mapping them to a bridge would
+            // cause the bridge (which expects a string parameter) to receive a boxed
+            // `any` value, producing garbage output. The pure WASM path handles all
+            // types correctly via AnyTypeTag dispatch (GEN004).
+            const WASM_ONLY_FUNCTIONS: &[&str] =
+                &["json.encode", "json.dataToText", "json.prettyDataToText"];
             for bf in &manifest.bridge.functions {
                 if let Some(stripped) = bf.name.strip_prefix('_') {
                     if let Some(underscore_pos) = stripped.find('_') {
@@ -686,11 +695,17 @@ impl PluginRegistry {
                         let method = &stripped[underscore_pos + 1..];
                         // snake_case variant: "auth.get_session"
                         let dot_name = format!("{}.{}", namespace, method);
+                        if WASM_ONLY_FUNCTIONS.contains(&dot_name.as_str()) {
+                            continue;
+                        }
                         map.entry(dot_name).or_insert_with(|| bf.name.clone());
                         // camelCase variant: "auth.getSession"
                         if method.contains('_') {
                             let camel_method = snake_to_camel(method);
                             let camel_dot_name = format!("{}.{}", namespace, camel_method);
+                            if WASM_ONLY_FUNCTIONS.contains(&camel_dot_name.as_str()) {
+                                continue;
+                            }
                             map.entry(camel_dot_name).or_insert_with(|| bf.name.clone());
                         }
                     }
@@ -1450,5 +1465,83 @@ mod tests {
         assert!(!map.contains_key("db.nonexistent"));
         // Total: 2 from phase 1 + 1 auto-derived from phase 2
         assert_eq!(map.len(), 3);
+    }
+
+    #[test]
+    fn test_language_to_bridge_map_excludes_wasm_only_functions() {
+        // GEN004: _json_encode and similar bridge functions must NOT auto-derive
+        // to json.encode / json.dataToText, because those are pure WASM functions.
+        // Mapping them to the bridge causes the bridge (which expects a string param)
+        // to receive a boxed `any` object value, producing empty JSON output.
+        use crate::plugins::plugin_abi::{
+            BridgeFunction, PluginBridge, PluginCompatibility, PluginExports, PluginFunctionDef,
+            PluginHandles, PluginInfo, PluginLanguage, PluginManifest,
+        };
+
+        let manifest = PluginManifest {
+            plugin: PluginInfo {
+                name: "frame.server".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Server plugin".to_string(),
+                author: "Test".to_string(),
+            },
+            compatibility: PluginCompatibility::default(),
+            handles: PluginHandles {
+                blocks: vec!["server".to_string()],
+                expressions: Vec::new(),
+            },
+            exports: PluginExports::default(),
+            bridge: PluginBridge {
+                functions: vec![
+                    BridgeFunction {
+                        name: "_json_encode".to_string(),
+                        params: vec!["string".to_string()],
+                        returns: "string".to_string(),
+                        module: "env".to_string(),
+                        description: None,
+                        expand_strings: true,
+                    },
+                    BridgeFunction {
+                        name: "_req_body".to_string(),
+                        params: vec![],
+                        returns: "string".to_string(),
+                        module: "env".to_string(),
+                        description: None,
+                        expand_strings: false,
+                    },
+                ],
+            },
+            language: PluginLanguage {
+                blocks: vec!["server".to_string()],
+                keywords: vec![],
+                types: vec![],
+                functions: vec![],
+                completions: vec![],
+                owns_paths: vec![],
+            },
+            ai: Default::default(),
+            paths: Default::default(),
+            enforcement: Default::default(),
+            memory: Default::default(),
+            build: Default::default(),
+        };
+
+        let registry = PluginRegistryBuilder::new()
+            .add_manifest("frame.server".to_string(), manifest)
+            .build()
+            .expect("Failed to build registry");
+
+        let map = registry.language_to_bridge_map();
+
+        // _req_body auto-derives to req.body — this is fine
+        assert_eq!(map.get("req.body"), Some(&"_req_body".to_string()));
+        // _json_encode must NOT auto-derive to json.encode — pure WASM function (GEN004)
+        assert!(
+            !map.contains_key("json.encode"),
+            "json.encode must not map to _json_encode bridge"
+        );
+        // _json_encode also must not derive to json.dataToText or json.prettyDataToText
+        assert!(!map.contains_key("json.dataToText"));
+        assert!(!map.contains_key("json.prettyDataToText"));
     }
 }
