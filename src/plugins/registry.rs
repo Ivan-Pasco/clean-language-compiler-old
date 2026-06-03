@@ -1474,8 +1474,8 @@ mod tests {
         // Mapping them to the bridge causes the bridge (which expects a string param)
         // to receive a boxed `any` object value, producing empty JSON output.
         use crate::plugins::plugin_abi::{
-            BridgeFunction, PluginBridge, PluginCompatibility, PluginExports, PluginFunctionDef,
-            PluginHandles, PluginInfo, PluginLanguage, PluginManifest,
+            BridgeFunction, PluginBridge, PluginCompatibility, PluginExports, PluginHandles,
+            PluginInfo, PluginLanguage, PluginManifest,
         };
 
         let manifest = PluginManifest {
