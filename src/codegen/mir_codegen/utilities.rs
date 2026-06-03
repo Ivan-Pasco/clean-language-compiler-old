@@ -1353,17 +1353,67 @@ impl MirCodeGenerator<'_> {
             }
         };
 
-        for function in mir_program.functions.values() {
-            for block in function.blocks.values() {
+        // Build a name→SymbolId reverse map so NamedFunction calls can be
+        // resolved to their MIR body even when symbol_id is the shared
+        // SymbolId(0) placeholder used for all stdlib namespace functions.
+        let name_to_symbol: std::collections::HashMap<String, crate::resolver::SymbolId> =
+            mir_program
+                .functions
+                .iter()
+                .map(|(sym, f)| (f.name.clone(), *sym))
+                .collect();
+
+        // Seed the BFS worklist with the program entry point and every
+        // exported function (route handlers, page handlers, _run_tests wrapper).
+        // Only functions reachable from these roots contribute bridge imports.
+        let mut visited: HashSet<crate::resolver::SymbolId> = HashSet::new();
+        let mut worklist: Vec<crate::resolver::SymbolId> = Vec::new();
+
+        let mut seed = |sym: crate::resolver::SymbolId| {
+            if visited.insert(sym) {
+                worklist.push(sym);
+            }
+        };
+
+        if let Some(ep) = mir_program.entry_point {
+            seed(ep);
+        }
+        for (sym, f) in &mir_program.functions {
+            if f.attributes.entry_point || f.attributes.exported {
+                seed(*sym);
+            }
+        }
+
+        while let Some(sym) = worklist.pop() {
+            let current_func = match mir_program.functions.get(&sym) {
+                Some(f) => f,
+                None => continue,
+            };
+            for block in current_func.blocks.values() {
                 for instruction in &block.instructions {
                     match &instruction.operation {
                         MirOperation::Call { function, .. } => match function {
-                            MirOperand::NamedFunction { name, .. } => {
+                            MirOperand::NamedFunction { name, symbol_id } => {
                                 insert_name(&mut names, name);
+                                // symbol_id is SymbolId(0) for all stdlib/namespace
+                                // functions; resolve by name for user-defined callees.
+                                let callee = if symbol_id.0 != 0 {
+                                    Some(*symbol_id)
+                                } else {
+                                    name_to_symbol.get(name.as_str()).copied()
+                                };
+                                if let Some(s) = callee {
+                                    if visited.insert(s) {
+                                        worklist.push(s);
+                                    }
+                                }
                             }
-                            MirOperand::Function(symbol_id) => {
-                                if let Some(name) = mir_program.symbol_name_map.get(symbol_id) {
+                            MirOperand::Function(callee_sym) => {
+                                if let Some(name) = mir_program.symbol_name_map.get(callee_sym) {
                                     insert_name(&mut names, name);
+                                }
+                                if visited.insert(*callee_sym) {
+                                    worklist.push(*callee_sym);
                                 }
                             }
                             _ => {}
@@ -1373,11 +1423,21 @@ impl MirCodeGenerator<'_> {
                         // codegen injects a `string_compare` call at BinaryOp
                         // code-gen time. We must mark `string_compare` reachable
                         // here so the import is not tree-shaken.
-                        MirOperation::AsyncFireCall { .. } => {
+                        MirOperation::AsyncFireCall { fn_name, .. } => {
                             names.insert("_async_fire".to_string());
+                            if let Some(s) = name_to_symbol.get(fn_name.as_str()) {
+                                if visited.insert(*s) {
+                                    worklist.push(*s);
+                                }
+                            }
                         }
-                        MirOperation::AsyncAwaitCall { .. } => {
+                        MirOperation::AsyncAwaitCall { fn_name, .. } => {
                             names.insert("_async_await".to_string());
+                            if let Some(s) = name_to_symbol.get(fn_name.as_str()) {
+                                if visited.insert(*s) {
+                                    worklist.push(*s);
+                                }
+                            }
                         }
                         MirOperation::BinaryOp {
                             op: MirBinaryOp::Eq | MirBinaryOp::Ne,
@@ -1385,7 +1445,7 @@ impl MirCodeGenerator<'_> {
                             right,
                         } => {
                             let left_is_string = match left {
-                                MirOperand::Value(vid) => function
+                                MirOperand::Value(vid) => current_func
                                     .locals
                                     .get(vid)
                                     .map(|l| is_string_type(&l.local_type))
@@ -1393,7 +1453,7 @@ impl MirCodeGenerator<'_> {
                                 _ => false,
                             };
                             let right_is_string = match right {
-                                MirOperand::Value(vid) => function
+                                MirOperand::Value(vid) => current_func
                                     .locals
                                     .get(vid)
                                     .map(|l| is_string_type(&l.local_type))
