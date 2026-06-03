@@ -273,3 +273,48 @@ fn route_handler_to_helper_bridge_import_is_registered() {
         imports
     );
 }
+
+/// GEN003 regression: reachable preamble function's bridge alias must be registered.
+///
+/// Before the fix: collect_used_function_names_from_mir skipped ALL preamble bodies
+/// unconditionally, so bridge aliases used inside compiled preamble helpers were
+/// never added to used_bridge_function_names → register_plugin_bridge_imports never
+/// registered the alias → codegen crash "bridge alias not found in function map".
+///
+/// The fix: skip only DEAD preamble functions (not in reachable_imports). Reachable
+/// preamble functions (exported or single-underscore callbacks) must be scanned.
+#[test]
+fn reachable_preamble_bridge_alias_is_registered() {
+    let mut loader = match WasmPluginLoader::new() {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let registry = match loader.load_plugins(&["frame.server".to_string()]) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Skipping: frame.server not installed ({e})");
+            return;
+        }
+    };
+
+    // A frame.server app with a POST endpoint. The preamble injects single-underscore
+    // helpers (seeded into BFS as external call targets) that may use req.body_field
+    // internally (location.file == "<plugin-output>"). User code never calls
+    // req.body_field directly.
+    // Before the fix: "bridge alias 'req.body_field' not found in function map"
+    // Use the arrow syntax so the handler is recognized as a request context — same
+    // pattern as route_handler_to_helper_bridge_import_is_registered.
+    let source = concat!(
+        "plugins:\n\tframe.server\n\n",
+        "endpoints:\n\tPOST /submit -> handleSubmit()\n\n",
+        "functions:\n\tstring handleSubmit()\n\t\treturn \"ok\"\n"
+    );
+
+    let result = clean_language_compiler::compile_with_plugins(source, "entry.cln", &registry);
+    assert!(
+        result.is_ok(),
+        "GEN003 preamble bridge regression: reachable preamble helper's bridge alias \
+         caused compile failure (expected successful WASM): {:?}",
+        result.err()
+    );
+}

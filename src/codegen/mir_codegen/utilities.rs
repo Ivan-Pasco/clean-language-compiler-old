@@ -1734,12 +1734,22 @@ impl MirCodeGenerator<'_> {
         };
 
         for function in mir_program.functions.values() {
-            // Skip plugin preamble functions that are not reachable from user code
-            // (they will be dead-code eliminated from codegen). Scanning them would
-            // add bridge imports like _email_send to used_bridge_function_names, causing
-            // those imports to be registered even when no user code calls them (GEN003).
             if function.location.file == "<plugin-output>" {
-                continue;
+                // Dead preamble functions are eliminated by DCE — skip them to preserve
+                // the Import Minimality Rule (GEN003). Reachable preamble functions ARE
+                // compiled and their bridge imports MUST be registered. The BFS pass
+                // (collect_all_called_names_from_mir) already ran and is the authority:
+                // any preamble function in reachable_imports survived DCE and is compiled.
+                let is_reachable = self
+                    .wasm_generator
+                    .reachable_imports
+                    .as_ref()
+                    .map(|r| r.contains(&function.name))
+                    .unwrap_or(false);
+                if !is_reachable {
+                    continue;
+                }
+                // Reachable preamble — fall through and scan its bridge calls
             }
             for block in function.blocks.values() {
                 for instruction in &block.instructions {

@@ -90,6 +90,22 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 ---
 
+## 10. GEN003 — Preamble Bridge Registration Invariant (FRAGILE)
+
+**What:** `collect_used_function_names_from_mir()` (`src/codegen/mir_codegen/utilities.rs`) must skip only DEAD preamble functions, not all preamble functions. The condition is: skip if `location.file == "<plugin-output>"` AND function name is NOT in `reachable_imports`.
+
+**Why:** Reachable preamble functions (exported or single-underscore callbacks) ARE compiled and their bridge imports MUST be registered. If skipped, codegen crashes with "bridge alias not found in function map" for any bridge call inside a compiled preamble body.
+
+**The invariant:** Register bridge imports for exactly the functions that survive DCE. The BFS pass (`collect_all_called_names_from_mir`) is the authority — if a preamble function's name is in `reachable_imports`, it survived DCE and its body must be scanned.
+
+**Pattern that causes regression:** Treating all preamble functions uniformly — either all skipped (breaks reachable preamble helpers) or all included (breaks GEN003, causes import leakage).
+
+**Where:** `src/codegen/mir_codegen/utilities.rs` ~line 1736, `tests/test_import_tree_shaking.rs`
+
+**History:** First fixed in 0.30.213 (BFS seeding). Regressed in 0.30.226 when the db.query transitive-BFS fix tightened seeding — the body scanner was not updated to match. Fixed again with the reachability-gated skip condition.
+
+---
+
 ## 8. Remaining Design Notes in mir_codegen.rs (UPDATED 2026-04-12)
 
 Three workarounds assessed and resolved, two remain as known limitations:
