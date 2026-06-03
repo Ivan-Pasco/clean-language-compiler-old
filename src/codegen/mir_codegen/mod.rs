@@ -831,6 +831,16 @@ impl MirCodeGenerator<'_> {
         let mut sorted_functions: Vec<_> = mir_program.functions.into_iter().collect();
         sorted_functions.sort_by_key(|(symbol_id, _)| symbol_id.0);
 
+        // Safety net: if two MIR functions share a name (e.g. __redirect_0 emitted by
+        // plugin preamble injection AND block expansion for the same route), the second
+        // unconditional insert into function_map would overwrite the first, orphaning the
+        // function body and silently dropping its WASM export (GEN002).  Retain only the
+        // first occurrence of each name (lowest SymbolId after sort).
+        {
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            sorted_functions.retain(|(_, f)| seen.insert(f.name.clone()));
+        }
+
         for (i, (symbol_id, function)) in sorted_functions.iter().enumerate() {
             let function_index = self.wasm_generator.function_count + i as u32;
             debug_mir!(

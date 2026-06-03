@@ -220,6 +220,154 @@ fn gen002_single_underscore_callback_still_exported() {
     );
 }
 
+/// GEN002 — root-cause regression (v0.30.221): two MirFunction entries with the
+/// same name but different SymbolIds must not corrupt the export table.
+///
+/// Trigger: plugin preamble injection on the entry module re-emits helpers
+/// (e.g. `__redirect_0`) that a non-entry module already generated via block
+/// expansion.  Before the fix the second insert into `function_map` overwrote
+/// the first, orphaning the function body and silently dropping its export.
+#[test]
+fn gen002_duplicate_symbol_ids_same_name_exports_exactly_once() {
+    use clean_language_compiler::mir::mir_types::{MirInstruction, MirOperand, MirOperation};
+
+    let func_name = "__redirect_0";
+    // Two different SymbolIds for the same function name (simulates the
+    // preamble-injection duplication across compilation units).
+    let sym_a = SymbolId(100); // from routes.cln expansion
+    let sym_b = SymbolId(200); // from main.cln preamble injection
+    let start_sym = SymbolId(300);
+
+    let make_void_fn = |sym: SymbolId, name: &str| -> MirFunction {
+        let block_id = BasicBlockId(0);
+        let block = MirBasicBlock {
+            id: block_id,
+            label: None,
+            instructions: vec![],
+            terminator: MirTerminator::Return { value: None },
+            predecessors: Default::default(),
+            successors: Default::default(),
+            location: Default::default(),
+        };
+        MirFunction {
+            symbol_id: sym,
+            name: name.to_string(),
+            parameters: vec![],
+            return_type: MirType::Void,
+            blocks: {
+                let mut m = HashMap::new();
+                m.insert(block_id, block);
+                m
+            },
+            entry_block: block_id,
+            locals: HashMap::new(),
+            next_value_id: 0,
+            next_block_id: 1,
+            attributes: MirFunctionAttributes {
+                inline: false,
+                pure: false,
+                entry_point: false,
+                exported: true,
+            },
+            location: Default::default(),
+        }
+    };
+
+    // Both duplicates have the same name — codegen must de-duplicate, keeping
+    // the first (lowest SymbolId) and emitting only one WASM function + export.
+    let fn_a = make_void_fn(sym_a, func_name);
+    let fn_b = make_void_fn(sym_b, func_name);
+
+    // Build a start function that calls sym_a (the kept copy)
+    let start_block_id = BasicBlockId(0);
+    let call_instr = MirInstruction {
+        dest: None,
+        operation: MirOperation::Call {
+            function: MirOperand::Function(sym_a),
+            arguments: vec![],
+        },
+        location: Default::default(),
+    };
+    let start_block = MirBasicBlock {
+        id: start_block_id,
+        label: None,
+        instructions: vec![call_instr],
+        terminator: MirTerminator::Return { value: None },
+        predecessors: Default::default(),
+        successors: Default::default(),
+        location: Default::default(),
+    };
+    let start_fn = MirFunction {
+        symbol_id: start_sym,
+        name: "start".to_string(),
+        parameters: vec![],
+        return_type: MirType::Void,
+        blocks: {
+            let mut m = HashMap::new();
+            m.insert(start_block_id, start_block);
+            m
+        },
+        entry_block: start_block_id,
+        locals: HashMap::new(),
+        next_value_id: 0,
+        next_block_id: 1,
+        attributes: MirFunctionAttributes {
+            inline: false,
+            pure: false,
+            entry_point: true,
+            exported: true,
+        },
+        location: Default::default(),
+    };
+
+    let mut functions = HashMap::new();
+    functions.insert(sym_a, fn_a);
+    functions.insert(sym_b, fn_b); // duplicate name — must be silently dropped
+    functions.insert(start_sym, start_fn);
+
+    let mut symbol_name_map = HashMap::new();
+    symbol_name_map.insert(sym_a, func_name.to_string());
+    symbol_name_map.insert(sym_b, func_name.to_string());
+    symbol_name_map.insert(start_sym, "start".to_string());
+
+    let mir_program = MirProgram {
+        functions,
+        globals: HashMap::new(),
+        string_pool: vec![],
+        entry_point: Some(start_sym),
+        debug_info: None,
+        symbol_name_map,
+        used_plugins: vec![],
+        state_rules: vec![],
+        state_guards: vec![],
+        externals: vec![],
+        test_functions: vec![],
+    };
+
+    let mut codegen = MirCodeGenerator::new();
+    let result = codegen
+        .generate(mir_program)
+        .expect("codegen must not fail with duplicate names");
+
+    let exports = exported_function_names(&result.wasm_bytes);
+
+    assert!(
+        exports.contains(func_name),
+        "GEN002: '{}' must be exported even when two SymbolIds share the same name.\n\
+         Actual exports: {:?}",
+        func_name,
+        exports
+    );
+
+    let count = exports.iter().filter(|n| n.as_str() == func_name).count();
+    assert_eq!(
+        count, 1,
+        "GEN002: '{}' must appear exactly once in the export table, found {}.\n\
+         Actual exports: {:?}",
+        func_name, count, exports
+    );
+}
+
 /// GEN002 — verify that compiler-internal helpers (__malloc, __string_concat,
 /// etc.) are NOT exported when they are NOT in mir_program.functions.
 /// They are registered via register_function() and should remain unexported.
