@@ -176,3 +176,51 @@ fn no_entry_point_with_string_concat_compiles() {
         imports
     );
 }
+
+#[test]
+fn user_app_with_direct_string_concat_includes_import() {
+    // GEN003 regression: user app WITH start: that uses string `+` directly.
+    let source = "start:\n\tstring s = \"hello\" + \" world\"\n\tprint(s)\n";
+    let result = clean_language_compiler::compile(source);
+    assert!(result.is_ok(), "compile failed: {:?}", result.err());
+    let wasm = result.unwrap();
+    let imports = list_imports(&wasm);
+    assert!(
+        imports.iter().any(|n| n == "string.concat"),
+        "GEN003: string.concat tree-shaken from app with direct concat in start:; imports: {:?}",
+        imports
+    );
+}
+
+#[test]
+fn user_app_with_helper_string_concat_includes_import() {
+    // GEN003 regression: string concat used in a helper function called from start:.
+    // Note: start: must precede functions: per section-order rules (SYN007).
+    let source =
+        "start:\n\tprint(greet(\"world\"))\nfunctions:\n\tstring greet(string name)\n\t\treturn \"Hello, \" + name\n";
+    let result = clean_language_compiler::compile(source);
+    assert!(result.is_ok(), "compile failed: {:?}", result.err());
+    let wasm = result.unwrap();
+    let imports = list_imports(&wasm);
+    assert!(
+        imports.iter().any(|n| n == "string.concat"),
+        "GEN003: string.concat tree-shaken when concat is only in helper fn; imports: {:?}",
+        imports
+    );
+}
+
+#[test]
+fn user_app_with_unreachable_function_using_string_concat() {
+    // GEN003 root cause: start: exists (so BFS seeds from it), but there is also a
+    // helper function NOT called from start that uses string concat.
+    // BFS won't traverse into it → string.concat not reachable → not registered.
+    // But codegen still generates the helper's body → tries to call string.concat → ERROR.
+    let source = "start:\n\tprint(\"hello\")\nfunctions:\n\tstring dead_concat()\n\t\treturn \"a\" + \"b\"\n";
+    let result = clean_language_compiler::compile(source);
+    // This should compile — the dead function's body should not cause import failure.
+    assert!(
+        result.is_ok(),
+        "GEN003: unreachable function with string concat caused compile failure: {:?}",
+        result.err()
+    );
+}

@@ -1498,6 +1498,61 @@ impl MirCodeGenerator<'_> {
             names.insert("string.concat".to_string());
         }
 
+        // Flat scan for synthetic utility imports (SymbolId >= 1000).
+        //
+        // The BFS above only visits functions reachable from entry points. But
+        // codegen generates ALL functions in mir_program.functions, including
+        // dead ones (unreachable from start). A dead function that calls
+        // string.concat still needs the import registered — otherwise codegen
+        // fails with "Function 'string.concat' not found in function map".
+        //
+        // Layer 3 server imports (_http_*, _req_*, etc.) are NOT affected here
+        // because those are never emitted as synthetic SymbolId calls; they come
+        // from NamedFunction operands and are correctly gated by the BFS above.
+        for function in mir_program.functions.values() {
+            for block in function.blocks.values() {
+                for instruction in &block.instructions {
+                    match &instruction.operation {
+                        MirOperation::Call {
+                            function: MirOperand::Function(sym),
+                            ..
+                        } if sym.0 >= 1000 => {
+                            if let Some(name) = mir_program.symbol_name_map.get(sym) {
+                                insert_name(&mut names, name);
+                            }
+                        }
+                        MirOperation::BinaryOp {
+                            op: MirBinaryOp::Eq | MirBinaryOp::Ne,
+                            left,
+                            right,
+                        } => {
+                            let left_str = match left {
+                                MirOperand::Value(vid) => function
+                                    .locals
+                                    .get(vid)
+                                    .map(|l| is_string_type(&l.local_type))
+                                    .unwrap_or(false),
+                                _ => false,
+                            };
+                            let right_str = match right {
+                                MirOperand::Value(vid) => function
+                                    .locals
+                                    .get(vid)
+                                    .map(|l| is_string_type(&l.local_type))
+                                    .unwrap_or(false),
+                                _ => false,
+                            };
+                            if left_str || right_str {
+                                names.insert("string_compare".to_string());
+                                names.insert("string.compare".to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         // Expand language-level names to the WASM import field names used by
         // host bridges. A call to `http.get` in the program maps to the
         // import `http_get` on the WASM module. Plugin bridge functions use
