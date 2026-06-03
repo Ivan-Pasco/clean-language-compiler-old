@@ -142,3 +142,37 @@ fn frame_server_app_without_download_emits_no_res_download() {
         leaked
     );
 }
+
+/// GEN003 regression (follow-up): code with no `start:` entry point and no
+/// MIR-exported functions (plugin source pattern) must still compile successfully
+/// when that code uses string concatenation.
+///
+/// Before the empty-seed fallback was added, `collect_all_called_names_from_mir`
+/// started BFS from an empty worklist, produced an empty reachable set, and
+/// tree-shook `string.concat` even though the function bodies called it.
+/// Codegen then failed with "Function 'string.concat' not found in function map".
+#[test]
+fn no_entry_point_with_string_concat_compiles() {
+    // A library-style source: no `start:` block, function that uses string `+`.
+    // The compiler must not crash when tree-shaking is enabled.
+    // Uses the `functions:` block syntax (no top-level `function` keyword in Clean Language).
+    let source = "functions:\n\tstring greet(string name)\n\t\treturn \"Hello, \" + name\n";
+    // Compilation must succeed (not panic, not return an error).
+    let result = clean_language_compiler::compile(source);
+    assert!(
+        result.is_ok(),
+        "GEN003 follow-up: library code with string concat and no entry point \
+         failed to compile: {:?}",
+        result.err()
+    );
+
+    // The produced WASM must contain the string.concat import.
+    let wasm = result.unwrap();
+    let imports = list_imports(&wasm);
+    assert!(
+        imports.iter().any(|n| n == "string.concat"),
+        "GEN003 follow-up: string.concat was tree-shaken from library code \
+         that calls it; imports present: {:?}",
+        imports
+    );
+}

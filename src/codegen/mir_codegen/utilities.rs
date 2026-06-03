@@ -1369,18 +1369,34 @@ impl MirCodeGenerator<'_> {
         let mut visited: HashSet<crate::resolver::SymbolId> = HashSet::new();
         let mut worklist: Vec<crate::resolver::SymbolId> = Vec::new();
 
-        let mut seed = |sym: crate::resolver::SymbolId| {
-            if visited.insert(sym) {
-                worklist.push(sym);
-            }
-        };
+        {
+            let mut seed = |sym: crate::resolver::SymbolId| {
+                if visited.insert(sym) {
+                    worklist.push(sym);
+                }
+            };
 
-        if let Some(ep) = mir_program.entry_point {
-            seed(ep);
-        }
-        for (sym, f) in &mir_program.functions {
-            if f.attributes.entry_point || f.attributes.exported {
-                seed(*sym);
+            if let Some(ep) = mir_program.entry_point {
+                seed(ep);
+            }
+            for (sym, f) in &mir_program.functions {
+                if f.attributes.entry_point || f.attributes.exported {
+                    seed(*sym);
+                }
+            }
+        } // seed closure dropped here, releasing borrows on visited/worklist
+
+        // Plugin source files have no `start:` entry point and their exported
+        // functions are not yet marked `exported: true` in MIR attributes (only
+        // `start` gets that flag — see mir_builder/functions.rs). When the seed
+        // is empty we fall back to scanning ALL functions, which preserves the
+        // pre-GEN003 behaviour and ensures internal helpers like `string.concat`
+        // are not incorrectly tree-shaken when compiling plugin code.
+        if worklist.is_empty() {
+            for sym in mir_program.functions.keys() {
+                if visited.insert(*sym) {
+                    worklist.push(*sym);
+                }
             }
         }
 
