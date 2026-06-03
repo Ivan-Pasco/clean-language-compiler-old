@@ -1792,10 +1792,27 @@ impl MirCodeGenerator<'_> {
                     );
                     true
                 } else {
-                    // NOTE: For functions without signatures called as expression statements,
-                    // default to NON-VOID (add DROP) to prevent stack pollution
-                    debug_mir!(" CALL NO DEST: Unknown function without signature, defaulting to non-void (adding DROP for safety)");
-                    false
+                    // Check function_return_types registry — populated by register_plugin_bridge_imports
+                    // for plugin.toml bridge functions with returns = "void". Without this check,
+                    // such functions fall through to the non-void default and emit a spurious DROP,
+                    // causing WASM validation failure ("type mismatch: nothing on stack").
+                    let is_registered_void = function_name
+                        .as_deref()
+                        .and_then(|name| self.function_return_types.get(name))
+                        .is_some_and(|rt| matches!(rt, MirType::Void));
+
+                    if is_registered_void {
+                        debug_mir!(
+                            " CALL NO DEST: Registered void function (plugin bridge): {:?}",
+                            function_name
+                        );
+                        true
+                    } else {
+                        // NOTE: For functions without signatures called as expression statements,
+                        // default to NON-VOID (add DROP) to prevent stack pollution
+                        debug_mir!(" CALL NO DEST: Unknown function without signature, defaulting to non-void (adding DROP for safety)");
+                        false
+                    }
                 }
             };
 
