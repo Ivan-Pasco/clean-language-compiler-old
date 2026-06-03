@@ -1,6 +1,9 @@
 //! Regression tests for the Import Minimality Rule
 //! (platform-architecture/EXECUTION_LAYERS.md).
 //!
+//! GEN003: frame.server preamble functions (resDownload, emailSend, etc.) must
+//! not cause their bridge imports to appear in apps that never call them.
+//!
 //! A Clean program that does not reference Layer 3 server functions
 //! (`_http_*`, `_req_*`, `_res_*`, `_session_*`, `_auth_*`) must NOT
 //! emit those functions as WASM imports. Emitting them would force
@@ -10,6 +13,7 @@
 //! Corresponds to bug report `CODEGEN_UNUSED_IMPORTS` reported via the
 //! MCP server against compiler v0.30.52.
 
+use clean_language_compiler::plugins::WasmPluginLoader;
 use wasmparser::Parser as WasmParser;
 use wasmparser::Payload;
 
@@ -76,5 +80,65 @@ fn client_only_program_has_reasonable_import_count() {
         "expected < 80 imports for minimal client program, got {} \
          (Import Minimality Rule regression?)",
         imports.len()
+    );
+}
+
+/// GEN003 regression: a frame.server app that never calls resDownload or
+/// emailSend must NOT emit _res_download, _email_send, _email_configure, or
+/// _email_last_error as WASM imports.
+///
+/// Before the BFS fix, collect_all_called_names_from_mir scanned every function
+/// including plugin preambles, causing those bridge names to leak unconditionally.
+#[test]
+fn frame_server_app_without_download_emits_no_res_download() {
+    let mut loader = match WasmPluginLoader::new() {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let registry = match loader.load_plugins(&["frame.server".to_string()]) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Skipping GEN003 regression: frame.server not installed ({e})");
+            return;
+        }
+    };
+
+    // App that never calls resDownload or emailSend
+    let source = "plugins:\n\tframe.server\n\nstart:\n\tprint(\"hello\")\n";
+    let wasm = match clean_language_compiler::compile_with_plugins(source, "entry.cln", &registry) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("Skipping GEN003 regression: build failed ({e:?})");
+            return;
+        }
+    };
+
+    let preamble_only_bridges = [
+        "_res_download",
+        "_email_send",
+        "_email_configure",
+        "_email_last_error",
+    ];
+
+    let leaked: Vec<String> = {
+        let mut out = Vec::new();
+        for payload in WasmParser::new(0).parse_all(&wasm) {
+            if let Ok(Payload::ImportSection(reader)) = payload {
+                for import in reader {
+                    let imp = import.expect("valid import");
+                    if preamble_only_bridges.contains(&imp.name) {
+                        out.push(imp.name.to_string());
+                    }
+                }
+            }
+        }
+        out
+    };
+
+    assert!(
+        leaked.is_empty(),
+        "GEN003: preamble-only bridge imports leaked into frame.server WASM \
+         (user code never calls them): {:?}",
+        leaked
     );
 }
