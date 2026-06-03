@@ -1384,6 +1384,21 @@ impl MirCodeGenerator<'_> {
             }
         }
 
+        // Plugin source files have no `start:` entry point and their exported
+        // functions are not yet marked `exported: true` in MIR attributes (only
+        // `start` gets that flag — see mir_builder/functions.rs). When the seed
+        // is empty we fall back to scanning ALL functions, which preserves the
+        // pre-GEN003 behaviour and ensures internal helpers like `string.concat`
+        // are not incorrectly tree-shaken when compiling plugin code.
+        drop(seed);
+        if worklist.is_empty() {
+            for sym in mir_program.functions.keys() {
+                if visited.insert(*sym) {
+                    worklist.push(*sym);
+                }
+            }
+        }
+
         while let Some(sym) = worklist.pop() {
             let current_func = match mir_program.functions.get(&sym) {
                 Some(f) => f,
