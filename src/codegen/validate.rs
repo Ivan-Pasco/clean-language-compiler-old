@@ -119,11 +119,9 @@ fn locate_function(bytes: &[u8], target_offset: usize) -> String {
         };
         match payload {
             Payload::ImportSection(r) => {
-                for imp in r {
-                    if let Ok(imp) = imp {
-                        if matches!(imp.ty, wasmparser::TypeRef::Func(_)) {
-                            import_count += 1;
-                        }
+                for imp in r.into_iter().flatten() {
+                    if matches!(imp.ty, wasmparser::TypeRef::Func(_)) {
+                        import_count += 1;
                     }
                 }
             }
@@ -131,14 +129,12 @@ fn locate_function(bytes: &[u8], target_offset: usize) -> String {
                 func_count_before_code = import_count;
                 in_code = true;
             }
-            Payload::CodeSectionEntry(body) => {
-                if in_code {
-                    let range = body.range();
-                    if range.contains(&target_offset) {
-                        return format!("func[{}]", func_count_before_code + body_index);
-                    }
-                    body_index += 1;
+            Payload::CodeSectionEntry(body) if in_code => {
+                let range = body.range();
+                if range.contains(&target_offset) {
+                    return format!("func[{}]", func_count_before_code + body_index);
                 }
+                body_index += 1;
             }
             _ => {}
         }
