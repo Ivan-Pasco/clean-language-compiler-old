@@ -970,7 +970,11 @@ impl HirBuilder {
                     None,
                 )),
             },
-            Type::List(inner) => {
+            Type::List(inner, _behavior) => {
+                // Behaviour is carried separately on `HirStatement::VariableDeclaration`
+                // (set when the var-decl path lowers the AST type). HirType itself
+                // is intentionally behaviour-free so list values flowing through the
+                // type system don't need to track it everywhere.
                 let inner_type = self.build_type(inner)?;
                 Ok(HirType::List(Box::new(inner_type)))
             }

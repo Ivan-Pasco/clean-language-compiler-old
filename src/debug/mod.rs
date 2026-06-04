@@ -99,7 +99,7 @@ impl DebugUtils {
             Type::Boolean => "boolean".to_string(),
             Type::String => "string".to_string(),
             Type::Void => "void".to_string(),
-            Type::List(inner) => format!("list<{}>", Self::type_to_string(inner)),
+            Type::List(inner, _behavior) => format!("list<{}>", Self::type_to_string(inner)),
             Type::Object(name) => name.clone(),
             Type::Any => "any".to_string(),
             _ => format!("{type_:?}"),

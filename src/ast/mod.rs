@@ -67,7 +67,7 @@ pub enum Value {
     Pairs(Vec<(Value, Value)>),
 }
 
-#[derive(Debug, Clone, PartialEq, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum ListBehavior {
     Default,        // Standard list behavior
     Line,           // Queue behavior (FIFO)
@@ -91,11 +91,24 @@ pub enum Type {
     None,
 
     // Advanced sized types
-    IntegerSized { bits: u8, unsigned: bool },
-    NumberSized { bits: u8 },
+    IntegerSized {
+        bits: u8,
+        unsigned: bool,
+    },
+    NumberSized {
+        bits: u8,
+    },
 
     // Composite types
-    List(Box<Type>),
+    /// List type with optional runtime-enforced behaviour.
+    ///
+    /// The behaviour modifier (`.line` / `.pile` / `.unique` and combinations,
+    /// per `type-system.md` §3 "List Behavior Modes") is part of the declared
+    /// type. At codegen time it is materialised as a flag byte written into
+    /// the list header (offset 12) so behaviour-aware stdlib functions
+    /// (`list.add`, `list.remove`, `list.peek`) can dispatch on it at
+    /// runtime without recompilation.
+    List(Box<Type>, ListBehavior),
     Matrix(Box<Type>),
     Pairs(Box<Type>, Box<Type>),
 
@@ -105,7 +118,10 @@ pub enum Type {
 
     // Object types
     Object(String),
-    Class { name: String, type_args: Vec<Type> },
+    Class {
+        name: String,
+        type_args: Vec<Type>,
+    },
     Function(Vec<Type>, Box<Type>),
 
     // Background types
@@ -1623,7 +1639,15 @@ impl fmt::Display for Type {
             }
             Type::NumberSized { bits } => write!(f, "number:{bits}"),
             // Type::Array removed - now using Type::List
-            Type::List(inner) => write!(f, "list<{inner}>"),
+            Type::List(inner, behavior) => {
+                use crate::stdlib::list_behavior::behavior_to_string;
+                let suffix = behavior_to_string(*behavior);
+                if suffix.is_empty() {
+                    write!(f, "list<{inner}>")
+                } else {
+                    write!(f, "list<{inner}>{suffix}")
+                }
+            }
             Type::Matrix(inner) => write!(f, "matrix<{inner}>"),
             Type::Pairs(key, value) => write!(f, "pairs<{key}, {value}>"),
             Type::Function(params, ret) => {

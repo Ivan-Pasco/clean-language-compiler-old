@@ -12,7 +12,7 @@
 use super::TokenParser;
 use crate::ast::{
     Class, Constructor, Expression, Field, Function, FunctionModifier, FunctionSyntax, ImportItem,
-    Parameter, Statement, Type, Visibility,
+    ListBehavior, Parameter, Statement, Type, Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
@@ -1391,6 +1391,9 @@ impl TokenParser {
                                                        // Any other ordering is a parse error (grammar.ebnf list_behavior).
                     let behavior_order = ["line", "unique", "pile"];
                     let mut last_index: i32 = -1;
+                    let mut has_line = false;
+                    let mut has_unique = false;
+                    let mut has_pile = false;
                     loop {
                         if !matches!(self.current_kind(), TokenKind::Dot) {
                             break;
@@ -1413,6 +1416,12 @@ impl TokenParser {
                                         Some("Use the canonical order: .line.unique.pile (omitting unused modifiers)".to_string()),
                                     ));
                                 }
+                                match kw.as_str() {
+                                    "line" => has_line = true,
+                                    "unique" => has_unique = true,
+                                    "pile" => has_pile = true,
+                                    _ => {}
+                                }
                                 last_index = idx;
                                 self.bump(); // consume the behavior keyword
                             } else {
@@ -1425,7 +1434,17 @@ impl TokenParser {
                             break;
                         }
                     }
-                    Type::List(Box::new(inner_type))
+                    let behavior = match (has_line, has_unique, has_pile) {
+                        (false, false, false) => ListBehavior::Default,
+                        (true, false, false) => ListBehavior::Line,
+                        (false, true, false) => ListBehavior::Unique,
+                        (false, false, true) => ListBehavior::Pile,
+                        (true, true, false) => ListBehavior::LineUnique,
+                        (true, false, true) => ListBehavior::LinePile,
+                        (false, true, true) => ListBehavior::PileUnique,
+                        (true, true, true) => ListBehavior::LineUniquePile,
+                    };
+                    Type::List(Box::new(inner_type), behavior)
                 } else {
                     // list without generic parameter - treat as Object
                     Type::Object("list".to_string())

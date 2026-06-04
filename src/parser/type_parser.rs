@@ -1,6 +1,6 @@
 use super::Rule;
 use super::{convert_to_ast_location, get_location};
-use crate::ast::Type;
+use crate::ast::{ListBehavior, Type};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
 
@@ -210,7 +210,10 @@ fn parse_list_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
     })?;
 
     let element_type = parse_type(element_type)?;
-    Ok(Type::List(Box::new(element_type)))
+    // Legacy parser path: no behaviour modifier handled here.
+    // The token-based parser (declarations.rs) is the production path and
+    // captures `.line` / `.pile` / `.unique` from the source.
+    Ok(Type::List(Box::new(element_type), ListBehavior::Default))
 }
 
 fn parse_pairs_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {

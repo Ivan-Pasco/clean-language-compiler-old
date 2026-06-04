@@ -157,10 +157,10 @@ impl From<&AstType> for WasmType {
         match ast_type {
             AstType::Integer | AstType::Boolean => WasmType::I32,
             AstType::Number => WasmType::F64,
-            AstType::String => WasmType::I32,    // String pointers
-            AstType::Void => WasmType::I32,      // Void represented as I32
-            AstType::List(_) => WasmType::I32,   // List pointers
-            AstType::Matrix(_) => WasmType::I32, // Matrix pointers
+            AstType::String => WasmType::I32,     // String pointers
+            AstType::Void => WasmType::I32,       // Void represented as I32
+            AstType::List(_, _) => WasmType::I32, // List pointers
+            AstType::Matrix(_) => WasmType::I32,  // Matrix pointers
             AstType::Pairs(_, _) => WasmType::I32, // Pairs are represented as pointers to heap-allocated structures
             AstType::Object(_) => WasmType::I32,   // Object pointers
             AstType::Generic(_, _) => WasmType::I32, // Generic type pointers

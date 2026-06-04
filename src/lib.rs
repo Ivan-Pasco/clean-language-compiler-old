@@ -727,7 +727,10 @@ fn parse_bridge_type(type_str: &str) -> ast::Type {
         // Handle generic types like "list<string>"
         s if s.starts_with("list<") && s.ends_with('>') => {
             let inner = &s[5..s.len() - 1];
-            ast::Type::List(Box::new(parse_bridge_type(inner)))
+            ast::Type::List(
+                Box::new(parse_bridge_type(inner)),
+                ast::ListBehavior::Default,
+            )
         }
         // Default to Any for unknown types
         _ => ast::Type::Any,
