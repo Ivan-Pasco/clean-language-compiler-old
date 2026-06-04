@@ -62,6 +62,12 @@ jobs:
         OPENSSL_VENDOR: 1
         CARGO_TARGET_DIR: target
 
+    - name: Build wasmtime_runner binary
+      run: cargo build --release --bin wasmtime_runner --target ${{ matrix.target }}
+      env:
+        OPENSSL_STATIC: 1
+        OPENSSL_VENDOR: 1
+
     - name: Generate compile-options.json (Unix)
       if: matrix.os != 'windows-latest'
       run: ./target/${{ matrix.target }}/release/cln options --export-json
@@ -76,6 +82,7 @@ jobs:
       run: |
         strip target/${{ matrix.target }}/release/cln || true
         strip target/${{ matrix.target }}/release/clean-language-server || true
+        strip target/${{ matrix.target }}/release/wasmtime_runner || true
 
     - name: Create archive (Unix)
       if: matrix.os != 'windows-latest'
@@ -83,6 +90,7 @@ jobs:
         mkdir -p release-package
         cp target/${{ matrix.target }}/release/cln release-package/
         cp target/${{ matrix.target }}/release/clean-language-server release-package/
+        cp target/${{ matrix.target }}/release/wasmtime_runner release-package/
         cp compile-options.json release-package/
         tar -czf ${{ matrix.name }}.tar.gz -C release-package .
         # Also copy direct binaries for cleanmanager compatibility
@@ -96,7 +104,7 @@ jobs:
       shell: pwsh
       run: |
         Set-Location "target/${{ matrix.target }}/release"
-        7z a "../../../${{ matrix.name }}.zip" cln.exe clean-language-server.exe
+        7z a "../../../${{ matrix.name }}.zip" cln.exe clean-language-server.exe wasmtime_runner.exe
         # Also copy direct binary for cleanmanager compatibility
         Copy-Item cln.exe "../../../${{ matrix.name }}.exe"
         $lsName = "${{ matrix.name }}" -replace '^cln-', 'clean-language-server-'
