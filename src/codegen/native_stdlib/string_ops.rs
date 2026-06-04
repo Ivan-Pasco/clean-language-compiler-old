@@ -1083,32 +1083,6 @@ pub fn gen_substring(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
-/// Helper: Check if a byte is whitespace (space, tab, newline, carriage return)
-/// Returns instructions that leave 1 on stack if whitespace, 0 otherwise
-/// Expects byte value on stack, consumes it
-#[allow(dead_code)] // Whitespace-check helper — not yet referenced by any string function
-fn gen_is_whitespace() -> Vec<Instruction<'static>> {
-    vec![
-        // Stack has: byte
-        // Check if byte == 32 (space) || byte == 9 (tab) || byte == 10 (newline) || byte == 13 (CR)
-        Instruction::LocalTee(100), // Save byte to temp local (will be declared)
-        Instruction::I32Const(32),  // space
-        Instruction::I32Eq,
-        Instruction::LocalGet(100),
-        Instruction::I32Const(9), // tab
-        Instruction::I32Eq,
-        Instruction::I32Or,
-        Instruction::LocalGet(100),
-        Instruction::I32Const(10), // newline
-        Instruction::I32Eq,
-        Instruction::I32Or,
-        Instruction::LocalGet(100),
-        Instruction::I32Const(13), // carriage return
-        Instruction::I32Eq,
-        Instruction::I32Or,
-    ]
-}
-
 /// Generate instructions for string.trimStart
 ///
 /// Trims whitespace characters from the beginning of a string.

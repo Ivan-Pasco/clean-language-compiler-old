@@ -4,7 +4,7 @@
 //! * Type helpers: `get_value_type`, `get_operand_mir_type`, `get_stdlib_return_type`
 //! * Function signature conversion: `convert_function_signature`, `mir_type_to_wasm_type`
 //! * Local/block computation: `compute_local_types`, `compute_block_order`
-//! * Function resolution: `resolve_namespace_function`, `get_function_name_by_symbol`
+//! * Function resolution: `get_function_name_by_symbol`
 //! * Module setup: `register_builtin_function_signatures`, `setup_memory_section`,
 //!   `setup_string_pool`, `add_function_to_module`, `val_type_to_wasm_type`
 //! * Export helpers: `generate_start_function_export`
@@ -337,64 +337,6 @@ impl MirCodeGenerator<'_> {
     // -------------------------------------------------------------------------
     // Function resolution
     // -------------------------------------------------------------------------
-
-    /// Resolve a namespace function `SymbolId` to a WASM function name.
-    #[allow(dead_code)] // Namespace-by-ID resolver — superseded by string-keyed lookup in mod.rs
-    pub(super) fn resolve_namespace_function(&self, symbol_id: SymbolId) -> Option<String> {
-        match symbol_id.0 {
-            35 => Some("math_sin".to_string()),
-            36 => Some("math_cos".to_string()),
-            37 => Some("math_tan".to_string()),
-            38 => Some("math_abs".to_string()),
-            39 => Some("math_floor".to_string()),
-            40 => Some("math_ceil".to_string()),
-            41 => Some("math_round".to_string()),
-            42 => Some("math_sqrt".to_string()),
-            43 => Some("math_trunc".to_string()),
-            44 => Some("math_pi".to_string()),
-            45 => Some("math_pow".to_string()),
-            46 => Some("math_max".to_string()),
-            47 => Some("math_min".to_string()),
-            48 => Some("string.length".to_string()),
-            49 => Some("string.substring".to_string()),
-            50 => Some("string.toUpperCase".to_string()),
-            51 => Some("string.toLowerCase".to_string()),
-            52 => Some("string.contains".to_string()),
-            53 => Some("list.size".to_string()),
-            54 => Some("list.push".to_string()),
-            55 => Some("list.pop".to_string()),
-            56 => Some("list.get".to_string()),
-            60 => Some("number.toString".to_string()),
-            61 => Some("math.max".to_string()),
-            62 => Some("integer.toString".to_string()),
-            63 => Some("boolean.toString".to_string()),
-            64 => Some("string.length".to_string()),
-            65 => Some("string.substring".to_string()),
-            66 => Some("string.contains".to_string()),
-            67 => Some("string.contains".to_string()),
-            68 => Some("string.length".to_string()),
-            69 => Some("string.isEmpty".to_string()),
-            70 => Some("math.ln".to_string()),
-            71 => Some("math.log10".to_string()),
-            72 => Some("math.log2".to_string()),
-            73 => Some("math.exp".to_string()),
-            74 => Some("math.exp2".to_string()),
-            75 => Some("math.asin".to_string()),
-            76 => Some("math.acos".to_string()),
-            77 => Some("math.atan".to_string()),
-            78 => Some("math.atan2".to_string()),
-            79 => Some("math.sinh".to_string()),
-            80 => Some("math.cosh".to_string()),
-            81 => Some("math.tanh".to_string()),
-            _ => {
-                tracing::debug!(
-                    symbol_id = symbol_id.0,
-                    "Unknown namespace function SymbolId"
-                );
-                None
-            }
-        }
-    }
 
     /// Get a function name by `SymbolId` using pure dynamic resolution.
     ///

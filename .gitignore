@@ -124,4 +124,10 @@ Codex/
 llm-sessions/
 ai-sessions/
 *-session-*.md
-*_session_*.md.playwright-mcp/
+*_session_*.md
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Claude scheduled tasks
+.claude/scheduled_tasks.lock

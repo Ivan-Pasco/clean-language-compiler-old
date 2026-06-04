@@ -1111,7 +1111,7 @@ impl super::CodeGenerator {
     pub(crate) fn register_env_builtin_imports(&mut self) -> Result<(), CompilerError> {
         self.register_import_function(
             "env",
-            "env_get",
+            "_env_get",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
@@ -1120,7 +1120,7 @@ impl super::CodeGenerator {
 
     /// Create local wrapper function for `env.get`. Must be called AFTER all imports.
     pub(crate) fn register_env_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
-        if let Some(&raw_idx) = self.function_map.get("env_get") {
+        if let Some(&raw_idx) = self.function_map.get("_env_get") {
             let wrap_idx = self.register_function(
                 "env.get",
                 &[WasmType::I32],

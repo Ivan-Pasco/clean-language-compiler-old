@@ -1,5 +1,37 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟢 OPEN: SPEC-EBNF-GENERIC — Clarify generic_type / type_parameters scope in grammar.ebnf
+
+**Priority**: LOW
+**Discovered**: 2026-06-03 (during `/audit compiler grammar`)
+**Files**: `foundation/spec/grammar.ebnf` lines 200-203, 689
+
+**Issue**: The EBNF defines `generic_type`, `type_arguments`, `type_parameters`, and `type_parameter`
+as if user-level generics with `<T>` are valid syntax (e.g. `function_in_block` references
+`function_return_type` which could include them). The prose specification explicitly states
+"no angle brackets in user code (`<>`) — these are internal representations" and instructs
+users to use `any` for generic behavior. The compiler parser correctly does NOT accept
+user-written `<T>` parameters (sets `type_parameters: vec![]` unconditionally in
+`src/parser/token_parser/declarations.rs:57,478`).
+
+The ambiguity: `list<integer>`, `matrix<number>`, `pairs<K,V>` are built-in parametric types
+that DO use `<>` at the source level. The EBNF's `generic_type` rule (`identifier "<" type_arguments ">"`)
+was likely intended only for these built-ins, but reads as general user syntax.
+
+**Resolution needed (developer judgment)**:
+  - Option A: Remove `generic_type`, `type_parameters`, `type_parameter` productions entirely,
+    keep only the special-cased `list_type`, `matrix_type`, `pairs_type` rules (which is the
+    current implementation reality).
+  - Option B: Add a comment to each of those productions clarifying they describe internal
+    representation only and are not valid user syntax outside the three built-in container types.
+  - Option C: If user generics are planned future work, leave the productions and move the EBNF
+    to a "future syntax" section.
+
+Requires developer approval before editing the spec (Principle 25). No test impact — no
+existing tests use user-level generic type parameters.
+
+---
+
 ## ✅ COMPLETED: CODEGEN001 — Object literals `{ key: value }` compiled to `return 0`
 
 **Priority**: CRITICAL

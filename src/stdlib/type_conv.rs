@@ -407,24 +407,6 @@ impl TypeConvOperations {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::codegen::CodeGenerator;
-    use wasmtime::{Instance, Module, Store};
-
-    #[allow(dead_code)] // Test helper — requires wasmtime feature; no test currently calls it
-    fn setup_test_environment() -> (Store<()>, Instance) {
-        let mut codegen = CodeGenerator::new();
-        let type_conv = TypeConvOperations::new(1024);
-        type_conv.register_functions(&mut codegen).unwrap();
-
-        let engine =
-            crate::runtime::wasmtime_config::CleanWasmtimeConfig::create_minimal_engine().unwrap();
-        let wasm_bytes = codegen.generate_test_module_without_imports().unwrap();
-        let module = Module::new(&engine, &wasm_bytes).unwrap();
-        let mut store = Store::new(&engine, ());
-        let instance = Instance::new(&mut store, &module, &[]).unwrap();
-        (store, instance)
-    }
 
     #[test]
     fn test_i32_to_f64() {

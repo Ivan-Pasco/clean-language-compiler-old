@@ -102,18 +102,6 @@ impl Default for TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::SourceLocation;
-
-    #[allow(dead_code)] // Test fixture — no test currently calls it
-    fn test_location() -> SourceLocation {
-        SourceLocation {
-            file: "test.cln".to_string(),
-            line: 1,
-            column: 1,
-            byte_start: None,
-            byte_end: None,
-        }
-    }
 
     #[test]
     fn test_typechecker_creation() {

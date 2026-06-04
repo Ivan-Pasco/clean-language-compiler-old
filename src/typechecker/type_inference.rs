@@ -6109,34 +6109,6 @@ impl BuiltinTypes {
     }
 }
 
-// Extension trait to get location from HIR statements — available for error reporting
-#[allow(dead_code)] // Not yet used; kept for future structured diagnostics
-trait StatementLocation {
-    fn location(&self) -> &SourceLocation;
-}
-
-#[allow(dead_code)] // Impl for dead trait — retained alongside the trait above
-impl StatementLocation for ResolvedHirStatement {
-    fn location(&self) -> &SourceLocation {
-        match self {
-            ResolvedHirStatement::Expression { location, .. } => location,
-            ResolvedHirStatement::VariableDeclaration { location, .. } => location,
-            ResolvedHirStatement::Return { location, .. } => location,
-            ResolvedHirStatement::If { location, .. } => location,
-            ResolvedHirStatement::Assignment { location, .. } => location,
-            ResolvedHirStatement::For { location, .. } => location,
-            ResolvedHirStatement::While { location, .. } => location,
-            ResolvedHirStatement::Break { location } => location,
-            ResolvedHirStatement::Continue { location } => location,
-            ResolvedHirStatement::Print { location, .. } => location,
-            ResolvedHirStatement::LaterAssignment { location, .. } => location,
-            ResolvedHirStatement::Require { location, .. } => location,
-            ResolvedHirStatement::Ensure { location, .. } => location,
-            ResolvedHirStatement::Background { location, .. } => location,
-        }
-    }
-}
-
 /// Walk a `TastExpression` tree and return the name of the first I/O call found,
 /// or `None` if the expression is pure.
 ///

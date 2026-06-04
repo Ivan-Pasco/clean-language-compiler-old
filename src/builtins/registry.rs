@@ -294,7 +294,7 @@ impl BuiltinRegistry {
                 BuiltinType::Boolean,
                 BuiltinCategory::IO,
             )
-            .with_wasm_import("env", "input_yes_no"),
+            .with_wasm_import("env", "input_yesno"),
         ];
 
         for func in io_functions {
