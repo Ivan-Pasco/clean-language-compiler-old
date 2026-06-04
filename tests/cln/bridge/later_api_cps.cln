@@ -1,0 +1,19 @@
+// Test: bridge/later_api_cps
+// Grammar: grammar.ebnf §4.9 later_assignment
+// Verifies that `later result = api.get(url)` is CPS-lowered:
+//   - the current function emits _api_get(url, "__later_N_fnName")
+//   - a generated continuation __later_N_fnName is exported
+//   - result.ok / result.json / result.status inside the continuation
+//     map to _api_ok() / _api_json() / _api_status() bridge calls
+// This test is compile-only (no browser runtime available); success is WASM generation.
+
+plugins:
+	frame.client
+
+functions:
+	any loadUser(string userId)
+		later result = api.get("/api/users/" + userId)
+		if result.ok
+			print(result.json("name"))
+		else
+			print("Error: " + result.status.toString())

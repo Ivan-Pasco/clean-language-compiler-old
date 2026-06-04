@@ -96,8 +96,19 @@ impl WasmPluginLoader {
             // Warn if this plugin was compiled with a compiler known to have codegen bugs.
             self.check_plugin_build_compatibility(plugin_name, &manifest, &plugin_dir);
 
-            // Load the plugin adapter
+            // Bridge-only plugins (handles.blocks is empty and no plugin.wasm exists) provide
+            // only bridge function declarations and keywords — no WASM module is needed.
             let wasm_path = plugin_dir.join("plugin.wasm");
+            let is_bridge_only = manifest.handles.blocks.is_empty() && !wasm_path.exists();
+            if is_bridge_only {
+                tracing::debug!(
+                    plugin = plugin_name,
+                    "Bridge-only plugin: skipping WASM load (no blocks, no plugin.wasm)"
+                );
+                continue;
+            }
+
+            // Load the plugin adapter
             let module = self.load_wasm_module(&wasm_path)?;
             let adapter = WasmPluginAdapter::new(
                 plugin_name.to_string(),

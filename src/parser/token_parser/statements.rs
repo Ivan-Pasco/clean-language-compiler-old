@@ -1042,12 +1042,11 @@ impl TokenParser {
         // Parse the expression (usually 'start someFunc()')
         let expression = self.parse_expression()?;
 
-        // Create a variable declaration with the later expression as initializer
-        // The type will be inferred from the expression
-        Ok(Statement::VariableDecl {
-            name: var_name,
-            type_: Type::Any, // Type will be inferred from the expression
-            initializer: Some(expression),
+        // Emit LaterAssignment so the HIR builder can apply the CPS transform
+        // (split the function at this point; remaining statements become a continuation).
+        Ok(Statement::LaterAssignment {
+            variable: var_name,
+            expression,
             location: Some(location),
         })
     }
