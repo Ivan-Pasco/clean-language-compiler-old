@@ -8,7 +8,7 @@
 use super::protocol::{error_codes, JsonRpcRequest, JsonRpcResponse, Tool, ToolInputSchema};
 use crate::builtins::registry::BuiltinRegistry;
 use crate::plugins::PluginDiscovery;
-use crate::{compile_with_opt_level, parse_to_ast, type_check, VERSION};
+use crate::{compile_source_with_detected_plugins, parse_to_ast, type_check, VERSION};
 use lazy_static::lazy_static;
 use serde_json::json;
 use std::sync::Mutex;
@@ -1592,7 +1592,7 @@ fn tool_compile(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespo
 
     let opt_level = args.get("opt_level").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
 
-    match compile_with_opt_level(source, file_path, opt_level) {
+    match compile_source_with_detected_plugins(source, file_path, opt_level) {
         Ok(wasm_bytes) => {
             let base64 = base64_encode(&wasm_bytes);
             JsonRpcResponse::success(
@@ -4637,7 +4637,7 @@ fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse 
     };
 
     // Step 2: Compile (even if type-check fails, to get all diagnostics)
-    let compile_result = compile_with_opt_level(source, file_path, 2);
+    let compile_result = compile_source_with_detected_plugins(source, file_path, 2);
 
     let duration = start.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
 

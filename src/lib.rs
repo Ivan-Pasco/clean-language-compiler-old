@@ -300,7 +300,7 @@ pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
 /// **Note:** This compiles with NO plugins (pure Clean Language).
 /// For framework features (endpoints:, data:, component:), use `compile_with_plugins`.
 pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_pure(source, file_path)
+    compile_source_with_detected_plugins(source, file_path, 2)
 }
 
 /// Compiles Clean Language source code with optimization level
@@ -710,6 +710,18 @@ pub fn compile_pure(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<Compil
         .build()
         .expect("Empty registry should always build");
     compile_with_plugins(source, file_path, &registry)
+}
+
+/// Alias for [`compile_with_external_plugins_and_opt_level`].
+///
+/// Used by the MCP compile/validate tools and the `cln debug` command so that
+/// any `plugins:` declarations in the source are honoured during compilation.
+pub fn compile_source_with_detected_plugins(
+    source: &str,
+    file_path: &str,
+    opt_level: u8,
+) -> Result<Vec<u8>, Vec<CompilerError>> {
+    compile_with_external_plugins_and_opt_level(source, file_path, opt_level)
 }
 
 /// Parses a bridge function type string into an AST Type
@@ -1199,9 +1211,12 @@ pub fn compile_with_external_plugins_and_opt_level(
     let plugin_names = extract_plugins(source);
 
     if plugin_names.is_empty() {
-        // No plugins declared, compile without external plugins
+        // No plugins declared: compile with empty registry, honouring opt_level.
         tracing::debug!("No plugins found, compiling without external plugins");
-        return compile_pure(source, file_path);
+        let registry = plugins::PluginRegistry::builder()
+            .build()
+            .expect("Empty registry should always build");
+        return compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level);
     }
 
     tracing::info!(plugins = ?plugin_names, "Loading external plugins from plugins: block");

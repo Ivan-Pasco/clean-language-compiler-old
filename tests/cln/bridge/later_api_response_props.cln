@@ -1,0 +1,19 @@
+// Test: bridge/later_api_response_props
+// Grammar: grammar.ebnf §4.9 later_assignment
+// Semantic: SEM-LATER-002 — result.* properties resolve to bridge calls after CPS transform
+// Verifies that result.ok / result.json / result.body / result.status inside a
+// `start:` continuation are correctly lowered to _api_ok / _api_json / _api_body / _api_status.
+// Compile-only (no browser runtime available); success means WASM generation without
+// "Function 'api.ok' not found in function map".
+
+plugins:
+	frame.client
+
+start:
+	later result = api.get("/api/users")
+	if result.ok
+		print(result.json("name"))
+		print(result.body)
+	else
+		string statusStr = result.status.toString()
+		print("Error: " + statusStr)
