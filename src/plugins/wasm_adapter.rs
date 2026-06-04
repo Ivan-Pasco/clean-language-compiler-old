@@ -854,7 +854,7 @@ impl WasmPluginAdapter {
         // Endpoint test bridge stubs (plugin sandbox has no live server)
         linker.func_wrap(
             "env",
-            "_test_http_request_raw",
+            "_test_http_request",
             |_: i32,
              _: i32,
              _: i32,

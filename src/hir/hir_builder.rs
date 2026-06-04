@@ -2658,7 +2658,7 @@ impl HirBuilder {
     /// Build a HirTest body for an endpoint test case.
     ///
     /// Generates:
-    ///   integer __handle = _test_http_request(method, path, body, "", "", "")
+    ///   integer __handle = _test_http_request_clean(method, path, body, "", "", "")
     ///   boolean __ok = true
     ///   for each assertion:
     ///     Status   → __ok = __ok && (_test_response_status(__handle) op value)
@@ -2684,10 +2684,10 @@ impl HirBuilder {
             HttpMethod::Patch => "PATCH",
         };
 
-        // _test_http_request(method, path, body, "", "", "")
+        // _test_http_request_clean(method, path, body, "", "", "")
         // body: use empty string for now (body key/value pairs require serialization)
         let handle_call = HirExpression::Call {
-            function: "_test_http_request".to_string(),
+            function: "_test_http_request_clean".to_string(),
             arguments: vec![
                 HirExpression::Literal {
                     value: Value::String(method_str.to_string()),

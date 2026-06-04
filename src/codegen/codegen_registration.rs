@@ -729,7 +729,7 @@ impl super::CodeGenerator {
     }
 
     /// Register raw imports for the endpoint-test bridge functions (imports phase only).
-    /// `_test_http_request_raw`: 10 x i32 (5 str ptr+len pairs) -> i32 handle
+    /// `_test_http_request`:    10 x i32 (5 str ptr+len pairs) -> i32 handle
     /// `_test_response_status`: (handle: i32) -> i32
     /// `_test_response_body`:   (handle: i32) -> i32 (string structure ptr)
     /// Call `register_test_bridge_wrappers()` AFTER all imports.
@@ -737,7 +737,7 @@ impl super::CodeGenerator {
         use crate::types::WasmType;
         self.register_import_function(
             "env",
-            "_test_http_request_raw",
+            "_test_http_request",
             &[
                 WasmType::I32,
                 WasmType::I32, // method ptr+len
@@ -767,15 +767,15 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Create the `_test_http_request` WASM wrapper.
+    /// Create the `_test_http_request_clean` WASM wrapper.
     /// Takes 5 string structure pointers (each pointing to [len:4][data]), reads their
-    /// lengths from memory, and calls `_test_http_request_raw` with 10 i32 params.
+    /// lengths from memory, and calls the `_test_http_request` host import with 10 i32 params.
     /// Must be called AFTER all imports.
     pub fn register_test_bridge_wrappers(&mut self) -> Result<(), CompilerError> {
         use crate::types::WasmType;
         use wasm_encoder::Instruction;
 
-        let raw_idx = match self.function_map.get("_test_http_request_raw").copied() {
+        let raw_idx = match self.function_map.get("_test_http_request").copied() {
             Some(idx) => idx,
             None => return Ok(()),
         };
@@ -803,7 +803,7 @@ impl super::CodeGenerator {
         instructions.push(Instruction::Call(raw_idx));
 
         let wrapper_idx = self.register_function(
-            "_test_http_request",
+            "_test_http_request_clean",
             &[
                 WasmType::I32,
                 WasmType::I32,
@@ -814,7 +814,7 @@ impl super::CodeGenerator {
             Some(WasmType::I32),
             &instructions,
         )?;
-        self.add_function_alias("_test_http_request", wrapper_idx);
+        self.add_function_alias("_test_http_request_clean", wrapper_idx);
         Ok(())
     }
 

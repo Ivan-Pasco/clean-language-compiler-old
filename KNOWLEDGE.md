@@ -42,7 +42,7 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 **What:** Functions must be registered in the function map BEFORE their bodies are generated, so that recursive calls within the body can resolve the function index. Skipping pre-registration causes "function not found" errors for valid recursive code.
 
-**Where:** `src/codegen/function_generator.rs`
+**Where:** `src/codegen/mir_codegen/mod.rs` (pre-registration loop; see `compile_mir`, asserting "All functions pre-registered in function_map") and `src/codegen/mir_codegen/utilities.rs` (lookup site that panics if the invariant is violated). The legacy `function_generator.rs` was removed in the 2026-04-12 codegen cleanup; pre-registration responsibility moved to `MirCodeGenerator`.
 
 **Watch for:** Any refactoring of function compilation order or function map construction.
 

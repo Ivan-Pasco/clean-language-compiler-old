@@ -633,7 +633,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Endpoint test bridge stubs (no live server in runner — always return 0)
     linker.func_wrap(
         "env",
-        "_test_http_request_raw",
+        "_test_http_request",
         |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
             0
         },
