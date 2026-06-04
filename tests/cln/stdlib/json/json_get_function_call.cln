@@ -1,0 +1,41 @@
+// Test: json.get as namespace function call
+// Grammar: function_call → namespace "." function_name "(" args ")"
+// Semantic: FUNC-BUILTIN — json.get(any, string) -> any
+// Regression: RUNTIME001 — json.get wrapper passed boxed Any ptr directly to
+//             __json_get_field which expected the raw unboxed object ptr.
+//
+// Expected output:
+//   json.get on simple object: Alice
+//   json.get on nested object: 42
+//   json.get null guard: pass
+//   json.get chained: deep
+
+start:
+	// Simple object — json.get as a function call (not .field syntax)
+	any obj1 = json.decode("{\"name\":\"Alice\",\"age\":30}")
+	any nameVal = json.get(obj1, "name")
+	string nameStr = nameVal.toString()
+	print("json.get on simple object: " + nameStr) +
+
+	// Nested object — chain json.get calls
+	any obj2 = json.decode("{\"user\":{\"score\":42}}")
+	any userVal = json.get(obj2, "user")
+	any scoreVal = json.get(userVal, "score")
+	string scoreStr = scoreVal.toString()
+	print("json.get on nested object: " + scoreStr) +
+
+	// Null guard — json.get on null must return null without crashing
+	any nullObj = null
+	any nullResult = json.get(nullObj, "key")
+	if nullResult == null
+		print("json.get null guard: pass") +
+	else
+		print("json.get null guard: fail") +
+
+	// Chained on deeper nesting
+	any obj3 = json.decode("{\"a\":{\"b\":{\"c\":\"deep\"}}}")
+	any aVal = json.get(obj3, "a")
+	any bVal = json.get(aVal, "b")
+	any cVal = json.get(bVal, "c")
+	string cStr = cVal.toString()
+	print("json.get chained: " + cStr) +

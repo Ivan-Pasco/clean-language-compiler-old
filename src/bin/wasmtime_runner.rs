@@ -451,12 +451,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         |mut caller: Caller<'_, ()>, value: f64| -> i32 {
             let string_value = value.to_string();
 
-            // CRITICAL DEBUG: Check if the function is even being called
-            println!(
-                "🔥 CRITICAL: float_to_string IS BEING CALLED! Input: {}, Output: '{}'",
-                value, string_value
-            );
-
             // Get memory to store the string
             if let Some(memory) = caller.get_export("memory") {
                 if let Some(memory) = memory.into_memory() {

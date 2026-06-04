@@ -74,7 +74,20 @@ impl JsonClass {
                 &[WasmType::I32, WasmType::I32], // (json_ptr, key_ptr)
                 Some(WasmType::I32),
                 vec![
-                    Instruction::LocalGet(0), // any_ptr = json_ptr
+                    // json_ptr is a boxed Any: [tag][raw_ptr][0].
+                    // __json_get_field expects the raw object pointer (not the boxed wrapper).
+                    // Guard against null first, then unbox by reading the raw ptr at offset 4.
+                    Instruction::LocalGet(0),
+                    Instruction::I32Eqz,
+                    Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+                    Instruction::I32Const(0), // null → return null
+                    Instruction::Else,
+                    Instruction::LocalGet(0), // json_ptr (boxed)
+                    Instruction::I32Load(MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }), // raw_obj_ptr = memory[json_ptr + 4]
                     Instruction::LocalGet(1), // key_ptr
                     Instruction::I32Const(4),
                     Instruction::I32Add, // key content start = key_ptr + 4
@@ -85,6 +98,7 @@ impl JsonClass {
                         memory_index: 0,
                     }), // key length = mem[key_ptr]
                     Instruction::Call(raw_idx),
+                    Instruction::End,
                 ],
             )?;
         }
