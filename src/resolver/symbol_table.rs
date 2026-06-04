@@ -885,6 +885,11 @@ impl GlobalSymbolTable {
                 HirType::Number,
             ),
             (
+                "list.setFlags",
+                vec![HirType::List(Box::new(HirType::Number)), HirType::Integer],
+                HirType::Void,
+            ),
+            (
                 "list.add",
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::List(Box::new(HirType::Number)), // Returns modified list per spec
@@ -1392,6 +1397,7 @@ impl GlobalSymbolTable {
             self.lookup_symbol("list.get").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.remove").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.peek").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("list.setFlags").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.add").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.contains").unwrap_or(SymbolId(0)),
             self.lookup_symbol("list.insert").unwrap_or(SymbolId(0)),

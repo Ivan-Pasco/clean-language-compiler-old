@@ -2042,17 +2042,35 @@ impl MirBuilder {
                             }
                             (list_add_symbol, args)
                         }
-                        (ConcreteType::Array(_), "remove" | "pop" | "removeLast") => {
-                            // Call list_pop - look up from symbol table
-                            // removeLast is the canonical name for pop per spec
-                            let list_pop_symbol = self
+                        (ConcreteType::Array(_), "setFlags") => {
+                            // Store compile-time-known behavior flags at offset 12.
+                            let set_flags_symbol = self
                                 .symbol_table
-                                .lookup_symbol("list_pop")
+                                .lookup_symbol("list.setFlags")
                                 .unwrap_or_else(|| {
-                                    warn!("list_pop not found in symbol table, using fallback");
+                                    warn!(
+                                        "list.setFlags not found in symbol table, using fallback"
+                                    );
                                     *method_symbol
                                 });
-                            (list_pop_symbol, vec![MirOperand::Value(receiver_id)])
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+                            (set_flags_symbol, args)
+                        }
+                        (ConcreteType::Array(_), "remove" | "pop" | "removeLast") => {
+                            // Use the behavior-aware list.remove so that LINE (FIFO) and
+                            // PILE (LIFO) flags are respected at runtime.
+                            let list_remove_symbol = self
+                                .symbol_table
+                                .lookup_symbol("list.remove")
+                                .unwrap_or_else(|| {
+                                    warn!("list.remove not found in symbol table, using fallback");
+                                    *method_symbol
+                                });
+                            (list_remove_symbol, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Array(_), "get") => {
                             // Call list_get - look up from symbol table
@@ -2403,6 +2421,12 @@ impl MirBuilder {
                         "toString" => ConcreteType::String,
                         "toNumber" => ConcreteType::Number,
                         "toInteger" => ConcreteType::Integer,
+                        _ => expression.expr_type.clone(),
+                    }
+                } else if matches!(&receiver.expr_type, ConcreteType::Array(_)) {
+                    // NOTE: Array/List methods with known void return type
+                    match method_name.as_str() {
+                        "setFlags" => ConcreteType::Undefined,
                         _ => expression.expr_type.clone(),
                     }
                 } else if matches!(&receiver.expr_type, ConcreteType::Matrix(_)) {

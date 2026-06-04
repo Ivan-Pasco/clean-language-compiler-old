@@ -1,40 +1,56 @@
 // Test: spec_compliance/types/list_behavior_enforcement
 // Grammar: list_type = "list" , "<" , type , ">" , [ list_behavior ] ;
 //          list_behavior = "." , ( "line" | "pile" | "unique" | combinations ) ;
-// Semantic: Behavior modifiers are parsed as part of the list_type production.
-//           The grammar production list_behavior is nested inside list_type,
-//           so these modifiers are syntactically impossible on non-list types.
-//           No separate typechecker check is needed — grammar prevents invalid use
-//           at parse time (RESOLVED per TASKS.md).
+// Semantic: Behavior flags are stored at offset 12 of the list header and are
+//           read at runtime by list.add (unique enforcement) and list.remove
+//           (FIFO vs LIFO selection).
 // Expected output:
 //   pile ok
 //   unique ok
 //   line ok
+//   pile LIFO: 3
+//   unique size: 2
+//   line FIFO: 10
 
 start:
-	// Valid: .pile modifier on list<integer> declaration
+	// Test 1: .pile modifier — declaration compiles and add/print works
 	list<integer>.pile myStack = []
 	myStack.add(1)
 	myStack.add(2)
 	print("pile ok")
 
-	// Valid: .unique modifier on list<string> declaration
+	// Test 2: .unique modifier — declaration compiles and add/print works
 	list<string>.unique myNames = []
 	myNames.add("alice")
 	myNames.add("alice")
 	print("unique ok")
 
-	// Valid: .line modifier on list<integer> declaration
+	// Test 3: .line modifier — declaration compiles and add/print works
 	list<integer>.line myQueue = []
 	myQueue.add(10)
 	myQueue.add(20)
 	print("line ok")
 
-	// Note: applying .pile/.unique/.line to a non-list type is impossible in
-	// the grammar — list_behavior only appears inside list_type, which requires
-	// "list" "<" type ">" before any behavior suffix. Any attempt to use these
-	// keywords as modifiers on integer/string/boolean/etc. types either:
-	//   (a) is rejected as a syntax error at parse time, or
-	//   (b) is parsed as a method call (e.g. myInt.pile) and fails semantic
-	//       analysis with "method pile not found on integer".
-	// In either case the compiler catches invalid use before code generation.
+	// Test 4: .pile runtime behavior — LIFO (last-in first-out)
+	list<integer>.pile stack = []
+	stack.add(1)
+	stack.add(2)
+	stack.add(3)
+	integer top = stack.remove()
+	print("pile LIFO: " + top.toString())
+
+	// Test 5: .unique runtime behavior — no duplicates
+	list<integer>.unique ulist = []
+	ulist.add(5)
+	ulist.add(10)
+	ulist.add(5)
+	integer sz = ulist.length()
+	print("unique size: " + sz.toString())
+
+	// Test 6: .line runtime behavior — FIFO (first-in first-out)
+	list<integer>.line queue = []
+	queue.add(10)
+	queue.add(20)
+	queue.add(30)
+	integer front = queue.remove()
+	print("line FIFO: " + front.toString())

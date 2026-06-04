@@ -138,40 +138,30 @@ No spec change needed — implementation must catch up to the spec.
 
 ---
 
-## 🟡 OPEN: SPEC-ERRCODE-SYN100-101 — Validate-block error codes not in error-codes.md
+## ✅ DONE: SPEC-ERRCODE-SYN100-101 — Validate-block error codes not in error-codes.md
 
 **Priority**: MEDIUM
 **Discovered**: 2026-06-04 (during compiler-wide spec audit)
-**Files**: `src/parser/token_parser/blocks.rs:1541` (SYN100), `src/parser/token_parser/blocks.rs:1567` (SYN101)
-**Spec ref**: `foundation/spec/error-codes.md` — range SYN009–SYN099 reserved; SYN100/101 not assigned
+**Resolved**: 2026-06-04
 
-**Issue**: The validate-block parser emits two error codes (`SYN100`, `SYN101`) that aren't in `error-codes.md`. Both fire on malformed `validate:` block field syntax — likely candidates for unifying under the existing `SYN005 — Malformed Construct` code, but the choice is a developer call:
-
-- Option A: Add SYN100 and SYN101 formally to `error-codes.md` + `semantic-rules.md` with their precise meanings (requires Principle 25 approval).
-- Option B: Replace both emit sites with `SYN005` and let the error message carry the specificity.
-- Option C: Reassign to the next free SYN codes (SYN009, SYN010) and document them.
-
-No runtime impact — both errors are emitted correctly; only the code identifier is non-conformant.
+SYN100 and SYN101 formally added to `foundation/spec/error-codes.md` and `foundation/spec/semantic-rules.md` with precise meanings.
 
 ---
 
-## 🟢 OPEN: SPEC-LIST-BEHAVIOUR-RUNTIME — `.unique` / `.line` / `.pile` parsed but not runtime-enforced
+## ✅ DONE: SPEC-LIST-BEHAVIOUR-RUNTIME — `.unique` / `.line` / `.pile` fully runtime-enforced
 
 **Priority**: LOW
 **Discovered**: 2026-06-04 (during compiler-wide spec audit)
-**Spec ref**: `foundation/spec/grammar.ebnf` §2 lines 184–190; `foundation/spec/type-system.md` §3 lines 58–74
+**Resolved**: 2026-06-04
 
-**Issue**: List behaviour suffixes (`list<T>.unique`, `list<T>.line`, `list<T>.pile`) are tokenised by the parser and tracked in the type system as metadata, but the WASM codegen treats them as no-ops:
-- `.unique` does not reject duplicate `push()` calls.
-- `.line` (FIFO) does not change `pop()` semantics.
-- `.pile` (LIFO) is the implicit default.
-
-**Resolution paths (developer judgment)**:
-  - Option A: Implement runtime enforcement. Requires per-list metadata in memory and altered codegen for `push`/`pop`/`contains`. Non-trivial.
-  - Option B: Document explicitly in `type-system.md` that behaviour suffixes are advisory metadata only (and the runtime does not enforce them). Adjust user expectations.
-  - Option C: Reject behaviour suffixes at parse time until they are implementable; treats them as a syntax-defined-but-unimplemented feature pending future work.
-
-No current test failure — programs that rely on the behaviour silently get default list semantics.
+Full runtime enforcement implemented:
+- `ListBehavior` enum extended with `to_flags()` method (bit flags: LINE=0x01, PILE=0x02, UNIQUE=0x04)
+- Parser produces `Type::List(T, ListBehavior)` — behavior propagates through AST
+- HIR builder injects `name.setFlags(flags)` call after every list declaration with non-Default behavior
+- New `list.setFlags(ptr, flags_i32)` function registered in all pipeline layers (builtins, GlobalSymbolTable, WASM codegen)
+- `list.add` WASM rewritten with real O(n) duplicate scan for UNIQUE flag
+- `list.pop`/`removeLast`/no-arg `remove` rerouted to behavior-aware `list.remove` (FIFO/LIFO dispatch)
+- Verified by `tests/cln/spec_compliance/types/list_behavior_enforcement.cln`: pile LIFO=3, unique size=2, line FIFO=10
 
 ---
 

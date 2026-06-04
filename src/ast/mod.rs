@@ -79,6 +79,23 @@ pub enum ListBehavior {
     LineUniquePile, // All three combined
 }
 
+impl ListBehavior {
+    /// Returns the runtime behavior flags stored at offset 12 of the list header.
+    /// LINE=0x01, PILE=0x02, UNIQUE=0x04
+    pub fn to_flags(self) -> i32 {
+        match self {
+            ListBehavior::Default => 0,
+            ListBehavior::Line => 0x01,
+            ListBehavior::Pile => 0x02,
+            ListBehavior::Unique => 0x04,
+            ListBehavior::LinePile => 0x01 | 0x02,
+            ListBehavior::LineUnique => 0x01 | 0x04,
+            ListBehavior::PileUnique => 0x02 | 0x04,
+            ListBehavior::LineUniquePile => 0x01 | 0x02 | 0x04,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum Type {
     // Core types from specification

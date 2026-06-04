@@ -968,6 +968,17 @@ impl BuiltinRegistry {
                 BuiltinType::Any,
                 BuiltinCategory::List,
             ),
+            // setFlags: compiler-internal; sets behavior flags from an integer constant.
+            // Emitted by the compiler when a list declaration has a behavior modifier.
+            BuiltinFunction::new(
+                "setFlags",
+                vec![
+                    BuiltinType::List(Box::new(BuiltinType::Any)),
+                    BuiltinType::Integer,
+                ],
+                BuiltinType::Void,
+                BuiltinCategory::List,
+            ),
         ]);
 
         self.namespaces.insert("list".to_string(), list_ns);

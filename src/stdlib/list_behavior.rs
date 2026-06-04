@@ -60,7 +60,7 @@ impl ListBehaviorManager {
             "list.add",
             &[WasmType::I32, WasmType::I32], // list_ptr, value
             Some(WasmType::I32),             // Returns modified list pointer
-            &[WasmType::I32],                // Local 2: behavior_flags
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // Local 2: behavior_flags, 3: loop_i, 4: elem
             self.generate_list_add(),
         )?;
 
@@ -114,6 +114,16 @@ impl ListBehaviorManager {
             &[WasmType::I32],    // list_ptr
             Some(WasmType::I32), // boolean
             self.generate_list_is_not_empty(),
+        )?;
+
+        // Compiler-internal function: set behavior flags from a compile-time integer.
+        // Used when a list declaration has a behavior modifier (.line/.pile/.unique).
+        register_stdlib_function(
+            codegen,
+            "list.setFlags",
+            &[WasmType::I32, WasmType::I32], // list_ptr, flags
+            None,                            // void
+            self.generate_set_behavior_flags(),
         )?;
 
         Ok(())
@@ -256,13 +266,28 @@ impl ListBehaviorManager {
         ]
     }
 
+    /// Generate WASM for directly storing compile-time-known behavior flags.
+    /// Used by the compiler when a list declaration has a behavior modifier.
+    fn generate_set_behavior_flags(&self) -> Vec<Instruction> {
+        vec![
+            // Parameters: list_ptr (0), flags (1)
+            Instruction::LocalGet(0), // list_ptr
+            Instruction::LocalGet(1), // flags
+            Instruction::I32Store(MemArg {
+                offset: 12,
+                align: 2,
+                memory_index: 0,
+            }),
+        ]
+    }
+
     /// Generate WASM for behavior-aware add operation
     /// Adds element to the end of the list, respecting unique behavior.
     /// List layout: [size:i32, capacity:i32, type_id:i32, behavior:i32, elements...]
     fn generate_list_add(&self) -> Vec<Instruction> {
         vec![
             // Parameters: list_ptr (0), value (1)
-            // Local: behavior_flags (2)
+            // Locals: behavior_flags (2), loop_i (3), current_elem (4)
 
             // Load behavior flags
             Instruction::LocalGet(0),
@@ -272,30 +297,59 @@ impl ListBehaviorManager {
                 memory_index: 0,
             }),
             Instruction::LocalSet(2), // behavior_flags
-            // Check for unique behavior - if set, check if value already exists
+            // If UNIQUE flag is set, scan for duplicate and bail if found
             Instruction::LocalGet(2),
             Instruction::I32Const(BEHAVIOR_UNIQUE),
             Instruction::I32And,
             Instruction::If(BlockType::Empty),
-            // Call contains check (inline the logic)
-            // For simplicity, we do a linear scan
+            // i = 0
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3),
+            // outer block — break target for "done scanning"
             Instruction::Block(BlockType::Empty),
-            Instruction::Block(BlockType::Empty),
-            // Get current size
+            // scan loop
+            Instruction::Loop(BlockType::Empty),
+            // if i >= size: break (element not found, proceed to add)
+            Instruction::LocalGet(3),
             Instruction::LocalGet(0),
             Instruction::I32Load(MemArg {
                 offset: 0,
                 align: 2,
                 memory_index: 0,
             }),
-            // If size is 0, skip uniqueness check
-            Instruction::I32Eqz,
-            Instruction::BrIf(0), // Skip to add if empty
-            // Size > 0, need to check each element
-            // This is a simplified check - for production, use the contains function
-            Instruction::End, // End inner block
-            Instruction::End, // End outer block
-            Instruction::End, // End unique behavior check
+            Instruction::I32GeS,
+            Instruction::BrIf(1), // break outer block
+            // load element at list_ptr + 16 + i*4
+            Instruction::LocalGet(0),
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // if element == value: duplicate found — return list_ptr without adding
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(1),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(0), // return list_ptr
+            Instruction::Return,
+            Instruction::End,
+            // i++
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0), // continue loop
+            Instruction::End,   // end loop
+            Instruction::End,   // end outer block
+            Instruction::End,   // end UNIQUE if
             // Add element to end of list
             // Calculate element position: list_ptr + 16 + (size * 4)
             Instruction::LocalGet(0),  // list_ptr

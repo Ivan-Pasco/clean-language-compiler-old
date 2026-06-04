@@ -8,8 +8,8 @@
 
 use crate::ast::SourceLocation;
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Class, Constructor, Expression, Function, Parameter, Program,
-    ResetTarget, Statement, Type, UnaryOperator, ValidateConstraint, Value,
+    AssignmentTarget, BinaryOperator, Class, Constructor, Expression, Function, ListBehavior,
+    Parameter, Program, ResetTarget, Statement, Type, UnaryOperator, ValidateConstraint, Value,
 };
 use crate::error::CompilerError;
 use crate::hir::*;
@@ -1069,13 +1069,24 @@ impl HirBuilder {
                         "Created VariableDeclaration from TypeApplyBlock"
                     );
 
+                    let decl_loc = location.clone().unwrap_or_default();
                     hir_statements.push(HirStatement::VariableDeclaration {
                         name: assignment.name.clone(),
                         var_type,
                         initializer: init_expr,
                         is_mutable: true, // Apply blocks create mutable variables
-                        location: location.clone().unwrap_or_default(),
+                        location: decl_loc.clone(),
                     });
+                    // Inject behavior flags for list type apply blocks with non-Default behavior.
+                    if let Type::List(_, behavior) = type_ {
+                        if *behavior != ListBehavior::Default {
+                            hir_statements.push(self.make_set_behavior_stmt(
+                                &assignment.name,
+                                *behavior,
+                                decl_loc,
+                            ));
+                        }
+                    }
                 }
             } else if let Statement::ConstantApplyBlock {
                 constants,
@@ -1113,6 +1124,19 @@ impl HirBuilder {
             } else {
                 // Regular statement processing
                 hir_statements.push(self.build_statement(stmt)?);
+                // Inject behavior flags for list declarations with non-Default behavior.
+                if let Statement::VariableDecl {
+                    name,
+                    type_: Type::List(_, behavior),
+                    location,
+                    ..
+                } = stmt
+                {
+                    if *behavior != ListBehavior::Default {
+                        let loc = location.clone().unwrap_or_default();
+                        hir_statements.push(self.make_set_behavior_stmt(name, *behavior, loc));
+                    }
+                }
             }
         }
 
@@ -2094,6 +2118,32 @@ impl HirBuilder {
     //       errors = validator.getErrors(__result)
     //       <error_branch>
     // =========================================================================
+
+    /// Build a `name.setFlags(flags)` method call statement.
+    /// Emitted after a list variable declaration when the type has a non-Default behavior.
+    fn make_set_behavior_stmt(
+        &self,
+        name: &str,
+        behavior: ListBehavior,
+        loc: SourceLocation,
+    ) -> HirStatement {
+        let flags = behavior.to_flags();
+        HirStatement::Expression {
+            expression: HirExpression::MethodCall {
+                receiver: Box::new(HirExpression::Variable {
+                    name: name.to_string(),
+                    location: loc.clone(),
+                }),
+                method: "setFlags".to_string(),
+                arguments: vec![HirExpression::Literal {
+                    value: Value::Integer(flags as i64),
+                    location: loc.clone(),
+                }],
+                location: loc.clone(),
+            },
+            location: loc,
+        }
+    }
 
     /// Desugar a `validate name:` block into a list of HIR statements.
     fn desugar_validate_declaration(
