@@ -1,5 +1,83 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟢 OPEN: SYNC-LIST-PUSH — Redundant `list.push` host import shadowed by native local
+
+**Priority**: LOW
+**Discovered**: 2026-06-04 (during `/audit sync`)
+**Files**: `src/stdlib/list_ops.rs:28-33`, `src/codegen/codegen_registration.rs:362-371`
+
+**Issue**: `src/stdlib/list_ops.rs::register_functions()` registers `list.push` as a host
+import via `register_import_function("env", "list.push", ...)`. Separately,
+`codegen_registration.rs` registers a native local WASM function `__list_push_i32` and
+aliases `list.push` to its index. The native path resolves first at call-site, so the
+host import is never reachable.
+
+Import Minimality currently tree-shakes the redundant import — no shipping fixture in
+`tests/output/` imports `list.push` (only `list.push_f64` ships, which has a distinct
+f64-typed signature and no native equivalent). So this is not a runtime bug; it is dead
+declaration code that confuses readers and inflates the static-emittable set.
+
+**Fix**: remove the `list.push` host import registration in `list_ops.rs:28-33`. Keep
+`list.push_f64` (that one has no native counterpart). Verify no test regression after
+removal — Import Minimality should produce identical .wasm output.
+
+**Why not done in the audit run**: removing it touches stdlib registration ordering and
+deserves its own focused change with a dedicated test, not a bulk audit-time edit.
+
+---
+
+## 🟡 OPEN: SYNC-PLUGIN-DRIFT — Plugin.toml signatures disagree with function-registry.toml (cross-component)
+
+**Priority**: MEDIUM-HIGH (CRITICAL severity at the framework component; this entry is the compiler-side bookkeeping)
+**Discovered**: 2026-06-04 (during `/audit sync`)
+**Reported**: framework component — fingerprint 150b6140d1b8777aa3baa4969b05dc5128797bbb9d2e0ffc04b2221aeaef02d4
+**Tracking**: https://errors.cleanlanguage.dev/errors/detail?fp=150b6140d1b8777aa3baa4969b05dc5128797bbb9d2e0ffc04b2221aeaef02d4
+
+107 `[bridge]` declarations in `clean-framework/plugins/*/plugin.toml` disagree with
+`foundation/platform-architecture/function-registry.toml` (51 ptr/string convention drift +
+56 typed mismatch). Per-plugin breakdown saved at `/tmp/plugin_drift_grouped.txt`
+during audit run.
+
+**Compiler-side action**: none required — the compiler emits WASM imports based on the
+registry, not plugin.toml. This entry exists so the compiler component knows the drift
+is reported and to re-run `/audit sync` after the framework fix lands to verify drift
+drops to 0.
+
+---
+
+## 🟡 OPEN: SYNC-NODE-HOST-MISSING — 16 bridge registrations missing from clean-node-server
+
+**Priority**: MEDIUM-HIGH (CRITICAL at node-server; compiler-side bookkeeping)
+**Discovered**: 2026-06-04 (during `/audit sync`)
+**Reported**: node-server component — fingerprint d68fd0e1a8650967581a9034db6d7955d3b9e14923a43fd887464c560405ffc3
+**Tracking**: https://errors.cleanlanguage.dev/errors/detail?fp=d68fd0e1a8650967581a9034db6d7955d3b9e14923a43fd887464c560405ffc3
+
+clean-node-server is missing 16 bridges that clean-server registers and shipping fixtures
+import: `_async_fire`, `_auth_can`, `_auth_get_session`, `_auth_has_any_role`,
+`_auth_require_auth`, `_auth_require_role`, `_db_execute`, `_db_query`, `_http_set_cookie`,
+`_server_sleep`, `_session_delete`, `_session_get`, `_session_store`, `_state_reset_all`,
+`_state_reset_named`, `list.push_f64`.
+
+**Compiler-side action**: none. Re-run `/audit sync` after the node-server fix to verify.
+
+---
+
+## 🟡 OPEN: SYNC-CANVAS-STUBS-MISSING — Canvas host stubs missing from both server hosts
+
+**Priority**: MEDIUM-HIGH (HIGH at server + node-server; compiler-side bookkeeping)
+**Discovered**: 2026-06-04 (during `/audit sync`)
+**Reported**:
+  - clean-server — fingerprint 4362655f2a6a496757c7458dfead904ce27ad8997309e3a0bcb2844d780e1404
+  - clean-node-server — fingerprint e046452c1286be26beddf7fe92280dc759a54ce07cc5c021dc9fad6f5841cd8c
+
+5 `_canvas_*` imports currently appear in shipping fixtures with no host-side stubs.
+frame.canvas declares 238 bridges in plugin.toml; the complete fix stubs all 238 to
+prevent future regressions as more canvas tests/examples are added.
+
+**Compiler-side action**: none.
+
+---
+
 ## 🟢 OPEN: SPEC-EBNF-GENERIC — Clarify generic_type / type_parameters scope in grammar.ebnf
 
 **Priority**: LOW
@@ -29,6 +107,87 @@ was likely intended only for these built-ins, but reads as general user syntax.
 
 Requires developer approval before editing the spec (Principle 25). No test impact — no
 existing tests use user-level generic type parameters.
+
+---
+
+## 🟡 OPEN: SPEC-OPS-SAFE-NAV — `?.` (safe navigation) and `??` (none-coalescing alt) not implemented
+
+**Priority**: MEDIUM-HIGH
+**Discovered**: 2026-06-04 (during compiler-wide spec audit)
+**Spec ref**: `foundation/spec/type-system.md` §8 — Operator 2 (`??`, lines 220–226) and Operator 4 (`?.`, lines 248–256)
+
+**Issue**: The type-system spec defines two none-handling operators that have no tokenizer/parser/AST support:
+
+- `?.` — Safe navigation: `patron.address?.city?.toUpperCase()`. Propagates `none` through a chain of field accesses and method calls without trapping. Spec text: "Regular `.` on a `none` value is a runtime trap (RUN004). `?.` is the safe alternative whenever an intermediate value may be absent."
+- `??` — None-coalescing alternate syntax: `string name = a ?? b ?? "Anonymous"`. Spec text: "Syntactically equivalent to `default`. Use `??` when both sides are expressions of similar length and `default` would read awkwardly."
+
+**Implementation gap**: No tokens, no AST nodes, no parser rules, no type-inference handling, no codegen.
+
+**Workaround currently available**:
+  - `??` → use `default` keyword (implemented and spec-compliant)
+  - `?.` → no workaround; users must restructure code or accept the runtime trap risk
+
+**Suggested ordering when implemented**:
+  1. Add `?.` and `??` tokens to the Pest grammar (`src/parser/grammar.pest`)
+  2. AST nodes: `SafeFieldAccess`, `SafeMethodCall` (or extend existing access nodes with an `is_safe` flag); `??` desugars to `default`
+  3. Type inference: `?.` chain wraps the result type as none-able and short-circuits on the first `none` intermediate
+  4. Codegen: `?.` chain emits a guard check before each access; `??` is a straight desugar to `default`
+  5. Tests: `tests/cln/operators/safe_nav_*.cln`, `tests/cln/operators/none_coalesce_alt.cln`
+
+No spec change needed — implementation must catch up to the spec.
+
+---
+
+## 🟡 OPEN: SPEC-ERRCODE-SYN100-101 — Validate-block error codes not in error-codes.md
+
+**Priority**: MEDIUM
+**Discovered**: 2026-06-04 (during compiler-wide spec audit)
+**Files**: `src/parser/token_parser/blocks.rs:1541` (SYN100), `src/parser/token_parser/blocks.rs:1567` (SYN101)
+**Spec ref**: `foundation/spec/error-codes.md` — range SYN009–SYN099 reserved; SYN100/101 not assigned
+
+**Issue**: The validate-block parser emits two error codes (`SYN100`, `SYN101`) that aren't in `error-codes.md`. Both fire on malformed `validate:` block field syntax — likely candidates for unifying under the existing `SYN005 — Malformed Construct` code, but the choice is a developer call:
+
+- Option A: Add SYN100 and SYN101 formally to `error-codes.md` + `semantic-rules.md` with their precise meanings (requires Principle 25 approval).
+- Option B: Replace both emit sites with `SYN005` and let the error message carry the specificity.
+- Option C: Reassign to the next free SYN codes (SYN009, SYN010) and document them.
+
+No runtime impact — both errors are emitted correctly; only the code identifier is non-conformant.
+
+---
+
+## 🟢 OPEN: SPEC-LIST-BEHAVIOUR-RUNTIME — `.unique` / `.line` / `.pile` parsed but not runtime-enforced
+
+**Priority**: LOW
+**Discovered**: 2026-06-04 (during compiler-wide spec audit)
+**Spec ref**: `foundation/spec/grammar.ebnf` §2 lines 184–190; `foundation/spec/type-system.md` §3 lines 58–74
+
+**Issue**: List behaviour suffixes (`list<T>.unique`, `list<T>.line`, `list<T>.pile`) are tokenised by the parser and tracked in the type system as metadata, but the WASM codegen treats them as no-ops:
+- `.unique` does not reject duplicate `push()` calls.
+- `.line` (FIFO) does not change `pop()` semantics.
+- `.pile` (LIFO) is the implicit default.
+
+**Resolution paths (developer judgment)**:
+  - Option A: Implement runtime enforcement. Requires per-list metadata in memory and altered codegen for `push`/`pop`/`contains`. Non-trivial.
+  - Option B: Document explicitly in `type-system.md` that behaviour suffixes are advisory metadata only (and the runtime does not enforce them). Adjust user expectations.
+  - Option C: Reject behaviour suffixes at parse time until they are implementable; treats them as a syntax-defined-but-unimplemented feature pending future work.
+
+No current test failure — programs that rely on the behaviour silently get default list semantics.
+
+---
+
+## 🟢 OPEN: SPEC-VALIDATOR-NS — `validator` namespace not exposed as a callable namespace
+
+**Priority**: LOW
+**Discovered**: 2026-06-04 (during compiler-wide spec audit)
+**Spec ref**: `foundation/spec/stdlib-validator.md` (referenced in audit; not yet read in full for this entry)
+
+**Issue**: The `validate:` block DSL works (parser → HIR → codegen complete). What's not exposed is a programmatic `validator.run(...)` / `validator.create(...)` namespace API documented in `stdlib-validator.md`. Users can validate via the DSL but cannot invoke validators dynamically.
+
+**Resolution paths**:
+  - Option A: Implement the validator namespace as a builtin (parallel to `Math.*`, `String.*`). Useful for libraries that need to validate input at runtime against user-supplied schemas.
+  - Option B: Mark the namespace as deferred in the spec and document that `validate:` blocks are the supported entry point today.
+
+No DSL-side regression — only the programmatic API is missing.
 
 ---
 

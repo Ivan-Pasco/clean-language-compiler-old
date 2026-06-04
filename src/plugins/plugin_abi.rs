@@ -652,7 +652,7 @@ impl BridgeFunction {
         }
     }
 
-    /// Get parameter types as BuiltinTypes
+    /// Get parameter types as `BuiltinType` values from the builtins registry.
     pub fn get_param_types(&self) -> Vec<crate::builtins::registry::BuiltinType> {
         self.params.iter().map(|p| Self::parse_type(p)).collect()
     }

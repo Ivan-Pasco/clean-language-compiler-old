@@ -25,7 +25,7 @@ pub use tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastExpression, TastFunction, TastProgram,
     TastStatement, TypeConstraint, UnaryOperator, Visibility,
 };
-pub use type_inference::{BuiltinTypes, InferenceResult, TypeInference};
+pub use type_inference::{InferenceResult, TypeInference};
 
 /// Type checker - Stage 5 of the pipeline
 ///

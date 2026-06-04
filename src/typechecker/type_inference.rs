@@ -35,10 +35,6 @@ pub struct TypeInference<'a> {
     /// Symbol table from resolution phase
     symbol_table: &'a GlobalSymbolTable,
 
-    /// Built-in types and their methods
-    #[allow(dead_code)] // BuiltinTypes constructed but lookups go through symbol_table instead
-    builtins: BuiltinTypes,
-
     /// Map from function SymbolId to minimum required parameter count
     /// (parameters without defaults)
     required_param_counts: HashMap<SymbolId, usize>,
@@ -54,16 +50,6 @@ pub struct TypeInference<'a> {
 
     /// Recursion depth counter to prevent stack overflow
     recursion_depth: usize,
-}
-
-/// Built-in types and their method signatures
-#[derive(Debug, Clone)]
-pub struct BuiltinTypes {
-    pub integer_methods: HashMap<String, ConcreteType>,
-    pub number_methods: HashMap<String, ConcreteType>,
-    pub string_methods: HashMap<String, ConcreteType>,
-    pub boolean_methods: HashMap<String, ConcreteType>,
-    pub array_methods: HashMap<String, ConcreteType>,
 }
 
 /// Result of type inference
@@ -83,7 +69,6 @@ impl<'a> TypeInference<'a> {
             constraints: Vec::new(),
             constraint_solver: ConstraintSolver::with_symbol_table(symbol_table),
             symbol_table,
-            builtins: BuiltinTypes::new(),
             required_param_counts: HashMap::new(),
             current_function: None,
             current_class: None,
@@ -6066,45 +6051,6 @@ impl<'a> TypeInference<'a> {
                 Self::block_definitely_returns(body) && catch_returns
             }
             _ => false,
-        }
-    }
-}
-
-impl BuiltinTypes {
-    /// Initialize built-in type method signatures
-    fn new() -> Self {
-        let mut string_methods = HashMap::new();
-        string_methods.insert("length".to_string(), ConcreteType::Integer);
-        string_methods.insert(
-            "substring".to_string(),
-            ConcreteType::Function {
-                parameters: vec![ConcreteType::Integer, ConcreteType::Integer],
-                return_type: Box::new(ConcreteType::String),
-                is_background: false,
-            },
-        );
-
-        let mut array_methods = HashMap::new();
-        array_methods.insert("length".to_string(), ConcreteType::Integer);
-        array_methods.insert("size".to_string(), ConcreteType::Integer);
-        array_methods.insert(
-            "push".to_string(),
-            ConcreteType::Function {
-                parameters: vec![ConcreteType::Generic {
-                    name: "T".to_string(),
-                    bounds: vec![],
-                }],
-                return_type: Box::new(ConcreteType::Integer),
-                is_background: false,
-            },
-        );
-
-        Self {
-            integer_methods: HashMap::new(),
-            number_methods: HashMap::new(),
-            string_methods,
-            boolean_methods: HashMap::new(),
-            array_methods,
         }
     }
 }
