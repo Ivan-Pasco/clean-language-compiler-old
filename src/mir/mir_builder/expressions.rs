@@ -921,16 +921,71 @@ impl MirBuilder {
                             &arg.location,
                         )?
                     } else {
-                        // Check if parameter type is Any and argument type is not Any
-                        // If so, we need to box the value
-                        let needs_boxing = if let Some(param_type) = param_types.get(arg_idx) {
-                            matches!(param_type, ConcreteType::Any)
-                                && !matches!(arg.expr_type, ConcreteType::Any)
-                        } else {
-                            false
-                        };
+                        let param_type_opt = param_types.get(arg_idx);
 
-                        if needs_boxing {
+                        // When a class instance is passed where a string is expected,
+                        // auto-serialize it to JSON via the compiler-generated __serialize_ClassName.
+                        // This enables api.post(url, classInstance) without explicit json.encode().
+                        let needs_class_serialize =
+                            matches!(param_type_opt, Some(ConcreteType::String))
+                                && matches!(&arg.expr_type, ConcreteType::Class { .. });
+
+                        // Check if parameter type is Any and argument type is not Any.
+                        let needs_boxing = !needs_class_serialize
+                            && matches!(param_type_opt, Some(ConcreteType::Any))
+                            && !matches!(arg.expr_type, ConcreteType::Any);
+
+                        if needs_class_serialize {
+                            if let ConcreteType::Class {
+                                symbol_id: class_sym,
+                                ..
+                            } = &arg.expr_type
+                            {
+                                let class_sym = *class_sym;
+                                let class_name = context
+                                    .all_classes
+                                    .iter()
+                                    .find(|c| c.symbol_id == class_sym)
+                                    .map(|c| c.name.clone());
+
+                                if let Some(ref name) = class_name {
+                                    if let Some(&serializer_id) =
+                                        self.class_serializer_ids.get(name)
+                                    {
+                                        let result_id = ValueId(context.function.next_value_id);
+                                        context.function.next_value_id += 1;
+                                        self.register_temp_local(
+                                            context,
+                                            result_id,
+                                            MirType::Ptr(Box::new(MirType::I8)),
+                                            arg.location.clone(),
+                                        );
+                                        self.add_instruction(
+                                            context,
+                                            MirInstruction {
+                                                dest: Some(result_id),
+                                                operation: MirOperation::Call {
+                                                    function: MirOperand::Function(serializer_id),
+                                                    arguments: vec![MirOperand::Value(arg_id)],
+                                                },
+                                                location: arg.location.clone(),
+                                            },
+                                        );
+                                        trace!(
+                                            class_name = %name,
+                                            "Auto-serialized class arg to JSON string"
+                                        );
+                                        result_id
+                                    } else {
+                                        arg_id
+                                    }
+                                } else {
+                                    arg_id
+                                }
+                            } else {
+                                arg_id
+                            }
+                        } else if needs_boxing {
                             trace!(
                                 arg_idx = arg_idx,
                                 arg_type = ?arg.expr_type,
@@ -2645,7 +2700,50 @@ impl MirBuilder {
                 let mut mir_arguments = Vec::new();
                 for arg in arguments {
                     let arg_id = self.build_expression(context, arg)?;
-                    mir_arguments.push(MirOperand::Value(arg_id));
+                    // Auto-serialize class instances to JSON strings for bridge/namespace calls.
+                    let final_id = if let ConcreteType::Class {
+                        symbol_id: class_sym,
+                        ..
+                    } = &arg.expr_type
+                    {
+                        let class_sym = *class_sym;
+                        let class_name = context
+                            .all_classes
+                            .iter()
+                            .find(|c| c.symbol_id == class_sym)
+                            .map(|c| c.name.clone());
+                        if let Some(ref name) = class_name {
+                            if let Some(&serializer_id) = self.class_serializer_ids.get(name) {
+                                let result_id = ValueId(context.function.next_value_id);
+                                context.function.next_value_id += 1;
+                                self.register_temp_local(
+                                    context,
+                                    result_id,
+                                    MirType::Ptr(Box::new(MirType::I8)),
+                                    arg.location.clone(),
+                                );
+                                self.add_instruction(
+                                    context,
+                                    MirInstruction {
+                                        dest: Some(result_id),
+                                        operation: MirOperation::Call {
+                                            function: MirOperand::Function(serializer_id),
+                                            arguments: vec![MirOperand::Value(arg_id)],
+                                        },
+                                        location: arg.location.clone(),
+                                    },
+                                );
+                                result_id
+                            } else {
+                                arg_id
+                            }
+                        } else {
+                            arg_id
+                        }
+                    } else {
+                        arg_id
+                    };
+                    mir_arguments.push(MirOperand::Value(final_id));
                 }
 
                 // Create result

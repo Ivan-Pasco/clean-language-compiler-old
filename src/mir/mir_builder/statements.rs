@@ -1722,7 +1722,54 @@ impl MirBuilder {
                         let mut arg_values = Vec::new();
                         for arg in arguments {
                             let arg_id = self.build_expression(context, arg)?;
-                            arg_values.push(MirOperand::Value(arg_id));
+                            // Auto-serialize class instances to JSON strings.
+                            // `later` calls target bridge functions which only accept primitives;
+                            // a class argument must become its JSON representation.
+                            let final_id = if let ConcreteType::Class {
+                                symbol_id: class_sym,
+                                ..
+                            } = &arg.expr_type
+                            {
+                                let class_sym = *class_sym;
+                                let class_name = context
+                                    .all_classes
+                                    .iter()
+                                    .find(|c| c.symbol_id == class_sym)
+                                    .map(|c| c.name.clone());
+                                if let Some(ref name) = class_name {
+                                    if let Some(&serializer_id) =
+                                        self.class_serializer_ids.get(name)
+                                    {
+                                        let result_id = ValueId(context.function.next_value_id);
+                                        context.function.next_value_id += 1;
+                                        self.register_temp_local(
+                                            context,
+                                            result_id,
+                                            MirType::Ptr(Box::new(MirType::I8)),
+                                            arg.location.clone(),
+                                        );
+                                        self.add_instruction(
+                                            context,
+                                            MirInstruction {
+                                                dest: Some(result_id),
+                                                operation: MirOperation::Call {
+                                                    function: MirOperand::Function(serializer_id),
+                                                    arguments: vec![MirOperand::Value(arg_id)],
+                                                },
+                                                location: arg.location.clone(),
+                                            },
+                                        );
+                                        result_id
+                                    } else {
+                                        arg_id
+                                    }
+                                } else {
+                                    arg_id
+                                }
+                            } else {
+                                arg_id
+                            };
+                            arg_values.push(MirOperand::Value(final_id));
                         }
                         let await_instruction = MirInstruction {
                             dest: Some(variable_value_id),

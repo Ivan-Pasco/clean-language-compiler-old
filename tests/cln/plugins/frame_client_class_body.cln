@@ -1,0 +1,25 @@
+// Test: plugins/frame_client_class_body
+// Grammar: later_assignment → "later" variable "=" namespace_call "(" args ")"
+// Semantic: FEAT-CLIENT-001 — class instances auto-serialized to JSON when passed to bridge functions
+// Regression: FEAT-CLIENT-001 — class arg bypassed coercion in LaterAssignment/StaticMethodCall path
+//   Root cause: `later result = api.post(url, obj)` is CPS-transformed in HIR builder into a
+//   StaticMethodCall; the StaticMethodCall branch in mir_builder/expressions.rs had no class→string
+//   coercion. Fixed by adding serializer emit in the StaticMethodCall argument loop.
+//
+// Note: this file requires frame.client plugin — it is a compilation-only test.
+// The expected WASM should contain a call to __serialize_Person before the _api_post bridge call.
+// Expected output: (compilation succeeds — runtime execution requires a running server)
+
+plugins:
+	frame.client
+
+start:
+	Person alice = Person("Alice", 30)
+	later result = api.post("/api/users", alice)
+
+class Person
+	string name
+	integer age
+	constructor(string n, integer a)
+		name = n
+		age = a
