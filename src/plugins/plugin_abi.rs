@@ -648,6 +648,10 @@ impl BridgeFunction {
             "boolean" | "bool" => BuiltinType::Boolean,
             "void" | "" => BuiltinType::Void,
             "handler" | "callback" => BuiltinType::Handler,
+            // "ptr" means a pointer to a Clean string struct {length: u32, data: bytes}.
+            // The server's write_string_to_caller always allocates this plain format — NOT a
+            // boxed Any tagged-union. Mapping to String ensures no UnboxAnyToI32 is generated.
+            "ptr" => BuiltinType::String,
             _ => BuiltinType::Any, // Default to Any for unknown types
         }
     }
