@@ -122,6 +122,12 @@ pub struct MirBuilder {
     /// Counter for allocating synthetic SymbolIds for computed getter functions.
     pub(super) next_computed_symbol_id: usize,
 
+    /// Maps class name → synthetic SymbolId for its JSON serializer function.
+    pub(super) class_serializer_ids: HashMap<String, SymbolId>,
+
+    /// Counter for synthetic SymbolIds for class serializer functions (starts at 5000).
+    pub(super) next_serializer_symbol_id: usize,
+
     /// Class always: condition expressions to be injected before every return in the
     /// currently-being-built class method.  Set by `build_class` before calling
     /// `build_function_with_class_context` and cleared afterwards.
@@ -219,6 +225,8 @@ impl MirBuilder {
             next_watch_symbol_id: 2000,
             computed_properties: HashMap::new(),
             next_computed_symbol_id: 3000,
+            class_serializer_ids: HashMap::new(),
+            next_serializer_symbol_id: 5000,
             pending_class_invariants: Vec::new(),
             release_mode: false,
         }
@@ -236,6 +244,19 @@ impl MirBuilder {
 
         // Store all classes for inheritance lookups
         self.all_classes = tast.classes.clone();
+
+        // Phase 0: Pre-register class serializer SymbolIds so forward references work when
+        // a nested class field is serialized before its own serializer is built.
+        for class in &tast.classes {
+            let sym_id = SymbolId(self.next_serializer_symbol_id);
+            self.next_serializer_symbol_id += 1;
+            self.class_serializer_ids.insert(class.name.clone(), sym_id);
+            debug!(
+                class_name = %class.name,
+                symbol_id = sym_id.0,
+                "Pre-registered class serializer SymbolId"
+            );
+        }
 
         // Store all functions for default parameter lookups
         self.all_functions = tast.functions.clone();
@@ -417,6 +438,16 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SymbolId(1008), "list.add_f64".to_string());
+        // Synthetic symbols for class JSON serialization helpers
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1009), "int_to_string".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1010), "number_to_string".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SymbolId(1011), "__json_quote_string".to_string());
 
         // NOTE: Add common name variations for builtin functions
         // Check symbol_name_map for variations and add correct WASM names
@@ -444,7 +475,7 @@ impl MirBuilder {
 
         debug!(
             final_count = mir_program.symbol_name_map.len(),
-            "MIR symbol_name_map ready (includes 5 synthetic SymbolIds)"
+            "MIR symbol_name_map ready (includes synthetic SymbolIds for builtins, list ops, and serializers)"
         );
 
         // Lower all functions
@@ -522,6 +553,27 @@ impl MirBuilder {
         }
         if !class_errors.is_empty() {
             return Err(class_errors);
+        }
+
+        // Generate JSON serializer functions for all classes.
+        // These synthetic `__serialize_ClassName(this: i32) -> i32` functions are emitted
+        // for every class so that `json.encode(classInstance)` can delegate to them.
+        let all_classes_snapshot = self.all_classes.clone();
+        for class in &all_classes_snapshot {
+            if let Some(&sym_id) = self.class_serializer_ids.get(&class.name) {
+                let mir_fn = self.build_class_serializer(sym_id, class, &all_classes_snapshot);
+                debug!(
+                    class_name = %class.name,
+                    symbol_id = sym_id.0,
+                    fn_name = %mir_fn.name,
+                    "Generated JSON serializer function for class"
+                );
+                mir_program
+                    .symbol_name_map
+                    .insert(sym_id, mir_fn.name.clone());
+                mir_program.functions.insert(sym_id, mir_fn);
+                self.stats.functions_lowered += 1;
+            }
         }
 
         // Phase 2: build the watch handler function bodies using the registrations

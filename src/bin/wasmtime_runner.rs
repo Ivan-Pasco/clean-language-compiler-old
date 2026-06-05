@@ -869,12 +869,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap(
         "memory_runtime",
         "mem_alloc",
-        |_type_id: i32, size: i32| -> i32 {
-            // Use the global allocator for proper memory allocation
+        |mut caller: Caller<'_, ()>, _type_id: i32, size: i32| -> i32 {
             let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
             let offset = *next_offset;
-            // Align size to 8-byte boundary and advance
-            *next_offset += ((size as usize) + 7) & !7;
+            let aligned_size = ((size as usize) + 7) & !7;
+            let aligned_end = offset + aligned_size;
+            *next_offset = aligned_end;
+            drop(next_offset);
+            // Keep WASM __heap_ptr in sync so WASM-side malloc doesn't
+            // allocate over host-allocated objects.
+            if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                let current = heap_global.get(&mut caller).i32().unwrap_or(0) as usize;
+                if aligned_end > current {
+                    heap_global
+                        .set(&mut caller, wasmtime::Val::I32(aligned_end as i32))
+                        .ok();
+                }
+            }
             offset as i32
         },
     )?;

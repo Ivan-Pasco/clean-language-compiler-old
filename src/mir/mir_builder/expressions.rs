@@ -725,6 +725,61 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
+                // json.encode / json.dataToText called with a class-typed argument
+                // → replace with a call to the compiler-generated __serialize_ClassName function
+                if matches!(
+                    function_name_opt.as_deref(),
+                    Some("json.encode") | Some("json.dataToText") | Some("json.prettyDataToText")
+                ) && arguments.len() == 1
+                {
+                    if let ConcreteType::Class {
+                        symbol_id: class_sym,
+                        ..
+                    } = &arguments[0].expr_type
+                    {
+                        let class_sym = *class_sym;
+                        let class_name = context
+                            .all_classes
+                            .iter()
+                            .find(|c| c.symbol_id == class_sym)
+                            .map(|c| c.name.clone());
+
+                        if let Some(ref name) = class_name {
+                            if let Some(&serializer_id) = self.class_serializer_ids.get(name) {
+                                // Evaluate the argument expression to get the class pointer.
+                                let arg_id = self.build_expression(context, &arguments[0])?;
+
+                                let result_id = ValueId(context.function.next_value_id);
+                                context.function.next_value_id += 1;
+                                self.register_temp_local(
+                                    context,
+                                    result_id,
+                                    MirType::Ptr(Box::new(MirType::I8)),
+                                    expression.location.clone(),
+                                );
+
+                                let call_instr = MirInstruction {
+                                    dest: Some(result_id),
+                                    operation: MirOperation::Call {
+                                        function: MirOperand::Function(serializer_id),
+                                        arguments: vec![MirOperand::Value(arg_id)],
+                                    },
+                                    location: expression.location.clone(),
+                                };
+                                self.add_instruction(context, call_instr);
+
+                                trace!(
+                                    class_name = %name,
+                                    serializer_id = serializer_id.0,
+                                    "json.encode dispatched to class serializer"
+                                );
+
+                                return Ok(result_id);
+                            }
+                        }
+                    }
+                }
+
                 // Build argument operands
                 let mut mir_arguments = Vec::new();
 

@@ -367,4 +367,386 @@ impl MirBuilder {
             MirTerminator::Trap => true, // Trap terminates execution
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Class JSON serialization
+    // -------------------------------------------------------------------------
+
+    /// Generate a `__serialize_ClassName(this: i32) -> Ptr(I8)` MIR function.
+    ///
+    /// The function walks every field in the class hierarchy (parent fields first)
+    /// and builds a JSON object string by concatenating key/value fragments via
+    /// `string.concat` (SymbolId 1000).  String values are quoted via
+    /// `__json_quote_string` (SymbolId 1011).  Integer/Boolean values are
+    /// converted via `int_to_string` (SymbolId 1009).  Number values are
+    /// converted via `number_to_string` (SymbolId 1010).
+    pub(super) fn build_class_serializer(
+        &mut self,
+        symbol_id: SymbolId,
+        class: &crate::typechecker::tast::TastClass,
+        all_classes: &[crate::typechecker::tast::TastClass],
+    ) -> MirFunction {
+        use crate::typechecker::tast::{ConcreteType, TastField};
+
+        let fn_name = format!("__serialize_{}", class.name);
+        let loc = SourceLocation::default();
+
+        // Collect all fields, root-first, for correct byte-offset calculation.
+        let fields: Vec<&TastField> = self.collect_serializer_fields(class, all_classes);
+
+        // We build the instruction list and locals directly — no closure needed.
+        let mut locals: HashMap<ValueId, MirLocal> = HashMap::new();
+        let mut instructions: Vec<MirInstruction> = Vec::new();
+        let mut next_vid: usize = 1; // ValueId(0) is the `this` parameter
+
+        // `this` parameter — i32 pointer to the class instance.
+        let this_id = ValueId(0);
+        locals.insert(
+            this_id,
+            MirLocal {
+                name: Some("this".to_string()),
+                local_type: MirType::I32,
+                is_mutable: false,
+                location: loc.clone(),
+            },
+        );
+
+        // --- Emit GEP + Load + conversion for each field ---
+
+        struct FieldFragment {
+            frag_vid: ValueId,
+            field_name: String,
+        }
+
+        let mut fragments: Vec<FieldFragment> = Vec::new();
+        let mut byte_offset: usize = 0;
+
+        for field in &fields {
+            let field_size = self.get_type_byte_size(&field.field_type);
+
+            // GEP: ptr = this + byte_offset
+            let ptr_vid = ValueId(next_vid);
+            next_vid += 1;
+            locals.insert(
+                ptr_vid,
+                MirLocal {
+                    name: Some(format!("ptr_{}", field.name)),
+                    local_type: MirType::I32,
+                    is_mutable: false,
+                    location: loc.clone(),
+                },
+            );
+            instructions.push(MirInstruction {
+                dest: Some(ptr_vid),
+                operation: MirOperation::GetElementPtr {
+                    base: MirOperand::Value(this_id),
+                    indices: vec![MirOperand::Constant(MirConstant::Integer(
+                        byte_offset as i64,
+                    ))],
+                    is_array: false,
+                },
+                location: loc.clone(),
+            });
+
+            // Load: val = *ptr
+            let field_mir_type = MirType::from_concrete_type(&field.field_type);
+            let val_vid = ValueId(next_vid);
+            next_vid += 1;
+            locals.insert(
+                val_vid,
+                MirLocal {
+                    name: Some(format!("val_{}", field.name)),
+                    local_type: field_mir_type.clone(),
+                    is_mutable: false,
+                    location: loc.clone(),
+                },
+            );
+            instructions.push(MirInstruction {
+                dest: Some(val_vid),
+                operation: MirOperation::Load {
+                    source: MirOperand::Value(ptr_vid),
+                },
+                location: loc.clone(),
+            });
+
+            // Convert field value to a JSON fragment string.
+            let frag_vid = ValueId(next_vid);
+            next_vid += 1;
+            let frag_type = MirType::Ptr(Box::new(MirType::I8));
+            locals.insert(
+                frag_vid,
+                MirLocal {
+                    name: Some(format!("frag_{}", field.name)),
+                    local_type: frag_type,
+                    is_mutable: false,
+                    location: loc.clone(),
+                },
+            );
+
+            let convert_op: MirOperation = match &field.field_type {
+                ConcreteType::String => MirOperation::Call {
+                    function: MirOperand::Function(SymbolId(1011)), // __json_quote_string
+                    arguments: vec![MirOperand::Value(val_vid)],
+                },
+                ConcreteType::Integer
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::Boolean => MirOperation::Call {
+                    function: MirOperand::Function(SymbolId(1009)), // int_to_string
+                    arguments: vec![MirOperand::Value(val_vid)],
+                },
+                ConcreteType::Number | ConcreteType::NumberSized { .. } => MirOperation::Call {
+                    function: MirOperand::Function(SymbolId(1010)), // number_to_string
+                    arguments: vec![MirOperand::Value(val_vid)],
+                },
+                ConcreteType::Class {
+                    symbol_id: nested_sym,
+                    ..
+                } => {
+                    // Look up the nested class by SymbolId then find its serializer.
+                    let maybe_serializer = all_classes
+                        .iter()
+                        .find(|c| c.symbol_id == *nested_sym)
+                        .and_then(|c| self.class_serializer_ids.get(&c.name).copied());
+                    if let Some(nested_sid) = maybe_serializer {
+                        MirOperation::Call {
+                            function: MirOperand::Function(nested_sid),
+                            arguments: vec![MirOperand::Value(val_vid)],
+                        }
+                    } else {
+                        // Nested class serializer not available — emit "null".
+                        let null_idx = self.get_string_index("null".to_string());
+                        MirOperation::Copy {
+                            source: MirOperand::Constant(MirConstant::String(null_idx)),
+                        }
+                    }
+                }
+                _ => {
+                    // Array and other complex types — emit "null" as a safe fallback.
+                    let null_idx = self.get_string_index("null".to_string());
+                    MirOperation::Copy {
+                        source: MirOperand::Constant(MirConstant::String(null_idx)),
+                    }
+                }
+            };
+
+            instructions.push(MirInstruction {
+                dest: Some(frag_vid),
+                operation: convert_op,
+                location: loc.clone(),
+            });
+
+            fragments.push(FieldFragment {
+                frag_vid,
+                field_name: field.name.clone(),
+            });
+            byte_offset += field_size;
+        }
+
+        // --- Build the JSON string by concatenating key/value pairs ---
+
+        let result_vid: ValueId = if fragments.is_empty() {
+            // No fields → return "{}"
+            let empty_idx = self.get_string_index("{}".to_string());
+            let vid = ValueId(next_vid);
+            next_vid += 1;
+            locals.insert(
+                vid,
+                MirLocal {
+                    name: Some("result".to_string()),
+                    local_type: MirType::Ptr(Box::new(MirType::I8)),
+                    is_mutable: false,
+                    location: loc.clone(),
+                },
+            );
+            instructions.push(MirInstruction {
+                dest: Some(vid),
+                operation: MirOperation::Copy {
+                    source: MirOperand::Constant(MirConstant::String(empty_idx)),
+                },
+                location: loc.clone(),
+            });
+            vid
+        } else {
+            // Iteratively build the JSON string: "{" + "\"key\":" + frag + "," + ...  + "}"
+            let mut current_vid: Option<ValueId> = None;
+
+            for (i, frag) in fragments.iter().enumerate() {
+                let escaped = frag.field_name.replace('\\', "\\\\").replace('"', "\\\"");
+                let key_str = if i == 0 {
+                    format!("{{\"{}\":", escaped)
+                } else {
+                    format!(",\"{}\":", escaped)
+                };
+                let key_idx = self.get_string_index(key_str);
+
+                // Prepend the key to whatever we have so far.
+                let before_frag_vid = if let Some(prev_vid) = current_vid {
+                    // concat(prev, key)
+                    let vid = ValueId(next_vid);
+                    next_vid += 1;
+                    locals.insert(
+                        vid,
+                        MirLocal {
+                            name: Some(format!("concat_key_{}", i)),
+                            local_type: MirType::Ptr(Box::new(MirType::I8)),
+                            is_mutable: false,
+                            location: loc.clone(),
+                        },
+                    );
+                    instructions.push(MirInstruction {
+                        dest: Some(vid),
+                        operation: MirOperation::Call {
+                            function: MirOperand::Function(SymbolId(1000)), // string.concat
+                            arguments: vec![
+                                MirOperand::Value(prev_vid),
+                                MirOperand::Constant(MirConstant::String(key_idx)),
+                            ],
+                        },
+                        location: loc.clone(),
+                    });
+                    vid
+                } else {
+                    // First field: copy the key constant directly.
+                    let vid = ValueId(next_vid);
+                    next_vid += 1;
+                    locals.insert(
+                        vid,
+                        MirLocal {
+                            name: Some("open_brace".to_string()),
+                            local_type: MirType::Ptr(Box::new(MirType::I8)),
+                            is_mutable: false,
+                            location: loc.clone(),
+                        },
+                    );
+                    instructions.push(MirInstruction {
+                        dest: Some(vid),
+                        operation: MirOperation::Copy {
+                            source: MirOperand::Constant(MirConstant::String(key_idx)),
+                        },
+                        location: loc.clone(),
+                    });
+                    vid
+                };
+
+                // concat(before_frag, frag_value)
+                let after_frag_vid = ValueId(next_vid);
+                next_vid += 1;
+                locals.insert(
+                    after_frag_vid,
+                    MirLocal {
+                        name: Some(format!("after_frag_{}", i)),
+                        local_type: MirType::Ptr(Box::new(MirType::I8)),
+                        is_mutable: false,
+                        location: loc.clone(),
+                    },
+                );
+                instructions.push(MirInstruction {
+                    dest: Some(after_frag_vid),
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(SymbolId(1000)),
+                        arguments: vec![
+                            MirOperand::Value(before_frag_vid),
+                            MirOperand::Value(frag.frag_vid),
+                        ],
+                    },
+                    location: loc.clone(),
+                });
+
+                current_vid = Some(after_frag_vid);
+            }
+
+            // Append closing "}"
+            let close_idx = self.get_string_index("}".to_string());
+            let result_vid = ValueId(next_vid);
+            next_vid += 1;
+            locals.insert(
+                result_vid,
+                MirLocal {
+                    name: Some("result".to_string()),
+                    local_type: MirType::Ptr(Box::new(MirType::I8)),
+                    is_mutable: false,
+                    location: loc.clone(),
+                },
+            );
+            instructions.push(MirInstruction {
+                dest: Some(result_vid),
+                operation: MirOperation::Call {
+                    function: MirOperand::Function(SymbolId(1000)),
+                    arguments: vec![
+                        MirOperand::Value(current_vid.unwrap()),
+                        MirOperand::Constant(MirConstant::String(close_idx)),
+                    ],
+                },
+                location: loc.clone(),
+            });
+            result_vid
+        };
+
+        // --- Assemble the single entry basic block ---
+        let entry_block_id = BasicBlockId(0);
+        let mut blocks: HashMap<BasicBlockId, MirBasicBlock> = HashMap::new();
+        blocks.insert(
+            entry_block_id,
+            MirBasicBlock {
+                id: entry_block_id,
+                label: None,
+                instructions,
+                terminator: MirTerminator::Return {
+                    value: Some(MirOperand::Value(result_vid)),
+                },
+                predecessors: HashSet::new(),
+                successors: HashSet::new(),
+                location: loc.clone(),
+            },
+        );
+
+        MirFunction {
+            symbol_id,
+            name: fn_name,
+            parameters: vec![MirParameter {
+                value_id: this_id,
+                name: "this".to_string(),
+                param_type: MirType::I32,
+                location: loc.clone(),
+            }],
+            return_type: MirType::Ptr(Box::new(MirType::I8)),
+            blocks,
+            entry_block: entry_block_id,
+            locals,
+            next_value_id: next_vid,
+            next_block_id: 1,
+            attributes: MirFunctionAttributes {
+                inline: false,
+                pure: true,
+                entry_point: false,
+                exported: false,
+            },
+            location: loc,
+        }
+    }
+
+    /// Collect all fields for a class, traversing the hierarchy root-first so
+    /// field byte offsets match what the constructor and field-access codegen compute.
+    fn collect_serializer_fields<'a>(
+        &self,
+        class: &'a crate::typechecker::tast::TastClass,
+        all_classes: &'a [crate::typechecker::tast::TastClass],
+    ) -> Vec<&'a crate::typechecker::tast::TastField> {
+        // Walk from the given class up to the root, collecting classes.
+        let mut hierarchy: Vec<&crate::typechecker::tast::TastClass> = Vec::new();
+        let mut current = Some(class);
+        while let Some(cls) = current {
+            hierarchy.push(cls);
+            current = cls
+                .parent_class
+                .as_ref()
+                .and_then(|pid| all_classes.iter().find(|c| c.symbol_id == *pid));
+        }
+        // Reverse so root (most distant ancestor) comes first.
+        hierarchy.reverse();
+        hierarchy
+            .into_iter()
+            .flat_map(|c| c.fields.iter())
+            .collect()
+    }
 }

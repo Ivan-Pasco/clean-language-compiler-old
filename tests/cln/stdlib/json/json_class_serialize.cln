@@ -1,0 +1,28 @@
+// Test: stdlib/json/json_class_serialize
+// Grammar: class_declaration, function_call
+// Tests compiler-generated __serialize_ClassName for typed JSON output
+// Expected output:
+//   {"name":"Alice","age":30}
+//   {"x":1,"y":2}
+
+start:
+	Person alice = Person("Alice", 30)
+	print(json.encode(alice))
+	Point p = Point(1, 2)
+	print(json.encode(p))
+
+class Person
+	string name
+	integer age
+
+	constructor(string personName, integer personAge)
+		name = personName
+		age = personAge
+
+class Point
+	integer x
+	integer y
+
+	constructor(integer px, integer py)
+		x = px
+		y = py
