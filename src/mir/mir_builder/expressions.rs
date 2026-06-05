@@ -822,6 +822,35 @@ impl MirBuilder {
                                 })
                         })
                     })
+                    .or_else(|| {
+                        // Fallback: look up builtin/namespace functions in the symbol table by
+                        // name. Builtins (json.get, math.sqrt, etc.) all share SymbolId(0) in
+                        // the TAST, so the all_functions lookup above always misses them.
+                        // Without this, Any-parameter boxing is skipped for string/integer
+                        // arguments to builtins like json.get(string, key) (RUNTIME002).
+                        let name = function_name_opt.as_deref()?;
+                        let sym_id = self.symbol_table.lookup_symbol(name)?;
+                        let symbol = self.symbol_table.get_symbol(sym_id)?;
+                        if let crate::resolver::SymbolKind::Function { parameters, .. } =
+                            &symbol.kind
+                        {
+                            if !parameters.is_empty() {
+                                let types: Vec<ConcreteType> = parameters
+                                    .iter()
+                                    .map(|hir_type| match hir_type {
+                                        crate::hir::HirType::Any => ConcreteType::Any,
+                                        crate::hir::HirType::String => ConcreteType::String,
+                                        crate::hir::HirType::Integer => ConcreteType::Integer,
+                                        crate::hir::HirType::Number => ConcreteType::Number,
+                                        crate::hir::HirType::Boolean => ConcreteType::Boolean,
+                                        _ => ConcreteType::Unknown,
+                                    })
+                                    .collect();
+                                return Some(types);
+                            }
+                        }
+                        None
+                    })
                     .unwrap_or_default();
 
                 // Add user-provided arguments

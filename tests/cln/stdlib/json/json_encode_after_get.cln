@@ -1,0 +1,32 @@
+// Test: json.encode on value from json.get (RUNTIME002 regression)
+// Grammar: function_call → namespace "." function_name "(" args ")"
+// Semantic: FUNC-BUILTIN — json.get auto-parses raw JSON strings; json.encode boxes Any correctly
+// Regression: RUNTIME002 — json.encode() returned "" when called on result of json.get(raw_string, key)
+//   Root cause: json.get received a String boxed as [tag=4, str_ptr], unboxed the ptr and passed it
+//   to __json_get_field which expects a parsed object → returned null → json.encode(null) → "".
+//   Fix: json.get detects tag=4 (String) and auto-parses via json.textToData before field access.
+//
+// Expected output:
+//   get from string: Alice
+//   encode after get: "Alice"
+//   encode integer: 30
+//   get nested from string: 42
+
+start:
+	string raw = "{\"name\": \"Alice\", \"age\": 30}"
+	any nameVal = json.get(raw, "name")
+	string nameStr = nameVal.toString()
+	print("get from string: " + nameStr) +
+
+	string encoded = json.encode(nameVal)
+	print("encode after get: " + encoded) +
+
+	any ageVal = json.get(raw, "age")
+	string ageEncoded = json.encode(ageVal)
+	print("encode integer: " + ageEncoded) +
+
+	string nested = "{\"user\": {\"score\": 42}}"
+	any userVal = json.get(nested, "user")
+	any scoreVal = json.get(userVal, "score")
+	string scoreStr = scoreVal.toString()
+	print("get nested from string: " + scoreStr) +

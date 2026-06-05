@@ -6,7 +6,7 @@
 
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
+use crate::stdlib::register_stdlib_function_with_locals;
 use crate::types::WasmType;
 use wasm_encoder::{Instruction, MemArg};
 
@@ -230,40 +230,75 @@ impl JsonClass {
         // __json_get_field(any_ptr, key_content_ptr, key_len) convention.
         // The key_ptr is a Clean Language string (4-byte length prefix + content);
         // this wrapper expands it to (key_ptr+4, mem[key_ptr]) before the call.
+        //
+        // RUNTIME002: When json_ptr is a boxed String (tag=4), the caller passed a raw JSON
+        // text string rather than a pre-decoded object.  Auto-parse it via json.textToData so
+        // that json.get(raw_json_string, key) works transparently — no explicit json.decode()
+        // needed.  A boxed Object (tag=6) or any other tag is passed through unchanged.
+        //
         // Note: when a plugin bridge (e.g. frame.auth) provides json.get, its
         // wrapper registration runs after this and overwrites this entry.
-        if let Some(raw_idx) = codegen.get_function_index("__json_get_field") {
-            register_stdlib_function(
+        if let (Some(raw_idx), Some(text_to_data_idx)) = (
+            codegen.get_function_index("__json_get_field"),
+            codegen.get_function_index("json.textToData"),
+        ) {
+            register_stdlib_function_with_locals(
                 codegen,
                 "json.get",
                 &[WasmType::I32, WasmType::I32], // (json_ptr, key_ptr)
                 Some(WasmType::I32),
+                &[WasmType::I32, WasmType::I32], // Local 2: type_tag, Local 3: obj_boxed_ptr
                 vec![
-                    // json_ptr is a boxed Any: [tag][raw_ptr][0].
-                    // __json_get_field expects the raw object pointer (not the boxed wrapper).
-                    // Guard against null first, then unbox by reading the raw ptr at offset 4.
+                    // null guard
                     Instruction::LocalGet(0),
                     Instruction::I32Eqz,
                     Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-                    Instruction::I32Const(0), // null → return null
+                    Instruction::I32Const(0),
                     Instruction::Else,
-                    Instruction::LocalGet(0), // json_ptr (boxed)
+                    // read type tag at offset 0 of the boxed Any
+                    Instruction::LocalGet(0),
+                    Instruction::I32Load(MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }),
+                    Instruction::LocalSet(2), // type_tag
+                    // if type_tag == 4 (String): extract str_ptr and auto-parse
+                    Instruction::LocalGet(2),
+                    Instruction::I32Const(4), // JSON_TAG_STRING
+                    Instruction::I32Eq,
+                    Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+                    Instruction::LocalGet(0),
                     Instruction::I32Load(MemArg {
                         offset: 4,
                         align: 2,
                         memory_index: 0,
-                    }), // raw_obj_ptr = memory[json_ptr + 4]
-                    Instruction::LocalGet(1), // key_ptr
+                    }), // str_ptr = memory[json_ptr + 4]
+                    Instruction::Call(text_to_data_idx), // → boxed Any (parsed JSON)
+                    Instruction::Else,
+                    Instruction::LocalGet(0), // already a boxed Any object or other type
+                    Instruction::End,
+                    Instruction::LocalSet(3), // obj_boxed_ptr
+                    // unbox: raw_obj_ptr = memory[obj_boxed_ptr + 4]
+                    Instruction::LocalGet(3),
+                    Instruction::I32Load(MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }),
+                    // key content ptr = key_ptr + 4
+                    Instruction::LocalGet(1),
                     Instruction::I32Const(4),
-                    Instruction::I32Add, // key content start = key_ptr + 4
+                    Instruction::I32Add,
+                    // key length = mem[key_ptr]
                     Instruction::LocalGet(1),
                     Instruction::I32Load(MemArg {
                         offset: 0,
                         align: 2,
                         memory_index: 0,
-                    }), // key length = mem[key_ptr]
+                    }),
                     Instruction::Call(raw_idx),
-                    Instruction::End,
+                    Instruction::End, // closes null check
                 ],
             )?;
         }
