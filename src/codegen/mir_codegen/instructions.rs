@@ -1408,6 +1408,7 @@ impl MirCodeGenerator<'_> {
                                         "http",
                                         "compare",
                                         "conditional",
+                                        "time",
                                     ];
                                     namespaces.iter().find_map(|ns| {
                                         let qualified_name = format!("{}.{}", ns, function_name);
@@ -1431,6 +1432,7 @@ impl MirCodeGenerator<'_> {
                                     "http",
                                     "compare",
                                     "conditional",
+                                    "time",
                                 ];
                                 namespaces.iter().find_map(|ns| {
                                     let qualified_name = format!("{}.{}", ns, function_name);

@@ -1687,6 +1687,16 @@ impl MirCodeGenerator<'_> {
                     return Some(bridge_name.clone());
                 }
             }
+            // "now" is a bare alias for "time.now" — when a plugin provides time.now
+            // via the bridge map, resolve "now" calls through "time.now" so that
+            // _time_now ends up in used_bridge_function_names and gets registered.
+            if name == "now" {
+                if let Some(bridge_name) = self.language_to_bridge_map.get("time.now") {
+                    if bridge_function_names.contains(bridge_name.as_str()) {
+                        return Some(bridge_name.clone());
+                    }
+                }
+            }
             None
         };
 
