@@ -487,9 +487,24 @@ impl TokenParser {
         after_ident < len && matches!(self.tokens[after_ident].kind, TokenKind::Colon)
     }
 
+    /// Returns `true` when the tokens at `idx` look like `Identifier =` (an ORM field
+    /// assignment such as `name = "Alice"` or `count = 0`).
+    fn peek_has_identifier_then_assign(&self, idx: usize, len: usize) -> bool {
+        if idx >= len || !matches!(self.tokens[idx].kind, TokenKind::Identifier(_)) {
+            return false;
+        }
+        let after_ident = self.peek_advance_past_whitespace(idx + 1, len);
+        after_ident < len && matches!(self.tokens[after_ident].kind, TokenKind::Assign)
+    }
+
     /// Returns `true` when the tokens starting at `self.cursor` look like an ORM-style
-    /// indented block whose first indented line starts with `Identifier :` (a sub-clause
-    /// such as `join:`, `where:`, `order:`, `limit:`, etc.).
+    /// indented block.  Two patterns are detected:
+    ///
+    /// 1. Sub-clause blocks (SELECT/UPDATE/DELETE): first indented line starts with
+    ///    `Identifier :` (e.g. `set:`, `where:`, `join:`, `order:`, `limit:`).
+    ///
+    /// 2. Field-assignment blocks (INSERT): first indented line starts with
+    ///    `Identifier =` (e.g. `name = "Alice"`, `count = 0`).
     ///
     /// This is a pure look-ahead — no tokens are consumed.
     fn peek_has_orm_subclauses(&self) -> bool {
@@ -507,8 +522,10 @@ impl TokenParser {
         // Skip optional whitespace inside the indented block.
         let idx = self.peek_advance_past_whitespace(idx, len);
 
-        // Expect an Identifier followed (after optional trivia) by a Colon.
+        // Expect an Identifier followed (after optional trivia) by a Colon (sub-clause)
+        // OR by an Assign (field-assignment, e.g. ORM insert).
         self.peek_has_identifier_then_colon(idx, len)
+            || self.peek_has_identifier_then_assign(idx, len)
     }
 
     /// Parse a method apply block: OBJECT.METHOD:\n\targ1\n\targ2

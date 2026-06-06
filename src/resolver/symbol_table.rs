@@ -234,6 +234,9 @@ impl GlobalSymbolTable {
             ),
             ("toString", vec![HirType::Integer], Some(HirType::String)),
             ("toInteger", vec![HirType::String], Some(HirType::Integer)),
+            // error(message) — raise a runtime error. Returns string so it can appear
+            // in expression context (e.g. test assertions: expr = error("msg")).
+            ("error", vec![HirType::String], Some(HirType::String)),
         ];
 
         for (name, params, return_type) in builtin_functions {

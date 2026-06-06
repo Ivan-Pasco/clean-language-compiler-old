@@ -295,6 +295,18 @@ impl BuiltinRegistry {
                 BuiltinCategory::IO,
             )
             .with_wasm_import("env", "input_yesno"),
+            // error(message) — raise a runtime error (prints message then traps).
+            // Registered as a builtin so the resolver accepts error(...) in expression
+            // contexts (e.g. test assertions: = error("msg")).
+            // Returns string so it can appear on the RHS of test assertions.
+            // Codegen emits console_error(msg) + unreachable.
+            BuiltinFunction::new(
+                "error",
+                vec![BuiltinType::String],
+                BuiltinType::String,
+                BuiltinCategory::IO,
+            )
+            .with_wasm_import("env", "console_error"),
         ];
 
         for func in io_functions {

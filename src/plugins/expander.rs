@@ -106,8 +106,38 @@ impl<'a> PluginExpander<'a> {
                 }
             }
             // Merge functions (skip duplicates that endpoints: already generated)
-            for func in preamble.functions {
+            let lang_fn_defs = self.registry.language_function_defs();
+            for mut func in preamble.functions {
                 if !program.functions.iter().any(|f| f.name == func.name) {
+                    // Apply param_defaults from [[language.functions]] to preamble-generated
+                    // functions.  The plugin WASM generates functions without default values
+                    // (e.g. `redirect(url, status_code)`) but the plugin.toml declares
+                    // optional parameters with defaults (e.g. `param_defaults = ["", "302"]`).
+                    // Patching here ensures the HIR validator accepts calls with fewer args.
+                    if let Some(lang_def) = lang_fn_defs.get(&func.name) {
+                        if !lang_def.param_defaults.is_empty() {
+                            for (i, param) in func.parameters.iter_mut().enumerate() {
+                                if param.default_value.is_none() {
+                                    if let Some(default_str) = lang_def.param_defaults.get(i) {
+                                        if !default_str.is_empty() {
+                                            let default_expr = if let Ok(n) =
+                                                default_str.parse::<i64>()
+                                            {
+                                                crate::ast::Expression::Literal(
+                                                    crate::ast::Value::Integer(n),
+                                                )
+                                            } else {
+                                                crate::ast::Expression::Literal(
+                                                    crate::ast::Value::String(default_str.clone()),
+                                                )
+                                            };
+                                            param.default_value = Some(default_expr);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     program.functions.push(func);
                 }
             }

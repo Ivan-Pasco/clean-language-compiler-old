@@ -858,6 +858,10 @@ impl TokenParser {
                                     location: Some(section_location),
                                 });
                             }
+                        } else if matches!(token_after_colon, TokenKind::IntegerLiteral(_)) {
+                            // Case 3: type-first field with a precision modifier (e.g. `number:64 area`).
+                            // The `:` here is a size specifier, not a field-name separator.
+                            fields.push(self.parse_field()?);
                         } else {
                             // Case 2: name-colon-type field declaration (e.g. `id: integer`)
                             fields.push(self.parse_field_name_colon_type()?);

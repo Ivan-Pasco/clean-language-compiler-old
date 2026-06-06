@@ -1401,6 +1401,21 @@ impl super::CodeGenerator {
             self.function_count += 1;
         }
 
+        // error(ptr: i32) -> i32 — raise a runtime error.
+        // Takes a string struct pointer (like input), returns i32 so it can appear
+        // in expression context. Host prints the message and traps.
+        let error_type = self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
+        if self.emit_import(
+            "env",
+            "error",
+            wasm_encoder::EntityType::Function(error_type),
+        ) {
+            let error_idx = self.function_count;
+            self.function_map.insert("error".to_string(), error_idx);
+            self.imported_functions.insert("error".to_string());
+            self.function_count += 1;
+        }
+
         Ok(())
     }
 
@@ -1585,8 +1600,12 @@ impl super::CodeGenerator {
             "float_to_string",
             wasm_encoder::EntityType::Function(float_to_string_type),
         ) {
+            let idx = self.function_count;
+            self.function_map.insert("float_to_string".to_string(), idx);
+            // number_to_string is the language-level alias used by the class serializer
+            // (SymbolId 1010 in MIR). Register it here so codegen can resolve it.
             self.function_map
-                .insert("float_to_string".to_string(), self.function_count);
+                .insert("number_to_string".to_string(), idx);
             self.imported_functions
                 .insert("float_to_string".to_string());
             self.function_count += 1;

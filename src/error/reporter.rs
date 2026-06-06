@@ -307,8 +307,12 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Validation Error", self.colors.yellow)?;
-        self.write_error_message(writer, &context.message)?;
+        if let Some(code) = context.error_code.as_deref() {
+            self.write_error_header_with_code(writer, &context.message, code, self.colors.yellow)?;
+        } else {
+            self.write_error_header(writer, "Validation Error", self.colors.yellow)?;
+            self.write_error_message(writer, &context.message)?;
+        }
         self.write_error_location(writer, context)?;
 
         if self.show_source {

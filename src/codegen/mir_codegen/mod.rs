@@ -835,10 +835,21 @@ impl MirCodeGenerator<'_> {
         // plugin preamble injection AND block expansion for the same route), the second
         // unconditional insert into function_map would overwrite the first, orphaning the
         // function body and silently dropping its WASM export (GEN002).  Retain only the
-        // first occurrence of each name (lowest SymbolId after sort).
+        // first occurrence of each name for plugin-generated preamble functions only.
+        //
+        // User-defined functions (including class constructors) share the name "constructor"
+        // across multiple classes but have distinct SymbolIds and distinct WASM bodies —
+        // they MUST all be kept.  Applying this dedup to user functions silently drops
+        // constructors for all classes after the first, causing WASM stack underflows.
         {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-            sorted_functions.retain(|(_, f)| seen.insert(f.name.clone()));
+            sorted_functions.retain(|(_, f)| {
+                if f.location.file == "<plugin-output>" {
+                    seen.insert(f.name.clone())
+                } else {
+                    true
+                }
+            });
         }
 
         // Dead-code elimination for plugin preamble functions (GEN003).

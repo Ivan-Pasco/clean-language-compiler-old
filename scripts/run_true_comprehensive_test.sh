@@ -42,11 +42,11 @@ cargo build --quiet 2>&1 || {
 echo -e "${GREEN}✓ Compiler built${NC}"
 echo ""
 
-COMPILER="./target/debug/clean-language-compiler"
+COMPILER="./target/debug/cln"
 
 # Find all test files
 echo -e "${YELLOW}Scanning for test files...${NC}"
-TEST_FILES=$(find tests/cln -name "*.cln" -type f | sort)
+TEST_FILES=$(find tests/cln -name "*.cln" -type f -not -path "*/future/*" | sort)
 TOTAL=$(echo "$TEST_FILES" | wc -l | tr -d ' ')
 
 echo -e "${BLUE}Found ${TOTAL} test files${NC}"
@@ -68,8 +68,14 @@ while IFS= read -r TEST_FILE; do
 
     printf "[%3d/%3d] %-50s " "$((COMPILED + COMPILE_FAILED + 1))" "$TOTAL" "$FILENAME"
 
-    # Compile
-    if $COMPILER compile -i "$TEST_FILE" -o "$WASM_FILE" >/dev/null 2>&1; then
+    # Check for expected-error annotation: "// Expected: compile error ERRCODE"
+    EXPECTED_ERROR=$(grep -m1 '^// Expected: compile error ' "$TEST_FILE" 2>/dev/null || true)
+    EXPECTED_ERROR=$(echo "$EXPECTED_ERROR" | sed 's|// Expected: compile error ||' | awk '{print $1}')
+
+    # Compile (guard against set -e exiting when compiler returns non-zero)
+    COMPILE_OUTPUT=$($COMPILER compile "$TEST_FILE" -o "$WASM_FILE" 2>&1) && COMPILE_EXIT=0 || COMPILE_EXIT=$?
+
+    if [ $COMPILE_EXIT -eq 0 ]; then
         COMPILED=$((COMPILED + 1))
 
         # Validate WASM
@@ -81,6 +87,18 @@ while IFS= read -r TEST_FILE; do
             WASM_INVALID=$((WASM_INVALID + 1))
             echo -e "${YELLOW}⚠ INVALID_WASM${NC}"
             RESULT="invalid_wasm"
+        fi
+    elif [ -n "$EXPECTED_ERROR" ]; then
+        # This test is expected to fail with a specific error code
+        if echo "$COMPILE_OUTPUT" | grep -q "\[$EXPECTED_ERROR\]\|error\[$EXPECTED_ERROR\]"; then
+            # Correct error emitted — count as pass
+            WASM_VALID=$((WASM_VALID + 1))
+            echo -e "${GREEN}✓ PASS (expected error: $EXPECTED_ERROR)${NC}"
+            RESULT="pass"
+        else
+            COMPILE_FAILED=$((COMPILE_FAILED + 1))
+            echo -e "${RED}✗ WRONG_ERROR (expected $EXPECTED_ERROR)${NC}"
+            RESULT="compile_failed"
         fi
     else
         COMPILE_FAILED=$((COMPILE_FAILED + 1))

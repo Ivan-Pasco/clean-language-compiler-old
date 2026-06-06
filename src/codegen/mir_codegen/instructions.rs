@@ -1144,10 +1144,10 @@ impl MirCodeGenerator<'_> {
             | Some("input_yesno")
             | Some("input.integer")  // Dot notation variants
             | Some("input.float")
-            | Some("input.yesNo") => {
-                debug_mir!(": Matched input function - using load_string_pointer_only");
-                // FIXED: Input functions now expect only (prompt_ptr) -> result
-                // They no longer take length parameter
+            | Some("input.yesNo")
+            | Some("error") => {
+                debug_mir!(": Matched input/error function - using load_string_pointer_only");
+                // Input and error functions expect only (string_ptr) -> result
                 for arg in arguments {
                     self.load_string_pointer_only(arg)?;
                 }
