@@ -1,0 +1,17 @@
+// Test: plugins/orm_insert_no_binding
+// Grammar: framework_block (ORM insert verb without variable binding)
+// Semantic: SYN001 — insert: block used as statement, not as expression binding
+// Expected output:
+//   inserted
+
+plugins:
+	frame.data
+
+data User
+	integer id
+	string name
+
+start:
+	User.insert:
+		name = "Alice"
+	print("inserted")

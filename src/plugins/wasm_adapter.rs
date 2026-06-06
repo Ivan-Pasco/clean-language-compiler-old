@@ -2661,12 +2661,40 @@ impl WasmPluginAdapter {
                 if let Ok(expand_verb) =
                     instance.get_typed_func::<(i32, i32), i32>(&mut store, &direct_fn)
                 {
-                    // Split block content into header ("list<User> rows =") and body subclauses
+                    // Split block content into header ("list<User> rows =") and body subclauses.
+                    //
+                    // Not all ORM verbs bind their result to a variable.  `insert:`, `update:`,
+                    // and `delete:` blocks typically have no binding — their content is entirely
+                    // field assignments (e.g. `name = value`).  `find:`, `first:`, and `count:`
+                    // blocks start with a binding header of the form `<type> <identifier> =`.
+                    //
+                    // We distinguish the two cases by checking how many whitespace-separated
+                    // tokens appear before the first `=` on the first line:
+                    //   • Two tokens (e.g. `list<User> rows =`) → binding header is present
+                    //   • One token  (e.g. `page_id =`)         → no binding, all content is body
                     let content = &block.content;
-                    let (header_line, sub_body) = if let Some(newline_pos) = content.find('\n') {
-                        (&content[..newline_pos], &content[newline_pos + 1..])
+                    let has_binding_header = {
+                        let first_line = content.lines().next().unwrap_or("").trim();
+                        if let Some(eq_pos) = first_line.find('=') {
+                            let before_eq = first_line[..eq_pos].trim();
+                            // Count whitespace-separated tokens (type may contain '<' / '>'
+                            // so we split on ASCII whitespace only).
+                            let token_count = before_eq.split_whitespace().count();
+                            token_count >= 2
+                        } else {
+                            false
+                        }
+                    };
+
+                    let (header_line, sub_body) = if has_binding_header {
+                        if let Some(newline_pos) = content.find('\n') {
+                            (&content[..newline_pos], &content[newline_pos + 1..])
+                        } else {
+                            (content.as_str(), "")
+                        }
                     } else {
-                        (content.as_str(), "")
+                        // No binding header — treat the entire content as the body.
+                        ("", content.as_str())
                     };
 
                     let model_ptr = self.find_or_write_string(&mut store, &memory, model_name)?;
@@ -2686,6 +2714,7 @@ impl WasmPluginAdapter {
                     tracing::trace!(
                         verb = verb,
                         model = model_name,
+                        has_binding_header = has_binding_header,
                         query_expr_len = query_expr.len(),
                         "ORM verb direct dispatch result"
                     );
@@ -2694,8 +2723,15 @@ impl WasmPluginAdapter {
                         return Ok(Vec::new());
                     }
 
-                    // Reassemble: "list<User> rows = _db_query(...)"
-                    let full_stmt = format!("{} {}", header_line, query_expr);
+                    // Reassemble the statement.  When a binding header is present:
+                    //   list<User> rows = _db_query(...)
+                    // When there is no binding (insert/update/delete used as a statement):
+                    //   _db_exec(...)
+                    let full_stmt = if has_binding_header {
+                        format!("{} {}", header_line, query_expr)
+                    } else {
+                        query_expr.to_string()
+                    };
                     let wrapper = format!("start:\n\t{}", full_stmt.trim().replace('\n', "\n\t"));
                     let program = self.parse_plugin_code(&wrapper).map_err(|e| {
                         anyhow!(

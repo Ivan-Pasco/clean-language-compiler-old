@@ -1,5 +1,74 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ COMPLETED: CODEGEN-TIME-NOW-DEREF — time.now() causes unreachable trap in integer arithmetic
+
+**Priority**: HIGH (priority 106)
+**Discovered**: 2026-06-05
+**Completed**: 2026-06-05
+**Files**: `src/resolver/resolver_impl.rs`
+
+**Issue**: `time.now()` triggered an WASM unreachable trap when its result was used in arithmetic.
+The frame.auth plugin declared `time.now` with `Any` return type, shadowing the compiler's
+built-in `Integer` return type. The resolver registered the `Any`-typed alias, causing the
+code generator to emit a spurious `UnboxAnyToI32` sequence that trapped.
+
+**Fix**: Added a guard in `register_language_function_aliases` in `resolver_impl.rs` to skip
+plugin aliases that degrade a known builtin's return type from a concrete type to `Any`.
+
+---
+
+## ✅ COMPLETED: SYN001/compiler — ORM insert: block as statement fails with "Unsupported statement type: Assign"
+
+**Priority**: HIGH (priority 56)
+**Discovered**: 2026-06-05
+**Completed**: 2026-06-05
+**Files**: `src/plugins/wasm_adapter.rs` (`call_expand` function), `tests/cln/plugins/orm_insert_no_binding.cln` (new test)
+
+**Issue**: `User.insert:` blocks used as statements (without a variable binding) caused a
+"Unsupported statement type: Assign" error. The `call_expand` function always assumed the
+first line of block content was a variable binding header of the form `type name =`.
+For `insert:` blocks, all lines are field assignments (`field = value`) — there is no binding header.
+
+**Fix**: Detect binding header by counting whitespace-separated tokens before the first `=`
+on the first line. Two tokens (e.g. `list<User> rows =`) → binding header present.
+One token (e.g. `name =`) → field assignment, no binding. When no binding, the entire block
+content is passed as the body and the query expression is emitted directly as a statement.
+
+---
+
+## ✅ COMPLETED: FRAME-UI-SHARED-LOGIC-BREAKS-SSR — frame.ui in shared file breaks SSR template variables
+
+**Priority**: HIGH (priority 56)
+**Discovered**: 2026-06-05
+**Completed**: 2026-06-06
+**Files**:
+  - `src/compilation/multi_file_compiler.rs` (Pass 2 assemble hook logic)
+  - `src/plugins/registry.rs` (`has_wasm_assemble_hook()` method + regression test)
+
+**Issue**: Declaring `plugins: frame.ui` in a shared logic file (e.g. `email.cln`) broke SSR
+template variable substitution for all pages. The `{greeting}` placeholder was emitted
+literally instead of being substituted at runtime.
+
+**Root cause**: Two conflicting assemble hooks both transformed page companion files:
+1. The builtin Rust `PageCompanionAssembler` shim in `builtin_assemblers.rs`
+2. The frame.ui WASM plugin's own `assemble` export (present since frame.ui 2.6.11)
+
+Both produced `TransformedSource` entries for the same page companion file paths.
+The WASM plugin's output was merged on top of the shim's output via `.extend()`,
+resulting in function bodies shifted by one index slot in the final WASM binary.
+The exported `pages_home_render` function ended up pointing to the wrong function body
+(`render_email` from email.cln instead of the frame.ui-generated SSR wrapper).
+
+**Fix**: Added `has_wasm_assemble_hook()` to `PluginRegistry` that checks whether any
+loaded plugin manifest declares an `assemble` export. In `multi_file_compiler.rs` Pass 2,
+the builtin `PageCompanionAssembler` shim is now skipped entirely when a WASM plugin
+already handles assembly. The shim is retained as a fallback for older frame.ui versions
+that predate the `assemble` export.
+
+**Regression test**: `test_has_wasm_assemble_hook_detects_plugin_assemble_export` in `registry.rs`
+
+---
+
 ## 🟢 OPEN: SYNC-LIST-PUSH — Redundant `list.push` host import shadowed by native local
 
 **Priority**: LOW

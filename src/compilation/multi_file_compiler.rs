@@ -424,9 +424,17 @@ impl MultiFileCompiler {
             }
 
             // Pass 2: run assemble hooks.
-            // The built-in PageCompanionAssembler shim always runs first.
-            // Any WASM plugins that implement the assemble hook are called next via
-            // the registry, enabling future frame.ui WASM exports to participate.
+            //
+            // Priority: if a WASM plugin (e.g. frame.ui >= 2.6.11) declares an
+            // `assemble` export in its manifest, that plugin owns the page companion
+            // assembly pipeline and the builtin Rust shim (PageCompanionAssembler)
+            // MUST NOT run.  Running both produces two conflicting TransformedSource
+            // entries for the same page companion paths — the WASM plugin's version
+            // overwrites the shim's version but with function bodies shifted by one
+            // slot, causing wrong exports and broken SSR template substitution.
+            //
+            // The shim is retained only as a fallback for older frame.ui versions
+            // that do not yet export `assemble`.
             let assemble_input = crate::plugins::AssembleInput {
                 source_files: shared_files
                     .iter()
@@ -439,10 +447,26 @@ impl MultiFileCompiler {
                 manifest_dir: manifest_dir.to_string_lossy().into_owned(),
                 has_frame_server: info.has_frame_server,
             };
-            let mut assemble_output = crate::plugins::builtin_assemblers::PageCompanionAssembler
-                .assemble(&assemble_input)
-                .unwrap_or_default();
-            // Merge any outputs from WASM plugin assemblers registered in the registry.
+
+            // Determine whether any loaded WASM plugin handles assembly.
+            let wasm_has_assemble = self
+                .config
+                .plugin_registry
+                .as_ref()
+                .map(|r| r.has_wasm_assemble_hook())
+                .unwrap_or(false);
+
+            let mut assemble_output = if wasm_has_assemble {
+                // WASM plugin owns assembly — skip the builtin shim entirely.
+                crate::plugins::plugin_abi::AssembleOutput::default()
+            } else {
+                // No WASM assemble hook present — fall back to the builtin shim.
+                crate::plugins::builtin_assemblers::PageCompanionAssembler
+                    .assemble(&assemble_input)
+                    .unwrap_or_default()
+            };
+
+            // Run WASM plugin assemble hooks (only if any are registered).
             if let Some(ref registry) = self.config.plugin_registry {
                 let hook_output = registry.run_assemble_hooks(&assemble_input);
                 assemble_output

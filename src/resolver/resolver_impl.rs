@@ -3540,6 +3540,15 @@ impl NameResolver {
                 // calls on a variable instead of namespace calls (SEM001).
                 // Direct `json(data)` calls still work through the call-site rewrite at
                 // the `function == "json"` branch in the Call handler above.
+                //
+                // Also skip if the existing builtin function already has a more specific
+                // return type than the plugin provides. Plugins often declare bridge
+                // functions as returning `Any` because the raw host type is opaque, but
+                // the compiler's built-in registry knows the precise language-level type
+                // (e.g. `time.now` returns `integer`, not `any`). Overwriting with `Any`
+                // causes the type-checker to treat the result as a boxed Any value and
+                // the MIR builder to emit spurious UnboxAnyToI32 operations, resulting
+                // in an unreachable trap at runtime (CODEGEN-TIME-NOW-DEREF).
                 if let Some(existing_id) = self
                     .symbol_table
                     .lookup_symbol_in_scope(lang_name, ScopeId(0))
@@ -3552,6 +3561,26 @@ impl NameResolver {
                                 "Skipping language alias — would shadow builtin namespace"
                             );
                             continue;
+                        }
+
+                        // If the existing builtin function has a specific return type and
+                        // the plugin alias would degrade it to Any, keep the builtin type.
+                        if let SymbolKind::Function {
+                            return_type: Some(existing_return_type),
+                            ..
+                        } = &existing_sym.kind
+                        {
+                            let plugin_is_any = matches!(return_type, Some(HirType::Any) | None);
+                            let builtin_is_specific = !matches!(existing_return_type, HirType::Any);
+                            if plugin_is_any && builtin_is_specific {
+                                tracing::debug!(
+                                    lang_name = %lang_name,
+                                    bridge_name = %bridge_name,
+                                    existing_return = ?existing_return_type,
+                                    "Skipping language alias — builtin has more specific return type than plugin"
+                                );
+                                continue;
+                            }
                         }
                     }
                 }

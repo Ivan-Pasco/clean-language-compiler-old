@@ -1,0 +1,16 @@
+// Test: bridge/time_now_arithmetic
+// Grammar: function_declaration, binary_expression
+// Semantic: FUNC-001 bridge function return used in arithmetic
+// Expected output:
+//   (an integer representing now+900)
+
+plugins:
+	frame.auth
+
+start:
+	print(compute_expiry())
+
+functions:
+	string compute_expiry()
+		integer expires_at = time.now() + 900
+		return expires_at.toString()
