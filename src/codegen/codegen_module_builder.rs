@@ -1163,6 +1163,8 @@ impl super::CodeGenerator {
                 &[Instruction::Call(raw_idx), Instruction::I32WrapI64],
             )?;
             self.function_map.insert("time.now".to_string(), wrap_idx);
+            // now() is a bare alias used by frame.data plugin-generated code
+            self.function_map.insert("now".to_string(), wrap_idx);
         }
         Ok(())
     }

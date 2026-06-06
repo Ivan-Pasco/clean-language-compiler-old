@@ -1223,6 +1223,8 @@ impl GlobalSymbolTable {
             ("env.get", vec![HirType::String], HirType::String),
             // time namespace functions — Layer 2 host bridge
             ("time.now", vec![], HirType::Integer),
+            // now() — bare alias for time.now(), used by frame.data plugin-generated code
+            ("now", vec![], HirType::Integer),
             // req namespace functions — Layer 3 server-only (language API)
             ("req.param", vec![HirType::String], HirType::String),
             ("req.query", vec![HirType::String], HirType::String),

@@ -2552,6 +2552,20 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, _: i32, _: i32| -> i32 { 0 },
         )?;
 
+        // error(ptr: i32) -> i32 — stub for plugin sandbox; plugins that call error()
+        // compile with this import but the sandbox only needs a no-op return.
+        linker.func_wrap(
+            "env",
+            "error",
+            |_: Caller<'_, PluginState>, _: i32| -> i32 { 0 },
+        )?;
+        // console_error is the underlying host import that error() maps to in codegen.
+        linker.func_wrap(
+            "env",
+            "console_error",
+            |_: Caller<'_, PluginState>, _: i32| -> i32 { 0 },
+        )?;
+
         // JSON stubs
         linker.func_wrap(
             "env",

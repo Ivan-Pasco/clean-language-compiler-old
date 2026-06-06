@@ -1493,6 +1493,13 @@ impl MirCodeGenerator<'_> {
             names.insert("string.concat".to_string());
         }
 
+        // now() is a bare alias for time.now() used by frame.data plugin-generated code.
+        // language_to_bridge_map only has "time.now" → "_time_now", not "now" → "_time_now",
+        // so without this explicit expansion _time_now is tree-shaken when only now() is called.
+        if names.contains("now") || names.contains("time.now") {
+            names.insert("_time_now".to_string());
+        }
+
         // Flat scan for synthetic utility imports (SymbolId >= 1000).
         //
         // The BFS above only visits functions reachable from entry points. But
@@ -2033,6 +2040,12 @@ impl MirCodeGenerator<'_> {
                             .function_map
                             .insert(lang_name.clone(), wrapper_index);
                     }
+                }
+                // now() is a bare alias for time.now() used by frame.data plugin-generated code
+                if public_name == "time.now" {
+                    self.wasm_generator
+                        .function_map
+                        .insert("now".to_string(), wrapper_index);
                 }
             }
         }
