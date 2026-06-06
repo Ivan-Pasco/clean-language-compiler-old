@@ -1658,11 +1658,14 @@ impl fmt::Display for Type {
             // Type::Array removed - now using Type::List
             Type::List(inner, behavior) => {
                 use crate::stdlib::list_behavior::behavior_to_string;
-                let suffix = behavior_to_string(*behavior);
-                if suffix.is_empty() {
-                    write!(f, "list<{inner}>")
-                } else {
-                    write!(f, "list<{inner}>{suffix}")
+                match behavior {
+                    ListBehavior::Default => write!(f, "list<{inner}>"),
+                    _ => {
+                        // Non-default behaviors use dot notation: list<T>.line, list<T>.unique, etc.
+                        // This matches the parser's expected syntax (grammar.ebnf list_behavior).
+                        let suffix = behavior_to_string(*behavior);
+                        write!(f, "list<{inner}>.{suffix}")
+                    }
                 }
             }
             Type::Matrix(inner) => write!(f, "matrix<{inner}>"),

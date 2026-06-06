@@ -1611,6 +1611,13 @@ impl TokenParser {
     ) -> Result<crate::lexer::specification_token::Token, CompilerError> {
         match self.current_kind() {
             TokenKind::Identifier(_) => Ok(self.bump()),
+            // source, build, spec, intent are contextual keywords that carry no syntactic
+            // weight in most positions — allow them as plain identifiers so field names,
+            // function names, and parameters can use these words without triggering a parse
+            // error (e.g., `source: string nullable` in a data model field list).
+            TokenKind::Source | TokenKind::Build | TokenKind::Spec | TokenKind::Intent => {
+                Ok(self.bump())
+            }
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(
