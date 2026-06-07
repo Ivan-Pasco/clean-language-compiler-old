@@ -3268,6 +3268,47 @@ Rules:
 - For intermediate HTML fragments, use helper functions that each return an html: block
 - Double quotes for HTML attributes inside html: blocks (single quotes cause lexer errors)
 
+### Rule A — ORM first, raw SQL only when necessary
+
+Use ORM DSL (`Model.exists:`, `Model.update:`, `Model.delete:`, `Model.count:`) for any CRUD operation the ORM supports. Fall back to `db.query()` **only** when the ORM cannot express it:
+- Aggregate aliases: `COUNT(*) AS cnt`
+- Date formatting: `DATE_FORMAT(...)`
+- Multi-table joins
+- Post-insert `SELECT` to retrieve the new ID
+
+```
+// WRONG — raw SQL for a standard update
+string sql = "UPDATE users SET name = ? WHERE id = ?"
+db.query(sql, params)
+
+// CORRECT — ORM DSL
+db.update:
+    model Users
+    set name = {name}
+    where id = {id}
+
+// CORRECT — raw SQL justified: COUNT alias + DATE_FORMAT are ORM-inexpressible
+string sql = "SELECT DATE_FORMAT(created_at, '%Y-%m') as month, COUNT(*) AS cnt FROM users GROUP BY month"
+string result = db.query(sql, params)
+```
+
+### Rule B — Compose functions, never duplicate queries
+
+Never repeat a SQL query that another function in the same file already performs. If you need decorated or filtered data from an existing query, call the existing function and transform the result. A second DB round-trip for data you already fetched is a bug.
+
+```
+// WRONG — duplicates the query from get_user()
+string get_user_display_name(integer id)
+    string sql = "SELECT first_name, last_name FROM users WHERE id = ?"
+    string row = db.query(sql, id.toString())
+    return json.get(row, "first_name") + " " + json.get(row, "last_name")
+
+// CORRECT — reuse the existing function, transform the result
+string get_user_display_name(integer id)
+    string row = get_user(id)
+    return json.get(row, "first_name") + " " + json.get(row, "last_name")
+```
+
 ### Database Queries — Data Only
 
 NEVER generate HTML inside SQL queries:
