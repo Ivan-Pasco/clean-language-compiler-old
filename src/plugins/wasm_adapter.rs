@@ -63,7 +63,46 @@ impl WasmPluginAdapter {
             .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
             .collect();
 
-        let expression_patterns_cache: Vec<String> = manifest.handles.expressions.clone();
+        // Build expression patterns from the manifest, then augment by scanning the WASM
+        // module exports for `expand_{verb}` functions.  This ensures that ORM verbs
+        // with a direct dispatch export (e.g. `expand_exists`) are registered as handled
+        // expression patterns even when the plugin's plugin.toml `[handles] expressions`
+        // list is missing the corresponding `*.{verb}:` entry.
+        //
+        // The authoritative set of ORM-verb export names that the compiler's direct-dispatch
+        // path in `call_expand` / `call_expand_full` knows how to call:
+        let orm_dispatch_verbs = [
+            "find", "first", "count", "exists", "insert", "update", "delete", "paginate", "cursor",
+        ];
+        let mut expression_patterns_cache: Vec<String> = manifest.handles.expressions.clone();
+        {
+            // Collect export names from the WASM module.
+            let export_names: Vec<String> = module
+                .exports()
+                .filter(|e| matches!(e.ty(), wasmtime::ExternType::Func(_)))
+                .map(|e| e.name().to_string())
+                .collect();
+            for verb in &orm_dispatch_verbs {
+                let export_name = format!("expand_{}", verb);
+                if export_names.iter().any(|n| n == &export_name) {
+                    // Build the glob pattern this verb should be registered under.
+                    let pattern = format!("*.{}:", verb);
+                    // Add it only if not already present (exact or equivalent match).
+                    let already_present = expression_patterns_cache
+                        .iter()
+                        .any(|p| p.trim_end_matches(':') == format!("*.{}", verb));
+                    if !already_present {
+                        tracing::debug!(
+                            plugin = %name,
+                            verb = verb,
+                            pattern = %pattern,
+                            "Auto-registering ORM verb pattern from plugin export"
+                        );
+                        expression_patterns_cache.push(pattern);
+                    }
+                }
+            }
+        }
 
         let mut adapter = Self {
             name,
@@ -2669,7 +2708,15 @@ impl WasmPluginAdapter {
             let model_name = &block_name[..dot_pos];
             if matches!(
                 verb,
-                "find" | "first" | "count" | "insert" | "update" | "delete"
+                "find"
+                    | "first"
+                    | "count"
+                    | "exists"
+                    | "insert"
+                    | "update"
+                    | "delete"
+                    | "paginate"
+                    | "cursor"
             ) {
                 let direct_fn = format!("expand_{}", verb);
                 if let Ok(expand_verb) =

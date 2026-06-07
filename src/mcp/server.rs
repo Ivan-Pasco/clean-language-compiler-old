@@ -4116,7 +4116,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         crate::telemetry::SubmitResult::Submitted {
             report_id,
             fingerprint,
-            tracking_url,
+            tracking_url: _,
         } => {
             let fp_line = fingerprint
                 .as_deref()
@@ -4128,14 +4128,13 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                     "content": [{
                         "type": "text",
                         "text": format!(
-                            "Error report submitted successfully.\nReport ID: {}{}\nTracking URL: {}\n\nThank you for helping improve Clean Language!",
-                            report_id, fp_line, tracking_url
+                            "Error report submitted successfully.\nReport ID: {}{}\n\nUse `check_reported_fixes` to track the status of this report.",
+                            report_id, fp_line
                         )
                     }],
                     "success": true,
                     "report_id": report_id,
-                    "fingerprint": fingerprint,
-                    "tracking_url": tracking_url
+                    "fingerprint": fingerprint
                 }),
             )
         }
@@ -5477,7 +5476,7 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
         crate::telemetry::submit::SubmitResult::Submitted {
             report_id: rid,
             fingerprint,
-            tracking_url,
+            tracking_url: _,
         } => {
             let published_dir = diag_path.join("published").join(&full_sha);
             let _ = std::fs::create_dir_all(published_dir.parent().unwrap());
@@ -5492,13 +5491,13 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
                     "content": [{
                         "type": "text",
                         "text": format!(
-                            "Diagnostic published to the error server.\nReport ID: {}{}\nTracking URL: {}\nSHA: {}\n\nThe Clean Language team will be notified.",
-                            rid, fp_line, tracking_url, full_sha
+                            "Diagnostic published to the error server.\nReport ID: {}{}\nSHA: {}\n\nThe Clean Language team will be notified. Use `check_reported_fixes` to track status.",
+                            rid, fp_line, full_sha
                         )
                     }],
                     "success": true, "status": "published", "report_id": rid,
                     "fingerprint": fingerprint,
-                    "tracking_url": tracking_url, "sha": full_sha
+                    "sha": full_sha
                 }),
             )
         }

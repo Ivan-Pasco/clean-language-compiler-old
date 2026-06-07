@@ -1,0 +1,31 @@
+// Test: plugins/orm_exists_verb
+// Grammar: expression = Variable "." identifier ":" indented_block  (ORM query expression)
+// Semantic: PLUGIN001/CODEGEN001 — Item.exists: must route to expand_exists and __Item_exists helper
+// Regression: CODEGEN001 — integer-returning ORM exists: emitted i32.const 0 instead of calling
+//   __Item_exists. Root cause: "exists" was missing from the ORM verb dispatch list in call_expand,
+//   and "*.exists:" was missing from the plugin's expression_patterns (plugin.toml omits it).
+//   Fixed by: (1) adding "exists" to the verb dispatch list in call_expand,
+//             (2) auto-detecting expand_{verb} exports and registering *.{verb}: patterns.
+//
+// Note: this file requires frame.data plugin.
+// Expected output: (compilation succeeds — runtime needs a server)
+
+plugins:
+	frame.data
+
+data Item
+	id: integer pk auto
+	name: string
+
+start:
+	integer found = Item.exists:
+		where:
+			id == 1
+	print(found)
+
+functions:
+	integer check_item_exists(integer item_id)
+		integer result = Item.exists:
+			where:
+				id == item_id
+		return result
