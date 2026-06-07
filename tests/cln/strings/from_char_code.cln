@@ -1,0 +1,18 @@
+// Test: strings/from_char_code
+// Grammar: MethodCall / StaticMethodCall
+// Semantic: string.fromCharCode(integer) -> string
+// Expected output:
+//   \
+//   A
+//   a
+//   0
+
+start:
+	string bs = string.fromCharCode(92)
+	print(bs)
+	string A = string.fromCharCode(65)
+	print(A)
+	string a = string.fromCharCode(97)
+	print(a)
+	string zero = string.fromCharCode(48)
+	print(zero)

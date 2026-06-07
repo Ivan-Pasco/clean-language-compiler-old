@@ -785,6 +785,11 @@ impl GlobalSymbolTable {
                 HirType::Integer,
             ),
             (
+                "string.fromCharCode",
+                vec![HirType::Integer],
+                HirType::String,
+            ),
+            (
                 "string.contains",
                 vec![HirType::String, HirType::String],
                 HirType::Boolean,

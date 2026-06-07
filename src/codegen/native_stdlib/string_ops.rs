@@ -45,6 +45,48 @@ pub fn gen_char_code_at() -> Vec<Instruction<'static>> {
     gen_char_at()
 }
 
+/// Generate instructions for string.fromCharCode
+///
+/// Converts an integer code point to a single-character string.
+///
+/// Parameters:
+///   - local 0: code_point (i32)
+///
+/// Returns: i32 (pointer to new 1-char length-prefixed string)
+///
+/// Uses locals:
+///   - local 1: new_ptr
+pub fn gen_from_char_code(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Allocate STRING_DATA_OFFSET + 1 bytes (4-byte length header + 1 byte)
+        Instruction::I32Const((STRING_DATA_OFFSET as i32) + 1),
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(1), // new_ptr
+        // Write length = 1
+        Instruction::LocalGet(1),
+        Instruction::I32Const(1),
+        Instruction::I32Store(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Write byte value: new_ptr[4] = code_point & 0xFF
+        Instruction::LocalGet(1),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(0), // code_point
+        Instruction::I32Const(0xFF),
+        Instruction::I32And,
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        // Return new_ptr
+        Instruction::LocalGet(1),
+    ]
+}
+
 /// Generate instructions for string.startsWith
 ///
 /// Parameters:

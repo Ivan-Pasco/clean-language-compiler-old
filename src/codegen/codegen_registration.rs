@@ -233,6 +233,19 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("string.substring", string_substring_idx);
 
+        // NATIVE: string_from_char_code - converts integer code point to single-char string
+        // Parameters: code_point (i32)
+        // Returns: pointer (i32) to new 1-char string
+        let from_char_code_instructions = native_stdlib::string_ops::gen_from_char_code(malloc_idx);
+        let from_char_code_idx = self.register_function_with_locals(
+            "__string_from_char_code",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32], // local 1: new_ptr
+            &from_char_code_instructions,
+        )?;
+        self.add_function_alias("string.fromCharCode", from_char_code_idx);
+
         // NATIVE: int_to_string - converts integer to string using malloc
         // Parameters: value (i32)
         // Returns: pointer (i32) to new string
