@@ -1,0 +1,30 @@
+// Test: bugfixes/codegen_f64_bridge_return_coercion
+// Regression: CODEGEN_F64 fingerprint 1a20405b — RETURN side coercion missing.
+//
+// The first fix (f7be2ca) only inserted F64ConvertI32S on the parameter side
+// (i32 arg → Number param). The reported follow-up showed the mismatch was
+// actually on the RETURN side: a bridge function returning one type was being
+// stored into a local of a different MIR type, with no coercion emitted.
+//
+// In the call-destination path, the codegen consults `function_signatures` and
+// then `function_return_types` for the source type. For bridge wrappers that
+// are not registered in either (plugin-DSL-generated helpers, HTTP server
+// wrappers, etc.), both lookups returned None and `store_to_local` ran without
+// a source type — skipping the i32↔f64 conversion entirely.
+//
+// The fix adds a final lookup against the wasm_generator's
+// `wasm_function_return_types` registry (populated by every `register_function`
+// / `register_import_function`), so the WASM-emitted return type is always
+// available as the source for coercion.
+//
+// This test stores the result of an i32-returning frame.ui bridge function
+// into a `number` (f64) local. Without the fix this emits invalid WASM with
+// "type mismatch: expected f64, found i32" at local.set. With the fix the
+// codegen emits F64ConvertI32S after the call.
+
+plugins:
+	frame.ui
+
+start:
+	number observerId = _ui_observe_visible(".target", "visible")
+	print(observerId.toString())

@@ -1869,12 +1869,36 @@ impl super::CodeGenerator {
         self.code_section.function(&func);
         self.function_names.push(name.to_string());
         self.function_map.insert(name.to_string(), function_index);
+        self.wasm_function_return_types
+            .insert(name.to_string(), return_type);
         self.function_count += 1;
         Ok(function_index)
     }
 
     pub fn add_function_alias(&mut self, alias: &str, function_index: u32) {
         self.function_map.insert(alias.to_string(), function_index);
+        // Propagate the aliased function's WASM return type to the alias name so
+        // call-site coercion can resolve source type by either name.
+        if let Some(name) = self
+            .function_map
+            .iter()
+            .find(|(_, &idx)| idx == function_index)
+            .map(|(n, _)| n.clone())
+        {
+            if let Some(&ret) = self.wasm_function_return_types.get(&name) {
+                self.wasm_function_return_types
+                    .insert(alias.to_string(), ret);
+            }
+        }
+    }
+
+    /// Look up the WASM return type of a registered function by name.
+    ///
+    /// Returns `Some(Some(t))` if the function returns a value, `Some(None)` for
+    /// void returns, and `None` if the function name is not registered. Used by
+    /// MIR codegen as a last-resort source-type for call-result coercion.
+    pub fn get_wasm_return_type(&self, name: &str) -> Option<Option<WasmType>> {
+        self.wasm_function_return_types.get(name).copied()
     }
 
     pub fn register_function_multi(

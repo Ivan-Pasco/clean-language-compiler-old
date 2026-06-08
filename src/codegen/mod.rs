@@ -74,6 +74,19 @@ pub struct CodeGenerator {
     function_count: u32,
     function_map: HashMap<String, u32>,
     function_names: Vec<String>,
+    /// WASM return type for every registered function (imports + internal),
+    /// keyed by the canonical name registered in `function_map`.
+    ///
+    /// Populated by `register_import_function` and the public `register_function`
+    /// on `CodeGenerator`. Consumed by the MIR codegen call-destination path as
+    /// a last-resort source-type for `store_to_local_with_conversion`, so that
+    /// call results stored into locals of a mismatched MIR type get an
+    /// `I32TruncF64S` / `F64ConvertI32S` coercion even when neither
+    /// `function_signatures` nor `function_return_types` resolved a type.
+    /// Without this, plugin-DSL-generated code that stores a Number-returning
+    /// call into an `integer` local (or vice versa) emitted invalid WASM —
+    /// see CODEGEN_F64 fingerprint `1a20405b`.
+    wasm_function_return_types: HashMap<String, Option<WasmType>>,
     file_import_indices: HashMap<String, u32>,
     http_import_indices: HashMap<String, u32>,
 
@@ -154,6 +167,7 @@ impl CodeGenerator {
             function_count: 0,
             function_map: HashMap::new(),
             function_names: Vec::new(),
+            wasm_function_return_types: HashMap::new(),
             file_import_indices: HashMap::new(),
             http_import_indices: HashMap::new(),
 
@@ -368,6 +382,8 @@ impl CodeGenerator {
         let func_index = self.function_count;
         self.function_map.insert(field.to_string(), func_index);
         self.function_names.push(field.to_string());
+        self.wasm_function_return_types
+            .insert(field.to_string(), return_type);
 
         // Also store the function type information in the instruction generator
         let wasm_params: Vec<wasm_encoder::ValType> = params.iter().map(|t| (*t).into()).collect();

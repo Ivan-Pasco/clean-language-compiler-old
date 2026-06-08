@@ -1751,46 +1751,80 @@ impl MirCodeGenerator<'_> {
                         self.store_to_local_with_conversion(dest, Some(return_type))?;
                     }
                     // Void functions don't store anything
-                } else if let Some(dest_type) = self.value_to_type.get(&dest) {
-                    debug_mir!(
-                        "DEBUG VOID CHECK: dest={:?}, dest_type={:?}, function={:?}",
-                        dest,
-                        dest_type,
-                        function_name
-                    );
-                    let is_any_or_ptr_void = matches!(dest_type, MirType::Any)
-                        || matches!(dest_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
-
-                    if is_any_or_ptr_void {
-                        debug_mir!(
-                            "DEBUG ANY DEST: Storing value to Any/dynamic type dest {:?}",
-                            dest
-                        );
-                    }
-                    // Any, Ptr(Void), and concrete types all store the return value
-                    self.store_to_local(dest)?;
                 } else {
-                    debug_mir!(
-                        "DEBUG VOID CHECK: dest={:?} not found in value_to_type",
-                        dest
-                    );
-                    // Last resort: check if this is a known void-returning built-in function
-                    if let Some(function_name) = &function_name {
-                        if function_name == "testFunction"
-                            || function_name == "print"
-                            || function_name == "printl"
-                            || function_name == "list.set"
-                            || function_name == "list.clear"
-                        {
-                            tracing::trace!(
-                                name = %function_name,
-                                "Skipping return value store for known void function"
+                    // Last-resort source-type lookup: query the wasm_generator for the
+                    // function's registered WASM return type. This catches cases where
+                    // neither function_signatures (MIR-level) nor function_return_types
+                    // (stdlib/bridge registry) resolved a type — e.g. plugin-DSL-generated
+                    // helpers, HTTP server wrappers, or any internal function whose
+                    // result is stored into a typed local. Without this, an i32 call
+                    // result stored into an f64 local (or vice versa) skips coercion
+                    // and produces "type mismatch: expected f64, found i32" at WASM
+                    // validation time (CODEGEN_F64 / fp 1a20405b).
+                    let wasm_return_mir = function_name.as_ref().and_then(|name| {
+                        match self.wasm_generator.get_wasm_return_type(name) {
+                            Some(Some(crate::types::WasmType::I32)) => Some(MirType::I32),
+                            Some(Some(crate::types::WasmType::I64)) => Some(MirType::I64),
+                            Some(Some(crate::types::WasmType::F32)) => Some(MirType::F32),
+                            Some(Some(crate::types::WasmType::F64)) => Some(MirType::F64),
+                            _ => None,
+                        }
+                    });
+
+                    if let Some(dest_type) = self.value_to_type.get(&dest) {
+                        debug_mir!(
+                            "DEBUG VOID CHECK: dest={:?}, dest_type={:?}, function={:?}, wasm_return_mir={:?}",
+                            dest,
+                            dest_type,
+                            function_name,
+                            wasm_return_mir
+                        );
+                        let is_any_or_ptr_void = matches!(dest_type, MirType::Any)
+                            || matches!(dest_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+
+                        if is_any_or_ptr_void {
+                            debug_mir!(
+                                "DEBUG ANY DEST: Storing value to Any/dynamic type dest {:?}",
+                                dest
                             );
+                            // For Any/Ptr(Void) destinations no coercion is appropriate
+                            // (Any is the boxed-pointer representation; treat as opaque).
+                            self.store_to_local(dest)?;
+                        } else if wasm_return_mir.is_some() {
+                            // We now know the source type from the WASM type section;
+                            // route through the conversion helper to handle i32↔f64 mismatch.
+                            self.store_to_local_with_conversion(dest, wasm_return_mir)?;
                         } else {
+                            // Concrete dest type but unknown source — store as-is.
                             self.store_to_local(dest)?;
                         }
                     } else {
-                        self.store_to_local(dest)?;
+                        debug_mir!(
+                            "DEBUG VOID CHECK: dest={:?} not found in value_to_type",
+                            dest
+                        );
+                        // Last resort: check if this is a known void-returning built-in function
+                        if let Some(function_name) = &function_name {
+                            if function_name == "testFunction"
+                                || function_name == "print"
+                                || function_name == "printl"
+                                || function_name == "list.set"
+                                || function_name == "list.clear"
+                            {
+                                tracing::trace!(
+                                    name = %function_name,
+                                    "Skipping return value store for known void function"
+                                );
+                            } else if wasm_return_mir.is_some() {
+                                self.store_to_local_with_conversion(dest, wasm_return_mir)?;
+                            } else {
+                                self.store_to_local(dest)?;
+                            }
+                        } else if wasm_return_mir.is_some() {
+                            self.store_to_local_with_conversion(dest, wasm_return_mir)?;
+                        } else {
+                            self.store_to_local(dest)?;
+                        }
                     }
                 }
             }
