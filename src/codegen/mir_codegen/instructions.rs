@@ -1336,6 +1336,50 @@ impl MirCodeGenerator<'_> {
                         }
                     }
 
+                    // Bridge function fallback: when function_signature is None (bridge
+                    // functions are not in function_signatures), use bridge_param_types
+                    // to detect Number (f64) params and insert the required conversion.
+                    // Without this, passing an integer to a bridge Number param causes
+                    // WASM validation failure: "type mismatch: expected f64, found i32"
+                    // (reproduces CODEGEN_F64 — _ui_intersect_observe, _ui_set_scroll, etc.).
+                    if param_types.is_none() {
+                        if let Some(bridge_params) = bridge_handler_params.as_ref() {
+                            if i < bridge_params.len()
+                                && matches!(
+                                    bridge_params[i],
+                                    crate::builtins::registry::BuiltinType::Number
+                                )
+                            {
+                                let arg_is_int = match arg {
+                                    MirOperand::Constant(MirConstant::Integer(_)) => true,
+                                    MirOperand::Value(value_id) => self
+                                        .value_to_type
+                                        .get(value_id)
+                                        .is_some_and(|t| {
+                                            matches!(
+                                                t,
+                                                MirType::I32
+                                                    | MirType::I8
+                                                    | MirType::I16
+                                                    | MirType::U8
+                                                    | MirType::U16
+                                                    | MirType::U32
+                                            )
+                                        }),
+                                    _ => false,
+                                };
+                                if arg_is_int {
+                                    debug_mir!(
+                                        "DEBUG CALL ARGS:   Bridge Number param[{}]: inserting i32→f64 conversion",
+                                        i
+                                    );
+                                    self.current_instructions
+                                        .push(Instruction::F64ConvertI32S);
+                                }
+                            }
+                        }
+                    }
+
                     debug_mir!(" CALL ARGS:   Arg[{}] loaded successfully", i);
                 }
                 debug_mir!(

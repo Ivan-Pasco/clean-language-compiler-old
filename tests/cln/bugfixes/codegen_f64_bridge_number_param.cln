@@ -1,0 +1,22 @@
+// Test: bugfixes/codegen_f64_bridge_number_param
+// Grammar: function_call (namespace.function form, bridge function)
+// Semantic: bridge function param type coercion
+// Regression: CODEGEN_F64 — when calling a bridge function with a `number` (f64) parameter,
+// passing an integer value must trigger automatic i32→f64 conversion (F64ConvertI32S).
+// Without the fix, WASM validation fails with: "type mismatch: expected f64, found i32"
+//
+// _ui_intersect_observe has params=["string","string","number"]. Passing an integer for
+// the threshold parameter previously generated invalid WASM because the call site loaded
+// i32 onto the stack but the bridge wrapper declared f64 for that position.
+
+plugins:
+	frame.ui
+
+start:
+	integer id = observe_with_int_threshold(1)
+	print(id.toString())
+
+functions:
+	integer observe_with_int_threshold(integer t)
+		integer obs_id = _ui_intersect_observe(".target", "onIntersect", t)
+		return obs_id
