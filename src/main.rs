@@ -1088,6 +1088,7 @@ async fn handle_build(
         opt_level,
         explicit_tier,
         target_default,
+        false,
     )
     .map_err(|errors| {
         // Report all errors
@@ -1107,7 +1108,115 @@ async fn handle_build(
         println!("Build successful! Generated {output_file}");
     }
 
+    // BUILD_FRONTEND: produce `frontend.wasm` alongside the server output when the
+    // project contains any component with an `events:` block (the spec signal for
+    // browser hydration per frame-ui-semantics.md §UI-B009).
+    if project_uses_client_hydration(&input) {
+        let frontend_path = frontend_output_path(&output_file);
+
+        if !output_config.quiet {
+            println!(
+                "Client hydration detected — building {}",
+                frontend_path.display()
+            );
+        }
+
+        // Reuse the same library paths the server build saw.
+        let lib_paths_clone: Vec<PathBuf> = Path::new(&input)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| vec![p.to_path_buf()])
+            .unwrap_or_default();
+
+        match clean_language_compiler::compile_multi_file_client_mode(
+            &input,
+            lib_paths_clone,
+            opt_level,
+        ) {
+            Ok(frontend_bytes) => {
+                let bytes_len = frontend_bytes.len();
+                fs::write(&frontend_path, &frontend_bytes)?;
+                if !output_config.quiet {
+                    println!(
+                        "Client build successful! Generated {} ({} bytes)",
+                        frontend_path.display(),
+                        bytes_len
+                    );
+                }
+            }
+            Err(errors) => {
+                // The server WASM is on disk; surface the client failure as a
+                // warning so the rest of the pipeline can proceed.
+                eprintln!(
+                    "Client build skipped: failed to compile {}",
+                    frontend_path.display()
+                );
+                for error in &errors {
+                    eprintln!("   {}", error);
+                }
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Returns the path where `frontend.wasm` should be written, as a sibling of
+/// the server output file.
+fn frontend_output_path(server_output: &str) -> PathBuf {
+    let server_path = Path::new(server_output);
+    match server_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join("frontend.wasm"),
+        _ => PathBuf::from("frontend.wasm"),
+    }
+}
+
+/// Returns `true` if the project rooted at `entry_file` declares at least one
+/// `events:` block — the signal that a `frontend.wasm` is required for
+/// browser hydration (frame-ui-semantics.md §UI-B009).
+fn project_uses_client_hydration(entry_file: &str) -> bool {
+    let entry_path = Path::new(entry_file);
+    let scan_root = entry_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    scan_for_events_block(&scan_root, 0)
+}
+
+fn scan_for_events_block(dir: &Path, depth: u32) -> bool {
+    if depth > 6 {
+        return false;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if matches!(name, "target" | "node_modules" | ".git" | "dist" | "build") {
+                continue;
+            }
+            if scan_for_events_block(&path, depth + 1) {
+                return true;
+            }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("cln") {
+            if let Ok(source) = fs::read_to_string(&path) {
+                for line in source.lines() {
+                    if line.trim_start().starts_with("events:") {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 async fn handle_compile(
@@ -1185,6 +1294,7 @@ async fn handle_compile(
             opt_level,
             explicit_tier,
             target_default,
+            false,
         )
     };
     let wasm_binary = match wasm_binary_result {

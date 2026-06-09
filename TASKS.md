@@ -1,5 +1,44 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ COMPLETED: BUILD_FRONTEND — `cln build` does not generate `frontend.wasm` for client-side components
+
+**Priority**: HIGH (priority 56)
+**Discovered**: 2026-06-09
+**Completed**: 2026-06-09
+**Reported error code**: `BUILD_FRONTEND`
+**Files**:
+  - `src/lib.rs` — added `client_mode` parameter to `compile_multi_file_with_memory_tier`,
+    new `compile_multi_file_client_mode` wrapper, `is_server_only_module` helper
+  - `src/main.rs` — `handle_build` now scans the project for `events:` blocks and
+    emits `frontend.wasm` as a sibling of the main output when present; also
+    threads the new `client_mode: false` argument to existing call sites
+  - `tests/test_client_mode_build.rs` — regression test that asserts the client mode
+    pipeline succeeds for a minimal component-bearing project
+
+**Issue**: `cln build` only produced `dist/app.wasm` for projects with `target: web` + a
+component declaring `events:`. The browser loader (`loader.js`, served by clean-server at
+`/loader.js`) expects a sibling `frontend.wasm` that contains only the client-side WASM,
+per `foundation/spec/plugins/frame-ui-semantics.md` §UI-B009. Without it the loader returns
+404 and hydration never runs.
+
+**Fix**: After the main compile, the build CLI scans for any `events:` block in the project
+tree (the spec signal for client hydration). When present, it runs a second compilation pass
+in client mode that:
+  - Drops server-only modules from the HIR merge (paths under `/server/`, `/backend/`,
+    `/api/`, `/pages/`, the `routes` module, and the synthetic `__page_routes_generated`)
+  - Replaces the `start:` body with an empty no-op so the browser's `_start()` does not
+    attempt to call `_http_listen` or other server bridge imports
+  - Guarantees a `_start` export exists even when the entry module is server-side
+Component classes and their `events:` handler functions remain as exports for the
+`_ui_on_event` runtime registrations to reach.
+
+**Limitation**: this is a path-heuristic split, not a full client/server reachability
+analysis. Server functions called from shared (non-server) modules will still appear in
+`frontend.wasm`. A follow-up task tracks proper function-level dead-code elimination keyed
+on bridge namespace.
+
+---
+
 ## ✅ COMPLETED: CODEGEN-TIME-NOW-DEREF — time.now() causes unreachable trap in integer arithmetic
 
 **Priority**: HIGH (priority 106)
