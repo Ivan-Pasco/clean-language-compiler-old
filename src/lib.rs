@@ -1927,6 +1927,7 @@ fn is_server_only_module(module_name: &str, file_path: &std::path::Path) -> bool
 ///   - The entry module's `start:` body is replaced with an empty body so the
 ///     browser does not attempt to call `_http_listen` etc. on `_start()`
 ///   - Component classes and their `events:` handlers are preserved as exports
+///
 /// Spec reference: `foundation/spec/plugins/frame-ui-semantics.md` §UI-B009.
 pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     entry_path: P,
