@@ -5164,12 +5164,8 @@ fn lint_endpoint_organization(source: &str, file_path: &str) -> Vec<serde_json::
         significant_line_count += 1;
     }
 
-    let indent_width = |s: &str| -> usize {
-        s.chars()
-            .take_while(|c| *c == '\t' || *c == ' ')
-            .map(|c| if c == '\t' { 1 } else { 1 })
-            .sum()
-    };
+    let indent_width =
+        |s: &str| -> usize { s.chars().take_while(|c| *c == '\t' || *c == ' ').count() };
 
     let mut i = 0;
     while i < lines.len() {
