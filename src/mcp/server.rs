@@ -1019,6 +1019,15 @@ fn get_available_tools() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "get_app_structure".to_string(),
+            description: "MANDATORY before creating any .cln file in an application project. Returns the canonical Clean Language application folder structure, the two architecture laws, a 10-step decision tree for placing new code, naming rules, forbidden patterns, and the growth path.".to_string(),
+            input_schema: ToolInputSchema {
+                type_: "object".to_string(),
+                properties: json!({}),
+                required: vec![],
+            },
+        },
+        Tool {
             name: "get_plugin_examples".to_string(),
             description: "Read example source files from an installed plugin. When called with a 'pattern' name (e.g. 'multilingual-site'), returns the full architectural example with use-when guidance and anti-pattern warning. Without 'pattern', returns all generic example files declared in the plugin's [ai] section.".to_string(),
             input_schema: ToolInputSchema {
@@ -1466,6 +1475,7 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "list_builtins" => tool_list_builtins(id.clone(), arguments),
         "list_error_codes" => tool_list_error_codes(id.clone(), arguments),
         "get_quick_reference" => tool_get_quick_reference(id.clone()),
+        "get_app_structure" => tool_get_app_structure(id.clone()),
         "get_plugin_examples" => tool_get_plugin_examples(id.clone(), arguments),
         "list_ecosystem" => tool_list_ecosystem(id.clone(), arguments),
         "get_stack_recommendation" => tool_get_stack_recommendation(id.clone(), arguments),
@@ -1544,10 +1554,13 @@ fn tool_check(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespons
         .and_then(|v| v.as_str())
         .unwrap_or("<stdin>");
 
+    let lint_warnings = lint_endpoint_organization(source, file_path);
+
     match type_check(source, file_path) {
         Ok(result) => {
-            let diagnostics: Vec<serde_json::Value> =
+            let mut diagnostics: Vec<serde_json::Value> =
                 result.diagnostics.iter().map(error_to_json).collect();
+            diagnostics.extend(lint_warnings);
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -1560,7 +1573,9 @@ fn tool_check(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespons
             )
         }
         Err(errors) => {
-            let diagnostics: Vec<serde_json::Value> = errors.iter().map(error_to_json).collect();
+            let mut diagnostics: Vec<serde_json::Value> =
+                errors.iter().map(error_to_json).collect();
+            diagnostics.extend(lint_warnings);
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -1684,51 +1699,44 @@ fn tool_diagnostics(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcR
     // Type-check and return only diagnostics with severity filtering
     let severity_filter = args.get("severity").and_then(|v| v.as_str());
 
-    match type_check(source, file_path) {
-        Ok(_result) => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true,
-                "diagnostics": [],
-                "error_count": 0,
-                "warning_count": 0
-            }),
-        ),
-        Err(errors) => {
-            let all_diagnostics: Vec<serde_json::Value> =
-                errors.iter().map(error_to_json).collect();
+    let lint_warnings = lint_endpoint_organization(source, file_path);
 
-            let diagnostics: Vec<serde_json::Value> = if let Some(filter) = severity_filter {
-                all_diagnostics
-                    .into_iter()
-                    .filter(|d| {
-                        d.get("severity")
-                            .and_then(|s| s.as_str())
-                            .map(|s| s.eq_ignore_ascii_case(filter))
-                            .unwrap_or(false)
-                    })
-                    .collect()
-            } else {
-                all_diagnostics
-            };
+    let (success, mut all_diagnostics): (bool, Vec<serde_json::Value>) =
+        match type_check(source, file_path) {
+            Ok(_result) => (true, Vec::new()),
+            Err(errors) => (false, errors.iter().map(error_to_json).collect()),
+        };
+    all_diagnostics.extend(lint_warnings);
 
-            let error_count = diagnostics
-                .iter()
-                .filter(|d| d.get("severity").and_then(|s| s.as_str()) == Some("error"))
-                .count();
-            let warning_count = diagnostics.len() - error_count;
+    let diagnostics: Vec<serde_json::Value> = if let Some(filter) = severity_filter {
+        all_diagnostics
+            .into_iter()
+            .filter(|d| {
+                d.get("severity")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.eq_ignore_ascii_case(filter))
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        all_diagnostics
+    };
 
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": error_count == 0,
-                    "diagnostics": diagnostics,
-                    "error_count": error_count,
-                    "warning_count": warning_count
-                }),
-            )
-        }
-    }
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| d.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .count();
+    let warning_count = diagnostics.len() - error_count;
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": success && error_count == 0,
+            "diagnostics": diagnostics,
+            "error_count": error_count,
+            "warning_count": warning_count
+        }),
+    )
 }
 
 /// Tool: explain_error - Explain an error code
@@ -3309,6 +3317,65 @@ string get_user_display_name(integer id)
     return json.get(row, "first_name") + " " + json.get(row, "last_name")
 ```
 
+### Rule C — One resource per endpoints file (frame.server)
+
+Do NOT create a single mega `api.cln` containing every endpoint in the app. Split `endpoints:` blocks by resource/domain so each file owns one noun.
+
+**Thresholds — split a file when ANY is true:**
+- More than **6 endpoint declarations** (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `FEED`, `LIVE`) in one `endpoints:` block
+- File exceeds **150 lines** (excluding blank lines and comments)
+- The file mixes **two or more unrelated resources** (e.g. `/users/*` and `/orders/*` in the same `endpoints:` block)
+
+**Grouping rule:** group by resource **noun**, not by HTTP verb. All `/users/*` routes (GET, POST, PUT, DELETE) belong in the same file regardless of method. Never split by verb (no `users_get.cln`, `users_post.cln`).
+
+**Directory layout:**
+
+    app/server/api/
+        users.cln              — GET/POST/PUT/DELETE /users, /users/:id
+        orders.cln             — all /orders/* routes
+        auth.cln               — login, logout, register
+        _middleware.cln        — shared auth guards, request logging (underscore prefix = not a route file)
+        _types.cln             — shared request/response shapes
+        admin/
+            users.cln          — admin-only /admin/users/* routes
+            metrics.cln        — /admin/metrics/* routes
+
+**Nested resources** get a subfolder when the parent resource itself has its own endpoints AND has child resources with their own endpoints. Otherwise keep child routes in the parent file.
+
+```
+// WRONG — one mega file mixing unrelated resources
+// app/server/api.cln
+endpoints:
+    GET  "/users"              -> list_users()
+    POST "/users"              -> create_user()
+    GET  "/orders"             -> list_orders()
+    POST "/orders"             -> create_order()
+    POST "/auth/login"         -> login()
+    POST "/auth/logout"        -> logout()
+    GET  "/admin/metrics"      -> metrics()
+
+// CORRECT — one file per resource
+// app/server/api/users.cln
+endpoints:
+    GET  "/users"              -> list_users()
+    POST "/users"              -> create_user()
+    GET  "/users/:id"          -> get_user()
+
+// app/server/api/orders.cln
+endpoints:
+    GET  "/orders"             -> list_orders()
+    POST "/orders"             -> create_order()
+
+// app/server/api/auth.cln
+endpoints:
+    POST "/auth/login"         -> login()
+    POST "/auth/logout"        -> logout()
+```
+
+**Cross-cutting concerns** (auth middleware, shared error handlers, shared request/response shapes) live in their own files prefixed with `_` so they sort to the top and signal "not a route file": `_middleware.cln`, `_types.cln`, `_errors.cln`.
+
+**Why split?** Long endpoint files (1) make code review and diff noise unmanageable, (2) force unrelated teams to merge into the same file, (3) hide which resources the API actually exposes, and (4) prevent route-level loading optimisations once the framework supports them.
+
 ### Database Queries — Data Only
 
 NEVER generate HTML inside SQL queries:
@@ -3420,6 +3487,223 @@ For other content types:
             "version": crate::VERSION,
             "tools_available": get_available_tools().len(),
             "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. If spec-correct code fails, call 'report_error' immediately — never write workarounds. Call 'check_reported_fixes' at session start. Call 'list_server_diagnostics' to find local runtime errors — ask the user to publish them."
+        }),
+    )
+}
+
+/// Tool: get_app_structure - Canonical Clean Language application architecture
+fn tool_get_app_structure(id: serde_json::Value) -> JsonRpcResponse {
+    let architecture = r##"# Clean Language Application Architecture (Canonical)
+
+**MANDATORY for all application projects.** Apply BEFORE creating any .cln file.
+Does NOT apply to plugins, library packages, or single-file scripts under 200 LOC.
+
+## 1. Folder Layout
+
+```
+my-app/
+├── main.cln                    REQUIRED — declares shared: and target: blocks
+├── public/{css,images}/        Static assets
+└── app/
+    ├── auth/                   frame.auth configuration and guards
+    ├── types/                  Validated value types (Email, Money, Slug)
+    ├── data/
+    │   ├── models/             data: blocks — schema only, NO methods
+    │   └── migrations/         Versioned schema migration files
+    ├── logic/                  Business logic — ONE class per capability
+    ├── server/
+    │   ├── api/                HTTP endpoints (thin, call ONE logic method)
+    │   └── middleware/         Request filters
+    └── web/
+        ├── layouts/            Page layout wrappers
+        ├── pages/              Page templates + companion .cln adapters
+        └── components/         Reusable UI components
+```
+
+No other folders inside `app/`. FORBIDDEN filenames anywhere in `app/`:
+`utils.cln`, `helpers.cln`, `common.cln`, `misc.cln`, `lib.cln`, `shared.cln`,
+`tools.cln`, `core.cln`. These always degrade into junk drawers.
+
+## 2. The Two Laws (non-negotiable)
+
+### Law 1 — Dependency direction is one-way
+
+```
+api, pages, components, middleware  →  logic  →  data/models  →  types
+                                          ↓
+                                        types
+```
+
+- `types/` imports nothing from the app
+- `data/models/` imports only from `types/`
+- `logic/` imports from `data/models/` and `types/`
+- `server/api/`, `server/middleware/`, `web/pages/`, `web/components/` import
+  from `logic/` and `types/`
+- A reverse import is a structural error
+
+### Law 2 — One class per logic file, called statically
+
+- Every `app/logic/<name>.cln` defines EXACTLY ONE `class <Name>`
+- Methods are invoked as `ClassName.method(args)` — NO instantiation
+  (e.g., `Auth.register(email, password)`, NOT `Auth a = Auth(); a.register(...)`)
+- The class name MUST be a capability, NEVER an entity
+- Logic classes have NO fields and NO constructor — they are stateless namespaces
+
+## 3. Decision Tree — Where Does New Code Go?
+
+Apply in order. First match wins.
+
+1. Validates or represents a primitive value (Email, Money, Slug)?
+   → `app/types/<name>.cln`
+2. Defines a database row shape?
+   → `data:` block in `app/data/models/<entity>.cln`
+3. ANY behavior — pure helper, workflow, I/O, validation, computation?
+   → method on a class in `app/logic/<capability>.cln`
+4. HTTP route?
+   → `app/server/api/<area>.cln` — body calls EXACTLY ONE logic method
+5. Request filter (auth check, logging, CORS)?
+   → `app/server/middleware/<name>.cln`
+6. Page template or companion adapter?
+   → `app/web/pages/<route>.{html,cln}`
+7. Reusable UI component?
+   → `app/web/components/<name>.cln`
+8. Page layout wrapper?
+   → `app/web/layouts/<name>.html`
+9. Auth configuration?
+   → `app/auth/`
+10. Schema migration?
+    → `app/data/migrations/`
+
+If nothing matches, the code does not belong in the app.
+
+## 4. Naming Rules
+
+| Element | Rule | OK | Forbidden |
+|---|---|---|---|
+| Value type | Singular PascalCase | `Email`, `Money`, `Slug` | `UserEmail`, `PriceValue` |
+| Model | Singular PascalCase | `User`, `Order`, `Product` | `Users`, `UserData`, `UserRecord` |
+| Logic class | Capability — never entity | `Auth`, `Checkout`, `Mailer`, `Billing`, `Search`, `Profile`, `Onboarding` | `User`, `UserService`, `OrderManager`, `ProductHelper`, `UserUtils`, `UserRepository` |
+| Filename | snake_case, matches primary export | `user.cln` → `User`; `auth.cln` → `Auth`; `email.cln` → `Email` | `User.cln`, `auth_service.cln`, `Email.cln` |
+
+## 5. Reserved Lowercase Identifiers (do NOT use as variable names)
+
+These names are taken by frame plugin bridge namespaces:
+`auth`, `db`, `http`, `req`, `res`, `request`, `response`, `string`, `math`,
+`list`, `json`, `ui`, `data`, `state`.
+
+The static-call pattern (`Auth.register(...)`) avoids the issue entirely.
+If you ever need an instance, pick a name the plugins don't own:
+`authentication`, `database`, `httpClient`, `httpRequest`, `appState`.
+
+## 6. Forbidden Patterns (will become structural errors)
+
+| Code | Violation |
+|---|---|
+| `E-STRUCT-001` | Junk-drawer filename (`utils.cln`, `helpers.cln`, etc.) |
+| `E-STRUCT-002` | Entity-named logic class or file (`UserService`, `OrderManager`) |
+| `E-STRUCT-003` | `functions:` block inside a `data:` block (frame.data drops it silently) |
+| `E-STRUCT-004` | Database call from `app/server/api/`, `app/web/components/`, or page companion |
+| `E-STRUCT-005` | More than one class or `data:` block in a single file |
+| `E-STRUCT-006` | Logic class with fields or constructor (must be stateless namespace) |
+| `E-STRUCT-007` | File outside the canonical folder set |
+| `E-STRUCT-008` | Reverse import (lower layer importing from higher layer) |
+| `E-STRUCT-009` | Logic file importing another logic file |
+| `W-STRUCT-010` | Variable shadows reserved plugin namespace |
+
+(Error codes are reserved but not yet enforced. They will be promoted to
+warnings, then to hard errors, over the v0.31–v0.33 release window.)
+
+## 7. Growth Path — Don't Pre-Create Folders
+
+A new app starts with ONLY:
+
+```
+main.cln
+app/
+├── data/models/
+├── server/api/
+└── web/pages/
+```
+
+Add the rest ONLY when the first real need arises:
+
+| Trigger | Folder to add |
+|---|---|
+| Endpoint or page companion grows beyond a single concern, or touches more than one model | `app/logic/` |
+| Same validation rule appears twice | `app/types/` |
+| UI pattern used in more than one page | `app/web/components/` |
+| Pages share header/footer/layout | `app/web/layouts/` |
+| Schema needs to evolve in production | `app/data/migrations/` |
+| Auth becomes non-trivial | `app/auth/` |
+| Request filters needed | `app/server/middleware/` |
+
+Empty folders are FORBIDDEN.
+
+## 8. Known Limitations (today)
+
+- `data: T` does NOT register `T` as a usable Clean type — you cannot declare
+  `User u` after a `data: User` block, and you cannot write a function that
+  takes `User user` as a parameter. All single-record helpers therefore live
+  in `app/logic/` (not co-located with the model).
+- `functions:` blocks inside `data:` blocks are accepted by the parser but
+  IGNORED by frame.data. Do NOT use this pattern — the methods will never be
+  callable. All behavior moves to `app/logic/`.
+
+## 9. Example — Auth Capability End-to-End
+
+`app/data/models/user.cln`
+```clean
+data: User
+    email: String
+    password_hash: String
+    role: String
+    created_at: DateTime
+```
+
+`app/types/email.cln`
+```clean
+class Email
+    string value
+
+    constructor(string raw)
+        require raw.contains("@")
+        value = raw.toLowerCase().trim()
+```
+
+`app/logic/auth.cln`
+```clean
+class Auth
+    functions:
+        integer register(string email, string password)
+            // hash password, persist via frame.data, send welcome email
+            return newUserId
+
+        string login(string email, string password)
+            return sessionToken
+
+        void logout(string sessionToken)
+```
+
+`app/server/api/auth.cln`
+```clean
+endpoints:
+    POST /api/register
+        integer userId = Auth.register(req.body.email, req.body.password)
+        return json({ id: userId })
+
+    POST /api/login
+        string token = Auth.login(req.body.email, req.body.password)
+        return json({ token: token })
+```
+"##;
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "architecture": architecture,
+            "version": crate::VERSION,
+            "tip": "Apply the decision tree (§3) BEFORE creating any .cln file. Logic classes are stateless namespaces — call them as Auth.register(...) without instantiating. If a file or class name doesn't fit a capability (Auth, Checkout, Mailer), it almost certainly belongs in app/data/models/ or app/types/ instead."
         }),
     )
 }
@@ -4851,6 +5135,175 @@ fn tool_get_changelog(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
 }
 
 /// Convert a CompilerError to JSON for MCP responses
+/// Lint: enforce "one resource per endpoints file" (Rule C in get_quick_reference).
+///
+/// Emits soft warnings — never errors. Always enabled. Codes:
+///   W-API-001 — endpoints: block has more than 6 route declarations
+///   W-API-002 — file containing endpoints: exceeds 150 non-blank/non-comment lines
+///   W-API-003 — endpoints: block mixes 2+ unrelated top-level resources
+fn lint_endpoint_organization(source: &str, file_path: &str) -> Vec<serde_json::Value> {
+    const MAX_ROUTES_PER_BLOCK: usize = 6;
+    const MAX_FILE_LINES: usize = 150;
+    const HTTP_VERBS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "FEED", "LIVE"];
+
+    let mut warnings: Vec<serde_json::Value> = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+
+    // Track whether the file contains any endpoints: block (gates W-API-002).
+    let mut has_endpoints_block = false;
+    let mut significant_line_count = 0usize;
+
+    for raw in &lines {
+        let trimmed = raw.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        significant_line_count += 1;
+    }
+
+    let indent_width = |s: &str| -> usize {
+        s.chars()
+            .take_while(|c| *c == '\t' || *c == ' ')
+            .map(|c| if c == '\t' { 1 } else { 1 })
+            .sum()
+    };
+
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("endpoints:") {
+            has_endpoints_block = true;
+            let base_indent = indent_width(line);
+            let block_start_line = i + 1; // 1-indexed
+            let mut routes: Vec<String> = Vec::new();
+            let mut j = i + 1;
+            while j < lines.len() {
+                let inner = lines[j];
+                let inner_trim = inner.trim_start();
+                if inner_trim.is_empty() || inner_trim.starts_with("//") {
+                    j += 1;
+                    continue;
+                }
+                if indent_width(inner) <= base_indent {
+                    break;
+                }
+                if let Some(rest) = HTTP_VERBS.iter().find_map(|verb| {
+                    let needle = format!("{} ", verb);
+                    inner_trim.strip_prefix(&needle)
+                }) {
+                    if let Some(path) = extract_quoted_path(rest) {
+                        routes.push(path);
+                    }
+                }
+                j += 1;
+            }
+
+            if routes.len() > MAX_ROUTES_PER_BLOCK {
+                warnings.push(json!({
+                    "severity": "warning",
+                    "code": "W-API-001",
+                    "message": format!(
+                        "endpoints: block declares {} routes (limit {}). Split by resource into separate files under app/server/api/<resource>.cln. See Rule C in get_quick_reference.",
+                        routes.len(),
+                        MAX_ROUTES_PER_BLOCK
+                    ),
+                    "file": file_path,
+                    "line": block_start_line,
+                    "column": 1,
+                }));
+            }
+
+            let mut distinct_segments: Vec<String> = Vec::new();
+            for path in &routes {
+                let seg = top_level_segment(path);
+                if !distinct_segments.contains(&seg) {
+                    distinct_segments.push(seg);
+                }
+            }
+            if distinct_segments.len() >= 2 {
+                warnings.push(json!({
+                    "severity": "warning",
+                    "code": "W-API-003",
+                    "message": format!(
+                        "endpoints: block mixes {} unrelated resources ({}). Split each resource into its own file (one resource per endpoints file). See Rule C in get_quick_reference.",
+                        distinct_segments.len(),
+                        distinct_segments
+                            .iter()
+                            .map(|s| format!("/{}", s))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    "file": file_path,
+                    "line": block_start_line,
+                    "column": 1,
+                }));
+            }
+
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+
+    if has_endpoints_block && significant_line_count > MAX_FILE_LINES {
+        warnings.push(json!({
+            "severity": "warning",
+            "code": "W-API-002",
+            "message": format!(
+                "File contains {} non-blank/non-comment lines (limit {} for files with endpoints:). Split by resource into separate files under app/server/api/<resource>.cln. See Rule C in get_quick_reference.",
+                significant_line_count,
+                MAX_FILE_LINES
+            ),
+            "file": file_path,
+            "line": 1,
+            "column": 1,
+        }));
+    }
+
+    warnings
+}
+
+/// Extract the first quoted string from `rest`. Returns the path without quotes.
+fn extract_quoted_path(rest: &str) -> Option<String> {
+    let bytes = rest.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() && bytes[idx] != b'"' {
+        idx += 1;
+    }
+    if idx >= bytes.len() {
+        return None;
+    }
+    idx += 1;
+    let start = idx;
+    while idx < bytes.len() && bytes[idx] != b'"' {
+        idx += 1;
+    }
+    if idx > start {
+        Some(rest[start..idx].to_string())
+    } else {
+        None
+    }
+}
+
+/// Return the top-level resource segment of a route path.
+/// `/users` -> "users", `/users/:id` -> "users", `/` -> "root", `/api/v1/users` -> "api".
+fn top_level_segment(path: &str) -> String {
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return "root".to_string();
+    }
+    let seg = trimmed.split('/').next().unwrap_or("");
+    if seg.starts_with(':') || seg.is_empty() {
+        "root".to_string()
+    } else {
+        seg.to_string()
+    }
+}
+
 fn error_to_json(error: &crate::error::CompilerError) -> serde_json::Value {
     use crate::error::CompilerError;
 
@@ -6107,5 +6560,209 @@ fn tool_get_feature_spec(id: serde_json::Value, args: &serde_json::Value) -> Jso
                 "error": format!("No feature spec found matching ref or feature name: '{}'", ref_str)
             }),
         ),
+    }
+}
+
+#[cfg(test)]
+mod endpoint_lint_tests {
+    use super::*;
+
+    fn codes(warnings: &[serde_json::Value]) -> Vec<&str> {
+        warnings
+            .iter()
+            .filter_map(|w| w.get("code").and_then(|c| c.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn no_warning_below_thresholds() {
+        let src = "endpoints:\n\tGET \"/users\" -> list()\n\tPOST \"/users\" -> create()\n";
+        let warnings = lint_endpoint_organization(src, "api/users.cln");
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings, got {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn w_api_001_fires_at_7_routes_same_resource() {
+        let mut src = String::from("endpoints:\n");
+        for i in 0..7 {
+            src.push_str(&format!("\tGET \"/users/{}\" -> h{}()\n", i, i));
+        }
+        let warnings = lint_endpoint_organization(&src, "api/users.cln");
+        let codes = codes(&warnings);
+        assert!(
+            codes.contains(&"W-API-001"),
+            "expected W-API-001 in {:?}",
+            codes
+        );
+        assert!(
+            !codes.contains(&"W-API-003"),
+            "unexpected W-API-003 in {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn w_api_003_fires_when_resources_mixed() {
+        let src = "endpoints:\n\tGET \"/users\" -> a()\n\tGET \"/orders\" -> b()\n";
+        let warnings = lint_endpoint_organization(src, "api.cln");
+        let codes = codes(&warnings);
+        assert!(
+            codes.contains(&"W-API-003"),
+            "expected W-API-003 in {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn w_api_003_does_not_fire_for_subpaths_of_same_resource() {
+        let src = "endpoints:\n\tGET \"/users\" -> a()\n\tGET \"/users/:id\" -> b()\n\tGET \"/users/:id/profile\" -> c()\n";
+        let warnings = lint_endpoint_organization(src, "api/users.cln");
+        let codes = codes(&warnings);
+        assert!(
+            !codes.contains(&"W-API-003"),
+            "unexpected W-API-003 in {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn w_api_002_fires_only_when_endpoints_present_and_over_limit() {
+        // 200 significant lines but no endpoints block -> no warning
+        let mut src = String::new();
+        for i in 0..200 {
+            src.push_str(&format!("integer x{} = {}\n", i, i));
+        }
+        let warnings = lint_endpoint_organization(&src, "stuff.cln");
+        assert!(codes(&warnings).is_empty());
+
+        // Now add an endpoints block -> warning
+        src.push_str("endpoints:\n\tGET \"/health\" -> ok()\n");
+        let warnings = lint_endpoint_organization(&src, "api.cln");
+        let codes = codes(&warnings);
+        assert!(
+            codes.contains(&"W-API-002"),
+            "expected W-API-002 in {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn comments_and_blank_lines_do_not_count_toward_line_limit() {
+        let mut src = String::new();
+        for _ in 0..400 {
+            src.push_str("// just a comment\n\n");
+        }
+        src.push_str("endpoints:\n\tGET \"/x\" -> h()\n");
+        let warnings = lint_endpoint_organization(&src, "api.cln");
+        let codes = codes(&warnings);
+        assert!(
+            !codes.contains(&"W-API-002"),
+            "comments should not trigger W-API-002, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn all_seven_http_verbs_count_as_routes() {
+        let src = "endpoints:\n\tGET \"/u\" -> a()\n\tPOST \"/u\" -> b()\n\tPUT \"/u\" -> c()\n\tDELETE \"/u\" -> d()\n\tPATCH \"/u\" -> e()\n\tFEED \"/u\" -> f()\n\tLIVE \"/u\" -> g()\n";
+        let warnings = lint_endpoint_organization(src, "api/u.cln");
+        let codes = codes(&warnings);
+        assert!(
+            codes.contains(&"W-API-001"),
+            "7 routes should trip W-API-001, got {:?}",
+            codes
+        );
+    }
+}
+
+#[cfg(test)]
+mod app_structure_tests {
+    use super::*;
+
+    #[test]
+    fn tool_is_registered() {
+        let tools = get_available_tools();
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(
+            names.contains(&"get_app_structure"),
+            "get_app_structure not in registered tools: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn handler_returns_success_with_architecture_content() {
+        let response = tool_get_app_structure(json!(1));
+        let result = response.result.expect("expected success result");
+
+        assert_eq!(result.get("success"), Some(&json!(true)));
+
+        let architecture = result
+            .get("architecture")
+            .and_then(|v| v.as_str())
+            .expect("architecture field must be a string");
+
+        assert!(
+            !architecture.is_empty(),
+            "architecture content must be non-empty"
+        );
+
+        // Spot-check the section markers that drive AI behavior. Each is
+        // load-bearing: removing one would silently weaken the rule.
+        for marker in [
+            "Folder Layout",
+            "Two Laws",
+            "Decision Tree",
+            "Naming Rules",
+            "Forbidden Patterns",
+            "Growth Path",
+            "Known Limitations",
+        ] {
+            assert!(
+                architecture.contains(marker),
+                "architecture missing section marker '{}'",
+                marker
+            );
+        }
+
+        // Spot-check the canonical folder names — these are the load-bearing
+        // structural decisions of the rule.
+        for folder in [
+            "app/data/models/",
+            "app/logic/",
+            "app/types/",
+            "app/server/api/",
+        ] {
+            assert!(
+                architecture.contains(folder),
+                "architecture missing canonical folder path '{}'",
+                folder
+            );
+        }
+    }
+
+    #[test]
+    fn handler_response_includes_version_and_tip() {
+        let response = tool_get_app_structure(json!(1));
+        let result = response.result.expect("expected success result");
+
+        assert!(
+            result.get("version").is_some(),
+            "version field must be present"
+        );
+
+        let tip = result
+            .get("tip")
+            .and_then(|v| v.as_str())
+            .expect("tip field must be a string");
+        assert!(
+            tip.contains("decision tree"),
+            "tip should reference the decision tree, got: {}",
+            tip
+        );
     }
 }

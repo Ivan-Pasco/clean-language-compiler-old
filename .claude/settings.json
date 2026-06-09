@@ -33,7 +33,8 @@
       "Bash(sed -n '765,775p' src/error/recovery.rs)",
       "Bash(sed -n '976,984p' src/error/mod.rs)",
       "Bash(./target/release/debug_wasm tests/output/vld001_json_namespace_direct_call.wasm)",
-      "Bash(~/.cleen/clean-runner/0.1.1/clean-runner /tmp/test_repro.wasm)"
+      "Bash(~/.cleen/clean-runner/0.1.1/clean-runner /tmp/test_repro.wasm)",
+      "mcp__clean-language__get_stack_recommendation"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
