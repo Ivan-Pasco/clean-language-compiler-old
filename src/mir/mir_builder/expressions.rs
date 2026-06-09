@@ -317,11 +317,11 @@ impl MirBuilder {
                         expression.location.clone(),
                     );
 
-                    // Use SymbolId(1001) for pow_f64, SymbolId(1002) for pow_i32
+                    // Pick the math.pow variant whose calling convention matches the result type.
                     let pow_function = if matches!(result_type, MirType::F64) {
-                        SymbolId(1001) // pow_f64
+                        SYM_BUILTIN_MATH_POW_F64
                     } else {
-                        SymbolId(1002) // pow_i32
+                        SYM_BUILTIN_MATH_POW_I32
                     };
 
                     let instruction = MirInstruction {
@@ -546,12 +546,11 @@ impl MirBuilder {
                         expression.location.clone(),
                     );
 
-                    // Generate call to string.concat runtime function
-                    // Use SymbolId(1000) as a fixed ID for string.concat built-in
+                    // Generate call to string.concat runtime function.
                     let instruction = MirInstruction {
                         dest: Some(result_id),
                         operation: MirOperation::Call {
-                            function: MirOperand::Function(SymbolId(1000)),
+                            function: MirOperand::Function(SYM_BUILTIN_STRING_CONCAT),
                             arguments: vec![
                                 MirOperand::Value(left_string_id),
                                 MirOperand::Value(right_string_id),
@@ -1348,8 +1347,8 @@ impl MirBuilder {
                             );
 
                             let add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
-                                _ => SymbolId(1007),                    // list.add (in-place)
+                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
+                                _ => SYM_BUILTIN_LIST_ADD,
                             };
 
                             let mut args = vec![MirOperand::Value(receiver_id)];
@@ -1383,8 +1382,8 @@ impl MirBuilder {
                             );
 
                             let add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
-                                _ => SymbolId(1007),                    // list.add (in-place)
+                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
+                                _ => SYM_BUILTIN_LIST_ADD,
                             };
 
                             let mut args = vec![MirOperand::Value(receiver_id)];
@@ -1418,7 +1417,7 @@ impl MirBuilder {
                             let instruction = MirInstruction {
                                 dest: Some(result_id),
                                 operation: MirOperation::Call {
-                                    function: MirOperand::Function(SymbolId(1006)), // list.size
+                                    function: MirOperand::Function(SYM_BUILTIN_LIST_SIZE),
                                     arguments: vec![MirOperand::Value(receiver_id)],
                                 },
                                 location: expression.location.clone(),
@@ -2151,15 +2150,16 @@ impl MirBuilder {
                         }
                         // Array/List methods
                         (ConcreteType::Array(_), "size" | "length") => {
-                            // NOTE: Use synthetic SymbolId(1006) for list.size
-                            // Symbol table lookup returns wrong function index
-                            (SymbolId(1006), vec![MirOperand::Value(receiver_id)])
+                            // Symbol-table lookup returns the wrong function index for
+                            // these stdlib namespace calls; route through the synthetic
+                            // SYM_BUILTIN_LIST_SIZE so codegen finds list.size directly.
+                            (SYM_BUILTIN_LIST_SIZE, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Array(element_type), "add") => {
                             // CRITICAL: list.add modifies IN-PLACE - use SymbolId(1007/1008)
                             let list_add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
-                                _ => SymbolId(1007),                    // list.add (in-place)
+                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
+                                _ => SYM_BUILTIN_LIST_ADD,
                             };
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
@@ -2171,8 +2171,8 @@ impl MirBuilder {
                         (ConcreteType::Array(element_type), "push") => {
                             // list.push is an alias for list.add (in-place append)
                             let list_add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SymbolId(1008), // list.add_f64 (in-place)
-                                _ => SymbolId(1007),                    // list.add (in-place)
+                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
+                                _ => SYM_BUILTIN_LIST_ADD,
                             };
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
@@ -3227,10 +3227,10 @@ impl MirBuilder {
                 let alloc_function = if matches!(&expression.expr_type, ConcreteType::Pairs(_, _)) {
                     MirOperand::NamedFunction {
                         name: "pairs.new".to_string(),
-                        symbol_id: SymbolId(1003),
+                        symbol_id: SYM_BUILTIN_LIST_ALLOCATE,
                     }
                 } else {
-                    MirOperand::Function(SymbolId(1003))
+                    MirOperand::Function(SYM_BUILTIN_LIST_ALLOCATE)
                 };
                 let alloc_instruction = MirInstruction {
                     dest: Some(list_value_id),
@@ -3262,11 +3262,11 @@ impl MirBuilder {
                     let push_symbol = match element_type {
                         MirType::F64 => {
                             trace!(element_index = idx, "Element is F64, using list.push_f64");
-                            SymbolId(1005) // list.push_f64
+                            SYM_BUILTIN_LIST_PUSH_F64
                         }
                         _ => {
                             trace!(element_index = idx, element_type = ?element_type, "Element using list.push");
-                            SymbolId(1004) // list.push
+                            SYM_BUILTIN_LIST_PUSH
                         }
                     };
 
@@ -3547,7 +3547,7 @@ impl MirBuilder {
                 let alloc_instruction = MirInstruction {
                     dest: Some(list_value_id),
                     operation: MirOperation::Call {
-                        function: MirOperand::Function(SymbolId(1003)),
+                        function: MirOperand::Function(SYM_BUILTIN_LIST_ALLOCATE),
                         arguments: vec![MirOperand::Value(size_value_id)],
                     },
                     location: expression.location.clone(),
@@ -3668,7 +3668,7 @@ impl MirBuilder {
                 let push_instruction = MirInstruction {
                     dest: Some(push_result_id),
                     operation: MirOperation::Call {
-                        function: MirOperand::Function(SymbolId(1004)), // list.push
+                        function: MirOperand::Function(SYM_BUILTIN_LIST_PUSH),
                         arguments: vec![
                             MirOperand::Value(list_value_id),
                             MirOperand::Value(counter_value_id),

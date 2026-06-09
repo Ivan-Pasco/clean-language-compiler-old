@@ -207,11 +207,11 @@ impl MirBuilder {
                             };
                             self.add_instruction(context, size_instruction);
 
-                            // Call list.allocate(8) with synthetic SymbolId(1003)
+                            // Call list.allocate(8) via the synthetic builtin symbol.
                             let call_instruction = MirInstruction {
                                 dest: Some(result_id),
                                 operation: MirOperation::Call {
-                                    function: MirOperand::Function(SymbolId(1003)), // list.allocate
+                                    function: MirOperand::Function(SYM_BUILTIN_LIST_ALLOCATE),
                                     arguments: vec![MirOperand::Value(size_id)],
                                 },
                                 location: location.clone(),
@@ -1367,7 +1367,7 @@ impl MirBuilder {
                     operation: MirOperation::Call {
                         function: MirOperand::NamedFunction {
                             name: "mem_scope_push".to_string(),
-                            symbol_id: SymbolId(1010), // Special SymbolId for mem_scope_push
+                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                         },
                         arguments: vec![],
                     },
@@ -1448,7 +1448,7 @@ impl MirBuilder {
                     operation: MirOperation::Call {
                         function: MirOperand::NamedFunction {
                             name: "mem_scope_pop".to_string(),
-                            symbol_id: SymbolId(1011), // Special SymbolId for mem_scope_pop
+                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                         },
                         arguments: vec![],
                     },
@@ -1636,7 +1636,7 @@ impl MirBuilder {
                     operation: MirOperation::Call {
                         function: MirOperand::NamedFunction {
                             name: "mem_scope_push".to_string(),
-                            symbol_id: SymbolId(1010), // Special SymbolId for mem_scope_push
+                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                         },
                         arguments: vec![],
                     },
@@ -1660,7 +1660,7 @@ impl MirBuilder {
                     operation: MirOperation::Call {
                         function: MirOperand::NamedFunction {
                             name: "mem_scope_pop".to_string(),
-                            symbol_id: SymbolId(1011), // Special SymbolId for mem_scope_pop
+                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                         },
                         arguments: vec![],
                     },
@@ -1874,7 +1874,7 @@ impl MirBuilder {
                         operation: MirOperation::Call {
                             function: MirOperand::NamedFunction {
                                 name: "mem_scope_pop".to_string(),
-                                symbol_id: SymbolId(1011),
+                                symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                             },
                             arguments: vec![],
                         },
@@ -1909,7 +1909,7 @@ impl MirBuilder {
                         operation: MirOperation::Call {
                             function: MirOperand::NamedFunction {
                                 name: "mem_scope_pop".to_string(),
-                                symbol_id: SymbolId(1011),
+                                symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                             },
                             arguments: vec![],
                         },
@@ -2257,7 +2257,7 @@ impl MirBuilder {
             operation: MirOperation::Call {
                 function: MirOperand::NamedFunction {
                     name: "mem_scope_push".to_string(),
-                    symbol_id: SymbolId(1010), // Special SymbolId for mem_scope_push
+                    symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                 },
                 arguments: vec![],
             },
@@ -2298,7 +2298,7 @@ impl MirBuilder {
             operation: MirOperation::Call {
                 function: MirOperand::NamedFunction {
                     name: "mem_scope_pop".to_string(),
-                    symbol_id: SymbolId(1011), // Special SymbolId for mem_scope_pop
+                    symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
                 },
                 arguments: vec![],
             },

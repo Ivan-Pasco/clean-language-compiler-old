@@ -12,6 +12,13 @@ use crate::mir::mir_types::{
     MirFunctionAttributes, MirGlobal, MirInstruction, MirLocal, MirOperand, MirOperation,
     MirParameter, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
+use crate::resolver::symbol_table::{
+    SYM_BUILTIN_INT_TO_STRING, SYM_BUILTIN_JSON_QUOTE_STRING, SYM_BUILTIN_LIST_ADD,
+    SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH,
+    SYM_BUILTIN_LIST_PUSH_F64, SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64,
+    SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_NUMBER_TO_STRING, SYM_BUILTIN_STRING_CONCAT,
+    SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE, SYM_WATCH_HANDLER_BASE,
+};
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastExpression, TastExpressionKind,
@@ -222,11 +229,11 @@ impl MirBuilder {
             state_rules: Vec::new(),
             state_guards: HashMap::new(),
             watch_handlers: HashMap::new(),
-            next_watch_symbol_id: 2000,
+            next_watch_symbol_id: SYM_WATCH_HANDLER_BASE,
             computed_properties: HashMap::new(),
-            next_computed_symbol_id: 3000,
+            next_computed_symbol_id: SYM_COMPUTED_GETTER_BASE,
             class_serializer_ids: HashMap::new(),
-            next_serializer_symbol_id: 5000,
+            next_serializer_symbol_id: SYM_CLASS_SERIALIZER_BASE,
             pending_class_invariants: Vec::new(),
             release_mode: false,
         }
@@ -404,50 +411,60 @@ impl MirBuilder {
 
         // NOTE: Add synthetic SymbolIds for MIR-generated built-in functions
         // These are created during MIR building for string concatenation and power operations
-        // Map them to existing WASM builtin functions
+        // Map them to existing WASM builtin functions.
+        //
+        // These IDs use the SYM_BUILTIN_* range defined in `resolver::symbol_table`
+        // (0x4000_0000+). That base is far above any resolver-allocated SymbolId,
+        // so synthetic builtins can never collide with a user function ID.  Prior
+        // versions used SymbolId(1000..1011); once a project loaded enough plugin
+        // bridge functions to push the resolver past 1000 the resolver-assigned
+        // ID overwrote `symbol_name_map[1011]` and class serializers ended up
+        // calling whatever user function landed on SymbolId(1011) instead of
+        // `__json_quote_string` (CODEGEN_F64 / CG-LOCAL29 root cause).
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1000), "string.concat".to_string());
+            .insert(SYM_BUILTIN_STRING_CONCAT, "string.concat".to_string());
         // pow_f64 and pow_i32 should map to the existing math.pow function
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1001), "math.pow".to_string());
+            .insert(SYM_BUILTIN_MATH_POW_F64, "math.pow".to_string());
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1002), "math.pow".to_string());
+            .insert(SYM_BUILTIN_MATH_POW_I32, "math.pow".to_string());
         // list.allocate and list.push for array literal creation
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1003), "list.allocate".to_string());
+            .insert(SYM_BUILTIN_LIST_ALLOCATE, "list.allocate".to_string());
         // NOTE: Use names matching stdlib function registration
         // list_push uses underscore (from list_ops.rs line 112)
         // list.size uses dot (from list_behavior.rs line 96)
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1004), "list_push".to_string());
+            .insert(SYM_BUILTIN_LIST_PUSH, "list_push".to_string());
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1005), "list_push_f64".to_string());
+            .insert(SYM_BUILTIN_LIST_PUSH_F64, "list_push_f64".to_string());
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1006), "list.size".to_string());
+            .insert(SYM_BUILTIN_LIST_SIZE, "list.size".to_string());
         // CRITICAL: list.add (in-place modification) vs list_push (creates new list)
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1007), "list.add".to_string());
+            .insert(SYM_BUILTIN_LIST_ADD, "list.add".to_string());
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1008), "list.add_f64".to_string());
+            .insert(SYM_BUILTIN_LIST_ADD_F64, "list.add_f64".to_string());
         // Synthetic symbols for class JSON serialization helpers
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1009), "int_to_string".to_string());
+            .insert(SYM_BUILTIN_INT_TO_STRING, "int_to_string".to_string());
         mir_program
             .symbol_name_map
-            .insert(SymbolId(1010), "number_to_string".to_string());
-        mir_program
-            .symbol_name_map
-            .insert(SymbolId(1011), "__json_quote_string".to_string());
+            .insert(SYM_BUILTIN_NUMBER_TO_STRING, "number_to_string".to_string());
+        mir_program.symbol_name_map.insert(
+            SYM_BUILTIN_JSON_QUOTE_STRING,
+            "__json_quote_string".to_string(),
+        );
 
         // NOTE: Add common name variations for builtin functions
         // Check symbol_name_map for variations and add correct WASM names

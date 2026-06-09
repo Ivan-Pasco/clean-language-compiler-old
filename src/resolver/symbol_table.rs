@@ -12,6 +12,50 @@ use std::sync::Mutex;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub usize);
 
+// ============================================================================
+// Reserved SymbolId ranges for MIR-synthesized symbols
+// ============================================================================
+//
+// These SymbolIds are allocated by the MIR builder (NOT by the resolver) for
+// stdlib operations, watch handlers, computed getters, and class serializers
+// that need a stable SymbolId in the call graph.
+//
+// The resolver allocates SymbolIds sequentially starting at 0. To guarantee
+// that resolver-assigned IDs NEVER collide with MIR-synthesized IDs, each
+// reserved range uses a base far above any plausible resolver allocation.
+// A previous version used SymbolId(1000..1011), which collided once a program
+// loaded enough plugin bridge functions to push the resolver counter past 1000;
+// the resolver-assigned ID overwrote `symbol_name_map[1011]` and class
+// serializers ended up calling whatever user function happened to land on
+// SymbolId(1011) instead of `__json_quote_string` (fingerprints CODEGEN_F64
+// bf9fc9cf8a8e and CG-LOCAL29 follow-ups).
+
+/// Base for MIR-synthesized stdlib builtins.
+/// Reserves SYNTHETIC_BUILTIN_BASE..SYNTHETIC_BUILTIN_BASE+1024.
+pub const SYNTHETIC_BUILTIN_BASE: usize = 0x4000_0000;
+
+pub const SYM_BUILTIN_STRING_CONCAT: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE);
+pub const SYM_BUILTIN_MATH_POW_F64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 1);
+pub const SYM_BUILTIN_MATH_POW_I32: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 2);
+pub const SYM_BUILTIN_LIST_ALLOCATE: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 3);
+pub const SYM_BUILTIN_LIST_PUSH: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 4);
+pub const SYM_BUILTIN_LIST_PUSH_F64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 5);
+pub const SYM_BUILTIN_LIST_SIZE: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 6);
+pub const SYM_BUILTIN_LIST_ADD: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 7);
+pub const SYM_BUILTIN_LIST_ADD_F64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 8);
+pub const SYM_BUILTIN_INT_TO_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 9);
+pub const SYM_BUILTIN_NUMBER_TO_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 10);
+pub const SYM_BUILTIN_JSON_QUOTE_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 11);
+
+/// Base for MIR-synthesized watch handler IDs (one per watch block target).
+pub const SYM_WATCH_HANDLER_BASE: usize = 0x4001_0000;
+
+/// Base for MIR-synthesized computed-property getter IDs.
+pub const SYM_COMPUTED_GETTER_BASE: usize = 0x4002_0000;
+
+/// Base for MIR-synthesized class JSON serializer IDs.
+pub const SYM_CLASS_SERIALIZER_BASE: usize = 0x4003_0000;
+
 /// Unique identifier for modules
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub usize);

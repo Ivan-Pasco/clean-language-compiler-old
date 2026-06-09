@@ -485,17 +485,17 @@ impl MirBuilder {
 
             let convert_op: MirOperation = match &field.field_type {
                 ConcreteType::String => MirOperation::Call {
-                    function: MirOperand::Function(SymbolId(1011)), // __json_quote_string
+                    function: MirOperand::Function(SYM_BUILTIN_JSON_QUOTE_STRING),
                     arguments: vec![MirOperand::Value(val_vid)],
                 },
                 ConcreteType::Integer
                 | ConcreteType::IntegerSized { .. }
                 | ConcreteType::Boolean => MirOperation::Call {
-                    function: MirOperand::Function(SymbolId(1009)), // int_to_string
+                    function: MirOperand::Function(SYM_BUILTIN_INT_TO_STRING),
                     arguments: vec![MirOperand::Value(val_vid)],
                 },
                 ConcreteType::Number | ConcreteType::NumberSized { .. } => MirOperation::Call {
-                    function: MirOperand::Function(SymbolId(1010)), // number_to_string
+                    function: MirOperand::Function(SYM_BUILTIN_NUMBER_TO_STRING),
                     arguments: vec![MirOperand::Value(val_vid)],
                 },
                 ConcreteType::Class {
@@ -596,7 +596,7 @@ impl MirBuilder {
                     instructions.push(MirInstruction {
                         dest: Some(vid),
                         operation: MirOperation::Call {
-                            function: MirOperand::Function(SymbolId(1000)), // string.concat
+                            function: MirOperand::Function(SYM_BUILTIN_STRING_CONCAT), // string.concat
                             arguments: vec![
                                 MirOperand::Value(prev_vid),
                                 MirOperand::Constant(MirConstant::String(key_idx)),
@@ -643,7 +643,7 @@ impl MirBuilder {
                 instructions.push(MirInstruction {
                     dest: Some(after_frag_vid),
                     operation: MirOperation::Call {
-                        function: MirOperand::Function(SymbolId(1000)),
+                        function: MirOperand::Function(SYM_BUILTIN_STRING_CONCAT),
                         arguments: vec![
                             MirOperand::Value(before_frag_vid),
                             MirOperand::Value(frag.frag_vid),
@@ -671,7 +671,7 @@ impl MirBuilder {
             instructions.push(MirInstruction {
                 dest: Some(result_vid),
                 operation: MirOperation::Call {
-                    function: MirOperand::Function(SymbolId(1000)),
+                    function: MirOperand::Function(SYM_BUILTIN_STRING_CONCAT),
                     arguments: vec![
                         MirOperand::Value(current_vid.unwrap()),
                         MirOperand::Constant(MirConstant::String(close_idx)),
