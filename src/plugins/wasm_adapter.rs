@@ -190,26 +190,34 @@ impl WasmPluginAdapter {
     /// emits for `string` parameters declared in an `external:` block, so
     /// plugins can call these bridges directly without raw (ptr, len) glue.
     fn register_build_state_bridges(&self, linker: &mut Linker<PluginState>) -> Result<()> {
-        // `_build_state_set(key_lp_ptr, value_lp_ptr) -> ()` — stores a value
+        // `_build_state_set(key_lp_ptr, value_lp_ptr) -> i32` — stores a value
         // under a key in the per-build state. Each argument is a single LP
         // pointer (length prefix at ptr, data at ptr+4).
+        //
+        // The `i32` return is a Clean convention quirk: every `external:` block
+        // declaration emits a `(result i32)` import regardless of whether the
+        // Clean-side return type is `void`. The host adapter MUST match the
+        // imported signature, so void-style bridges return `0` here. Same
+        // pattern as clean-server's `_http_respond` and every other host-side
+        // void-return bridge.
         let state_for_set = std::sync::Arc::clone(&self.build_state);
         linker.func_wrap(
             "env",
             "_build_state_set",
-            move |mut caller: Caller<'_, PluginState>, key_ptr: i32, value_ptr: i32| {
+            move |mut caller: Caller<'_, PluginState>, key_ptr: i32, value_ptr: i32| -> i32 {
                 let Some(key) = read_clean_string(&mut caller, key_ptr) else {
-                    return;
+                    return 0;
                 };
                 let Some(value) = read_clean_string(&mut caller, value_ptr) else {
-                    return;
+                    return 0;
                 };
                 if key.is_empty() {
-                    return;
+                    return 0;
                 }
                 if let Ok(mut guard) = state_for_set.lock() {
                     guard.insert(key, value);
                 }
+                0
             },
         )?;
 
