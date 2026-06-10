@@ -222,7 +222,16 @@ impl WasmPluginAdapter {
         )?;
 
         // `_build_state_get(key_lp_ptr) -> string_lp_ptr` — returns an LP
-        // pointer to the value, or an empty LP string if the key is absent.
+        // pointer to the value, or an LP-pointer to a cached empty string if
+        // the key is absent.
+        //
+        // The empty-string return is the hot path during plugin warmup (every
+        // plugin's first lookup hits a cold cache). To avoid bump-allocating a
+        // fresh 4-byte zero block on every miss — which churns the host's
+        // bump pointer and risks aliasing the plugin's own runtime allocations
+        // — we cache the empty LP-string pointer in `PluginState` and reuse it.
+        // See `compiler-build-state-bridge-runtime-trap.md` for the third
+        // bug in this series that prompted the change.
         let state_for_get = std::sync::Arc::clone(&self.build_state);
         linker.func_wrap(
             "env",
@@ -236,10 +245,19 @@ impl WasmPluginAdapter {
                     .ok()
                     .and_then(|g| g.get(&key).cloned())
                     .unwrap_or_default();
+                if value.is_empty() {
+                    if let Some(cached) = caller.data().cached_empty_lp_ptr {
+                        return cached;
+                    }
+                }
                 let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
                     return 0;
                 };
-                write_lp_string(&mut caller, &memory, &value).unwrap_or(0)
+                let ptr = write_lp_string(&mut caller, &memory, &value).unwrap_or(0);
+                if value.is_empty() && ptr != 0 {
+                    caller.data_mut().cached_empty_lp_ptr = Some(ptr);
+                }
+                ptr
             },
         )?;
 
@@ -2851,7 +2869,17 @@ impl WasmPluginAdapter {
                     let model_ptr = self.find_or_write_string(&mut store, &memory, model_name)?;
                     let body_ptr = self.find_or_write_string(&mut store, &memory, sub_body)?;
 
-                    let result_ptr = expand_verb.call(&mut store, (model_ptr, body_ptr))?;
+                    let result_ptr = expand_verb
+                        .call(&mut store, (model_ptr, body_ptr))
+                        .map_err(|e| {
+                            anyhow!(
+                                "{}",
+                                describe_plugin_trap(
+                                    &e,
+                                    &format!("ORM verb dispatch ({}.{})", model_name, verb)
+                                )
+                            )
+                        })?;
 
                     if let Some(error) = store.data().last_error.clone() {
                         return Err(anyhow!("Plugin error: {}", error));
@@ -2939,7 +2967,14 @@ impl WasmPluginAdapter {
                     e
                 )
             })?;
-        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
+        let result_ptr = expand
+            .call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))
+            .map_err(|e| {
+                anyhow!(
+                    "{}",
+                    describe_plugin_trap(&e, &format!("expand_full block `{}`", block_name))
+                )
+            })?;
 
         // Check for errors
         if let Some(error) = store.data().last_error.clone() {
@@ -3093,7 +3128,14 @@ impl WasmPluginAdapter {
                     e
                 )
             })?;
-        let result_ptr = expand.call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))?;
+        let result_ptr = expand
+            .call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))
+            .map_err(|e| {
+                anyhow!(
+                    "{}",
+                    describe_plugin_trap(&e, &format!("expand block `{}`", block_name))
+                )
+            })?;
 
         // Check for errors
         if let Some(error) = store.data().last_error.clone() {
@@ -3454,7 +3496,12 @@ impl WasmPluginAdapter {
                     )
                 })?;
 
-        let result_ptr = slot.call(&mut store, context_ptr)?;
+        let result_ptr = slot.call(&mut store, context_ptr).map_err(|e| {
+            anyhow!(
+                "{}",
+                describe_plugin_trap(&e, &format!("lifecycle slot `{}`", slot_name))
+            )
+        })?;
 
         if let Some(error) = store.data().last_error.clone() {
             return Err(anyhow!(
@@ -3561,7 +3608,12 @@ impl WasmPluginAdapter {
                     )
                 })?;
 
-        let result_ptr = hook.call(&mut store, ())?;
+        let result_ptr = hook.call(&mut store, ()).map_err(|e| {
+            anyhow!(
+                "{}",
+                describe_plugin_trap(&e, &format!("lifecycle hook `{}`", export_name))
+            )
+        })?;
 
         if let Some(error) = store.data().last_error.clone() {
             return Err(anyhow!(
@@ -3895,6 +3947,12 @@ struct PluginState {
     alloc_offset: usize,
     /// Last error reported by plugin
     last_error: Option<String>,
+    /// Pointer to a pre-allocated empty LP-string in plugin memory.
+    /// Lazily initialized on first use by `write_clean_string` / the
+    /// `_build_state_get` bridge so repeated empty returns reuse the same
+    /// stable address instead of bump-allocating a fresh 4-byte zero block
+    /// on every call. See `compiler-build-state-bridge-runtime-trap.md`.
+    cached_empty_lp_ptr: Option<i32>,
 }
 
 impl PluginState {
@@ -3906,6 +3964,7 @@ impl PluginState {
             // For large plugins with many string operations, 512KB should be safe
             alloc_offset: 524288,
             last_error: None,
+            cached_empty_lp_ptr: None,
         }
     }
 
@@ -3920,6 +3979,24 @@ impl PluginState {
 /// Helper to write a UTF-8 string as a Clean length-prefixed allocation
 /// and return its pointer. Wraps `write_clean_string` with a `Result`-style
 /// signature that yields `None` on memory failure rather than a sentinel 0.
+/// Format a wasmtime `.call()` error with the trap kind (when available)
+/// prepended to the default backtrace. Lets the framework see, e.g.,
+/// "out of bounds memory access at wasm function 276" instead of the bare
+/// `<unknown>!<wasm function 276>`. See
+/// `compiler-build-state-bridge-runtime-trap.md`.
+fn describe_plugin_trap(err: &anyhow::Error, context: &str) -> String {
+    let mut prefix = format!("Plugin trap in {}", context);
+    // Walk the error chain for the first wasmtime::Trap. wasmtime returns
+    // the Trap inside an anyhow::Error whose root cause is the Trap value.
+    if let Some(trap) = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<wasmtime::Trap>())
+    {
+        prefix.push_str(&format!(" [{}]", trap));
+    }
+    format!("{}: {}", prefix, err)
+}
+
 fn write_lp_string(caller: &mut Caller<'_, PluginState>, _memory: &Memory, s: &str) -> Option<i32> {
     let ptr = write_clean_string(caller, s.as_bytes());
     if ptr == 0 {
@@ -4066,6 +4143,157 @@ mod tests {
         let ptr3 = state.allocate(50);
         // 524392 + 200 = 524592, aligned to 8 = 524592
         assert_eq!(ptr3, 524592);
+    }
+
+    /// Plugin Contracts v2 §2.5 smoke test — exercises `_build_state_set`
+    /// and `_build_state_get` end-to-end via a hand-crafted WAT module that
+    /// imports them with the contract-mandated signatures.
+    ///
+    /// Guards against the three bugs that hit this surface in 0.30.258–0.30.260:
+    /// param convention (signature-mismatch), return type (return-type-mismatch),
+    /// and runtime trap on empty returns (runtime-trap). Future regressions in
+    /// either bridge or the shared `PluginState` allocator will trip this test
+    /// before a framework AI eats another revert cycle.
+    #[test]
+    fn test_build_state_bridges_round_trip() {
+        use crate::plugins::{new_build_state, BuildState};
+        use wasmtime::{Engine, Linker, Module, Store};
+
+        let engine = Engine::default();
+        let build_state: BuildState = new_build_state();
+
+        // Mini plugin: 64KB memory, LP-strings "k" / "v" / "missing" in the
+        // data section, exports `round_trip` (set + get) and two `missing_*`
+        // exports that probe the empty-string cache path.
+        let wat = r#"
+            (module
+              (import "env" "_build_state_set"
+                (func $set (param i32 i32) (result i32)))
+              (import "env" "_build_state_get"
+                (func $get (param i32) (result i32)))
+              (memory (export "memory") 1)
+              (data (i32.const 16) "\01\00\00\00k")
+              (data (i32.const 32) "\01\00\00\00v")
+              (data (i32.const 48) "\07\00\00\00missing")
+              (func (export "round_trip") (result i32)
+                i32.const 16
+                i32.const 32
+                call $set
+                drop
+                i32.const 16
+                call $get)
+              (func (export "missing_get") (result i32)
+                i32.const 48
+                call $get)
+              (func (export "missing_get_again") (result i32)
+                i32.const 48
+                call $get))
+        "#;
+
+        let module = Module::new(&engine, wat).expect("compile mini plugin");
+        let mut store = Store::new(&engine, PluginState::new());
+        let mut linker: Linker<PluginState> = Linker::new(&engine);
+
+        let state_for_set = std::sync::Arc::clone(&build_state);
+        linker
+            .func_wrap(
+                "env",
+                "_build_state_set",
+                move |mut caller: Caller<'_, PluginState>, key_ptr: i32, value_ptr: i32| -> i32 {
+                    let Some(key) = read_clean_string(&mut caller, key_ptr) else {
+                        return 0;
+                    };
+                    let Some(value) = read_clean_string(&mut caller, value_ptr) else {
+                        return 0;
+                    };
+                    if key.is_empty() {
+                        return 0;
+                    }
+                    if let Ok(mut guard) = state_for_set.lock() {
+                        guard.insert(key, value);
+                    }
+                    0
+                },
+            )
+            .unwrap();
+
+        let state_for_get = std::sync::Arc::clone(&build_state);
+        linker
+            .func_wrap(
+                "env",
+                "_build_state_get",
+                move |mut caller: Caller<'_, PluginState>, key_ptr: i32| -> i32 {
+                    let Some(key) = read_clean_string(&mut caller, key_ptr) else {
+                        return 0;
+                    };
+                    let value = state_for_get
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.get(&key).cloned())
+                        .unwrap_or_default();
+                    if value.is_empty() {
+                        if let Some(cached) = caller.data().cached_empty_lp_ptr {
+                            return cached;
+                        }
+                    }
+                    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory())
+                    else {
+                        return 0;
+                    };
+                    let ptr = write_lp_string(&mut caller, &memory, &value).unwrap_or(0);
+                    if value.is_empty() && ptr != 0 {
+                        caller.data_mut().cached_empty_lp_ptr = Some(ptr);
+                    }
+                    ptr
+                },
+            )
+            .unwrap();
+
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let memory = instance.get_memory(&mut store, "memory").expect("memory");
+
+        // 1. Round-trip: set("k","v") then get("k") returns LP pointer with "v".
+        let round_trip: TypedFunc<(), i32> =
+            instance.get_typed_func(&mut store, "round_trip").unwrap();
+        let result_ptr = round_trip.call(&mut store, ()).expect("round_trip ok");
+        let data = memory.data(&store);
+        let len = u32::from_le_bytes(
+            data[result_ptr as usize..result_ptr as usize + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let bytes = &data[result_ptr as usize + 4..result_ptr as usize + 4 + len];
+        assert_eq!(bytes, b"v", "round_trip should retrieve stored value");
+
+        // 2. Missing key returns a stable empty LP pointer (length 0, not null).
+        let missing_get: TypedFunc<(), i32> =
+            instance.get_typed_func(&mut store, "missing_get").unwrap();
+        let missing_ptr = missing_get.call(&mut store, ()).expect("missing_get ok");
+        assert!(
+            missing_ptr != 0,
+            "missing-key returns valid LP pointer, not 0 sentinel"
+        );
+        let data = memory.data(&store);
+        let len = u32::from_le_bytes(
+            data[missing_ptr as usize..missing_ptr as usize + 4]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(len, 0, "missing-key LP pointer length must be 0");
+
+        // 3. The empty-string pointer is cached and reused across calls.
+        let missing_again: TypedFunc<(), i32> = instance
+            .get_typed_func(&mut store, "missing_get_again")
+            .unwrap();
+        let second_ptr = missing_again
+            .call(&mut store, ())
+            .expect("missing_get_again ok");
+        assert_eq!(
+            second_ptr, missing_ptr,
+            "second empty-string lookup must reuse the cached LP pointer"
+        );
     }
 
     /// Integration test: verify the frame.ui plugin compiled with the CURRENT compiler
