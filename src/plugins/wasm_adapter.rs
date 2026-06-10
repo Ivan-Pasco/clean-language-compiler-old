@@ -183,27 +183,27 @@ impl WasmPluginAdapter {
     /// Plugin Contracts v2 — register the `_build_state_set` /
     /// `_build_state_get` bridges that plugins use to communicate state
     /// across calls within one build. See `lifecycle.md` §2.5.
+    ///
+    /// **Calling convention:** both bridges take **LP-pointers** (single i32
+    /// per string arg pointing to a `[length: 4 bytes LE][data]` allocation
+    /// — `HOST_BRIDGE.md` §"LP-pointer convention"). This matches what Clean
+    /// emits for `string` parameters declared in an `external:` block, so
+    /// plugins can call these bridges directly without raw (ptr, len) glue.
     fn register_build_state_bridges(&self, linker: &mut Linker<PluginState>) -> Result<()> {
-        // `_build_state_set(key_ptr, key_len, value_ptr, value_len)` — stores
-        // a value under a key in the per-build state. Both arguments are raw
-        // pointer+length pairs (the host bridge convention) so plugins can
-        // call this from compiled Clean code without needing the LP wrapper
-        // emitted for return values.
+        // `_build_state_set(key_lp_ptr, value_lp_ptr) -> ()` — stores a value
+        // under a key in the per-build state. Each argument is a single LP
+        // pointer (length prefix at ptr, data at ptr+4).
         let state_for_set = std::sync::Arc::clone(&self.build_state);
         linker.func_wrap(
             "env",
             "_build_state_set",
-            move |mut caller: Caller<'_, PluginState>,
-                  key_ptr: i32,
-                  key_len: i32,
-                  value_ptr: i32,
-                  value_len: i32| {
-                let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+            move |mut caller: Caller<'_, PluginState>, key_ptr: i32, value_ptr: i32| {
+                let Some(key) = read_clean_string(&mut caller, key_ptr) else {
                     return;
                 };
-                let data = memory.data(&caller);
-                let key = read_raw_string(data, key_ptr, key_len).unwrap_or_default();
-                let value = read_raw_string(data, value_ptr, value_len).unwrap_or_default();
+                let Some(value) = read_clean_string(&mut caller, value_ptr) else {
+                    return;
+                };
                 if key.is_empty() {
                     return;
                 }
@@ -213,29 +213,24 @@ impl WasmPluginAdapter {
             },
         )?;
 
-        // `_build_state_get(key_ptr, key_len) -> string_ptr` — returns a
-        // length-prefixed string pointer to the value, or an empty string if
-        // the key is absent.
+        // `_build_state_get(key_lp_ptr) -> string_lp_ptr` — returns an LP
+        // pointer to the value, or an empty LP string if the key is absent.
         let state_for_get = std::sync::Arc::clone(&self.build_state);
         linker.func_wrap(
             "env",
             "_build_state_get",
-            move |mut caller: Caller<'_, PluginState>, key_ptr: i32, key_len: i32| -> i32 {
-                let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+            move |mut caller: Caller<'_, PluginState>, key_ptr: i32| -> i32 {
+                let Some(key) = read_clean_string(&mut caller, key_ptr) else {
                     return 0;
-                };
-                let key = {
-                    let data = memory.data(&caller);
-                    match read_raw_string(data, key_ptr, key_len) {
-                        Some(k) => k,
-                        None => return 0,
-                    }
                 };
                 let value = state_for_get
                     .lock()
                     .ok()
                     .and_then(|g| g.get(&key).cloned())
                     .unwrap_or_default();
+                let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                    return 0;
+                };
                 write_lp_string(&mut caller, &memory, &value).unwrap_or(0)
             },
         )?;
@@ -3912,28 +3907,6 @@ impl PluginState {
         self.alloc_offset = (self.alloc_offset + size + 7) & !7;
         ptr
     }
-}
-
-/// Helper to read a Clean string from WASM memory
-/// Clean strings are stored as [4-byte length][data]
-/// Helper to read a UTF-8 string from WASM memory using the raw ptr+len
-/// convention (host bridge style). Used by `_build_state_set` whose two
-/// string params are passed as `(ptr, len)` pairs rather than as Clean LP
-/// pointers — that's how the compiler emits string arguments for host
-/// bridge functions declared with `expand_strings = true`.
-fn read_raw_string(data: &[u8], ptr: i32, len: i32) -> Option<String> {
-    let start = ptr as usize;
-    let length = len as usize;
-    if length == 0 {
-        return Some(String::new());
-    }
-    let end = start.checked_add(length)?;
-    if end > data.len() {
-        return None;
-    }
-    std::str::from_utf8(&data[start..end])
-        .ok()
-        .map(String::from)
 }
 
 /// Helper to write a UTF-8 string as a Clean length-prefixed allocation
