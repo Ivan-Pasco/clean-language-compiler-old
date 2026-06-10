@@ -1190,10 +1190,10 @@ async fn handle_build(
             Err(e) => {
                 // Hard error from the orchestrator — fail the build.
                 eprintln!("error: artifact orchestration failed: {}", e);
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("artifact orchestration failed: {}", e),
-                )));
+                return Err(Box::new(std::io::Error::other(format!(
+                    "artifact orchestration failed: {}",
+                    e
+                ))));
             }
         }
     } else {

@@ -76,7 +76,7 @@ impl std::fmt::Display for ArtifactError {
 /// - `"has_client_init"` — any plugin declares the `client_init` lifecycle slot.
 /// - `"has_lifecycle.<slot>"` — any plugin declares the named slot
 ///   (slots: `module_helpers`, `program_init`, `client_init`, `server_init`,
-///    `per_request`, `artifact_emitters`).
+///   `per_request`, `artifact_emitters`).
 /// - `"has_artifact.<name>"` — an artifact with the given `name` has already
 ///   been emitted earlier in the orchestration pass.
 ///

@@ -1220,10 +1220,10 @@ mod tests {
         // Order matches dispatch order: program_init first, then client_init.
         let extract_marker = |stmt: &Statement| -> String {
             match stmt {
-                Statement::Print { expression, .. } => match expression {
-                    Expression::Literal(Value::String(s)) => s.clone(),
-                    _ => String::new(),
-                },
+                Statement::Print {
+                    expression: Expression::Literal(Value::String(s)),
+                    ..
+                } => s.clone(),
                 _ => String::new(),
             }
         };
