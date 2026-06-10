@@ -63,7 +63,35 @@ impl WasmPluginLoader {
     ///
     /// # Returns
     /// A PluginRegistry with all requested plugins loaded, including bridge functions
+    /// Plugin Contracts v2 — load plugins and share a per-build state
+    /// container across all of them. The container threads through each
+    /// `WasmPluginAdapter` so the `_build_state_set` / `_build_state_get`
+    /// bridge stubs operate on a single keystore. The same container is
+    /// stored on the returned `PluginRegistry` (via `set_build_state`) so the
+    /// build orchestrator can snapshot it for the manifest at end of build.
+    /// See `contracts/lifecycle.md` §2.5.
+    pub fn load_plugins_with_build_state(
+        &mut self,
+        plugin_names: &[String],
+        build_state: super::BuildState,
+    ) -> Result<PluginRegistry> {
+        let mut registry = self.load_plugins_inner(plugin_names, Some(build_state.clone()))?;
+        registry.set_build_state(build_state);
+        Ok(registry)
+    }
+
+    /// Backward-compatible plugin loader — creates a fresh, isolated build
+    /// state for the returned registry. Callers that want to surface build
+    /// state into the manifest should use `load_plugins_with_build_state`.
     pub fn load_plugins(&mut self, plugin_names: &[String]) -> Result<PluginRegistry> {
+        self.load_plugins_inner(plugin_names, None)
+    }
+
+    fn load_plugins_inner(
+        &mut self,
+        plugin_names: &[String],
+        shared_state: Option<super::BuildState>,
+    ) -> Result<PluginRegistry> {
         let mut builder = PluginRegistry::builder();
 
         for plugin_name in plugin_names {
@@ -110,12 +138,20 @@ impl WasmPluginLoader {
 
             // Load the plugin adapter
             let module = self.load_wasm_module(&wasm_path)?;
-            let adapter = WasmPluginAdapter::new(
+            let mut adapter = WasmPluginAdapter::new(
                 plugin_name.to_string(),
                 manifest,
                 module,
                 self.engine.clone(),
             )?;
+            // Plugin Contracts v2 — if a shared build state was supplied,
+            // wire it into the adapter so its `_build_state_*` bridge stubs
+            // operate on the registry-wide keystore. Re-linking is required
+            // because the linker captures the Arc by clone at setup time.
+            // See contracts/lifecycle.md §2.5.
+            if let Some(ref shared) = shared_state {
+                adapter.set_build_state(shared.clone())?;
+            }
 
             // Call the lifecycle hooks and update the registrations that were
             // added above with the actual values returned by the WASM module.

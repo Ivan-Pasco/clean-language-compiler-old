@@ -1102,63 +1102,258 @@ async fn handle_build(
     })?;
 
     // Write output
-    fs::write(&output_file, wasm_binary)?;
+    fs::write(&output_file, &wasm_binary)?;
 
     if !output_config.quiet {
         println!("Build successful! Generated {output_file}");
     }
 
-    // BUILD_FRONTEND: produce `frontend.wasm` alongside the server output when the
-    // project contains any component with an `events:` block (the spec signal for
-    // browser hydration per frame-ui-semantics.md §UI-B009).
-    if project_uses_client_hydration(&input) {
-        let frontend_path = frontend_output_path(&output_file);
+    // Collect extra artifacts produced by the build (e.g. frontend.wasm under
+    // BUILD_FRONTEND). They are emitted to disk in this block and recorded
+    // into the build-manifest.json at the end.
+    let mut extra_artifacts: Vec<(
+        String,
+        String,
+        &'static str,
+        bool,
+        &'static str,
+        Vec<u8>,
+        Option<String>,
+    )> = Vec::new();
 
-        if !output_config.quiet {
-            println!(
-                "Client hydration detected — building {}",
-                frontend_path.display()
-            );
-        }
+    // Plugin Contracts v2 — declarative artifact orchestration.
+    // If any loaded plugin declares `[[artifacts]]` entries in its plugin.toml,
+    // those entries drive the artifact pass. The legacy `events:` source-content
+    // detection is only used as the fallback path for projects whose plugins
+    // have not yet migrated. See contracts/artifacts.md §7 and
+    // contracts/migration.md §4.
+    let loaded_manifests = clean_language_compiler::discover_plugin_manifests(&input);
+    let any_plugin_declares_artifacts = loaded_manifests.values().any(|m| !m.artifacts.is_empty());
 
-        // Reuse the same library paths the server build saw.
-        let lib_paths_clone: Vec<PathBuf> = Path::new(&input)
+    if any_plugin_declares_artifacts {
+        let main_wasm_path = PathBuf::from(&output_file);
+        let output_dir = main_wasm_path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| vec![p.to_path_buf()])
-            .unwrap_or_default();
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
 
-        match clean_language_compiler::compile_multi_file_client_mode(
-            &input,
-            lib_paths_clone,
+        let ctx = clean_language_compiler::plugin_artifacts::EmitContext {
+            entry_path: Path::new(&input),
+            output_dir: &output_dir,
             opt_level,
-        ) {
-            Ok(frontend_bytes) => {
-                let bytes_len = frontend_bytes.len();
-                fs::write(&frontend_path, &frontend_bytes)?;
-                if !output_config.quiet {
-                    println!(
-                        "Client build successful! Generated {} ({} bytes)",
-                        frontend_path.display(),
-                        bytes_len
-                    );
+            in_nested_build: false,
+        };
+
+        match clean_language_compiler::plugin_artifacts::orchestrate(&loaded_manifests, &ctx) {
+            Ok((emitted, warnings)) => {
+                for w in warnings {
+                    if !output_config.quiet {
+                        eprintln!("warning: {}", w);
+                    }
+                }
+                for art in emitted {
+                    let resolved =
+                        clean_language_compiler::plugin_artifacts::resolve_output_relative(
+                            // The orchestrator already resolved path_relative against output_dir.
+                            // We need the full disk path to write the bytes.
+                            &format!("{{output_dir}}/{}", art.path_relative),
+                            &output_dir,
+                        );
+                    if let Some(parent) = resolved.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::write(&resolved, &art.bytes)?;
+                    if !output_config.quiet {
+                        println!(
+                            "Artifact `{}` produced by `{}` → {} ({} bytes)",
+                            art.name,
+                            art.source_plugin,
+                            resolved.display(),
+                            art.bytes.len()
+                        );
+                    }
+                    extra_artifacts.push((
+                        art.name,
+                        art.path_relative,
+                        // The static string slots in extra_artifacts predate v2
+                        // — we leak per-instance Strings into &'static str via
+                        // Box::leak. Acceptable for a build-time path.
+                        Box::leak(art.purpose.into_boxed_str()),
+                        art.public,
+                        Box::leak(art.content_type.into_boxed_str()),
+                        art.bytes,
+                        Some(art.source_plugin),
+                    ));
                 }
             }
-            Err(errors) => {
-                // The server WASM is on disk; surface the client failure as a
-                // warning so the rest of the pipeline can proceed.
-                eprintln!(
-                    "Client build skipped: failed to compile {}",
+            Err(e) => {
+                // Hard error from the orchestrator — fail the build.
+                eprintln!("error: artifact orchestration failed: {}", e);
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("artifact orchestration failed: {}", e),
+                )));
+            }
+        }
+    } else {
+        // Legacy fallback: BUILD_FRONTEND source-content detection. Removed
+        // in Phase D once all framework plugins have migrated to v2 [[artifacts]].
+        if project_uses_client_hydration(&input) {
+            let frontend_path = frontend_output_path(&output_file);
+
+            if !output_config.quiet {
+                println!(
+                    "Client hydration detected — building {}",
                     frontend_path.display()
                 );
-                for error in &errors {
-                    eprintln!("   {}", error);
+            }
+
+            let lib_paths_clone: Vec<PathBuf> = Path::new(&input)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| vec![p.to_path_buf()])
+                .unwrap_or_default();
+
+            match clean_language_compiler::compile_multi_file_client_mode(
+                &input,
+                lib_paths_clone,
+                opt_level,
+            ) {
+                Ok(frontend_bytes) => {
+                    let bytes_len = frontend_bytes.len();
+                    fs::write(&frontend_path, &frontend_bytes)?;
+                    let frontend_name = frontend_path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("frontend.wasm")
+                        .to_string();
+                    extra_artifacts.push((
+                        frontend_name.clone(),
+                        frontend_name,
+                        "client_hydration",
+                        true,
+                        "application/wasm",
+                        frontend_bytes,
+                        None,
+                    ));
+                    if !output_config.quiet {
+                        println!(
+                            "Client build successful! Generated {} ({} bytes)",
+                            frontend_path.display(),
+                            bytes_len
+                        );
+                    }
+                }
+                Err(errors) => {
+                    eprintln!(
+                        "Client build skipped: failed to compile {}",
+                        frontend_path.display()
+                    );
+                    for error in &errors {
+                        eprintln!("   {}", error);
+                    }
                 }
             }
         }
     }
 
+    write_build_manifest(
+        Path::new(&output_file),
+        &wasm_binary,
+        extra_artifacts,
+        Some(Path::new(&input)),
+        output_config.quiet,
+    );
+
     Ok(())
+}
+
+/// Build a manifest describing every artifact this build produced and write
+/// it as a sibling of `main_wasm_path`. Plugin Contracts v2 —
+/// `foundation/spec/plugins/contracts/artifacts.md` §5. Emits unconditionally
+/// so hosts can consume the manifest before any plugin opts into v2.
+///
+/// `extra_artifacts` carries additional artifacts emitted alongside the main
+/// WASM (e.g. `frontend.wasm`) as `(name, path_relative, purpose, public,
+/// content_type, bytes, source_plugin)` tuples.
+///
+/// `entry_path` is the .cln file the build was invoked on; it's used to
+/// re-discover plugins and extract their callback contracts for the
+/// `callbacks` field per contracts/bridge-host-classes.md §4.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn write_build_manifest(
+    main_wasm_path: &Path,
+    main_wasm_bytes: &[u8],
+    extra_artifacts: Vec<(
+        String,
+        String,
+        &'static str,
+        bool,
+        &'static str,
+        Vec<u8>,
+        Option<String>,
+    )>,
+    entry_path: Option<&Path>,
+    quiet: bool,
+) {
+    let mut manifest =
+        clean_language_compiler::build_manifest::BuildManifest::new(env!("CARGO_PKG_VERSION"));
+    let main_name = main_wasm_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("app.wasm")
+        .to_string();
+    manifest.add_artifact(
+        main_name.clone(),
+        main_name,
+        "main_module",
+        false,
+        "application/wasm",
+        main_wasm_bytes,
+        None,
+    );
+    for (name, path_relative, purpose, public, content_type, bytes, source_plugin) in
+        extra_artifacts
+    {
+        manifest.add_artifact(
+            name,
+            path_relative,
+            purpose,
+            public,
+            content_type,
+            &bytes,
+            source_plugin,
+        );
+    }
+    // Resolve callback contracts so hosts can read the dispatch mapping
+    // (e.g. `_ui_render_page` → component_tag_render → frame.ui)
+    // without re-parsing every plugin.toml. Empty when no plugin declares
+    // callbacks; the plugin validation already ran in the compile path.
+    if let Some(entry) = entry_path {
+        for cb in clean_language_compiler::discover_callback_contracts(entry) {
+            manifest.add_callback(cb);
+        }
+        // Plugin Contracts v2 §2.5 — snapshot the per-build state for
+        // hosts. Phase C limitation: populated from a fresh registry; will
+        // reflect compile-time writes once registry threading lands.
+        manifest.set_build_state(clean_language_compiler::discover_build_state_snapshot(
+            entry,
+        ));
+    }
+    match manifest.write_alongside(main_wasm_path) {
+        Ok(path) => {
+            if !quiet {
+                println!("Build manifest: {}", path.display());
+            }
+        }
+        Err(e) => {
+            // Manifest emission must not fail the build; clean-server gracefully
+            // falls back to the v1 path-probing behavior when the manifest is
+            // absent (contracts/migration.md §4 phase B).
+            eprintln!("warning: failed to write build manifest: {}", e);
+        }
+    }
 }
 
 /// Returns the path where `frontend.wasm` should be written, as a sibling of
@@ -1322,6 +1517,17 @@ async fn handle_compile(
     }
 
     fs::write(&output, &wasm_binary)?;
+
+    // Plugin Contracts v2 — emit build-manifest.json alongside the WASM so
+    // hosts can locate artifacts by purpose rather than path coincidence.
+    // See foundation/spec/plugins/contracts/artifacts.md §5.
+    write_build_manifest(
+        Path::new(&output),
+        &wasm_binary,
+        Vec::new(),
+        Some(Path::new(&input)),
+        output_config.quiet,
+    );
 
     println!("Successfully compiled to {output}");
 

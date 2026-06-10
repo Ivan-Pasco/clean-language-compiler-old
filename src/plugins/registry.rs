@@ -186,6 +186,11 @@ pub struct PluginRegistry {
     /// deprecated mutable API (which lacks manifest information) are absent from
     /// this map and are therefore exempt from permission checking.
     plugin_permissions: HashMap<String, HashSet<String>>,
+    /// Plugin Contracts v2 — shared per-build keystore. Bridge stubs in the
+    /// loaded plugins' WASM sandboxes mutate this store; the build orchestrator
+    /// snapshots it into `dist/build-manifest.json` at end of build.
+    /// See `contracts/lifecycle.md` §2.5.
+    build_state: super::BuildState,
 }
 
 impl Default for PluginRegistry {
@@ -193,6 +198,40 @@ impl Default for PluginRegistry {
         Self::builder()
             .build()
             .expect("Default registry should build")
+    }
+}
+
+/// Tag every function and class in a plugin expansion with the given marker
+/// as its `location.file`. Used to mark v2 `module_helpers_are_roots` output
+/// so the BFS reachability scan in `mir_codegen` seeds them as roots.
+/// See foundation/spec/plugins/contracts/lifecycle.md §3.1.
+fn retag_expansion_for_v2_root(expansion: &mut super::PluginExpansion, marker: &str) {
+    fn ensure_marker(loc: &mut Option<crate::ast::SourceLocation>, marker: &str) {
+        match loc {
+            Some(l) => l.file = marker.to_string(),
+            None => {
+                *loc = Some(crate::ast::SourceLocation {
+                    line: 0,
+                    column: 0,
+                    file: marker.to_string(),
+                    byte_start: None,
+                    byte_end: None,
+                });
+            }
+        }
+    }
+
+    for func in &mut expansion.functions {
+        ensure_marker(&mut func.location, marker);
+    }
+    if let Some(start_fn) = expansion.start_function.as_mut() {
+        ensure_marker(&mut start_fn.location, marker);
+    }
+    for class in &mut expansion.classes {
+        ensure_marker(&mut class.location, marker);
+        for method in &mut class.methods {
+            ensure_marker(&mut method.location, marker);
+        }
     }
 }
 
@@ -218,6 +257,7 @@ impl PluginRegistry {
     /// Create a new empty plugin registry
     #[deprecated(note = "Use PluginRegistry::builder() instead")]
     pub fn new() -> Self {
+        #[allow(deprecated)]
         Self {
             handlers: HashMap::new(),
             expression_handlers: HashMap::new(),
@@ -226,6 +266,7 @@ impl PluginRegistry {
             manifests: HashMap::new(),
             registrations: PluginRegistrations::default(),
             plugin_permissions: HashMap::new(),
+            build_state: super::new_build_state(),
         }
     }
 
@@ -458,18 +499,40 @@ impl PluginRegistry {
     /// Plugins that do not handle `"__preamble"` return empty output — this is safe.
     /// Results are returned in registration order; the caller is responsible for
     /// deduplicating functions before merging into the AST.
+    ///
+    /// **v2 (contracts/lifecycle.md §3.1):** If a plugin's manifest declares
+    /// `lifecycle.module_helpers_are_roots = true`, every function and class in
+    /// that plugin's preamble is tagged with `PLUGIN_OUTPUT_V2_ROOT_MARKER`
+    /// (instead of the default `PLUGIN_OUTPUT_MARKER`). The BFS reachability
+    /// scan then seeds those functions as roots, closing GEN003 for plugins
+    /// (e.g. frame.server) whose helpers are called from generated route
+    /// handler code the BFS cannot statically trace.
     pub fn expand_preambles(&self) -> Vec<super::PluginExpansion> {
+        use crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
+
         let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
         for plugin in self.handlers.values() {
-            if seen.insert(plugin.name().to_string()) {
+            let plugin_name = plugin.name();
+            if seen.insert(plugin_name.to_string()) {
                 let preamble_block = crate::plugins::FrameworkBlock {
                     name: "__preamble".to_string(),
                     content: String::new(),
                     attributes: Vec::new(),
                     location: None,
                 };
-                if let Ok(expansion) = plugin.expand_full(&preamble_block) {
+                if let Ok(mut expansion) = plugin.expand_full(&preamble_block) {
+                    // v2 opt-in: tag preamble output with the v2 root marker so
+                    // the BFS treats it as a root. Looked up from the manifest
+                    // (set when the plugin was loaded from plugin.toml).
+                    let is_v2_root_helper = self
+                        .manifests
+                        .get(plugin_name)
+                        .map(|m| m.lifecycle.module_helpers_are_roots)
+                        .unwrap_or(false);
+                    if is_v2_root_helper {
+                        retag_expansion_for_v2_root(&mut expansion, PLUGIN_OUTPUT_V2_ROOT_MARKER);
+                    }
                     results.push(expansion);
                 }
             }
@@ -553,6 +616,131 @@ impl PluginRegistry {
     /// Get all loaded plugin manifests
     ///
     /// Returns the full manifests for enforcement rules, path detection, etc.
+    /// Plugin Contracts v2 — replace the registry's per-build state container.
+    /// Called by `WasmPluginLoader::load_plugins_with_build_state` after
+    /// every adapter has been wired so the registry can hand the same `Arc`
+    /// to the build orchestrator at end of build.
+    /// See `contracts/lifecycle.md` §2.5.
+    pub fn set_build_state(&mut self, state: super::BuildState) {
+        self.build_state = state;
+    }
+
+    /// Plugin Contracts v2 — borrow the shared per-build state for snapshotting
+    /// into the build context or `build-manifest.json`.
+    pub fn build_state(&self) -> &super::BuildState {
+        &self.build_state
+    }
+
+    /// Plugin Contracts v2 — take a snapshot of the build state as a plain
+    /// BTreeMap for serialization into `build-manifest.json`.
+    pub fn build_state_snapshot(&self) -> std::collections::BTreeMap<String, String> {
+        self.build_state
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// Plugin Contracts v2 — true when any loaded plugin's manifest declares
+    /// the given lifecycle slot. Used by the build orchestration to decide
+    /// whether a slot's downstream effects should fire (e.g. preserving the
+    /// expander's client_init contribution instead of clearing client _start).
+    /// See contracts/lifecycle.md §3.
+    pub fn any_plugin_declares_lifecycle_slot(&self, slot_name: &str) -> bool {
+        self.manifests.values().any(|m| match slot_name {
+            "module_helpers" => m.lifecycle.module_helpers.is_some(),
+            "program_init" => m.lifecycle.program_init.is_some(),
+            "client_init" => m.lifecycle.client_init.is_some(),
+            "server_init" => m.lifecycle.server_init.is_some(),
+            "per_request" => m.lifecycle.per_request.is_some(),
+            "artifact_emitters" => m.lifecycle.artifact_emitters.is_some(),
+            _ => false,
+        })
+    }
+
+    /// Plugin Contracts v2 — invoke a lifecycle slot across every registered
+    /// plugin in load order and return the contributed code per plugin.
+    /// See foundation/spec/plugins/contracts/lifecycle.md §2, §3.
+    ///
+    /// The build context (target, paths, prior artifacts, snapshot of
+    /// per-build state) is passed verbatim to each plugin. The caller is
+    /// responsible for taking a fresh state snapshot before each slot
+    /// dispatch — see `BuildContext::snapshot_build_state`.
+    ///
+    /// Plugins that have not declared the slot in their manifest contribute
+    /// empty expansions. Failed slot invocations are logged and skipped — the
+    /// build continues with whatever the other plugins contributed.
+    pub fn invoke_lifecycle_slot(
+        &self,
+        slot_name: &str,
+        context: &super::BuildContext,
+    ) -> Vec<super::PluginExpansion> {
+        let mut seen = std::collections::HashSet::new();
+        let mut results = Vec::new();
+        for plugin in self.handlers.values() {
+            let plugin_name = plugin.name();
+            if !seen.insert(plugin_name.to_string()) {
+                continue;
+            }
+            // Skip plugins that did not declare the slot. Avoids spinning up
+            // a wasmtime instance for every (plugin, slot) pair.
+            let declared = self
+                .manifests
+                .get(plugin_name)
+                .map(|m| match slot_name {
+                    "module_helpers" => m.lifecycle.module_helpers.is_some(),
+                    "program_init" => m.lifecycle.program_init.is_some(),
+                    "client_init" => m.lifecycle.client_init.is_some(),
+                    "server_init" => m.lifecycle.server_init.is_some(),
+                    "per_request" => m.lifecycle.per_request.is_some(),
+                    "artifact_emitters" => m.lifecycle.artifact_emitters.is_some(),
+                    _ => false,
+                })
+                .unwrap_or(false);
+            if !declared {
+                continue;
+            }
+            match plugin.invoke_lifecycle_slot(slot_name, context) {
+                Ok(expansion) => results.push(expansion),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "plugin_contracts_v2",
+                        plugin = %plugin_name,
+                        slot = %slot_name,
+                        error = %e,
+                        "lifecycle slot invocation failed; continuing with empty contribution"
+                    );
+                }
+            }
+        }
+        results
+    }
+
+    /// Plugin Contracts v2 — return resolved callback contracts from every
+    /// loaded plugin's `[bridge.functions.callback]` blocks. Used to populate
+    /// the `callbacks` field in `build-manifest.json` so hosts can read the
+    /// dispatch contract without re-parsing every plugin.toml.
+    /// See foundation/spec/plugins/contracts/bridge-host-classes.md §4.
+    pub fn callback_contracts(&self) -> Vec<crate::build_manifest::CallbackContract> {
+        let mut out = Vec::new();
+        for (declaring_plugin, manifest) in &self.manifests {
+            for bridge in &manifest.bridge.functions {
+                let Some(cb) = &bridge.callback else {
+                    continue;
+                };
+                out.push(crate::build_manifest::CallbackContract {
+                    bridge: bridge.name.clone(),
+                    purpose: cb.purpose.clone(),
+                    plugin_target: cb.plugin_target.clone(),
+                    discovery: cb.discovery.clone(),
+                    export_pattern: cb.export_pattern.clone(),
+                    fallback: cb.fallback.clone(),
+                    declared_by_plugin: declaring_plugin.clone(),
+                });
+            }
+        }
+        out
+    }
+
     pub fn loaded_manifests(&self) -> &HashMap<String, PluginManifest> {
         &self.manifests
     }
@@ -1235,12 +1423,62 @@ impl PluginRegistryBuilder {
             registered_plugins.push(plugin_name);
         }
 
+        // Plugin Contracts v2 — validate callback contracts.
+        // For each [bridge.functions.callback] block:
+        //   1. plugin_target must reference a loaded plugin (PLUGIN-CALLBACK-TARGET-MISSING).
+        //   2. (bridge_function, purpose) must not collide across plugins (PLUGIN-CALLBACK-CONFLICT).
+        // See foundation/spec/plugins/contracts/bridge-host-classes.md §4.
+        //
+        // "Loaded" includes plugins that supplied a manifest via `add_manifest`
+        // even without a corresponding FrameworkPlugin object. The production
+        // path through WasmPluginLoader populates both sets in lockstep, but
+        // manifest-only setups (tests, lifecycle slot exploration) must still
+        // pass validation.
+        let loaded_names: std::collections::HashSet<&str> = registered_plugins
+            .iter()
+            .map(|s| s.as_str())
+            .chain(self.manifests.keys().map(|s| s.as_str()))
+            .collect();
+        let mut seen_callbacks: HashMap<(String, String), String> = HashMap::new();
+        for (declaring_plugin, manifest) in &self.manifests {
+            for bridge in &manifest.bridge.functions {
+                let Some(cb) = &bridge.callback else {
+                    continue;
+                };
+                // §4 #1 — target plugin must be loaded.
+                if !loaded_names.contains(cb.plugin_target.as_str()) {
+                    return Err(PluginError::ValidationFailed {
+                        plugin_name: declaring_plugin.clone(),
+                        message: format!(
+                            "PLUGIN-CALLBACK-TARGET-MISSING: bridge `{}` declares callback with plugin_target = `{}`, but that plugin is not loaded. Add it to plugins: in app.cln or remove the callback declaration.",
+                            bridge.name, cb.plugin_target
+                        ),
+                        location: None,
+                    });
+                }
+                // §4 #3 — no two callbacks may share (bridge, purpose).
+                let key = (bridge.name.clone(), cb.purpose.clone());
+                if let Some(prior) = seen_callbacks.get(&key) {
+                    return Err(PluginError::ValidationFailed {
+                        plugin_name: declaring_plugin.clone(),
+                        message: format!(
+                            "PLUGIN-CALLBACK-CONFLICT: bridge `{}` purpose `{}` is declared by both `{}` and `{}`. A given (bridge, purpose) pair may have at most one callback contract.",
+                            bridge.name, cb.purpose, prior, declaring_plugin
+                        ),
+                        location: None,
+                    });
+                }
+                seen_callbacks.insert(key, declaring_plugin.clone());
+            }
+        }
+
         Ok(PluginRegistry {
             handlers,
             expression_handlers,
             registered_plugins,
             bridge_functions: self.bridge_functions,
             manifests: self.manifests,
+            build_state: super::new_build_state(),
             registrations: self.registrations,
             plugin_permissions: self.plugin_permissions,
         })
@@ -1342,6 +1580,7 @@ mod tests {
                     module: "env".to_string(),
                     description: Some("Execute SELECT query".to_string()),
                     expand_strings: true,
+                    ..Default::default()
                 },
                 BridgeFunction {
                     name: "_db_execute".to_string(),
@@ -1350,6 +1589,7 @@ mod tests {
                     module: "env".to_string(),
                     description: Some("Execute INSERT/UPDATE/DELETE".to_string()),
                     expand_strings: true,
+                    ..Default::default()
                 },
             ],
         };
@@ -1404,6 +1644,7 @@ mod tests {
                         module: "env".to_string(),
                         description: None,
                         expand_strings: true,
+                        ..Default::default()
                     },
                     BridgeFunction {
                         name: "_db_execute".to_string(),
@@ -1412,6 +1653,7 @@ mod tests {
                         module: "env".to_string(),
                         description: None,
                         expand_strings: true,
+                        ..Default::default()
                     },
                 ],
             },
@@ -1459,6 +1701,8 @@ mod tests {
             enforcement: Default::default(),
             memory: Default::default(),
             build: Default::default(),
+            lifecycle: Default::default(),
+            artifacts: Vec::new(),
         };
 
         let registry = PluginRegistryBuilder::new()
@@ -1513,6 +1757,7 @@ mod tests {
                         module: "env".to_string(),
                         description: None,
                         expand_strings: true,
+                        ..Default::default()
                     },
                     BridgeFunction {
                         name: "_req_body".to_string(),
@@ -1521,6 +1766,7 @@ mod tests {
                         module: "env".to_string(),
                         description: None,
                         expand_strings: false,
+                        ..Default::default()
                     },
                 ],
             },
@@ -1537,6 +1783,8 @@ mod tests {
             enforcement: Default::default(),
             memory: Default::default(),
             build: Default::default(),
+            lifecycle: Default::default(),
+            artifacts: Vec::new(),
         };
 
         let registry = PluginRegistryBuilder::new()
@@ -1613,6 +1861,8 @@ mod tests {
             enforcement: Default::default(),
             memory: Default::default(),
             build: Default::default(),
+            lifecycle: Default::default(),
+            artifacts: Vec::new(),
         };
 
         let registry_with_assemble = PluginRegistryBuilder::new()
@@ -1623,6 +1873,317 @@ mod tests {
         assert!(
             registry_with_assemble.has_wasm_assemble_hook(),
             "registry with frame.ui assemble export must return true"
+        );
+    }
+
+    /// Helpers shared across the v2 callback validation tests below.
+    mod v2_callback_helpers {
+        use crate::plugins::plugin_abi::{
+            BridgeCallback, BridgeFunction, PluginBridge, PluginCompatibility, PluginExports,
+            PluginHandles, PluginInfo, PluginLanguage, PluginManifest,
+        };
+
+        pub(super) fn manifest_with_callback(
+            plugin_name: &str,
+            bridge_name: &str,
+            callback: Option<BridgeCallback>,
+        ) -> PluginManifest {
+            PluginManifest {
+                plugin: PluginInfo {
+                    name: plugin_name.to_string(),
+                    version: "1.0.0".to_string(),
+                    description: String::new(),
+                    author: String::new(),
+                },
+                compatibility: PluginCompatibility::default(),
+                handles: PluginHandles {
+                    blocks: vec![plugin_name.replace('.', "_")],
+                    expressions: Vec::new(),
+                },
+                exports: PluginExports::default(),
+                bridge: PluginBridge {
+                    functions: vec![BridgeFunction {
+                        name: bridge_name.to_string(),
+                        params: vec!["string".to_string()],
+                        returns: "string".to_string(),
+                        module: "env".to_string(),
+                        description: None,
+                        expand_strings: true,
+                        callback,
+                        ..Default::default()
+                    }],
+                },
+                language: PluginLanguage::default(),
+                ai: Default::default(),
+                paths: Default::default(),
+                enforcement: Default::default(),
+                memory: Default::default(),
+                build: Default::default(),
+                lifecycle: Default::default(),
+                artifacts: Vec::new(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_v2_callback_validation_accepts_loaded_plugin_target() {
+        use crate::plugins::plugin_abi::BridgeCallback;
+        use v2_callback_helpers::manifest_with_callback;
+
+        let frame_server = manifest_with_callback(
+            "frame.server",
+            "_ui_render_page",
+            Some(BridgeCallback {
+                purpose: "component_tag_render".to_string(),
+                plugin_target: "frame.ui".to_string(),
+                discovery: "exports_matching".to_string(),
+                export_pattern: Some("{tagname}_render".to_string()),
+                fallback: "passthrough".to_string(),
+            }),
+        );
+        let frame_ui = manifest_with_callback("frame.ui", "_ui_event", None);
+
+        let result = PluginRegistryBuilder::new()
+            .add_manifest("frame.server".to_string(), frame_server)
+            .add_manifest("frame.ui".to_string(), frame_ui)
+            .build();
+
+        assert!(result.is_ok(), "valid callback target must build cleanly");
+    }
+
+    #[test]
+    fn test_v2_callback_validation_rejects_missing_plugin_target() {
+        use crate::plugins::plugin_abi::BridgeCallback;
+        use v2_callback_helpers::manifest_with_callback;
+
+        let frame_server = manifest_with_callback(
+            "frame.server",
+            "_ui_render_page",
+            Some(BridgeCallback {
+                purpose: "component_tag_render".to_string(),
+                plugin_target: "frame.does_not_exist".to_string(),
+                discovery: "exports_matching".to_string(),
+                export_pattern: Some("{tagname}_render".to_string()),
+                fallback: "passthrough".to_string(),
+            }),
+        );
+
+        let err = PluginRegistryBuilder::new()
+            .add_manifest("frame.server".to_string(), frame_server)
+            .build()
+            .expect_err("missing plugin_target must fail to build");
+
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("PLUGIN-CALLBACK-TARGET-MISSING"),
+            "diagnostic must cite the error code; got: {}",
+            msg
+        );
+        assert!(msg.contains("frame.does_not_exist"));
+    }
+
+    #[test]
+    fn test_v2_callback_validation_rejects_conflict_across_plugins() {
+        use crate::plugins::plugin_abi::BridgeCallback;
+        use v2_callback_helpers::manifest_with_callback;
+
+        let cb = BridgeCallback {
+            purpose: "component_tag_render".to_string(),
+            plugin_target: "frame.ui".to_string(),
+            discovery: "exports_matching".to_string(),
+            export_pattern: Some("{tagname}_render".to_string()),
+            fallback: "passthrough".to_string(),
+        };
+        let plugin_a = manifest_with_callback("plugin.a", "_shared_bridge", Some(cb.clone()));
+        let plugin_b = manifest_with_callback("plugin.b", "_shared_bridge", Some(cb));
+        let frame_ui = manifest_with_callback("frame.ui", "_ui_event", None);
+
+        let err = PluginRegistryBuilder::new()
+            .add_manifest("plugin.a".to_string(), plugin_a)
+            .add_manifest("plugin.b".to_string(), plugin_b)
+            .add_manifest("frame.ui".to_string(), frame_ui)
+            .build()
+            .expect_err("conflicting (bridge, purpose) must fail to build");
+
+        let msg = format!("{}", err);
+        assert!(msg.contains("PLUGIN-CALLBACK-CONFLICT"));
+        assert!(msg.contains("_shared_bridge"));
+        assert!(msg.contains("component_tag_render"));
+    }
+
+    #[test]
+    fn test_v2_callback_contracts_accessor_returns_resolved_set() {
+        use crate::plugins::plugin_abi::BridgeCallback;
+        use v2_callback_helpers::manifest_with_callback;
+
+        let frame_server = manifest_with_callback(
+            "frame.server",
+            "_ui_render_page",
+            Some(BridgeCallback {
+                purpose: "component_tag_render".to_string(),
+                plugin_target: "frame.ui".to_string(),
+                discovery: "exports_matching".to_string(),
+                export_pattern: Some("{tagname}_render".to_string()),
+                fallback: "passthrough".to_string(),
+            }),
+        );
+        let frame_ui = manifest_with_callback("frame.ui", "_ui_event", None);
+
+        let registry = PluginRegistryBuilder::new()
+            .add_manifest("frame.server".to_string(), frame_server)
+            .add_manifest("frame.ui".to_string(), frame_ui)
+            .build()
+            .expect("build should succeed");
+
+        let callbacks = registry.callback_contracts();
+        assert_eq!(callbacks.len(), 1);
+        assert_eq!(callbacks[0].bridge, "_ui_render_page");
+        assert_eq!(callbacks[0].purpose, "component_tag_render");
+        assert_eq!(callbacks[0].plugin_target, "frame.ui");
+        assert_eq!(callbacks[0].declared_by_plugin, "frame.server");
+        assert_eq!(callbacks[0].discovery, "exports_matching");
+        assert_eq!(
+            callbacks[0].export_pattern.as_deref(),
+            Some("{tagname}_render")
+        );
+        assert_eq!(callbacks[0].fallback, "passthrough");
+    }
+
+    /// Regression test for the v2 `lifecycle.module_helpers_are_roots` flag.
+    /// Functions emitted by a plugin that opts in must be tagged with the
+    /// v2 root marker so the BFS in `mir_codegen` seeds them as roots.
+    /// Closes GEN003.
+    #[test]
+    fn test_retag_expansion_for_v2_root_marks_functions_and_classes() {
+        use crate::ast::{
+            Class, Function, Parameter, SourceLocation, Type, Visibility, PLUGIN_OUTPUT_MARKER,
+            PLUGIN_OUTPUT_V2_ROOT_MARKER,
+        };
+        use crate::plugins::PluginExpansion;
+
+        // Build a fake expansion as a plugin would emit: two top-level
+        // functions and a class with one method, all initially tagged
+        // with the v1 PLUGIN_OUTPUT_MARKER.
+        let v1_loc = || {
+            Some(SourceLocation {
+                line: 1,
+                column: 1,
+                file: PLUGIN_OUTPUT_MARKER.to_string(),
+                byte_start: None,
+                byte_end: None,
+            })
+        };
+
+        let mut expansion = PluginExpansion {
+            statements: Vec::new(),
+            start_function: Some(Function {
+                name: "start".to_string(),
+                type_parameters: Vec::new(),
+                type_constraints: Vec::new(),
+                parameters: Vec::new(),
+                return_type: Type::Void,
+                body: Vec::new(),
+                description: None,
+                syntax: crate::ast::FunctionSyntax::Simple,
+                visibility: Visibility::Public,
+                modifier: crate::ast::FunctionModifier::None,
+                location: v1_loc(),
+            }),
+            functions: vec![
+                Function {
+                    name: "redirect".to_string(),
+                    type_parameters: Vec::new(),
+                    type_constraints: Vec::new(),
+                    parameters: vec![Parameter {
+                        name: "url".to_string(),
+                        type_: Type::String,
+                        default_value: None,
+                    }],
+                    return_type: Type::Void,
+                    body: Vec::new(),
+                    description: None,
+                    syntax: crate::ast::FunctionSyntax::Simple,
+                    visibility: Visibility::Public,
+                    modifier: crate::ast::FunctionModifier::None,
+                    location: v1_loc(),
+                },
+                Function {
+                    name: "json".to_string(),
+                    type_parameters: Vec::new(),
+                    type_constraints: Vec::new(),
+                    parameters: Vec::new(),
+                    return_type: Type::String,
+                    body: Vec::new(),
+                    description: None,
+                    syntax: crate::ast::FunctionSyntax::Simple,
+                    visibility: Visibility::Public,
+                    modifier: crate::ast::FunctionModifier::None,
+                    location: None, // exercise the None branch
+                },
+            ],
+            classes: vec![Class {
+                name: "Response".to_string(),
+                type_parameters: Vec::new(),
+                description: None,
+                base_class: None,
+                base_class_type_args: Vec::new(),
+                fields: Vec::new(),
+                methods: vec![Function {
+                    name: "send".to_string(),
+                    type_parameters: Vec::new(),
+                    type_constraints: Vec::new(),
+                    parameters: Vec::new(),
+                    return_type: Type::Void,
+                    body: Vec::new(),
+                    description: None,
+                    syntax: crate::ast::FunctionSyntax::Simple,
+                    visibility: Visibility::Public,
+                    modifier: crate::ast::FunctionModifier::None,
+                    location: v1_loc(),
+                }],
+                constructor: None,
+                invariants: Vec::new(),
+                location: v1_loc(),
+            }],
+            externals: Vec::new(),
+        };
+
+        retag_expansion_for_v2_root(&mut expansion, PLUGIN_OUTPUT_V2_ROOT_MARKER);
+
+        // All top-level functions retagged
+        assert_eq!(
+            expansion.functions[0].location.as_ref().unwrap().file,
+            PLUGIN_OUTPUT_V2_ROOT_MARKER
+        );
+        // Function whose location was None now has Some with the marker
+        let json_loc = expansion.functions[1].location.as_ref().unwrap();
+        assert_eq!(json_loc.file, PLUGIN_OUTPUT_V2_ROOT_MARKER);
+
+        // start_function retagged
+        assert_eq!(
+            expansion
+                .start_function
+                .as_ref()
+                .unwrap()
+                .location
+                .as_ref()
+                .unwrap()
+                .file,
+            PLUGIN_OUTPUT_V2_ROOT_MARKER
+        );
+
+        // Class and its method retagged
+        assert_eq!(
+            expansion.classes[0].location.as_ref().unwrap().file,
+            PLUGIN_OUTPUT_V2_ROOT_MARKER
+        );
+        assert_eq!(
+            expansion.classes[0].methods[0]
+                .location
+                .as_ref()
+                .unwrap()
+                .file,
+            PLUGIN_OUTPUT_V2_ROOT_MARKER
         );
     }
 }

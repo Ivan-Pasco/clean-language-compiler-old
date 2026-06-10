@@ -91,6 +91,7 @@ pub use expander::PluginExpander;
 pub use language_registry::{
     BlockInfo, CompletionSnippet, FunctionInfo, KeywordInfo, LanguageRegistry, TypeInfo,
 };
+pub use plugin_abi::{new_build_state, BuildContext, BuildContextArtifact, BuildState};
 pub use plugin_abi::{
     AssembleInput, AssembleOutput, AssembleSourceFile, InjectedSource, TransformedSource,
 };
@@ -352,6 +353,28 @@ pub trait FrameworkPlugin: Send + Sync {
             classes: Vec::new(),
             externals: Vec::new(),
         })
+    }
+
+    /// Plugin Contracts v2 — invoke a lifecycle slot and return the contributed
+    /// code. See `foundation/spec/plugins/contracts/lifecycle.md` §2, §3.
+    ///
+    /// `slot_name` is one of: `"module_helpers"`, `"program_init"`,
+    /// `"client_init"`, `"server_init"`, `"per_request"`, `"artifact_emitters"`.
+    /// `context` is the build context JSON (lifecycle.md §2.1) passed to the
+    /// plugin export — target, paths, prior artifacts, and a snapshot of the
+    /// per-build state populated through the `_build_state_set` bridge.
+    /// Plugins return an expansion containing statements (spliced into the
+    /// target entry point) and optionally functions, classes, externals.
+    ///
+    /// The default implementation returns an empty expansion — every plugin
+    /// that does not opt into v2 lifecycle dispatch passes through silently.
+    fn invoke_lifecycle_slot(
+        &self,
+        slot_name: &str,
+        context: &BuildContext,
+    ) -> PluginResult<PluginExpansion> {
+        let _ = (slot_name, context);
+        Ok(PluginExpansion::default())
     }
 
     // ========================================================================

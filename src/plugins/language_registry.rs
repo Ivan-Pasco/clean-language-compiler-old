@@ -427,6 +427,8 @@ mod tests {
             },
             exports: PluginExports::default(),
             bridge: Default::default(),
+            lifecycle: Default::default(),
+            artifacts: Vec::new(),
             language: PluginLanguage {
                 blocks: vec!["testblock".to_string()],
                 keywords: vec![

@@ -1,5 +1,18 @@
 use std::fmt;
 
+/// `SourceLocation.file` marker for code emitted by a v1.0.0 plugin's
+/// `__preamble` block. The BFS reachability scan in `mir_codegen` treats these
+/// as non-roots — they're only kept if user code transitively references them.
+pub const PLUGIN_OUTPUT_MARKER: &str = "<plugin-output>";
+
+/// `SourceLocation.file` marker for code emitted by a v2 plugin's
+/// `lifecycle.module_helpers` slot when `module_helpers_are_roots = true`.
+/// The BFS reachability scan treats these as roots, so their bridge imports
+/// are not tree-shaken even when the helper is only called from generated
+/// code that the BFS cannot statically trace.
+/// See foundation/spec/plugins/contracts/lifecycle.md §3.1.
+pub const PLUGIN_OUTPUT_V2_ROOT_MARKER: &str = "<plugin-output-v2-root>";
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize)]
 pub struct SourceLocation {
     pub line: usize,

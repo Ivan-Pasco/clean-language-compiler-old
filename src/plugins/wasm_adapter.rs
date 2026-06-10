@@ -39,6 +39,11 @@ pub struct WasmPluginAdapter {
     /// The Linker is bound to the Engine (not the Store), so it can be
     /// shared across multiple Store/Instance pairs.
     cached_linker: Option<Linker<PluginState>>,
+    /// Plugin Contracts v2 — shared per-build state. Captured by the
+    /// `_build_state_set` / `_build_state_get` bridge stubs in the linker so
+    /// every plugin loaded with the same `BuildState` shares the same store.
+    /// See `foundation/spec/plugins/contracts/lifecycle.md` §2.5.
+    build_state: crate::plugins::BuildState,
 }
 
 impl WasmPluginAdapter {
@@ -115,6 +120,7 @@ impl WasmPluginAdapter {
             version_cache,
             description_cache,
             cached_linker: None,
+            build_state: crate::plugins::new_build_state(),
         };
 
         // Pre-build the linker once — this sets up ~50+ host function stubs
@@ -123,6 +129,23 @@ impl WasmPluginAdapter {
         adapter.cached_linker = Some(linker);
 
         Ok(adapter)
+    }
+
+    /// Replace the adapter's per-build state container so multiple plugins
+    /// loaded into the same registry share a single keystore. Called by
+    /// `WasmPluginLoader::load_plugins` immediately after `new()` so the
+    /// linker's bridge stubs (set up once, cached) capture the shared store.
+    ///
+    /// Note: because the bridge stubs were registered before this point,
+    /// the linker is rebuilt to ensure the captured `Arc` points to the
+    /// shared store. Plugins loaded after `set_build_state` see the new
+    /// state immediately on their next slot invocation.
+    pub fn set_build_state(&mut self, state: crate::plugins::BuildState) -> Result<()> {
+        self.build_state = state;
+        // Rebuild the linker so the bridge stubs capture the new Arc.
+        let linker = self.setup_linker()?;
+        self.cached_linker = Some(linker);
+        Ok(())
     }
 
     /// Create a new store with host functions
@@ -153,7 +176,71 @@ impl WasmPluginAdapter {
         self.register_file_functions(&mut linker)?;
         self.register_math_functions(&mut linker)?;
         self.register_http_auth_stubs(&mut linker)?;
+        self.register_build_state_bridges(&mut linker)?;
         Ok(linker)
+    }
+
+    /// Plugin Contracts v2 — register the `_build_state_set` /
+    /// `_build_state_get` bridges that plugins use to communicate state
+    /// across calls within one build. See `lifecycle.md` §2.5.
+    fn register_build_state_bridges(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+        // `_build_state_set(key_ptr, key_len, value_ptr, value_len)` — stores
+        // a value under a key in the per-build state. Both arguments are raw
+        // pointer+length pairs (the host bridge convention) so plugins can
+        // call this from compiled Clean code without needing the LP wrapper
+        // emitted for return values.
+        let state_for_set = std::sync::Arc::clone(&self.build_state);
+        linker.func_wrap(
+            "env",
+            "_build_state_set",
+            move |mut caller: Caller<'_, PluginState>,
+                  key_ptr: i32,
+                  key_len: i32,
+                  value_ptr: i32,
+                  value_len: i32| {
+                let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                    return;
+                };
+                let data = memory.data(&caller);
+                let key = read_raw_string(data, key_ptr, key_len).unwrap_or_default();
+                let value = read_raw_string(data, value_ptr, value_len).unwrap_or_default();
+                if key.is_empty() {
+                    return;
+                }
+                if let Ok(mut guard) = state_for_set.lock() {
+                    guard.insert(key, value);
+                }
+            },
+        )?;
+
+        // `_build_state_get(key_ptr, key_len) -> string_ptr` — returns a
+        // length-prefixed string pointer to the value, or an empty string if
+        // the key is absent.
+        let state_for_get = std::sync::Arc::clone(&self.build_state);
+        linker.func_wrap(
+            "env",
+            "_build_state_get",
+            move |mut caller: Caller<'_, PluginState>, key_ptr: i32, key_len: i32| -> i32 {
+                let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                    return 0;
+                };
+                let key = {
+                    let data = memory.data(&caller);
+                    match read_raw_string(data, key_ptr, key_len) {
+                        Some(k) => k,
+                        None => return 0,
+                    }
+                };
+                let value = state_for_get
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.get(&key).cloned())
+                    .unwrap_or_default();
+                write_lp_string(&mut caller, &memory, &value).unwrap_or(0)
+            },
+        )?;
+
+        Ok(())
     }
 
     // =========================================
@@ -3297,6 +3384,146 @@ impl WasmPluginAdapter {
         Ok(data[data_start..data_end].to_vec())
     }
 
+    /// Plugin Contracts v2 — invoke a lifecycle slot with the JSON build
+    /// context per `lifecycle.md` §2. The WASM signature is
+    /// `(param i32) (result i32)` where the param is a Clean LP pointer to a
+    /// length-prefixed UTF-8 JSON string and the result is a Clean LP pointer
+    /// to a JSON response in the expansion output format.
+    ///
+    /// `slot_name` is used for diagnostic messages only; the actual export
+    /// called is `export_name` (read from `manifest.lifecycle.<slot>`).
+    fn call_lifecycle_slot_v2(
+        &self,
+        slot_name: &str,
+        export_name: &str,
+        context: &crate::plugins::BuildContext,
+    ) -> Result<PluginExpansion> {
+        let mut store = self.create_store();
+        let linker = self.get_linker()?;
+
+        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
+            anyhow!(
+                "Failed to instantiate plugin module for lifecycle slot `{}`: {}",
+                slot_name,
+                e
+            )
+        })?;
+
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
+
+        // Same heap-pointer fix as call_expand_full — keeps plugin allocator
+        // from colliding with the WASM data section.
+        let globals: Vec<_> = instance
+            .exports(&mut store)
+            .filter_map(|e| e.into_global())
+            .collect();
+        for global in globals {
+            if let wasmtime::Val::I32(val) = global.get(&mut store) {
+                if val == 1024 {
+                    let _ = global.set(&mut store, wasmtime::Val::I32(8192));
+                    break;
+                }
+            }
+        }
+
+        // Serialize the build context to JSON and write to plugin memory.
+        let context_json = serde_json::to_string(context).map_err(|e| {
+            anyhow!(
+                "Failed to serialize build context for lifecycle slot `{}`: {}",
+                slot_name,
+                e
+            )
+        })?;
+        let context_ptr = self.find_or_write_string(&mut store, &memory, &context_json)?;
+
+        // Call the slot — signature `(param i32) -> i32`.
+        let slot: TypedFunc<i32, i32> =
+            instance
+                .get_typed_func(&mut store, export_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "Plugin does not export lifecycle slot `{}` (export `{}`): {}",
+                        slot_name,
+                        export_name,
+                        e
+                    )
+                })?;
+
+        let result_ptr = slot.call(&mut store, context_ptr)?;
+
+        if let Some(error) = store.data().last_error.clone() {
+            return Err(anyhow!(
+                "Plugin error in lifecycle slot `{}`: {}",
+                slot_name,
+                error
+            ));
+        }
+
+        let result_bytes = self.read_result(&store, &memory, result_ptr)?;
+        // Empty response → empty expansion (the plugin chose to contribute
+        // nothing for this build context, e.g. no components to hydrate).
+        if result_bytes.is_empty() {
+            return Ok(PluginExpansion::default());
+        }
+        let response_str = std::str::from_utf8(&result_bytes).map_err(|e| {
+            anyhow!(
+                "Invalid UTF-8 in lifecycle slot `{}` response: {}",
+                slot_name,
+                e
+            )
+        })?;
+
+        // Parse `{"statements": "<source>"}` and lift to a PluginExpansion by
+        // re-parsing the source statements using the same path the block
+        // expander uses for plugin output.
+        #[derive(serde::Deserialize, Default)]
+        struct SlotResponse {
+            #[serde(default)]
+            statements: String,
+            #[serde(default)]
+            error: Option<String>,
+        }
+        let response: SlotResponse = serde_json::from_str(response_str).map_err(|e| {
+            anyhow!(
+                "Failed to parse lifecycle slot `{}` response as JSON: {} — raw: {}",
+                slot_name,
+                e,
+                &response_str[..response_str.len().min(256)]
+            )
+        })?;
+        if let Some(err) = response.error {
+            return Err(anyhow!(
+                "Lifecycle slot `{}` reported error: {}",
+                slot_name,
+                err
+            ));
+        }
+        if response.statements.trim().is_empty() {
+            return Ok(PluginExpansion::default());
+        }
+
+        // Re-parse the contributed Clean source so the statements integrate
+        // into the program AST like any other plugin-produced code.
+        let parsed = self.parse_plugin_code(&response.statements)?;
+        // The slot is conceptually contributing statement-level code. Most
+        // plugins will return just statements; for plugins that include a
+        // start function (e.g. legacy compatibility shims), merge its body
+        // into the statements list.
+        let mut statements = parsed.statements;
+        if let Some(start_fn) = parsed.start_function {
+            statements.extend(start_fn.body);
+        }
+        Ok(PluginExpansion {
+            statements,
+            start_function: None,
+            functions: parsed.functions,
+            classes: parsed.classes,
+            externals: parsed.externals,
+        })
+    }
+
     /// Call a no-argument lifecycle hook that returns a length-prefixed JSON
     /// string pointer and deserialise it into `T`.
     ///
@@ -3471,6 +3698,37 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 block_name: block.name.clone(),
                 message: e.to_string(),
                 location: block.location.clone(),
+            })
+    }
+
+    fn invoke_lifecycle_slot(
+        &self,
+        slot_name: &str,
+        context: &crate::plugins::BuildContext,
+    ) -> PluginResult<PluginExpansion> {
+        // Plugin Contracts v2 — read the slot's export name from the manifest's
+        // [lifecycle] section. A missing entry is a no-op (the plugin did not
+        // opt into this slot). See contracts/lifecycle.md §3.
+        let export_name = match slot_name {
+            "module_helpers" => self.manifest.lifecycle.module_helpers.as_deref(),
+            "program_init" => self.manifest.lifecycle.program_init.as_deref(),
+            "client_init" => self.manifest.lifecycle.client_init.as_deref(),
+            "server_init" => self.manifest.lifecycle.server_init.as_deref(),
+            "per_request" => self.manifest.lifecycle.per_request.as_deref(),
+            "artifact_emitters" => self.manifest.lifecycle.artifact_emitters.as_deref(),
+            _ => None,
+        };
+        let Some(export_name) = export_name else {
+            return Ok(PluginExpansion::default());
+        };
+        // Call the slot via the dedicated v2 protocol — single string param
+        // carrying the JSON build context per contracts/lifecycle.md §2.1.
+        self.call_lifecycle_slot_v2(slot_name, export_name, context)
+            .map_err(|e| PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: format!("__lifecycle_{}", slot_name),
+                message: format!("lifecycle slot `{}` invocation failed: {}", slot_name, e),
+                location: None,
             })
     }
 
@@ -3658,6 +3916,38 @@ impl PluginState {
 
 /// Helper to read a Clean string from WASM memory
 /// Clean strings are stored as [4-byte length][data]
+/// Helper to read a UTF-8 string from WASM memory using the raw ptr+len
+/// convention (host bridge style). Used by `_build_state_set` whose two
+/// string params are passed as `(ptr, len)` pairs rather than as Clean LP
+/// pointers — that's how the compiler emits string arguments for host
+/// bridge functions declared with `expand_strings = true`.
+fn read_raw_string(data: &[u8], ptr: i32, len: i32) -> Option<String> {
+    let start = ptr as usize;
+    let length = len as usize;
+    if length == 0 {
+        return Some(String::new());
+    }
+    let end = start.checked_add(length)?;
+    if end > data.len() {
+        return None;
+    }
+    std::str::from_utf8(&data[start..end])
+        .ok()
+        .map(String::from)
+}
+
+/// Helper to write a UTF-8 string as a Clean length-prefixed allocation
+/// and return its pointer. Wraps `write_clean_string` with a `Result`-style
+/// signature that yields `None` on memory failure rather than a sentinel 0.
+fn write_lp_string(caller: &mut Caller<'_, PluginState>, _memory: &Memory, s: &str) -> Option<i32> {
+    let ptr = write_clean_string(caller, s.as_bytes());
+    if ptr == 0 {
+        None
+    } else {
+        Some(ptr)
+    }
+}
+
 fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<String> {
     let memory = caller.get_export("memory").and_then(|e| e.into_memory())?;
     let data = memory.data(&*caller);

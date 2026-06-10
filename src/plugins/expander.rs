@@ -11,6 +11,33 @@ use crate::ast::{Class, ExternalFunction, Function, Program, Statement};
 use crate::error::CompilerError;
 use crate::plugins::enforcement::validate_plugin_permissions;
 
+/// Prepend statements to the program's start function body, creating the
+/// start function if it doesn't exist. Used by lifecycle slot dispatch to
+/// splice plugin-contributed init code ahead of any user `start:` code.
+/// See `contracts/lifecycle.md` §3.2 / §3.4.
+fn prepend_to_start(program: &mut Program, statements: Vec<Statement>) {
+    if statements.is_empty() {
+        return;
+    }
+    match program.start_function.as_mut() {
+        Some(start_fn) => {
+            // Prepend so the lifecycle slot runs before any user start: code.
+            let mut new_body = statements;
+            new_body.append(&mut start_fn.body);
+            start_fn.body = new_body;
+        }
+        None => {
+            program.start_function = Some(Function::new(
+                "start".to_string(),
+                Vec::new(),
+                crate::ast::Type::Void,
+                statements,
+                None,
+            ));
+        }
+    }
+}
+
 /// AST expander that transforms framework blocks into Clean Language code
 pub struct PluginExpander<'a> {
     registry: &'a PluginRegistry,
@@ -27,10 +54,24 @@ pub struct PluginExpander<'a> {
     pending_externals: Vec<ExternalFunction>,
     /// Permission violations collected during expansion (non-fatal; reported as errors)
     permission_errors: Vec<CompilerError>,
+    /// Plugin Contracts v2 — whether this is a server-target build. Used to
+    /// gate the `server_init` lifecycle slot per contracts/lifecycle.md §3.4.
+    is_server_build: bool,
+    /// Plugin Contracts v2 — whether this is a client-target build (the
+    /// nested `frontend.wasm` compilation). The `client_init` slot is
+    /// dispatched only here.
+    is_client_build: bool,
+    /// Plugin Contracts v2 — build context passed to every lifecycle slot
+    /// call. See `contracts/lifecycle.md` §2.1. Set via `with_build_context`;
+    /// defaults to an empty context populated only with versioning fields.
+    build_context: super::BuildContext,
 }
 
 impl<'a> PluginExpander<'a> {
-    /// Create a new expander with the given plugin registry
+    /// Create a new expander with the given plugin registry.
+    ///
+    /// Defaults to a server-target build. Override via `with_build_target` if
+    /// the parent build is producing client (browser) WASM.
     pub fn new(registry: &'a PluginRegistry) -> Self {
         Self {
             registry,
@@ -41,7 +82,43 @@ impl<'a> PluginExpander<'a> {
             pending_classes: Vec::new(),
             pending_externals: Vec::new(),
             permission_errors: Vec::new(),
+            is_server_build: true,
+            is_client_build: false,
+            build_context: super::BuildContext::new(),
         }
+    }
+
+    /// Plugin Contracts v2 — declare which build shape this expansion pass
+    /// produces. Server builds receive `server_init` slot output; client
+    /// builds receive `client_init`. Both receive `program_init` and
+    /// `module_helpers`. See contracts/lifecycle.md §3.
+    pub fn with_build_target(mut self, is_server: bool, is_client: bool) -> Self {
+        self.is_server_build = is_server;
+        self.is_client_build = is_client;
+        self.build_context.target = if is_client {
+            "browser".to_string()
+        } else {
+            "server".to_string()
+        };
+        self.build_context.client_mode = is_client;
+        self
+    }
+
+    /// Plugin Contracts v2 — set the build context that gets passed to every
+    /// lifecycle slot call. The registry takes a fresh `build_state` snapshot
+    /// for every slot dispatch so plugins always see writes from earlier
+    /// expand_block calls. See `contracts/lifecycle.md` §2.1, §2.5.
+    pub fn with_build_context(mut self, context: super::BuildContext) -> Self {
+        // Preserve the target derivation from `with_build_target` if it was
+        // called first — the caller's explicit target wins over the default.
+        let target = self.build_context.target.clone();
+        let client_mode = self.build_context.client_mode;
+        self.build_context = context;
+        if !target.is_empty() {
+            self.build_context.target = target;
+            self.build_context.client_mode = client_mode;
+        }
+        self
     }
 
     /// Expand all framework blocks in a program
@@ -155,6 +232,47 @@ impl<'a> PluginExpander<'a> {
             }
         }
 
+        // Plugin Contracts v2 — dispatch lifecycle slots.
+        // See foundation/spec/plugins/contracts/lifecycle.md §3.
+        //
+        // Slots are dispatched in a fixed order so plugins can reason about
+        // what's available when they're called:
+        //   1. module_helpers  → top-level functions/classes (every file)
+        //   2. program_init    → program start: prelude (every build)
+        //   3. server_init     → server bootstrap (server builds only)
+        //   4. client_init     → client _start (client builds only)
+        //   5. per_request     → request handler prelude (§2 follow-up — depends
+        //                        on route-handler emission rework)
+        //
+        // Plugins that have not declared a slot in their manifest are skipped
+        // at the registry level — no WASM instantiation cost for inactive
+        // slots. See PluginRegistry::invoke_lifecycle_slot.
+        //
+        // module_helpers contributes top-level functions/classes which are
+        // merged in-place. The other slots contribute statements that go
+        // into the start function. To preserve declaration order across
+        // multiple slots, we accumulate their outputs first, then prepend
+        // the assembled block to the existing start body in a single splice.
+        self.merge_module_helpers(&mut program);
+        let mut slot_prelude: Vec<Statement> = Vec::new();
+        self.collect_slot_statements(&mut slot_prelude, "program_init");
+        if self.is_server_build {
+            self.collect_slot_statements(&mut slot_prelude, "server_init");
+        }
+        if self.is_client_build {
+            // §1 — client_init contributes the body of the synthetic client
+            // _start. Plugins that opted in (e.g. frame.ui's emit_ui_client_init)
+            // emit component-instantiation + onMount() calls here.
+            // Closes HYDRATE_AUTO once a plugin declares the slot.
+            self.collect_slot_statements(&mut slot_prelude, "client_init");
+        }
+        // per_request lifecycle splicing into route handlers — follow-up
+        // commit. Touches route-handler emission which is more involved than
+        // the program-level slots above.
+        if !slot_prelude.is_empty() {
+            prepend_to_start(&mut program, slot_prelude);
+        }
+
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
             statements_generated = self.statements_generated,
@@ -163,6 +281,52 @@ impl<'a> PluginExpander<'a> {
         );
 
         Ok(program)
+    }
+
+    /// Plugin Contracts v2 — merge `module_helpers` contributions into the
+    /// program's top-level functions/classes/externals. See `lifecycle.md`
+    /// §3.1. Duplicate-name entries are silently skipped per the v1 preamble
+    /// merge semantics.
+    fn merge_module_helpers(&self, program: &mut Program) {
+        for expansion in self
+            .registry
+            .invoke_lifecycle_slot("module_helpers", &self.build_context)
+        {
+            for func in expansion.functions {
+                if !program.functions.iter().any(|f| f.name == func.name) {
+                    program.functions.push(func);
+                }
+            }
+            for class in expansion.classes {
+                if !program.classes.iter().any(|c| c.name == class.name) {
+                    program.classes.push(class);
+                }
+            }
+            for ext in expansion.externals {
+                if !program.externals.iter().any(|e| e.name == ext.name) {
+                    program.externals.push(ext);
+                }
+            }
+            // Statements at module scope are rare for module_helpers; if
+            // present, they accumulate into the slot prelude later.
+        }
+    }
+
+    /// Plugin Contracts v2 — collect a single slot's contributed statements
+    /// in declaration order. Used by `expand_program` to accumulate all slot
+    /// outputs in fixed order (program_init → server_init → client_init)
+    /// before splicing the assembled prelude into the start function.
+    /// See `lifecycle.md` §3.
+    fn collect_slot_statements(&self, accumulator: &mut Vec<Statement>, slot: &str) {
+        for expansion in self
+            .registry
+            .invoke_lifecycle_slot(slot, &self.build_context)
+        {
+            accumulator.extend(expansion.statements);
+            if let Some(start_fn) = expansion.start_function {
+                accumulator.extend(start_fn.body);
+            }
+        }
     }
 
     /// Like `expand_program` but skips preamble injection.
@@ -624,7 +788,7 @@ impl<'a> PluginExpander<'a> {
 mod tests {
     use super::*;
     use crate::ast::{Expression, Value};
-    use crate::plugins::{FrameworkPlugin, PluginResult};
+    use crate::plugins::{FrameworkPlugin, PluginExpansion, PluginResult};
     use std::sync::Arc;
 
     struct EchoPlugin;
@@ -715,5 +879,378 @@ mod tests {
             result.statements[0],
             Statement::FrameworkBlock { .. }
         ));
+    }
+
+    // ========================================================================
+    // Plugin Contracts v2 — lifecycle slot dispatch (§2)
+    // foundation/spec/plugins/contracts/lifecycle.md
+    // ========================================================================
+
+    /// Mock plugin that injects a deterministic Print statement for the
+    /// `program_init` and `server_init` lifecycle slots. Lets us verify the
+    /// expander wires the slot output into the program's start function.
+    ///
+    /// `handles` returns a non-empty block list because the registry's plugin
+    /// dispatch table is keyed by block name. Production plugins (frame.server,
+    /// frame.ui, etc.) always declare at least one block, so this matches the
+    /// real-world topology.
+    struct LifecycleMockPlugin {
+        marker: &'static str,
+        slots: Vec<&'static str>,
+    }
+
+    impl FrameworkPlugin for LifecycleMockPlugin {
+        fn name(&self) -> &'static str {
+            "test.lifecycle"
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            // Synthetic block; never expanded in these tests.
+            &["__lifecycle_mock_block"]
+        }
+
+        fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(Vec::new())
+        }
+
+        fn invoke_lifecycle_slot(
+            &self,
+            slot_name: &str,
+            _context: &crate::plugins::BuildContext,
+        ) -> PluginResult<PluginExpansion> {
+            if !self.slots.contains(&slot_name) {
+                return Ok(PluginExpansion::default());
+            }
+            Ok(PluginExpansion {
+                statements: vec![Statement::Print {
+                    expression: Expression::Literal(Value::String(format!(
+                        "{}:{}",
+                        self.marker, slot_name
+                    ))),
+                    newline: true,
+                    location: None,
+                }],
+                start_function: None,
+                functions: Vec::new(),
+                classes: Vec::new(),
+                externals: Vec::new(),
+            })
+        }
+    }
+
+    fn lifecycle_manifest(
+        plugin_name: &str,
+        slots: &[(&str, &str)],
+    ) -> crate::plugins::PluginManifest {
+        use crate::plugins::plugin_abi::{
+            PluginCompatibility, PluginExports, PluginHandles, PluginInfo, PluginLanguage,
+            PluginLifecycle, PluginManifest,
+        };
+        let mut lifecycle = PluginLifecycle::default();
+        for (slot, export) in slots {
+            match *slot {
+                "module_helpers" => lifecycle.module_helpers = Some((*export).to_string()),
+                "program_init" => lifecycle.program_init = Some((*export).to_string()),
+                "client_init" => lifecycle.client_init = Some((*export).to_string()),
+                "server_init" => lifecycle.server_init = Some((*export).to_string()),
+                "per_request" => lifecycle.per_request = Some((*export).to_string()),
+                "artifact_emitters" => lifecycle.artifact_emitters = Some((*export).to_string()),
+                _ => {}
+            }
+        }
+        PluginManifest {
+            plugin: PluginInfo {
+                name: plugin_name.to_string(),
+                version: "1.0.0".to_string(),
+                description: String::new(),
+                author: String::new(),
+            },
+            compatibility: PluginCompatibility::default(),
+            handles: PluginHandles {
+                blocks: Vec::new(),
+                expressions: Vec::new(),
+            },
+            exports: PluginExports::default(),
+            bridge: Default::default(),
+            language: PluginLanguage::default(),
+            ai: Default::default(),
+            paths: Default::default(),
+            enforcement: Default::default(),
+            memory: Default::default(),
+            build: Default::default(),
+            lifecycle,
+            artifacts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_lifecycle_program_init_is_spliced_into_start() {
+        let registry = PluginRegistry::builder()
+            .add(LifecycleMockPlugin {
+                marker: "P",
+                slots: vec!["program_init"],
+            })
+            .add_manifest(
+                "test.lifecycle".to_string(),
+                lifecycle_manifest("test.lifecycle", &[("program_init", "emit_program_init")]),
+            )
+            .build()
+            .expect("registry build should succeed");
+
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander
+            .expand_program(make_test_program(Vec::new()))
+            .expect("expand_program should succeed");
+
+        let start = result
+            .start_function
+            .expect("program_init must synthesize a start function when none exists");
+        assert_eq!(
+            start.body.len(),
+            1,
+            "program_init slot output should appear once in start body"
+        );
+        match &start.body[0] {
+            Statement::Print { expression, .. } => match expression {
+                Expression::Literal(Value::String(s)) => {
+                    assert_eq!(s, "P:program_init");
+                }
+                _ => panic!("expected string literal print"),
+            },
+            other => panic!("expected Print statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lifecycle_server_init_only_runs_on_server_target() {
+        // Plugin declares both program_init and server_init.
+        let registry = PluginRegistry::builder()
+            .add(LifecycleMockPlugin {
+                marker: "X",
+                slots: vec!["program_init", "server_init"],
+            })
+            .add_manifest(
+                "test.lifecycle".to_string(),
+                lifecycle_manifest(
+                    "test.lifecycle",
+                    &[
+                        ("program_init", "emit_program_init"),
+                        ("server_init", "emit_server_init"),
+                    ],
+                ),
+            )
+            .build()
+            .expect("registry build should succeed");
+
+        // Server build receives both program_init and server_init.
+        let mut expander = PluginExpander::new(&registry);
+        let server_result = expander
+            .expand_program(make_test_program(Vec::new()))
+            .expect("server expand should succeed");
+        let server_start = server_result
+            .start_function
+            .expect("server build should have a start function");
+        assert_eq!(server_start.body.len(), 2);
+
+        // Client build skips server_init.
+        let registry2 = PluginRegistry::builder()
+            .add(LifecycleMockPlugin {
+                marker: "X",
+                slots: vec!["program_init", "server_init"],
+            })
+            .add_manifest(
+                "test.lifecycle".to_string(),
+                lifecycle_manifest(
+                    "test.lifecycle",
+                    &[
+                        ("program_init", "emit_program_init"),
+                        ("server_init", "emit_server_init"),
+                    ],
+                ),
+            )
+            .build()
+            .unwrap();
+        let mut client_expander = PluginExpander::new(&registry2).with_build_target(false, true);
+        let client_result = client_expander
+            .expand_program(make_test_program(Vec::new()))
+            .expect("client expand should succeed");
+        let client_start = client_result
+            .start_function
+            .expect("client build should have a start function");
+        assert_eq!(
+            client_start.body.len(),
+            1,
+            "client build should receive only program_init, not server_init"
+        );
+        match &client_start.body[0] {
+            Statement::Print { expression, .. } => match expression {
+                Expression::Literal(Value::String(s)) => assert_eq!(s, "X:program_init"),
+                _ => panic!("expected string literal"),
+            },
+            other => panic!("expected Print, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lifecycle_slots_run_before_user_start() {
+        use crate::ast::FunctionSyntax;
+        let registry = PluginRegistry::builder()
+            .add(LifecycleMockPlugin {
+                marker: "L",
+                slots: vec!["program_init"],
+            })
+            .add_manifest(
+                "test.lifecycle".to_string(),
+                lifecycle_manifest("test.lifecycle", &[("program_init", "emit_program_init")]),
+            )
+            .build()
+            .unwrap();
+
+        let mut user_program = make_test_program(Vec::new());
+        user_program.start_function = Some(Function {
+            name: "start".to_string(),
+            type_parameters: Vec::new(),
+            type_constraints: Vec::new(),
+            parameters: Vec::new(),
+            return_type: crate::ast::Type::Void,
+            body: vec![Statement::Print {
+                expression: Expression::Literal(Value::String("user".to_string())),
+                newline: true,
+                location: None,
+            }],
+            description: None,
+            syntax: FunctionSyntax::Simple,
+            visibility: crate::ast::Visibility::Public,
+            modifier: crate::ast::FunctionModifier::None,
+            location: None,
+        });
+
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(user_program).unwrap();
+        let start = result.start_function.unwrap();
+        assert_eq!(
+            start.body.len(),
+            2,
+            "plugin lifecycle output should be prepended, not replace, user start body"
+        );
+        // First the plugin's L:program_init, then the user's "user".
+        match (&start.body[0], &start.body[1]) {
+            (
+                Statement::Print {
+                    expression: Expression::Literal(Value::String(s0)),
+                    ..
+                },
+                Statement::Print {
+                    expression: Expression::Literal(Value::String(s1)),
+                    ..
+                },
+            ) => {
+                assert_eq!(s0, "L:program_init");
+                assert_eq!(s1, "user");
+            }
+            other => panic!("expected two prints, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lifecycle_client_init_dispatched_only_on_client_build() {
+        // Plugin declares both program_init and client_init.
+        let server_registry = PluginRegistry::builder()
+            .add(LifecycleMockPlugin {
+                marker: "Y",
+                slots: vec!["program_init", "client_init"],
+            })
+            .add_manifest(
+                "test.lifecycle".to_string(),
+                lifecycle_manifest(
+                    "test.lifecycle",
+                    &[
+                        ("program_init", "emit_program_init"),
+                        ("client_init", "emit_client_init"),
+                    ],
+                ),
+            )
+            .build()
+            .unwrap();
+
+        // Server build: program_init runs, client_init does not.
+        let mut server_expander = PluginExpander::new(&server_registry);
+        let server_result = server_expander
+            .expand_program(make_test_program(Vec::new()))
+            .unwrap();
+        let server_body = server_result.start_function.unwrap().body;
+        assert_eq!(server_body.len(), 1);
+        match &server_body[0] {
+            Statement::Print { expression, .. } => match expression {
+                Expression::Literal(Value::String(s)) => assert_eq!(s, "Y:program_init"),
+                _ => panic!("expected string literal"),
+            },
+            other => panic!("expected Print, got {:?}", other),
+        }
+
+        // Client build: program_init AND client_init both run.
+        let client_registry = PluginRegistry::builder()
+            .add(LifecycleMockPlugin {
+                marker: "Y",
+                slots: vec!["program_init", "client_init"],
+            })
+            .add_manifest(
+                "test.lifecycle".to_string(),
+                lifecycle_manifest(
+                    "test.lifecycle",
+                    &[
+                        ("program_init", "emit_program_init"),
+                        ("client_init", "emit_client_init"),
+                    ],
+                ),
+            )
+            .build()
+            .unwrap();
+        let mut client_expander =
+            PluginExpander::new(&client_registry).with_build_target(false, true);
+        let client_result = client_expander
+            .expand_program(make_test_program(Vec::new()))
+            .unwrap();
+        let client_body = client_result.start_function.unwrap().body;
+        assert_eq!(
+            client_body.len(),
+            2,
+            "client build should receive program_init AND client_init"
+        );
+        // Order matches dispatch order: program_init first, then client_init.
+        let extract_marker = |stmt: &Statement| -> String {
+            match stmt {
+                Statement::Print { expression, .. } => match expression {
+                    Expression::Literal(Value::String(s)) => s.clone(),
+                    _ => String::new(),
+                },
+                _ => String::new(),
+            }
+        };
+        assert_eq!(extract_marker(&client_body[0]), "Y:program_init");
+        assert_eq!(extract_marker(&client_body[1]), "Y:client_init");
+    }
+
+    #[test]
+    fn test_lifecycle_plugins_without_slot_contribute_nothing() {
+        let registry = PluginRegistry::builder()
+            .add(LifecycleMockPlugin {
+                marker: "L",
+                slots: vec!["client_init"], // declared but not invoked in server build
+            })
+            .add_manifest(
+                "test.lifecycle".to_string(),
+                lifecycle_manifest("test.lifecycle", &[("client_init", "emit_client_init")]),
+            )
+            .build()
+            .unwrap();
+
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander
+            .expand_program(make_test_program(Vec::new()))
+            .unwrap();
+        // Server build: client_init isn't dispatched yet (§1 follow-up), and
+        // program_init wasn't declared. No start_function should appear.
+        assert!(result.start_function.is_none());
     }
 }

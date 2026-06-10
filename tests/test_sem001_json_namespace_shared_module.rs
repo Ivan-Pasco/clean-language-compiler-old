@@ -78,6 +78,7 @@ functions:
         html_components_dir: None,
         plugin_registry: Some(Arc::new(registry)),
         release_mode: false,
+        client_mode: false,
     };
 
     let compiler = MultiFileCompiler::with_config(config);

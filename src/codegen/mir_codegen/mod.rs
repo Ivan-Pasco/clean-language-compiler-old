@@ -237,6 +237,18 @@ pub struct MirCodeGenerator<'a> {
     /// Compiler-internal helpers (`__malloc`, `__string_concat`, etc.) are NOT in this
     /// set because they are registered via `register_function`, not from `mir_program.functions`.
     pub(super) user_defined_function_names: HashSet<String>,
+
+    /// Host class this build targets, used by Plugin Contracts v2 bridge-host
+    /// enforcement (`foundation/spec/plugins/contracts/bridge-host-classes.md` §6).
+    /// `None` disables the check (e.g. plugin builds). Values: `"server"`,
+    /// `"browser"`, `"native"`.
+    pub(super) host_class: Option<String>,
+
+    /// When true, bridge-host mismatches against the active `host_class` are
+    /// returned as compile errors. When false (Phase C default), mismatches
+    /// are emitted as warnings and the build proceeds. Set via the
+    /// `CLEAN_STRICT_HOSTS=1` environment variable or `--strict-hosts` CLI flag.
+    pub(super) strict_hosts: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +290,8 @@ impl MirCodeGenerator<'_> {
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
             user_defined_function_names: HashSet::new(),
+            host_class: None,
+            strict_hosts: false,
         }
     }
 
@@ -315,6 +329,8 @@ impl MirCodeGenerator<'_> {
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
             user_defined_function_names: HashSet::new(),
+            host_class: None,
+            strict_hosts: false,
         }
     }
 
@@ -352,6 +368,8 @@ impl MirCodeGenerator<'_> {
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
             user_defined_function_names: HashSet::new(),
+            host_class: None,
+            strict_hosts: false,
         }
     }
 
@@ -363,6 +381,20 @@ impl MirCodeGenerator<'_> {
     /// Set the memory budget tier.
     pub fn set_memory_tier(&mut self, tier: crate::MemoryTier) {
         self.memory_tier = tier;
+    }
+
+    /// Set the host class for Plugin Contracts v2 bridge-host enforcement.
+    /// See `foundation/spec/plugins/contracts/bridge-host-classes.md` §6.
+    /// Pass `"server"`, `"browser"`, `"native"`, or `None` to disable the check.
+    pub fn set_host_class(&mut self, host_class: Option<String>) {
+        self.host_class = host_class;
+    }
+
+    /// Promote bridge-host mismatches from warnings to errors.
+    /// Phase C default is false; Phase D default will be true. May also be set
+    /// via the `CLEAN_STRICT_HOSTS=1` environment variable in `compile_multi_file_*`.
+    pub fn set_strict_hosts(&mut self, strict: bool) {
+        self.strict_hosts = strict;
     }
 
     /// Set plugin bridge functions to be registered as WASM imports.
@@ -410,7 +442,7 @@ impl MirCodeGenerator<'_> {
 
         let start_time = std::time::Instant::now();
         let mut stats = MirCodegenStats::default();
-        let warnings = Vec::new();
+        let mut warnings = Vec::new();
 
         // Set up WASM generator with runtime imports
         if self.wasm_generator.include_runtime_imports {
@@ -419,6 +451,28 @@ impl MirCodeGenerator<'_> {
             // reachable from the MIR call graph. Must happen BEFORE any
             // register_*_imports() / register_*_operations() call.
             let reachable = self.collect_all_called_names_from_mir(&mir_program);
+
+            // Plugin Contracts v2 — bridge-host-class enforcement.
+            // For each reachable bridge function, check that its declared
+            // `hosts` includes the active build's host class. See
+            // foundation/spec/plugins/contracts/bridge-host-classes.md §6.
+            let host_diagnostics = self.check_bridge_host_classes(&reachable);
+            if !host_diagnostics.is_empty() {
+                if self.strict_hosts {
+                    // Strict mode: any mismatch fails the build.
+                    return Err(host_diagnostics);
+                }
+                // Phase C default: collect as warnings.
+                for diag in &host_diagnostics {
+                    tracing::warn!(
+                        target: "plugin_contracts_v2",
+                        diagnostic = %diag,
+                        "bridge host-class mismatch (warning; pass --strict-hosts to promote to error)"
+                    );
+                }
+                warnings.extend(host_diagnostics);
+            }
+
             self.wasm_generator.set_reachable_imports(reachable);
 
             self.wasm_generator
@@ -844,7 +898,11 @@ impl MirCodeGenerator<'_> {
         {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             sorted_functions.retain(|(_, f)| {
-                if f.location.file == "<plugin-output>" {
+                // Dedup any plugin-emitted function (v1 preamble or v2 root helper)
+                // by name — multiple plugins may emit the same helper symbol.
+                if f.location.file == crate::ast::PLUGIN_OUTPUT_MARKER
+                    || f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER
+                {
                     seen.insert(f.name.clone())
                 } else {
                     true
@@ -862,10 +920,19 @@ impl MirCodeGenerator<'_> {
         //
         // We skip preamble functions whose names are not in the BFS reachable set.
         // User-defined functions are always kept (they are seeded by the BFS).
+        //
+        // v2 (contracts/lifecycle.md §3.1): functions tagged with the v2-root
+        // marker are explicit roots — never DCE'd, even when not transitively
+        // reachable from user code. Their bridge imports stay too because the
+        // BFS seeded them in the first place.
         if let Some(reachable) = &self.wasm_generator.reachable_imports {
             let reachable_snap = reachable.clone();
             sorted_functions.retain(|(_, f)| {
-                f.location.file != "<plugin-output>" || reachable_snap.contains(&f.name)
+                if f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER {
+                    return true;
+                }
+                f.location.file != crate::ast::PLUGIN_OUTPUT_MARKER
+                    || reachable_snap.contains(&f.name)
             });
         }
 

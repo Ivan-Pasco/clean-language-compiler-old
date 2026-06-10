@@ -64,6 +64,12 @@ pub struct MultiFileCompilerConfig {
     /// When true, class `always:` block conditions are not injected before
     /// method returns, producing smaller and faster WASM.
     pub release_mode: bool,
+
+    /// Plugin Contracts v2 — true when this compilation is the nested client
+    /// (browser) build that produces `frontend.wasm`. Controls which lifecycle
+    /// slots are dispatched by `PluginExpander` per contracts/lifecycle.md §3.
+    /// See `MultiFileCompilerConfig::with_client_mode`.
+    pub client_mode: bool,
 }
 
 impl std::fmt::Debug for MultiFileCompilerConfig {
@@ -100,6 +106,7 @@ impl Default for MultiFileCompilerConfig {
             html_components_dir: None,
             plugin_registry: None,
             release_mode: false,
+            client_mode: false,
         }
     }
 }
@@ -155,6 +162,15 @@ impl MultiFileCompilerConfig {
     /// Enable release mode (strips `always:` invariant checks).
     pub fn with_release_mode(mut self, release: bool) -> Self {
         self.release_mode = release;
+        self
+    }
+
+    /// Plugin Contracts v2 — declare this is the nested client (browser) build.
+    /// Controls which lifecycle slots `PluginExpander` dispatches:
+    /// `is_server_build = !client_mode`, `is_client_build = client_mode`.
+    /// See foundation/spec/plugins/contracts/lifecycle.md §3.
+    pub fn with_client_mode(mut self, client_mode: bool) -> Self {
+        self.client_mode = client_mode;
         self
     }
 }
@@ -598,6 +614,7 @@ impl MultiFileCompiler {
             html_components_dir: self.config.html_components_dir.clone(),
             plugin_registry: self.config.plugin_registry.clone(),
             release_mode: self.config.release_mode,
+            client_mode: self.config.client_mode,
         };
 
         let compiler = MultiFileCompiler::with_config(config);
@@ -1801,7 +1818,11 @@ impl MultiFileCompiler {
                 is_entry = is_entry,
                 "Starting Stage 2.5: Plugin Expansion for module"
             );
-            let mut expander = PluginExpander::new(registry.as_ref());
+            // Plugin Contracts v2 — pass build-target flags to the expander so
+            // it dispatches only the lifecycle slots that match the build
+            // shape. See contracts/lifecycle.md §3.3, §3.4.
+            let mut expander = PluginExpander::new(registry.as_ref())
+                .with_build_target(!self.config.client_mode, self.config.client_mode);
             let expand_result = if is_entry {
                 expander.expand_program(parsed_ast)
             } else {

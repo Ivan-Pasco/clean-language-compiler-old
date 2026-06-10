@@ -34,6 +34,15 @@ pub struct PluginManifest {
     /// Build provenance — stamped automatically by `cln compile` when building a plugin
     #[serde(default)]
     pub build: PluginBuildMeta,
+    /// Plugin lifecycle slot declarations.
+    /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/lifecycle.md.
+    /// Absent when the plugin opts into v1.0.0 (uses `__preamble` magic block).
+    #[serde(default)]
+    pub lifecycle: PluginLifecycle,
+    /// Side-channel artifacts the plugin declares it produces.
+    /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/artifacts.md.
+    #[serde(default)]
+    pub artifacts: Vec<PluginArtifact>,
 }
 
 /// Stamped by `cln compile` into plugin.toml after a successful plugin build.
@@ -82,12 +91,20 @@ pub struct PluginInfo {
 pub struct PluginCompatibility {
     #[serde(default = "default_min_compiler")]
     pub min_compiler_version: String,
+    /// Clean Runtime ABI version the plugin's WASM was compiled against.
+    /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/runtime-abi.md.
+    /// Absent on plugins that predate the versioned ABI; the loader treats absent
+    /// as legacy ABI "0.0.0" and applies the hand-maintained stub set for
+    /// backwards compatibility.
+    #[serde(default)]
+    pub abi_version: Option<String>,
 }
 
 impl Default for PluginCompatibility {
     fn default() -> Self {
         Self {
             min_compiler_version: default_min_compiler(),
+            abi_version: None,
         }
     }
 }
@@ -315,9 +332,11 @@ fn default_expand() -> String {
 pub struct BridgeFunction {
     /// Function name (e.g., "_db_query")
     pub name: String,
-    /// Parameter types as strings: "string", "integer", "number", "boolean", "void", "handler"
+    /// Parameter types as strings: "string", "integer", "number", "boolean", "void", "handler".
+    /// v2 (contracts/bridge-host-classes.md §5) accepts tagged forms: "number:f64",
+    /// "integer:i64", "string:lp" — propagated through MIR to close CODEGEN_F64.
     pub params: Vec<String>,
-    /// Return type as string
+    /// Return type as string. Tagged forms accepted per v2 §5.
     pub returns: String,
     /// WASM import module name (defaults to "env")
     #[serde(default = "default_bridge_module")]
@@ -328,10 +347,60 @@ pub struct BridgeFunction {
     /// Whether string parameters should be expanded to (ptr, len) pairs at WASM level
     #[serde(default)]
     pub expand_strings: bool,
+    /// Host classes the function is available on.
+    /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/bridge-host-classes.md §2.
+    /// Allowed values: "all" (default if omitted), "server", "browser", "native".
+    /// Absent is treated as `["all"]` with a deprecation warning at plugin load.
+    #[serde(default)]
+    pub hosts: Option<Vec<String>>,
+    /// Whether the server host provides a real implementation or a stub.
+    /// v2 §3. None defaults to BridgeImpl::Real on hosts listed in `hosts`.
+    #[serde(default)]
+    pub server_impl: Option<BridgeImpl>,
+    /// Whether the browser host provides a real implementation or a stub. v2 §3.
+    #[serde(default)]
+    pub browser_impl: Option<BridgeImpl>,
+    /// Whether the native host provides a real implementation or a stub. v2 §3.
+    #[serde(default)]
+    pub native_impl: Option<BridgeImpl>,
+    /// Stub behavior when server_impl = Stub. v2 §3.
+    #[serde(default)]
+    pub server_stub: Option<BridgeStub>,
+    /// Stub behavior when browser_impl = Stub. v2 §3.
+    #[serde(default)]
+    pub browser_stub: Option<BridgeStub>,
+    /// Stub behavior when native_impl = Stub. v2 §3.
+    #[serde(default)]
+    pub native_stub: Option<BridgeStub>,
+    /// Module-callback contract for bridges that dispatch back into the WASM module.
+    /// v2 §4 — closes SRV001 by giving _ui_render_page a documented purpose.
+    #[serde(default)]
+    pub callback: Option<BridgeCallback>,
 }
 
 fn default_bridge_module() -> String {
     "env".to_string()
+}
+
+impl Default for BridgeFunction {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            params: Vec::new(),
+            returns: String::new(),
+            module: default_bridge_module(),
+            description: None,
+            expand_strings: false,
+            hosts: None,
+            server_impl: None,
+            browser_impl: None,
+            native_impl: None,
+            server_stub: None,
+            browser_stub: None,
+            native_stub: None,
+            callback: None,
+        }
+    }
 }
 
 /// AI context for agent-assisted development
@@ -681,6 +750,294 @@ impl BridgeFunction {
 
 /// Plugin ABI version
 pub const PLUGIN_ABI_VERSION: u32 = 1;
+
+// ============================================================================
+// Plugin Contracts v2
+// See foundation/spec/plugins/contracts/
+//
+// All fields are additive and #[serde(default)] so v1.0.0 plugins continue to
+// load unchanged. A plugin opts into v2 by declaring any [lifecycle] slot, any
+// hosts field on a bridge entry, any [[artifacts]] entry, or
+// [compatibility].abi_version.
+// ============================================================================
+
+/// Plugin contract revision implemented by this compiler.
+/// Sections §11+ of plugin-contract.md reference foundation/spec/plugins/contracts/.
+pub const PLUGIN_CONTRACT_VERSION: &str = "1.0.0";
+
+/// Clean Runtime ABI versions this compiler can load plugin WASM stamped against.
+/// See contracts/runtime-abi.md §5. Missing stamp ("0.0.0") falls back to the
+/// hand-maintained stub block in wasm_adapter.rs for backwards compatibility.
+pub const SUPPORTED_RUNTIME_ABI_VERSIONS: &[&str] = &["1.0.0"];
+
+/// Clean Runtime ABI version emitted by `cln compile` when building a plugin.
+pub const DEFAULT_RUNTIME_ABI_VERSION: &str = "1.0.0";
+
+/// Plugin Contracts v2 — shared per-build state.
+/// See `foundation/spec/plugins/contracts/lifecycle.md` §2.5.
+///
+/// `BuildState` is a thread-safe key/value store the compiler owns for the
+/// duration of one `cln compile` / `cln build` invocation. Plugins read and
+/// write through the `_build_state_set` / `_build_state_get` bridges provided
+/// by the plugin sandbox; the final snapshot is published in
+/// `dist/build-manifest.json` so hosts can read the state at startup.
+///
+/// Keys should be plugin-namespaced (`frame.ui:components`,
+/// `frame.server:routes`). The `__compiler:` prefix is reserved for compiler
+/// internal keys.
+pub type BuildState = std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, String>>>;
+
+/// Construct a fresh, empty build state for a new compilation pass.
+pub fn new_build_state() -> BuildState {
+    std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()))
+}
+
+/// Plugin Contracts v2 — JSON build context passed to every lifecycle slot
+/// call (and every `artifact_emitters` callback).
+/// See `foundation/spec/plugins/contracts/lifecycle.md` §2.1.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuildContext {
+    /// Host class the build is producing for.
+    /// `"server"`, `"browser"`, or `"native"`.
+    pub target: String,
+    /// True iff `target == "browser"`. Convenience for plugins that key on
+    /// "this is the nested client build."
+    pub client_mode: bool,
+    /// Path to the `.cln` entry file the build was invoked on, relative to
+    /// the project root.
+    pub entry_path: String,
+    /// Directory artifacts are written into.
+    pub output_dir: String,
+    /// Path to the main WASM output, relative to `output_dir`.
+    pub main_wasm: String,
+    /// Compiler version producing the build.
+    pub compiler_version: String,
+    /// Plugin contract version this compiler implements.
+    pub contract_version: String,
+    /// Clean runtime ABI version emitted into module imports.
+    pub runtime_abi_version: String,
+    /// Artifacts produced earlier in the build. Empty for slots that run
+    /// before any artifact emission.
+    #[serde(default)]
+    pub artifacts_so_far: Vec<BuildContextArtifact>,
+    /// Snapshot of the compiler-owned build state at the moment this slot
+    /// is invoked. Read-only — plugins MUST use `_build_state_set` to write.
+    #[serde(default)]
+    pub build_state: std::collections::BTreeMap<String, String>,
+}
+
+/// Minimal artifact view passed in the build context. Avoids leaking
+/// compiler-internal fields like `size_bytes` / `sha256` to plugins.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuildContextArtifact {
+    pub name: String,
+    pub path_relative: String,
+    pub purpose: String,
+    pub public: bool,
+}
+
+impl BuildContext {
+    /// Construct a context with the current compiler/contract/abi versions
+    /// and sensible defaults. Callers fill in target/entry_path/output_dir.
+    pub fn new() -> Self {
+        Self {
+            target: "server".to_string(),
+            client_mode: false,
+            entry_path: String::new(),
+            output_dir: String::new(),
+            main_wasm: String::new(),
+            compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+            contract_version: PLUGIN_CONTRACT_VERSION.to_string(),
+            runtime_abi_version: DEFAULT_RUNTIME_ABI_VERSION.to_string(),
+            artifacts_so_far: Vec::new(),
+            build_state: std::collections::BTreeMap::new(),
+        }
+    }
+
+    pub fn with_target(mut self, target: impl Into<String>) -> Self {
+        self.target = target.into();
+        self.client_mode = self.target == "browser";
+        self
+    }
+    pub fn with_entry(mut self, entry: impl Into<String>) -> Self {
+        self.entry_path = entry.into();
+        self
+    }
+    pub fn with_output_dir(mut self, dir: impl Into<String>) -> Self {
+        self.output_dir = dir.into();
+        self
+    }
+    pub fn with_main_wasm(mut self, path: impl Into<String>) -> Self {
+        self.main_wasm = path.into();
+        self
+    }
+    /// Take a snapshot of the current build state into `build_state`.
+    /// Called just before passing the context to a slot per
+    /// contracts/lifecycle.md §2.1 (the snapshot reflects writes from
+    /// earlier expand_block / slot calls in this build).
+    pub fn snapshot_build_state(&mut self, state: &BuildState) {
+        if let Ok(guard) = state.lock() {
+            self.build_state = guard.clone();
+        }
+    }
+}
+
+/// Plugin lifecycle slot declarations.
+/// See foundation/spec/plugins/contracts/lifecycle.md.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginLifecycle {
+    /// WASM export contributing per-file helper functions and classes.
+    /// Replaces the `__preamble` magic block for plugins that opt into v2.
+    #[serde(default)]
+    pub module_helpers: Option<String>,
+    /// If true, BFS reachability treats module_helpers output as roots.
+    /// Closes GEN003 for plugins whose helpers are called from generated code
+    /// that isn't statically reachable from user entry points.
+    #[serde(default)]
+    pub module_helpers_are_roots: bool,
+    /// WASM export contributing program _start prelude statements.
+    #[serde(default)]
+    pub program_init: Option<String>,
+    /// WASM export contributing client _start body (browser builds only).
+    /// Closes HYDRATE_AUTO by replacing the compiler's no-op rewrite.
+    #[serde(default)]
+    pub client_init: Option<String>,
+    /// WASM export contributing server bootstrap body (server builds only).
+    #[serde(default)]
+    pub server_init: Option<String>,
+    /// WASM export contributing per-request handler prelude.
+    #[serde(default)]
+    pub per_request: Option<String>,
+    /// Entry-point shapes per_request applies to.
+    /// Default ["http"] when per_request is set. Other values: "sse", "ws".
+    #[serde(default)]
+    pub per_request_targets: Vec<String>,
+    /// WASM export returning dynamic [[artifacts]] entries at build time.
+    /// Most plugins declare artifacts statically; this slot is for plugins
+    /// that need to compute the set from the build context.
+    #[serde(default)]
+    pub artifact_emitters: Option<String>,
+}
+
+impl PluginLifecycle {
+    /// Returns true if the plugin declares any v2 lifecycle slot.
+    /// Used to choose between v2 dispatch and the v1.0.0 `__preamble` path.
+    pub fn opts_into_v2(&self) -> bool {
+        self.module_helpers.is_some()
+            || self.program_init.is_some()
+            || self.client_init.is_some()
+            || self.server_init.is_some()
+            || self.per_request.is_some()
+            || self.artifact_emitters.is_some()
+    }
+}
+
+/// Build artifact a plugin declares it produces.
+/// See foundation/spec/plugins/contracts/artifacts.md §2.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginArtifact {
+    /// Conventional file name (e.g. "frontend.wasm", "theme.css").
+    /// Must be unique across loaded plugins.
+    pub name: String,
+    /// Documented purpose. See contracts/artifacts.md §4 for the set.
+    /// Values: "client_hydration", "static_asset", "manifest", "data_migration".
+    pub purpose: String,
+    /// Source for the artifact bytes. Either `emit` or `static_path` is required.
+    #[serde(default)]
+    pub emit: Option<ArtifactSource>,
+    /// Path inside the plugin directory to a precomputed file.
+    #[serde(default)]
+    pub static_path: Option<String>,
+    /// Output path relative to the build directory.
+    /// Supports `{output_dir}` substitution.
+    pub output_relative: String,
+    /// When the artifact must be produced.
+    /// Values: "always" (default), "never", "has_client_init",
+    /// "has_lifecycle.<slot>", "has_artifact.<name>".
+    #[serde(default = "default_required_when")]
+    pub required_when: String,
+    /// Whether the artifact is served to web clients.
+    #[serde(default)]
+    pub public: bool,
+    /// Cache key hint: "build_input_hash" (default), "plugin_version", "never".
+    #[serde(default = "default_cache_hint")]
+    pub cache: String,
+    /// MIME type. Inferred from extension if absent.
+    #[serde(default)]
+    pub content_type: Option<String>,
+}
+
+fn default_required_when() -> String {
+    "always".to_string()
+}
+
+fn default_cache_hint() -> String {
+    "build_input_hash".to_string()
+}
+
+/// How an artifact's bytes are produced.
+/// See contracts/artifacts.md §3.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ArtifactSource {
+    /// Plugin exports a WASM function returning the bytes.
+    /// The string is the export name.
+    Callback(String),
+    /// Compiler performs a named build operation to produce the bytes.
+    /// Documented values: "client_only_build", "server_only_build", "manifest".
+    Module { from_module: String },
+}
+
+/// Whether a host class is expected to provide a real implementation or a stub.
+/// See contracts/bridge-host-classes.md §3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BridgeImpl {
+    /// Host MUST provide the real implementation.
+    Real,
+    /// Host registers a stub. The stub's behavior is declared in the
+    /// matching `*_stub` block.
+    Stub,
+}
+
+/// Stub behavior for a bridge function on hosts that don't provide a real impl.
+/// See contracts/bridge-host-classes.md §3.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BridgeStub {
+    /// Literal return value as a string ("0", "false", "\"\"", "null").
+    /// Mutually exclusive with `no_op`.
+    #[serde(default)]
+    pub returns: Option<String>,
+    /// If true, the stub is void-equivalent (returns nothing).
+    #[serde(default)]
+    pub no_op: bool,
+}
+
+/// Module-callback contract for bridges that dispatch back into the WASM module.
+/// See contracts/bridge-host-classes.md §4.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BridgeCallback {
+    /// One of the documented purposes:
+    /// "component_tag_render", "route_dispatch", "migration_apply", "event_dispatch".
+    pub purpose: String,
+    /// Which plugin's exports the host should look up.
+    pub plugin_target: String,
+    /// How the host finds the right export.
+    /// Values: "exports_matching", "manifest_lookup", "explicit_argument".
+    pub discovery: String,
+    /// When discovery is "exports_matching", the symbol pattern
+    /// with `{placeholder}` substitution (e.g. "{tagname}_render").
+    #[serde(default)]
+    pub export_pattern: Option<String>,
+    /// What to do when no matching export is found.
+    /// Values: "passthrough" (default), "error", "empty".
+    #[serde(default = "default_callback_fallback")]
+    pub fallback: String,
+}
+
+fn default_callback_fallback() -> String {
+    "passthrough".to_string()
+}
 
 /// Expected WASM exports from a plugin
 pub struct PluginAbi;
@@ -1113,5 +1470,370 @@ mod tests {
         let response_type = &manifest.language.types[1];
         assert_eq!(response_type.name, "Response");
         assert_eq!(response_type.fields.len(), 0);
+    }
+
+    // ========================================================================
+    // Plugin Contracts v2 (foundation/spec/plugins/contracts/)
+    // ========================================================================
+
+    #[test]
+    fn test_v1_manifest_loads_with_empty_v2_defaults() {
+        // A v1.0.0 plugin.toml must continue to load unchanged.
+        // v2 fields default to absent / empty / false.
+        let toml_str = r#"
+            [plugin]
+            name = "legacy.plugin"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["legacy"]
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.plugin.name, "legacy.plugin");
+        // v2 fields all default
+        assert!(manifest.compatibility.abi_version.is_none());
+        assert!(!manifest.lifecycle.opts_into_v2());
+        assert!(!manifest.lifecycle.module_helpers_are_roots);
+        assert!(manifest.artifacts.is_empty());
+    }
+
+    #[test]
+    fn test_v2_manifest_lifecycle_section_parses() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.ui"
+            version = "2.6.12"
+
+            [compatibility]
+            abi_version = "1.0.0"
+
+            [handles]
+            blocks = ["component"]
+
+            [lifecycle]
+            module_helpers = "emit_ui_helpers"
+            module_helpers_are_roots = true
+            client_init = "emit_ui_client_init"
+            artifact_emitters = "emit_ui_artifacts"
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.compatibility.abi_version.as_deref(), Some("1.0.0"));
+        assert!(manifest.lifecycle.opts_into_v2());
+        assert!(manifest.lifecycle.module_helpers_are_roots);
+        assert_eq!(
+            manifest.lifecycle.module_helpers.as_deref(),
+            Some("emit_ui_helpers")
+        );
+        assert_eq!(
+            manifest.lifecycle.client_init.as_deref(),
+            Some("emit_ui_client_init")
+        );
+        assert_eq!(
+            manifest.lifecycle.artifact_emitters.as_deref(),
+            Some("emit_ui_artifacts")
+        );
+        // Slots not declared default to None
+        assert!(manifest.lifecycle.program_init.is_none());
+        assert!(manifest.lifecycle.server_init.is_none());
+        assert!(manifest.lifecycle.per_request.is_none());
+    }
+
+    #[test]
+    fn test_v2_manifest_artifacts_section_parses() {
+        // The artifact closes BUILD_FRONTEND/SRV004 — frame.ui declares
+        // frontend.wasm here and clean-server locates it by manifest, not
+        // by CWD coincidence.
+        let toml_str = r#"
+            [plugin]
+            name = "frame.ui"
+            version = "2.6.12"
+
+            [handles]
+            blocks = ["component"]
+
+            [[artifacts]]
+            name = "frontend.wasm"
+            purpose = "client_hydration"
+            emit = { from_module = "client_only_build" }
+            output_relative = "{output_dir}/frontend.wasm"
+            required_when = "has_client_init"
+            public = true
+            content_type = "application/wasm"
+
+            [[artifacts]]
+            name = "theme.css"
+            purpose = "static_asset"
+            emit = "emit_theme_css"
+            output_relative = "{output_dir}/theme.css"
+            public = true
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(manifest.artifacts.len(), 2);
+
+        let frontend = &manifest.artifacts[0];
+        assert_eq!(frontend.name, "frontend.wasm");
+        assert_eq!(frontend.purpose, "client_hydration");
+        assert_eq!(frontend.required_when, "has_client_init");
+        assert!(frontend.public);
+        assert_eq!(frontend.content_type.as_deref(), Some("application/wasm"));
+        match frontend.emit.as_ref().unwrap() {
+            ArtifactSource::Module { from_module } => {
+                assert_eq!(from_module, "client_only_build");
+            }
+            _ => panic!("expected Module variant for frontend.wasm emit"),
+        }
+
+        let theme = &manifest.artifacts[1];
+        assert_eq!(theme.name, "theme.css");
+        assert_eq!(theme.purpose, "static_asset");
+        // Default required_when is "always"
+        assert_eq!(theme.required_when, "always");
+        // Default cache is "build_input_hash"
+        assert_eq!(theme.cache, "build_input_hash");
+        match theme.emit.as_ref().unwrap() {
+            ArtifactSource::Callback(name) => assert_eq!(name, "emit_theme_css"),
+            _ => panic!("expected Callback variant for theme.css emit"),
+        }
+    }
+
+    #[test]
+    fn test_v2_bridge_function_with_hosts_and_callback() {
+        // The callback declaration is how SRV001 is closed — _ui_render_page
+        // declares the component_tag_render purpose so clean-server can
+        // dispatch back into the WASM module without hardcoded knowledge.
+        let toml_str = r#"
+            [plugin]
+            name = "frame.ui"
+            version = "2.6.12"
+
+            [handles]
+            blocks = ["component"]
+
+            [[bridge.functions]]
+            name = "_ui_render_page"
+            params = ["string", "string"]
+            returns = "string"
+            expand_strings = true
+            hosts = ["server"]
+
+            [bridge.functions.callback]
+            purpose = "component_tag_render"
+            plugin_target = "frame.ui"
+            discovery = "exports_matching"
+            export_pattern = "{tagname}_render"
+            fallback = "passthrough"
+
+            [[bridge.functions]]
+            name = "_ui_get_bounds"
+            params = ["string"]
+            returns = "string"
+            expand_strings = true
+            hosts = ["browser", "server"]
+            browser_impl = "real"
+            server_impl = "stub"
+            server_stub = { returns = "\"\"" }
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(manifest.bridge.functions.len(), 2);
+
+        let render = &manifest.bridge.functions[0];
+        assert_eq!(render.name, "_ui_render_page");
+        assert_eq!(render.hosts.as_ref().unwrap(), &vec!["server".to_string()]);
+        let cb = render.callback.as_ref().expect("callback should parse");
+        assert_eq!(cb.purpose, "component_tag_render");
+        assert_eq!(cb.discovery, "exports_matching");
+        assert_eq!(cb.export_pattern.as_deref(), Some("{tagname}_render"));
+        assert_eq!(cb.fallback, "passthrough");
+
+        let bounds = &manifest.bridge.functions[1];
+        assert_eq!(
+            bounds.hosts.as_ref().unwrap(),
+            &vec!["browser".to_string(), "server".to_string()]
+        );
+        assert_eq!(bounds.browser_impl, Some(BridgeImpl::Real));
+        assert_eq!(bounds.server_impl, Some(BridgeImpl::Stub));
+        let stub = bounds.server_stub.as_ref().expect("server_stub parses");
+        assert_eq!(stub.returns.as_deref(), Some("\"\""));
+        assert!(!stub.no_op);
+    }
+
+    #[test]
+    fn test_v2_bridge_function_defaults_without_v2_fields() {
+        // v1.0.0 bridge declarations must keep parsing with v2 fields absent.
+        let toml_str = r#"
+            [plugin]
+            name = "test.plugin"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["test"]
+
+            [[bridge.functions]]
+            name = "_db_query"
+            params = ["string", "string"]
+            returns = "string"
+            expand_strings = true
+        "#;
+
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+        let f = &manifest.bridge.functions[0];
+        assert!(f.hosts.is_none());
+        assert!(f.server_impl.is_none());
+        assert!(f.browser_impl.is_none());
+        assert!(f.callback.is_none());
+    }
+
+    // ========================================================================
+    // Plugin Contracts v2 §2 — BuildContext and BuildState
+    // ========================================================================
+
+    #[test]
+    fn test_build_context_default_carries_version_constants() {
+        let ctx = BuildContext::new();
+        assert_eq!(ctx.contract_version, PLUGIN_CONTRACT_VERSION);
+        assert_eq!(ctx.runtime_abi_version, DEFAULT_RUNTIME_ABI_VERSION);
+        assert_eq!(ctx.target, "server");
+        assert!(!ctx.client_mode);
+    }
+
+    #[test]
+    fn test_build_context_with_target_derives_client_mode() {
+        let ctx = BuildContext::new().with_target("browser");
+        assert_eq!(ctx.target, "browser");
+        assert!(ctx.client_mode);
+
+        let ctx = BuildContext::new().with_target("server");
+        assert_eq!(ctx.target, "server");
+        assert!(!ctx.client_mode);
+
+        let ctx = BuildContext::new().with_target("native");
+        assert!(!ctx.client_mode);
+    }
+
+    #[test]
+    fn test_build_context_json_round_trip() {
+        // The JSON shape is what plugins parse — a stable round trip ensures
+        // the field names match contracts/lifecycle.md §2.1.
+        let mut ctx = BuildContext::new()
+            .with_target("server")
+            .with_entry("app/main.cln")
+            .with_output_dir("dist")
+            .with_main_wasm("app.wasm");
+        ctx.artifacts_so_far.push(BuildContextArtifact {
+            name: "frontend.wasm".to_string(),
+            path_relative: "frontend.wasm".to_string(),
+            purpose: "client_hydration".to_string(),
+            public: true,
+        });
+        ctx.build_state.insert(
+            "frame.ui:components".to_string(),
+            "[\"app-header\"]".to_string(),
+        );
+
+        let json = serde_json::to_string(&ctx).expect("serialize");
+        // Verify every documented field appears in the wire form.
+        for field in [
+            "\"target\"",
+            "\"client_mode\"",
+            "\"entry_path\"",
+            "\"output_dir\"",
+            "\"main_wasm\"",
+            "\"compiler_version\"",
+            "\"contract_version\"",
+            "\"runtime_abi_version\"",
+            "\"artifacts_so_far\"",
+            "\"build_state\"",
+        ] {
+            assert!(json.contains(field), "missing field {} in {}", field, json);
+        }
+
+        let parsed: BuildContext = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.target, "server");
+        assert_eq!(parsed.entry_path, "app/main.cln");
+        assert_eq!(parsed.artifacts_so_far.len(), 1);
+        assert_eq!(parsed.artifacts_so_far[0].name, "frontend.wasm");
+        assert_eq!(
+            parsed.build_state.get("frame.ui:components"),
+            Some(&"[\"app-header\"]".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_state_snapshot_reflects_writes() {
+        // The BuildState is shared by Arc so concurrent writes are visible
+        // through the snapshot helper. This is how `expand_block` writes are
+        // observed by later slot calls within one build.
+        let state = new_build_state();
+        {
+            let mut g = state.lock().unwrap();
+            g.insert("frame.ui:components".to_string(), "[]".to_string());
+            g.insert("frame.server:routes".to_string(), "[]".to_string());
+        }
+
+        let mut ctx = BuildContext::new();
+        ctx.snapshot_build_state(&state);
+        assert_eq!(ctx.build_state.len(), 2);
+        assert!(ctx.build_state.contains_key("frame.ui:components"));
+
+        // Subsequent writes don't retroactively appear in the snapshot — the
+        // snapshot is a point-in-time copy per contracts/lifecycle.md §2.1.
+        state
+            .lock()
+            .unwrap()
+            .insert("frame.auth:roles".to_string(), "[]".to_string());
+        assert_eq!(
+            ctx.build_state.len(),
+            2,
+            "snapshot must not see post-snapshot writes"
+        );
+
+        // A fresh snapshot picks up the new write.
+        let mut ctx2 = BuildContext::new();
+        ctx2.snapshot_build_state(&state);
+        assert_eq!(ctx2.build_state.len(), 3);
+    }
+
+    #[test]
+    fn test_build_state_keys_namespaced_by_convention() {
+        // The spec says: keys should be plugin-namespaced (frame.ui:foo) and
+        // __compiler:* is reserved. This test documents the convention so a
+        // future spec lint can check it.
+        let state = new_build_state();
+        {
+            let mut g = state.lock().unwrap();
+            g.insert("frame.ui:components".to_string(), "[]".to_string());
+            g.insert("__compiler:internal".to_string(), "value".to_string());
+        }
+        // No structural enforcement yet — just confirm both kinds round-trip.
+        let snap: std::collections::BTreeMap<String, String> = state.lock().unwrap().clone();
+        assert!(snap.contains_key("frame.ui:components"));
+        assert!(snap.contains_key("__compiler:internal"));
+    }
+
+    #[test]
+    fn test_lifecycle_opts_into_v2() {
+        let empty = PluginLifecycle::default();
+        assert!(!empty.opts_into_v2());
+
+        let with_helpers = PluginLifecycle {
+            module_helpers: Some("emit_helpers".to_string()),
+            ..PluginLifecycle::default()
+        };
+        assert!(with_helpers.opts_into_v2());
+
+        // module_helpers_are_roots alone is NOT a v2 opt-in — it's a
+        // modifier on module_helpers. Without module_helpers it does nothing.
+        let only_roots_flag = PluginLifecycle {
+            module_helpers_are_roots: true,
+            ..PluginLifecycle::default()
+        };
+        assert!(!only_roots_flag.opts_into_v2());
     }
 }

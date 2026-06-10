@@ -1262,6 +1262,69 @@ impl MirCodeGenerator<'_> {
 
     /// Walk the MIR call graph and collect every called function name.
     ///
+    /// Plugin Contracts v2 — check every reachable bridge call against the
+    /// active build's host class. Returns one diagnostic per bridge function
+    /// whose declared `hosts` does not include the host class.
+    ///
+    /// Returns an empty Vec when:
+    /// - `self.host_class` is None (enforcement disabled — e.g. plugin builds),
+    /// - no bridge function in the reachable set has a `hosts` field, or
+    /// - every reachable bridge accepts `"all"` or the current host class.
+    ///
+    /// Bridges with no `hosts` field are skipped (Phase C compatibility per
+    /// `foundation/spec/plugins/contracts/bridge-host-classes.md` §6.2 — third
+    /// party plugins haven't migrated yet). When Phase D lands, missing
+    /// `hosts` will become a deprecation warning at plugin load.
+    pub(super) fn check_bridge_host_classes(
+        &self,
+        reachable_calls: &HashSet<String>,
+    ) -> Vec<crate::error::CompilerError> {
+        use crate::error::{CompilerError, ErrorContext, ErrorType};
+
+        let host_class = match self.host_class.as_deref() {
+            Some(h) => h,
+            None => return Vec::new(),
+        };
+
+        let mut diagnostics = Vec::new();
+        for bridge in &self.bridge_functions {
+            let hosts = match bridge.hosts.as_deref() {
+                Some(h) => h,
+                None => continue,
+            };
+            // A bridge call must reach the BFS reachable set to be relevant.
+            // Also accept dot-form aliases (e.g. `db.query` for `_db_query`).
+            let reachable = reachable_calls.contains(&bridge.name)
+                || self
+                    .language_to_bridge_map
+                    .iter()
+                    .any(|(lang, bridge_name)| {
+                        bridge_name == &bridge.name && reachable_calls.contains(lang)
+                    });
+            if !reachable {
+                continue;
+            }
+            let allowed = hosts.iter().any(|h| h == "all" || h == host_class);
+            if allowed {
+                continue;
+            }
+            let message = format!(
+                "BRIDGE-HOST-MISMATCH: bridge function `{}` is declared for hosts {:?}, \
+                 but this build targets host class `{}`. \
+                 Calling this function on the wrong host will fail at runtime. \
+                 See foundation/spec/plugins/contracts/bridge-host-classes.md §6.",
+                bridge.name, hosts, host_class
+            );
+            diagnostics.push(CompilerError::Validation {
+                context: Box::new(
+                    ErrorContext::new(message, None, ErrorType::Validation, None)
+                        .with_error_code("BRIDGE-HOST-MISMATCH"),
+                ),
+            });
+        }
+        diagnostics
+    }
+
     /// This is a general-purpose reachability scan used to drive the
     /// Import Minimality Rule (see foundation/platform-architecture/EXECUTION_LAYERS.md).
     /// Returns the set of names that appear as call targets anywhere in the
@@ -1346,9 +1409,23 @@ impl MirCodeGenerator<'_> {
                 // we deliberately exclude them here to preserve the Import Minimality Rule
                 // — preamble helpers like resDownload must not drag in _res_download unless
                 // user code actually calls them.
-                let is_user_defined =
-                    !f.location.file.is_empty() && f.location.file != "<plugin-output>";
-                if is_exported_by_attr || is_external_call_target || is_user_defined {
+                let is_user_defined = !f.location.file.is_empty()
+                    && f.location.file != crate::ast::PLUGIN_OUTPUT_MARKER
+                    && f.location.file != crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
+                // v2 (contracts/lifecycle.md §3.1): plugins that declare
+                // `lifecycle.module_helpers_are_roots = true` have their preamble
+                // functions tagged with PLUGIN_OUTPUT_V2_ROOT_MARKER. These are
+                // explicit roots — they ARE seeded so their bridge imports
+                // (e.g. _http_redirect for frame.server's redirect() helper) are
+                // preserved even when user code never references them directly.
+                // Closes GEN003.
+                let is_v2_module_helper_root =
+                    f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
+                if is_exported_by_attr
+                    || is_external_call_target
+                    || is_user_defined
+                    || is_v2_module_helper_root
+                {
                     seed(*sym);
                 }
                 // Page handlers call json.encode(data) to serialize load() return values.
@@ -2399,5 +2476,135 @@ impl MirCodeGenerator<'_> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod host_class_enforcement_tests {
+    use super::*;
+    use crate::codegen::mir_codegen::MirCodeGenerator;
+    use crate::plugins::BridgeFunction;
+
+    fn bridge(name: &str, hosts: Option<Vec<&str>>) -> BridgeFunction {
+        BridgeFunction {
+            name: name.to_string(),
+            params: vec!["string".to_string()],
+            returns: "string".to_string(),
+            module: "env".to_string(),
+            description: None,
+            expand_strings: true,
+            hosts: hosts.map(|v| v.into_iter().map(String::from).collect()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_no_host_class_disables_check() {
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.set_bridge_functions(vec![bridge("_db_query", Some(vec!["server"]))]);
+        gen.set_host_class(None);
+        let reachable: HashSet<String> = ["_db_query".to_string()].into_iter().collect();
+
+        let diags = gen.check_bridge_host_classes(&reachable);
+        assert!(
+            diags.is_empty(),
+            "no host_class set must skip enforcement entirely"
+        );
+    }
+
+    #[test]
+    fn test_bridge_without_hosts_is_skipped() {
+        // Phase C compatibility — third-party plugins without hosts continue
+        // to compile cleanly. Phase D will surface a deprecation warning.
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.set_bridge_functions(vec![bridge("_legacy_func", None)]);
+        gen.set_host_class(Some("browser".to_string()));
+        let reachable: HashSet<String> = ["_legacy_func".to_string()].into_iter().collect();
+
+        let diags = gen.check_bridge_host_classes(&reachable);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn test_server_bridge_in_browser_build_fails() {
+        // The canonical BRIDGE-HOST-MISMATCH case.
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.set_bridge_functions(vec![bridge("_db_query", Some(vec!["server"]))]);
+        gen.set_host_class(Some("browser".to_string()));
+        let reachable: HashSet<String> = ["_db_query".to_string()].into_iter().collect();
+
+        let diags = gen.check_bridge_host_classes(&reachable);
+        assert_eq!(diags.len(), 1);
+        let msg = format!("{}", diags[0]);
+        assert!(msg.contains("BRIDGE-HOST-MISMATCH"));
+        assert!(msg.contains("_db_query"));
+        assert!(msg.contains("server"));
+    }
+
+    #[test]
+    fn test_all_hosts_value_is_accepted_by_every_host_class() {
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.set_bridge_functions(vec![bridge("file_read", Some(vec!["all"]))]);
+        let reachable: HashSet<String> = ["file_read".to_string()].into_iter().collect();
+
+        for host in ["server", "browser", "native"] {
+            gen.set_host_class(Some(host.to_string()));
+            let diags = gen.check_bridge_host_classes(&reachable);
+            assert!(
+                diags.is_empty(),
+                "all-hosts bridge must be callable from {} target",
+                host
+            );
+        }
+    }
+
+    #[test]
+    fn test_multiple_hosts_passes_when_current_listed() {
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.set_bridge_functions(vec![bridge(
+            "_ui_get_bounds",
+            Some(vec!["browser", "server"]),
+        )]);
+        let reachable: HashSet<String> = ["_ui_get_bounds".to_string()].into_iter().collect();
+
+        for host in ["server", "browser"] {
+            gen.set_host_class(Some(host.to_string()));
+            assert!(gen.check_bridge_host_classes(&reachable).is_empty());
+        }
+
+        gen.set_host_class(Some("native".to_string()));
+        assert_eq!(gen.check_bridge_host_classes(&reachable).len(), 1);
+    }
+
+    #[test]
+    fn test_unreachable_bridge_is_not_diagnosed() {
+        // Phase C respects Import Minimality — if the bridge is never called
+        // in this build's reachable graph, no diagnostic.
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.set_bridge_functions(vec![bridge("_db_query", Some(vec!["server"]))]);
+        gen.set_host_class(Some("browser".to_string()));
+
+        let empty_reachable: HashSet<String> = HashSet::new();
+        assert!(gen.check_bridge_host_classes(&empty_reachable).is_empty());
+    }
+
+    #[test]
+    fn test_dot_alias_reachability_is_picked_up() {
+        // db.query in user code resolves to _db_query at codegen via the
+        // language_to_bridge_map. The enforcement must follow the alias so a
+        // call written as `db.query(...)` isn't a false negative.
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.set_bridge_functions(vec![bridge("_db_query", Some(vec!["server"]))]);
+        gen.set_language_to_bridge_map(
+            [("db.query".to_string(), "_db_query".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        gen.set_host_class(Some("browser".to_string()));
+
+        // Only the language-level name appears in the reachable set.
+        let reachable: HashSet<String> = ["db.query".to_string()].into_iter().collect();
+        let diags = gen.check_bridge_host_classes(&reachable);
+        assert_eq!(diags.len(), 1, "alias must propagate to enforcement");
     }
 }

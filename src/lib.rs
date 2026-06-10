@@ -69,6 +69,8 @@
 
 /// Abstract Syntax Tree definitions — output of Stage 2 (parsing)
 pub mod ast;
+/// Build manifest emission (Plugin Contracts v2 — contracts/artifacts.md)
+pub mod build_manifest;
 /// Built-in function registry — intrinsic functions available without imports
 pub mod builtins;
 /// WebAssembly code generation — Stage 7 (MIR to WASM bytecode)
@@ -95,6 +97,8 @@ pub mod module;
 pub mod package;
 /// Parser — Stage 2 (tokens to AST via recursive descent)
 pub mod parser;
+/// Plugin artifact orchestration (Plugin Contracts v2 — contracts/artifacts.md)
+pub mod plugin_artifacts;
 /// Plugin system — framework plugin loading, expansion, and enforcement
 pub mod plugins;
 /// Name and module resolution — Stage 4 (symbol binding and scope resolution)
@@ -1475,6 +1479,105 @@ fn extract_plugins(source: &str) -> Vec<String> {
 /// merging all unique plugin names.  This ensures that plugins declared only
 /// in shared source files (e.g. `frame.server` in routes.cln) are loaded into
 /// the registry even when the manifest entry file does not re-declare them.
+/// Plugin Contracts v2 — discover plugins for the given entry file, load
+/// their manifests, and return resolved callback contracts.
+///
+/// Used by the build flow (`cln compile`, `cln build`) to populate the
+/// `callbacks` field in `dist/build-manifest.json` so hosts can read the
+/// dispatch contracts (e.g. `_ui_render_page` → `component_tag_render`)
+/// without re-parsing every plugin.toml. Validation per
+/// `foundation/spec/plugins/contracts/bridge-host-classes.md` §4 already
+/// happens at registry build; this helper just extracts the resolved set.
+///
+/// Returns an empty Vec when:
+/// - the entry file declares no plugins,
+/// - no loaded plugin declares any `[bridge.functions.callback]` blocks,
+/// - plugin loading itself fails (the caller's normal compile pass will
+///   surface that error — this helper degrades to "no callbacks" rather
+///   than blocking manifest emission).
+pub fn discover_callback_contracts<P: AsRef<std::path::Path>>(
+    entry_path: P,
+) -> Vec<build_manifest::CallbackContract> {
+    let entry_source = match std::fs::read_to_string(entry_path.as_ref()) {
+        Ok(src) => src,
+        Err(_) => return Vec::new(),
+    };
+    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
+    if plugin_names.is_empty() {
+        return Vec::new();
+    }
+    let mut loader = match plugins::WasmPluginLoader::new() {
+        Ok(l) => l,
+        Err(_) => return Vec::new(),
+    };
+    let registry = match loader.load_plugins(&plugin_names) {
+        Ok(reg) => reg,
+        Err(_) => return Vec::new(),
+    };
+    registry.callback_contracts()
+}
+
+/// Plugin Contracts v2 — return a snapshot of the build state populated by
+/// plugin `_build_state_set` calls during the most recent compile pass.
+///
+/// **Current limitation (Phase C):** the snapshot is taken from a freshly
+/// loaded registry, NOT from the registry the compile flow used. Real plugins
+/// that have not yet adopted the v2 lifecycle will return an empty map.
+/// A follow-up commit will thread the in-flight registry's state through to
+/// main.rs so the manifest reflects every write made during the build.
+///
+/// Returns an empty map on any error.
+pub fn discover_build_state_snapshot<P: AsRef<std::path::Path>>(
+    entry_path: P,
+) -> std::collections::BTreeMap<String, String> {
+    let entry_source = match std::fs::read_to_string(entry_path.as_ref()) {
+        Ok(src) => src,
+        Err(_) => return std::collections::BTreeMap::new(),
+    };
+    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
+    if plugin_names.is_empty() {
+        return std::collections::BTreeMap::new();
+    }
+    let mut loader = match plugins::WasmPluginLoader::new() {
+        Ok(l) => l,
+        Err(_) => return std::collections::BTreeMap::new(),
+    };
+    let registry = match loader.load_plugins(&plugin_names) {
+        Ok(reg) => reg,
+        Err(_) => return std::collections::BTreeMap::new(),
+    };
+    registry.build_state_snapshot()
+}
+
+/// Plugin Contracts v2 — discover plugins for the given entry file, load
+/// their manifests, and return the full set keyed by plugin name. Used by
+/// the build flow to orchestrate `[[artifacts]]` emission per
+/// `foundation/spec/plugins/contracts/artifacts.md` §7.
+///
+/// Returns an empty map on any error so the legacy emission path can
+/// gracefully take over.
+pub fn discover_plugin_manifests<P: AsRef<std::path::Path>>(
+    entry_path: P,
+) -> std::collections::HashMap<String, plugins::PluginManifest> {
+    let entry_source = match std::fs::read_to_string(entry_path.as_ref()) {
+        Ok(src) => src,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
+    if plugin_names.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    let mut loader = match plugins::WasmPluginLoader::new() {
+        Ok(l) => l,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let registry = match loader.load_plugins(&plugin_names) {
+        Ok(reg) => reg,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    registry.loaded_manifests().clone()
+}
+
 fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> Vec<String> {
     let mut plugins: Vec<String> = extract_plugins(entry_source);
 
@@ -1973,12 +2076,20 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
             }]
         })?;
 
-        let reg = loader.load_plugins(&plugin_names).map_err(|e| {
-            vec![CompilerError::PluginError {
-                message: format!("Failed to load plugins: {}", e),
-                location: None,
-            }]
-        })?;
+        // Plugin Contracts v2 — load plugins with a shared per-build state
+        // so the `_build_state_set` / `_build_state_get` bridges in their
+        // sandboxes communicate through a single keystore. The registry
+        // hands the same Arc back via `build_state()` so the orchestrator
+        // can snapshot it at end of build. See contracts/lifecycle.md §2.5.
+        let build_state = plugins::new_build_state();
+        let reg = loader
+            .load_plugins_with_build_state(&plugin_names, build_state)
+            .map_err(|e| {
+                vec![CompilerError::PluginError {
+                    message: format!("Failed to load plugins: {}", e),
+                    location: None,
+                }]
+            })?;
 
         Some(Arc::new(reg))
     } else {
@@ -1988,7 +2099,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     // Step 1: Build the compilation unit
     let mut config = MultiFileCompilerConfig::default()
         .with_search_paths(search_paths)
-        .with_opt_level(opt_level);
+        .with_opt_level(opt_level)
+        .with_client_mode(client_mode);
 
     if let Some(ref reg) = registry {
         config = config.with_plugin_registry(Arc::clone(reg));
@@ -2073,10 +2185,32 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         // when the loader fires `_start()`, which the browser bridge cannot
         // satisfy.  Component event handlers remain as exported functions and
         // are reached via the `_ui_on_event` registrations the components make.
+        // Plugin Contracts v2 §1 — preserve client_init contributions.
+        //
+        // The legacy behavior in client_mode was to discard the merged start
+        // body so the browser's `_start` becomes a no-op (the server _start
+        // imports like `_http_listen` are not callable from the browser host).
+        //
+        // With v2 lifecycle slot dispatch, the expander has already prepended
+        // each plugin's `client_init` output to start_function's body. We
+        // preserve those contributions and only clear the user's residual
+        // server-only statements that came in BEFORE the plugin output.
+        //
+        // The rule is keyed on whether any loaded plugin declares the slot:
+        // if yes, we keep start_function as-is (the expander has shaped it
+        // correctly). If no plugin declared client_init, we keep the legacy
+        // clearing behavior so server-only code doesn't leak into the browser
+        // _start. See contracts/lifecycle.md §3.3.
         if client_mode {
-            extra_start_stmts.clear();
-            if let Some(ref mut sf) = start_function {
-                sf.body.statements.clear();
+            let any_client_init = registry
+                .as_ref()
+                .map(|r| r.any_plugin_declares_lifecycle_slot("client_init"))
+                .unwrap_or(false);
+            if !any_client_init {
+                extra_start_stmts.clear();
+                if let Some(ref mut sf) = start_function {
+                    sf.body.statements.clear();
+                }
             }
         }
 
@@ -2364,6 +2498,23 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     if !lang_to_bridge.is_empty() {
         mir_codegen.set_language_to_bridge_map(lang_to_bridge);
     }
+
+    // Plugin Contracts v2 — derive host class from client_mode so the bridge
+    // enforcement check in codegen knows which `hosts` declarations apply.
+    // See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
+    //
+    // - client_mode = true  → the nested `frontend.wasm` build → "browser"
+    // - client_mode = false → the server build (default for `cln compile`) → "server"
+    //
+    // Strict mode (warnings → errors) is opt-in via the CLEAN_STRICT_HOSTS=1
+    // environment variable for now. Phase D will flip the default.
+    let host_class = if client_mode { "browser" } else { "server" };
+    mir_codegen.set_host_class(Some(host_class.to_string()));
+    let strict = std::env::var("CLEAN_STRICT_HOSTS")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    mir_codegen.set_strict_hosts(strict);
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 
