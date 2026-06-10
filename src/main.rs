@@ -1127,11 +1127,69 @@ async fn handle_build(
     // detection is only used as the fallback path for projects whose plugins
     // have not yet migrated. See contracts/artifacts.md §7 and
     // contracts/migration.md §4.
-    let loaded_manifests = clean_language_compiler::discover_plugin_manifests(&input);
+    extra_artifacts.extend(orchestrate_artifacts(
+        &input,
+        &output_file,
+        opt_level,
+        output_config.quiet,
+    )?);
+
+    write_build_manifest(
+        Path::new(&output_file),
+        &wasm_binary,
+        extra_artifacts,
+        Some(Path::new(&input)),
+        output_config.quiet,
+    );
+
+    Ok(())
+}
+
+/// Plugin Contracts v2 — orchestrate `[[artifacts]]` emission for the build.
+///
+/// Discovers loaded plugins, asks each whether it declares `[[artifacts]]`,
+/// and either runs the declarative orchestrator (predicate-driven, per
+/// `contracts/artifacts.md` §7) or falls back to the legacy `events:`
+/// source-content detection for v1.0.0 plugins.
+///
+/// Called from BOTH `handle_build` and `handle_compile`. Prior to this
+/// extraction the orchestrator ran only in `handle_build`, so `cln compile`
+/// silently dropped declared artifacts (e.g. frame.ui's `frontend.wasm`)
+/// even when the manifest's `required_when` predicate matched. See
+/// `compiler-build-state-bridge-runtime-trap.md` — second lead.
+#[allow(clippy::type_complexity)]
+fn orchestrate_artifacts(
+    input: &str,
+    output_file: &str,
+    opt_level: u8,
+    quiet: bool,
+) -> Result<
+    Vec<(
+        String,
+        String,
+        &'static str,
+        bool,
+        &'static str,
+        Vec<u8>,
+        Option<String>,
+    )>,
+    Box<dyn std::error::Error>,
+> {
+    let mut extra_artifacts: Vec<(
+        String,
+        String,
+        &'static str,
+        bool,
+        &'static str,
+        Vec<u8>,
+        Option<String>,
+    )> = Vec::new();
+
+    let loaded_manifests = clean_language_compiler::discover_plugin_manifests(input);
     let any_plugin_declares_artifacts = loaded_manifests.values().any(|m| !m.artifacts.is_empty());
 
     if any_plugin_declares_artifacts {
-        let main_wasm_path = PathBuf::from(&output_file);
+        let main_wasm_path = PathBuf::from(output_file);
         let output_dir = main_wasm_path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -1139,7 +1197,7 @@ async fn handle_build(
             .unwrap_or_else(|| PathBuf::from("."));
 
         let ctx = clean_language_compiler::plugin_artifacts::EmitContext {
-            entry_path: Path::new(&input),
+            entry_path: Path::new(input),
             output_dir: &output_dir,
             opt_level,
             in_nested_build: false,
@@ -1148,15 +1206,13 @@ async fn handle_build(
         match clean_language_compiler::plugin_artifacts::orchestrate(&loaded_manifests, &ctx) {
             Ok((emitted, warnings)) => {
                 for w in warnings {
-                    if !output_config.quiet {
+                    if !quiet {
                         eprintln!("warning: {}", w);
                     }
                 }
                 for art in emitted {
                     let resolved =
                         clean_language_compiler::plugin_artifacts::resolve_output_relative(
-                            // The orchestrator already resolved path_relative against output_dir.
-                            // We need the full disk path to write the bytes.
                             &format!("{{output_dir}}/{}", art.path_relative),
                             &output_dir,
                         );
@@ -1164,7 +1220,7 @@ async fn handle_build(
                         fs::create_dir_all(parent)?;
                     }
                     fs::write(&resolved, &art.bytes)?;
-                    if !output_config.quiet {
+                    if !quiet {
                         println!(
                             "Artifact `{}` produced by `{}` → {} ({} bytes)",
                             art.name,
@@ -1176,9 +1232,6 @@ async fn handle_build(
                     extra_artifacts.push((
                         art.name,
                         art.path_relative,
-                        // The static string slots in extra_artifacts predate v2
-                        // — we leak per-instance Strings into &'static str via
-                        // Box::leak. Acceptable for a build-time path.
                         Box::leak(art.purpose.into_boxed_str()),
                         art.public,
                         Box::leak(art.content_type.into_boxed_str()),
@@ -1188,7 +1241,6 @@ async fn handle_build(
                 }
             }
             Err(e) => {
-                // Hard error from the orchestrator — fail the build.
                 eprintln!("error: artifact orchestration failed: {}", e);
                 return Err(Box::new(std::io::Error::other(format!(
                     "artifact orchestration failed: {}",
@@ -1196,77 +1248,65 @@ async fn handle_build(
                 ))));
             }
         }
-    } else {
-        // Legacy fallback: BUILD_FRONTEND source-content detection. Removed
-        // in Phase D once all framework plugins have migrated to v2 [[artifacts]].
-        if project_uses_client_hydration(&input) {
-            let frontend_path = frontend_output_path(&output_file);
+    } else if project_uses_client_hydration(input) {
+        // Legacy fallback: BUILD_FRONTEND source-content detection.
+        // Removed in Phase D once all framework plugins have migrated.
+        let frontend_path = frontend_output_path(output_file);
+        if !quiet {
+            println!(
+                "Client hydration detected — building {}",
+                frontend_path.display()
+            );
+        }
+        let lib_paths_clone: Vec<PathBuf> = Path::new(input)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| vec![p.to_path_buf()])
+            .unwrap_or_default();
 
-            if !output_config.quiet {
-                println!(
-                    "Client hydration detected — building {}",
+        match clean_language_compiler::compile_multi_file_client_mode(
+            input,
+            lib_paths_clone,
+            opt_level,
+        ) {
+            Ok(frontend_bytes) => {
+                let bytes_len = frontend_bytes.len();
+                fs::write(&frontend_path, &frontend_bytes)?;
+                let frontend_name = frontend_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("frontend.wasm")
+                    .to_string();
+                extra_artifacts.push((
+                    frontend_name.clone(),
+                    frontend_name,
+                    "client_hydration",
+                    true,
+                    "application/wasm",
+                    frontend_bytes,
+                    None,
+                ));
+                if !quiet {
+                    println!(
+                        "Client build successful! Generated {} ({} bytes)",
+                        frontend_path.display(),
+                        bytes_len
+                    );
+                }
+            }
+            Err(errors) => {
+                eprintln!(
+                    "Client build skipped: failed to compile {}",
                     frontend_path.display()
                 );
-            }
-
-            let lib_paths_clone: Vec<PathBuf> = Path::new(&input)
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .map(|p| vec![p.to_path_buf()])
-                .unwrap_or_default();
-
-            match clean_language_compiler::compile_multi_file_client_mode(
-                &input,
-                lib_paths_clone,
-                opt_level,
-            ) {
-                Ok(frontend_bytes) => {
-                    let bytes_len = frontend_bytes.len();
-                    fs::write(&frontend_path, &frontend_bytes)?;
-                    let frontend_name = frontend_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("frontend.wasm")
-                        .to_string();
-                    extra_artifacts.push((
-                        frontend_name.clone(),
-                        frontend_name,
-                        "client_hydration",
-                        true,
-                        "application/wasm",
-                        frontend_bytes,
-                        None,
-                    ));
-                    if !output_config.quiet {
-                        println!(
-                            "Client build successful! Generated {} ({} bytes)",
-                            frontend_path.display(),
-                            bytes_len
-                        );
-                    }
-                }
-                Err(errors) => {
-                    eprintln!(
-                        "Client build skipped: failed to compile {}",
-                        frontend_path.display()
-                    );
-                    for error in &errors {
-                        eprintln!("   {}", error);
-                    }
+                for error in &errors {
+                    eprintln!("   {}", error);
                 }
             }
         }
     }
 
-    write_build_manifest(
-        Path::new(&output_file),
-        &wasm_binary,
-        extra_artifacts,
-        Some(Path::new(&input)),
-        output_config.quiet,
-    );
-
-    Ok(())
+    Ok(extra_artifacts)
 }
 
 /// Build a manifest describing every artifact this build produced and write
@@ -1518,13 +1558,21 @@ async fn handle_compile(
 
     fs::write(&output, &wasm_binary)?;
 
+    // Plugin Contracts v2 — orchestrate plugin-declared [[artifacts]] before
+    // writing the manifest. Previously only `cln build` ran the orchestrator
+    // and `cln compile` silently produced no side-channel artifacts (no
+    // frontend.wasm even when frame.ui's manifest declared it with
+    // required_when = "has_client_init"). See orchestrate_artifacts() and
+    // compiler-build-state-bridge-runtime-trap.md lead 2.
+    let extra_artifacts = orchestrate_artifacts(&input, &output, opt_level, output_config.quiet)?;
+
     // Plugin Contracts v2 — emit build-manifest.json alongside the WASM so
     // hosts can locate artifacts by purpose rather than path coincidence.
     // See foundation/spec/plugins/contracts/artifacts.md §5.
     write_build_manifest(
         Path::new(&output),
         &wasm_binary,
-        Vec::new(),
+        extra_artifacts,
         Some(Path::new(&input)),
         output_config.quiet,
     );
