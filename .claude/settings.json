@@ -34,7 +34,10 @@
       "Bash(sed -n '976,984p' src/error/mod.rs)",
       "Bash(./target/release/debug_wasm tests/output/vld001_json_namespace_direct_call.wasm)",
       "Bash(~/.cleen/clean-runner/0.1.1/clean-runner /tmp/test_repro.wasm)",
-      "mcp__clean-language__get_stack_recommendation"
+      "mcp__clean-language__get_stack_recommendation",
+      "Bash(rm -rf /tmp/hyd-repro)",
+      "Bash(mkdir -p /tmp/hyd-repro/app/web/pages /tmp/hyd-repro/app/web/components)",
+      "Bash(wasm-tools --version)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

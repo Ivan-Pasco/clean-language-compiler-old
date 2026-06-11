@@ -1579,13 +1579,24 @@ async fn handle_compile(
 
     println!("Successfully compiled to {output}");
 
+    // PLUGIN-BUILD-STAMP — stamp `built_with_compiler` into plugin.toml when this
+    // is a plugin build. The loader (src/plugins/wasm_loader.rs check_plugin_build_compatibility)
+    // reads this from the TOML to detect stale plugins. Without the stamp, every
+    // load emits a "plugin has no build stamp" warning even after a fresh rebuild,
+    // and the warning's "rebuild with build.sh" hint creates a misleading feedback
+    // loop. Gated on target == "plugin" so non-plugin compiles that happen to live
+    // adjacent to a plugin.toml don't get an unrelated stamp.
+    if target.to_lowercase() == "plugin" {
+        stamp_plugin_toml_if_present(&output);
+    }
+
     // Generate bridge files based on target
     let bridge_target = match target.to_lowercase().as_str() {
         "browser" | "web" => Some(BridgeTarget::Browser),
         "node" | "nodejs" => Some(BridgeTarget::Node),
         "ios" | "macos" | "apple" => Some(BridgeTarget::iOS),
         "android" => Some(BridgeTarget::Android),
-        "server" | "wasi" | "native" => None, // Server/native targets don't need bridge files
+        "server" | "wasi" | "native" | "plugin" => None, // No bridge files for these targets
         _ => {
             if !output_config.quiet {
                 println!(
@@ -1622,6 +1633,75 @@ async fn handle_compile(
     }
 
     Ok(())
+}
+
+/// After a successful plugin compile, stamp the adjacent plugin.toml's
+/// `[build] built_with_compiler` field so wasm_loader's compatibility check
+/// can recognise the build. Scans the output file's parent and grandparent
+/// for a plugin.toml — matches the cleen layout where build.sh writes the
+/// WASM alongside or one directory below the manifest.
+fn stamp_plugin_toml_if_present(output_file: &str) {
+    let out_path = Path::new(output_file);
+    let candidates = [
+        out_path.parent().map(|p| p.join("plugin.toml")),
+        out_path
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("plugin.toml")),
+    ];
+
+    for candidate in candidates.iter().flatten() {
+        if candidate.exists() {
+            if let Err(e) = write_build_stamp(candidate) {
+                eprintln!("warning: could not stamp {}: {}", candidate.display(), e);
+            } else {
+                eprintln!(
+                    "[Plugin Build] Stamped {} with compiler {}",
+                    candidate.display(),
+                    env!("CARGO_PKG_VERSION")
+                );
+            }
+            return;
+        }
+    }
+}
+
+/// Writes or replaces `built_with_compiler = "<ver>"` inside the [build]
+/// section of a plugin.toml without disturbing other content or comments.
+fn write_build_stamp(toml_path: &Path) -> std::io::Result<()> {
+    let content = fs::read_to_string(toml_path)?;
+    let version = env!("CARGO_PKG_VERSION");
+    let stamp_line = format!("built_with_compiler = \"{}\"", version);
+
+    let updated = if content.contains("built_with_compiler") {
+        content
+            .lines()
+            .map(|l| {
+                if l.trim_start().starts_with("built_with_compiler") {
+                    stamp_line.clone()
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else if content.contains("[build]") {
+        content
+            .lines()
+            .flat_map(|l| {
+                if l.trim() == "[build]" {
+                    vec![l.to_string(), stamp_line.clone()]
+                } else {
+                    vec![l.to_string()]
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        format!("{}\n\n[build]\n{}\n", content.trim_end(), stamp_line)
+    };
+
+    fs::write(toml_path, updated)
 }
 
 /// Parse `--memory-tier` CLI flag value into `Option<MemoryTier>`.
