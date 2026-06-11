@@ -1,0 +1,51 @@
+// Test: codegen/expand_component_truncation_regression
+// Grammar: grammar.ebnf §4.6 if_statement (with and without else_clause),
+//          §4.4 function_decl (string return type)
+// Semantic: SEM-FUNC return-from-non-void (every path must reach `return`)
+//
+// Regression: frame.ui 2.12.0 / compiler 0.30.263. `expand_component` traps
+// at runtime because its WASM body ends with the `unreachable` safety-net
+// instead of `return result`. The truncation drops every statement after
+// the bridge `if/else`.
+//
+// Trigger shape (smallest known reproducer):
+//   1. Non-void function (string return type).
+//   2. An outer `if cond` with NO else clause whose then-branch contains a
+//      nested `if/else`.
+//   3. One or more statements after the outer `if` that produce the return
+//      value.
+//
+// Codegen path (src/codegen/mir_codegen/blocks.rs, generate_structured_blocks
+// → Branch arm, continuation-selection at lines 902-955): when the outer
+// if has no else and the true-branch has a nested Branch terminator,
+// find_eventual_continuation returns the *inner* merge block. That inner
+// merge block was already inlined by generate_branch_block at lines 580-593
+// while emitting the then-branch, so the outer call short-circuits and the
+// real false_block (containing every post-if statement) is never visited.
+// Function ends as `... end end unreachable )` and traps when called.
+//
+// Bridge calls are NOT required to trigger the bug — pure-Clean variants
+// truncate too. The `external:` block is kept so the test can run through
+// `compile_for_plugin`, matching how frame.ui itself was compiled when the
+// bug was first observed. Expected output of `expand_block("X", "foo", "B")`
+// when the fix lands: `// hello\nclass X\n\tstring x = "y"\n`.
+//
+// Expected after fix: WASM body for `expand_block` contains a `Return`
+// instruction. The Rust counterpart is tests/test_expand_component_truncation.rs.
+
+external:
+	void _build_state_set(string key, string value)
+	string _build_state_get(string key)
+
+functions:
+	string expand_block(string name, string attrs, string body)
+		if attrs != ""
+			string current = _build_state_get("test:key")
+			if current == ""
+				_build_state_set("test:key", "first")
+			else
+				_build_state_set("test:key", current + ";next")
+		string result = "// hello\n"
+		result = result + "class " + name + "\n"
+		result = result + "\tstring x = \"y\"\n"
+		return result

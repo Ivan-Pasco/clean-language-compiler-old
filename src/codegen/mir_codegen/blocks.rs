@@ -898,32 +898,42 @@ impl MirCodeGenerator<'_> {
                         // Both branches return - add unreachable to indicate code after if-else is never reached
                         self.current_instructions.push(Instruction::Unreachable);
                     } else {
-                        // Find and generate continuation block
-                        // We need to find the continuation that at least one non-returning branch jumps to
-                        // NOTE: Use find_eventual_continuation to handle nested control flow
+                        // Find and generate continuation block.
+                        // We need to find the continuation that at least one non-returning branch jumps to.
                         let mut continuation: Option<BasicBlockId> = None;
 
-                        // Check if true branch jumps to a continuation (may have nested control flow)
-                        if !true_has_return {
-                            if let Some(true_blk) = function.blocks.get(true_block) {
-                                match &true_blk.terminator {
-                                    MirTerminator::Jump { target } => {
-                                        continuation = Some(*target);
+                        if !has_else_clause {
+                            // No else clause: `false_block` IS the outer if's continuation by
+                            // construction (the MIR builder allocates it as the merge point for
+                            // the if's non-taken path). Use it directly.
+                            //
+                            // `find_eventual_continuation(true_block)` is NOT safe here when the
+                            // true branch contains nested control flow: it returns the inner
+                            // merge block, which `generate_branch_block` has already inlined
+                            // while emitting the true branch. Re-entering it would short-circuit
+                            // on `generated.contains(&...)` and the outer continuation would
+                            // never be visited, dropping every statement after the outer if.
+                            continuation = Some(*false_block);
+                        } else {
+                            // Real else clause: locate the merge block both branches jump to.
+
+                            if !true_has_return {
+                                if let Some(true_blk) = function.blocks.get(true_block) {
+                                    match &true_blk.terminator {
+                                        MirTerminator::Jump { target } => {
+                                            continuation = Some(*target);
+                                        }
+                                        MirTerminator::Branch { .. } => {
+                                            // Nested control flow - find eventual continuation
+                                            continuation = self
+                                                .find_eventual_continuation(function, *true_block);
+                                        }
+                                        _ => {}
                                     }
-                                    MirTerminator::Branch { .. } => {
-                                        // Nested control flow - find eventual continuation
-                                        continuation =
-                                            self.find_eventual_continuation(function, *true_block);
-                                    }
-                                    _ => {}
                                 }
                             }
-                        }
 
-                        // Check if false branch jumps to a continuation (should be same as true if both jump)
-                        if !false_has_return {
-                            if has_else_clause {
-                                // Real else clause - check where it jumps
+                            if !false_has_return {
                                 if let Some(false_blk) = function.blocks.get(false_block) {
                                     let false_cont = match &false_blk.terminator {
                                         MirTerminator::Jump { target } => Some(*target),
@@ -940,11 +950,6 @@ impl MirCodeGenerator<'_> {
                                         }
                                         // Both branches should lead to same continuation
                                     }
-                                }
-                            } else {
-                                // No else clause - false_block IS the continuation
-                                if continuation.is_none() {
-                                    continuation = Some(*false_block);
                                 }
                             }
                         }
