@@ -1,0 +1,27 @@
+// Test: plugins/hydrate_auto_e2e
+// Plugin Contracts v2 §3.3 — end-to-end exercise of the client_init splice
+// chain. Mirrors the minimal §1 reproduction from
+// foundation/management/cross-component-prompts/compiler-frame-ui-v2-client-init-output-not-spliced.md
+// without the full Frame package shape.
+//
+// What this exercises:
+//   1. A non-entry module declares a `component:` block. During the per-file
+//      expand phase, frame.ui's expand_component writes the tag/class/hydration
+//      record into the compiler-owned build_state under "frame.ui:components".
+//   2. The entry module triggers the entry-time `expand_program` path. In
+//      client-mode builds (`--target=plugin` isn't enough; the actual switch
+//      is `compile_multi_file_client_mode`), the expander dispatches the
+//      `client_init` lifecycle slot.
+//   3. The slot dispatch must hand each plugin a BuildContext whose
+//      `build_state` field reflects writes performed earlier in this build.
+//      Without the snapshot, emit_ui_client_init reads an empty CSV and
+//      returns `{"statements": ""}` — leaving the synthetic client `_start`
+//      body empty. With the snapshot, it returns instantiation +
+//      onMount() calls for every component whose hydration mode is not "off".
+//
+// This .cln file alone is NOT runnable by `cln compile` — it's a fixture
+// loaded by tests/test_hydrate_auto_e2e.rs, which drives the multi-file
+// pipeline directly and asserts the splice happened.
+
+start:
+	printl("hello")

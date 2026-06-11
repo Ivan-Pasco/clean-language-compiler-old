@@ -661,10 +661,12 @@ impl PluginRegistry {
     /// plugin in load order and return the contributed code per plugin.
     /// See foundation/spec/plugins/contracts/lifecycle.md §2, §3.
     ///
-    /// The build context (target, paths, prior artifacts, snapshot of
-    /// per-build state) is passed verbatim to each plugin. The caller is
-    /// responsible for taking a fresh state snapshot before each slot
-    /// dispatch — see `BuildContext::snapshot_build_state`.
+    /// Each plugin sees a fresh snapshot of the shared per-build state taken
+    /// just before dispatch, so reads of `frame.ui:components` etc. reflect
+    /// writes performed earlier in this build (the per-file `expand_block`
+    /// pass that populates the keystore via `_build_state_set`). The
+    /// caller's `context` is cloned and the snapshot is stamped into the
+    /// clone — the caller's context is never mutated.
     ///
     /// Plugins that have not declared the slot in their manifest contribute
     /// empty expansions. Failed slot invocations are logged and skipped — the
@@ -674,6 +676,17 @@ impl PluginRegistry {
         slot_name: &str,
         context: &super::BuildContext,
     ) -> Vec<super::PluginExpansion> {
+        // Take a fresh snapshot of the build state into a per-dispatch
+        // context clone. Without this, `context.build_state` stays as
+        // whatever the caller passed in (typically an empty map from
+        // `BuildContext::new()`), and slots like `emit_ui_client_init`
+        // that read `build_state.frame.ui:components` see nothing —
+        // even though `_build_state_set` writes performed during the
+        // earlier per-file expand pass have populated the shared Arc.
+        // That gap is the root cause of HYDRATE_AUTO.
+        let mut snapshotted = context.clone();
+        snapshotted.snapshot_build_state(&self.build_state);
+
         let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
         for plugin in self.handlers.values() {
@@ -699,7 +712,7 @@ impl PluginRegistry {
             if !declared {
                 continue;
             }
-            match plugin.invoke_lifecycle_slot(slot_name, context) {
+            match plugin.invoke_lifecycle_slot(slot_name, &snapshotted) {
                 Ok(expansion) => results.push(expansion),
                 Err(e) => {
                     tracing::warn!(

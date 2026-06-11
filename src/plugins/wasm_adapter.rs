@@ -3556,7 +3556,32 @@ impl WasmPluginAdapter {
 
         // Re-parse the contributed Clean source so the statements integrate
         // into the program AST like any other plugin-produced code.
-        let parsed = self.parse_plugin_code(&response.statements)?;
+        //
+        // The lifecycle-slot contract says the `statements` field carries
+        // statement-level code (no top-level `start:` / `functions:` wrapper),
+        // but the Clean parser only accepts whole programs. Wrap the slot
+        // output in a synthetic `start:` block — tab-indented so each line
+        // becomes part of the block body — parse, then lift the statements
+        // out of the resulting start_function.
+        //
+        // If the output happens to already contain top-level keywords
+        // (legacy plugins shipping a full `start:` block), fall back to
+        // parsing as-is so we don't break that shape.
+        let parsed = match self.parse_plugin_code(&response.statements) {
+            Ok(p) => p,
+            Err(_) => {
+                let wrapped = wrap_slot_statements_as_start(&response.statements);
+                self.parse_plugin_code(&wrapped).map_err(|e| {
+                    anyhow!(
+                        "Lifecycle slot `{}` returned statements that could not be parsed \
+                         even when wrapped in a `start:` block: {} — raw: {}",
+                        slot_name,
+                        e,
+                        &response.statements[..response.statements.len().min(256)]
+                    )
+                })?
+            }
+        };
         // The slot is conceptually contributing statement-level code. Most
         // plugins will return just statements; for plugins that include a
         // start function (e.g. legacy compatibility shims), merge its body
@@ -4078,6 +4103,24 @@ fn write_clean_string(caller: &mut Caller<'_, PluginState>, data: &[u8]) -> i32 
 /// - body: `\thtml:\n\t\t<h1>...` (remaining content after the attribute line)
 ///
 /// If the first line has no `key="value"` pattern, returns empty attrs and full content.
+/// Wrap statement-level slot output in a synthetic `start:` block so the
+/// program parser accepts it. Used by `call_lifecycle_slot_v2` when the
+/// plugin's slot returned raw statements without any top-level wrapper.
+///
+/// Each input line is tab-indented so it becomes part of the start block
+/// body. Empty trailing lines are preserved to match the Clean grammar's
+/// terminator requirements.
+fn wrap_slot_statements_as_start(source: &str) -> String {
+    let mut wrapped = String::with_capacity(source.len() + 16);
+    wrapped.push_str("start:\n");
+    for line in source.lines() {
+        wrapped.push('\t');
+        wrapped.push_str(line);
+        wrapped.push('\n');
+    }
+    wrapped
+}
+
 fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
     // Split at first newline
     let (first_line, rest) = match content.find('\n') {

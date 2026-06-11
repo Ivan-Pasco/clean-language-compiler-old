@@ -2128,19 +2128,25 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         for module_id in &unit.compilation_order {
             if let Some(module) = unit.get_module(*module_id) {
                 // Client-mode filter: drop server-only modules before merging their HIR.
-                // The entry module's location is still captured as a fallback
-                // root_location even when its body is dropped.
-                if client_mode && is_server_only_module(&module.name, &module.file_path) {
+                //
+                // The entry module is exempt. Its `start_function` is now
+                // compiler-controlled via the `client_init` lifecycle slot
+                // dispatch (see `PluginExpander::expand_program` →
+                // `prepend_to_start`), so dropping it would also drop every
+                // statement the slot produced (component instantiation +
+                // onMount() calls). Preamble-injected helpers that would
+                // misbehave under a browser host are stripped downstream by
+                // the codegen tree-shaker — they are not reachable from the
+                // synthetic browser `_start` body.
+                if client_mode
+                    && !module.is_entry
+                    && is_server_only_module(&module.name, &module.file_path)
+                {
                     tracing::debug!(
                         module = %module.name,
                         path = %module.file_path.display(),
                         "client_mode: skipping server-only module"
                     );
-                    if module.is_entry && root_location.is_none() {
-                        if let Some(hir) = &module.hir {
-                            root_location = Some(hir.location.clone());
-                        }
-                    }
                     continue;
                 }
                 if let Some(hir) = &module.hir {
