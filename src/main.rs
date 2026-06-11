@@ -1579,16 +1579,19 @@ async fn handle_compile(
 
     println!("Successfully compiled to {output}");
 
-    // PLUGIN-BUILD-STAMP — stamp `built_with_compiler` into plugin.toml when this
-    // is a plugin build. The loader (src/plugins/wasm_loader.rs check_plugin_build_compatibility)
-    // reads this from the TOML to detect stale plugins. Without the stamp, every
-    // load emits a "plugin has no build stamp" warning even after a fresh rebuild,
-    // and the warning's "rebuild with build.sh" hint creates a misleading feedback
-    // loop. Gated on target == "plugin" so non-plugin compiles that happen to live
-    // adjacent to a plugin.toml don't get an unrelated stamp.
-    if target.to_lowercase() == "plugin" {
-        stamp_plugin_toml_if_present(&output);
-    }
+    // PLUGIN-BUILD-STAMP — stamp `built_with_compiler` into an adjacent
+    // plugin.toml so wasm_loader's check_plugin_build_compatibility recognises
+    // freshly-rebuilt plugins. Without the stamp every load emits a "plugin
+    // has no build stamp" warning even on a fresh rebuild, and the warning's
+    // "rebuild with build.sh" hint becomes a misleading feedback loop.
+    //
+    // No target gate: presence of plugin.toml next to the output WASM is the
+    // signal. Framework build.sh scripts are inconsistent about passing
+    // --target=plugin (frame.auth/canvas/data don't), so gating on the flag
+    // would silently skip half the plugins. The stamp itself is meta-info
+    // that affects nothing except plugin loading — a false positive on a
+    // non-plugin compile that happens to live next to a plugin.toml is harmless.
+    stamp_plugin_toml_if_present(&output);
 
     // Generate bridge files based on target
     let bridge_target = match target.to_lowercase().as_str() {

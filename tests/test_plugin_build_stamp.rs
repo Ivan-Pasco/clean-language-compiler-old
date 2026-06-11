@@ -107,15 +107,17 @@ fn plugin_compile_updates_existing_build_stamp() {
 }
 
 #[test]
-fn non_plugin_compile_does_not_stamp_adjacent_plugin_toml() {
+fn compile_without_target_flag_still_stamps_adjacent_plugin_toml() {
+    // Framework build.sh scripts are inconsistent about passing --target=plugin
+    // (frame.auth, frame.canvas, frame.data don't). Presence of plugin.toml
+    // next to the output is itself the signal that this is a plugin build,
+    // so we stamp unconditionally on successful compile. False positives are
+    // harmless — the stamp affects nothing except plugin loading.
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
-    let toml_body = "[plugin]\nname = \"other.plugin\"\nversion = \"1.0.0\"\n";
+    let toml_body = "[plugin]\nname = \"flagless.plugin\"\nversion = \"1.0.0\"\n";
     write_plugin_project(root, toml_body);
 
-    // Compile WITHOUT --target=plugin. The stamp must NOT fire because the
-    // user wasn't building this plugin — they were compiling something else
-    // that happens to live alongside a plugin.toml.
     let status = Command::new(cln_binary())
         .args(["compile", "src/main.cln", "-o", "out.wasm"])
         .current_dir(root)
@@ -123,9 +125,10 @@ fn non_plugin_compile_does_not_stamp_adjacent_plugin_toml() {
         .expect("failed to run cln");
     assert!(status.success(), "cln compile must succeed");
 
-    let toml_after = std::fs::read_to_string(root.join("plugin.toml")).unwrap();
-    assert_eq!(
-        toml_after, toml_body,
-        "non-plugin target must leave adjacent plugin.toml untouched"
+    let stamped = std::fs::read_to_string(root.join("plugin.toml")).unwrap();
+    assert!(
+        stamped.contains("built_with_compiler"),
+        "plugin.toml adjacent to the output must be stamped even without --target=plugin: got\n{}",
+        stamped
     );
 }
