@@ -323,6 +323,121 @@ mod tests {
         }
     }
 
+    /// Issue #2 from `compiler-frame-ui-v2-followup-trap-and-silent-orchestrator.md`:
+    /// confirm that when a manifest declares `[[artifacts]] required_when = "has_client_init"`
+    /// AND a separate plugin manifest declares `lifecycle.client_init`, the orchestrator
+    /// invokes `evaluate_required_when` for the artifact and the predicate returns true.
+    ///
+    /// Guards the silent-no-emit codepath: prior to this test, an artifact could be
+    /// declared with `required_when = "has_client_init"` and the orchestrator would
+    /// emit nothing because either (a) the predicate didn't see the lifecycle slot
+    /// or (b) the source type fell through to `UnsupportedSource` and the warning
+    /// was swallowed.
+    #[test]
+    fn test_orchestrate_invokes_required_when_for_has_client_init() {
+        // Plugin A declares the artifact with required_when = "has_client_init".
+        // Plugin B declares the lifecycle.client_init slot.
+        // Both predicate truthiness AND orchestrator invocation are verified.
+        let mut declarer = manifest_with_lifecycle("plugin.declarer", PluginLifecycle::default());
+        declarer.artifacts.push(PluginArtifact {
+            name: "frontend.wasm".to_string(),
+            purpose: "client_hydration".to_string(),
+            emit: Some(ArtifactSource::Module {
+                from_module: "manifest".to_string(), // unsupported in Phase C
+            }),
+            static_path: None,
+            output_relative: "{output_dir}/frontend.wasm".to_string(),
+            required_when: "has_client_init".to_string(),
+            public: true,
+            cache: "build_input_hash".to_string(),
+            content_type: Some("application/wasm".to_string()),
+        });
+
+        let opter_in = manifest_with_lifecycle(
+            "plugin.optin",
+            PluginLifecycle {
+                client_init: Some("emit_client_init".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let mut manifests = HashMap::new();
+        manifests.insert("plugin.declarer".to_string(), declarer);
+        manifests.insert("plugin.optin".to_string(), opter_in);
+
+        // 1. The predicate ALONE returns true when one plugin's lifecycle.client_init
+        //    is set, even though the declaring plugin's lifecycle is empty.
+        assert!(
+            evaluate_required_when("has_client_init", &manifests, &[]),
+            "has_client_init must see lifecycle.client_init from any loaded plugin"
+        );
+
+        // 2. The orchestrator MUST invoke evaluate_required_when for the artifact
+        //    (not silently skip the plugin's [[artifacts]] entries). The unsupported
+        //    `from_module = "manifest"` source path produces a warning entry that we
+        //    can detect — if the warning is present, the orchestrator at least
+        //    REACHED the artifact and tried to emit it.
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/whatever.cln"),
+            output_dir: Path::new("/tmp/dist"),
+            opt_level: 2,
+            in_nested_build: false,
+        };
+        let (emitted, warnings) =
+            orchestrate(&manifests, &ctx).expect("orchestrate should not hard-error");
+        assert!(
+            emitted.is_empty(),
+            "manifest source unsupported in Phase C — no artifact bytes expected"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("frontend.wasm")),
+            "orchestrator must surface warning for unsupported source, NOT silently skip; got: {:?}",
+            warnings
+        );
+    }
+
+    /// Negative companion: if NO plugin declares `lifecycle.client_init`, the
+    /// `has_client_init` predicate returns false and the artifact is not produced.
+    #[test]
+    fn test_orchestrate_skips_artifact_when_predicate_false() {
+        let mut declarer = manifest_with_lifecycle("plugin.declarer", PluginLifecycle::default());
+        declarer.artifacts.push(PluginArtifact {
+            name: "frontend.wasm".to_string(),
+            purpose: "client_hydration".to_string(),
+            emit: Some(ArtifactSource::Module {
+                from_module: "client_only_build".to_string(),
+            }),
+            static_path: None,
+            output_relative: "{output_dir}/frontend.wasm".to_string(),
+            required_when: "has_client_init".to_string(),
+            public: true,
+            cache: "build_input_hash".to_string(),
+            content_type: Some("application/wasm".to_string()),
+        });
+
+        // No plugin declares client_init. Predicate must short-circuit.
+        let mut manifests = HashMap::new();
+        manifests.insert("plugin.declarer".to_string(), declarer);
+
+        assert!(
+            !evaluate_required_when("has_client_init", &manifests, &[]),
+            "predicate must return false when no plugin declares client_init"
+        );
+
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/whatever.cln"),
+            output_dir: Path::new("/tmp/dist"),
+            opt_level: 2,
+            in_nested_build: false,
+        };
+        let (emitted, warnings) = orchestrate(&manifests, &ctx).expect("orchestrate ok");
+        assert!(emitted.is_empty(), "no artifacts when predicate false");
+        assert!(
+            warnings.is_empty(),
+            "no warnings either — artifact correctly skipped (not even reached)"
+        );
+    }
+
     #[test]
     fn test_evaluate_always_is_true() {
         let m = HashMap::new();

@@ -1,0 +1,38 @@
+// Test: plugins/build_state_round_trip
+// Plugin Contracts v2 — exercises the _build_state_get + string == "" +
+// _build_state_set sequence that frame.ui 2.12.0 uses in expand_component.
+//
+// Regression: HYDRATE_AUTO — UI-bearing apps hit a wasm `unreachable` trap
+// when the plugin's compiled Clean code runs through the build_state bridge
+// sequence. The trap was diagnosed (in compiler 0.30.261's defensive layer)
+// as a Clean codegen guard firing on the bridge call return / string
+// comparison / string concatenation path. See
+// compiler-frame-ui-v2-followup-trap-and-silent-orchestrator.md.
+//
+// Compiled as a plugin via `cln compile --target=plugin`. Loaded by
+// tests/test_plugin_build_state_round_trip.rs with the build_state bridges
+// registered. The test calls `expand_block` twice and asserts no trap.
+//
+// First call: key absent → _build_state_get returns empty LP-pointer (the
+// cached empty string), comparison succeeds, _build_state_set("test:key",
+// "first") writes to the keystore.
+//
+// Second call: key present ("first") → _build_state_get returns LP-pointer
+// to "first", comparison with "" yields false, else branch runs
+// _build_state_set("test:key", "first;next") via string concatenation.
+//
+// If either call traps, the bug is reproduced in isolation — no frame.ui,
+// no framework, no host runtime beyond the build_state bridges themselves.
+
+external:
+	void _build_state_set(string key, string value)
+	string _build_state_get(string key)
+
+functions:
+	string expand_block(string name, string attrs, string body)
+		string current = _build_state_get("test:key")
+		if current == ""
+			_build_state_set("test:key", "first")
+		else
+			_build_state_set("test:key", current + ";next")
+		return body
