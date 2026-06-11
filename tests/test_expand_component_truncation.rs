@@ -72,11 +72,7 @@ fn analyze_function_body(body: &wasmparser::FunctionBody<'_>) -> (bool, bool) {
     let mut depth: i32 = 0;
     let mut saw_return = false;
     let mut last_meaningful: Option<Operator<'_>> = None;
-    loop {
-        let op = match reader.read() {
-            Ok(op) => op,
-            Err(_) => break,
-        };
+    while let Ok(op) = reader.read() {
         match &op {
             Operator::Block { .. } | Operator::Loop { .. } | Operator::If { .. } => {
                 depth += 1;
@@ -108,7 +104,7 @@ fn analyze_function_body(body: &wasmparser::FunctionBody<'_>) -> (bool, bool) {
 }
 
 /// Locate the FunctionBody for the exported `expand_block` and analyze it.
-fn analyze_exported_function<'a>(wasm: &'a [u8], name: &str) -> (bool, bool) {
+fn analyze_exported_function(wasm: &[u8], name: &str) -> (bool, bool) {
     let func_index =
         find_exported_func_index(wasm, name).unwrap_or_else(|| panic!("export {name:?} missing"));
     let n_imports = count_func_imports(wasm);
