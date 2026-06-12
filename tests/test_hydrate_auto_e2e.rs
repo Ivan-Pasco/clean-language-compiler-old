@@ -166,6 +166,25 @@ fn export_names(wasm: &[u8]) -> std::collections::HashMap<u32, String> {
     map
 }
 
+/// Flat set of every exported function name in the module. Used by the
+/// per-handler-export assertion to check whether `do_thing`, `fmt_bold`, etc.
+/// appear as bare-named exports the loader can dispatch to via
+/// `instance.exports[handlerName]()`.
+fn all_exported_function_names(wasm: &[u8]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for payload in WasmParser::new(0).parse_all(wasm) {
+        if let Ok(Payload::ExportSection(reader)) = payload {
+            for export in reader {
+                let export = export.expect("valid export");
+                if matches!(export.kind, wasmparser::ExternalKind::Func) {
+                    names.insert(export.name.to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
 #[test]
 fn client_init_splice_reaches_start_body() {
     if !frame_ui_available() {
@@ -234,5 +253,132 @@ fn client_init_splice_reaches_start_body() {
          (BuildContext::snapshot_build_state) but is only called from tests.",
         reachable.len(),
         reachable_export_names
+    );
+}
+
+/// HYDRATE_AUTO Gap 2 — per-handler exports.
+///
+/// loader.js dispatches click events to component handlers via
+/// `instance.exports[handlerName]()`. For that lookup to succeed, every method
+/// declared in a component's `events:` block must appear in the WASM export
+/// table under its *bare* name — `onMount`, `do_thing`, etc. — not the
+/// qualified `mytoolbar.do_thing` form.
+///
+/// Today only `onMount` is bare-named-exported, because the `client_init`
+/// slice emits `instance_my_toolbar.onMount()` as a direct call from `_start`.
+/// Methods that are referenced only as string literals to `_ui_on_event`
+/// (`do_thing` in the fixture) have no static call site reaching them from the
+/// BFS roots in `collect_all_called_names_from_mir`, so they are dead-code
+/// eliminated by the PLUGIN_OUTPUT_MARKER DCE pass in
+/// `mir_codegen/mod.rs::generate` and never make it to the export table.
+///
+/// Closing this gap is a frame.ui responsibility: either emit a top-level
+/// shim function for each event-block method (with the bare name, so the
+/// compiler's "regular function" export rule applies), or have the lifecycle
+/// slot output mark the event handlers as roots in some compiler-visible way.
+/// Either path needs the bare-named export to land in `frontend.wasm`. This
+/// test asserts that endpoint regardless of how frame.ui chooses to get there.
+///
+/// RED today: only `onMount` is exported; `do_thing` is missing.
+/// GREEN once frame.ui ships per-handler bare-name exports.
+#[test]
+fn event_handlers_exported_by_bare_name() {
+    if !frame_ui_available() {
+        eprintln!(
+            "skipping: frame.ui plugin not installed at {} — install with `cleen frame install latest`",
+            FRAME_UI_PATH
+        );
+        return;
+    }
+
+    let root = setup_workspace();
+    let entry = root.join("main.cln");
+
+    let wasm = match clean_language_compiler::compile_multi_file_client_mode(
+        &entry,
+        vec![root.clone()],
+        2,
+    ) {
+        Ok(bytes) => bytes,
+        Err(errors) => {
+            // The client-mode compile failure is itself a HYDRATE_AUTO symptom
+            // (see `client_init_splice_reaches_start_body`). Report it so this
+            // test does not silently mask it, but distinguish it from the
+            // bare-name-export gap this test is specifically guarding.
+            for e in &errors {
+                eprintln!("compile error: {e}");
+            }
+            panic!(
+                "client-mode compile of the HYDRATE_AUTO repro failed — {} errors. \
+                 Resolve the splice-time compile error first; this test then becomes \
+                 a clean signal for the bare-name-export gap.",
+                errors.len()
+            );
+        }
+    };
+
+    let exports = all_exported_function_names(&wasm);
+
+    // onMount is the baseline: it must be bare-named-exported because the
+    // `client_init` splice calls it directly. If this fails, the splice
+    // itself is broken (and `client_init_splice_reaches_start_body` should
+    // already be red).
+    assert!(
+        exports.contains("onMount"),
+        "BASELINE: `onMount` must be a bare-named export — the client_init splice \
+         calls `instance_my_toolbar.onMount()` directly so it should always be \
+         reachable from `_start` and survive the PLUGIN_OUTPUT_MARKER DCE pass. \
+         Its absence means the splice has regressed. Exports present: {:?}",
+        exports
+            .iter()
+            .filter(|n| !n.starts_with("__")
+                && !n.contains('.')
+                && n.as_str() != "memory"
+                && n.as_str() != "__heap_ptr")
+            .collect::<Vec<_>>()
+    );
+
+    // The actual gap: `do_thing` is named only as a string literal in
+    // `_ui_on_event(..., "do_thing")`. The compiler has no static signal that
+    // this string names an export target, so the method is DCE'd. frame.ui
+    // must emit something that keeps `do_thing` alive AND surfaces it as a
+    // bare-named export. The shape of that something is a frame.ui call —
+    // a top-level shim function `void do_thing()` that delegates to the
+    // instance is the cleanest, but anything that puts `do_thing` in the
+    // export table satisfies this assertion.
+    assert!(
+        exports.contains("do_thing"),
+        "GAP (HYDRATE_AUTO Gap 2): `do_thing` is referenced as the third argument \
+         of `_ui_on_event(\"#btn\", \"click\", \"do_thing\")` but does NOT appear \
+         as a bare-named export in `frontend.wasm`. loader.js will look it up via \
+         `instance.exports[\"do_thing\"]()` and log `Event handler export do_thing \
+         not found`. \n\
+         \n\
+         Root cause: the `do_thing` method on the component class is tagged with \
+         PLUGIN_OUTPUT_MARKER (frame.ui's `expand_block` output), and the BFS \
+         roots in `collect_all_called_names_from_mir` ([src/codegen/mir_codegen/\
+         utilities.rs:1334](src/codegen/mir_codegen/utilities.rs#L1334)) reach \
+         only those plugin-emitted functions transitively called from user code \
+         or from the splice. String literals are not call sites, so `do_thing` \
+         falls out of the reachable set and is DCE'd by [src/codegen/mir_codegen/\
+         mod.rs:928](src/codegen/mir_codegen/mod.rs#L928).\n\
+         \n\
+         Fix: frame.ui-side. Either (a) emit a top-level shim function for each \
+         events:-block method (bare name, delegates to the instance global — the \
+         compiler's regular-function export rule then places it in the export \
+         table by name), or (b) tag the component class's event-block methods \
+         with PLUGIN_OUTPUT_V2_ROOT_MARKER so the BFS treats them as explicit \
+         roots. The shim approach is cleaner because the bare name is then a \
+         genuine top-level function and not a method needing instance dispatch.\n\
+         \n\
+         Reachable exports observed: {:?}",
+        exports
+            .iter()
+            .filter(|n| !n.contains('.')
+                && !n.starts_with("__")
+                && n.as_str() != "memory"
+                && n.as_str() != "__heap_ptr"
+                && n.as_str() != "_start")
+            .collect::<Vec<_>>()
     );
 }

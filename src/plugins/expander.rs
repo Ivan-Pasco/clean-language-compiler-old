@@ -7,9 +7,38 @@
  */
 
 use super::{FrameworkBlock, PluginError, PluginRegistry};
-use crate::ast::{Class, ExternalFunction, Function, Program, Statement};
+use crate::ast::{Class, ExternalFunction, Function, Program, StateBlock, Statement};
 use crate::error::CompilerError;
 use crate::plugins::enforcement::validate_plugin_permissions;
+
+/// Merge `incoming` into `target` using the contract described on
+/// `PluginExpansion::state`: declarations from `incoming` are appended after
+/// any existing declarations (preserving plugin-then-user order across the
+/// life of the expander, since plugin-contributed state is accumulated into
+/// `pending_state` before the user's `program.state` is folded in by the
+/// caller), computed values likewise. At most one `rules:` block survives;
+/// duplicate rules blocks would silently overwrite each other so we keep the
+/// first non-None and the caller is responsible for raising an error if two
+/// distinct sources contribute one. `scope` is taken from the first non-None
+/// block; mismatched scopes are also a caller concern (top-level `state:` is
+/// always App scope per `foundation/spec/semantic-rules.md`).
+fn merge_state_block(target: &mut Option<StateBlock>, incoming: Option<StateBlock>) {
+    let incoming = match incoming {
+        Some(s) => s,
+        None => return,
+    };
+    match target {
+        None => *target = Some(incoming),
+        Some(existing) => {
+            existing.declarations.extend(incoming.declarations);
+            existing.computed.extend(incoming.computed);
+            if existing.rules.is_none() {
+                existing.rules = incoming.rules;
+            }
+            // existing.scope and existing.location preserved — first writer wins.
+        }
+    }
+}
 
 /// Prepend statements to the program's start function body, creating the
 /// start function if it doesn't exist. Used by lifecycle slot dispatch to
@@ -52,6 +81,12 @@ pub struct PluginExpander<'a> {
     pending_classes: Vec<crate::ast::Class>,
     /// Pending external functions from plugin expansion
     pending_externals: Vec<ExternalFunction>,
+    /// Pending top-level `state:` block contributed by plugin expansion.
+    /// Multiple plugin blocks emitting state: blocks (e.g. several `component:`
+    /// blocks each contributing one `instance_<tag>` global) accumulate here
+    /// via `merge_state_block`. The merged result is folded into
+    /// `program.state` by `expand_program` and `expand_program_without_preambles`.
+    pending_state: Option<StateBlock>,
     /// Permission violations collected during expansion (non-fatal; reported as errors)
     permission_errors: Vec<CompilerError>,
     /// Plugin Contracts v2 — whether this is a server-target build. Used to
@@ -81,6 +116,7 @@ impl<'a> PluginExpander<'a> {
             pending_functions: Vec::new(),
             pending_classes: Vec::new(),
             pending_externals: Vec::new(),
+            pending_state: None,
             permission_errors: Vec::new(),
             is_server_build: true,
             is_client_build: false,
@@ -165,6 +201,18 @@ impl<'a> PluginExpander<'a> {
             if !program.externals.iter().any(|e| e.name == ext.name) {
                 program.externals.push(ext);
             }
+        }
+
+        // Merge pending state into program. Plugin-contributed declarations
+        // come first (accumulated in pending_state); the user's existing
+        // state block (if any) is appended after. Keeping that order makes
+        // user code able to read plugin-emitted instance globals during its
+        // own start: body without ordering surprises.
+        if self.pending_state.is_some() {
+            let plugin_state = self.pending_state.take();
+            let user_state = program.state.take();
+            program.state = plugin_state;
+            merge_state_block(&mut program.state, user_state);
         }
 
         // Inject preamble helper functions from each registered plugin.
@@ -363,6 +411,15 @@ impl<'a> PluginExpander<'a> {
             }
         }
 
+        // Mirror expand_program: plugin-contributed state goes first, user
+        // state appended. See the equivalent block there for rationale.
+        if self.pending_state.is_some() {
+            let plugin_state = self.pending_state.take();
+            let user_state = program.state.take();
+            program.state = plugin_state;
+            merge_state_block(&mut program.state, user_state);
+        }
+
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
             statements_generated = self.statements_generated,
@@ -444,6 +501,13 @@ impl<'a> PluginExpander<'a> {
 
                         // Capture external functions
                         self.pending_externals.extend(expansion.externals);
+
+                        // Capture top-level state: block. Required for the
+                        // frame.ui v2.12.3 hydration pattern, where each
+                        // `component:` block contributes one
+                        // `instance_<tag>` declaration that the `client_init`
+                        // splice later dispatches through.
+                        merge_state_block(&mut self.pending_state, expansion.state);
 
                         // Add expanded statements
                         let expanded = self.expand_statements_full(expansion.statements)?;
@@ -934,6 +998,7 @@ mod tests {
                 functions: Vec::new(),
                 classes: Vec::new(),
                 externals: Vec::new(),
+                state: None,
             })
         }
     }
@@ -1252,5 +1317,226 @@ mod tests {
         // Server build: client_init isn't dispatched yet (§1 follow-up), and
         // program_init wasn't declared. No start_function should appear.
         assert!(result.start_function.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // PluginExpansion.state propagation (HYDRATE_AUTO Gap 1 closure)
+    // -----------------------------------------------------------------------
+    //
+    // frame.ui v2.12.3's `expand_component` emits a top-level `state:` block
+    // declaring an instance global (`MyToolbar instance_my_toolbar =
+    // MyToolbar()`) that the `client_init` splice later references. Before
+    // PR A landed, the parser would parse the state block but
+    // `PluginExpansion` had no state field, so it was silently dropped on
+    // the way to `program.state`. The splice then failed with
+    // `Undefined variable 'instance_my_toolbar'`. These tests cover the
+    // propagation + merge path that closes that gap.
+
+    use crate::ast::{StateBlock, StateDeclaration, StateScope, Type};
+
+    /// Mock plugin that emits a state: block on `expand_full`. Mirrors what
+    /// frame.ui v2.12.3's `expand_component` returns: a single instance
+    /// declaration with a deterministic identifier so tests can grep for it.
+    /// `handles()` always returns `["state_emitter"]`; tests that need two
+    /// distinct plugins register two instances and rely on the registry
+    /// rejecting the duplicate (so they call `merge_state_block` directly
+    /// instead — see `multiple_plugin_state_blocks_accumulate`).
+    struct StateEmittingPlugin {
+        var_name: &'static str,
+    }
+
+    impl FrameworkPlugin for StateEmittingPlugin {
+        fn name(&self) -> &'static str {
+            "test.state"
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            &["state_emitter"]
+        }
+
+        fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(Vec::new())
+        }
+
+        fn expand_full(&self, _block: &FrameworkBlock) -> PluginResult<PluginExpansion> {
+            // Single declaration: `<block> <var_name> = "ok"`.  Using String
+            // instead of a class type avoids hauling in a Class fixture; the
+            // merge plumbing is type-agnostic.
+            let decl = StateDeclaration {
+                name: self.var_name.to_string(),
+                type_: Type::String,
+                initializer: Expression::Literal(Value::String("ok".to_string())),
+                guard: None,
+                is_private: false,
+                location: None,
+            };
+            Ok(PluginExpansion {
+                statements: Vec::new(),
+                start_function: None,
+                functions: Vec::new(),
+                classes: Vec::new(),
+                externals: Vec::new(),
+                state: Some(StateBlock {
+                    declarations: vec![decl],
+                    computed: Vec::new(),
+                    rules: None,
+                    scope: StateScope::App,
+                    location: None,
+                }),
+            })
+        }
+    }
+
+    fn user_state_with(decl_name: &str) -> StateBlock {
+        StateBlock {
+            declarations: vec![StateDeclaration {
+                name: decl_name.to_string(),
+                type_: Type::String,
+                initializer: Expression::Literal(Value::String("user".to_string())),
+                guard: None,
+                is_private: false,
+                location: None,
+            }],
+            computed: Vec::new(),
+            rules: None,
+            scope: StateScope::App,
+            location: None,
+        }
+    }
+
+    /// Single plugin block contributing a state: declaration: the merged
+    /// program.state must contain the plugin's declaration. The baseline
+    /// regression — silently-dropped state — would leave program.state None.
+    #[test]
+    fn plugin_state_block_reaches_program_state() {
+        let mut registry = PluginRegistry::new();
+        registry
+            .register(Arc::new(StateEmittingPlugin {
+                var_name: "instance_my_toolbar",
+            }))
+            .unwrap();
+
+        let program = make_test_program(vec![Statement::FrameworkBlock {
+            name: "state_emitter".to_string(),
+            content: String::new(),
+            attributes: Vec::new(),
+            location: None,
+        }]);
+
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program).unwrap();
+
+        let state = result
+            .state
+            .expect("plugin-emitted state: block must reach program.state");
+        assert_eq!(state.declarations.len(), 1);
+        assert_eq!(state.declarations[0].name, "instance_my_toolbar");
+    }
+
+    /// User and plugin both contribute state. Plugin declarations land first
+    /// (so user start: code can reference plugin-emitted globals), user
+    /// declarations follow. Order matters because semantic analysis runs
+    /// initializers left-to-right.
+    #[test]
+    fn plugin_state_merges_with_user_state_plugin_first() {
+        let mut registry = PluginRegistry::new();
+        registry
+            .register(Arc::new(StateEmittingPlugin {
+                var_name: "plugin_var",
+            }))
+            .unwrap();
+
+        let mut program = make_test_program(vec![Statement::FrameworkBlock {
+            name: "state_emitter".to_string(),
+            content: String::new(),
+            attributes: Vec::new(),
+            location: None,
+        }]);
+        program.state = Some(user_state_with("user_var"));
+
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program).unwrap();
+
+        let state = result.state.expect("merged state must survive");
+        let names: Vec<&str> = state.declarations.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["plugin_var", "user_var"],
+            "plugin-contributed declarations must appear before user declarations"
+        );
+    }
+
+    /// Multiple plugin blocks each contributing one state: declaration must
+    /// all land in program.state. The frame.ui hydration flow emits one
+    /// `instance_<tag>` per component block in the source file; if only the
+    /// first block's state survived, multi-component pages would silently
+    /// lose all but the first instance global.
+    ///
+    /// `StateEmittingPlugin::handles()` returns a single static block name,
+    /// so registering two instances with different `var_name`s would collide
+    /// at the registry. The accumulation semantics themselves are what this
+    /// asserts, so we drive `merge_state_block` directly — that's the same
+    /// function `expand_statements_full` calls per block.
+    #[test]
+    fn multiple_plugin_state_blocks_accumulate() {
+        let plugin_block_a = StateBlock {
+            declarations: vec![StateDeclaration {
+                name: "first_var".to_string(),
+                type_: Type::String,
+                initializer: Expression::Literal(Value::String("a".to_string())),
+                guard: None,
+                is_private: false,
+                location: None,
+            }],
+            computed: Vec::new(),
+            rules: None,
+            scope: StateScope::App,
+            location: None,
+        };
+        let plugin_block_b = StateBlock {
+            declarations: vec![StateDeclaration {
+                name: "second_var".to_string(),
+                type_: Type::String,
+                initializer: Expression::Literal(Value::String("b".to_string())),
+                guard: None,
+                is_private: false,
+                location: None,
+            }],
+            computed: Vec::new(),
+            rules: None,
+            scope: StateScope::App,
+            location: None,
+        };
+
+        let mut accumulator: Option<StateBlock> = None;
+        merge_state_block(&mut accumulator, Some(plugin_block_a));
+        merge_state_block(&mut accumulator, Some(plugin_block_b));
+
+        let merged = accumulator.expect("merge of two state blocks must produce a result");
+        let names: Vec<&str> = merged
+            .declarations
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["first_var", "second_var"]);
+    }
+
+    /// merge_state_block with no incoming leaves target untouched.
+    #[test]
+    fn merge_state_block_no_op_for_none_incoming() {
+        let original = user_state_with("keep_me");
+        let mut target = Some(original.clone());
+        merge_state_block(&mut target, None);
+        assert_eq!(target.as_ref().unwrap().declarations[0].name, "keep_me");
+    }
+
+    /// merge_state_block with target None and incoming Some sets target.
+    #[test]
+    fn merge_state_block_adopts_incoming_when_target_empty() {
+        let incoming = user_state_with("from_incoming");
+        let mut target: Option<StateBlock> = None;
+        merge_state_block(&mut target, Some(incoming));
+        assert!(target.is_some());
+        assert_eq!(target.unwrap().declarations[0].name, "from_incoming");
     }
 }

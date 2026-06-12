@@ -352,6 +352,7 @@ pub trait FrameworkPlugin: Send + Sync {
             functions: Vec::new(),
             classes: Vec::new(),
             externals: Vec::new(),
+            state: None,
         })
     }
 
@@ -557,6 +558,16 @@ pub struct PluginExpansion {
     pub classes: Vec<crate::ast::Class>,
     /// External functions (WASM imports) declared by the plugin
     pub externals: Vec<crate::ast::ExternalFunction>,
+    /// Top-level `state:` block emitted by the plugin. Required for the
+    /// frame.ui v2.12.3 hydration pattern, where `expand_component` emits a
+    /// module-level instance global (`state: <Class> instance_<tag> =
+    /// <Class>()`) that the `client_init` lifecycle splice then dispatches
+    /// through. Without this field the plugin's state block was parsed and
+    /// silently dropped, causing the splice's `instance_<tag>` reference to
+    /// resolve as Undefined variable. Merge semantics in the expander:
+    /// plugin declarations come before user declarations; computed values
+    /// concatenate; only one rules block is allowed across the whole program.
+    pub state: Option<crate::ast::StateBlock>,
 }
 
 #[cfg(test)]

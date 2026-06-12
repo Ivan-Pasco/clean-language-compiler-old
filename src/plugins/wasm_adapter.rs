@@ -3179,6 +3179,7 @@ impl WasmPluginAdapter {
                     functions: program.functions,
                     classes: program.classes,
                     externals: program.externals,
+                    state: program.state,
                 });
             }
             Err(ref _e) => {
@@ -3268,6 +3269,7 @@ impl WasmPluginAdapter {
                 functions: program.functions,
                 classes: program.classes,
                 externals: program.externals,
+                state: program.state,
             });
         }
 
@@ -3307,6 +3309,7 @@ impl WasmPluginAdapter {
             functions: program.functions,
             classes: program.classes,
             externals: program.externals,
+            state: program.state,
         })
     }
 
@@ -3596,6 +3599,7 @@ impl WasmPluginAdapter {
             functions: parsed.functions,
             classes: parsed.classes,
             externals: parsed.externals,
+            state: parsed.state,
         })
     }
 

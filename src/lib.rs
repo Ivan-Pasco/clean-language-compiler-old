@@ -753,6 +753,39 @@ fn parse_bridge_type(type_str: &str) -> ast::Type {
     }
 }
 
+/// Merge two HIR state blocks. Used by the multi-file pipeline to fold each
+/// non-entry module's `state:` declarations into the merged state alongside
+/// the entry module's. Without this, plugin-emitted state blocks (e.g.
+/// `state: <Class> instance_<tag> = <Class>()` from frame.ui's
+/// `expand_component`) that live in component source files were silently
+/// dropped because the merge logic only copied `hir.state` from the entry
+/// module. The dropped declarations caused the `client_init` splice's
+/// `instance_<tag>` reference to resolve as `Undefined variable`.
+///
+/// Semantics mirror the AST-level `merge_state_block` in `plugins::expander`:
+/// declarations and computed values concatenate; the first non-empty rules
+/// vec survives (multiple rules vecs from different modules is a caller
+/// concern); scope and location are taken from the first non-None block.
+fn merge_hir_state(
+    target: &mut Option<crate::hir::HirStateBlock>,
+    incoming: Option<crate::hir::HirStateBlock>,
+) {
+    let incoming = match incoming {
+        Some(s) => s,
+        None => return,
+    };
+    match target {
+        None => *target = Some(incoming),
+        Some(existing) => {
+            existing.declarations.extend(incoming.declarations);
+            existing.computed.extend(incoming.computed);
+            if existing.rules.is_empty() {
+                existing.rules = incoming.rules;
+            }
+        }
+    }
+}
+
 /// Injects synthetic phantom class stubs for types declared in loaded plugin manifests.
 ///
 /// Plugin manifests list their custom types (e.g. `Request`, `Response` from frame.server)
@@ -1786,9 +1819,19 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
                         all_classes.push(class.clone());
                     }
 
+                    // Merge state from every module. compilation_order is
+                    // topologically sorted with the entry last, so non-entry
+                    // plugin-emitted globals (e.g. frame.ui's `instance_<tag>`
+                    // declarations contributed by `expand_component` running on
+                    // component source files) land before the entry module's
+                    // user state declarations. Before this merge landed, the
+                    // entry-only assignment silently discarded plugin state,
+                    // breaking the v2.12.3 client_init splice with
+                    // `Undefined variable 'instance_<tag>'`.
+                    merge_hir_state(&mut merged_state, hir.state.clone());
+
                     if module.is_entry {
                         start_function = hir.start_function.clone();
-                        merged_state = hir.state.clone();
                         merged_screen_blocks = hir.screen_blocks.clone();
                         merged_watch_blocks = hir.watch_blocks.clone();
                         root_location = Some(hir.location.clone());
@@ -2162,9 +2205,19 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
                     for class in &hir.classes {
                         all_classes.push(class.clone());
                     }
+                    // Merge state from every module. compilation_order is
+                    // topologically sorted with the entry last, so non-entry
+                    // plugin-emitted globals (e.g. frame.ui's `instance_<tag>`
+                    // declarations contributed by `expand_component` running on
+                    // component source files) land before the entry module's
+                    // user state declarations. Before this merge landed, the
+                    // entry-only assignment silently discarded plugin state,
+                    // breaking the v2.12.3 client_init splice with
+                    // `Undefined variable 'instance_<tag>'`.
+                    merge_hir_state(&mut merged_state, hir.state.clone());
+
                     if module.is_entry {
                         start_function = hir.start_function.clone();
-                        merged_state = hir.state.clone();
                         merged_screen_blocks = hir.screen_blocks.clone();
                         merged_watch_blocks = hir.watch_blocks.clone();
                         root_location = Some(hir.location.clone());
@@ -2662,9 +2715,19 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
                     for class in &hir.classes {
                         all_classes.push(class.clone());
                     }
+                    // Merge state from every module. compilation_order is
+                    // topologically sorted with the entry last, so non-entry
+                    // plugin-emitted globals (e.g. frame.ui's `instance_<tag>`
+                    // declarations contributed by `expand_component` running on
+                    // component source files) land before the entry module's
+                    // user state declarations. Before this merge landed, the
+                    // entry-only assignment silently discarded plugin state,
+                    // breaking the v2.12.3 client_init splice with
+                    // `Undefined variable 'instance_<tag>'`.
+                    merge_hir_state(&mut merged_state, hir.state.clone());
+
                     if module.is_entry {
                         start_function = hir.start_function.clone();
-                        merged_state = hir.state.clone();
                         merged_screen_blocks = hir.screen_blocks.clone();
                         merged_watch_blocks = hir.watch_blocks.clone();
                         root_location = Some(hir.location.clone());

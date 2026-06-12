@@ -2159,6 +2159,7 @@ mod tests {
                 location: v1_loc(),
             }],
             externals: Vec::new(),
+            state: None,
         };
 
         retag_expansion_for_v2_root(&mut expansion, PLUGIN_OUTPUT_V2_ROOT_MARKER);
