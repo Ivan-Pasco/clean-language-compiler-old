@@ -749,9 +749,94 @@ impl TokenParser {
                     }
                 }
                 TokenKind::Identifier(_) => {
+                    // HYDRATE_AUTO Gap 2 — `events:` class section.
+                    //
+                    // Spec: foundation/spec/plugins/frame-ui.ebnf §events_section.
+                    // A class can declare an `events:` block sibling to `functions:`.
+                    // Methods declared inside it have identical signatures and bodies
+                    // to ordinary methods; the distinction is that the post-expansion
+                    // shim pass emits a bare-named top-level dispatch function for
+                    // each, so that the browser loader's
+                    // `instance.exports[handlerName]()` lookup succeeds when a click
+                    // event hits the wrapper. Without this branch every events:-block
+                    // would have been swallowed by the generic identifier:colon
+                    // sub-section handler below and re-emitted as a synthetic class
+                    // of fields — which is what frame.ui v2.12.3 works around by
+                    // rewriting `events:` to `functions:` in `normalize_handlers`.
+                    let events_section = if let TokenKind::Identifier(name) = self.current_kind() {
+                        name == "events" && matches!(self.look_ahead(1).kind, TokenKind::Colon)
+                    } else {
+                        false
+                    };
+                    if events_section {
+                        self.bump(); // consume 'events'
+                        self.skip_whitespace();
+                        self.expect(&TokenKind::Colon)?;
+                        self.skip_whitespace();
+
+                        let events_indent_level =
+                            if matches!(self.current_kind(), TokenKind::Indent(_)) {
+                                if let TokenKind::Indent(level) = self.current_kind() {
+                                    *level
+                                } else {
+                                    1
+                                }
+                            } else {
+                                1
+                            };
+
+                        // Mirror the methods-parsing loop from the Functions arm.
+                        while !self.is_at_end() {
+                            self.skip_whitespace();
+                            if self.is_at_end() {
+                                break;
+                            }
+                            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                                if *dedent_level < events_indent_level {
+                                    break;
+                                }
+                                self.bump();
+                                self.skip_whitespace();
+                            }
+                            self.skip_indentation();
+                            if self.is_at_end() {
+                                break;
+                            }
+                            if matches!(
+                                self.current_kind(),
+                                TokenKind::Class
+                                    | TokenKind::Start
+                                    | TokenKind::Function
+                                    | TokenKind::Tests
+                                    | TokenKind::Functions
+                                    | TokenKind::Always
+                                    | TokenKind::Private
+                                    | TokenKind::Constructor
+                            ) {
+                                break;
+                            }
+                            if matches!(self.current_kind(), TokenKind::Identifier(_)) {
+                                match self.parse_function_in_block() {
+                                    Ok(mut func) => {
+                                        // Tag this method so the post-expansion shim
+                                        // pass knows to emit a bare-named dispatch.
+                                        func.modifier = crate::ast::FunctionModifier::EventHandler;
+                                        methods.push(func);
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, "Failed to parse events: method");
+                                        break;
+                                    }
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
                     // Look ahead to distinguish three cases:
                     //   1. `identifier ":" newline/indent`  → plugin-injected sub-section header
-                    //      (e.g. `inputs:`, `state:`, `events:` from frame.ui).
+                    //      (e.g. `inputs:`, `state:` from frame.ui).
                     //      Consume the header and parse the indented field block beneath it.
                     //   2. `identifier ":" type-token`  → name-colon-type field
                     //      (e.g. `id: integer`, `email: string` as emitted by some plugin expanders).

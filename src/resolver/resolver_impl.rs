@@ -17,6 +17,17 @@ pub struct NameResolver {
     /// Name of the screen currently being resolved (for SCOPE005 enforcement).
     /// `None` when resolving code that is not inside a screen block.
     current_screen: Option<String>,
+    /// class name → set of declared method names. Populated during
+    /// `register_top_level_symbols` so `receiver_has_method` can answer
+    /// "does this class declare this method?" during the FIRST pass of
+    /// expression resolution — before `resolve_class` has had a chance to
+    /// build the class's method-symbol list. Without this, every method
+    /// call on a class receiver hit the same race the post-expansion shim
+    /// pass for HYDRATE_AUTO Gap 2 surfaced: shim function bodies are
+    /// resolved before class methods are registered, so the FUNC012
+    /// receiver-type-first lookup couldn't find the matching method and
+    /// raised the standalone-function error.
+    class_method_names: std::collections::HashMap<String, std::collections::HashSet<String>>,
     errors: Vec<CompilerError>,
     warnings: Vec<CompilerError>,
     expression_recursion_depth: usize,
@@ -43,6 +54,7 @@ impl NameResolver {
             current_function: None,
             current_function_return_type: None,
             current_screen: None,
+            class_method_names: std::collections::HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
             expression_recursion_depth: 0,
@@ -298,6 +310,17 @@ impl NameResolver {
                     self.symbol_table.current_scope_id(),
                     class.location.clone(),
                 );
+
+                // Pre-populate the class → method-names map so
+                // `receiver_has_method` can answer the FUNC012 carve-out
+                // during expression resolution of top-level functions.
+                // resolve_class will register the actual method symbols and
+                // wire them onto the class symbol in a later pass; this
+                // map only carries the names.
+                let method_set: std::collections::HashSet<String> =
+                    class.methods.iter().map(|m| m.name.clone()).collect();
+                self.class_method_names
+                    .insert(class.name.clone(), method_set);
             }
         }
 
@@ -2218,6 +2241,21 @@ impl NameResolver {
             }
             _ => return false,
         };
+
+        // Prefer the pre-populated map: it's set up in
+        // `register_top_level_symbols` before any function bodies are
+        // resolved, so the answer is correct even for top-level functions
+        // that reference class methods (e.g. the HYDRATE_AUTO Gap 2 shim
+        // pass's `void <method>() { instance.<method>() }` shims). The
+        // symbol-table path below is a fallback for cases where the class
+        // came from somewhere other than the HIR program's classes vec
+        // (e.g. plugin module_helpers expansion that adds classes after
+        // first-pass registration).
+        if let Some(method_set) = self.class_method_names.get(&class_name) {
+            if method_set.contains(method_name) {
+                return true;
+            }
+        }
 
         let class_symbol_id = match self.symbol_table.lookup_symbol(&class_name) {
             Some(id) => id,

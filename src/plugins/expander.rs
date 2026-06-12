@@ -40,6 +40,137 @@ fn merge_state_block(target: &mut Option<StateBlock>, incoming: Option<StateBloc
     }
 }
 
+/// HYDRATE_AUTO Gap 2 — emit bare-named top-level dispatch functions for
+/// every class method declared inside an `events:` block.
+///
+/// For each `FunctionModifier::EventHandler` method on a class, find the
+/// state-block declaration whose declared type is that class, and emit a
+/// top-level free function that dispatches through the state global:
+///
+/// ```clean
+/// state:
+///     MyToolbar instance_my_toolbar = MyToolbar()
+///
+/// class MyToolbar
+///     events:
+///         void fmt_bold()
+///             ...
+/// ```
+///
+/// produces an additional top-level function:
+///
+/// ```clean
+/// functions:
+///     void fmt_bold()
+///         instance_my_toolbar.fmt_bold()
+/// ```
+///
+/// The browser loader looks methods up via
+/// `instance.exports[handlerName]()` — a bare-named free function with no
+/// `this` parameter. The class method itself stays where it is (the splice
+/// and any user code still call `instance.fmt_bold()` through the receiver),
+/// but the shim is what reaches the export table by name.
+///
+/// Strategy for finding the matching instance global is the singleton
+/// heuristic: any state declaration whose declared type is a `Named` type
+/// with the class's name. Today's component model has one instance per
+/// `component:` tag in a file, which produces exactly one such state
+/// declaration per class. The multi-instance case (multiple
+/// `<my-toolbar id="...">` islands on a page) needs more design work —
+/// either a tag-parametrised thunk signature or per-instance dispatch tables
+/// on the JS side — and is not in scope here. When multiple matches are
+/// found we pick the first deterministic-order candidate and continue;
+/// when no match is found we skip emission for that class entirely (the
+/// loader-side call site will simply log "not found", same as before).
+///
+/// Name collisions (a user `functions:` block already declaring a function
+/// with the same name as a shim) are resolved by the user winning: we skip
+/// the shim. The user's function reaches the export table the normal way,
+/// and the event handler method becomes effectively shadowed for loader
+/// dispatch — an explicit user override.
+pub fn emit_event_handler_shims(program: &mut Program) {
+    use crate::ast::{Expression, FunctionModifier, Statement, Type, Visibility};
+
+    if program.classes.is_empty() {
+        return;
+    }
+    let state_decls = match &program.state {
+        Some(state) => &state.declarations,
+        None => return, // No state declarations means no instance to dispatch through.
+    };
+
+    let mut shims: Vec<Function> = Vec::new();
+    for class in &program.classes {
+        // Find a state declaration whose declared type names this class.
+        // The parser uses Type::Object for `FormatToolbar instance = ...`-style
+        // declarations and Type::Class { name, .. } for the generic form
+        // (`FormatToolbar<T> instance = ...`); both shapes resolve to the same
+        // class symbol downstream so we accept either.
+        let state_var_name = state_decls.iter().find_map(|decl| match &decl.type_ {
+            Type::Object(name) if name == &class.name => Some(decl.name.clone()),
+            Type::Class { name, .. } if name == &class.name => Some(decl.name.clone()),
+            _ => None,
+        });
+        let state_var_name = match state_var_name {
+            Some(name) => name,
+            None => continue,
+        };
+
+        for method in &class.methods {
+            if !matches!(method.modifier, FunctionModifier::EventHandler) {
+                continue;
+            }
+            // User-defined top-level function with the same name wins.
+            if program.functions.iter().any(|f| f.name == method.name) {
+                continue;
+            }
+            if shims.iter().any(|f| f.name == method.name) {
+                continue;
+            }
+            // Body: `instance_<tag>.<method>()` — single expression statement.
+            let dispatch = Expression::MethodCall {
+                object: Box::new(Expression::Variable(state_var_name.clone())),
+                method: method.name.clone(),
+                arguments: Vec::new(),
+                location: method
+                    .location
+                    .clone()
+                    .unwrap_or_else(|| crate::ast::SourceLocation {
+                        file: String::new(),
+                        line: 0,
+                        column: 0,
+                        byte_start: None,
+                        byte_end: None,
+                    }),
+            };
+            let body = vec![Statement::Expression {
+                expr: dispatch,
+                location: method.location.clone(),
+            }];
+            // Construct as Function::new then patch visibility/syntax so we
+            // don't touch every site that builds Function.  The shim is a
+            // public top-level free function with the bare method name; it
+            // takes no arguments, returns void, and lives in the synthetic
+            // "event handler shim" location of its source method.
+            let mut shim = Function::new(
+                method.name.clone(),
+                Vec::new(),
+                Type::Void,
+                body,
+                method.location.clone(),
+            );
+            shim.visibility = Visibility::Public;
+            // EventHandler tag is for class methods inside `events:`. The
+            // shim itself is a plain top-level function — leave its modifier
+            // as None so downstream passes (e.g. another expansion sweep)
+            // don't mistake it for a class method.
+            shim.modifier = FunctionModifier::None;
+            shims.push(shim);
+        }
+    }
+    program.functions.extend(shims);
+}
+
 /// Prepend statements to the program's start function body, creating the
 /// start function if it doesn't exist. Used by lifecycle slot dispatch to
 /// splice plugin-contributed init code ahead of any user `start:` code.
@@ -321,6 +452,8 @@ impl<'a> PluginExpander<'a> {
             prepend_to_start(&mut program, slot_prelude);
         }
 
+        emit_event_handler_shims(&mut program);
+
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
             statements_generated = self.statements_generated,
@@ -419,6 +552,8 @@ impl<'a> PluginExpander<'a> {
             program.state = plugin_state;
             merge_state_block(&mut program.state, user_state);
         }
+
+        emit_event_handler_shims(&mut program);
 
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,

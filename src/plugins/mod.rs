@@ -77,7 +77,7 @@ mod app_config;
 pub mod builtin_assemblers;
 mod discovery;
 pub mod enforcement;
-mod expander;
+pub mod expander;
 pub mod language_registry;
 pub mod plugin_abi;
 mod registry;

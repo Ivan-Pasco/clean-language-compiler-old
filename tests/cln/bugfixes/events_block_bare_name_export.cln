@@ -1,0 +1,42 @@
+// Test: bugfixes/events_block_bare_name_export
+// Grammar: class_body → events: section sibling to functions:
+// Semantic: Methods declared inside a class's `events:` section are tagged
+//           with FunctionModifier::EventHandler. The post-expansion shim
+//           pass in plugins::expander emits a top-level free function with
+//           the bare method name for each event-handler method whose
+//           owning class has a matching state-block instance. The shim
+//           dispatches through that instance: `void fmt() { state_var.fmt() }`.
+// Regression: HYDRATE_AUTO Gap 2 — browsers dispatch click events to
+//             component handlers via `instance.exports[handlerName]()`,
+//             expecting bare-named exports with no `this` parameter. Without
+//             the shim pass, event-block methods only appeared in the export
+//             table under their qualified `<class>.<method>` name AND with
+//             a `this: i32` first parameter — both wrong for the loader's
+//             call shape.
+// Expected output:
+//   onMount ran
+//   bold ran
+//   italic ran
+//   done
+
+start:
+	// Direct method call still works — the event-block methods are normal
+	// class methods, plus a shim alongside them.
+	instance.onMount()
+	// The shim path: top-level free function with the bare name, which
+	// dispatches through the state instance.
+	fmt_bold()
+	fmt_italic()
+	printl("done")
+
+state:
+	FormatToolbar instance = FormatToolbar()
+
+class FormatToolbar
+	events:
+		void onMount()
+			printl("onMount ran")
+		void fmt_bold()
+			printl("bold ran")
+		void fmt_italic()
+			printl("italic ran")

@@ -1401,6 +1401,17 @@ pub struct RulesBlock {
 pub enum FunctionModifier {
     None,
     Background,
+    /// Method declared inside a class's `events:` section.
+    ///
+    /// Semantically identical to a method declared inside `functions:` —
+    /// same signature, same body, called by user code as `instance.method()`.
+    /// Distinguished only so the post-expansion shim pass can find these
+    /// methods, locate the singleton state-block instance of the owning
+    /// class, and emit a bare-named top-level dispatch shim for each. The
+    /// shim is what loader.js looks up via `instance.exports[handlerName]()`
+    /// when a click event fires. Closes HYDRATE_AUTO Gap 2 once frame.ui's
+    /// `normalize_handlers` rewrite is reverted.
+    EventHandler,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
