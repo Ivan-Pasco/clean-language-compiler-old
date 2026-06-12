@@ -96,7 +96,7 @@ pub fn emit_event_handler_shims(program: &mut Program) {
     }
     let state_decls = match &program.state {
         Some(state) => &state.declarations,
-        None => return, // No state declarations means no instance to dispatch through.
+        None => return,
     };
 
     let mut shims: Vec<Function> = Vec::new();
@@ -127,37 +127,51 @@ pub fn emit_event_handler_shims(program: &mut Program) {
             if shims.iter().any(|f| f.name == method.name) {
                 continue;
             }
+            // Tag the shim with PLUGIN_OUTPUT_V2_ROOT_MARKER so it survives
+            // both BFS root selection in `collect_all_called_names_from_mir`
+            // and the PLUGIN_OUTPUT_MARKER DCE pass in `mir_codegen::generate`.
+            //
+            // Without this tag, the shim inherits the source method's
+            // location — which for plugin-emitted classes (frame.ui's
+            // `expand_component` output) carries PLUGIN_OUTPUT_MARKER. The
+            // BFS roots list excludes PLUGIN_OUTPUT_MARKER functions from
+            // being seeded, and the DCE pass then drops them entirely
+            // unless they're transitively called from user code. Nothing in
+            // user code calls these shims — the only call site is the
+            // browser loader's `instance.exports[handlerName]()` JS
+            // dispatch, which the compiler's static reachability analysis
+            // cannot see. V2 root marker explicitly opts the shim into
+            // root status, which is exactly the contract documented at
+            // `mir_codegen/utilities.rs:1415-1424`.
+            let shim_location = crate::ast::SourceLocation {
+                file: crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER.to_string(),
+                line: method.location.as_ref().map(|l| l.line).unwrap_or(0),
+                column: method.location.as_ref().map(|l| l.column).unwrap_or(0),
+                byte_start: None,
+                byte_end: None,
+            };
             // Body: `instance_<tag>.<method>()` — single expression statement.
             let dispatch = Expression::MethodCall {
                 object: Box::new(Expression::Variable(state_var_name.clone())),
                 method: method.name.clone(),
                 arguments: Vec::new(),
-                location: method
-                    .location
-                    .clone()
-                    .unwrap_or_else(|| crate::ast::SourceLocation {
-                        file: String::new(),
-                        line: 0,
-                        column: 0,
-                        byte_start: None,
-                        byte_end: None,
-                    }),
+                location: shim_location.clone(),
             };
             let body = vec![Statement::Expression {
                 expr: dispatch,
-                location: method.location.clone(),
+                location: Some(shim_location.clone()),
             }];
             // Construct as Function::new then patch visibility/syntax so we
             // don't touch every site that builds Function.  The shim is a
             // public top-level free function with the bare method name; it
             // takes no arguments, returns void, and lives in the synthetic
-            // "event handler shim" location of its source method.
+            // V2-root location so it survives DCE.
             let mut shim = Function::new(
                 method.name.clone(),
                 Vec::new(),
                 Type::Void,
                 body,
-                method.location.clone(),
+                Some(shim_location),
             );
             shim.visibility = Visibility::Public;
             // EventHandler tag is for class methods inside `events:`. The

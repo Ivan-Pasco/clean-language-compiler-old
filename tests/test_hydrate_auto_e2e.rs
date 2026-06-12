@@ -56,13 +56,18 @@ fn setup_workspace() -> PathBuf {
             "start:\n\tprintl(\"hello\")\n",
         )
         .expect("write index.cln");
+        // events: methods follow `foundation/spec/plugins/frame-ui.ebnf
+        // §event_handler_function` — spec form `identifier(params):` with
+        // no return type and a trailing colon, not the typed `void name()`
+        // form. This is what frame.ui v2.12.4+ emits from
+        // expand_component once normalize_handlers is a pass-through.
         fs::write(
             root.join("app/web/components/MyToolbar.cln"),
             r##"component: tag="my-toolbar" client="on"
 	events:
-		void onMount()
+		onMount():
 			integer r = _ui_on_event("#btn", "click", "do_thing")
-		void do_thing()
+		do_thing():
 			integer r = _ui_add_class("#target", "active")
 	html:
 		<button id="btn">Click</button>
