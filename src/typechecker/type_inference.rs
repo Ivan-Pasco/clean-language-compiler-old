@@ -926,8 +926,45 @@ impl<'a> TypeInference<'a> {
         for symbol_id in all_symbols {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if let crate::resolver::SymbolKind::StateVariable { var_type, .. } = &symbol.kind {
-                    // Convert HirType to ConcreteType and register in type environment
-                    let concrete_type = Self::hir_type_to_concrete_type(var_type);
+                    // Convert HirType to ConcreteType and register in type environment.
+                    //
+                    // The static mapper returns `Unknown` for any `HirType::Named` that
+                    // isn't one of the primitive aliases (integer/number/string/boolean/
+                    // void). User-defined class instances declared as state globals
+                    // (e.g. `state: MyToolbar instance = MyToolbar()` from frame.ui's
+                    // expand_component output) would land as Unknown here. The MIR
+                    // builder's method-call type-inference then falls back to the locals
+                    // map — which sees the class instance as `MirType::I32` (its WASM
+                    // pointer) and remaps that to `ConcreteType::Integer`. The codegen
+                    // then looks up `integer.<method>` and fails with "Function
+                    // 'integer.<method>' not found in function map".
+                    //
+                    // Upgrade: when the static mapper yields Unknown for a Named type
+                    // whose name matches a class symbol already in the table, register
+                    // it as `ConcreteType::Class { symbol_id, ... }` instead. Class
+                    // signatures are registered later in `infer_program` but the
+                    // resolver pass that ran before us already populated the symbol
+                    // table with class symbols, so the lookup succeeds here.
+                    let mut concrete_type = Self::hir_type_to_concrete_type(var_type);
+                    if matches!(concrete_type, ConcreteType::Unknown) {
+                        if let crate::hir::HirType::Named { name, .. } = var_type {
+                            if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(name) {
+                                if let Some(class_symbol) =
+                                    self.symbol_table.get_symbol(class_symbol_id)
+                                {
+                                    if matches!(
+                                        class_symbol.kind,
+                                        crate::resolver::SymbolKind::Class { .. }
+                                    ) {
+                                        concrete_type = ConcreteType::Class {
+                                            symbol_id: class_symbol_id,
+                                            type_args: Vec::new(),
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
                     self.type_env.insert(symbol_id, concrete_type);
                     tracing::trace!(
                         "Registered state variable '{}' (SymbolId {:?}) with type",

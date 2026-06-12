@@ -1,0 +1,45 @@
+// Test: bugfixes/method_call_with_toplevel_collision
+// Grammar: method_call_expr (receiver-type-first resolution)
+// Semantic: FUNC012 — method-style call rejection must NOT fire when the
+//           receiver's class has a method with the same name as a top-level
+//           function. Receiver type wins over top-level lookup. Applies to
+//           every receiver SymbolKind that carries a Named class type:
+//           Variable, Parameter, StateVariable.
+// Regression: frame.ui v2.12.3's __preamble emits a top-level
+//             `string render(string name)` SSR helper, and expand_component
+//             emits a class method `void render()` AND a `state:` block
+//             declaring the instance global. The client_init splice writes
+//             `instance.render()` (state-block receiver). The resolver
+//             rejected this as FUNC012 because it found the top-level
+//             `render` first AND because the first version of the fix only
+//             handled Variable/Parameter, not StateVariable. Fixed by having
+//             FUNC012 check receiver type across all three kinds.
+// Expected output:
+//   widget rendered
+//   widget did thing
+//   rendered_hello
+//   widget rendered
+//   ok
+
+start:
+	Widget w = Widget()
+	w.render()
+	w.do_thing()
+	printl(render("hello"))
+	// State-block receiver — same shape as the frame.ui splice:
+	state_w.render()
+	printl("ok")
+
+state:
+	Widget state_w = Widget()
+
+class Widget
+	functions:
+		void render()
+			printl("widget rendered")
+		void do_thing()
+			printl("widget did thing")
+
+functions:
+	string render(string name)
+		return "rendered_" + name

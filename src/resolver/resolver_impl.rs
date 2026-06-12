@@ -2134,10 +2134,22 @@ impl NameResolver {
         // Builtin functions like `toString` and `toInteger` are registered as
         // SymbolKind::Function but are valid as method-style calls (e.g.
         // `value.toString()`), so they are excluded from this check.
+        //
+        // Receiver-type-first lookup: when the receiver is a variable or
+        // parameter whose declared type is a class, and that class declares a
+        // method with the same name, that method wins over the top-level
+        // function. Without this lookup, a top-level `functions: render(name)`
+        // shadows every `Foo.render()` instance method in scope (the bug
+        // frame.ui v2.12.3's `client_init` splice surfaced — the `__preamble`
+        // SSR helper `render(string name)` was shadowing the component class's
+        // `render()` method emitted by `expand_component`). Spec rule:
+        // `instance.method()` binds to the method on the instance's class
+        // before falling back to top-level symbols.
         if let Some(symbol_id) = self.symbol_table.lookup_symbol(method) {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if matches!(symbol.kind, SymbolKind::Function { .. })
                     && !self.symbol_table.is_builtin(symbol_id)
+                    && !self.receiver_has_method(receiver, method)
                 {
                     self.errors
                         .push(CompilerError::method_call_on_standalone_function(
@@ -2168,6 +2180,60 @@ impl NameResolver {
             arguments: resolved_arguments,
             location: location.clone(),
         })
+    }
+
+    /// Return true when `receiver` is a variable or parameter whose declared
+    /// type is a class that declares a method (inherited or own) named
+    /// `method_name`. Used by the FUNC012 guard so that a top-level function
+    /// with the same name as a class method does NOT shadow the method when
+    /// called on a typed receiver. Receivers that aren't simple identifiers,
+    /// or whose type isn't a `Named` class reference, return false — those
+    /// cases reach the regular instance-method resolution downstream where
+    /// type inference fills in for missing static type info.
+    fn receiver_has_method(&self, receiver: &HirExpression, method_name: &str) -> bool {
+        let class_name = match receiver {
+            HirExpression::Variable { name, .. } => {
+                let var_symbol_id = match self.symbol_table.lookup_symbol(name) {
+                    Some(id) => id,
+                    None => return false,
+                };
+                let var_symbol = match self.symbol_table.get_symbol(var_symbol_id) {
+                    Some(s) => s,
+                    None => return false,
+                };
+                match &var_symbol.kind {
+                    SymbolKind::Variable {
+                        var_type: HirType::Named { name, .. },
+                        ..
+                    } => name.clone(),
+                    SymbolKind::Parameter {
+                        param_type: HirType::Named { name, .. },
+                    } => name.clone(),
+                    SymbolKind::StateVariable {
+                        var_type: HirType::Named { name, .. },
+                        ..
+                    } => name.clone(),
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+
+        let class_symbol_id = match self.symbol_table.lookup_symbol(&class_name) {
+            Some(id) => id,
+            None => return false,
+        };
+        let class_symbol = match self.symbol_table.get_symbol(class_symbol_id) {
+            Some(s) => s,
+            None => return false,
+        };
+        if !matches!(class_symbol.kind, SymbolKind::Class { .. }) {
+            return false;
+        }
+
+        self.symbol_table
+            .lookup_class_member(class_symbol_id, method_name)
+            .is_some()
     }
 
     /// Resolve a `FieldAccess` expression.
