@@ -1,18 +1,23 @@
 // Test: bugfixes/events_block_bare_name_export
-// Grammar: class_body → events: section sibling to functions:
-// Semantic: Methods declared inside a class's `events:` section are tagged
-//           with FunctionModifier::EventHandler. The post-expansion shim
-//           pass in plugins::expander emits a top-level free function with
-//           the bare method name for each event-handler method whose
-//           owning class has a matching state-block instance. The shim
-//           dispatches through that instance: `void fmt() { state_var.fmt() }`.
-// Regression: HYDRATE_AUTO Gap 2 — browsers dispatch click events to
-//             component handlers via `instance.exports[handlerName]()`,
-//             expecting bare-named exports with no `this` parameter. Without
-//             the shim pass, event-block methods only appeared in the export
-//             table under their qualified `<class>.<method>` name AND with
-//             a `this: i32` first parameter — both wrong for the loader's
-//             call shape.
+// Grammar: foundation/spec/plugins/frame-ui.ebnf §events_section
+//          event_handler_function = identifier , "(" , [ parameter_list ] , ")" , ":" ,
+//                                   NEWLINE , INDENT , INDENT , INDENT , { statement } ;
+// Semantic: Methods declared inside a class's `events:` section follow the
+//           spec form `name(params):` — no return type, trailing colon
+//           required, parameters use `name [":" type]` form. They are
+//           parsed by `parse_event_handler_in_block` and tagged with
+//           FunctionModifier::EventHandler. The post-expansion shim pass
+//           in plugins::expander emits a top-level free function with the
+//           bare method name for each event-handler method whose owning
+//           class has a matching state-block instance. The shim dispatches
+//           through that instance: `void fmt() { state_var.fmt() }`.
+// Regression: HYDRATE_AUTO Gap 2 reopen — earlier attempt routed events:
+//             methods through `parse_function_in_block`, which expects
+//             standard `void name()` syntax and rejects the spec-required
+//             trailing colon with "Unsupported statement type: Colon".
+//             Caused frame.ui v2.12.4 (the version intended to revert
+//             normalize_handlers) to fail with SYN001 on every component.
+//             Closed by adding the dedicated event-handler parser.
 // Expected output:
 //   onMount ran
 //   bold ran
@@ -34,9 +39,9 @@ state:
 
 class FormatToolbar
 	events:
-		void onMount()
+		onMount():
 			printl("onMount ran")
-		void fmt_bold()
+		fmt_bold():
 			printl("bold ran")
-		void fmt_italic()
+		fmt_italic():
 			printl("italic ran")

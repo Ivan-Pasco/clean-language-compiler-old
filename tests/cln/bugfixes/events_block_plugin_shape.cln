@@ -1,0 +1,52 @@
+// Test: bugfixes/events_block_plugin_shape
+// Grammar: foundation/spec/plugins/frame-ui.ebnf §events_section
+// Semantic: Mirrors the AST shape that frame.ui's `expand_component` emits
+//           after `normalize_handlers` becomes a pass-through (the v2.12.4
+//           intent). A component-source `class` with fields, an events:
+//           section in spec form, and a functions: sibling — exactly what
+//           the plugin re-parses into the program AST. Must compile and
+//           emit bare-named exports for every events: method via the shim
+//           pass.
+// Regression: HYDRATE_AUTO Gap 2 second reopen — the earlier events: parser
+//             change handled hand-written user-source events: blocks but
+//             failed on plugin-output shape because the events: section
+//             often appears AFTER fields, and the method form `name():`
+//             (spec) needs its own parser distinct from the typed
+//             `void name()` form. The first regression fixture
+//             `events_block_bare_name_export.cln` covered the user-source
+//             path; this fixture covers the plugin-output path where
+//             frame.ui v2.12.4+ emit lands in the AST.
+// Expected output:
+//   mounted
+//   done
+
+start:
+	instance_my_toolbar.onMount()
+	do_thing()
+	printl("done")
+
+state:
+	MyToolbar instance_my_toolbar = MyToolbar()
+
+class MyToolbar
+	string _tag = "my-toolbar"
+	string _hydration_mode = "on"
+	string _slot_content = ""
+
+	events:
+		onMount():
+			printl("mounted")
+		do_thing():
+			_slot_content = "clicked"
+
+	functions:
+		string render()
+			string __html = ""
+			__html = __html + "<button id='b'>Click</button>"
+			return __html
+
+		void setSlot(string content)
+			_slot_content = content
+
+		string renderSSR()
+			return this.render()

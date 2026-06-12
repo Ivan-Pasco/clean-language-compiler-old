@@ -488,6 +488,94 @@ impl TokenParser {
         })
     }
 
+    /// Parse a method declared inside an `events:` block.
+    ///
+    /// Per `foundation/spec/plugins/frame-ui.ebnf §events_section`:
+    ///
+    /// ```text
+    /// event_handler_function = identifier , "(" , [ parameter_list ] , ")" , ":" , NEWLINE
+    ///                        , INDENT , INDENT , INDENT , { statement } ;
+    /// parameter_list         = parameter , { "," , parameter } ;
+    /// parameter              = identifier , [ ":" , type ] ;
+    /// ```
+    ///
+    /// The shape `name(params):` is intentionally distinct from
+    /// `functions_method` — no return type (handlers are implicitly void),
+    /// trailing colon required, and parameters use `name [":" type]` form
+    /// instead of `type name`. This is what frame.ui v2.12.4+ emits from
+    /// `expand_component` once `normalize_handlers` no longer rewrites
+    /// `events:` to `functions:`. Treating events: methods as if they were
+    /// ordinary functions: methods (the previous implementation) failed
+    /// with "Unsupported statement type: Colon" because the trailing colon
+    /// in `onMount():` had no place in the standard method grammar.
+    pub(super) fn parse_event_handler_in_block(&mut self) -> Result<Function, CompilerError> {
+        let start_location = self.current().location.clone();
+
+        // Method name.
+        let name_token = self.expect_name()?;
+        let func_name = name_token.text.clone();
+        self.skip_whitespace();
+
+        // Parameters: spec form `name [":" type]`, comma-separated.
+        self.expect(&TokenKind::LeftParen)?;
+        self.skip_whitespace();
+
+        let mut parameters = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                self.skip_whitespace();
+                let param_name_token = self.expect_name()?;
+                let param_name = param_name_token.text.clone();
+                self.skip_whitespace();
+                // Optional `: type` annotation. Defaults to Any when absent
+                // so untyped handler params still resolve.
+                let param_type = if self.eat(&TokenKind::Colon) {
+                    self.skip_whitespace();
+                    self.parse_type()?
+                } else {
+                    Type::Any
+                };
+                parameters.push(Parameter {
+                    name: param_name,
+                    type_: param_type,
+                    default_value: None,
+                });
+                self.skip_whitespace();
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(&TokenKind::RightParen)?;
+        self.skip_whitespace();
+
+        // The trailing colon is REQUIRED in the spec form. We accept its
+        // absence to also handle anyone still writing the typed-return form
+        // (`void name()`) inside an events: block — though that's outside
+        // the spec, callers may rely on the older shape until frame.ui's
+        // emit settles. When the colon IS present we expect a newline after
+        // it (statement body begins on the next line).
+        self.eat(&TokenKind::Colon);
+        self.skip_whitespace();
+
+        // Body — same indented-block handling as functions: methods.
+        let body = self.parse_block()?;
+
+        Ok(Function {
+            name: func_name,
+            type_parameters: Vec::new(),
+            type_constraints: Vec::new(),
+            parameters,
+            return_type: Type::Void,
+            body,
+            description: None,
+            syntax: FunctionSyntax::Simple,
+            visibility: Visibility::Public,
+            modifier: FunctionModifier::None,
+            location: Some(start_location),
+        })
+    }
+
     pub(super) fn parse_class(&mut self) -> Result<Class, CompilerError> {
         self.expect(&TokenKind::Class)?;
         self.skip_whitespace();
@@ -816,7 +904,7 @@ impl TokenParser {
                                 break;
                             }
                             if matches!(self.current_kind(), TokenKind::Identifier(_)) {
-                                match self.parse_function_in_block() {
+                                match self.parse_event_handler_in_block() {
                                     Ok(mut func) => {
                                         // Tag this method so the post-expansion shim
                                         // pass knows to emit a bare-named dispatch.
