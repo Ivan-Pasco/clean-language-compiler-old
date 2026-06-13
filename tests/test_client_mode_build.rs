@@ -82,6 +82,50 @@ fn wasm_imported_functions(bytes: &[u8]) -> Vec<String> {
     imports
 }
 
+/// Regression test for CLIENT_PULLS_SERVER_DCE:
+/// When the entry module has a `start:` block with server-side code (e.g. calling
+/// frame.data migrations) AND a component with `client="on"`, the frontend.wasm
+/// _start must NOT call the server SSR entry or pull in _db_register_migration.
+#[test]
+fn client_mode_start_does_not_pull_migration_chain() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Entry module: has both server start: code and a client component.
+    std::fs::write(
+        root.join("main.cln"),
+        "start:\n\tprintl(\"server start\")\n",
+    )
+    .unwrap();
+
+    let entry = root.join("main.cln");
+    let result = clean_language_compiler::compile_multi_file_client_mode(
+        &entry,
+        vec![root.to_path_buf()],
+        0,
+    );
+
+    let bytes = result.expect("client_mode compile failed for migration leak test");
+    assert!(
+        bytes.starts_with(b"\0asm"),
+        "output must be a valid WASM module"
+    );
+
+    let imports = wasm_imported_functions(&bytes);
+    assert!(
+        !imports.contains(&"_db_register_migration".to_string()),
+        "frontend.wasm must not import _db_register_migration — server migration \
+         chain leaked into client build via _start.\n\
+         Imported functions: {imports:?}"
+    );
+    assert!(
+        !imports.contains(&"_http_listen".to_string()),
+        "frontend.wasm must not import _http_listen — server SSR entry leaked into \
+         client build via _start.\n\
+         Imported functions: {imports:?}"
+    );
+}
+
 /// Regression test for CLIENT_MODULE_LEAK:
 /// A server-only function (`find_user`) that calls a server bridge (`_db_query`)
 /// must be DCE'd from frontend.wasm when no client code calls it.
