@@ -13,6 +13,13 @@ pub const PLUGIN_OUTPUT_MARKER: &str = "<plugin-output>";
 /// See foundation/spec/plugins/contracts/lifecycle.md §3.1.
 pub const PLUGIN_OUTPUT_V2_ROOT_MARKER: &str = "<plugin-output-v2-root>";
 
+/// `SourceLocation.file` marker stamped on every statement injected into the
+/// program start function by a lifecycle slot dispatch (`program_init`,
+/// `server_init`, `client_init`).  Lets downstream passes distinguish
+/// plugin-contributed statements from user-authored `start:` body code.
+/// See `plugins/expander.rs` `collect_slot_statements`.
+pub const LIFECYCLE_SLOT_OUTPUT_MARKER: &str = "<lifecycle-slot-output>";
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize)]
 pub struct SourceLocation {
     pub line: usize,
@@ -781,6 +788,60 @@ pub enum Statement {
         check: ValidateCheckBlock,
         location: Option<SourceLocation>,
     },
+}
+
+impl Statement {
+    /// Return a mutable reference to this statement's location field.
+    /// Used to stamp lifecycle-slot-injected statements with
+    /// [`LIFECYCLE_SLOT_OUTPUT_MARKER`] so they are distinguishable from
+    /// user-authored `start:` body statements.
+    pub fn location_mut(&mut self) -> &mut Option<SourceLocation> {
+        match self {
+            Statement::Require { location, .. } => location,
+            Statement::Ensure { location, .. } => location,
+            Statement::VariableDecl { location, .. } => location,
+            Statement::FunctionsBlock { location, .. } => location,
+            Statement::TypeApplyBlock { location, .. } => location,
+            Statement::FunctionApplyBlock { location, .. } => location,
+            Statement::MethodApplyBlock { location, .. } => location,
+            Statement::ConstantApplyBlock { location, .. } => location,
+            Statement::Assignment { location, .. } => location,
+            Statement::Print { location, .. } => location,
+            Statement::PrintBlock { location, .. } => location,
+            Statement::Return { location, .. } => location,
+            Statement::Break { location, .. } => location,
+            Statement::Continue { location, .. } => location,
+            Statement::If { location, .. } => location,
+            Statement::Iterate { location, .. } => location,
+            Statement::RangeIterate { location, .. } => location,
+            Statement::While { location, .. } => location,
+            Statement::Test { location, .. } => location,
+            Statement::TestsBlock { location, .. } => location,
+            Statement::Expression { location, .. } => location,
+            Statement::Error { location, .. } => location,
+            Statement::Import { location, .. } => location,
+            Statement::LaterAssignment { location, .. } => location,
+            Statement::Background { location, .. } => location,
+            Statement::OnErrorBlock { location, .. } => location,
+            Statement::PrivateBlock { location, .. } => location,
+            Statement::StandaloneErrorHandler { location, .. } => location,
+            Statement::ClassDefinition { location, .. } => location,
+            Statement::Description { location, .. } => location,
+            Statement::Spec { location, .. } => location,
+            Statement::Intent { location, .. } => location,
+            Statement::SourceBlock { location, .. } => location,
+            Statement::BuildBlock { location, .. } => location,
+            Statement::FrameworkBlock { location, .. } => location,
+            Statement::ScreenBlock { location, .. } => location,
+            Statement::UiBlock { location, .. } => location,
+            Statement::StateBlockStmt { location, .. } => location,
+            Statement::WatchBlockStmt { location, .. } => location,
+            Statement::ResetStmt { location, .. } => location,
+            Statement::ScreenBlockStmt { location, .. } => location,
+            Statement::ValidateDeclaration { location, .. } => location,
+            Statement::ValidateCheck { location, .. } => location,
+        }
+    }
 }
 
 // ============================================================================

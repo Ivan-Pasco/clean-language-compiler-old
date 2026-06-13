@@ -2239,27 +2239,19 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
             }
         }
 
-        // Client mode: discard any merged `start:` body so the browser's `_start`
-        // becomes a no-op.  Without this the WASM would call `_http_listen` etc.
-        // when the loader fires `_start()`, which the browser bridge cannot
-        // satisfy.  Component event handlers remain as exported functions and
-        // are reached via the `_ui_on_event` registrations the components make.
-        // Plugin Contracts v2 §1 — preserve client_init contributions.
+        // Client mode: build-pipeline enforcement — what runs in the browser _start.
         //
-        // The legacy behavior in client_mode was to discard the merged start
-        // body so the browser's `_start` becomes a no-op (the server _start
-        // imports like `_http_listen` are not callable from the browser host).
+        // The user's start: block is the server entry point: it boots the HTTP
+        // listener, registers migrations, sets up routes. None of that is callable
+        // from the browser host. In client builds the expander has already:
+        //   1. Collected `program_init` + `client_init` lifecycle slot output into
+        //      `slot_prelude`, tagged each statement with LIFECYCLE_SLOT_OUTPUT_MARKER.
+        //   2. Cleared the user's start: body (server code gone).
+        //   3. Called prepend_to_start to fill the body with only the tagged output.
         //
-        // With v2 lifecycle slot dispatch, the expander has already prepended
-        // each plugin's `client_init` output to start_function's body. We
-        // preserve those contributions and only clear the user's residual
-        // server-only statements that came in BEFORE the plugin output.
-        //
-        // The rule is keyed on whether any loaded plugin declares the slot:
-        // if yes, we keep start_function as-is (the expander has shaped it
-        // correctly). If no plugin declared client_init, we keep the legacy
-        // clearing behavior so server-only code doesn't leak into the browser
-        // _start. See contracts/lifecycle.md §3.3.
+        // Here we handle the HIR-level merging of non-entry module start: bodies
+        // (`extra_start_stmts`) and the legacy case where no plugin declares
+        // client_init. See expander.rs `collect_slot_statements` and `expand_program`.
         if client_mode {
             // CLIENT_PULLS_SERVER: non-entry module start: blocks are server-side
             // code (db init, migration registration, etc.) — always discard them

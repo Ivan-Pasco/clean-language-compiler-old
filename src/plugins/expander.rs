@@ -527,10 +527,28 @@ impl<'a> PluginExpander<'a> {
             .registry
             .invoke_lifecycle_slot(slot, &self.build_context)
         {
-            accumulator.extend(expansion.statements);
+            let mut stmts: Vec<Statement> = expansion.statements;
             if let Some(start_fn) = expansion.start_function {
-                accumulator.extend(start_fn.body);
+                stmts.extend(start_fn.body);
             }
+            // Tag every injected statement so downstream passes can distinguish
+            // plugin-contributed lifecycle output from user-authored start: code.
+            for stmt in &mut stmts {
+                let loc = stmt.location_mut();
+                match loc {
+                    Some(l) => l.file = crate::ast::LIFECYCLE_SLOT_OUTPUT_MARKER.to_string(),
+                    None => {
+                        *loc = Some(crate::ast::SourceLocation {
+                            file: crate::ast::LIFECYCLE_SLOT_OUTPUT_MARKER.to_string(),
+                            line: 0,
+                            column: 0,
+                            byte_start: None,
+                            byte_end: None,
+                        });
+                    }
+                }
+            }
+            accumulator.extend(stmts);
         }
     }
 
