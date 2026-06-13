@@ -2574,6 +2574,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     mir_codegen.set_strict_hosts(strict);
+    mir_codegen.set_client_mode(client_mode);
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 

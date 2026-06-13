@@ -1396,9 +1396,16 @@ impl MirCodeGenerator<'_> {
                 // utilities.rs — the same functions that are exported so hosts can
                 // dispatch to them must also be seeded so their bridge imports are
                 // registered. (GEN003 follow-up)
-                let is_external_call_target = f.name.starts_with("__route_handler_")
-                    || f.name.starts_with("__page_handler_")
-                    || (f.name.starts_with('_') && !f.name.starts_with("__"));
+                //
+                // In client mode (browser build), route/page handlers are server-only
+                // and must NOT be seeded — seeding them causes their _db_query /
+                // _http_respond imports to appear in frontend.wasm (CLIENT_MODULE_LEAK).
+                let is_server_handler =
+                    f.name.starts_with("__route_handler_") || f.name.starts_with("__page_handler_");
+                let is_single_underscore_callback =
+                    f.name.starts_with('_') && !f.name.starts_with("__");
+                let is_external_call_target =
+                    (!self.client_mode && is_server_handler) || is_single_underscore_callback;
                 // User-defined functions are called directly by the HTTP server runtime
                 // when they are registered as endpoint handlers (e.g. via frame.server
                 // endpoints:). The plugin uses integer table indices to register them,
@@ -1409,7 +1416,14 @@ impl MirCodeGenerator<'_> {
                 // we deliberately exclude them here to preserve the Import Minimality Rule
                 // — preamble helpers like resDownload must not drag in _res_download unless
                 // user code actually calls them.
-                let is_user_defined = !f.location.file.is_empty()
+                //
+                // In client mode, user-defined functions are NOT seeded as roots.
+                // Only _start (the entry point) and explicitly exported functions are
+                // roots; everything else is found by BFS reachability from those roots.
+                // This prevents server-only functions (e.g. find_user calling _db_query)
+                // from leaking into frontend.wasm (CLIENT_MODULE_LEAK).
+                let is_user_defined = !self.client_mode
+                    && !f.location.file.is_empty()
                     && f.location.file != crate::ast::PLUGIN_OUTPUT_MARKER
                     && f.location.file != crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
                 // v2 (contracts/lifecycle.md §3.1): plugins that declare
@@ -1433,7 +1447,7 @@ impl MirCodeGenerator<'_> {
                 // registered (register_stringify_operations gates on string.concat). Force
                 // string.concat into the reachable set whenever a page handler is present
                 // so the pure WASM path is always available (GEN004).
-                if f.name.starts_with("__page_handler_") {
+                if !self.client_mode && f.name.starts_with("__page_handler_") {
                     names.insert("string.concat".to_string());
                 }
             }

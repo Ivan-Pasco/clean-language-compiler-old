@@ -249,6 +249,13 @@ pub struct MirCodeGenerator<'a> {
     /// are emitted as warnings and the build proceeds. Set via the
     /// `CLEAN_STRICT_HOSTS=1` environment variable or `--strict-hosts` CLI flag.
     pub(super) strict_hosts: bool,
+
+    /// When true, the output is a browser `frontend.wasm`. DCE roots are
+    /// restricted to `_start` + explicitly exported functions only — user-defined
+    /// functions that are not reachable from those roots are dead-code eliminated
+    /// so server-only bridge imports (`_db_query`, `_http_listen`, etc.) are never
+    /// emitted into the browser module. See CLIENT_MODULE_LEAK.
+    pub(super) client_mode: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +299,7 @@ impl MirCodeGenerator<'_> {
             user_defined_function_names: HashSet::new(),
             host_class: None,
             strict_hosts: false,
+            client_mode: false,
         }
     }
 
@@ -331,6 +339,7 @@ impl MirCodeGenerator<'_> {
             user_defined_function_names: HashSet::new(),
             host_class: None,
             strict_hosts: false,
+            client_mode: false,
         }
     }
 
@@ -370,6 +379,7 @@ impl MirCodeGenerator<'_> {
             user_defined_function_names: HashSet::new(),
             host_class: None,
             strict_hosts: false,
+            client_mode: false,
         }
     }
 
@@ -395,6 +405,16 @@ impl MirCodeGenerator<'_> {
     /// via the `CLEAN_STRICT_HOSTS=1` environment variable in `compile_multi_file_*`.
     pub fn set_strict_hosts(&mut self, strict: bool) {
         self.strict_hosts = strict;
+    }
+
+    /// Mark this as a browser (`frontend.wasm`) build.
+    ///
+    /// When enabled, DCE roots are restricted to `_start` + explicitly exported
+    /// functions. User-defined functions unreachable from those roots are
+    /// dead-code eliminated, preventing server-only bridge imports
+    /// (`_db_query`, `_http_listen`, etc.) from leaking into the browser module.
+    pub fn set_client_mode(&mut self, client_mode: bool) {
+        self.client_mode = client_mode;
     }
 
     /// Set plugin bridge functions to be registered as WASM imports.
