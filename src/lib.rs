@@ -2261,16 +2261,25 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         // clearing behavior so server-only code doesn't leak into the browser
         // _start. See contracts/lifecycle.md §3.3.
         if client_mode {
+            // CLIENT_PULLS_SERVER: non-entry module start: blocks are server-side
+            // code (db init, migration registration, etc.) — always discard them
+            // in client builds. The entry module's start_function was already
+            // cleared and rebuilt by the expander to contain only browser-safe
+            // plugin output (program_init + client_init). See expander.rs.
+            extra_start_stmts.clear();
+
             let any_client_init = registry
                 .as_ref()
                 .map(|r| r.any_plugin_declares_lifecycle_slot("client_init"))
                 .unwrap_or(false);
             if !any_client_init {
-                extra_start_stmts.clear();
+                // Legacy path: no client_init slot, clear the entry start body too.
                 if let Some(ref mut sf) = start_function {
                     sf.body.statements.clear();
                 }
             }
+            // When any_client_init: the expander already replaced the entry
+            // start_function body with only browser-safe plugin output.
         }
 
         if !extra_start_stmts.is_empty() {

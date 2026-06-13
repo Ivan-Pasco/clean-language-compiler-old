@@ -458,6 +458,16 @@ impl<'a> PluginExpander<'a> {
             // emit component-instantiation + onMount() calls here.
             // Closes HYDRATE_AUTO once a plugin declares the slot.
             self.collect_slot_statements(&mut slot_prelude, "client_init");
+
+            // CLIENT_PULLS_SERVER: The user's start: body is server-side code
+            // (HTTP listen, migration registration, route setup). Clear it so
+            // _start in frontend.wasm contains only browser-safe plugin output
+            // (program_init + client_init). Without this, prepend_to_start leaves
+            // the server SSR entry reachable from _start, pulling the entire
+            // migration chain into the browser WASM via DCE BFS.
+            if let Some(ref mut sf) = program.start_function {
+                sf.body.clear();
+            }
         }
         // per_request lifecycle splicing into route handlers — follow-up
         // commit. Touches route-handler emission which is more involved than
