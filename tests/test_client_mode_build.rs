@@ -72,11 +72,9 @@ fn wasm_imported_functions(bytes: &[u8]) -> Vec<String> {
     let mut imports = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
         if let Ok(Payload::ImportSection(reader)) = payload {
-            for import in reader {
-                if let Ok(import) = import {
-                    if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                        imports.push(import.name.to_string());
-                    }
+            for import in reader.into_iter().flatten() {
+                if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                    imports.push(import.name.to_string());
                 }
             }
         }
