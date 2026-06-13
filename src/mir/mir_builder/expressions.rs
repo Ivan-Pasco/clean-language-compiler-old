@@ -564,8 +564,6 @@ impl MirBuilder {
                     // Regular binary operation (arithmetic, comparison, etc.)
                     let left_id = self.build_expression(context, left)?;
                     let right_id = self.build_expression(context, right)?;
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
 
                     // NOTE: Use actual MIR types from built expressions, not TAST expr_type
                     // TAST expr_type may be Unknown for method calls like toNumber()
@@ -581,6 +579,75 @@ impl MirBuilder {
                         .get(&right_id)
                         .map(|local| local.local_type.clone())
                         .unwrap_or_else(|| MirType::from_concrete_type(&right.expr_type));
+
+                    // Auto-unbox `any` operands when the other side is a primitive.
+                    //
+                    // The result of expressions like `data.field` on an `any`-typed
+                    // receiver is itself an `any` (boxed [tag, value] heap struct).
+                    // A naive BinaryOp would compare the boxed pointer to the
+                    // primitive literal (e.g. `pointer == 0`), which is never true
+                    // for a found field and always true for `!= 0`. The compiler
+                    // already has the unbox machinery used by assignments and
+                    // explicit `.toInteger()` / `.toNumber()` method calls — we
+                    // reuse it here so `if data.count == 0` and similar patterns
+                    // evaluate against the contained value, not the heap pointer.
+                    //
+                    // Mixed any+any comparisons are left as raw pointer equality
+                    // for now (well-defined for object identity, no silent
+                    // mis-evaluation), and string-on-any is handled by the
+                    // string-compare branch downstream.
+                    //
+                    // Regression test: tests/test_any_int_compare.rs
+                    // Reported as ANY_INT_COMPARE_USES_POINTER against 0.30.276.
+                    let left_is_any = matches!(left_mir_type, MirType::Any);
+                    let right_is_any = matches!(right_mir_type, MirType::Any);
+
+                    let (left_id, left_mir_type) = if left_is_any && !right_is_any {
+                        let target = Self::mir_type_to_concrete(&right_mir_type);
+                        if matches!(
+                            target,
+                            ConcreteType::Integer | ConcreteType::Number | ConcreteType::Boolean
+                        ) {
+                            let unboxed =
+                                self.emit_unbox_any(context, left_id, &target, &left.location);
+                            let new_type = context
+                                .function
+                                .locals
+                                .get(&unboxed)
+                                .map(|l| l.local_type.clone())
+                                .unwrap_or(left_mir_type);
+                            (unboxed, new_type)
+                        } else {
+                            (left_id, left_mir_type)
+                        }
+                    } else {
+                        (left_id, left_mir_type)
+                    };
+
+                    let (right_id, right_mir_type) = if right_is_any && !left_is_any {
+                        let target = Self::mir_type_to_concrete(&left_mir_type);
+                        if matches!(
+                            target,
+                            ConcreteType::Integer | ConcreteType::Number | ConcreteType::Boolean
+                        ) {
+                            let unboxed =
+                                self.emit_unbox_any(context, right_id, &target, &right.location);
+                            let new_type = context
+                                .function
+                                .locals
+                                .get(&unboxed)
+                                .map(|l| l.local_type.clone())
+                                .unwrap_or(right_mir_type);
+                            (unboxed, new_type)
+                        } else {
+                            (right_id, right_mir_type)
+                        }
+                    } else {
+                        (right_id, right_mir_type)
+                    };
+
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
 
                     let left_concrete = Self::mir_type_to_concrete(&left_mir_type);
                     let right_concrete = Self::mir_type_to_concrete(&right_mir_type);
