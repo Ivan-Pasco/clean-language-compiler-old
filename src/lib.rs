@@ -1550,16 +1550,23 @@ pub fn discover_callback_contracts<P: AsRef<std::path::Path>>(
     registry.callback_contracts()
 }
 
-/// Plugin Contracts v2 — return a snapshot of the build state populated by
-/// plugin `_build_state_set` calls during the most recent compile pass.
+/// Plugin Contracts v2 — **DO NOT USE**. Always returns an empty map.
 ///
-/// **Current limitation (Phase C):** the snapshot is taken from a freshly
-/// loaded registry, NOT from the registry the compile flow used. Real plugins
-/// that have not yet adopted the v2 lifecycle will return an empty map.
-/// A follow-up commit will thread the in-flight registry's state through to
-/// main.rs so the manifest reflects every write made during the build.
+/// This function was a Phase-C stub that loaded plugins into a brand-new
+/// throwaway registry and snapshotted its (necessarily empty) BuildState. It
+/// can never reflect writes made during the real build because the writes
+/// happen in a different registry that lives only inside
+/// [`compile_multi_file_with_memory_tier`] / [`compile_multi_file_release`].
 ///
-/// Returns an empty map on any error.
+/// Both of those functions now return the populated snapshot directly in
+/// their `Result` tuple. Use that instead. This wrapper is retained only so
+/// out-of-tree callers still link; new code MUST use the tuple return.
+///
+/// Reported as `PLUGIN_BUILD_STATE_NOT_PERSISTED` against compiler 0.30.276.
+#[deprecated(
+    note = "Use the build_state returned by compile_multi_file_with_memory_tier or \
+            compile_multi_file_release. This function always returns an empty map."
+)]
 pub fn discover_build_state_snapshot<P: AsRef<std::path::Path>>(
     entry_path: P,
 ) -> std::collections::BTreeMap<String, String> {
@@ -2082,7 +2089,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     explicit_tier: Option<MemoryTier>,
     target_default: MemoryTier,
     client_mode: bool,
-) -> Result<Vec<u8>, Vec<CompilerError>> {
+) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
     use crate::mir::lower_tast_to_mir_with_opt_level;
     use crate::resolver::NameResolver as Resolver;
@@ -2109,7 +2116,19 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
 
     let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
 
-    let registry = if !plugin_names.is_empty() {
+    // Plugin Contracts v2 — keep an Arc clone of the build-state keystore so
+    // that, after compilation completes, callers (e.g. main.rs) can read every
+    // write made by plugin `_build_state_set` calls during `expand_block`.
+    // Without this clone the populated state would be dropped with the
+    // registry, leaving the manifest writer and artifact orchestrator
+    // unable to see writes. See `contracts/lifecycle.md` §2.5.
+    let build_state_arc: Option<plugins::BuildState> = if plugin_names.is_empty() {
+        None
+    } else {
+        Some(plugins::new_build_state())
+    };
+
+    let registry = if let Some(ref bs) = build_state_arc {
         tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
 
         let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
@@ -2119,14 +2138,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
             }]
         })?;
 
-        // Plugin Contracts v2 — load plugins with a shared per-build state
-        // so the `_build_state_set` / `_build_state_get` bridges in their
-        // sandboxes communicate through a single keystore. The registry
-        // hands the same Arc back via `build_state()` so the orchestrator
-        // can snapshot it at end of build. See contracts/lifecycle.md §2.5.
-        let build_state = plugins::new_build_state();
         let reg = loader
-            .load_plugins_with_build_state(&plugin_names, build_state)
+            .load_plugins_with_build_state(&plugin_names, Arc::clone(bs))
             .map_err(|e| {
                 vec![CompilerError::PluginError {
                     message: format!("Failed to load plugins: {}", e),
@@ -2593,7 +2606,19 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         "Multi-file compilation with memory tier complete"
     );
 
-    Ok(codegen_result.wasm_bytes)
+    let build_state_snapshot = snapshot_build_state(build_state_arc.as_ref());
+    Ok((codegen_result.wasm_bytes, build_state_snapshot))
+}
+
+/// Plugin Contracts v2 §2.5 — extract a snapshot of every `_build_state_set`
+/// write made during a compile. Returns an empty map when the build had no
+/// plugins (and therefore no shared keystore) or when the mutex is poisoned.
+fn snapshot_build_state(
+    state: Option<&plugins::BuildState>,
+) -> std::collections::BTreeMap<String, String> {
+    state
+        .and_then(|s| s.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default()
 }
 
 /// Compile a Clean Language project for browser hydration (`frontend.wasm`).
@@ -2610,6 +2635,10 @@ pub fn compile_multi_file_client_mode<P: AsRef<std::path::Path>>(
     search_paths: Vec<std::path::PathBuf>,
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
+    // Client builds emit `frontend.wasm` only — they do not write a build
+    // manifest, so the populated build_state snapshot is intentionally
+    // discarded here. Callers that need it must use
+    // [`compile_multi_file_with_memory_tier`] directly.
     compile_multi_file_with_memory_tier(
         entry_path,
         search_paths,
@@ -2618,6 +2647,7 @@ pub fn compile_multi_file_client_mode<P: AsRef<std::path::Path>>(
         MemoryTier::Standard,
         true,
     )
+    .map(|(bytes, _state)| bytes)
 }
 
 /// Compile a Clean Language project in release mode.
@@ -2634,7 +2664,7 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     opt_level: u8,
     explicit_tier: Option<MemoryTier>,
     target_default: MemoryTier,
-) -> Result<Vec<u8>, Vec<CompilerError>> {
+) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
     use crate::mir::lower_tast_to_mir_release;
     use crate::resolver::NameResolver as Resolver;
@@ -2658,19 +2688,33 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
 
     let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
 
-    let registry = if !plugin_names.is_empty() {
+    // Plugin Contracts v2 — the release path previously used bare
+    // `load_plugins`, which gave each plugin its own private (empty)
+    // BuildState. That broke `has_build_state.*` artifact predicates and
+    // emitted manifests with an empty `build_state` field whenever a project
+    // was compiled with `--release`. Use the shared keystore here too so the
+    // snapshot is non-empty when plugins write to it.
+    let build_state_arc: Option<plugins::BuildState> = if plugin_names.is_empty() {
+        None
+    } else {
+        Some(plugins::new_build_state())
+    };
+
+    let registry = if let Some(ref bs) = build_state_arc {
         let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
             vec![CompilerError::PluginError {
                 message: format!("Failed to create plugin loader: {}", e),
                 location: None,
             }]
         })?;
-        let reg = loader.load_plugins(&plugin_names).map_err(|e| {
-            vec![CompilerError::PluginError {
-                message: format!("Failed to load plugins: {}", e),
-                location: None,
-            }]
-        })?;
+        let reg = loader
+            .load_plugins_with_build_state(&plugin_names, Arc::clone(bs))
+            .map_err(|e| {
+                vec![CompilerError::PluginError {
+                    message: format!("Failed to load plugins: {}", e),
+                    location: None,
+                }]
+            })?;
         Some(Arc::new(reg))
     } else {
         None
@@ -2916,7 +2960,8 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
         "Release-mode compilation complete"
     );
 
-    Ok(codegen_result.wasm_bytes)
+    let build_state_snapshot = snapshot_build_state(build_state_arc.as_ref());
+    Ok((codegen_result.wasm_bytes, build_state_snapshot))
 }
 
 /// HTML-first compilation configuration

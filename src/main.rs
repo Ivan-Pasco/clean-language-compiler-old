@@ -1081,8 +1081,15 @@ async fn handle_build(
     let explicit_tier = parse_memory_tier_flag(memory_tier_str.as_deref())?;
     let target_default = clean_language_compiler::MemoryTier::default_for_target("auto");
 
-    // Use the multi-file compiler with memory tier
-    let wasm_binary = clean_language_compiler::compile_multi_file_with_memory_tier(
+    // Use the multi-file compiler with memory tier. The second tuple element is
+    // the build_state snapshot populated by plugin `_build_state_set` calls
+    // during `expand_block`; it's threaded into the artifact orchestrator and
+    // the build manifest below so `has_build_state.*` predicates and the
+    // manifest's `build_state` field reflect compile-time writes. Without
+    // this thread-through, both consumers see an empty map and predicate-gated
+    // artifacts (e.g. frame.ui's `frontend.wasm`) silently fail to emit
+    // (PLUGIN_BUILD_STATE_NOT_PERSISTED).
+    let (wasm_binary, build_state) = clean_language_compiler::compile_multi_file_with_memory_tier(
         &input,
         lib_paths,
         opt_level,
@@ -1091,7 +1098,6 @@ async fn handle_build(
         false,
     )
     .map_err(|errors| {
-        // Report all errors
         let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
         output_config.report_errors(&errors, None);
         format!(
@@ -1132,6 +1138,7 @@ async fn handle_build(
         &output_file,
         opt_level,
         output_config.quiet,
+        &build_state,
     )?);
 
     write_build_manifest(
@@ -1140,6 +1147,7 @@ async fn handle_build(
         extra_artifacts,
         Some(Path::new(&input)),
         output_config.quiet,
+        &build_state,
     );
 
     Ok(())
@@ -1163,6 +1171,7 @@ fn orchestrate_artifacts(
     output_file: &str,
     opt_level: u8,
     quiet: bool,
+    build_state: &std::collections::BTreeMap<String, String>,
 ) -> Result<
     Vec<(
         String,
@@ -1196,13 +1205,17 @@ fn orchestrate_artifacts(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
 
-        let build_state = clean_language_compiler::discover_build_state_snapshot(input);
+        // build_state is the snapshot returned by the compile pass — it
+        // contains every `_build_state_set` write made by plugins during
+        // `expand_block`. Cloning is cheap (small BTreeMap) and lets us hand
+        // ownership to EmitContext while keeping the caller's reference live
+        // for the manifest writer downstream.
         let ctx = clean_language_compiler::plugin_artifacts::EmitContext {
             entry_path: Path::new(input),
             output_dir: &output_dir,
             opt_level,
             in_nested_build: false,
-            build_state,
+            build_state: build_state.clone(),
         };
 
         match clean_language_compiler::plugin_artifacts::orchestrate(&loaded_manifests, &ctx) {
@@ -1338,6 +1351,7 @@ fn write_build_manifest(
     )>,
     entry_path: Option<&Path>,
     quiet: bool,
+    build_state: &std::collections::BTreeMap<String, String>,
 ) {
     let mut manifest =
         clean_language_compiler::build_manifest::BuildManifest::new(env!("CARGO_PKG_VERSION"));
@@ -1376,13 +1390,14 @@ fn write_build_manifest(
         for cb in clean_language_compiler::discover_callback_contracts(entry) {
             manifest.add_callback(cb);
         }
-        // Plugin Contracts v2 §2.5 — snapshot the per-build state for
-        // hosts. Phase C limitation: populated from a fresh registry; will
-        // reflect compile-time writes once registry threading lands.
-        manifest.set_build_state(clean_language_compiler::discover_build_state_snapshot(
-            entry,
-        ));
     }
+    // Plugin Contracts v2 §2.5 — snapshot the per-build state for hosts.
+    // `build_state` was extracted from the in-flight registry by the compile
+    // pass and threaded into this function, so it reflects every
+    // `_build_state_set` write made during plugin `expand_block`. Always
+    // populate it (even when `entry_path` is None) so the manifest field is
+    // never silently missing.
+    manifest.set_build_state(build_state.clone());
     match manifest.write_alongside(main_wasm_path) {
         Ok(path) => {
             if !quiet {
@@ -1534,8 +1549,8 @@ async fn handle_compile(
             false,
         )
     };
-    let wasm_binary = match wasm_binary_result {
-        Ok(binary) => binary,
+    let (wasm_binary, build_state) = match wasm_binary_result {
+        Ok(output) => output,
         Err(errors) => {
             let source = fs::read_to_string(&input).unwrap_or_default();
             output_config.report_errors(&errors, Some(&source));
@@ -1566,7 +1581,13 @@ async fn handle_compile(
     // frontend.wasm even when frame.ui's manifest declared it with
     // required_when = "has_client_init"). See orchestrate_artifacts() and
     // compiler-build-state-bridge-runtime-trap.md lead 2.
-    let extra_artifacts = orchestrate_artifacts(&input, &output, opt_level, output_config.quiet)?;
+    let extra_artifacts = orchestrate_artifacts(
+        &input,
+        &output,
+        opt_level,
+        output_config.quiet,
+        &build_state,
+    )?;
 
     // Plugin Contracts v2 — emit build-manifest.json alongside the WASM so
     // hosts can locate artifacts by purpose rather than path coincidence.
@@ -1577,6 +1598,7 @@ async fn handle_compile(
         extra_artifacts,
         Some(Path::new(&input)),
         output_config.quiet,
+        &build_state,
     );
 
     println!("Successfully compiled to {output}");
