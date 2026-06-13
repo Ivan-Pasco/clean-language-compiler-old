@@ -1196,11 +1196,13 @@ fn orchestrate_artifacts(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
 
+        let build_state = clean_language_compiler::discover_build_state_snapshot(input);
         let ctx = clean_language_compiler::plugin_artifacts::EmitContext {
             entry_path: Path::new(input),
             output_dir: &output_dir,
             opt_level,
             in_nested_build: false,
+            build_state,
         };
 
         match clean_language_compiler::plugin_artifacts::orchestrate(&loaded_manifests, &ctx) {

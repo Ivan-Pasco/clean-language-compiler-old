@@ -79,6 +79,10 @@ impl std::fmt::Display for ArtifactError {
 ///   `per_request`, `artifact_emitters`).
 /// - `"has_artifact.<name>"` — an artifact with the given `name` has already
 ///   been emitted earlier in the orchestration pass.
+/// - `"has_build_state.<key>"` — the build state map from the compile pass
+///   contains `<key>`. Requires `build_state` to be populated in the
+///   `EmitContext`; evaluates to `false` (safe-degrade) when the map is empty.
+///   (ARTIFACT_PREDICATE_NO_BUILD_STATE)
 ///
 /// Unknown predicates default to `false` with a tracing warning so a typo
 /// silently skips the artifact rather than producing it incorrectly.
@@ -86,6 +90,7 @@ pub fn evaluate_required_when(
     predicate: &str,
     loaded_manifests: &HashMap<String, PluginManifest>,
     artifacts_so_far: &[String],
+    build_state: &std::collections::BTreeMap<String, String>,
 ) -> bool {
     if predicate == "always" {
         return true;
@@ -111,6 +116,9 @@ pub fn evaluate_required_when(
     }
     if let Some(artifact) = predicate.strip_prefix("has_artifact.") {
         return artifacts_so_far.iter().any(|a| a == artifact);
+    }
+    if let Some(key) = predicate.strip_prefix("has_build_state.") {
+        return build_state.contains_key(key);
     }
     tracing::warn!(
         target: "plugin_contracts_v2",
@@ -138,6 +146,12 @@ pub struct EmitContext<'a> {
     /// (e.g. a `client_only_build` triggered by a parent build). Used to
     /// refuse `from_module = "client_only_build"` recursion per §6.
     pub in_nested_build: bool,
+    /// Build state snapshot from the preceding compile pass. Populated by
+    /// plugins via `_build_state_set` during `expand_block`. Enables the
+    /// `has_build_state.<key>` predicate in `required_when`. Pass an empty
+    /// `BTreeMap::new()` when the state is unavailable — the predicate
+    /// safely degrades to false. (ARTIFACT_PREDICATE_NO_BUILD_STATE)
+    pub build_state: std::collections::BTreeMap<String, String>,
 }
 
 /// Produce bytes for a single artifact according to its declared source.
@@ -215,7 +229,12 @@ pub fn orchestrate(
 
     for (plugin_name, manifest) in loaded_manifests {
         for artifact in &manifest.artifacts {
-            if !evaluate_required_when(&artifact.required_when, loaded_manifests, &emitted_names) {
+            if !evaluate_required_when(
+                &artifact.required_when,
+                loaded_manifests,
+                &emitted_names,
+                &ctx.build_state,
+            ) {
                 continue;
             }
             match emit_artifact_bytes(artifact, ctx) {
@@ -368,7 +387,7 @@ mod tests {
         // 1. The predicate ALONE returns true when one plugin's lifecycle.client_init
         //    is set, even though the declaring plugin's lifecycle is empty.
         assert!(
-            evaluate_required_when("has_client_init", &manifests, &[]),
+            evaluate_required_when("has_client_init", &manifests, &[], &Default::default()),
             "has_client_init must see lifecycle.client_init from any loaded plugin"
         );
 
@@ -382,6 +401,7 @@ mod tests {
             output_dir: Path::new("/tmp/dist"),
             opt_level: 2,
             in_nested_build: false,
+            build_state: Default::default(),
         };
         let (emitted, warnings) =
             orchestrate(&manifests, &ctx).expect("orchestrate should not hard-error");
@@ -420,7 +440,7 @@ mod tests {
         manifests.insert("plugin.declarer".to_string(), declarer);
 
         assert!(
-            !evaluate_required_when("has_client_init", &manifests, &[]),
+            !evaluate_required_when("has_client_init", &manifests, &[], &Default::default()),
             "predicate must return false when no plugin declares client_init"
         );
 
@@ -429,6 +449,7 @@ mod tests {
             output_dir: Path::new("/tmp/dist"),
             opt_level: 2,
             in_nested_build: false,
+            build_state: Default::default(),
         };
         let (emitted, warnings) = orchestrate(&manifests, &ctx).expect("orchestrate ok");
         assert!(emitted.is_empty(), "no artifacts when predicate false");
@@ -441,13 +462,23 @@ mod tests {
     #[test]
     fn test_evaluate_always_is_true() {
         let m = HashMap::new();
-        assert!(evaluate_required_when("always", &m, &[]));
+        assert!(evaluate_required_when(
+            "always",
+            &m,
+            &[],
+            &Default::default()
+        ));
     }
 
     #[test]
     fn test_evaluate_never_is_false() {
         let m = HashMap::new();
-        assert!(!evaluate_required_when("never", &m, &[]));
+        assert!(!evaluate_required_when(
+            "never",
+            &m,
+            &[],
+            &Default::default()
+        ));
     }
 
     #[test]
@@ -463,7 +494,12 @@ mod tests {
                 },
             ),
         );
-        assert!(evaluate_required_when("has_client_init", &manifests, &[]));
+        assert!(evaluate_required_when(
+            "has_client_init",
+            &manifests,
+            &[],
+            &Default::default()
+        ));
     }
 
     #[test]
@@ -473,7 +509,12 @@ mod tests {
             "frame.server".to_string(),
             manifest_with_lifecycle("frame.server", PluginLifecycle::default()),
         );
-        assert!(!evaluate_required_when("has_client_init", &manifests, &[]));
+        assert!(!evaluate_required_when(
+            "has_client_init",
+            &manifests,
+            &[],
+            &Default::default()
+        ));
     }
 
     #[test]
@@ -492,18 +533,21 @@ mod tests {
         assert!(evaluate_required_when(
             "has_lifecycle.server_init",
             &manifests,
-            &[]
+            &[],
+            &Default::default()
         ));
         assert!(!evaluate_required_when(
             "has_lifecycle.client_init",
             &manifests,
-            &[]
+            &[],
+            &Default::default()
         ));
         // Unknown slot name → false.
         assert!(!evaluate_required_when(
             "has_lifecycle.bogus",
             &manifests,
-            &[]
+            &[],
+            &Default::default()
         ));
     }
 
@@ -514,20 +558,62 @@ mod tests {
         assert!(evaluate_required_when(
             "has_artifact.frontend.wasm",
             &manifests,
-            &prior
+            &prior,
+            &Default::default()
         ));
         assert!(!evaluate_required_when(
             "has_artifact.theme.css",
             &manifests,
-            &prior
+            &prior,
+            &Default::default()
         ));
+    }
+
+    #[test]
+    fn test_has_build_state_key_present() {
+        let manifests = HashMap::new();
+        let mut state = std::collections::BTreeMap::new();
+        state.insert("has_client_components".to_string(), "true".to_string());
+        assert!(
+            evaluate_required_when(
+                "has_build_state.has_client_components",
+                &manifests,
+                &[],
+                &state
+            ),
+            "predicate must return true when key is present in build_state"
+        );
+        assert!(
+            !evaluate_required_when("has_build_state.missing_key", &manifests, &[], &state),
+            "predicate must return false when key is absent from build_state"
+        );
+    }
+
+    #[test]
+    fn test_has_build_state_empty_map() {
+        let manifests = HashMap::new();
+        let state = std::collections::BTreeMap::new();
+        assert!(
+            !evaluate_required_when("has_build_state.any_key", &manifests, &[], &state),
+            "predicate must return false against an empty build_state"
+        );
     }
 
     #[test]
     fn test_unknown_predicate_defaults_to_false() {
         let manifests = HashMap::new();
-        assert!(!evaluate_required_when("typo", &manifests, &[]));
-        assert!(!evaluate_required_when("has_foo_bar", &manifests, &[]));
+        assert!(!evaluate_required_when(
+            "typo",
+            &manifests,
+            &[],
+            &Default::default()
+        ));
+        assert!(!evaluate_required_when(
+            "has_foo_bar",
+            &manifests,
+            &[],
+            &Default::default()
+        ));
     }
 
     #[test]
@@ -566,6 +652,7 @@ mod tests {
             output_dir: Path::new("/tmp/dist"),
             opt_level: 2,
             in_nested_build: true,
+            build_state: Default::default(),
         };
         let err = emit_artifact_bytes(&artifact, &ctx).expect_err("must reject");
         matches!(err, ArtifactError::BuildCycle { .. });
@@ -591,6 +678,7 @@ mod tests {
             output_dir: Path::new("/tmp/dist"),
             opt_level: 2,
             in_nested_build: false,
+            build_state: Default::default(),
         };
         let err = emit_artifact_bytes(&artifact, &ctx).expect_err("must error");
         let msg = format!("{}", err);
