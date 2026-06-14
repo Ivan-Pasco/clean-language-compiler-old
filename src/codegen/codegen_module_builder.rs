@@ -1780,13 +1780,6 @@ impl super::CodeGenerator {
         instructions: &[Instruction],
     ) -> Result<u32, CompilerError> {
         let function_index = self.function_count;
-        self.instruction_generator.register_function(
-            name,
-            params,
-            return_type,
-            instructions,
-            function_index,
-        )?;
         let type_index = self.add_function_type(params, return_type)?;
         self.function_section.function(type_index);
         let locals_needed: Vec<(u32, wasm_encoder::ValType)> = local_types
@@ -1825,13 +1818,6 @@ impl super::CodeGenerator {
         instructions: &[Instruction],
     ) -> Result<u32, CompilerError> {
         let function_index = self.function_count;
-        self.instruction_generator.register_function(
-            name,
-            params,
-            return_type,
-            instructions,
-            function_index,
-        )?;
         let type_index = self.add_function_type(params, return_type)?;
         self.function_section.function(type_index);
         let max_local_index = instructions
@@ -1939,14 +1925,6 @@ impl super::CodeGenerator {
         self.function_names.push(name.to_string());
         self.function_map.insert(name.to_string(), function_index);
         self.function_count += 1;
-        let single_return = return_types.first().copied();
-        self.instruction_generator.register_function(
-            name,
-            params,
-            single_return,
-            instructions,
-            function_index,
-        )?;
         Ok(function_index)
     }
 }

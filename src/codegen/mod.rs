@@ -15,7 +15,6 @@ pub mod bridge_generator;
 mod codegen_module_builder;
 mod codegen_registration;
 pub mod const_eval;
-mod instruction_generator;
 mod memory;
 pub mod mir_codegen;
 pub mod native_stdlib;
@@ -28,7 +27,6 @@ mod tests;
 
 // Import the StringPool struct
 use self::memory::MemoryUtils;
-use instruction_generator::InstructionGenerator;
 pub use mir_codegen::{MirCodeGenerator, MirCodegenResult};
 use type_manager::TypeManager;
 use wasm_module_builder::WasmModuleBuilder;
@@ -69,7 +67,6 @@ pub struct CodeGenerator {
 
     import_section: ImportSection,
     type_manager: TypeManager,
-    instruction_generator: InstructionGenerator,
     memory_utils: MemoryUtils,
     function_count: u32,
     function_map: HashMap<String, u32>,
@@ -140,7 +137,6 @@ impl CodeGenerator {
     /// Create a new code generator with configurable runtime imports
     fn new_with_config(include_runtime_imports: bool) -> Self {
         let type_manager = TypeManager::new();
-        let instruction_generator = InstructionGenerator::new(type_manager.clone());
 
         // Create global section with heap pointer global at index 0
         // HEAP_PTR_GLOBAL (index 0) is a mutable i32 initialized to HEAP_START
@@ -162,7 +158,6 @@ impl CodeGenerator {
 
             import_section: ImportSection::new(),
             type_manager,
-            instruction_generator,
             memory_utils: MemoryUtils::new(DATA_SECTION_START),
             function_count: 0,
             function_map: HashMap::new(),
@@ -384,13 +379,6 @@ impl CodeGenerator {
         self.function_names.push(field.to_string());
         self.wasm_function_return_types
             .insert(field.to_string(), return_type);
-
-        // Also store the function type information in the instruction generator
-        let wasm_params: Vec<wasm_encoder::ValType> = params.iter().map(|t| (*t).into()).collect();
-        let wasm_results: Vec<wasm_encoder::ValType> =
-            return_type.map_or_else(Vec::new, |t| vec![t.into()]);
-        self.instruction_generator
-            .add_function_type(func_index, wasm_params, wasm_results);
 
         self.function_count += 1;
 
