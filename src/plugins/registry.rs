@@ -727,6 +727,34 @@ impl PluginRegistry {
         &self.manifests
     }
 
+    /// Find a registered plugin that declares `[exports].process_html` in its
+    /// manifest. Returned plugin can be asked to convert a raw HTML page into
+    /// Clean Language source via `FrameworkPlugin::process_html`.
+    ///
+    /// Returns `None` if no loaded plugin processes HTML — the compiler then
+    /// reports a configuration error rather than silently feeding raw HTML
+    /// into the Clean parser (which produced `SYN001` historically).
+    pub fn find_html_processor(&self) -> Option<&Arc<dyn FrameworkPlugin>> {
+        // Plugins are registered once per block they handle, so the same
+        // Arc may appear under multiple keys in `handlers`. Pick the first
+        // plugin whose manifest declares the export, in deterministic order
+        // (Vec preserves registration order).
+        for plugin_name in &self.registered_plugins {
+            let manifest = self.manifests.get(plugin_name)?;
+            if manifest.exports.process_html.is_some() {
+                // Find any handler entry for this plugin and return that Arc.
+                if let Some(arc) = self
+                    .handlers
+                    .values()
+                    .find(|p| p.name() == plugin_name.as_str())
+                {
+                    return Some(arc);
+                }
+            }
+        }
+        None
+    }
+
     /// Resolve the highest memory tier declared by any active plugin.
     ///
     /// Returns `Ok(Some(tier))` if at least one plugin declares a `[memory] tier`,

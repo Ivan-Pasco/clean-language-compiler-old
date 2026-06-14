@@ -388,6 +388,32 @@ pub trait FrameworkPlugin: Send + Sync {
         Ok(())
     }
 
+    /// Optional: Process an HTML page entry into Clean Language source.
+    ///
+    /// Called by the compiler when a manifest's `entry:` resolves to a file
+    /// whose extension is listed in this plugin's `[html].extensions`. The
+    /// plugin returns Clean source for the page, which the compiler parses
+    /// as the entry module. Default returns `None` — the compiler treats
+    /// that as "this plugin does not process HTML entries" and tries the
+    /// next plugin.
+    ///
+    /// Arguments are passed verbatim to the plugin's `process_html` WASM
+    /// export (signature in `PluginExports::process_html`): the raw HTML
+    /// content, the file path relative to the project root, a JSON registry
+    /// of registered components, and a JSON descriptor of any companion
+    /// `.cln` file (or `""` if none). Plugins that do not implement HTML
+    /// processing return `None`.
+    fn process_html(
+        &self,
+        html: &str,
+        path: &str,
+        registry_json: &str,
+        companion_json: &str,
+    ) -> PluginResult<Option<String>> {
+        let _ = (html, path, registry_json, companion_json);
+        Ok(None)
+    }
+
     /// Optional: Plugin version for compatibility checks
     fn version(&self) -> &'static str {
         "1.0.0"

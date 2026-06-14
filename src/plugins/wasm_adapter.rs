@@ -3603,6 +3603,85 @@ impl WasmPluginAdapter {
         })
     }
 
+    /// Call the plugin's `process_html` export. The plugin transforms a raw
+    /// HTML page into Clean Language source. Returns the generated source as
+    /// a UTF-8 string.
+    ///
+    /// Signature (per `PluginExports::process_html`):
+    /// `(html_ptr, path_ptr, registry_ptr, companion_ptr) -> result_ptr`
+    /// where each `*_ptr` points to a length-prefixed Clean string.
+    fn call_process_html(
+        &self,
+        html: &str,
+        path: &str,
+        registry_json: &str,
+        companion_json: &str,
+    ) -> Result<String> {
+        let Some(export_name) = self.manifest.exports.process_html.as_ref() else {
+            return Err(anyhow!(
+                "Plugin `{}` did not declare an HTML processor (no `[exports].process_html`)",
+                self.name
+            ));
+        };
+
+        let mut store = self.create_store();
+        let linker = self.get_linker()?;
+
+        let instance = linker
+            .instantiate(&mut store, &self.module)
+            .map_err(|e| anyhow!("Failed to instantiate plugin module: {}", e))?;
+
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
+
+        // Same heap-pointer fix as call_expand_full — keeps the plugin's
+        // bump allocator from colliding with the WASM data section.
+        let globals: Vec<_> = instance
+            .exports(&mut store)
+            .filter_map(|e| e.into_global())
+            .collect();
+        for global in globals {
+            if let wasmtime::Val::I32(val) = global.get(&mut store) {
+                if val == 1024 {
+                    let _ = global.set(&mut store, wasmtime::Val::I32(8192));
+                    break;
+                }
+            }
+        }
+
+        let html_ptr = self.find_or_write_string(&mut store, &memory, html)?;
+        let path_ptr = self.find_or_write_string(&mut store, &memory, path)?;
+        let registry_ptr = self.find_or_write_string(&mut store, &memory, registry_json)?;
+        let companion_ptr = self.find_or_write_string(&mut store, &memory, companion_json)?;
+
+        let process: TypedFunc<(i32, i32, i32, i32), i32> = instance
+            .get_typed_func(&mut store, export_name.as_str())
+            .map_err(|e| anyhow!("Plugin does not export `{}` function: {}", export_name, e))?;
+
+        let result_ptr = process
+            .call(
+                &mut store,
+                (html_ptr, path_ptr, registry_ptr, companion_ptr),
+            )
+            .map_err(|e| {
+                anyhow!(
+                    "{}",
+                    describe_plugin_trap(&e, &format!("process_html for `{}`", path))
+                )
+            })?;
+
+        if let Some(error) = store.data().last_error.clone() {
+            return Err(anyhow!("Plugin error in process_html: {}", error));
+        }
+
+        let result_bytes = self.read_result(&store, &memory, result_ptr)?;
+        let generated = std::str::from_utf8(&result_bytes)
+            .map_err(|e| anyhow!("Invalid UTF-8 in process_html response: {}", e))?;
+
+        Ok(generated.to_string())
+    }
+
     /// Call a no-argument lifecycle hook that returns a length-prefixed JSON
     /// string pointer and deserialise it into `T`.
     ///
@@ -3782,6 +3861,29 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 block_name: block.name.clone(),
                 message: e.to_string(),
                 location: block.location.clone(),
+            })
+    }
+
+    fn process_html(
+        &self,
+        html: &str,
+        path: &str,
+        registry_json: &str,
+        companion_json: &str,
+    ) -> PluginResult<Option<String>> {
+        // Plugin opted out of HTML processing — return None so the caller
+        // tries the next plugin.
+        if self.manifest.exports.process_html.is_none() {
+            return Ok(None);
+        }
+
+        self.call_process_html(html, path, registry_json, companion_json)
+            .map(Some)
+            .map_err(|e| PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "__process_html".to_string(),
+                message: e.to_string(),
+                location: None,
             })
     }
 

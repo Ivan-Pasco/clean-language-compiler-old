@@ -168,6 +168,17 @@ pub struct PluginExports {
     /// pointer is a length-prefixed JSON string containing a serialized `AssembleOutput`.
     #[serde(default)]
     pub assemble: Option<String>,
+    /// WASM export name for the HTML-page processor.
+    /// Invoked by the compiler when a manifest's `entry:` resolves to a file
+    /// with one of the extensions declared in `[html].extensions` (e.g. `.html`).
+    /// The plugin transforms the raw HTML into Clean Language source, which the
+    /// compiler then parses as the entry module.
+    ///
+    /// Signature: `(html_ptr, html_len, path_ptr, path_len, registry_ptr,
+    /// registry_len, companion_ptr, companion_len) -> i32` where the returned
+    /// pointer is a length-prefixed Clean source string.
+    #[serde(default)]
+    pub process_html: Option<String>,
 }
 
 impl Default for PluginExports {
@@ -184,6 +195,7 @@ impl Default for PluginExports {
             register_data: None,
             register_build: None,
             assemble: None,
+            process_html: None,
         }
     }
 }

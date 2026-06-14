@@ -364,14 +364,32 @@ impl MultiFileCompiler {
 
                 // Resolve the actual entry file if declared
                 if let Some(ref ep) = info.entry_path {
-                    match fs::read_to_string(ep) {
-                        Ok(src) => {
-                            let ep_canonical = ep.canonicalize().unwrap_or_else(|_| ep.clone());
-                            (Some(info), src, ep_canonical)
+                    let is_html_entry = ep.extension().and_then(|e| e.to_str()) == Some("html");
+                    if is_html_entry {
+                        // HTML-first entry: ask a loaded plugin (e.g. frame.ui)
+                        // to convert the .html page into Clean Language source
+                        // via its `process_html` WASM export. The compiler
+                        // itself owns no HTML logic — feeding raw HTML to the
+                        // Clean parser would error with SYN001 on the leading
+                        // `<`. See `[exports].process_html` in plugin.toml and
+                        // `PluginRegistry::find_html_processor`.
+                        match self.process_html_entry_via_plugin(ep, manifest_dir) {
+                            Ok(src) => {
+                                let ep_canonical = ep.canonicalize().unwrap_or_else(|_| ep.clone());
+                                (Some(info), src, ep_canonical)
+                            }
+                            Err(errs) => return Err(errs),
                         }
-                        Err(_) => {
-                            // Entry file not found — fall back to compiling the manifest itself
-                            (Some(info), manifest_source, manifest_canonical)
+                    } else {
+                        match fs::read_to_string(ep) {
+                            Ok(src) => {
+                                let ep_canonical = ep.canonicalize().unwrap_or_else(|_| ep.clone());
+                                (Some(info), src, ep_canonical)
+                            }
+                            Err(_) => {
+                                // Entry file not found — fall back to compiling the manifest itself
+                                (Some(info), manifest_source, manifest_canonical)
+                            }
                         }
                     }
                 } else {
@@ -629,6 +647,119 @@ impl MultiFileCompiler {
     // =========================================================================
     // HTML-First Page Processing Methods
     // =========================================================================
+
+    /// Convert an HTML entry into Clean Language source by delegating to a
+    /// plugin's `process_html` WASM export.
+    ///
+    /// Architectural note: the compiler owns no HTML logic. It reads the HTML
+    /// file off disk, hands the bytes to the plugin (typically frame.ui via
+    /// `[exports].process_html`), and uses whatever Clean source the plugin
+    /// returns as the entry module. Without a loaded HTML processor the
+    /// manifest configuration is rejected — no fallback parsing of the raw
+    /// HTML, no inline conversion in Rust.
+    fn process_html_entry_via_plugin(
+        &self,
+        entry_path: &Path,
+        manifest_dir: &Path,
+    ) -> Result<String, Vec<CompilerError>> {
+        let registry = self.config.plugin_registry.as_ref().ok_or_else(|| {
+            vec![CompilerError::PluginError {
+                message: format!(
+                    "HTML entry `{}` requires a plugin with `[exports].process_html` \
+                     (e.g. frame.ui), but no plugins are loaded for this build.",
+                    entry_path.display()
+                ),
+                location: None,
+            }]
+        })?;
+
+        let processor = registry.find_html_processor().ok_or_else(|| {
+            vec![CompilerError::PluginError {
+                message: format!(
+                    "HTML entry `{}` requires a plugin that declares \
+                     `[exports].process_html` in its plugin.toml. Add frame.ui \
+                     (or another HTML processor) to the manifest `plugins:` list.",
+                    entry_path.display()
+                ),
+                location: None,
+            }]
+        })?;
+
+        let html = fs::read_to_string(entry_path).map_err(|e| {
+            vec![CompilerError::io_error(
+                format!(
+                    "Failed to read HTML entry `{}`: {}",
+                    entry_path.display(),
+                    e
+                ),
+                None,
+                None,
+            )]
+        })?;
+
+        // Path passed to the plugin is relative to the manifest directory so
+        // that plugin-generated identifiers and route paths are stable across
+        // build hosts.
+        let relative_path = entry_path
+            .strip_prefix(manifest_dir)
+            .unwrap_or(entry_path)
+            .to_string_lossy()
+            .to_string();
+
+        // Companion `.cln` next to the page — same convention as
+        // `find_companion_file`. The plugin decides whether to honour it.
+        let companion_json = {
+            let companion_path = entry_path.with_extension("cln");
+            if companion_path.exists() {
+                let module_name = crate::plugins::builtin_assemblers::derive_companion_module_name(
+                    &companion_path,
+                    manifest_dir,
+                );
+                let companion_source = fs::read_to_string(&companion_path).unwrap_or_default();
+                let has_guard =
+                    companion_source.contains("any guard(") || companion_source.contains("guard()");
+                let has_load =
+                    companion_source.contains("any load(") || companion_source.contains("load()");
+                format!(
+                    "{{\"has_guard\":{},\"has_load\":{},\"module_name\":\"{}\"}}",
+                    has_guard, has_load, module_name
+                )
+            } else {
+                String::new()
+            }
+        };
+
+        // The compiler does not synthesise a component registry — that is the
+        // plugin's domain. Pass an empty JSON object; plugins that need a
+        // registry collect it themselves through other hooks.
+        let registry_json = "{}".to_string();
+
+        let generated = processor
+            .process_html(&html, &relative_path, &registry_json, &companion_json)
+            .map_err(|e| {
+                vec![CompilerError::PluginError {
+                    message: format!(
+                        "Plugin `{}` failed to process HTML entry `{}`: {}",
+                        processor.name(),
+                        entry_path.display(),
+                        e
+                    ),
+                    location: None,
+                }]
+            })?
+            .ok_or_else(|| {
+                vec![CompilerError::PluginError {
+                    message: format!(
+                        "Plugin `{}` returned no Clean source for HTML entry `{}`",
+                        processor.name(),
+                        entry_path.display()
+                    ),
+                    location: None,
+                }]
+            })?;
+
+        Ok(generated)
+    }
 
     /// Discover HTML pages in the pages directory
     pub fn discover_html_pages<P: AsRef<Path>>(
