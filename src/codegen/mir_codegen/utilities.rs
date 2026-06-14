@@ -18,6 +18,25 @@
 use super::*;
 use wasm_encoder::{Function as WasmFunction, Instruction, ValType};
 
+/// Return true if `host_class` is set and `bridge_hosts` excludes both `"all"`
+/// and the active host class. Used by `register_plugin_bridge_imports` to
+/// substitute a local no-op stub for bridges that won't be provided by the
+/// active host (CLIENT_BUILD_ENTRY_LEAK).
+///
+/// Bridges with no `hosts` field are treated as cross-host (Phase C compat):
+/// see `foundation/spec/plugins/contracts/bridge-host-classes.md` §6.2.
+fn bridge_is_host_mismatched(host_class: Option<&str>, bridge_hosts: Option<&[String]>) -> bool {
+    let host_class = match host_class {
+        Some(h) => h,
+        None => return false,
+    };
+    let hosts = match bridge_hosts {
+        Some(h) => h,
+        None => return false,
+    };
+    !hosts.iter().any(|h| h == "all" || h == host_class)
+}
+
 impl MirCodeGenerator<'_> {
     // -------------------------------------------------------------------------
     // Type helpers
@@ -1901,8 +1920,55 @@ impl MirCodeGenerator<'_> {
                 .collect();
             self.function_return_types
                 .insert(func.name.clone(), mir_return.clone());
-            for alias in aliases {
+            for alias in aliases.iter().cloned() {
                 self.function_return_types.insert(alias, mir_return.clone());
+            }
+
+            // CLIENT_BUILD_ENTRY_LEAK — Plugin Contracts v2 §6 (Phase C+).
+            //
+            // If this bridge's `hosts` declaration excludes the active build's
+            // host class (e.g. a Frame page companion's server-only `guard()`
+            // calls `_auth_require_auth` in a `target: web` client build),
+            // register a local no-op stub instead of an import. The
+            // `BRIDGE-HOST-MISMATCH` warning has already informed the user;
+            // the stub keeps the call site resolvable so the build succeeds
+            // and DCE eliminates the surrounding dead code where possible.
+            if bridge_is_host_mismatched(self.host_class.as_deref(), func.hosts.as_deref()) {
+                let wasm_params: Vec<WasmType> = param_types
+                    .iter()
+                    .map(Self::builtin_type_to_wasm_type)
+                    .collect();
+                let wasm_return = match &return_type {
+                    BuiltinType::Void => None,
+                    _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                };
+                let body: Vec<wasm_encoder::Instruction> = match wasm_return {
+                    None | Some(WasmType::Unit) => Vec::new(),
+                    Some(WasmType::I32) => vec![wasm_encoder::Instruction::I32Const(0)],
+                    Some(WasmType::I64) => vec![wasm_encoder::Instruction::I64Const(0)],
+                    Some(WasmType::F32) => vec![wasm_encoder::Instruction::F32Const(0.0)],
+                    Some(WasmType::F64) => vec![wasm_encoder::Instruction::F64Const(0.0)],
+                    Some(WasmType::V128) => vec![wasm_encoder::Instruction::V128Const(0)],
+                };
+                let stub_index = self.wasm_generator.register_function(
+                    &func.name,
+                    &wasm_params,
+                    wasm_return,
+                    &body,
+                )?;
+                for alias in &aliases {
+                    self.wasm_generator
+                        .function_map
+                        .insert(alias.clone(), stub_index);
+                }
+                tracing::info!(
+                    bridge = %func.name,
+                    host_class = ?self.host_class,
+                    bridge_hosts = ?func.hosts,
+                    wasm_index = stub_index,
+                    "Registered no-op stub for host-mismatched bridge (CLIENT_BUILD_ENTRY_LEAK)"
+                );
+                continue;
             }
 
             let needs_wrapper =
@@ -2628,5 +2694,97 @@ mod host_class_enforcement_tests {
         let reachable: HashSet<String> = ["db.query".to_string()].into_iter().collect();
         let diags = gen.check_bridge_host_classes(&reachable);
         assert_eq!(diags.len(), 1, "alias must propagate to enforcement");
+    }
+
+    /// CLIENT_BUILD_ENTRY_LEAK regression test.
+    ///
+    /// When a reachable bridge function declares `hosts = ["server"]` and the
+    /// active build's host class is `"browser"`, `register_plugin_bridge_imports`
+    /// must register a local no-op stub under the bridge's name (and all its
+    /// language aliases) instead of attempting an import that the browser host
+    /// cannot provide. Without the stub, codegen subsequently fails with
+    /// "Function `_auth_require_auth` not found in function map".
+    #[test]
+    fn test_host_mismatched_bridge_is_stubbed_in_function_map() {
+        let mut gen = MirCodeGenerator::new_minimal();
+        // Bridge with no string params — avoids the wrapper path so the test
+        // exercises the direct-import branch where the stub substitution lives.
+        let bf = BridgeFunction {
+            name: "_auth_require_auth".to_string(),
+            params: vec![],
+            returns: "integer".to_string(),
+            module: "env".to_string(),
+            description: None,
+            expand_strings: false,
+            hosts: Some(vec!["server".to_string()]),
+            ..Default::default()
+        };
+        gen.set_bridge_functions(vec![bf]);
+        gen.set_language_to_bridge_map(
+            [(
+                "auth.requireAuth".to_string(),
+                "_auth_require_auth".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        gen.set_host_class(Some("browser".to_string()));
+        gen.used_bridge_function_names
+            .insert("_auth_require_auth".to_string());
+
+        gen.register_plugin_bridge_imports()
+            .expect("stub registration must not fail");
+
+        let function_map = &gen.wasm_generator.function_map;
+        assert!(
+            function_map.contains_key("_auth_require_auth"),
+            "bridge name must resolve to the stub via function_map"
+        );
+        assert!(
+            function_map.contains_key("auth.requireAuth"),
+            "language alias must also resolve to the stub"
+        );
+        assert_eq!(
+            function_map.get("_auth_require_auth"),
+            function_map.get("auth.requireAuth"),
+            "alias and canonical name must point to the same stub index"
+        );
+    }
+
+    #[test]
+    fn test_host_matched_bridge_uses_import_path() {
+        // Counter-check: when hosts include the active class, the import path
+        // runs as normal — no stub substitution.
+        let mut gen = MirCodeGenerator::new_minimal();
+        let bf = BridgeFunction {
+            name: "_browser_only_fn".to_string(),
+            params: vec![],
+            returns: "integer".to_string(),
+            module: "env".to_string(),
+            description: None,
+            expand_strings: false,
+            hosts: Some(vec!["browser".to_string()]),
+            ..Default::default()
+        };
+        gen.set_bridge_functions(vec![bf]);
+        gen.set_host_class(Some("browser".to_string()));
+        gen.used_bridge_function_names
+            .insert("_browser_only_fn".to_string());
+
+        gen.register_plugin_bridge_imports()
+            .expect("import registration must not fail for host-matched bridge");
+
+        // Import-path success: the bridge name lands in function_map via the
+        // import-index path (also valid for stub). The key signal that this
+        // is NOT the stub path: function_return_types is populated by the
+        // shared preamble for both paths, so we don't differentiate on that;
+        // instead, the unit test relies on the negative-correlation test
+        // above (host_mismatched) catching the differing branch.
+        assert!(
+            gen.wasm_generator
+                .function_map
+                .contains_key("_browser_only_fn"),
+            "host-matched bridge must still be registered"
+        );
     }
 }
