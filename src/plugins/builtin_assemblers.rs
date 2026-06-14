@@ -1,27 +1,17 @@
-//! Built-in plugin assemblers.
+//! Page-companion path helpers shared by the multi-file compilation pipeline.
 //!
-//! These are Rust implementations of the `assemble` hook that run when no
-//! WASM-side hook is provided by the relevant plugin. Each assembler encapsulates
-//! framework-specific source transformation logic that MUST eventually migrate
-//! to the corresponding WASM plugin. The shim exists purely for backward
-//! compatibility — remove it once the framework plugin ships its WASM `assemble`
-//! export.
+//! These functions translate file paths under a project's `pages/` hierarchy
+//! into the module names, route strings, and source transformations the
+//! compiler needs to wire page companions into the build graph. They are pure
+//! path / string utilities — they do not parse Clean source.
 //!
-//! # Current shims
-//!
-//! - `PageCompanionAssembler` — frame.ui/frame.server page companion detection,
-//!   function prefixing, and synthetic route module generation. Replaces the
-//!   six hardcoded functions that were previously in `multi_file_compiler.rs`.
-//!   Remove when frame.ui implements `[exports] assemble`.
+//! The previous in-tree `PageCompanionAssembler` Rust shim that implemented
+//! the `assemble` lifecycle hook was deleted as part of
+//! `BUILTIN-NAMESPACE-OVERREACH` step 2: frame.ui declares
+//! `[exports].assemble` in its plugin.toml, and the compiler delegates to it
+//! via `PluginRegistry::run_assemble_hooks` (see `multi_file_compiler.rs`).
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use crate::ast::{FrameworkBlock, Statement};
-use crate::plugins::plugin_abi::{
-    AssembleInput, AssembleOutput, InjectedSource, TransformedSource,
-};
-use crate::plugins::{FrameworkPlugin, PluginError, PluginResult};
+use std::path::Path;
 
 // ============================================================================
 // Page Companion Assembler (frame.ui / frame.server shim)
@@ -205,137 +195,4 @@ pub fn generate_page_route_source(records: &[PageCompanionRecord]) -> String {
     }
 
     src
-}
-
-// ============================================================================
-// FrameworkPlugin impl for PageCompanionAssembler
-// ============================================================================
-
-/// Built-in assembler that handles page companion detection, function prefixing,
-/// and synthetic route module generation.
-///
-/// This is a Rust shim for the logic that will eventually live in the frame.ui
-/// WASM plugin's `assemble` export. It implements the `FrameworkPlugin` trait
-/// so it can be registered in the `PluginRegistry` alongside WASM plugins.
-///
-/// It only overrides `assemble()` — all other trait methods return no-op defaults.
-pub struct PageCompanionAssembler;
-
-impl FrameworkPlugin for PageCompanionAssembler {
-    fn name(&self) -> &'static str {
-        "builtin:page-companion-assembler"
-    }
-
-    fn handles(&self) -> &'static [&'static str] {
-        &[]
-    }
-
-    fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
-        Err(PluginError::UnknownBlockType {
-            block_name: "builtin:page-companion-assembler".to_string(),
-            location: None,
-        })
-    }
-
-    fn assemble(&self, input: &AssembleInput) -> PluginResult<AssembleOutput> {
-        let project_root = PathBuf::from(&input.project_root);
-        let manifest_dir = PathBuf::from(&input.manifest_dir);
-
-        let mut records: Vec<PageCompanionRecord> = Vec::new();
-        let mut transformed: Vec<TransformedSource> = Vec::new();
-
-        for file in &input.source_files {
-            let file_path = PathBuf::from(&file.path);
-
-            // Determine which shared directory this file belongs to by checking if
-            // any ancestor directory is a known shared folder. Since we don't carry
-            // shared_dirs in AssembleInput, we infer it from the path: find the
-            // first ancestor that contains a "pages" component.
-            let shared_dir = find_shared_dir_for_page(&file_path);
-            let shared_dir = match shared_dir {
-                Some(d) => d,
-                None => continue, // not under any pages/ hierarchy
-            };
-
-            let is_page_companion = {
-                let relative = file_path.strip_prefix(&shared_dir).unwrap_or(&file_path);
-                relative
-                    .components()
-                    .any(|c| matches!(c, std::path::Component::Normal(n) if n == "pages"))
-            };
-
-            if !is_page_companion {
-                continue;
-            }
-
-            let raw_source = &file.content;
-            let is_active = raw_source.contains("any load(") || raw_source.contains("any guard(");
-            if !is_active {
-                continue;
-            }
-
-            let module_name = derive_companion_module_name(&file_path, &shared_dir);
-            let prefixed = prefix_companion_functions(raw_source, &module_name);
-            let route = derive_page_route_from_cln(&file_path, &shared_dir);
-            let page_name = derive_page_name_from_cln(&file_path, &project_root);
-
-            records.push(PageCompanionRecord {
-                module_name,
-                route_path: route,
-                page_name,
-                has_guard: raw_source.contains("any guard("),
-                has_load: raw_source.contains("any load("),
-            });
-
-            transformed.push(TransformedSource {
-                path: file.path.clone(),
-                content: prefixed,
-            });
-        }
-
-        if transformed.is_empty() {
-            return Ok(AssembleOutput::default());
-        }
-
-        // Synthetic route registration module is only generated when frame.server
-        // is declared — without a server, there is nothing to register routes with.
-        let injected = if input.has_frame_server && !records.is_empty() {
-            let synthetic_source = generate_page_route_source(&records);
-            let synthetic_path = format!("{}/__page_routes_generated.cln", manifest_dir.display());
-            vec![InjectedSource {
-                virtual_path: synthetic_path,
-                content: synthetic_source,
-            }]
-        } else {
-            vec![]
-        };
-
-        Ok(AssembleOutput {
-            injected_sources: injected,
-            transformed_sources: transformed,
-        })
-    }
-}
-
-/// Infer the shared directory for a page companion by walking up the path
-/// until we find an ancestor that is the parent of a `pages/` component.
-///
-/// Example: `/project/app/web/pages/login.cln` → `/project/app/web`
-fn find_shared_dir_for_page(file_path: &Path) -> Option<PathBuf> {
-    let components: Vec<_> = file_path.components().collect();
-    for (i, component) in components.iter().enumerate() {
-        if let std::path::Component::Normal(name) = component {
-            if *name == "pages" && i > 0 {
-                // The shared dir is everything before "pages/"
-                let shared: PathBuf = components[..i].iter().collect();
-                return Some(shared);
-            }
-        }
-    }
-    None
-}
-
-/// Construct a `PageCompanionAssembler` wrapped in `Arc<dyn FrameworkPlugin>`.
-pub fn page_companion_assembler() -> Arc<dyn FrameworkPlugin> {
-    Arc::new(PageCompanionAssembler)
 }

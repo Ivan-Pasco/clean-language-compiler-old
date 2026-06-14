@@ -85,7 +85,6 @@ mod wasm_adapter;
 mod wasm_loader;
 
 pub use app_config::AppConfig;
-pub use builtin_assemblers::page_companion_assembler;
 pub use discovery::{DiscoveryError, PluginDiscovery};
 pub use expander::PluginExpander;
 pub use language_registry::{

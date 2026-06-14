@@ -809,19 +809,6 @@ impl PluginRegistry {
         !self.registrations.build.is_empty()
     }
 
-    /// Return `true` if at least one loaded WASM plugin declares an `assemble`
-    /// export in its manifest.
-    ///
-    /// When this returns `true` the builtin `PageCompanionAssembler` Rust shim
-    /// should be skipped so that only the WASM plugin's assemble hook runs.
-    /// Running both would produce conflicting transformed sources for the same
-    /// page companion files (FRAME-UI-SHARED-LOGIC-BREAKS-SSR).
-    pub fn has_wasm_assemble_hook(&self) -> bool {
-        self.manifests
-            .values()
-            .any(|m| m.exports.assemble.is_some())
-    }
-
     // ========================================================================
     // Permission Enforcement Methods
     // ========================================================================
@@ -1814,76 +1801,6 @@ mod tests {
         // _json_encode also must not derive to json.dataToText or json.prettyDataToText
         assert!(!map.contains_key("json.dataToText"));
         assert!(!map.contains_key("json.prettyDataToText"));
-    }
-
-    /// Guard against FRAME-UI-SHARED-LOGIC-BREAKS-SSR regression.
-    ///
-    /// When frame.ui (or any plugin) declares `assemble` in its manifest exports,
-    /// `has_wasm_assemble_hook()` must return `true` so the builtin
-    /// `PageCompanionAssembler` shim is skipped.  Running both assemblers on the
-    /// same page companion file shifts function indices in the final WASM binary,
-    /// causing wrong exports and broken SSR template variable substitution.
-    #[test]
-    fn test_has_wasm_assemble_hook_detects_plugin_assemble_export() {
-        use crate::plugins::plugin_abi::{
-            PluginBridge, PluginCompatibility, PluginExports, PluginHandles, PluginInfo,
-            PluginLanguage, PluginManifest,
-        };
-
-        // Registry without any plugin with assemble export → returns false.
-        let registry_no_assemble = PluginRegistryBuilder::new()
-            .build()
-            .expect("Failed to build registry");
-        assert!(
-            !registry_no_assemble.has_wasm_assemble_hook(),
-            "empty registry must not claim a wasm assemble hook"
-        );
-
-        // Build a manifest that declares assemble (like frame.ui >= 2.6.11).
-        let manifest_with_assemble = PluginManifest {
-            plugin: PluginInfo {
-                name: "frame.ui".to_string(),
-                version: "2.6.11".to_string(),
-                description: "UI plugin".to_string(),
-                author: "Test".to_string(),
-            },
-            compatibility: PluginCompatibility::default(),
-            handles: PluginHandles {
-                blocks: vec!["component".to_string()],
-                expressions: Vec::new(),
-            },
-            exports: PluginExports {
-                expand: "expand_block".to_string(),
-                assemble: Some("assemble".to_string()),
-                ..PluginExports::default()
-            },
-            bridge: PluginBridge::default(),
-            language: PluginLanguage {
-                blocks: vec!["component".to_string()],
-                keywords: vec![],
-                types: vec![],
-                functions: vec![],
-                completions: vec![],
-                owns_paths: vec![],
-            },
-            ai: Default::default(),
-            paths: Default::default(),
-            enforcement: Default::default(),
-            memory: Default::default(),
-            build: Default::default(),
-            lifecycle: Default::default(),
-            artifacts: Vec::new(),
-        };
-
-        let registry_with_assemble = PluginRegistryBuilder::new()
-            .add_manifest("frame.ui".to_string(), manifest_with_assemble)
-            .build()
-            .expect("Failed to build registry");
-
-        assert!(
-            registry_with_assemble.has_wasm_assemble_hook(),
-            "registry with frame.ui assemble export must return true"
-        );
     }
 
     /// Helpers shared across the v2 callback validation tests below.

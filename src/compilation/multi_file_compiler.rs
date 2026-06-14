@@ -10,7 +10,7 @@ use crate::hir::hir_builder::HirBuilder;
 use crate::hir::HirProgram;
 use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
 use crate::parser::SpecificationParser;
-use crate::plugins::{FrameworkPlugin, PluginExpander, PluginRegistry};
+use crate::plugins::{PluginExpander, PluginRegistry};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -436,9 +436,9 @@ impl MultiFileCompiler {
         // that were not already discovered via imports.  These files compile as part of
         // every target even when no other module explicitly imports them.
         //
-        // Collect all shared files first, then run the assemble hook to let the
-        // PageCompanionAssembler handle page companion detection, function prefixing,
-        // and synthetic route module generation (replaces 6 hardcoded functions).
+        // Collect all shared files first, then run plugin-declared assemble hooks
+        // for page-companion detection, function prefixing, and synthetic route
+        // module generation. The compiler owns no assemble logic itself.
         if let (Some(ref info), Some(ref project_root), Some(ref manifest_dir)) =
             (&manifest_info, &manifest_root, &manifest_root)
         {
@@ -459,16 +459,10 @@ impl MultiFileCompiler {
 
             // Pass 2: run assemble hooks.
             //
-            // Priority: if a WASM plugin (e.g. frame.ui >= 2.6.11) declares an
-            // `assemble` export in its manifest, that plugin owns the page companion
-            // assembly pipeline and the builtin Rust shim (PageCompanionAssembler)
-            // MUST NOT run.  Running both produces two conflicting TransformedSource
-            // entries for the same page companion paths — the WASM plugin's version
-            // overwrites the shim's version but with function bodies shifted by one
-            // slot, causing wrong exports and broken SSR template substitution.
-            //
-            // The shim is retained only as a fallback for older frame.ui versions
-            // that do not yet export `assemble`.
+            // Assembly is owned by whichever loaded plugin declares
+            // `[exports].assemble` in its plugin.toml (e.g. frame.ui >= 2.6.11).
+            // The compiler does not contain a Rust fallback — manifests that
+            // load no assemble-capable plugin simply get an empty output here.
             let assemble_input = crate::plugins::AssembleInput {
                 source_files: shared_files
                     .iter()
@@ -482,25 +476,7 @@ impl MultiFileCompiler {
                 has_frame_server: info.has_frame_server,
             };
 
-            // Determine whether any loaded WASM plugin handles assembly.
-            let wasm_has_assemble = self
-                .config
-                .plugin_registry
-                .as_ref()
-                .map(|r| r.has_wasm_assemble_hook())
-                .unwrap_or(false);
-
-            let mut assemble_output = if wasm_has_assemble {
-                // WASM plugin owns assembly — skip the builtin shim entirely.
-                crate::plugins::plugin_abi::AssembleOutput::default()
-            } else {
-                // No WASM assemble hook present — fall back to the builtin shim.
-                crate::plugins::builtin_assemblers::PageCompanionAssembler
-                    .assemble(&assemble_input)
-                    .unwrap_or_default()
-            };
-
-            // Run WASM plugin assemble hooks (only if any are registered).
+            let mut assemble_output = crate::plugins::plugin_abi::AssembleOutput::default();
             if let Some(ref registry) = self.config.plugin_registry {
                 let hook_output = registry.run_assemble_hooks(&assemble_input);
                 assemble_output
@@ -2458,61 +2434,10 @@ posts = Post.findAll()
         );
     }
 
-    #[test]
-    fn test_page_companion_load_functions_are_prefixed_to_avoid_collision() {
-        // Regression: multiple page companion files each defining load()/guard()
-        // must not collide in the merged symbol table.  The shared-folder scanner
-        // should prefix them with a unique module name derived from their path.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        // Manifest
-        let manifest_source =
-            "package: TestApp\n\tversion: \"1.0.0\"\n\ttarget: web\n\t\tplugins: []\n\t\tentry: app/web/pages/page_a.cln\n";
-        std::fs::write(root.join("main.cln"), manifest_source).unwrap();
-
-        // Page files
-        let pages_dir = root.join("app").join("web").join("pages");
-        std::fs::create_dir_all(&pages_dir).unwrap();
-
-        std::fs::write(
-            pages_dir.join("page_a.cln"),
-            "functions:\n\tany load(string req)\n\t\treturn \"Page A\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            pages_dir.join("page_b.cln"),
-            "functions:\n\tany load(string req)\n\t\treturn \"Page B\"\n",
-        )
-        .unwrap();
-
-        let compiler = MultiFileCompiler::new();
-        let unit = compiler.build_from_file(root.join("main.cln")).expect(
-            "build_from_file should succeed — page companion load() functions must not collide",
-        );
-
-        // page_b.cln is auto-discovered via the shared web root folder.
-        // Its load() must have been prefixed to pages_page_b_load().
-        let page_b_module = unit
-            .modules
-            .values()
-            .find(|m| m.file_path.file_name().and_then(|n| n.to_str()) == Some("page_b.cln"));
-
-        assert!(
-            page_b_module.is_some(),
-            "page_b.cln should be discovered as a shared module"
-        );
-        let source = &page_b_module.unwrap().source;
-        assert!(
-            source.contains("pages_page_b_load("),
-            "load() in page_b.cln should be prefixed to pages_page_b_load(); got:\n{}",
-            source
-        );
-        assert!(
-            !source.contains("any load("),
-            "original unprefixed load() should not remain in page_b.cln source"
-        );
-    }
+    // Deleted: test_page_companion_load_functions_are_prefixed_to_avoid_collision
+    // — depended on the in-tree PageCompanionAssembler Rust shim. Page companion
+    // prefixing now lives in frame.ui's WASM `assemble` export; the equivalent
+    // regression coverage belongs in clean-framework/plugins/frame.ui/tests.
 
     // =========================================================================
     // Page companion route registration tests (E-PGREG fix)
@@ -2665,81 +2590,11 @@ posts = Post.findAll()
         );
     }
 
-    #[test]
-    fn test_build_from_file_generates_route_module_for_page_companions() {
-        // End-to-end: when frame.server is declared in the manifest and page companion
-        // files exist, build_from_file must add a synthetic route-registration module.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        // Write a manifest declaring frame.server and a web target
-        let manifest_source = concat!(
-            "package: TestApp\n",
-            "\tversion: \"1.0.0\"\n",
-            "\ttarget: web\n",
-            "\t\tplugins: [frame.ui, frame.server]\n",
-            "\t\tentry: app/web/pages/home.cln\n",
-        );
-        std::fs::write(root.join("main.cln"), manifest_source).unwrap();
-
-        // Create directory structure
-        let pages_dir = root.join("app").join("web").join("pages");
-        std::fs::create_dir_all(&pages_dir).unwrap();
-        std::fs::create_dir_all(root.join("app").join("server")).unwrap();
-
-        // Entry page (home.cln)
-        std::fs::write(
-            pages_dir.join("home.cln"),
-            "functions:\n\tany load(string req)\n\t\treturn \"Home\"\n",
-        )
-        .unwrap();
-
-        // Second page companion (login.cln)
-        std::fs::write(
-            pages_dir.join("login.cln"),
-            "functions:\n\tany load(string req)\n\t\treturn \"Login\"\n",
-        )
-        .unwrap();
-
-        let compiler = MultiFileCompiler::new();
-        let unit = compiler
-            .build_from_file(root.join("main.cln"))
-            .expect("build_from_file should succeed with page companions");
-
-        // There must be a synthetic __page_routes_generated module
-        let has_synthetic = unit.modules.values().any(|m| {
-            m.file_path
-                .to_string_lossy()
-                .contains("__page_routes_generated")
-        });
-
-        assert!(
-            has_synthetic,
-            "build_from_file should generate __page_routes_generated module when frame.server \
-             is declared and page companions exist; modules present: {:?}",
-            unit.modules
-                .values()
-                .map(|m| m.file_path.display().to_string())
-                .collect::<Vec<_>>()
-        );
-
-        // The synthetic module's source must register routes
-        let synthetic = unit
-            .modules
-            .values()
-            .find(|m| {
-                m.file_path
-                    .to_string_lossy()
-                    .contains("__page_routes_generated")
-            })
-            .unwrap();
-
-        assert!(
-            synthetic.source.contains("_http_route"),
-            "synthetic module should contain _http_route calls; got:\n{}",
-            synthetic.source
-        );
-    }
+    // Deleted: test_build_from_file_generates_route_module_for_page_companions
+    // — asserted the shim emitted `_http_route` calls in a synthetic module.
+    // Route registration now flows through frame.server's WASM assemble path.
+    // Equivalent end-to-end coverage belongs in the framework's integration
+    // tests, not in compiler unit tests.
 
     #[test]
     fn test_build_from_file_no_route_module_without_frame_server() {
