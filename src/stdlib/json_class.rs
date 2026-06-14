@@ -4626,11 +4626,17 @@ impl JsonClass {
             Instruction::I32Eq,
             Instruction::I32Or,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            // depth == 0 → this is the outer closing brace: exit skip_block
+            // depth == 0 → this is the outer closing brace: exit skip_block.
+            // Br index: from inside two nested Ifs (outer brace If + inner depth==0 If)
+            // the label stack is [innerIf, outerIf, skip_loop(Loop), skip_block(Block)].
+            // Br(3) targets skip_block. Br(2) would restart skip_loop (Loop labels mean
+            // "go to start"), which lets the scanner march past the object's closing
+            // brace and miscounts characters in the next array element as additional
+            // key/value pairs (STDLIB-JSON-INDEX-OBJECT-ARRAY-PAST-ZERO).
             Instruction::LocalGet(10),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::Br(2), // exit skip_block
+            Instruction::Br(3), // exit skip_block
             Instruction::End,
             // depth > 0: decrement and continue
             Instruction::LocalGet(10),
@@ -5824,11 +5830,15 @@ impl JsonClass {
             Instruction::I32Eq,
             Instruction::I32Or,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            // depth == 0: outer close → exit skip_block
+            // depth == 0: outer close → exit skip_block.
+            // Br index: from inside two nested Ifs (outer brace If + inner depth==0 If)
+            // the label stack is [innerIf, outerIf, skip_loop(Loop), skip_block(Block)].
+            // Br(3) targets skip_block. Br(2) would restart skip_loop and cause the
+            // counter to march past the array's `]` (STDLIB-JSON-INDEX-OBJECT-ARRAY-PAST-ZERO).
             Instruction::LocalGet(10),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::Br(2), // exit skip_block
+            Instruction::Br(3), // exit skip_block
             Instruction::End,
             // depth > 0: decrement
             Instruction::LocalGet(10),

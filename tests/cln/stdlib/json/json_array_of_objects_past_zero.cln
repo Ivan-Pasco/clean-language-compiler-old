@@ -1,0 +1,33 @@
+// Test: arrays of objects must be indexable past element 0.
+// Grammar: function_call → namespace "." function_name "(" args ")"
+// Semantic: FUNC-BUILTIN — json.get(any, string) -> any
+// Spec: foundation/spec/stdlib-reference.md §8
+// Regression: STDLIB-JSON-INDEX-OBJECT-ARRAY-PAST-ZERO — before the fix,
+//   __json_parse_array and __json_parse_object emitted Br(2) where Br(3)
+//   was needed to exit skip_block (the Br was nested inside two If blocks
+//   inside skip_loop). Br(2) restarted the loop instead of exiting,
+//   causing the counter to march past the inner `}` or outer `]` and
+//   miscount elements. As a result, arrays of objects had pair_count and
+//   elem_count wrong, and json.get on every index past 0 returned null.
+//
+// Expected output:
+//   chained_a1:two
+//   dotpath_1_name:Second
+//   prim_arr_1:y
+
+start:
+	// (1) Chained json.get — the canonical user-reported repro.
+	any j = json.decode("[{\"a\":\"one\"},{\"a\":\"two\"}]")
+	any e1 = json.get(j, "1")
+	string a1 = json.get(e1, "a").toString()
+	print("chained_a1:" + a1) +
+
+	// (2) Dot-path access — same underlying bug, surfaced via dot-path.
+	string spec = "{\"data\":{\"rows\":[{\"name\":\"Welcome\"},{\"name\":\"Second\"}]}}"
+	string dotpath_1_name = json.get(spec, "data.rows.1.name")
+	print("dotpath_1_name:" + dotpath_1_name) +
+
+	// (3) Primitive array must still work (parser path that always worked).
+	any arr = json.decode("[\"x\",\"y\",\"z\"]")
+	string p1 = json.get(arr, "1").toString()
+	print("prim_arr_1:" + p1) +
