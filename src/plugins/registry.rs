@@ -201,40 +201,6 @@ impl Default for PluginRegistry {
     }
 }
 
-/// Tag every function and class in a plugin expansion with the given marker
-/// as its `location.file`. Used to mark v2 `module_helpers_are_roots` output
-/// so the BFS reachability scan in `mir_codegen` seeds them as roots.
-/// See foundation/spec/plugins/contracts/lifecycle.md §3.1.
-fn retag_expansion_for_v2_root(expansion: &mut super::PluginExpansion, marker: &str) {
-    fn ensure_marker(loc: &mut Option<crate::ast::SourceLocation>, marker: &str) {
-        match loc {
-            Some(l) => l.file = marker.to_string(),
-            None => {
-                *loc = Some(crate::ast::SourceLocation {
-                    line: 0,
-                    column: 0,
-                    file: marker.to_string(),
-                    byte_start: None,
-                    byte_end: None,
-                });
-            }
-        }
-    }
-
-    for func in &mut expansion.functions {
-        ensure_marker(&mut func.location, marker);
-    }
-    if let Some(start_fn) = expansion.start_function.as_mut() {
-        ensure_marker(&mut start_fn.location, marker);
-    }
-    for class in &mut expansion.classes {
-        ensure_marker(&mut class.location, marker);
-        for method in &mut class.methods {
-            ensure_marker(&mut method.location, marker);
-        }
-    }
-}
-
 /// Convert a snake_case string to camelCase.
 /// e.g. "get_session" → "getSession", "has_any_role" → "hasAnyRole"
 fn snake_to_camel(s: &str) -> String {
@@ -500,16 +466,30 @@ impl PluginRegistry {
     /// Results are returned in registration order; the caller is responsible for
     /// deduplicating functions before merging into the AST.
     ///
-    /// **v2 (contracts/lifecycle.md §3.1):** If a plugin's manifest declares
-    /// `lifecycle.module_helpers_are_roots = true`, every function and class in
-    /// that plugin's preamble is tagged with `PLUGIN_OUTPUT_V2_ROOT_MARKER`
-    /// (instead of the default `PLUGIN_OUTPUT_MARKER`). The BFS reachability
-    /// scan then seeds those functions as roots, closing GEN003 for plugins
-    /// (e.g. frame.server) whose helpers are called from generated route
-    /// handler code the BFS cannot statically trace.
+    /// **Preamble helpers are NOT auto-rooted.** Preamble output carries the
+    /// default `PLUGIN_OUTPUT_MARKER`, which means the BFS reachability scan
+    /// in `mir_codegen::collect_all_called_names_from_mir` will only mark
+    /// them reachable when a statically-visible call site exists — either in
+    /// user code (`user calls redirect("/foo")`) or in a generated route
+    /// handler shim (`__route_handler_*`, already a BFS root via the
+    /// `is_server_handler` seed). Unreachable preamble helpers are DCE'd
+    /// along with their bridge imports.
+    ///
+    /// This deliberately diverges from a literal reading of
+    /// `contracts/lifecycle.md §3.1` ("Treat module_helpers output as BFS
+    /// roots if `module_helpers_are_roots = true`"). Auto-rooting ALL
+    /// preamble helpers caused unused bridge imports (`_res_download`,
+    /// `_email_send`, `_email_last_error`) to leak unconditionally into
+    /// every frame.server WASM (GEN003 fingerprint
+    /// `a2375b1158b2`). With the BFS already seeding `__route_handler_*`
+    /// shims as roots — the exact case the v2 root flag was meant to handle
+    /// — preamble helpers reachable from generated route code are still
+    /// found; only the genuinely unreachable ones are tree-shaken.
+    ///
+    /// Event-handler shims (called from JS, not Clean MIR) continue to use
+    /// the v2 root marker directly via `expander.rs::synthesize_event_handler_shims` —
+    /// that path is independent of this function.
     pub fn expand_preambles(&self) -> Vec<super::PluginExpansion> {
-        use crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
-
         let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
         for plugin in self.handlers.values() {
@@ -521,18 +501,7 @@ impl PluginRegistry {
                     attributes: Vec::new(),
                     location: None,
                 };
-                if let Ok(mut expansion) = plugin.expand_full(&preamble_block) {
-                    // v2 opt-in: tag preamble output with the v2 root marker so
-                    // the BFS treats it as a root. Looked up from the manifest
-                    // (set when the plugin was loaded from plugin.toml).
-                    let is_v2_root_helper = self
-                        .manifests
-                        .get(plugin_name)
-                        .map(|m| m.lifecycle.module_helpers_are_roots)
-                        .unwrap_or(false);
-                    if is_v2_root_helper {
-                        retag_expansion_for_v2_root(&mut expansion, PLUGIN_OUTPUT_V2_ROOT_MARKER);
-                    }
+                if let Ok(expansion) = plugin.expand_full(&preamble_block) {
                     results.push(expansion);
                 }
             }
@@ -2060,144 +2029,5 @@ mod tests {
             Some("{tagname}_render")
         );
         assert_eq!(callbacks[0].fallback, "passthrough");
-    }
-
-    /// Regression test for the v2 `lifecycle.module_helpers_are_roots` flag.
-    /// Functions emitted by a plugin that opts in must be tagged with the
-    /// v2 root marker so the BFS in `mir_codegen` seeds them as roots.
-    /// Closes GEN003.
-    #[test]
-    fn test_retag_expansion_for_v2_root_marks_functions_and_classes() {
-        use crate::ast::{
-            Class, Function, Parameter, SourceLocation, Type, Visibility, PLUGIN_OUTPUT_MARKER,
-            PLUGIN_OUTPUT_V2_ROOT_MARKER,
-        };
-        use crate::plugins::PluginExpansion;
-
-        // Build a fake expansion as a plugin would emit: two top-level
-        // functions and a class with one method, all initially tagged
-        // with the v1 PLUGIN_OUTPUT_MARKER.
-        let v1_loc = || {
-            Some(SourceLocation {
-                line: 1,
-                column: 1,
-                file: PLUGIN_OUTPUT_MARKER.to_string(),
-                byte_start: None,
-                byte_end: None,
-            })
-        };
-
-        let mut expansion = PluginExpansion {
-            statements: Vec::new(),
-            start_function: Some(Function {
-                name: "start".to_string(),
-                type_parameters: Vec::new(),
-                type_constraints: Vec::new(),
-                parameters: Vec::new(),
-                return_type: Type::Void,
-                body: Vec::new(),
-                description: None,
-                syntax: crate::ast::FunctionSyntax::Simple,
-                visibility: Visibility::Public,
-                modifier: crate::ast::FunctionModifier::None,
-                location: v1_loc(),
-            }),
-            functions: vec![
-                Function {
-                    name: "redirect".to_string(),
-                    type_parameters: Vec::new(),
-                    type_constraints: Vec::new(),
-                    parameters: vec![Parameter {
-                        name: "url".to_string(),
-                        type_: Type::String,
-                        default_value: None,
-                    }],
-                    return_type: Type::Void,
-                    body: Vec::new(),
-                    description: None,
-                    syntax: crate::ast::FunctionSyntax::Simple,
-                    visibility: Visibility::Public,
-                    modifier: crate::ast::FunctionModifier::None,
-                    location: v1_loc(),
-                },
-                Function {
-                    name: "json".to_string(),
-                    type_parameters: Vec::new(),
-                    type_constraints: Vec::new(),
-                    parameters: Vec::new(),
-                    return_type: Type::String,
-                    body: Vec::new(),
-                    description: None,
-                    syntax: crate::ast::FunctionSyntax::Simple,
-                    visibility: Visibility::Public,
-                    modifier: crate::ast::FunctionModifier::None,
-                    location: None, // exercise the None branch
-                },
-            ],
-            classes: vec![Class {
-                name: "Response".to_string(),
-                type_parameters: Vec::new(),
-                description: None,
-                base_class: None,
-                base_class_type_args: Vec::new(),
-                fields: Vec::new(),
-                methods: vec![Function {
-                    name: "send".to_string(),
-                    type_parameters: Vec::new(),
-                    type_constraints: Vec::new(),
-                    parameters: Vec::new(),
-                    return_type: Type::Void,
-                    body: Vec::new(),
-                    description: None,
-                    syntax: crate::ast::FunctionSyntax::Simple,
-                    visibility: Visibility::Public,
-                    modifier: crate::ast::FunctionModifier::None,
-                    location: v1_loc(),
-                }],
-                constructor: None,
-                invariants: Vec::new(),
-                location: v1_loc(),
-            }],
-            externals: Vec::new(),
-            state: None,
-        };
-
-        retag_expansion_for_v2_root(&mut expansion, PLUGIN_OUTPUT_V2_ROOT_MARKER);
-
-        // All top-level functions retagged
-        assert_eq!(
-            expansion.functions[0].location.as_ref().unwrap().file,
-            PLUGIN_OUTPUT_V2_ROOT_MARKER
-        );
-        // Function whose location was None now has Some with the marker
-        let json_loc = expansion.functions[1].location.as_ref().unwrap();
-        assert_eq!(json_loc.file, PLUGIN_OUTPUT_V2_ROOT_MARKER);
-
-        // start_function retagged
-        assert_eq!(
-            expansion
-                .start_function
-                .as_ref()
-                .unwrap()
-                .location
-                .as_ref()
-                .unwrap()
-                .file,
-            PLUGIN_OUTPUT_V2_ROOT_MARKER
-        );
-
-        // Class and its method retagged
-        assert_eq!(
-            expansion.classes[0].location.as_ref().unwrap().file,
-            PLUGIN_OUTPUT_V2_ROOT_MARKER
-        );
-        assert_eq!(
-            expansion.classes[0].methods[0]
-                .location
-                .as_ref()
-                .unwrap()
-                .file,
-            PLUGIN_OUTPUT_V2_ROOT_MARKER
-        );
     }
 }

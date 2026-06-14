@@ -1426,13 +1426,21 @@ impl MirCodeGenerator<'_> {
                     && !f.location.file.is_empty()
                     && f.location.file != crate::ast::PLUGIN_OUTPUT_MARKER
                     && f.location.file != crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
-                // v2 (contracts/lifecycle.md §3.1): plugins that declare
-                // `lifecycle.module_helpers_are_roots = true` have their preamble
-                // functions tagged with PLUGIN_OUTPUT_V2_ROOT_MARKER. These are
-                // explicit roots — they ARE seeded so their bridge imports
-                // (e.g. _http_redirect for frame.server's redirect() helper) are
-                // preserved even when user code never references them directly.
-                // Closes GEN003.
+                // PLUGIN_OUTPUT_V2_ROOT_MARKER is used by `expander.rs::synthesize_event_handler_shims`
+                // for synthesized event-handler shims that dispatch to component
+                // class methods. The browser loader calls these shims via
+                // `instance.exports[handlerName]()` JS — no static call site
+                // exists in MIR — so they must be BFS roots, otherwise their
+                // bridge imports (`_ui_*` helpers etc.) get tree-shaken.
+                //
+                // Plugin preamble helpers (frame.server's `redirect`, `json`,
+                // `resDownload`, …) deliberately do NOT carry this marker even
+                // when `module_helpers_are_roots = true` (see
+                // `registry.rs::expand_preambles`). The BFS already seeds
+                // `__route_handler_*` / `__page_handler_*` shims as roots and
+                // finds preamble helpers naturally through them — auto-rooting
+                // every preamble helper used to leak its bridge imports
+                // unconditionally (GEN003 fingerprint `a2375b1158b2`).
                 let is_v2_module_helper_root =
                     f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
                 if is_exported_by_attr

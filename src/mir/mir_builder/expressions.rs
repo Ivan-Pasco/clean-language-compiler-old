@@ -592,33 +592,53 @@ impl MirBuilder {
                     // reuse it here so `if data.count == 0` and similar patterns
                     // evaluate against the contained value, not the heap pointer.
                     //
+                    // For String, we dispatch to `AnyToString` (runtime type-tag
+                    // dispatch producing a real length-prefixed string) rather
+                    // than `UnboxAnyToI32`, because the downstream string-compare
+                    // branch needs a real string pointer — reading offset 4 raw
+                    // would only work for string-tagged any values and produce
+                    // garbage for other tags. Without this, `data.kind == "user"`
+                    // compares the boxed-any pointer bits to the literal's first
+                    // 4 bytes and silently always evaluates false.
+                    //
                     // Mixed any+any comparisons are left as raw pointer equality
                     // for now (well-defined for object identity, no silent
-                    // mis-evaluation), and string-on-any is handled by the
-                    // string-compare branch downstream.
+                    // mis-evaluation).
                     //
-                    // Regression test: tests/test_any_int_compare.rs
-                    // Reported as ANY_INT_COMPARE_USES_POINTER against 0.30.276.
+                    // Regression tests:
+                    //   tests/test_any_int_compare.rs    (ANY_INT_COMPARE_USES_POINTER)
+                    //   tests/test_any_string_compare.rs (ANY_STRING_COMPARE_USES_POINTER)
                     let left_is_any = matches!(left_mir_type, MirType::Any);
                     let right_is_any = matches!(right_mir_type, MirType::Any);
 
                     let (left_id, left_mir_type) = if left_is_any && !right_is_any {
                         let target = Self::mir_type_to_concrete(&right_mir_type);
-                        if matches!(
-                            target,
-                            ConcreteType::Integer | ConcreteType::Number | ConcreteType::Boolean
-                        ) {
-                            let unboxed =
-                                self.emit_unbox_any(context, left_id, &target, &left.location);
-                            let new_type = context
-                                .function
-                                .locals
-                                .get(&unboxed)
-                                .map(|l| l.local_type.clone())
-                                .unwrap_or(left_mir_type);
-                            (unboxed, new_type)
-                        } else {
-                            (left_id, left_mir_type)
+                        match target {
+                            ConcreteType::Integer
+                            | ConcreteType::Number
+                            | ConcreteType::Boolean => {
+                                let unboxed =
+                                    self.emit_unbox_any(context, left_id, &target, &left.location);
+                                let new_type = context
+                                    .function
+                                    .locals
+                                    .get(&unboxed)
+                                    .map(|l| l.local_type.clone())
+                                    .unwrap_or(left_mir_type);
+                                (unboxed, new_type)
+                            }
+                            ConcreteType::String => {
+                                let converted =
+                                    self.emit_any_to_string(context, left_id, &left.location);
+                                let new_type = context
+                                    .function
+                                    .locals
+                                    .get(&converted)
+                                    .map(|l| l.local_type.clone())
+                                    .unwrap_or(left_mir_type);
+                                (converted, new_type)
+                            }
+                            _ => (left_id, left_mir_type),
                         }
                     } else {
                         (left_id, left_mir_type)
@@ -626,21 +646,36 @@ impl MirBuilder {
 
                     let (right_id, right_mir_type) = if right_is_any && !left_is_any {
                         let target = Self::mir_type_to_concrete(&left_mir_type);
-                        if matches!(
-                            target,
-                            ConcreteType::Integer | ConcreteType::Number | ConcreteType::Boolean
-                        ) {
-                            let unboxed =
-                                self.emit_unbox_any(context, right_id, &target, &right.location);
-                            let new_type = context
-                                .function
-                                .locals
-                                .get(&unboxed)
-                                .map(|l| l.local_type.clone())
-                                .unwrap_or(right_mir_type);
-                            (unboxed, new_type)
-                        } else {
-                            (right_id, right_mir_type)
+                        match target {
+                            ConcreteType::Integer
+                            | ConcreteType::Number
+                            | ConcreteType::Boolean => {
+                                let unboxed = self.emit_unbox_any(
+                                    context,
+                                    right_id,
+                                    &target,
+                                    &right.location,
+                                );
+                                let new_type = context
+                                    .function
+                                    .locals
+                                    .get(&unboxed)
+                                    .map(|l| l.local_type.clone())
+                                    .unwrap_or(right_mir_type);
+                                (unboxed, new_type)
+                            }
+                            ConcreteType::String => {
+                                let converted =
+                                    self.emit_any_to_string(context, right_id, &right.location);
+                                let new_type = context
+                                    .function
+                                    .locals
+                                    .get(&converted)
+                                    .map(|l| l.local_type.clone())
+                                    .unwrap_or(right_mir_type);
+                                (converted, new_type)
+                            }
+                            _ => (right_id, right_mir_type),
                         }
                     } else {
                         (right_id, right_mir_type)

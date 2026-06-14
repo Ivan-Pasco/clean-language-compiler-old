@@ -95,6 +95,45 @@ impl MirBuilder {
         result_id
     }
 
+    /// Convert a boxed `any` value to a string via runtime type-tag dispatch.
+    ///
+    /// Unlike `emit_unbox_any` with a String target — which would emit a raw
+    /// `UnboxAnyToI32` that just reads offset 4 of the any-struct as an i32 —
+    /// this dispatches on the type tag and produces an actual length-prefixed
+    /// string pointer regardless of whether the contained value was originally
+    /// a string, number, integer, or boolean. This is the correct operand for
+    /// `string_compare` when comparing `any` against a string literal.
+    ///
+    /// Result is registered as `Ptr(U8)` (the canonical string pointer type
+    /// used elsewhere for host-function string results).
+    pub(super) fn emit_any_to_string(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+
+        self.register_temp_local(
+            context,
+            result_id,
+            MirType::Ptr(Box::new(MirType::U8)),
+            location.clone(),
+        );
+
+        let instruction = MirInstruction {
+            dest: Some(result_id),
+            operation: MirOperation::AnyToString {
+                value: MirOperand::Value(value_id),
+            },
+            location: location.clone(),
+        };
+
+        self.add_instruction(context, instruction);
+        result_id
+    }
+
     /// Convert TAST literal to MIR constant
     pub(super) fn convert_literal(&mut self, literal: &TastLiteral) -> MirConstant {
         match literal {
