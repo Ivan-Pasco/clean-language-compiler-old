@@ -225,27 +225,30 @@ impl JsonClass {
         if let Some(idx) = codegen.get_function_index("json.textToData") {
             codegen.add_function_alias("json.decode", idx);
         }
-        // json.get(json_ptr: i32, key_ptr: i32) -> i32
+        // json.get(json_ptr: i32, path_ptr: i32) -> i32
         // Adapts the 2-arg language calling convention to the 3-arg internal
-        // __json_get_field(any_ptr, key_content_ptr, key_len) convention.
-        // The key_ptr is a Clean Language string (4-byte length prefix + content);
-        // this wrapper expands it to (key_ptr+4, mem[key_ptr]) before the call.
+        // __json_get_path(obj_boxed, path_content_ptr, path_len) convention,
+        // which walks a dot-separated path through the JSON value per spec
+        // §8 (foundation/spec/stdlib-reference.md). The path_ptr is a Clean
+        // Language string (4-byte length prefix + content); this wrapper
+        // expands it to (path_ptr + 4, mem[path_ptr]) before the call.
         //
-        // RUNTIME002: When json_ptr is a boxed String (tag=4), the caller passed a raw JSON
-        // text string rather than a pre-decoded object.  Auto-parse it via json.textToData so
-        // that json.get(raw_json_string, key) works transparently — no explicit json.decode()
-        // needed.  A boxed Object (tag=6) or any other tag is passed through unchanged.
+        // RUNTIME002: When json_ptr is a boxed String (tag=4), the caller passed
+        // raw JSON text rather than a pre-decoded object. Auto-parse it via
+        // json.textToData so json.get(raw_json_string, path) works transparently
+        // — no explicit json.decode() needed. A boxed Object (tag=6) or any other
+        // tag is passed through unchanged.
         //
         // Note: when a plugin bridge (e.g. frame.auth) provides json.get, its
         // wrapper registration runs after this and overwrites this entry.
-        if let (Some(raw_idx), Some(text_to_data_idx)) = (
-            codegen.get_function_index("__json_get_field"),
+        if let (Some(path_idx), Some(text_to_data_idx)) = (
+            codegen.get_function_index("__json_get_path"),
             codegen.get_function_index("json.textToData"),
         ) {
             register_stdlib_function_with_locals(
                 codegen,
                 "json.get",
-                &[WasmType::I32, WasmType::I32], // (json_ptr, key_ptr)
+                &[WasmType::I32, WasmType::I32], // (json_ptr, path_ptr)
                 Some(WasmType::I32),
                 &[WasmType::I32, WasmType::I32], // Local 2: type_tag, Local 3: obj_boxed_ptr
                 vec![
@@ -265,7 +268,7 @@ impl JsonClass {
                     Instruction::LocalSet(2), // type_tag
                     // if type_tag == 4 (String): extract str_ptr and auto-parse
                     Instruction::LocalGet(2),
-                    Instruction::I32Const(4), // JSON_TAG_STRING
+                    Instruction::I32Const(JSON_TAG_STRING),
                     Instruction::I32Eq,
                     Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
                     Instruction::LocalGet(0),
@@ -279,25 +282,22 @@ impl JsonClass {
                     Instruction::LocalGet(0), // already a boxed Any object or other type
                     Instruction::End,
                     Instruction::LocalSet(3), // obj_boxed_ptr
-                    // unbox: raw_obj_ptr = memory[obj_boxed_ptr + 4]
+                    // __json_get_path expects the boxed Any directly (not the raw inner
+                    // pointer) because it must re-read the tag for every segment to
+                    // decide between field vs index dispatch.
                     Instruction::LocalGet(3),
-                    Instruction::I32Load(MemArg {
-                        offset: 4,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    // key content ptr = key_ptr + 4
+                    // path content ptr = path_ptr + 4
                     Instruction::LocalGet(1),
                     Instruction::I32Const(4),
                     Instruction::I32Add,
-                    // key length = mem[key_ptr]
+                    // path length = mem[path_ptr]
                     Instruction::LocalGet(1),
                     Instruction::I32Load(MemArg {
                         offset: 0,
                         align: 2,
                         memory_index: 0,
                     }),
-                    Instruction::Call(raw_idx),
+                    Instruction::Call(path_idx),
                     Instruction::End, // closes null check
                 ],
             )?;
@@ -829,6 +829,46 @@ impl JsonClass {
             self.generate_get_index_instructions(malloc_index),
         )?;
 
+        // __json_get_path(obj_boxed_ptr: i32, path_content_ptr: i32, path_len: i32) -> i32
+        //
+        // Descend through a JSON value following a dot-separated path, e.g.
+        // `data.rows.0.name`. Each segment is dispatched to `__json_get_field`
+        // when the current target is an object, or to `__json_get_index` when
+        // the current target is an array AND the segment is all-digits.
+        // Returns the boxed any pointer of the resolved value, or 0 if any
+        // segment fails to resolve (per the spec, `json.get` never raises —
+        // it returns null on miss). The `__json_get_field` and `__json_get_index`
+        // primitives stay single-segment; path logic lives only here.
+        //
+        // Spec: foundation/spec/stdlib-reference.md §8 — "json.get function uses
+        // dot-separated paths: json.get(result, \"data.rows.0.name\")".
+        let field_index = codegen
+            .get_function_index("__json_get_field")
+            .expect("__json_get_field must be registered before __json_get_path");
+        let index_index = codegen
+            .get_function_index("__json_get_index")
+            .expect("__json_get_index must be registered before __json_get_path");
+
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_get_path",
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // obj_boxed, path_content, path_len
+            Some(WasmType::I32),                            // returns boxed any pointer
+            &[
+                WasmType::I32, // Local 3: cursor
+                WasmType::I32, // Local 4: seg_end
+                WasmType::I32, // Local 5: cur_boxed
+                WasmType::I32, // Local 6: cur_tag
+                WasmType::I32, // Local 7: cur_raw_ptr
+                WasmType::I32, // Local 8: idx_acc
+                WasmType::I32, // Local 9: is_digit_seg
+                WasmType::I32, // Local 10: byte
+                WasmType::I32, // Local 11: scan_i
+                WasmType::I32, // Local 12: seg_len
+            ],
+            self.generate_get_path_instructions(field_index, index_index),
+        )?;
+
         Ok(())
     }
 
@@ -1132,6 +1172,229 @@ impl JsonClass {
             Instruction::End,
         ]);
         instrs
+    }
+
+    /// Generate WASM instructions for `__json_get_path`.
+    ///
+    /// Walks a dot-separated path through a boxed JSON value, dispatching each
+    /// segment to `__json_get_field` (object) or `__json_get_index` (array) per
+    /// the spec at `foundation/spec/stdlib-reference.md` §8. Returns 0 (null)
+    /// at the first segment that fails to resolve.
+    fn generate_get_path_instructions(
+        &self,
+        field_index: u32,
+        index_index: u32,
+    ) -> Vec<Instruction<'static>> {
+        // Parameters:
+        // Local 0: obj_boxed_ptr  — boxed any of starting target
+        // Local 1: path_content_ptr — raw path bytes (already past 4-byte len prefix)
+        // Local 2: path_len
+        //
+        // Working locals:
+        // Local 3: cursor
+        // Local 4: seg_end
+        // Local 5: cur_boxed (mutates as we descend)
+        // Local 6: cur_tag
+        // Local 7: cur_raw_ptr
+        // Local 8: idx_acc — parsed integer for numeric segments
+        // Local 9: is_digit_seg — 1 when segment is all ASCII digits
+        // Local 10: byte
+        // Local 11: scan_i
+        // Local 12: seg_len
+        const DOT_BYTE: i32 = 46; // '.'
+        const ZERO_BYTE: i32 = 48; // '0'
+        const NINE_BYTE: i32 = 57; // '9'
+
+        vec![
+            // Empty-path shortcut: return obj_boxed_ptr unchanged.
+            Instruction::LocalGet(2),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::LocalGet(0),
+            Instruction::Else,
+            // cur_boxed = obj_boxed_ptr; cursor = 0
+            Instruction::LocalGet(0),
+            Instruction::LocalSet(5),
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3),
+            // Block(I32): final result of the walk
+            Instruction::Block(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // Loop: one iteration per path segment
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // Bail if current target is null
+            Instruction::LocalGet(5),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Br(2), // exit outer Block with 0
+            Instruction::End,
+            // Find seg_end: scan from cursor until '.' or path_len.
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(4), // seg_end = cursor
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // seg_end >= path_len → exit scan block
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(4),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(10),
+            Instruction::LocalGet(10),
+            Instruction::I32Const(DOT_BYTE),
+            Instruction::I32Eq,
+            Instruction::BrIf(1), // hit '.' → exit scan block
+            Instruction::LocalGet(4),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(4),
+            Instruction::Br(0), // continue scan loop
+            Instruction::End,   // end scan loop
+            Instruction::End,   // end scan block
+            // seg_len = seg_end - cursor
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(3),
+            Instruction::I32Sub,
+            Instruction::LocalSet(12),
+            // Empty segment (consecutive dots, leading/trailing dot) → return null.
+            Instruction::LocalGet(12),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Br(2),
+            Instruction::End,
+            // is_digit_seg = 1; idx_acc = 0; scan_i = cursor
+            Instruction::I32Const(1),
+            Instruction::LocalSet(9),
+            Instruction::I32Const(0),
+            Instruction::LocalSet(8),
+            Instruction::LocalGet(3),
+            Instruction::LocalSet(11),
+            // Walk the segment bytes; track if all are digits and accumulate value.
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(11),
+            Instruction::LocalGet(4),
+            Instruction::I32GeU,
+            Instruction::BrIf(1), // scan_i >= seg_end → exit
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(11),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(10),
+            // (byte < '0') | (byte > '9') → not a digit
+            Instruction::LocalGet(10),
+            Instruction::I32Const(ZERO_BYTE),
+            Instruction::I32LtU,
+            Instruction::LocalGet(10),
+            Instruction::I32Const(NINE_BYTE),
+            Instruction::I32GtU,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::LocalSet(9),
+            Instruction::Br(2), // exit digit block
+            Instruction::End,
+            // idx_acc = idx_acc * 10 + (byte - '0')
+            Instruction::LocalGet(8),
+            Instruction::I32Const(10),
+            Instruction::I32Mul,
+            Instruction::LocalGet(10),
+            Instruction::I32Const(ZERO_BYTE),
+            Instruction::I32Sub,
+            Instruction::I32Add,
+            Instruction::LocalSet(8),
+            // scan_i++
+            Instruction::LocalGet(11),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(11),
+            Instruction::Br(0), // continue digit loop
+            Instruction::End,   // end digit loop
+            Instruction::End,   // end digit block
+            // Unbox cur_boxed: tag at offset 0, raw inner ptr at offset 4.
+            Instruction::LocalGet(5),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(6), // cur_tag
+            Instruction::LocalGet(5),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(7), // cur_raw_ptr
+            // Dispatch:
+            //   array  + numeric segment → __json_get_index
+            //   object + any segment     → __json_get_field
+            //   anything else            → return null
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(JSON_TAG_ARRAY),
+            Instruction::I32Eq,
+            Instruction::I32And,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(8),
+            Instruction::Call(index_index),
+            Instruction::LocalSet(5),
+            Instruction::Else,
+            Instruction::LocalGet(6),
+            Instruction::I32Const(JSON_TAG_OBJECT),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Add, // path_content_ptr + cursor
+            Instruction::LocalGet(12),
+            Instruction::Call(field_index),
+            Instruction::LocalSet(5),
+            Instruction::Else,
+            Instruction::I32Const(0),
+            Instruction::Br(3), // current target is not traversable → exit Block w/ 0
+            Instruction::End,
+            Instruction::End,
+            // If the call returned null, propagate it out.
+            Instruction::LocalGet(5),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Br(2),
+            Instruction::End,
+            // If we consumed the entire path, the walk is finished.
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(5),
+            Instruction::Br(2),
+            Instruction::End,
+            // cursor = seg_end + 1 (skip the dot)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0), // continue outer loop
+            Instruction::End,   // end Loop
+            // Fallthrough — unreachable in practice; Block's static result type.
+            Instruction::I32Const(0),
+            Instruction::End, // end Block
+            Instruction::End, // end outer if
+        ]
     }
 
     /// Generate WASM instructions for json.textToData

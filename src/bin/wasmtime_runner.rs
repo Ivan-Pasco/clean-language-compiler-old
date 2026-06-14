@@ -169,6 +169,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         print!("{}", value);
     })?;
 
+    // env::error(msg_ptr: i32) -> i32 — print to stderr and return the same
+    // pointer so the value passes through expression context unchanged.
+    linker.func_wrap(
+        "env",
+        "error",
+        |mut caller: Caller<'_, ()>, msg_ptr: i32| -> i32 {
+            if let Some(Extern::Memory(memory)) = caller.get_export("memory") {
+                let data = memory.data(&caller);
+                let start = msg_ptr as usize;
+                if start + 4 <= data.len() {
+                    let len =
+                        u32::from_le_bytes(data[start..start + 4].try_into().unwrap_or([0; 4]))
+                            as usize;
+                    let bytes_start = start + 4;
+                    if bytes_start + len <= data.len() {
+                        if let Ok(s) = std::str::from_utf8(&data[bytes_start..bytes_start + len]) {
+                            eprintln!("error: {s}");
+                        }
+                    }
+                }
+            }
+            msg_ptr
+        },
+    )?;
+
     // Add print_float function: print_float(value: f64) -> void
     linker.func_wrap("env", "print_float", |value: f64| {
         print!("{}", value);

@@ -1,0 +1,47 @@
+// Test: json.get with dot-separated path
+// Grammar: function_call → namespace "." function_name "(" args ")"
+// Semantic: FUNC-BUILTIN — json.get(any, string) -> any
+// Spec: foundation/spec/stdlib-reference.md §8 —
+//   "json.get function uses dot-separated paths: json.get(result, \"data.rows.0.name\")"
+// Regression: STDLIB-JSON-GET-DOTPATH-UNIMPLEMENTED — before the fix the wrapper
+//   treated the entire path as one literal key and silently returned null.
+//
+// Expected output:
+//   spec_example:Welcome
+//   single_segment:Welcome
+//   missing_key_returns_empty
+//   missing_index_returns_empty
+//   string_array_index:second
+
+start:
+	// (1) The exact spec example must work.
+	string j = "{\"data\":{\"rows\":[{\"name\":\"Welcome\"}]}}"
+	string spec_example = json.get(j, "data.rows.0.name")
+	print("spec_example:" + spec_example) +
+
+	// (2) Single-segment access must still work (back-compat with pre-fix wrapper).
+	any decoded = json.decode(j)
+	any data = json.get(decoded, "data")
+	any rows = json.get(data, "rows")
+	any first_row = json.get(rows, "0")
+	string single_segment = json.get(first_row, "name").toString()
+	print("single_segment:" + single_segment) +
+
+	// (3) Missing key in a real path must return null (spec: never raises).
+	string missing_key = json.get(j, "data.rows.0.missing")
+	if missing_key == ""
+		print("missing_key_returns_empty") +
+	else
+		print("missing_key:[" + missing_key + "]") +
+
+	// (4) Out-of-bounds array index must return null.
+	string missing_index = json.get(j, "data.rows.99.name")
+	if missing_index == ""
+		print("missing_index_returns_empty") +
+	else
+		print("missing_index:[" + missing_index + "]") +
+
+	// (5) Array of primitives must index correctly past zero.
+	string strarr = "{\"items\":[\"first\",\"second\",\"third\"]}"
+	string string_array_index = json.get(strarr, "items.1")
+	print("string_array_index:" + string_array_index) +
