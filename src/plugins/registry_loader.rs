@@ -19,10 +19,16 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-/// Baked-in copy of the registry. Rebuilt every time the compiler is built,
-/// so an installed `cln` always carries the registry it was compiled against.
-const EMBEDDED_REGISTRY: &str =
-    include_str!("../../../foundation/platform-architecture/function-registry.toml");
+/// Baked-in copy of the registry. The source of truth lives in the sibling
+/// `foundation/platform-architecture/function-registry.toml`, but the file
+/// next to this source is a vendored copy committed to the compiler repo so
+/// CI (which only checks out clean-language-compiler) can build.
+///
+/// `build.rs` at the crate root auto-syncs the vendored copy from foundation
+/// whenever foundation is present alongside this checkout. When foundation
+/// is not present (e.g. CI), the committed copy is used as-is. Developers
+/// who edit the foundation copy must commit the resulting vendored update.
+const EMBEDDED_REGISTRY: &str = include_str!("function-registry.toml");
 
 #[derive(Debug, Clone, Deserialize)]
 struct RegistryDocument {
