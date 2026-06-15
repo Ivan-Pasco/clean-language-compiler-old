@@ -1641,6 +1641,110 @@ aliases     = ["req.ip"]
 description = "Get client IP address; checks X-Forwarded-For then X-Real-IP; returns 'unknown' if unavailable"
 
 # ============================================================
+# LAYER 3 - WEBSOCKET (9 functions — server-only, LIVE endpoints)
+# Implemented in clean-server commit 9a1eedcb (2026-06-15).
+# ============================================================
+
+[[functions]]
+name        = "_http_ws_route"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = ["string", "string", "string", "string", "string"]
+returns     = "void"
+aliases     = ["http.ws_route"]
+hosts       = ["server"]
+description = "Register WebSocket route: method, path, onConnect handler name, onMessage handler name, onClose handler name"
+
+[[functions]]
+name        = "_ws_send"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = ["integer", "string"]
+returns     = "void"
+aliases     = ["ws.send"]
+hosts       = ["server"]
+description = "Send message to a specific WebSocket client by ID"
+
+[[functions]]
+name        = "_ws_broadcast"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = ["string", "string"]
+returns     = "void"
+aliases     = ["ws.broadcast"]
+hosts       = ["server"]
+description = "Broadcast message to all clients in a room: room, message"
+
+[[functions]]
+name        = "_ws_close"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = ["integer"]
+returns     = "void"
+aliases     = ["ws.close"]
+hosts       = ["server"]
+description = "Close WebSocket connection for a specific client ID"
+
+[[functions]]
+name        = "_ws_client_id"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = []
+returns     = "integer"
+aliases     = ["ws.client_id"]
+hosts       = ["server"]
+description = "Get the current WebSocket client ID from the request context (inside an onConnect/onMessage/onClose handler)"
+
+[[functions]]
+name        = "_ws_message"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = []
+returns     = "ptr"
+aliases     = ["ws.message"]
+hosts       = ["server"]
+description = "Get the current incoming WebSocket message payload from the request context (inside an onMessage handler)"
+
+[[functions]]
+name        = "_ws_room_join"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = ["integer", "string"]
+returns     = "void"
+aliases     = ["ws.room_join"]
+hosts       = ["server"]
+description = "Add a client to a named room: clientId, room"
+
+[[functions]]
+name        = "_ws_room_leave"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = ["integer", "string"]
+returns     = "void"
+aliases     = ["ws.room_leave"]
+hosts       = ["server"]
+description = "Remove a client from a named room: clientId, room"
+
+[[functions]]
+name        = "_ws_room_broadcast"
+layer       = 3
+category    = "websocket"
+module      = "env"
+params      = ["string", "string"]
+returns     = "void"
+aliases     = ["ws.room_broadcast"]
+hosts       = ["server"]
+description = "Broadcast message to all clients in a named room: room, message"
+
+# ============================================================
 # LAYER 3 - SESSION MANAGEMENT (7 functions)
 # ============================================================
 
