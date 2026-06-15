@@ -1904,6 +1904,101 @@ hosts       = ["server"]
 description = "Cancel a cron schedule by name; returns true if cancelled, false if not found"
 
 # ============================================================
+# LAYER 2 - I18N / LOCALE (8 functions — translations, formatting)
+# Implemented in clean-server commit e50176c (2026-06-15).
+# Browser-side equivalents for the 7 hosts=["all"] entries are tracked
+# separately in locale-server-and-browser-implementation.md.
+# ============================================================
+
+[[functions]]
+name        = "_i18n_t"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["string", "string"]
+returns     = "ptr"
+aliases     = ["i18n.t", "t"]
+hosts       = ["all"]
+description = "Translate a key using the active locale: key, JSON args object. Returns the translated string with {placeholders} substituted, or the key verbatim if no translation."
+
+[[functions]]
+name        = "_i18n_t_count"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["string", "integer", "string"]
+returns     = "ptr"
+aliases     = ["i18n.tc", "tc"]
+hosts       = ["all"]
+description = "Pluralized translation: key, count, JSON args object. Picks <key>.zero / <key>.one / <key>.other based on the count and active locale's CLDR plural rules."
+
+[[functions]]
+name        = "_i18n_locale"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = []
+returns     = "ptr"
+aliases     = ["i18n.locale", "locale.get"]
+hosts       = ["all"]
+description = "Get the currently active locale code (e.g. 'en', 'fr-CA', 'ar')"
+
+[[functions]]
+name        = "_i18n_set_locale"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["string"]
+returns     = "void"
+aliases     = ["i18n.setLocale", "locale.set"]
+hosts       = ["all"]
+description = "Set the active locale for the current request/document; updates document.documentElement.dir on the browser for RTL locales"
+
+[[functions]]
+name        = "_i18n_format_number"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["number", "string", "string"]
+returns     = "ptr"
+aliases     = ["i18n.formatNumber", "locale.formatNumber"]
+hosts       = ["all"]
+description = "Format a number for a locale: value (f64), locale code, options JSON ({ minimumFractionDigits, maximumFractionDigits, useGrouping, ... })"
+
+[[functions]]
+name        = "_i18n_format_currency"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["number", "string", "string"]
+returns     = "ptr"
+aliases     = ["i18n.formatCurrency", "locale.formatCurrency"]
+hosts       = ["all"]
+description = "Format a currency value for a locale: amount (f64), ISO 4217 currency code, locale code"
+
+[[functions]]
+name        = "_i18n_format_date"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["number", "string", "string"]
+returns     = "ptr"
+aliases     = ["i18n.formatDate", "locale.formatDate"]
+hosts       = ["all"]
+description = "Format a date for a locale: Unix timestamp ms (f64), format ('short' | 'medium' | 'long' | 'full' | CLDR pattern), locale code"
+
+[[functions]]
+name        = "_i18n_load"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["string", "string"]
+returns     = "void"
+aliases     = ["i18n.load"]
+hosts       = ["server"]
+description = "Load translations for a locale at startup: locale code, JSON object of key→value mappings. Called by locale: blocks during preamble."
+
+# ============================================================
 # LAYER 3 - SESSION MANAGEMENT (7 functions)
 # ============================================================
 
