@@ -1745,6 +1745,165 @@ hosts       = ["server"]
 description = "Broadcast message to all clients in a named room: room, message"
 
 # ============================================================
+# LAYER 3 - JOBS (14 functions — background queue + cron scheduler)
+# Implemented in clean-server commits 9983913 + ea36dab (2026-06-15).
+# ============================================================
+
+[[functions]]
+name        = "_job_register"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string", "string", "i32", "string", "i32", "i32", "string"]
+returns     = "void"
+aliases     = ["job.register"]
+hosts       = ["server"]
+description = "Register a job handler: name, handler function, maxAttempts, backoff strategy, delayMs, timeoutMs, queue name"
+
+[[functions]]
+name        = "_job_enqueue"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string", "string"]
+returns     = "ptr"
+aliases     = ["job.enqueue", "queue.enqueue"]
+hosts       = ["server"]
+description = "Enqueue a job for immediate execution: jobName, argsJson. Returns generated job ID."
+
+[[functions]]
+name        = "_job_enqueue_at"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string", "string", "number"]
+returns     = "ptr"
+aliases     = ["job.enqueueAt", "queue.enqueueAt"]
+hosts       = ["server"]
+description = "Schedule a job for a specific Unix epoch timestamp (milliseconds, f64): jobName, argsJson, runAtUnixMs. Returns generated job ID."
+
+[[functions]]
+name        = "_job_cancel"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string"]
+returns     = "boolean"
+aliases     = ["job.cancel"]
+hosts       = ["server"]
+description = "Cancel a pending or running job by ID; returns true if a job was cancelled, false if not found"
+
+[[functions]]
+name        = "_job_status"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string"]
+returns     = "ptr"
+aliases     = ["job.status"]
+hosts       = ["server"]
+description = "Get current job status by ID: 'pending', 'running', 'succeeded', 'failed', or 'cancelled'"
+
+[[functions]]
+name        = "_job_result"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string"]
+returns     = "ptr"
+aliases     = ["job.result"]
+hosts       = ["server"]
+description = "Get job result by ID: JSON result string if succeeded, error message if failed, empty string if pending/running"
+
+[[functions]]
+name        = "_job_current_id"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = []
+returns     = "ptr"
+aliases     = ["job.currentId"]
+hosts       = ["server"]
+description = "Get the current job ID from the request context (only valid inside a job handler)"
+
+[[functions]]
+name        = "_job_current_args"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = []
+returns     = "ptr"
+aliases     = ["job.currentArgs"]
+hosts       = ["server"]
+description = "Get the current job's args JSON from the request context (only valid inside a job handler)"
+
+[[functions]]
+name        = "_job_current_attempt"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = []
+returns     = "i32"
+aliases     = ["job.currentAttempt"]
+hosts       = ["server"]
+description = "Get the current job's attempt number (1-based); only valid inside a job handler"
+
+[[functions]]
+name        = "_job_retry_after"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["i32"]
+returns     = "void"
+aliases     = ["job.retryAfter"]
+hosts       = ["server"]
+description = "Inside a job handler, request retry after a specific delay in milliseconds; overrides default backoff for this attempt"
+
+[[functions]]
+name        = "_job_fail"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string"]
+returns     = "void"
+aliases     = ["job.fail"]
+hosts       = ["server"]
+description = "Inside a job handler, mark the current attempt as failed with an error message"
+
+[[functions]]
+name        = "_job_succeed"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string"]
+returns     = "void"
+aliases     = ["job.succeed"]
+hosts       = ["server"]
+description = "Inside a job handler, mark the current attempt as succeeded with a JSON result string"
+
+[[functions]]
+name        = "_schedule_cron"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string", "string", "string"]
+returns     = "ptr"
+aliases     = ["schedule.cron"]
+hosts       = ["server"]
+description = "Register a cron-scheduled handler: scheduleName, cronExpr (5-field), handlerName. Returns a registration ID or empty string on error."
+
+[[functions]]
+name        = "_schedule_cancel"
+layer       = 3
+category    = "jobs"
+module      = "env"
+params      = ["string"]
+returns     = "boolean"
+aliases     = ["schedule.cancel"]
+hosts       = ["server"]
+description = "Cancel a cron schedule by name; returns true if cancelled, false if not found"
+
+# ============================================================
 # LAYER 3 - SESSION MANAGEMENT (7 functions)
 # ============================================================
 
