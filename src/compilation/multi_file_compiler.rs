@@ -5,7 +5,7 @@
 
 use super::{CompilationModuleId, CompilationUnit, ModuleGraph};
 use crate::ast::SourceLocation;
-use crate::error::CompilerError;
+use crate::error::{CompilerError, ErrorContext, ErrorType};
 use crate::hir::hir_builder::HirBuilder;
 use crate::hir::HirProgram;
 use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
@@ -212,7 +212,18 @@ impl MultiFileCompiler {
 
         let (manifest_info, entry_source, canonical_path) =
             if let Some(ref manifest_dir) = manifest_root {
-                let info = Self::parse_manifest_info(&manifest_source, manifest_dir);
+                let (info, manifest_errors) = Self::parse_manifest_info(
+                    &manifest_source,
+                    manifest_dir,
+                    self.config.plugin_registry.as_ref(),
+                );
+
+                // Migration diagnostics (e.g. BLD-LAYOUT) abort the build
+                // before any file walking so the developer sees the layout
+                // problem before any downstream parse/typecheck errors.
+                if !manifest_errors.is_empty() {
+                    return Err(manifest_errors);
+                }
 
                 // Resolve the actual entry file if declared
                 if let Some(ref ep) = info.entry_path {
@@ -595,27 +606,26 @@ impl MultiFileCompiler {
         source.trim_start().starts_with("package:")
     }
 
-    /// Extract entry: and shared: declarations from a manifest file.
+    /// Extract entry: and shared: declarations from a manifest file, then
+    /// expand `shared_folders` with every directory that the active plugins
+    /// declare ownership of via `[paths].owns` in their plugin.toml.
     ///
-    /// This is a line-level parser — it does not tokenize the full file. It only
-    /// extracts the two fields needed to drive multi-file discovery.
-    fn parse_manifest_info(source: &str, manifest_dir: &Path) -> ManifestInfo {
+    /// The compiler does NOT know any folder names. Ownership of `app/ui/`,
+    /// `app/server/`, etc. lives entirely in plugin manifests — this method
+    /// reads them off the loaded `PluginRegistry`. The only special folder
+    /// path that appears in compiler source is the legacy `app/web/` migration
+    /// detector below, which emits a BLD-LAYOUT diagnostic when a project is
+    /// still on the pre-frame.ui-2.7 layout.
+    fn parse_manifest_info(
+        source: &str,
+        manifest_dir: &Path,
+        plugin_registry: Option<&Arc<PluginRegistry>>,
+    ) -> (ManifestInfo, Vec<CompilerError>) {
         let mut info = ManifestInfo::default();
-        let mut has_web_target = false;
-        let mut has_frame_server = false;
+        let mut errors: Vec<CompilerError> = Vec::new();
 
         for line in source.lines() {
             let trimmed = line.trim();
-
-            // Detect `target: web` so we can auto-add the web root as a shared folder
-            if trimmed == "target: web" || trimmed == "target:web" {
-                has_web_target = true;
-            }
-
-            // Detect frame.server in any plugins: block (at any indentation)
-            if trimmed.contains("frame.server") {
-                has_frame_server = true;
-            }
 
             // shared: [path1, path2, ...]
             if let Some(rest) = trimmed.strip_prefix("shared:") {
@@ -643,53 +653,77 @@ impl MultiFileCompiler {
             }
         }
 
-        // When `target: web` is declared, auto-add the web root as a shared folder
-        // so companion files like routes.cln are discovered without requiring an
-        // explicit shared: declaration.  Convention: entry lives in <web_root>/pages/,
-        // so routes.cln and other companions sit at <web_root>/ (one level above pages/).
-        if has_web_target {
-            if let Some(ref ep) = info.entry_path {
-                if let Some(pages_dir) = ep.parent() {
-                    if pages_dir.file_name().and_then(|n| n.to_str()) == Some("pages") {
-                        if let Some(web_root) = pages_dir.parent() {
-                            let web_root = web_root.to_path_buf();
-                            if web_root.exists() && !info.shared_folders.contains(&web_root) {
-                                info.shared_folders.push(web_root);
-                            }
-                        }
+        // Manifest-driven folder discovery (spec §plugin-contract §1.2).
+        //
+        // Each plugin loaded into the registry has already been selected by
+        // the build pipeline based on the manifest's `plugins:` list. Every
+        // directory it declares via `[paths].owns` becomes a shared folder
+        // for this build, provided the directory actually exists.
+        //
+        // No folder name is hardcoded here. Plugin authors are the single
+        // source of truth for what folders the compiler walks — adding a new
+        // owned folder requires only updating the plugin's plugin.toml.
+        let mut declared_owned: HashSet<String> = HashSet::new();
+        if let Some(registry) = plugin_registry {
+            // `has_frame_server` is consumed by the assemble hook input
+            // (see build_from_file) to flag whether route-registration code
+            // should be generated. Derive it from registry state, not by
+            // string-matching the manifest source.
+            info.has_frame_server = registry.loaded_manifests().contains_key("frame.server");
+
+            for manifest in registry.loaded_manifests().values() {
+                for owned in &manifest.paths.owns {
+                    declared_owned.insert(owned.trim_end_matches('/').to_string());
+                    let dir = manifest_dir.join(owned);
+                    if dir.exists() && !info.shared_folders.contains(&dir) {
+                        info.shared_folders.push(dir);
                     }
                 }
             }
         }
 
-        // When `frame.server` is declared in a `target: web` manifest, auto-add the
-        // server root as a shared folder so API/middleware files are discovered without
-        // requiring an explicit shared: declaration.
-        // Convention: entry lives in <app_root>/web/pages/, server files live in
-        // <app_root>/server/ (sibling of web/).  Derived as web_root.parent()/server.
-        if has_web_target && has_frame_server {
-            if let Some(ref ep) = info.entry_path {
-                if let Some(pages_dir) = ep.parent() {
-                    if pages_dir.file_name().and_then(|n| n.to_str()) == Some("pages") {
-                        if let Some(web_root) = pages_dir.parent() {
-                            if let Some(app_root) = web_root.parent() {
-                                let server_root = app_root.join("server");
-                                if server_root.exists()
-                                    && !info.shared_folders.contains(&server_root)
-                                {
-                                    info.shared_folders.push(server_root);
-                                }
-                            }
-                        }
-                    }
-                }
+        // Migration diagnostic (BLD-LAYOUT).
+        //
+        // The pre-frame.ui-2.7 layout placed pages under `app/web/pages/`.
+        // The new layout (declared by an upgraded frame.ui manifest) nests
+        // every render target under `app/ui/`, so the same pages live at
+        // `app/ui/web/pages/`. When a project still has files in the legacy
+        // location AND the active plugins describe the new layout, emit a
+        // hard error directing the developer to reorganize the tree.
+        //
+        // This is the only place in the compiler where the literal
+        // string "app/web" appears: it is the migration anchor, not a
+        // discovery rule.
+        // BLD-LAYOUT-MIGRATION-ANCHOR: legacy layout detection.
+        let legacy_pages = manifest_dir.join("app").join("web").join("pages"); // BLD-LAYOUT-MIGRATION-ANCHOR
+        let new_pages = manifest_dir
+            .join("app")
+            .join("ui")
+            .join("web")
+            .join("pages"); // BLD-LAYOUT-MIGRATION-ANCHOR
+        if legacy_pages.exists() && !new_pages.exists() {
+            let plugins_use_new_layout = declared_owned
+                .iter()
+                .any(|p| p == "app/ui/web" || p.starts_with("app/ui/web/"));
+            if plugins_use_new_layout {
+                let message = "Folder layout out of date: `app/web/` is no longer recognized.\n\
+                     Move:\n  \
+                       `app/web/`                              → `app/ui/web/`\n  \
+                       `app/ui/` (any non-target content)      → `app/ui/shared/`\n\
+                     Update `entry:` in main.cln accordingly. \
+                     See clean-framework PROJECT_STRUCTURE.md for the new layout."
+                    .to_string();
+                errors.push(CompilerError::Validation {
+                    context: Box::new(
+                        ErrorContext::new(message, None, ErrorType::Validation, None)
+                            .with_error_code("BLD-LAYOUT")
+                            .with_suggestion("Run `mv app/web app/ui/web` from the project root."),
+                    ),
+                });
             }
         }
 
-        // Propagate the frame.server flag so build_from_file can generate route registrations.
-        info.has_frame_server = has_frame_server;
-
-        info
+        (info, errors)
     }
 
     /// Recursively collect all .cln files under a directory.
@@ -1384,75 +1418,296 @@ start:
         );
     }
 
+    // =========================================================================
+    // Manifest-driven folder discovery tests
+    //
+    // These tests assert that `parse_manifest_info` reads every active plugin's
+    // `[paths].owns` list out of the registry and includes the directories it
+    // points to. The compiler hardcodes NO folder names — the tests therefore
+    // build synthetic plugin manifests in-memory and verify that whatever those
+    // manifests declare ends up in `shared_folders`.
+    // =========================================================================
+
+    /// Build a synthetic plugin registry with the given (plugin_name, owns_paths)
+    /// pairs. Each manifest is otherwise minimal — only `plugin.paths.owns`
+    /// matters for folder discovery.
+    fn registry_with_owns(entries: &[(&str, &[&str])]) -> Arc<crate::plugins::PluginRegistry> {
+        use crate::plugins::plugin_abi::{
+            PluginCompatibility, PluginHandles, PluginInfo, PluginManifest, PluginPaths,
+        };
+
+        let mut builder = crate::plugins::PluginRegistry::builder()
+            .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off);
+        for (name, owns) in entries {
+            let manifest = PluginManifest {
+                plugin: PluginInfo {
+                    name: (*name).to_string(),
+                    version: "1.0.0".to_string(),
+                    description: "test".to_string(),
+                    author: "test".to_string(),
+                },
+                compatibility: PluginCompatibility::default(),
+                handles: PluginHandles {
+                    blocks: vec![],
+                    expressions: vec![],
+                },
+                exports: Default::default(),
+                bridge: Default::default(),
+                language: Default::default(),
+                ai: Default::default(),
+                paths: PluginPaths {
+                    owns: owns.iter().map(|s| (*s).to_string()).collect(),
+                    auto_create: false,
+                    patterns: vec![],
+                    implicit_import: false,
+                },
+                enforcement: Default::default(),
+                memory: Default::default(),
+                build: Default::default(),
+                lifecycle: Default::default(),
+                artifacts: Vec::new(),
+            };
+            builder = builder.add_manifest((*name).to_string(), manifest);
+        }
+        Arc::new(builder.build().expect("build registry"))
+    }
+
     #[test]
-    fn test_parse_manifest_info_web_target_adds_web_root_as_shared() {
-        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/web/pages/index.cln\n";
+    fn test_parse_manifest_info_uses_plugin_paths_owns() {
+        // A plugin that declares ownership of app/ui/web should cause that
+        // directory to appear in shared_folders without any folder name being
+        // hardcoded in the compiler.
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/ui/web/pages/index.cln\n";
         let tmp = tempfile::tempdir().unwrap();
         let manifest_dir = tmp.path();
 
-        // Create the pages directory so web_root.exists() returns true
-        let web_root = manifest_dir.join("app").join("web");
-        std::fs::create_dir_all(web_root.join("pages")).unwrap();
+        let owned = manifest_dir.join("app").join("ui").join("web");
+        std::fs::create_dir_all(owned.join("pages")).unwrap();
 
-        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+        let registry = registry_with_owns(&[("frame.ui", &["app/ui/web"])]);
+        let (info, errors) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry));
 
+        assert!(errors.is_empty(), "no migration diagnostics expected");
         assert!(
-            info.shared_folders.contains(&web_root),
-            "web root app/web/ should be auto-added as shared folder for target: web"
+            info.shared_folders.contains(&owned),
+            "directory declared in [paths].owns should be added to shared_folders"
         );
     }
 
     #[test]
-    fn test_parse_manifest_info_no_web_target_no_auto_shared() {
+    fn test_parse_manifest_info_skips_undeclared_directories() {
+        // A directory that no loaded plugin declares ownership of must NOT be
+        // auto-included, even if it exists on disk. This is the spec-parity
+        // check: discovery is manifest-driven, not filesystem-driven.
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/ui/web/pages/index.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+
+        std::fs::create_dir_all(
+            manifest_dir
+                .join("app")
+                .join("ui")
+                .join("web")
+                .join("pages"),
+        )
+        .unwrap();
+        // Create an unrelated directory the plugin does NOT own.
+        let unowned = manifest_dir.join("app").join("server");
+        std::fs::create_dir_all(&unowned).unwrap();
+
+        let registry = registry_with_owns(&[("frame.ui", &["app/ui/web"])]);
+        let (info, errors) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry));
+
+        assert!(errors.is_empty());
+        assert!(
+            !info.shared_folders.contains(&unowned),
+            "directories not declared in any plugin's [paths].owns must not be auto-included"
+        );
+    }
+
+    #[test]
+    fn test_parse_manifest_info_no_registry_no_auto_shared() {
+        // Without a plugin registry there is no source of folder ownership,
+        // so nothing is auto-discovered beyond explicit `shared:` declarations.
         let manifest = "package: Test\n\tentry: src/main.cln\n";
         let tmp = tempfile::tempdir().unwrap();
         let manifest_dir = tmp.path();
         std::fs::create_dir_all(manifest_dir.join("src")).unwrap();
 
-        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+        let (info, errors) = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, None);
 
+        assert!(errors.is_empty());
         assert!(
             info.shared_folders.is_empty(),
-            "no target: web means no auto-shared folder"
+            "without plugins, no auto-shared folder"
         );
     }
 
     #[test]
-    fn test_parse_manifest_info_frame_server_adds_server_root_as_shared() {
-        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/web/pages/index.cln\n";
+    fn test_parse_manifest_info_has_frame_server_flag_tracks_registry() {
+        // The `has_frame_server` flag (consumed by the assemble hook) must be
+        // true iff the registry has loaded `frame.server` — derived from
+        // registry state, not from string-matching the manifest text.
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/ui/web/pages/index.cln\n";
         let tmp = tempfile::tempdir().unwrap();
         let manifest_dir = tmp.path();
+        std::fs::create_dir_all(
+            manifest_dir
+                .join("app")
+                .join("ui")
+                .join("web")
+                .join("pages"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(manifest_dir.join("app").join("server")).unwrap();
 
-        // Create the directory structure so exists() checks pass
+        let registry_with = registry_with_owns(&[
+            ("frame.ui", &["app/ui/web"]),
+            ("frame.server", &["app/server"]),
+        ]);
+        let (info_with, _) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry_with));
+        assert!(info_with.has_frame_server);
+
+        let registry_without = registry_with_owns(&[("frame.ui", &["app/ui/web"])]);
+        let (info_without, _) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry_without));
+        assert!(!info_without.has_frame_server);
+    }
+
+    #[test]
+    fn test_parse_manifest_info_bld_layout_fires_on_legacy_tree() {
+        // Project still has app/web/pages/ on disk; active plugins describe
+        // the new app/ui/web/ layout. Expected: BLD-LAYOUT migration error.
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/web/pages/index.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
         std::fs::create_dir_all(manifest_dir.join("app").join("web").join("pages")).unwrap();
-        let server_root = manifest_dir.join("app").join("server");
-        std::fs::create_dir_all(&server_root).unwrap();
 
-        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+        let registry = registry_with_owns(&[("frame.ui", &["app/ui/web", "app/ui/web/pages"])]);
+        let (_info, errors) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry));
 
+        let has_bld_layout = errors.iter().any(|e| match e {
+            CompilerError::Validation { context } => {
+                context.error_code.as_deref() == Some("BLD-LAYOUT")
+            }
+            _ => false,
+        });
         assert!(
-            info.shared_folders.contains(&server_root),
-            "app/server/ should be auto-added as shared folder when frame.server is declared"
+            has_bld_layout,
+            "expected BLD-LAYOUT diagnostic when project is on legacy layout but plugins use new layout"
         );
     }
 
     #[test]
-    fn test_parse_manifest_info_no_frame_server_no_server_root() {
-        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.data]\n\t\tentry: app/web/pages/index.cln\n";
+    fn test_parse_manifest_info_bld_layout_silent_on_current_layout() {
+        // Project on legacy layout, plugins also on legacy layout → no migration.
+        // This is the today-case: shipping the manifest-driven discovery without
+        // breaking projects that haven't updated yet.
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/web/pages/index.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+        std::fs::create_dir_all(manifest_dir.join("app").join("web").join("pages")).unwrap();
+
+        let registry = registry_with_owns(&[("frame.ui", &["app/ui", "app/web", "app/web/pages"])]);
+        let (_info, errors) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry));
+
+        let has_bld_layout = errors.iter().any(|e| match e {
+            CompilerError::Validation { context } => {
+                context.error_code.as_deref() == Some("BLD-LAYOUT")
+            }
+            _ => false,
+        });
+        assert!(
+            !has_bld_layout,
+            "BLD-LAYOUT must not fire when active plugins still claim ownership of the legacy paths"
+        );
+    }
+
+    #[test]
+    fn test_parse_manifest_info_second_plugin_picked_up_without_compiler_change() {
+        // Regression guard for §D in the cross-component prompt:
+        // a never-before-seen folder declared by a plugin's [paths].owns
+        // must be discovered with zero compiler changes.
+        let manifest = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/ui/web/pages/index.cln\n";
         let tmp = tempfile::tempdir().unwrap();
         let manifest_dir = tmp.path();
 
-        std::fs::create_dir_all(manifest_dir.join("app").join("web").join("pages")).unwrap();
-        // Create the server dir so existence isn't the deciding factor
-        let server_root = manifest_dir.join("app").join("server");
-        std::fs::create_dir_all(&server_root).unwrap();
+        let fictional = manifest_dir.join("app").join("ui").join("desktop");
+        std::fs::create_dir_all(&fictional).unwrap();
+        std::fs::create_dir_all(
+            manifest_dir
+                .join("app")
+                .join("ui")
+                .join("web")
+                .join("pages"),
+        )
+        .unwrap();
 
-        let info = MultiFileCompiler::parse_manifest_info(manifest, manifest_dir);
+        let registry = registry_with_owns(&[("frame.ui", &["app/ui/web", "app/ui/desktop"])]);
+        let (info, errors) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry));
 
+        assert!(errors.is_empty());
         assert!(
-            !info.shared_folders.contains(&server_root),
-            "app/server/ should NOT be auto-added when frame.server is not declared"
+            info.shared_folders.contains(&fictional),
+            "a folder declared by a plugin's manifest must be auto-discovered without compiler changes"
         );
+    }
+
+    /// Architecture-check regression test (cross-component prompt §D).
+    ///
+    /// The compiler's file-discovery code path must not contain literal folder
+    /// names — those belong in plugin manifests. The only allowed string
+    /// literals in `multi_file_compiler.rs` related to the legacy layout are
+    /// the BLD-LAYOUT migration anchor strings (the literal `"app/web"`
+    /// directory path used to detect the legacy layout), which are explicitly
+    /// scoped to the migration diagnostic.
+    #[test]
+    fn test_no_hardcoded_folder_names_in_discovery() {
+        // Forbidden literal segments. These names should ONLY come from plugin
+        // manifests, never from compiler source.
+        const FORBIDDEN: &[&str] = &[
+            "\"pages\"",
+            "\"server\"",
+            "\"api\"",
+            "\"models\"",
+            "\"middleware\"",
+            "\"layouts\"",
+            "\"components\"",
+            "\"migrations\"",
+            "\"seeds\"",
+        ];
+
+        let src = include_str!("multi_file_compiler.rs");
+
+        // Strip the #[cfg(test)] module — fixtures and assertions legitimately
+        // contain these literals and would create false positives. The scan
+        // targets only the production discovery code.
+        let production_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+
+        // Lines tagged `BLD-LAYOUT-MIGRATION-ANCHOR` are the deliberately-scoped
+        // legacy path strings used by the migration diagnostic per prompt §B —
+        // the only allowed appearance of folder names in production code.
+        let scanned: String = production_src
+            .lines()
+            .filter(|line| !line.contains("BLD-LAYOUT-MIGRATION-ANCHOR"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for needle in FORBIDDEN {
+            assert!(
+                !scanned.contains(needle),
+                "compiler production code contains hardcoded folder name `{}`; \
+                 folder ownership must come from plugin manifests ([paths].owns), \
+                 not compiler source",
+                needle
+            );
+        }
     }
 
     // Deleted: test_page_companion_load_functions_are_prefixed_to_avoid_collision

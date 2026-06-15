@@ -165,6 +165,35 @@ that predate the `assemble` export.
 
 ---
 
+## 🟢 OPEN: MCP-DOCS-HARDCODED-PATHS — `get_app_structure` / `get_quick_reference` documentation strings still cite `app/web/...`
+
+**Priority**: LOW
+**Discovered**: 2026-06-15 (while implementing manifest-driven folder discovery)
+**Files**: `src/mcp/server.rs` lines ~3476, ~3478, ~3487, ~3495, ~3604, ~3606, ~3608, ~3642, ~3671, ~3672, ~3914-3916, ~3934, ~3939
+
+**Issue**: After the `[paths].owns`-driven discovery landed, the compiler no longer
+hardcodes folder names — but the long-form documentation strings returned by MCP tools
+`get_app_structure` and `get_quick_reference` still describe `app/web/pages/`,
+`app/web/components/`, `app/web/layouts/` etc. as canonical locations. AI assistants
+reading these strings will continue to recommend the legacy layout even after
+frame.ui ships its `app/ui/web/...` migration.
+
+**Fix options** (per cross-component prompt §"Files to change" / `src/mcp/server.rs`):
+1. Remove the path examples and describe the layout conceptually (`pages folder`,
+   `components folder`) without nailing down a path.
+2. Fetch the path examples from `PluginRegistry::loaded_manifests()[name].paths.owns`
+   at MCP tool invocation time. Requires plumbing a registry handle into the tool
+   handlers (currently they're stateless).
+
+**Why deferred**: option 2 needs a registry handle in MCP tool context that doesn't
+exist today; option 1 is a documentation rewrite that's best done in coordination
+with the framework's `app/ui/web/...` rollout (so the docs flip from old to new
+without a transient "everything stripped" state).
+
+**Cross-component anchor**: `foundation/management/cross-component-prompts/compiler-app-ui-render-target-nesting.md` §"Files to change" — this entry tracks the deferred half of that prompt.
+
+---
+
 ## 🟢 OPEN: SYNC-LIST-PUSH — Redundant `list.push` host import shadowed by native local
 
 **Priority**: LOW

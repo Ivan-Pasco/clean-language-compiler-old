@@ -2673,7 +2673,7 @@ fn tool_list_builtins(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
             SymbolKind::Class { methods, .. } => {
                 let mut methods_arr: Vec<serde_json::Value> = Vec::new();
                 for m_id in methods {
-                    if let Some((m_name, m_params, m_ret)) = function_json(&m_id) {
+                    if let Some((m_name, m_params, m_ret)) = function_json(m_id) {
                         methods_arr.push(json!({
                             "name": m_name,
                             "parameters": m_params,
@@ -2694,7 +2694,7 @@ fn tool_list_builtins(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
                 }
                 let mut funcs_arr: Vec<serde_json::Value> = Vec::new();
                 for f_id in functions {
-                    if let Some((f_name, f_params, f_ret)) = function_json(&f_id) {
+                    if let Some((f_name, f_params, f_ret)) = function_json(f_id) {
                         funcs_arr.push(json!({
                             "name": f_name,
                             "parameters": f_params,

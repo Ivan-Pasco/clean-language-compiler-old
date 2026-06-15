@@ -1485,14 +1485,13 @@ impl PluginRegistryBuilder {
         }
 
         // Registry conformance validation — gated per-plugin via the
-        // CLEAN_PLUGIN_REGISTRY_VALIDATION env var. Default is `off` so a
-        // freshly-installed cln binary does not break on existing drift while
-        // the cross-component cleanup tracked in
-        // foundation/management/cross-component-prompts/ lands.
+        // CLEAN_PLUGIN_REGISTRY_VALIDATION env var. Default (unset) is `all`:
+        // every plugin manifest must match foundation/platform-architecture/
+        // function-registry.toml at WASM-shape level.
         //
-        // Set to `all` once the registry covers every plugin's declarations,
-        // or to a comma-separated allowlist (e.g. `frame.data,frame.auth`) to
-        // enforce per-plugin as each framework prompt resolves. See
+        // Set explicitly to `"off"` for emergency triage when a brand-new
+        // plugin/registry edit is mid-flight, or to a comma-separated allowlist
+        // (e.g. `frame.data,frame.auth`) to narrow the scope. See
         // `registry_loader::ValidationPolicy` for the grammar.
         let policy = self
             .validation_policy

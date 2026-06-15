@@ -1399,9 +1399,9 @@ impl MirCodeGenerator<'_> {
             .bridge_functions
             .iter()
             .filter(|bf| {
-                bf.hosts.as_deref().map_or(false, |hosts| {
-                    !hosts.iter().any(|h| h == "browser" || h == "all")
-                })
+                bf.hosts
+                    .as_deref()
+                    .is_some_and(|hosts| !hosts.iter().any(|h| h == "browser" || h == "all"))
             })
             .map(|bf| bf.name.clone())
             .collect();

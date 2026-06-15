@@ -41,6 +41,11 @@ jobs:
       run: cargo build --verbose
 
     - name: Run tests
+      env:
+        # Lock the plugin-registry drift gate to ON in CI, independent of the
+        # in-code default. Set to `off` only for an emergency green build while
+        # cross-component cleanup is mid-flight; never check `off` into main.
+        CLEAN_PLUGIN_REGISTRY_VALIDATION: all
       run: cargo test --verbose
 
     - name: Test cln binary
