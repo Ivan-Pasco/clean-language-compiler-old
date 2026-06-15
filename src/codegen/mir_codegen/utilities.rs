@@ -1387,6 +1387,25 @@ impl MirCodeGenerator<'_> {
                 .map(|(sym, f)| (f.name.clone(), *sym))
                 .collect();
 
+        // Layer-3 (server-only) bridge names sourced from plugin manifests.
+        // Replaces the previous hardcoded `_http_*`, `_req_*`, … prefix list
+        // (BUILTIN-NAMESPACE-OVERREACH). A bridge is server-only when its
+        // `hosts` field is set and excludes both `"all"` and `"browser"`.
+        // Calls to these names appearing inside dead code are intentionally
+        // excluded from the reachable-names set so server imports are not
+        // pulled into builds whose start: never invokes them (Import
+        // Minimality Rule, GEN003).
+        let server_only_bridge_names: HashSet<String> = self
+            .bridge_functions
+            .iter()
+            .filter(|bf| {
+                bf.hosts.as_deref().map_or(false, |hosts| {
+                    !hosts.iter().any(|h| h == "browser" || h == "all")
+                })
+            })
+            .map(|bf| bf.name.clone())
+            .collect();
+
         // Seed the BFS worklist with the program entry point and every
         // exported function (route handlers, page handlers, _run_tests wrapper).
         // Only functions reachable from these roots contribute bridge imports.
@@ -1655,19 +1674,15 @@ impl MirCodeGenerator<'_> {
                         // User endpoint handlers (e.g. getTimestamp) may call Layer2
                         // bridge functions (time.now, db.query) without being reachable
                         // from start: via BFS. We include these here so their imports
-                        // are registered. Layer3 server imports (_http_*, _req_*,
-                        // _res_*, _session_*, _auth_*) are intentionally excluded —
-                        // they are only registered when reachable from a seeded entry
-                        // point (Import Minimality Rule, GEN003).
+                        // are registered. Server-only bridges (identified by their
+                        // plugin manifest `hosts` field excluding "browser"/"all")
+                        // are intentionally excluded — they only register when
+                        // reachable from a seeded entry point (Import Minimality
+                        // Rule, GEN003). See `server_only_bridge_names` above.
                         MirOperation::Call {
                             function: MirOperand::NamedFunction { name, .. },
                             ..
-                        } if !name.starts_with("_http_")
-                            && !name.starts_with("_req_")
-                            && !name.starts_with("_res_")
-                            && !name.starts_with("_session_")
-                            && !name.starts_with("_auth_") =>
-                        {
+                        } if !server_only_bridge_names.contains(name) => {
                             insert_name(&mut names, name);
                         }
                         MirOperation::BinaryOp {

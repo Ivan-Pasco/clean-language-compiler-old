@@ -1,18 +1,11 @@
-//! Centralized Builtin Registry
+//! Builtin Type Descriptors
 //!
-//! This module provides a single source of truth for all builtin functions
-//! in the Clean Language compiler. Previously, builtins were registered in
-//! three separate places with potentially inconsistent signatures:
-//! - `src/resolver/symbol_table.rs` (add_builtins)
-//! - `src/typechecker/type_inference.rs` (initialize_builtins)
-//! - `src/stdlib/mod.rs` (register_functions)
-//!
-//! This registry unifies all definitions and provides conversion methods
-//! for each compiler stage.
+//! Hosts the `BuiltinType` enum used by the bridge function ABI. Historically
+//! this module also re-exported `BuiltinRegistry` and its companion types
+//! (`BuiltinFunction`, `BuiltinClass`, etc.); those were removed in 0.30.289
+//! as part of BUILTIN-NAMESPACE-OVERREACH sub-finding D-MCP-1. Builtin
+//! signatures now live in exactly one place: `src/resolver/symbol_table.rs`.
 
 pub mod registry;
 
-pub use registry::{
-    BuiltinCategory, BuiltinClass, BuiltinFunction, BuiltinMethod, BuiltinNamespace,
-    BuiltinRegistry, BuiltinType,
-};
+pub use registry::BuiltinType;

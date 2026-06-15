@@ -63,8 +63,6 @@ const PLUGIN_BRIDGE_PREFIXES: &[&str] = &[
 const EXEMPT_FILES: &[&str] = &[
     // Plugin abstraction layer — owns the contract:
     "src/plugins/",
-    // Single approved namespace registry (language-builtin namespaces):
-    "src/builtins/registry.rs",
     // Binaries: debug tools and test runners may register host stubs:
     "src/bin/",
     // KNOWN VIOLATION (tracked under BUILTIN-NAMESPACE-OVERREACH):
@@ -87,11 +85,9 @@ const EXEMPT_FILES: &[&str] = &[
     // `[bridge]` declarations. Fixing requires the resolver to receive a
     // plugin registry handle during symbol-table seeding.
     "src/resolver/symbol_table.rs",
-    // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding B):
-    // MIR codegen utilities hardcode WASM signatures for plugin bridges
-    // (`_req_*`, `_session_*`, `_auth_*`, `_res_*`, `_http_*`) instead of
-    // deriving them from plugin.toml. Same refactor as sub-finding A.
-    "src/codegen/mir_codegen/utilities.rs",
+    // Note: src/codegen/mir_codegen/utilities.rs (formerly sub-finding B) was
+    // cleared in 0.30.289 — `register_http_server_wrappers` deleted (0.30.288)
+    // and the Layer-3 prefix classifier replaced with a bridge_functions lookup.
     // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding C):
     // Codegen module builder hardcodes `db.begin/commit/rollback` →
     // `_db_begin/_db_commit/_db_rollback` aliasing instead of reading

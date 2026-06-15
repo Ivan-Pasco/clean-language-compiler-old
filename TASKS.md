@@ -11,13 +11,13 @@
 | Sub-finding | Status | Owner |
 |---|---|---|
 | Sub-B (register_http_server_wrappers) | ✅ Done in 0.30.288 — dead code deleted (~180 LOC) | compiler |
+| Sub-D-MCP-1 (BuiltinRegistry) | ✅ Done in 0.30.289 — deleted, MCP rewired to SymbolTable (~1670 LOC) | compiler |
+| Layer-3 prefix classifier (utilities.rs:1665-1669) | ✅ Done in 0.30.289 — bridge_functions lookup replaces hardcoded prefixes | compiler |
 | Sub-A (resolver/symbol_table.rs req.*/auth.*) | ⏸ Blocked on framework plugin.toml updates | cross-component |
 | Sub-B-rest (register_http_imports server bridges) | ⏸ Blocked on framework plugin.toml updates (or test-helper redesign) | cross-component |
 | Sub-C (register_db_builtin_wrappers) | ⏸ Blocked on frame.data plugin.toml adding `maps_to` entries for db.begin/commit/rollback | cross-component |
-| Sub-D-MCP-1 (BuiltinRegistry) | 🟢 Compiler-only ready, ~1744 LOC delete | compiler |
 | Sub-D-MCP-2 (MCP plugin lists) | 🟡 Needs runtime plugin loading design | compiler |
-| Sub-E (runtime/host_functions.rs stubs) | 🟢 Compiler-only ready, test-only impact | compiler |
-| Layer-3 prefix classifier (utilities.rs:1665-1669) | 🟢 Compiler-only ready, small refactor | compiler |
+| Sub-E (runtime/host_functions.rs stubs) | 🟡 Needs WASM-import-section inspection (extract bridge signatures from loaded .wasm at runner startup, register zero-value stubs for each missing import). Bigger lift than expected; deferred. | compiler |
 
 **Directions to continue** (when next picking this up):
 

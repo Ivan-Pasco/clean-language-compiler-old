@@ -6,8 +6,8 @@
  */
 
 use super::protocol::{error_codes, JsonRpcRequest, JsonRpcResponse, Tool, ToolInputSchema};
-use crate::builtins::registry::BuiltinRegistry;
 use crate::plugins::PluginDiscovery;
+use crate::resolver::symbol_table::{GlobalSymbolTable, SymbolKind};
 use crate::{compile_source_with_detected_plugins, parse_to_ast, type_check, VERSION};
 use lazy_static::lazy_static;
 use serde_json::json;
@@ -2584,105 +2584,142 @@ fn tool_get_specification(id: serde_json::Value, args: &serde_json::Value) -> Js
     )
 }
 
-/// Tool: list_builtins - List all built-in functions, classes, and namespaces
+/// Tool: list_builtins - List all built-in functions, classes, and namespaces.
+///
+/// Source of truth: a freshly-constructed `SymbolTable`. The compiler's
+/// resolver uses the same table when type-checking calls, so MCP introspection
+/// stays in lockstep with what actually compiles. Replaced the parallel
+/// `BuiltinRegistry` hardcoded list in 0.30.289 (BUILTIN-NAMESPACE-OVERREACH
+/// sub-finding D-MCP-1).
+///
+/// Accepted regressions vs. the old `BuiltinRegistry`:
+///   * No `BuiltinCategory` filter (Math/String/List/…). The `category` field
+///     in arguments is now ignored. The IDE rarely filters on this.
+///   * No `is_static` distinction on class methods. SymbolTable's
+///     `SymbolKind::Method` does not track static-vs-instance; the field is
+///     omitted from the response.
 fn tool_list_builtins(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
-    let category_filter = args.get("category").and_then(|v| v.as_str());
     let namespace_filter = args.get("namespace").and_then(|v| v.as_str());
 
-    let registry = BuiltinRegistry::new();
-    let (global_count, class_count, namespace_count, total_methods) = registry.stats();
+    let table = GlobalSymbolTable::new();
+    let all_symbols = table.all_symbols();
 
-    // Build global functions list
-    let mut global_functions = Vec::new();
-    for (name, func) in registry.functions.iter() {
-        // Filter by category if specified
-        if let Some(cat) = category_filter {
-            let cat_lower = cat.to_lowercase();
-            let func_cat = format!("{:?}", func.category).to_lowercase();
-            if !func_cat.contains(&cat_lower) {
-                continue;
+    // Resolve a SymbolId to (name, params_json, return_type_json) when the
+    // symbol is a Function or Method.
+    let function_json =
+        |sym_id: &crate::resolver::SymbolId| -> Option<(String, Vec<String>, String)> {
+            let sym = all_symbols.get(sym_id)?;
+            match &sym.kind {
+                SymbolKind::Function {
+                    parameters,
+                    return_type,
+                } => {
+                    let params = parameters
+                        .iter()
+                        .map(|p| format!("{p:?}"))
+                        .collect::<Vec<_>>();
+                    let ret = return_type
+                        .as_ref()
+                        .map(|t| format!("{t:?}"))
+                        .unwrap_or_else(|| "Void".to_string());
+                    Some((sym.name.clone(), params, ret))
+                }
+                SymbolKind::Method {
+                    parameters,
+                    return_type,
+                    ..
+                } => {
+                    let params = parameters
+                        .iter()
+                        .map(|p| format!("{p:?}"))
+                        .collect::<Vec<_>>();
+                    let ret = format!("{return_type:?}");
+                    Some((sym.name.clone(), params, ret))
+                }
+                _ => None,
             }
+        };
+
+    let mut global_functions: Vec<serde_json::Value> = Vec::new();
+    let mut classes_json: Vec<serde_json::Value> = Vec::new();
+    let mut namespaces_json: Vec<serde_json::Value> = Vec::new();
+
+    for (sid, symbol) in all_symbols.iter() {
+        if !table.is_builtin(*sid) {
+            continue;
         }
-
-        let params: Vec<String> = func.parameters.iter().map(|p| format!("{:?}", p)).collect();
-
-        global_functions.push(json!({
-            "name": name,
-            "parameters": params,
-            "return_type": format!("{:?}", func.return_type),
-            "category": format!("{:?}", func.category)
-        }));
-    }
-
-    // Build namespaces list
-    let mut namespaces = Vec::new();
-    for (ns_name, ns) in registry.namespaces.iter() {
-        // Filter by namespace if specified
-        if let Some(ns_filter) = namespace_filter {
-            if !ns_name.eq_ignore_ascii_case(ns_filter) {
-                continue;
-            }
-        }
-
-        let mut ns_functions = Vec::new();
-        for func in ns.functions.iter() {
-            // Filter by category if specified
-            if let Some(cat) = category_filter {
-                let cat_lower = cat.to_lowercase();
-                let func_cat = format!("{:?}", func.category).to_lowercase();
-                if !func_cat.contains(&cat_lower) {
+        match &symbol.kind {
+            SymbolKind::Function {
+                parameters,
+                return_type,
+            } => {
+                // Filter out namespace-qualified names (e.g. "math.sin") —
+                // those are surfaced under the namespace section below to
+                // avoid double-listing.
+                if symbol.name.contains('.') {
                     continue;
                 }
+                let params: Vec<String> = parameters.iter().map(|p| format!("{p:?}")).collect();
+                let ret = return_type
+                    .as_ref()
+                    .map(|t| format!("{t:?}"))
+                    .unwrap_or_else(|| "Void".to_string());
+                global_functions.push(json!({
+                    "name": symbol.name,
+                    "parameters": params,
+                    "return_type": ret,
+                }));
             }
-
-            let params: Vec<String> = func.parameters.iter().map(|p| format!("{:?}", p)).collect();
-
-            ns_functions.push(json!({
-                "name": func.name,
-                "parameters": params,
-                "return_type": format!("{:?}", func.return_type),
-                "category": format!("{:?}", func.category)
-            }));
-        }
-
-        if !ns_functions.is_empty() || namespace_filter.is_some() {
-            namespaces.push(json!({
-                "name": ns_name,
-                "functions": ns_functions
-            }));
+            SymbolKind::Class { methods, .. } => {
+                let mut methods_arr: Vec<serde_json::Value> = Vec::new();
+                for m_id in methods {
+                    if let Some((m_name, m_params, m_ret)) = function_json(&m_id) {
+                        methods_arr.push(json!({
+                            "name": m_name,
+                            "parameters": m_params,
+                            "return_type": m_ret,
+                        }));
+                    }
+                }
+                classes_json.push(json!({
+                    "name": symbol.name,
+                    "methods": methods_arr,
+                }));
+            }
+            SymbolKind::Namespace { functions } => {
+                if let Some(filter) = namespace_filter {
+                    if !symbol.name.eq_ignore_ascii_case(filter) {
+                        continue;
+                    }
+                }
+                let mut funcs_arr: Vec<serde_json::Value> = Vec::new();
+                for f_id in functions {
+                    if let Some((f_name, f_params, f_ret)) = function_json(&f_id) {
+                        funcs_arr.push(json!({
+                            "name": f_name,
+                            "parameters": f_params,
+                            "return_type": f_ret,
+                        }));
+                    }
+                }
+                namespaces_json.push(json!({
+                    "name": symbol.name,
+                    "functions": funcs_arr,
+                }));
+            }
+            _ => {}
         }
     }
 
-    // Build classes list
-    let mut classes = Vec::new();
-    for (class_name, class) in registry.classes.iter() {
-        let mut methods = Vec::new();
-        for method in class.methods.iter() {
-            let params: Vec<String> = method
-                .parameters
-                .iter()
-                .map(|p| format!("{:?}", p))
-                .collect();
-
-            methods.push(json!({
-                "name": method.name,
-                "parameters": params,
-                "return_type": format!("{:?}", method.return_type),
-                "is_static": method.is_static
-            }));
-        }
-
-        classes.push(json!({
-            "name": class_name,
-            "methods": methods
-        }));
-    }
-
+    let total_methods: usize = classes_json
+        .iter()
+        .filter_map(|c| c.get("methods").and_then(|m| m.as_array()).map(Vec::len))
+        .sum();
     let summary = json!({
-        "global_functions": global_count,
-        "classes": class_count,
-        "namespaces": namespace_count,
-        "total_methods": total_methods
+        "global_functions": global_functions.len(),
+        "classes": classes_json.len(),
+        "namespaces": namespaces_json.len(),
+        "total_methods": total_methods,
     });
 
     JsonRpcResponse::success(
@@ -2691,8 +2728,8 @@ fn tool_list_builtins(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
             "success": true,
             "summary": summary,
             "global_functions": global_functions,
-            "namespaces": namespaces,
-            "classes": classes
+            "namespaces": namespaces_json,
+            "classes": classes_json,
         }),
     )
 }

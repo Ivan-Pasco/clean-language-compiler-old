@@ -746,18 +746,6 @@ impl BridgeFunction {
     pub fn get_return_type(&self) -> crate::builtins::registry::BuiltinType {
         Self::parse_type(&self.returns)
     }
-
-    /// Convert to BuiltinFunction for registry registration
-    pub fn to_builtin_function(&self) -> crate::builtins::registry::BuiltinFunction {
-        use crate::builtins::registry::{BuiltinCategory, BuiltinFunction};
-        BuiltinFunction::new(
-            &self.name,
-            self.get_param_types(),
-            self.get_return_type(),
-            BuiltinCategory::Http, // Use Http category for plugin bridge functions
-        )
-        .with_wasm_import(&self.module, &self.name)
-    }
 }
 
 /// Plugin ABI version
