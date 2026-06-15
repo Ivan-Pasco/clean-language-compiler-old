@@ -3001,13 +3001,13 @@ nums.remove(0)             // remove at index
 boolean has = nums.contains(3)
 list<integer> sorted = nums.sort()
 
-// List behaviors (set .type property)
-list<string> queue = []
-queue.type = "line"        // FIFO queue: add to back, remove from front
-list<string> stack = []
-stack.type = "pile"        // LIFO stack: add/remove from top
-list<string> unique = []
-unique.type = "unique"     // Set: no duplicates allowed
+// List behaviors — declared as a TYPE SUFFIX on the list type
+list<string>.line queue = []      // FIFO queue: add to back, remove from front
+list<string>.pile stack = []      // LIFO stack: add/remove from top
+list<string>.unique names = []    // Set: no duplicates allowed
+
+// Combined behaviors (canonical order: .line then .unique then .pile)
+list<integer>.line.unique uniqueQueue = []
 ```
 
 ## Classes
@@ -3053,6 +3053,40 @@ class Dog is Animal
 		string speak()
 			return name + " barks"
 ```
+
+## Event Handlers (events: class section)
+Classes can declare an `events:` block sibling to `functions:` for UI event handlers (frame.ui components, etc.). Event-handler methods use a distinct signature: bare `name(params):` form — NO return type, trailing colon required. Parameters use `name [: type]` form.
+
+The compiler tags each `events:` method with `FunctionModifier::EventHandler`. After expansion, the compiler emits a bare-named top-level dispatch function per event method (when the class has a matching `state:` block instance), so the browser loader's `instance.exports[handlerName]()` lookup succeeds.
+
+```
+class FormatToolbar
+	events:
+		onMount():
+			printl("mounted")
+		fmt_bold():
+			printl("bold clicked")
+		fmt_italic():
+			printl("italic clicked")
+
+state:
+	FormatToolbar instance = FormatToolbar()
+
+start:
+	// Direct method call works as normal:
+	instance.onMount()
+	// Bare-name shim works too (used by the browser loader):
+	fmt_bold()
+	fmt_italic()
+```
+
+## Environment Variables
+Use `env.get("VAR_NAME")` — the single canonical form for reading environment variables. Do NOT use `$VAR` or `env("VAR")` shortcuts; they were removed in 2026-06-15.
+```
+string dbHost = env.get("DB_HOST")
+string apiKey = env.get("API_KEY") default ""
+```
+This form is also accepted inside plugin config blocks (`frame.auth` JWT secret, `frame.server` mail values, etc.).
 
 ## State Management
 Top-level reactive state — persists for app lifetime.
@@ -3441,7 +3475,7 @@ For sections with repeating items (cards, lists, grids):
 
 2. Query count:
     string count_sql = "SELECT CAST(COUNT(*) AS CHAR) as cnt FROM ... JSON_TABLE(...)"
-    integer count = json_get(db.query(count_sql, params), "cnt").toInteger()
+    integer count = json.get(db.query(count_sql, params), "cnt").toInteger()
 
 3. Iterate and render:
     string items_html = ""
