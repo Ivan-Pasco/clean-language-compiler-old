@@ -830,6 +830,99 @@ aliases     = ["db.register_migration"]
 description = "Register a migration (name, up_sql, down_sql); queued and applied in order before first request; returns 1 on success, 0 on error"
 
 # ============================================================
+# LAYER 2 - DATABASE EXTENDED (8 functions — configure, pagination, migrations)
+# Implemented in clean-server commit df36523 (2026-06-15).
+# ============================================================
+
+[[functions]]
+name        = "_db_configure"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = ["string"]
+returns     = "i32"
+aliases     = ["db.configure"]
+hosts       = ["server"]
+description = "Configure the database connection pool from JSON config object; returns 0 on success, -1 on error"
+
+[[functions]]
+name        = "_db_paginate"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = ["string", "string", "integer", "integer"]
+returns     = "ptr"
+aliases     = ["db.paginate"]
+hosts       = ["server"]
+description = "Offset-based paginated query: model table name, where JSON, page (1-based), per-page count. Returns PagedResult JSON."
+
+[[functions]]
+name        = "_db_cursor_page"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = ["string", "string", "integer", "string", "string"]
+returns     = "ptr"
+aliases     = ["db.cursorPage"]
+hosts       = ["server"]
+description = "Cursor-based paginated query: model table name, where JSON, per-page count, after-cursor value, cursor field name. Returns CursorResult JSON."
+
+[[functions]]
+name        = "_db_migration_diff"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = ["string", "string"]
+returns     = "ptr"
+aliases     = ["db.migration_diff"]
+hosts       = ["server"]
+description = "Compare declared model fields against live database table schema; returns ALTER TABLE SQL or empty string when in sync"
+
+[[functions]]
+name        = "_db_migration_status"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = []
+returns     = "ptr"
+aliases     = ["db.migration_status"]
+hosts       = ["server"]
+description = "Get JSON array of migration status records (name, applied_at); applied_at is null for pending migrations"
+
+[[functions]]
+name        = "_db_rollback_migration"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = ["string"]
+returns     = "i32"
+aliases     = ["db.rollback_migration"]
+hosts       = ["server"]
+description = "Rollback a specific migration by name; returns 0 on success, -1 on error"
+
+[[functions]]
+name        = "_db_run_migrations"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = []
+returns     = "i32"
+aliases     = ["db.run_migrations"]
+hosts       = ["server"]
+description = "Run all pending registered migrations in version order; returns count of migrations applied or -1 on error"
+
+[[functions]]
+name        = "_db_valid_field"
+layer       = 2
+category    = "database"
+module      = "env"
+params      = ["string", "string"]
+returns     = "boolean"
+aliases     = ["db.valid_field"]
+hosts       = ["server"]
+description = "Return true when the second argument is a valid column name for the table named in the first argument; used for runtime ORDER BY safety checks"
+
+# ============================================================
 # LAYER 2 - FILE I/O (5 functions, all canonical)
 # ============================================================
 
