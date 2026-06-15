@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.30.287"
+version = "0.30.288"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"

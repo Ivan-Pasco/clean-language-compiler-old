@@ -754,10 +754,6 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
-            // HTTP server wrapper functions for string expansion
-            debug_mir!("DEBUG MIR: Registering HTTP server wrapper functions");
-            self.register_http_server_wrappers().map_err(|e| vec![e])?;
-
             // Layer 2 builtin namespace wrappers — created AFTER all imports so
             // WASM function indices are correct (imports before local functions).
             if !self.language_to_bridge_map.contains_key("db.query") {
