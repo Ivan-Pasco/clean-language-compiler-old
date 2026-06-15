@@ -1,5 +1,62 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟡 IN PROGRESS: BUILTIN-NAMESPACE-OVERREACH — consolidate hardcoded plugin-domain knowledge
+
+**Priority**: MEDIUM (priority 56 on dashboard)
+**Dashboard fingerprint**: `cf5bbd0c6c55bd307278e32b9e61f85cb25ff23e970e572e31661c9adf55c192`
+**Cross-component plan**: `foundation/management/cross-component-prompts/all-builtin-namespace-overreach-consolidation.md`
+
+**Status summary**:
+
+| Sub-finding | Status | Owner |
+|---|---|---|
+| Sub-B (register_http_server_wrappers) | ✅ Done in 0.30.288 — dead code deleted (~180 LOC) | compiler |
+| Sub-A (resolver/symbol_table.rs req.*/auth.*) | ⏸ Blocked on framework plugin.toml updates | cross-component |
+| Sub-B-rest (register_http_imports server bridges) | ⏸ Blocked on framework plugin.toml updates (or test-helper redesign) | cross-component |
+| Sub-C (register_db_builtin_wrappers) | ⏸ Blocked on frame.data plugin.toml adding `maps_to` entries for db.begin/commit/rollback | cross-component |
+| Sub-D-MCP-1 (BuiltinRegistry) | 🟢 Compiler-only ready, ~1744 LOC delete | compiler |
+| Sub-D-MCP-2 (MCP plugin lists) | 🟡 Needs runtime plugin loading design | compiler |
+| Sub-E (runtime/host_functions.rs stubs) | 🟢 Compiler-only ready, test-only impact | compiler |
+| Layer-3 prefix classifier (utilities.rs:1665-1669) | 🟢 Compiler-only ready, small refactor | compiler |
+
+**Directions to continue** (when next picking this up):
+
+### Step 1 — Decide whether to do compiler-only pieces ahead of cross-component
+
+Two compiler-only pieces are ready to ship without waiting on framework:
+- **Layer-3 prefix classifier** (`src/codegen/mir_codegen/utilities.rs:1665-1669`): hardcodes `"_req_"`, `"_res_"`, `"_session_"`, `"_auth_"`, `"_http_"` prefix strings to filter Layer 3 calls from import-name collection. Replace with `self.bridge_functions.iter().filter(|f| f.hosts.as_deref().map_or(false, |h| h == ["server"]))` — or move the layer-classification into the plugin manifest (the cleaner long-term answer).
+- **Sub-E runtime stubs** (`src/runtime/host_functions.rs:2599-2666`): test-only wasmtime stubs. If a `PluginRegistry` handle is available at runner setup, iterate `bridge_functions` to register zero-valued stubs from manifest signatures. Falls back to current hardcoded list when registry is absent.
+
+### Step 2 — Cross-component coordination (when ready)
+
+The biggest reductions are blocked on plugin.toml updates in `clean-framework`:
+- For Sub-A: every `[[functions]]` entry with `maps_to` needs explicit `params` and `returns` Clean Language types (see Path B proposal §Step 2). Without these, removing the resolver's hardcoded entries degrades `req.body()` from `String` to `Any`.
+- For Sub-C: frame.data needs `{ name = "db.begin", maps_to = "_db_begin" }` (and commit/rollback) so `language_to_bridge_map` carries the alias, making `register_db_builtin_wrappers` skippable.
+
+The framework-side prompt to file when ready: a `framework-` prefixed entry in `foundation/management/cross-component-prompts/` citing the Path B proposal §Step 2.
+
+### Step 3 — Sub-D-MCP-1: delete BuiltinRegistry (compiler-only, biggest LOC win)
+
+`src/builtins/registry.rs` (~1744 LOC) duplicates language-builtin signatures already present in `src/resolver/symbol_table.rs`. Only consumer is `tool_list_builtins` in `src/mcp/server.rs:2587`. Refactor:
+1. Replace the MCP tool's iteration over `BuiltinRegistry::new()` with iteration over `SymbolTable::new().all_symbols()` filtered by `is_builtin`.
+2. Accepted feature regression: MCP loses `BuiltinCategory` filter (Math/String/etc.) and per-class static/instance distinction.
+3. Delete `BuiltinRegistry` struct + methods. Keep `BuiltinType` (used in 7 files outside `registry.rs`).
+4. Delete dead `BridgeFunction::to_builtin_function()` (only used by `BuiltinRegistry`'s own tests).
+
+### Step 4 — Lint cleanup after each landing
+
+After each sub-finding lands, remove the corresponding `EXEMPT_FILES` entry from `tests/architecture_boundaries.rs`. Each entry has a `KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding X)` comment matching the sub-letter above.
+
+### Step 5 — Resolve on dashboard
+
+`/resolve-fix BUILTIN-NAMESPACE-OVERREACH <VERSION>` only when **all** EXEMPT entries tagged with this fingerprint have been removed. Partial work doesn't close the dashboard ticket.
+
+**Risk notes**:
+- Sub-A and Sub-C are tempting to do compiler-only with no plugin.toml updates, but doing so causes silent type degradation (`Any` instead of `String`/`Boolean`). The hardcoded entries exist specifically because plugin manifests don't declare language-level types today. Don't delete them in isolation.
+- The Layer-3 prefix classifier is the only piece where compiler "owns" the architectural decision (which prefixes are Layer 3). Even the cleanest refactor still encodes that knowledge somewhere — moving it to plugin.toml's `hosts` field is the right answer.
+
+---
+
 ## ✅ COMPLETED: BUILD_FRONTEND — `cln build` does not generate `frontend.wasm` for client-side components
 
 **Priority**: HIGH (priority 56)
