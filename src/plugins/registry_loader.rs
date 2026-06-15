@@ -238,8 +238,11 @@ fn strip_tag(t: &str) -> &str {
 /// and the `framework_plugins_match_registry` integration test (CI gate).
 ///
 /// # Grammar
-/// - unset, empty, or `"off"` → `Off` (no validation, current default)
-/// - `"all"` → `All` (validate every plugin)
+/// - unset → `All` (default since 2026-06-15; was `Off` during the cross-
+///   component cleanup tracked in foundation/management/cross-component-prompts/)
+/// - explicit `"off"` or empty string → `Off` (escape hatch for emergency
+///   fallback when a brand-new plugin/registry edit is mid-flight)
+/// - `"all"` → `All` (explicit; same as unset)
 /// - comma-separated names, e.g. `"frame.data"` or `"frame.data,frame.auth"` →
 ///   `Allowlist(set)` (only the named plugins are validated; others pass freely)
 ///
@@ -262,9 +265,13 @@ impl ValidationPolicy {
     }
 
     /// Parse a raw value (as would come from the env var). Exposed for tests.
+    ///
+    /// Default (unset) is `All` — every plugin manifest must conform to the
+    /// registry. To opt out for emergency triage, set the env var explicitly
+    /// to `"off"` or the empty string.
     pub fn from_raw(raw: Option<&str>) -> Self {
         let Some(s) = raw else {
-            return Self::Off;
+            return Self::All;
         };
         let trimmed = s.trim();
         if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("off") {
@@ -444,8 +451,15 @@ mod tests {
     }
 
     #[test]
-    fn validation_policy_unset_is_off() {
-        assert_eq!(ValidationPolicy::from_raw(None), ValidationPolicy::Off);
+    fn validation_policy_unset_is_all() {
+        // Default changed 2026-06-15: unset env var → All, since the
+        // cross-component cleanup is complete and registry drift is zero.
+        // Explicit "off" or empty string remains the escape hatch.
+        assert_eq!(ValidationPolicy::from_raw(None), ValidationPolicy::All);
+    }
+
+    #[test]
+    fn validation_policy_explicit_off_is_off() {
         assert_eq!(ValidationPolicy::from_raw(Some("")), ValidationPolicy::Off);
         assert_eq!(
             ValidationPolicy::from_raw(Some("   ")),

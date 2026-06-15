@@ -1655,7 +1655,7 @@ mod tests {
                 BridgeFunction {
                     name: "_db_execute".to_string(),
                     params: vec!["string".to_string(), "string".to_string()],
-                    returns: "integer".to_string(),
+                    returns: "i32".to_string(),
                     module: "env".to_string(),
                     description: Some("Execute INSERT/UPDATE/DELETE".to_string()),
                     expand_strings: true,
@@ -1719,7 +1719,7 @@ mod tests {
                     BridgeFunction {
                         name: "_db_execute".to_string(),
                         params: vec!["string".to_string(), "string".to_string()],
-                        returns: "integer".to_string(),
+                        returns: "i32".to_string(),
                         module: "env".to_string(),
                         description: None,
                         expand_strings: true,
@@ -1776,6 +1776,7 @@ mod tests {
         };
 
         let registry = PluginRegistryBuilder::new()
+            .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off)
             .add_manifest("frame.data".to_string(), manifest)
             .build()
             .expect("Failed to build registry");
@@ -1944,6 +1945,7 @@ mod tests {
         let frame_ui = manifest_with_callback("frame.ui", "_ui_event", None);
 
         let result = PluginRegistryBuilder::new()
+            .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off)
             .add_manifest("frame.server".to_string(), frame_server)
             .add_manifest("frame.ui".to_string(), frame_ui)
             .build();
@@ -2030,6 +2032,7 @@ mod tests {
         let frame_ui = manifest_with_callback("frame.ui", "_ui_event", None);
 
         let registry = PluginRegistryBuilder::new()
+            .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off)
             .add_manifest("frame.server".to_string(), frame_server)
             .add_manifest("frame.ui".to_string(), frame_ui)
             .build()

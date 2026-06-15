@@ -11,7 +11,8 @@
 # TYPE EXPANSION RULES
 # ============================================================
 #
-#   "string"  -> WASM (i32, i32)   ptr + len pair
+#   "string"  -> WASM (i32, i32) or i32  see VALIDATOR COMPARISON RULE
+#                                        below for the expand_strings branch
 #   "integer" -> WASM (i64)        64-bit signed integer
 #   "number"  -> WASM (f64)        64-bit float
 #   "boolean" -> WASM (i32)        0 = false, 1 = true

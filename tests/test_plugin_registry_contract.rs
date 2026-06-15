@@ -51,12 +51,11 @@ fn registry_loads_with_expected_shape() {
     }
 }
 
-// Gated by `CLEAN_PLUGIN_REGISTRY_VALIDATION`. Default (unset / "off") makes
-// this test a no-op so default CI runs are unaffected while the cross-component
-// cleanup proceeds. Set `CLEAN_PLUGIN_REGISTRY_VALIDATION=all` to validate every
-// framework plugin, or supply an allowlist like
-// `CLEAN_PLUGIN_REGISTRY_VALIDATION=frame.data,frame.auth` to enforce only the
-// plugins whose cross-component prompts have landed.
+// Gated by `CLEAN_PLUGIN_REGISTRY_VALIDATION`. Default (unset) is `All` since
+// 2026-06-15, so by default every framework plugin is validated against the
+// registry. Set the env var explicitly to `"off"` for emergency triage when
+// a brand-new plugin/registry edit is mid-flight; set to a comma-separated
+// allowlist like `frame.data,frame.auth` to narrow the scope.
 //
 // This mirrors the gating in `PluginRegistryBuilder::build` so a single env
 // setting drives both compile-time and test-time enforcement.
@@ -65,8 +64,7 @@ fn framework_plugins_match_registry() {
     let policy = ValidationPolicy::from_env();
     if !policy.is_active() {
         eprintln!(
-            "CLEAN_PLUGIN_REGISTRY_VALIDATION is unset or `off` — skipping framework drift scan. \
-Set to `all` or a comma-separated plugin list to enable."
+            "CLEAN_PLUGIN_REGISTRY_VALIDATION is explicitly `off` — skipping framework drift scan."
         );
         return;
     }
