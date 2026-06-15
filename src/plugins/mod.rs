@@ -81,6 +81,7 @@ pub mod expander;
 pub mod language_registry;
 pub mod plugin_abi;
 mod registry;
+pub mod registry_loader;
 mod wasm_adapter;
 mod wasm_loader;
 

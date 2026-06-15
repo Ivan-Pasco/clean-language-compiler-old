@@ -1164,6 +1164,9 @@ pub struct PluginRegistryBuilder {
     registrations: PluginRegistrations,
     /// Accumulated permission allowlists (plugin name → allowed bridge function names)
     plugin_permissions: HashMap<String, HashSet<String>>,
+    /// Override for the registry-conformance validation policy. `None` means
+    /// fall back to `ValidationPolicy::from_env()` at `build()` time.
+    validation_policy: Option<crate::plugins::registry_loader::ValidationPolicy>,
 }
 
 impl PluginRegistryBuilder {
@@ -1175,7 +1178,19 @@ impl PluginRegistryBuilder {
             manifests: HashMap::new(),
             registrations: PluginRegistrations::default(),
             plugin_permissions: HashMap::new(),
+            validation_policy: None,
         }
+    }
+
+    /// Override the registry-conformance validation policy for this build.
+    /// Primarily for tests; production callers should use the
+    /// `CLEAN_PLUGIN_REGISTRY_VALIDATION` env var.
+    pub fn with_validation_policy(
+        mut self,
+        policy: crate::plugins::registry_loader::ValidationPolicy,
+    ) -> Self {
+        self.validation_policy = Some(policy);
+        self
     }
 
     /// Add a plugin to the registry
@@ -1466,6 +1481,64 @@ impl PluginRegistryBuilder {
                     });
                 }
                 seen_callbacks.insert(key, declaring_plugin.clone());
+            }
+        }
+
+        // Registry conformance validation — gated per-plugin via the
+        // CLEAN_PLUGIN_REGISTRY_VALIDATION env var. Default is `off` so a
+        // freshly-installed cln binary does not break on existing drift while
+        // the cross-component cleanup tracked in
+        // foundation/management/cross-component-prompts/ lands.
+        //
+        // Set to `all` once the registry covers every plugin's declarations,
+        // or to a comma-separated allowlist (e.g. `frame.data,frame.auth`) to
+        // enforce per-plugin as each framework prompt resolves. See
+        // `registry_loader::ValidationPolicy` for the grammar.
+        let policy = self
+            .validation_policy
+            .clone()
+            .unwrap_or_else(crate::plugins::registry_loader::ValidationPolicy::from_env);
+        if policy.is_active() {
+            match crate::plugins::registry_loader::RegistryIndex::load() {
+                Ok(idx) => {
+                    let mut all_issues: Vec<String> = Vec::new();
+                    let mut sorted_manifests: Vec<(&String, &PluginManifest)> =
+                        self.manifests.iter().collect();
+                    sorted_manifests.sort_by(|a, b| a.0.cmp(b.0));
+                    for (plugin_name, manifest) in sorted_manifests {
+                        if !policy.includes(plugin_name) {
+                            continue;
+                        }
+                        for decl in &manifest.bridge.functions {
+                            all_issues.extend(idx.check_bridge(plugin_name, decl));
+                        }
+                    }
+                    if !all_issues.is_empty() {
+                        return Err(PluginError::ValidationFailed {
+                            plugin_name: "(registry)".to_string(),
+                            message: format!(
+                                "PLUGIN-REGISTRY-DRIFT: {} bridge function declaration(s) \
+do not match foundation/platform-architecture/function-registry.toml. \
+Fix the plugin.toml entries or update the registry (with developer approval). \
+To exclude a plugin from this check temporarily, narrow the \
+CLEAN_PLUGIN_REGISTRY_VALIDATION allowlist:\n{}",
+                                all_issues.len(),
+                                all_issues.join("\n"),
+                            ),
+                            location: None,
+                        });
+                    }
+                }
+                Err(e) => {
+                    return Err(PluginError::ValidationFailed {
+                        plugin_name: "(registry)".to_string(),
+                        message: format!(
+                            "failed to load function-registry.toml: {e}. \
+This is a compiler build issue, not a plugin issue."
+                        ),
+                        location: None,
+                    });
+                }
             }
         }
 
