@@ -1957,31 +1957,30 @@ impl MirCodeGenerator<'_> {
                     BuiltinType::Void => None,
                     _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
                 };
-                let body: Vec<wasm_encoder::Instruction> = match wasm_return {
-                    None | Some(WasmType::Unit) => Vec::new(),
-                    Some(WasmType::I32) => vec![wasm_encoder::Instruction::I32Const(0)],
-                    Some(WasmType::I64) => vec![wasm_encoder::Instruction::I64Const(0)],
-                    Some(WasmType::F32) => vec![wasm_encoder::Instruction::F32Const(0.0)],
-                    Some(WasmType::F64) => vec![wasm_encoder::Instruction::F64Const(0.0)],
-                    Some(WasmType::V128) => vec![wasm_encoder::Instruction::V128Const(0)],
-                };
-                let stub_index = self.wasm_generator.register_function(
-                    &func.name,
-                    &wasm_params,
-                    wasm_return,
-                    &body,
-                )?;
-                for alias in &aliases {
-                    self.wasm_generator
-                        .function_map
-                        .insert(alias.clone(), stub_index);
-                }
+                // DEFER stub registration. Registering a local function via
+                // `wasm_generator.register_function` here — mid-import-phase —
+                // would shift the funcidx of every import emitted after it,
+                // because WASM's funcidx space puts imports before locals
+                // and `function_count` is the global counter. The resulting
+                // `Call(N)` instructions would target the wrong function and
+                // fail wasmparser validation (CODEGEN-WASM-STACK-MISMATCH /
+                // CODEGEN_STACK_REMAINING — both originally caused by this
+                // out-of-order registration). The deferred queue is drained
+                // by `register_pending_host_mismatched_stubs` after every
+                // other import is in place.
+                self.pending_host_mismatched_stubs.push(
+                    crate::codegen::mir_codegen::PendingHostMismatchedStub {
+                        name: func.name.clone(),
+                        params: wasm_params,
+                        wasm_return,
+                        aliases: aliases.clone(),
+                    },
+                );
                 tracing::info!(
                     bridge = %func.name,
                     host_class = ?self.host_class,
                     bridge_hosts = ?func.hosts,
-                    wasm_index = stub_index,
-                    "Registered no-op stub for host-mismatched bridge (CLIENT_BUILD_ENTRY_LEAK)"
+                    "Deferred no-op stub for host-mismatched bridge (CLIENT_BUILD_ENTRY_LEAK)"
                 );
                 continue;
             }
@@ -2238,6 +2237,52 @@ impl MirCodeGenerator<'_> {
                         .insert("now".to_string(), wrapper_index);
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Register the deferred no-op stubs for host-mismatched bridges queued
+    /// during `register_plugin_bridge_imports`.
+    ///
+    /// Must be called AFTER all imports are emitted — these stubs are local
+    /// functions and the WASM funcidx allocator counts imports first. See
+    /// [`PendingHostMismatchedStub`] doc comment for the bug this prevents
+    /// (CODEGEN-WASM-STACK-MISMATCH / CODEGEN_STACK_REMAINING).
+    pub(super) fn register_pending_host_mismatched_stubs(&mut self) -> Result<(), CompilerError> {
+        use crate::types::WasmType;
+        use wasm_encoder::Instruction;
+
+        let stubs = std::mem::take(&mut self.pending_host_mismatched_stubs);
+
+        for stub in stubs {
+            let body: Vec<Instruction> = match stub.wasm_return {
+                None | Some(WasmType::Unit) => Vec::new(),
+                Some(WasmType::I32) => vec![Instruction::I32Const(0)],
+                Some(WasmType::I64) => vec![Instruction::I64Const(0)],
+                Some(WasmType::F32) => vec![Instruction::F32Const(0.0)],
+                Some(WasmType::F64) => vec![Instruction::F64Const(0.0)],
+                Some(WasmType::V128) => vec![Instruction::V128Const(0)],
+            };
+
+            let stub_index = self.wasm_generator.register_function(
+                &stub.name,
+                &stub.params,
+                stub.wasm_return,
+                &body,
+            )?;
+
+            for alias in &stub.aliases {
+                self.wasm_generator
+                    .function_map
+                    .insert(alias.clone(), stub_index);
+            }
+
+            tracing::info!(
+                bridge = %stub.name,
+                wasm_index = stub_index,
+                "Registered no-op stub for host-mismatched bridge (deferred)"
+            );
         }
 
         Ok(())
@@ -2567,16 +2612,42 @@ mod host_class_enforcement_tests {
             .insert("_auth_require_auth".to_string());
 
         gen.register_plugin_bridge_imports()
-            .expect("stub registration must not fail");
+            .expect("stub queuing must not fail");
+
+        // The import phase must DEFER stub registration to avoid shifting
+        // funcidx for subsequent imports (CODEGEN-WASM-STACK-MISMATCH /
+        // CODEGEN_STACK_REMAINING). The function_map should not contain
+        // the bridge name yet.
+        assert!(
+            !gen.wasm_generator
+                .function_map
+                .contains_key("_auth_require_auth"),
+            "stub must NOT be in function_map after import phase — registration is deferred"
+        );
+        assert_eq!(
+            gen.pending_host_mismatched_stubs.len(),
+            1,
+            "the host-mismatched bridge must be queued as a pending stub"
+        );
+        let queued = &gen.pending_host_mismatched_stubs[0];
+        assert_eq!(queued.name, "_auth_require_auth");
+        assert!(
+            queued.aliases.iter().any(|a| a == "auth.requireAuth"),
+            "language alias must be carried on the queued stub for later registration"
+        );
+
+        // Drain the queue (mirrors what generate() does after imports are done).
+        gen.register_pending_host_mismatched_stubs()
+            .expect("deferred stub registration must succeed");
 
         let function_map = &gen.wasm_generator.function_map;
         assert!(
             function_map.contains_key("_auth_require_auth"),
-            "bridge name must resolve to the stub via function_map"
+            "bridge name must resolve to the stub after the deferred registration"
         );
         assert!(
             function_map.contains_key("auth.requireAuth"),
-            "language alias must also resolve to the stub"
+            "language alias must also resolve to the stub after deferred registration"
         );
         assert_eq!(
             function_map.get("_auth_require_auth"),

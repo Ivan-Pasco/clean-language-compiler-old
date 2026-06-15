@@ -105,6 +105,27 @@ pub(super) struct PendingBridgeWrapper {
     pub(super) wrap_i64: bool,
 }
 
+/// Info for a deferred no-op stub for a host-mismatched bridge.
+///
+/// Like [`PendingBridgeWrapper`], these must be registered AFTER every WASM
+/// import to keep function-index allocation correct. WASM's funcidx space
+/// puts all imported functions before any local functions; registering a
+/// local function mid-import phase would shift the indices of every import
+/// that follows, producing a Call(N) that targets the wrong function and
+/// fails wasmparser validation (CODEGEN-WASM-STACK-MISMATCH / CODEGEN_STACK_REMAINING).
+///
+/// The body is a single zero-valued constant matching `wasm_return` so the
+/// stub satisfies its declared signature without doing any work.
+#[derive(Clone)]
+pub(super) struct PendingHostMismatchedStub {
+    pub(super) name: String,
+    pub(super) params: Vec<crate::types::WasmType>,
+    pub(super) wasm_return: Option<crate::types::WasmType>,
+    /// Language-name aliases (e.g. "auth.requireAuth") that must point at
+    /// the same stub index in function_map once registered.
+    pub(super) aliases: Vec<String>,
+}
+
 /// Per-function generation statistics (internal).
 #[derive(Debug, Default)]
 pub(super) struct FunctionStats {
@@ -180,6 +201,11 @@ pub struct MirCodeGenerator<'a> {
 
     /// Pending wrapper functions to be registered AFTER ALL imports are done.
     pub(super) pending_bridge_wrappers: Vec<PendingBridgeWrapper>,
+
+    /// Pending host-mismatched bridge stubs to be registered AFTER ALL
+    /// imports are done. See [`PendingHostMismatchedStub`] for why this is
+    /// deferred (the bug it prevents is CODEGEN-WASM-STACK-MISMATCH).
+    pub(super) pending_host_mismatched_stubs: Vec<PendingHostMismatchedStub>,
 
     /// Stack of loop contexts for proper break/continue code generation.
     pub(super) loop_context_stack: Vec<LoopCodegenContext>,
@@ -284,6 +310,7 @@ impl MirCodeGenerator<'_> {
             bridge_functions: Vec::new(),
             used_bridge_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
+            pending_host_mismatched_stubs: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
             state_global_indices: HashMap::new(),
@@ -324,6 +351,7 @@ impl MirCodeGenerator<'_> {
             bridge_functions: Vec::new(),
             used_bridge_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
+            pending_host_mismatched_stubs: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
             state_global_indices: HashMap::new(),
@@ -364,6 +392,7 @@ impl MirCodeGenerator<'_> {
             bridge_functions: Vec::new(),
             used_bridge_function_names: HashSet::new(),
             pending_bridge_wrappers: Vec::new(),
+            pending_host_mismatched_stubs: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
             state_global_indices: HashMap::new(),
@@ -751,6 +780,18 @@ impl MirCodeGenerator<'_> {
                     self.pending_bridge_wrappers.len()
                 );
                 self.register_pending_bridge_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
+
+            // Register deferred host-mismatched bridge stubs AFTER all imports
+            // for the same reason as pending_bridge_wrappers above (WASM funcidx
+            // ordering — see PendingHostMismatchedStub doc).
+            if !self.pending_host_mismatched_stubs.is_empty() {
+                debug_mir!(
+                    "DEBUG MIR: Registering {} host-mismatched bridge stubs",
+                    self.pending_host_mismatched_stubs.len()
+                );
+                self.register_pending_host_mismatched_stubs()
                     .map_err(|e| vec![e])?;
             }
 
