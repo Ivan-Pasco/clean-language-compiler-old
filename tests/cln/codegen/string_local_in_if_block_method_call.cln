@@ -1,0 +1,33 @@
+// Test: codegen/string_local_in_if_block_method_call
+// Grammar: statement → if_statement → block → variable_decl_init
+// Regression: CODEGEN-INVALID-WASM (fingerprint b330dad2c89369e5...)
+// Bug:  local `string` decl initialized from an instance method call inside
+//       a nested `if` block leaves the receiver on the operand stack at
+//       block end, producing wasmparser "values remaining on stack at end
+//       of block" at validation time.
+// Expected output:
+//   [en] ok
+
+start:
+	Demo d = Demo("en")
+	print(d.run())
+
+class Helper
+	functions:
+		string label(string s)
+			return "[" + s + "]"
+
+class Demo
+	string lang
+
+	constructor(string langParam)
+		lang = langParam
+
+	functions:
+		string run()
+			Helper h = Helper()
+			string out = ""
+			if lang != ""
+				string tmp = h.label(lang)
+				out = tmp + " ok"
+			return out

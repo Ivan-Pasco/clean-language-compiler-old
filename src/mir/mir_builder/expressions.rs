@@ -2500,18 +2500,25 @@ impl MirBuilder {
                         }
                     }
                 } else {
-                    // This is a user-defined method - receiver becomes first argument
-                    let mut args = vec![MirOperand::Value(receiver_id)];
-
-                    // Look up method parameter types from the class
-                    // First, get the class symbol from the receiver type
-                    let method_param_types: Vec<ConcreteType> = if let ConcreteType::Class {
+                    // User-defined method call. Look up the resolved method so we can
+                    // (1) check `is_static` — utility-class methods that don't reference
+                    //     `this` are lowered without a `this` parameter (see
+                    //     type_inference.rs `is_static = !body_uses_this(...)`). For these,
+                    //     the WASM signature has N params, but pushing the receiver here
+                    //     would emit N+1 stack values. WASM `return` ignores the leftover
+                    //     so it slips past validation at function top-level, but an
+                    //     enclosing structured block (if/else/loop) requires the stack to
+                    //     match the block type and fails with "values remaining on stack
+                    //     at end of block" (CODEGEN-INVALID-WASM).
+                    // (2) pull the declared parameter types for `any`-boxing.
+                    let resolved_method: Option<&TastFunction> = if let ConcreteType::Class {
                         symbol_id: class_symbol,
                         ..
                     } = &receiver.expr_type
                     {
-                        // Find the class and then the method
-                        context.all_classes.iter()
+                        context
+                            .all_classes
+                            .iter()
                             .find(|c| c.symbol_id == *class_symbol)
                             .and_then(|class| {
                                 trace!(
@@ -2520,29 +2527,41 @@ impl MirBuilder {
                                     method_count = %class.methods.len(),
                                     "Looking for method in class"
                                 );
-                                class.methods.iter()
-                                    .find(|m| m.symbol_id == *method_symbol)
-                                    .map(|method| {
-                                        trace!(
-                                            method_name = %method.name,
-                                            param_count = %method.parameters.len(),
-                                            params = ?method.parameters.iter().map(|p| &p.param_type).collect::<Vec<_>>(),
-                                            "Found method with parameters"
-                                        );
-                                        // NOTE: TastFunction.parameters does NOT include 'this' for methods
-                                        // so we don't need to skip anything
-                                        method.parameters.iter()
-                                            .map(|p| p.param_type.clone())
-                                            .collect()
-                                    })
+                                class.methods.iter().find(|m| m.symbol_id == *method_symbol)
                             })
-                            .unwrap_or_default()
                     } else {
                         trace!(
                             receiver_type = ?receiver.expr_type,
                             "Receiver is not a Class type"
                         );
+                        None
+                    };
+
+                    let method_is_static = resolved_method.map(|m| m.is_static).unwrap_or(false);
+                    let method_param_types: Vec<ConcreteType> = resolved_method
+                        .map(|method| {
+                            trace!(
+                                method_name = %method.name,
+                                param_count = %method.parameters.len(),
+                                is_static = method.is_static,
+                                params = ?method.parameters.iter().map(|p| &p.param_type).collect::<Vec<_>>(),
+                                "Found method with parameters"
+                            );
+                            method
+                                .parameters
+                                .iter()
+                                .map(|p| p.param_type.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    // Only pass the receiver when the method actually accepts `this`.
+                    // Side effects in the receiver expression already executed when we
+                    // built `receiver_id` above; we just drop the resulting ValueId.
+                    let mut args = if method_is_static {
                         Vec::new()
+                    } else {
+                        vec![MirOperand::Value(receiver_id)]
                     };
 
                     trace!(
