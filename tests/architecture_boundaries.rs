@@ -79,14 +79,24 @@ const EXEMPT_FILES: &[&str] = &[
     "src/codegen/mod.rs",
     // Doc-comment example only — no executable plugin knowledge:
     "src/hir/mod.rs",
-    // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding A — partial):
+    // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding A — last residue):
     // Resolver pre-registers raw bridge names (`_req_*`, `_server_sleep`) as
-    // hardcoded builtin function signatures so direct bridge calls from generated
-    // framework code resolve. Language-level entries (req.*, auth.*, session.*,
-    // server.sleep, jwt.sign/verify/decode) were removed in 0.30.296 once
-    // framework v2.12.26 supplied them via plugin.toml `[[functions]]` maps_to.
-    // Still hardcoded: db.query/db.execute, crypto.*, env.get, time.now/now, and
-    // the `_req_*` bridge names (used directly in framework examples).
+    // hardcoded builtin function signatures so direct bridge calls from
+    // framework-generated code resolve at parse time. Removing these requires
+    // either rewriting how the framework emits direct bridge calls or accepting
+    // the architectural impurity — both deserve their own decision.
+    //
+    // Also still hardcoded: `crypto.sha256` / `crypto.sha512` — these resolve to
+    // bridge names that don't exist (`_crypto_sha256` / `_crypto_sha512`) while
+    // function-registry.toml declares them as `_crypto_hash_sha256` /
+    // `_crypto_hash_sha512` with `aliases = ["crypto.hash_sha256", ...]`. Either
+    // rename the registry aliases or update these entries — separate task.
+    //
+    // Sub-A language-level entries (req.*, auth.*, session.*, server.sleep,
+    // jwt.{sign,verify,decode}, db.{query,execute}, crypto.{hashPassword,
+    // verifyPassword,randomBytes,randomHex,hmac}, env.get, time.now, now,
+    // http.{setCache,noCache}) all removed by 0.30.301 — supplied by frame.*
+    // plugin.toml entries with `maps_to` + `params` + `returns`.
     "src/resolver/symbol_table.rs",
     // Note: src/codegen/mir_codegen/utilities.rs (formerly sub-finding B) was
     // cleared in 0.30.289 — `register_http_server_wrappers` deleted (0.30.288)

@@ -1090,8 +1090,10 @@ impl GlobalSymbolTable {
                 vec![HirType::String, HirType::String],
                 HirType::String,
             ),
-            ("http.setCache", vec![HirType::Integer], HirType::Integer),
-            ("http.noCache", vec![], HirType::Integer),
+            // http.setCache / http.noCache removed in 0.30.301 — now provided by
+            // frame.server plugin.toml `[[functions]]` with `returns = "boolean"`.
+            // Language type changes from Integer → Boolean (matches the actual
+            // bridge ABI). Per BUILTIN-NAMESPACE-OVERREACH Sub-A finalize.
             // File namespace functions
             ("file.read", vec![HirType::String], HirType::String),
             (
@@ -1218,55 +1220,26 @@ impl GlobalSymbolTable {
                 vec![HirType::Integer, HirType::String],
                 HirType::Integer,
             ),
-            // db namespace functions — Layer 2 host bridge
-            (
-                "db.query",
-                vec![HirType::String, HirType::String],
-                HirType::String,
-            ),
-            (
-                "db.execute",
-                vec![HirType::String, HirType::String],
-                HirType::Integer,
-            ),
-            // db.begin / db.commit / db.rollback removed in 0.30.296 — now provided by
-            // frame.data plugin.toml `[[functions]]` with `maps_to` + `returns = "integer"`.
-            // Per BUILTIN-NAMESPACE-OVERREACH Sub-C resolution; framework v2.12.26+ supplies
-            // the language-level declarations. Language type changes from Boolean → Integer
-            // (matches the actual i32 bridge ABI).
-            // crypto namespace functions — Layer 2 host bridge
-            (
-                "crypto.hashPassword",
-                vec![HirType::String],
-                HirType::String,
-            ),
-            (
-                "crypto.verifyPassword",
-                vec![HirType::String, HirType::String],
-                HirType::Boolean,
-            ),
-            (
-                "crypto.randomBytes",
-                vec![HirType::Integer],
-                HirType::String,
-            ),
-            ("crypto.randomHex", vec![HirType::Integer], HirType::String),
+            // db.* / crypto.{hashPassword,verifyPassword,randomBytes,randomHex,hmac}
+            // / env.get / time.now / `now` removed in 0.30.301 — all provided by
+            // frame.data, frame.auth, and frame.server plugin.toml `[[functions]]`
+            // with `maps_to` + `params` + `returns`. Framework v2.12.29 supplies
+            // the language-level declarations (db.query/db.execute/db.queryAs/db.begin/
+            // db.commit/db.rollback/db.paginate/db.cursorPage from frame.data;
+            // crypto.* from frame.auth; env.get/time.now/now from frame.server).
+            // Per BUILTIN-NAMESPACE-OVERREACH Sub-A finalize.
+            //
+            // crypto.sha256 / crypto.sha512 kept hardcoded — they reference bridge
+            // names (`_crypto_sha256` / `_crypto_sha512`) that do not exist in
+            // function-registry.toml (which declares them as `_crypto_hash_sha256` /
+            // `_crypto_hash_sha512` with `aliases = ["crypto.hash_sha256",
+            // "crypto.hash_sha512"]`). Resolving that mismatch is a separate task —
+            // either rename the registry aliases or change the resolver entries.
             ("crypto.sha256", vec![HirType::String], HirType::String),
             ("crypto.sha512", vec![HirType::String], HirType::String),
-            (
-                "crypto.hmac",
-                vec![HirType::String, HirType::String, HirType::String],
-                HirType::String,
-            ),
             // jwt.sign / jwt.verify / jwt.decode removed in 0.30.296 — provided by
             // frame.auth plugin.toml. Per BUILTIN-NAMESPACE-OVERREACH Sub-A resolution;
             // framework v2.12.26+ declares these with maps_to and matching types.
-            // env namespace functions — Layer 2 host bridge
-            ("env.get", vec![HirType::String], HirType::String),
-            // time namespace functions — Layer 2 host bridge
-            ("time.now", vec![], HirType::Integer),
-            // now() — bare alias for time.now(), used by frame.data plugin-generated code
-            ("now", vec![], HirType::Integer),
             // req.* removed in 0.30.296 — provided by frame.server plugin.toml `[[functions]]`
             // entries (lines 228-239) with maps_to and matching String types.
             // Per BUILTIN-NAMESPACE-OVERREACH Sub-A resolution; framework v2.12.26+.
