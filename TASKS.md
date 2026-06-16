@@ -33,7 +33,7 @@ The biggest reductions are blocked on plugin.toml updates in `clean-framework`:
 - For Sub-A: every `[[functions]]` entry with `maps_to` needs explicit `params` and `returns` Clean Language types (see Path B proposal §Step 2). Without these, removing the resolver's hardcoded entries degrades `req.body()` from `String` to `Any`.
 - For Sub-C: frame.data needs `{ name = "db.begin", maps_to = "_db_begin" }` (and commit/rollback) so `language_to_bridge_map` carries the alias, making `register_db_builtin_wrappers` skippable.
 
-The framework-side prompt to file when ready: a `framework-` prefixed entry in `foundation/management/cross-component-prompts/` citing the Path B proposal §Step 2.
+**Framework prompt filed 2026-06-16**: `foundation/management/cross-component-prompts/framework-builtin-namespace-overreach-sub-a-finalize.md`. Enumerates the exact remaining plugin.toml additions after the v2.12.26 slice landed (`db.query`/`db.execute`, `crypto.*`, `env.get`, `time.now`/`now`, `http.setCache`/`http.noCache`). When the framework lands these and a new framework version ships, the compiler-side cleanup is: delete the matching `add_builtin_namespace_functions` entries in `src/resolver/symbol_table.rs:1222-1293`, switch `http.setCache`/`http.noCache` return type from `Integer` to `Boolean` to match the bridge, and rerun the architecture_boundaries lint (the `src/resolver/symbol_table.rs` EXEMPT_FILES entry can be removed when nothing in Sub-A still hardcodes).
 
 ### Step 3 — Sub-D-MCP-1: delete BuiltinRegistry (compiler-only, biggest LOC win)
 

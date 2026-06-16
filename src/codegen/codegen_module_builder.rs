@@ -1010,64 +1010,72 @@ impl super::CodeGenerator {
     /// MUST be called AFTER all imports are registered. Wrappers expand Clean
     /// length-prefixed string pointers to the (ptr+4, len) pair the host bridge expects.
     pub(crate) fn register_db_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
-        if let Some(&raw_idx) = self.function_map.get("_db_query") {
-            let wrap_idx = self.register_function(
-                "db.query",
-                &[WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-                &[
-                    Instruction::LocalGet(0),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    Instruction::LocalGet(0),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::LocalGet(1),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    Instruction::LocalGet(1),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::Call(raw_idx),
-                ],
-            )?;
-            self.function_map.insert("db.query".to_string(), wrap_idx);
+        // Idempotency: skip when a plugin (e.g. frame.data) has already mapped
+        // the language name to a bridge call. Prevents orphan wrapper functions
+        // when this no-plugin fallback path runs alongside a partial plugin
+        // declaration. Per BUILTIN-NAMESPACE-OVERREACH Sub-A/C consolidation.
+        if !self.function_map.contains_key("db.query") {
+            if let Some(&raw_idx) = self.function_map.get("_db_query") {
+                let wrap_idx = self.register_function(
+                    "db.query",
+                    &[WasmType::I32, WasmType::I32],
+                    Some(WasmType::I32),
+                    &[
+                        Instruction::LocalGet(0),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(0),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                        Instruction::LocalGet(1),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(1),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                        Instruction::Call(raw_idx),
+                    ],
+                )?;
+                self.function_map.insert("db.query".to_string(), wrap_idx);
+            }
         }
 
-        if let Some(&raw_idx) = self.function_map.get("_db_execute") {
-            let wrap_idx = self.register_function(
-                "db.execute",
-                &[WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-                &[
-                    Instruction::LocalGet(0),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    Instruction::LocalGet(0),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::LocalGet(1),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    Instruction::LocalGet(1),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::Call(raw_idx),
-                ],
-            )?;
-            self.function_map.insert("db.execute".to_string(), wrap_idx);
+        if !self.function_map.contains_key("db.execute") {
+            if let Some(&raw_idx) = self.function_map.get("_db_execute") {
+                let wrap_idx = self.register_function(
+                    "db.execute",
+                    &[WasmType::I32, WasmType::I32],
+                    Some(WasmType::I32),
+                    &[
+                        Instruction::LocalGet(0),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(0),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                        Instruction::LocalGet(1),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(1),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                        Instruction::Call(raw_idx),
+                    ],
+                )?;
+                self.function_map.insert("db.execute".to_string(), wrap_idx);
+            }
         }
 
         // db.begin / db.commit / db.rollback wrappers removed in 0.30.296. The
@@ -1095,6 +1103,10 @@ impl super::CodeGenerator {
 
     /// Create local wrapper function for `env.get`. Must be called AFTER all imports.
     pub(crate) fn register_env_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        // Idempotency: see register_db_builtin_wrappers.
+        if self.function_map.contains_key("env.get") {
+            return Ok(());
+        }
         if let Some(&raw_idx) = self.function_map.get("_env_get") {
             let wrap_idx = self.register_function(
                 "env.get",
@@ -1130,6 +1142,10 @@ impl super::CodeGenerator {
 
     /// Create local wrapper function for `time.now`. Must be called AFTER all imports.
     pub(crate) fn register_time_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        // Idempotency: see register_db_builtin_wrappers.
+        if self.function_map.contains_key("time.now") {
+            return Ok(());
+        }
         if let Some(&raw_idx) = self.function_map.get("_time_now") {
             let wrap_idx = self.register_function(
                 "time.now",
@@ -1231,12 +1247,25 @@ impl super::CodeGenerator {
     /// Create local wrapper functions for the `crypto` namespace.
     /// Must be called AFTER all imports are registered.
     pub(crate) fn register_crypto_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        // Per-name idempotency: when a plugin (e.g. frame.auth) declares a
+        // subset of crypto.* language entries via `[[functions]]` `maps_to`,
+        // the namespace-level gate at mir_codegen/mod.rs (keyed on a single
+        // discriminator like `crypto.sha256`) cannot detect partial coverage —
+        // so this fallback still fires. Without per-name idempotency the
+        // wrappers below would orphan the plugin's resolutions and bloat the
+        // WASM with duplicate function bodies. Per BUILTIN-NAMESPACE-OVERREACH
+        // Sub-A consolidation (framework prompt
+        // `framework-builtin-namespace-overreach-sub-a-finalize.md`).
+
         // Single-string-param wrappers (expand ptr → ptr+4, len)
         for (raw_name, lang_name) in &[
             ("_crypto_hash_password", "crypto.hashPassword"),
             ("_crypto_hash_sha256", "crypto.sha256"),
             ("_crypto_hash_sha512", "crypto.sha512"),
         ] {
+            if self.function_map.contains_key(*lang_name) {
+                continue;
+            }
             if let Some(&raw_idx) = self.function_map.get(*raw_name) {
                 let wrap_idx = self.register_function(
                     lang_name,
@@ -1264,6 +1293,9 @@ impl super::CodeGenerator {
             ("_crypto_random_bytes", "crypto.randomBytes"),
             ("_crypto_random_hex", "crypto.randomHex"),
         ] {
+            if self.function_map.contains_key(*lang_name) {
+                continue;
+            }
             if let Some(&raw_idx) = self.function_map.get(*raw_name) {
                 let wrap_idx = self.register_function(
                     lang_name,
@@ -1276,35 +1308,37 @@ impl super::CodeGenerator {
         }
 
         // Two-string-param wrapper for verifyPassword
-        if let Some(&raw_idx) = self.function_map.get("_crypto_verify_password") {
-            let wrap_idx = self.register_function(
-                "crypto.verifyPassword",
-                &[WasmType::I32, WasmType::I32],
-                Some(WasmType::I32),
-                &[
-                    Instruction::LocalGet(0),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    Instruction::LocalGet(0),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::LocalGet(1),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    Instruction::LocalGet(1),
-                    Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::Call(raw_idx),
-                ],
-            )?;
-            self.function_map
-                .insert("crypto.verifyPassword".to_string(), wrap_idx);
+        if !self.function_map.contains_key("crypto.verifyPassword") {
+            if let Some(&raw_idx) = self.function_map.get("_crypto_verify_password") {
+                let wrap_idx = self.register_function(
+                    "crypto.verifyPassword",
+                    &[WasmType::I32, WasmType::I32],
+                    Some(WasmType::I32),
+                    &[
+                        Instruction::LocalGet(0),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(0),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                        Instruction::LocalGet(1),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(1),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                        Instruction::Call(raw_idx),
+                    ],
+                )?;
+                self.function_map
+                    .insert("crypto.verifyPassword".to_string(), wrap_idx);
+            }
         }
 
         Ok(())
