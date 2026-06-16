@@ -53,6 +53,45 @@ jobs:
         cargo build --bin cln
         ./target/debug/cln --version
 
+  plugin-registry-contract:
+    name: Plugin Registry Contract
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout compiler
+      uses: actions/checkout@v4
+      with:
+        path: clean-language-compiler
+
+    # Checks out clean-framework as a sibling so the integration test at
+    # tests/test_plugin_registry_contract.rs::framework_plugins_match_registry
+    # can find plugin.toml manifests at ../clean-framework/plugins/.
+    # Pinned to `main` so any drift between framework plugin.toml entries
+    # and foundation/platform-architecture/function-registry.toml surfaces
+    # immediately, not at the next framework release bump.
+    - name: Checkout framework (main)
+      uses: actions/checkout@v4
+      with:
+        repository: Ivan-Pasco/cleen-framework
+        ref: main
+        path: clean-framework
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-contract-${{ hashFiles('clean-language-compiler/Cargo.lock') }}
+
+    - name: Run plugin registry contract test
+      working-directory: clean-language-compiler
+      env:
+        CLEAN_PLUGIN_REGISTRY_VALIDATION: all
+      run: cargo test --test test_plugin_registry_contract framework_plugins_match_registry -- --nocapture
+
   build-test:
     name: Build Test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
