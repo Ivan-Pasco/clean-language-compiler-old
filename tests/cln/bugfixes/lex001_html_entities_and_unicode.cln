@@ -1,0 +1,21 @@
+// Test: bugfixes/lex001_html_entities_and_unicode
+// Grammar: html_block (plugin-owned, raw-text body)
+// Regression: LEX001 (fingerprint 41310e98b853...)
+// Bug:  Compiler's main lexer rejected '&' and any non-ASCII codepoint
+//       (→, ©, ·, ®, &rarr;, &middot;, &copy;) inside an html: block
+//       before frame.ui's expand_block could see the raw bytes. The
+//       lexer now emits these as pass-through Identifier tokens so the
+//       parser's byte-range raw extractor captures them intact.
+// Expected output:
+//   <a href='/x'>Continue &rarr; &middot; &copy; → © · ®</a>
+
+plugins:
+	frame.ui
+
+start:
+	print(render())
+
+functions:
+	string render()
+		html:
+			<a href="/x">Continue &rarr; &middot; &copy; → © · ®</a>

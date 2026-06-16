@@ -216,16 +216,39 @@ impl<'a> SpecificationLexer<'a> {
                     Ok(Token::simple(TokenKind::At, loc))
                 }
 
-                // Single quotes are valid in framework blocks (e.g. html: attribute values)
-                // Emitted as an Identifier token so the token stream flows through without
-                // error; the parser's extract_block_content_raw() reconstructs raw text from
-                // byte positions in the original source, so the token kind is irrelevant.
-                '\'' => {
-                    self.advance();
+                // Characters that are not valid Clean Language syntax outside of
+                // framework blocks (html:, component:, etc.) but MUST flow through the
+                // token stream so plugin-owned blocks can capture them via byte-range
+                // raw extraction. The parser's extract_block_content_raw() reads bytes
+                // directly from the source — the token kind for these characters is
+                // irrelevant, only their presence (so the lexer doesn't error) and their
+                // byte position matter.
+                //
+                // Pass-through set:
+                //   '\''         — html attribute values like alt='Photo'
+                //   '&'          — html entities like &rarr;, &middot;
+                //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
+                //
+                // If any of these appear outside a framework block, the parser will
+                // catch them later as an unexpected-token error in the right context.
+                // Reproduces LEX001 (fingerprint 41310e98b853...) when removed.
+                '\'' | '&' => {
+                    let loc = start_location.clone();
+                    let c = self.advance().unwrap();
                     Ok(Token::new(
-                        TokenKind::Identifier("'".to_string()),
-                        start_location.clone(),
-                        "'".to_string(),
+                        TokenKind::Identifier(c.to_string()),
+                        loc,
+                        c.to_string(),
+                    ))
+                }
+
+                c if !c.is_ascii() => {
+                    let loc = start_location.clone();
+                    let ch = self.advance().unwrap();
+                    Ok(Token::new(
+                        TokenKind::Identifier(ch.to_string()),
+                        loc,
+                        ch.to_string(),
                     ))
                 }
 
@@ -449,16 +472,39 @@ impl<'a> SpecificationLexer<'a> {
                     Ok(Token::simple(TokenKind::At, loc))
                 }
 
-                // Single quotes are valid in framework blocks (e.g. html: attribute values)
-                // Emitted as an Identifier token so the token stream flows through without
-                // error; the parser's extract_block_content_raw() reconstructs raw text from
-                // byte positions in the original source, so the token kind is irrelevant.
-                '\'' => {
-                    self.advance();
+                // Characters that are not valid Clean Language syntax outside of
+                // framework blocks (html:, component:, etc.) but MUST flow through the
+                // token stream so plugin-owned blocks can capture them via byte-range
+                // raw extraction. The parser's extract_block_content_raw() reads bytes
+                // directly from the source — the token kind for these characters is
+                // irrelevant, only their presence (so the lexer doesn't error) and their
+                // byte position matter.
+                //
+                // Pass-through set:
+                //   '\''         — html attribute values like alt='Photo'
+                //   '&'          — html entities like &rarr;, &middot;
+                //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
+                //
+                // If any of these appear outside a framework block, the parser will
+                // catch them later as an unexpected-token error in the right context.
+                // Reproduces LEX001 (fingerprint 41310e98b853...) when removed.
+                '\'' | '&' => {
+                    let loc = start_location.clone();
+                    let c = self.advance().unwrap();
                     Ok(Token::new(
-                        TokenKind::Identifier("'".to_string()),
-                        start_location.clone(),
-                        "'".to_string(),
+                        TokenKind::Identifier(c.to_string()),
+                        loc,
+                        c.to_string(),
+                    ))
+                }
+
+                c if !c.is_ascii() => {
+                    let loc = start_location.clone();
+                    let ch = self.advance().unwrap();
+                    Ok(Token::new(
+                        TokenKind::Identifier(ch.to_string()),
+                        loc,
+                        ch.to_string(),
                     ))
                 }
 
