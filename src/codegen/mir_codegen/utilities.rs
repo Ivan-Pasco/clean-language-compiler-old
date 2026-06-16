@@ -1623,9 +1623,17 @@ impl MirCodeGenerator<'_> {
         // json.prettyDataToText) generate native WASM that calls string.concat
         // internally. If any json.* function is reachable, ensure string.concat
         // is also in the reachable set so the import is not tree-shaken.
+        // The `__json_*` prefix covers the typed-collection encoders
+        // (`__json_encode_cln_list`, `__json_encode_cln_pairs`) emitted by the
+        // `json.encode(List<T>)` / `json.encode(Pairs<K,V>)` dispatch in
+        // `mir_builder/expressions.rs` — those are the only call-graph names
+        // when the user wrote `json.encode(...)` but never wrote any plain
+        // string concatenation, so without this case the helpers would be
+        // skipped at registration time and codegen would fail with
+        // "Function '__json_encode_cln_pairs' not found in function map".
         if names
             .iter()
-            .any(|n| n.starts_with("json.") || n.starts_with("json_"))
+            .any(|n| n.starts_with("json.") || n.starts_with("json_") || n.starts_with("__json_"))
         {
             names.insert("string.concat".to_string());
         }

@@ -1,0 +1,26 @@
+// Test: stdlib/json/json_encode_typed_list
+// Grammar: function_call → namespace "." function_name "(" args ")"
+// Semantic: FUNC-BUILTIN — json.encode on a typed List<T> walks the native
+//   list heap layout and emits a JSON array directly, dispatching per element
+//   type tag for correct primitive formatting.
+// Regression: discovered while fixing JSON-ENCODE-PAIRS-MALFORMED (compiler
+//   0.30.298). Before the fix:
+//     - `list<string> = ["a","b","c"]; json.encode(items)` produced
+//       `[null,0.000…02,null]` because list elements are stored raw (not boxed
+//       Any) but the generic stringify_array path expects boxed Any pointers.
+//   Fix: `json.encode(List<T>)` routes to the new `__json_encode_cln_list`
+//   stdlib helper, which knows the native Clean list layout and the per-tag
+//   element decoding (Integer / Boolean / Number / String).
+//
+// Note: the present test only exercises `list<string>` because the underlying
+// bump allocator (`generate_list_allocate` in src/stdlib/list_ops.rs) cannot
+// safely host multiple list literals in the same program — see follow-up
+// `report_error` filed alongside this fix for the runtime allocator issue.
+// Sibling tests cover the other element tags one at a time.
+//
+// Expected output:
+//   ["a","b","c"]
+
+start:
+	list<string> ss = ["a", "b", "c"]
+	print(json.encode(ss))

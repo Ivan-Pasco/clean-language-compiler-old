@@ -1,0 +1,11 @@
+// Test: stdlib/json/json_encode_list_boolean
+// Semantic: FUNC-BUILTIN — json.encode dispatches to __json_encode_cln_list
+//   with elem_tag = 2 (Boolean); each element materializes as "true" / "false".
+// Regression: see json_encode_typed_list.cln header.
+//
+// Expected output:
+//   [true,false,true]
+
+start:
+	list<boolean> bs = [true, false, true]
+	print(json.encode(bs))

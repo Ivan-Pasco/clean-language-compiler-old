@@ -18,8 +18,35 @@ impl MirBuilder {
                 location,
             } => {
                 let value_id = if let Some(init_expr) = initializer {
+                    // Type propagation: when the declared type is `Pairs<K, V>` and the
+                    // initializer is an object literal (or list literal), the typechecker
+                    // labels the literal's `expr_type` as `Any` rather than `Pairs<>`.
+                    // Without propagating the declared type, ObjectLiteral codegen would
+                    // produce the JSON-object layout (4-byte header) instead of the
+                    // pairs layout (8-byte header with capacity), and `pairs.get/set`
+                    // would scan the wrong offsets. Materialize a re-typed copy of the
+                    // initializer so the literal codegen takes the typed-collection path.
+                    let propagated;
+                    let init_for_build = if matches!(var_type, ConcreteType::Pairs(_, _))
+                        && matches!(
+                            init_expr.kind,
+                            TastExpressionKind::ObjectLiteral { .. }
+                                | TastExpressionKind::ArrayLiteral { .. }
+                        )
+                        && !matches!(init_expr.expr_type, ConcreteType::Pairs(_, _))
+                    {
+                        propagated = TastExpression {
+                            kind: init_expr.kind.clone(),
+                            expr_type: var_type.clone(),
+                            location: init_expr.location.clone(),
+                        };
+                        &propagated
+                    } else {
+                        init_expr
+                    };
+
                     // Build initializer expression
-                    let init_value_id = self.build_expression(context, init_expr)?;
+                    let init_value_id = self.build_expression(context, init_for_build)?;
 
                     // NOTE: Check the ACTUAL MIR type of the initialized value,
                     // not just the typechecker's type. This is important because MIR builder
@@ -33,8 +60,11 @@ impl MirBuilder {
                     // If the actual MIR type is Any, don't try to box - it's already Any format
                     let init_is_actually_any = matches!(actual_mir_type, Some(MirType::Any));
 
-                    // Check if we need to unbox: initializer type is Any but variable type is not
-                    let needs_unboxing = (matches!(init_expr.expr_type, ConcreteType::Any)
+                    // Check if we need to unbox: initializer type is Any but variable type is not.
+                    // After propagation above, `init_for_build.expr_type` may now match `var_type`
+                    // (e.g. typed-pairs literal path) — in that case we have a raw value, not a
+                    // boxed Any, so skip unboxing.
+                    let needs_unboxing = (matches!(init_for_build.expr_type, ConcreteType::Any)
                         || init_is_actually_any)
                         && !matches!(var_type, ConcreteType::Any);
 
@@ -45,7 +75,7 @@ impl MirBuilder {
                     // but the actual function returns a boxed Any value
                     let needs_boxing = matches!(var_type, ConcreteType::Any)
                         && !matches!(
-                            init_expr.expr_type,
+                            init_for_build.expr_type,
                             ConcreteType::Any | ConcreteType::Unknown
                         )
                         && !init_is_actually_any;

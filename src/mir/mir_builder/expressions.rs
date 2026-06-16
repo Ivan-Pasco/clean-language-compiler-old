@@ -826,13 +826,20 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
-                // json.encode / json.dataToText called with a class-typed argument
-                // → replace with a call to the compiler-generated __serialize_ClassName function
+                // json.encode / json.dataToText — call-site dispatch by source type.
+                // The generic `json.dataToText(any)` only knows how to walk values that
+                // are already in the JSON-tagged tree format produced by `json.decode`
+                // and `ObjectLiteral`. Typed Clean collections (List<T>, Pairs<K,V>)
+                // use native heap layouts whose elements are raw — not boxed Any — so
+                // walking them through `dataToText` corrupts the output. Dispatch on
+                // the argument's source type and call a specialized encoder when one
+                // exists; fall back to `dataToText` for `any`/`object`/`json` values.
                 if matches!(
                     function_name_opt.as_deref(),
                     Some("json.encode") | Some("json.dataToText") | Some("json.prettyDataToText")
                 ) && arguments.len() == 1
                 {
+                    // (a) Class-typed argument → compiler-generated __serialize_ClassName.
                     if let ConcreteType::Class {
                         symbol_id: class_sym,
                         ..
@@ -878,6 +885,87 @@ impl MirBuilder {
                                 return Ok(result_id);
                             }
                         }
+                    }
+
+                    // (b) Pairs<K, V> → __json_encode_cln_pairs(pairs_ptr, val_tag).
+                    // Pairs entries are 4-byte i32 slots, so the value tag covers
+                    // Integer / Boolean / String (and "null" as a safe fallback for
+                    // anything we don't specialize). Nested values (Pairs/List/Class)
+                    // would need a recursive encoder — for now they fall through to
+                    // "null" inside the helper rather than producing malformed bytes.
+                    if let ConcreteType::Pairs(_key_type, val_type) = &arguments[0].expr_type {
+                        let val_tag = Self::get_any_type_tag(val_type) as i64;
+                        let arg_id = self.build_expression(context, &arguments[0])?;
+
+                        let result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            MirType::Ptr(Box::new(MirType::U8)),
+                            expression.location.clone(),
+                        );
+
+                        let call_instr = MirInstruction {
+                            dest: Some(result_id),
+                            operation: MirOperation::Call {
+                                function: MirOperand::NamedFunction {
+                                    name: "__json_encode_cln_pairs".to_string(),
+                                    symbol_id: SymbolId(0),
+                                },
+                                arguments: vec![
+                                    MirOperand::Value(arg_id),
+                                    MirOperand::Constant(MirConstant::Integer(val_tag)),
+                                ],
+                            },
+                            location: expression.location.clone(),
+                        };
+                        self.add_instruction(context, call_instr);
+
+                        trace!(
+                            val_tag = val_tag,
+                            "json.encode dispatched to __json_encode_cln_pairs"
+                        );
+
+                        return Ok(result_id);
+                    }
+
+                    // (c) Array<T>/List<T> → __json_encode_cln_list(list_ptr, elem_tag).
+                    if let ConcreteType::Array(elem_type) = &arguments[0].expr_type {
+                        let elem_tag = Self::get_any_type_tag(elem_type) as i64;
+                        let arg_id = self.build_expression(context, &arguments[0])?;
+
+                        let result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            MirType::Ptr(Box::new(MirType::U8)),
+                            expression.location.clone(),
+                        );
+
+                        let call_instr = MirInstruction {
+                            dest: Some(result_id),
+                            operation: MirOperation::Call {
+                                function: MirOperand::NamedFunction {
+                                    name: "__json_encode_cln_list".to_string(),
+                                    symbol_id: SymbolId(0),
+                                },
+                                arguments: vec![
+                                    MirOperand::Value(arg_id),
+                                    MirOperand::Constant(MirConstant::Integer(elem_tag)),
+                                ],
+                            },
+                            location: expression.location.clone(),
+                        };
+                        self.add_instruction(context, call_instr);
+
+                        trace!(
+                            elem_tag = elem_tag,
+                            "json.encode dispatched to __json_encode_cln_list"
+                        );
+
+                        return Ok(result_id);
                     }
                 }
 
@@ -3437,6 +3525,73 @@ impl MirBuilder {
                 let n = fields.len();
                 let loc = expression.location.clone();
                 trace!(field_count = n, "Creating object literal");
+
+                // When the expected type is `Pairs<K, V>`, the literal must materialize
+                // the native pairs heap layout — `[count:i32][capacity:i32][key_ptr,val_ptr]…` —
+                // so that `pairs.get`, `pairs.set`, and the rest of the typed-pairs API
+                // can operate on it. This path produces a raw pairs pointer (not a
+                // boxed Any) since the target variable has type Pairs.
+                if matches!(&expression.expr_type, ConcreteType::Pairs(_, _)) {
+                    let pairs_ptr_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(context, pairs_ptr_id, MirType::I32, loc.clone());
+
+                    // Allocate via pairs.new(n) so the header carries the correct count=0
+                    // and capacity=n. pairs.set will then bump the count as entries land.
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: Some(pairs_ptr_id),
+                            operation: MirOperation::Call {
+                                function: MirOperand::NamedFunction {
+                                    name: "pairs.new".to_string(),
+                                    symbol_id: SYM_BUILTIN_LIST_ALLOCATE,
+                                },
+                                arguments: vec![MirOperand::Constant(MirConstant::Integer(
+                                    n as i64,
+                                ))],
+                            },
+                            location: loc.clone(),
+                        },
+                    );
+
+                    for field in fields {
+                        let key_str_expr = TastExpression {
+                            kind: TastExpressionKind::Literal {
+                                value: TastLiteral::String(field.key.clone()),
+                            },
+                            expr_type: ConcreteType::String,
+                            location: field.location.clone(),
+                        };
+                        let key_id = self.build_expression(context, &key_str_expr)?;
+                        let val_id = self.build_expression(context, &field.value)?;
+
+                        // pairs.set(map_ptr, key_ptr, val_ptr) — value is the raw V (i32
+                        // representation for the user's V type). No boxing — pairs.get
+                        // returns the raw V, and json.encode walks the pairs natively.
+                        self.add_instruction(
+                            context,
+                            MirInstruction {
+                                dest: None,
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: "pairs.set".to_string(),
+                                        symbol_id: SYM_BUILTIN_LIST_ALLOCATE,
+                                    },
+                                    arguments: vec![
+                                        MirOperand::Value(pairs_ptr_id),
+                                        MirOperand::Value(key_id),
+                                        MirOperand::Value(val_id),
+                                    ],
+                                },
+                                location: field.location.clone(),
+                            },
+                        );
+                    }
+
+                    trace!(pairs_ptr_id = ?pairs_ptr_id, "Pairs literal created");
+                    return Ok(pairs_ptr_id);
+                }
 
                 // Allocate raw object memory: 4 bytes for count + 8 bytes per entry (key_ptr, val_ptr)
                 let alloc_size = (4 + n * 8) as i64;

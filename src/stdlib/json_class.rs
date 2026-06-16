@@ -742,6 +742,61 @@ impl JsonClass {
             "Function index prediction failed for __json_pretty_stringify_object"
         );
 
+        // __json_encode_cln_list(list_ptr: i32, elem_tag: i32) -> i32
+        // Walks a native Clean list and encodes each element directly as JSON.
+        // Used by the json.encode(List<T>) dispatch in mir_builder/expressions.rs.
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_encode_cln_list",
+            &[WasmType::I32, WasmType::I32], // list_ptr, elem_tag
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // 2: count
+                WasmType::I32, // 3: i
+                WasmType::I32, // 4: result_ptr
+                WasmType::I32, // 5: elem_str
+                WasmType::I32, // 6: elem_addr
+                WasmType::I32, // 7: elem_i32
+                WasmType::I32, // 8: temp_buf
+                WasmType::I32, // 9: elem_stride
+                WasmType::F64, // 10: elem_f64
+            ],
+            self.generate_encode_cln_list_instructions(
+                malloc_index,
+                string_concat_index,
+                int_to_string_index,
+                float_to_string_index,
+                quote_string_idx,
+            ),
+        )?;
+
+        // __json_encode_cln_pairs(pairs_ptr: i32, val_tag: i32) -> i32
+        // Walks a native Clean pairs map and encodes each entry directly as JSON.
+        // Used by the json.encode(Pairs<K,V>) dispatch in mir_builder/expressions.rs.
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_encode_cln_pairs",
+            &[WasmType::I32, WasmType::I32], // pairs_ptr, val_tag
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // 2: count
+                WasmType::I32, // 3: i
+                WasmType::I32, // 4: result_ptr
+                WasmType::I32, // 5: entry_addr
+                WasmType::I32, // 6: key_ptr
+                WasmType::I32, // 7: val_i32
+                WasmType::I32, // 8: key_str
+                WasmType::I32, // 9: val_str
+                WasmType::I32, // 10: temp_buf
+            ],
+            self.generate_encode_cln_pairs_instructions(
+                malloc_index,
+                string_concat_index,
+                int_to_string_index,
+                quote_string_idx,
+            ),
+        )?;
+
         // json.dataToText(data: any) -> string
         // Convert data structure to JSON text
         register_stdlib_function_with_locals(
@@ -3273,6 +3328,427 @@ impl JsonClass {
             Instruction::End, // end count == 0 check
         ]);
         instrs
+    }
+
+    /// Allocate a length-prefixed Clean string of `bytes` length and store the pointer
+    /// in `out_local`. After execution the local holds the pointer; the string is
+    /// `[i32 len][raw bytes…]`. Used by helpers that emit short literal strings such
+    /// as `"["`, `"]"`, `","`, `":"`, `"true"`, `"false"`, `"null"`.
+    fn emit_alloc_const_str(
+        v: &mut Vec<Instruction<'static>>,
+        bytes: &[u8],
+        malloc_idx: u32,
+        out_local: u32,
+    ) {
+        let len = bytes.len() as i32;
+        v.extend([
+            Instruction::I32Const(4 + len),
+            Instruction::Call(malloc_idx),
+            Instruction::LocalSet(out_local),
+            Instruction::LocalGet(out_local),
+            Instruction::I32Const(len),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+        ]);
+        for (i, &b) in bytes.iter().enumerate() {
+            v.extend([
+                Instruction::LocalGet(out_local),
+                Instruction::I32Const(b as i32),
+                Instruction::I32Store8(MemArg {
+                    offset: (4 + i) as u64,
+                    align: 0,
+                    memory_index: 0,
+                }),
+            ]);
+        }
+    }
+
+    /// Emit a dispatch on `tag_local` that encodes the raw i32 value in `val_local`
+    /// as a JSON-compatible Clean string and leaves the resulting string pointer in
+    /// `out_local`. Handles tags `1` (Integer), `2` (Boolean), `4` (String); anything
+    /// else falls through to `"null"`. The Number tag (`3`) is f64 and is handled
+    /// separately at call sites (see `generate_encode_cln_list_instructions`).
+    fn emit_encode_primitive_i32(
+        v: &mut Vec<Instruction<'static>>,
+        val_local: u32,
+        tag_local: u32,
+        out_local: u32,
+        int_to_string_idx: u32,
+        quote_string_idx: u32,
+        malloc_idx: u32,
+    ) {
+        // if tag == 1 (Integer)
+        v.extend([
+            Instruction::LocalGet(tag_local),
+            Instruction::I32Const(1),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(val_local),
+            Instruction::Call(int_to_string_idx),
+            Instruction::LocalSet(out_local),
+            Instruction::Else,
+            // elif tag == 2 (Boolean)
+            Instruction::LocalGet(tag_local),
+            Instruction::I32Const(2),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // if val != 0: "true" else "false"
+            Instruction::LocalGet(val_local),
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ]);
+        Self::emit_alloc_const_str(v, b"true", malloc_idx, out_local);
+        v.push(Instruction::Else);
+        Self::emit_alloc_const_str(v, b"false", malloc_idx, out_local);
+        v.extend([
+            Instruction::End,
+            Instruction::Else,
+            // elif tag == 4 (String) — val is a Clean string pointer; quote it for JSON
+            Instruction::LocalGet(tag_local),
+            Instruction::I32Const(4),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(val_local),
+            Instruction::Call(quote_string_idx),
+            Instruction::LocalSet(out_local),
+            Instruction::Else,
+            // default — emit "null"
+        ]);
+        Self::emit_alloc_const_str(v, b"null", malloc_idx, out_local);
+        v.extend([Instruction::End, Instruction::End, Instruction::End]);
+    }
+
+    /// Generate WASM body for `__json_encode_cln_list(list_ptr: i32, elem_tag: i32) -> i32`.
+    ///
+    /// Walks a native Clean list (header `[len:i32@0][cap:i32@4][type_id:i32@8][pad@12]`,
+    /// elements from offset 16) and encodes each element directly into a JSON array
+    /// string. Element stride is 8 bytes when `elem_tag == 3` (Number/f64) and 4 bytes
+    /// otherwise. Used by the `json.encode(List<T>)` dispatch in `mir_builder/expressions.rs`
+    /// when `T` is a primitive — for richer element types (nested collections, class
+    /// instances) the dispatch is expected to take a different path.
+    fn generate_encode_cln_list_instructions(
+        &self,
+        malloc_idx: u32,
+        string_concat_idx: u32,
+        int_to_string_idx: u32,
+        float_to_string_idx: u32,
+        quote_string_idx: u32,
+    ) -> Vec<Instruction<'static>> {
+        // Locals (declared via register_stdlib_function_with_locals):
+        //   0: list_ptr (param)        — base of the Clean list
+        //   1: elem_tag (param)        — element AnyTypeTag (1,2,3,4)
+        //   2: count                   — number of elements
+        //   3: i                       — loop counter
+        //   4: result_ptr              — accumulating result string
+        //   5: elem_str                — encoded current element
+        //   6: elem_addr               — list_ptr + 16 + i*stride
+        //   7: elem_i32                — raw i32 element (for non-Number tags)
+        //   8: temp_buf                — scratch for "[", "]", "," etc.
+        //   9: elem_stride             — 4 or 8
+        //  10: elem_f64                — f64 element (for tag 3)
+        //
+        // Note: no null guard. Address 0 is a valid list pointer in this runtime
+        // because the bump allocator's heap state lives at `mem[0]`, so the first
+        // list materializes at address 0. The empty-list check below handles the
+        // genuinely empty case.
+        const LIST_DATA_OFFSET: u32 = 16;
+        let mut v: Vec<Instruction<'static>> = Vec::new();
+
+        // count = mem[list_ptr + 0]
+        v.extend([
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2),
+        ]);
+
+        // empty? return "[]"
+        v.extend([
+            Instruction::LocalGet(2),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+        ]);
+        Self::emit_alloc_const_str(&mut v, b"[]", malloc_idx, 4);
+        v.extend([Instruction::LocalGet(4), Instruction::Else]);
+
+        // elem_stride = (elem_tag == 3) ? 8 : 4
+        v.extend([
+            Instruction::LocalGet(1),
+            Instruction::I32Const(3),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::I32Const(8),
+            Instruction::Else,
+            Instruction::I32Const(4),
+            Instruction::End,
+            Instruction::LocalSet(9),
+        ]);
+
+        // result = "["
+        Self::emit_alloc_const_str(&mut v, b"[", malloc_idx, 4);
+
+        // i = 0
+        v.extend([
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3),
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // if i >= count: break
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // if i > 0: result = concat(result, ",")
+            Instruction::LocalGet(3),
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ]);
+        Self::emit_alloc_const_str(&mut v, b",", malloc_idx, 8);
+        v.extend([
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(8),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+            Instruction::End,
+            // elem_addr = list_ptr + 16 + i * elem_stride
+            Instruction::LocalGet(0),
+            Instruction::I32Const(LIST_DATA_OFFSET as i32),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(9),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(6),
+            // Dispatch by tag: tag 3 (Number/f64) loads f64 and converts; others load i32
+            Instruction::LocalGet(1),
+            Instruction::I32Const(3),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(6),
+            Instruction::F64Load(MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(10),
+            Instruction::LocalGet(10),
+            Instruction::Call(float_to_string_idx),
+            Instruction::LocalSet(5),
+            Instruction::Else,
+            Instruction::LocalGet(6),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(7),
+        ]);
+        Self::emit_encode_primitive_i32(
+            &mut v,
+            7,
+            1,
+            5,
+            int_to_string_idx,
+            quote_string_idx,
+            malloc_idx,
+        );
+        v.extend([
+            Instruction::End,
+            // result = concat(result, elem_str)
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(5),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+            // i++
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End, // end loop
+            Instruction::End, // end block
+        ]);
+
+        // result = concat(result, "]")
+        Self::emit_alloc_const_str(&mut v, b"]", malloc_idx, 8);
+        v.extend([
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(8),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+            // emit final result
+            Instruction::LocalGet(4),
+            Instruction::End, // end count==0 if
+        ]);
+
+        v
+    }
+
+    /// Generate WASM body for `__json_encode_cln_pairs(pairs_ptr: i32, val_tag: i32) -> i32`.
+    ///
+    /// Walks a native Clean pairs map (header `[count:i32@0][capacity:i32@4]`, entries
+    /// from offset 8 as `[key_ptr:i32][val:i32]` of 8 bytes each) and encodes each
+    /// entry as `"key":value` directly into a JSON object string. Keys are Clean
+    /// strings and are quoted via `__json_quote_string`. Values are dispatched by
+    /// `val_tag` (`1`=Integer, `2`=Boolean, `4`=String); other tags emit `null`.
+    /// `pairs<K,V>` cannot hold `V=number` because pairs entries are 4 bytes — the
+    /// type checker rejects that combination, so a tag-3 case is not handled here.
+    fn generate_encode_cln_pairs_instructions(
+        &self,
+        malloc_idx: u32,
+        string_concat_idx: u32,
+        int_to_string_idx: u32,
+        quote_string_idx: u32,
+    ) -> Vec<Instruction<'static>> {
+        // Locals:
+        //   0: pairs_ptr (param)
+        //   1: val_tag (param)
+        //   2: count
+        //   3: i
+        //   4: result_ptr
+        //   5: entry_addr
+        //   6: key_ptr
+        //   7: val_i32
+        //   8: key_str
+        //   9: val_str
+        //  10: temp_buf
+        //
+        // Note: no null guard. See `generate_encode_cln_list_instructions` —
+        // address 0 is a valid pointer in this runtime's bump allocator.
+        const PAIRS_HEADER_SIZE: u32 = 8;
+        const PAIRS_ENTRY_SIZE: u32 = 8;
+        let mut v: Vec<Instruction<'static>> = Vec::new();
+
+        // count = mem[pairs_ptr + 0]
+        v.extend([
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2),
+        ]);
+
+        // empty? return "{}"
+        v.extend([
+            Instruction::LocalGet(2),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+        ]);
+        Self::emit_alloc_const_str(&mut v, b"{}", malloc_idx, 4);
+        v.extend([Instruction::LocalGet(4), Instruction::Else]);
+
+        // result = "{"
+        Self::emit_alloc_const_str(&mut v, b"{", malloc_idx, 4);
+
+        // i = 0
+        v.extend([
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3),
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // if i >= count: break
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // if i > 0: result = concat(result, ",")
+            Instruction::LocalGet(3),
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ]);
+        Self::emit_alloc_const_str(&mut v, b",", malloc_idx, 10);
+        v.extend([
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(10),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+            Instruction::End,
+            // entry_addr = pairs_ptr + 8 + i * 8
+            Instruction::LocalGet(0),
+            Instruction::I32Const(PAIRS_HEADER_SIZE as i32),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(PAIRS_ENTRY_SIZE as i32),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(5),
+            // key_ptr = mem[entry_addr + 0]
+            Instruction::LocalGet(5),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(6),
+            // val_i32 = mem[entry_addr + 4]
+            Instruction::LocalGet(5),
+            Instruction::I32Load(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(7),
+            // key_str = quote_string(key_ptr)
+            Instruction::LocalGet(6),
+            Instruction::Call(quote_string_idx),
+            Instruction::LocalSet(8),
+            // result = concat(result, key_str)
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(8),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+        ]);
+        // result = concat(result, ":")
+        Self::emit_alloc_const_str(&mut v, b":", malloc_idx, 10);
+        v.extend([
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(10),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+        ]);
+        // val_str = encode_primitive(val_i32, val_tag)
+        Self::emit_encode_primitive_i32(
+            &mut v,
+            7,
+            1,
+            9,
+            int_to_string_idx,
+            quote_string_idx,
+            malloc_idx,
+        );
+        v.extend([
+            // result = concat(result, val_str)
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(9),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+            // i++
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End, // end loop
+            Instruction::End, // end block
+        ]);
+
+        // result = concat(result, "}")
+        Self::emit_alloc_const_str(&mut v, b"}", malloc_idx, 10);
+        v.extend([
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(10),
+            Instruction::Call(string_concat_idx),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(4),
+            Instruction::End, // end count==0 if
+        ]);
+
+        v
     }
 
     // ====================================================================================

@@ -1,0 +1,45 @@
+// Test: stdlib/json/json_encode_pairs
+// Grammar: function_call → namespace "." function_name "(" args ")"
+// Semantic: FUNC-BUILTIN — json.encode on a typed Pairs<K,V> walks the native
+//   pairs heap layout and emits a JSON object directly.
+// Regression: JSON-ENCODE-PAIRS-MALFORMED (compiler 0.30.298, dashboard
+//   fingerprint ce3b02d0fd48). Before the fix:
+//     - `pairs<string,string> data = { title: "hello" }; json.encode(data)`
+//       produced a raw pointer value like "1048576" because the pairs were
+//       boxed through `AnyTypeTag::Integer` (fallthrough in get_any_type_tag)
+//       and then stringified as an integer.
+//     - Typed pairs literals stored in JSON-object format also broke
+//       `pairs.get/set` because the layouts have different header sizes.
+//   Fix: ObjectLiteral now produces the native pairs layout when the declared
+//   variable type is Pairs<>, and `json.encode(Pairs<>)` routes to the new
+//   `__json_encode_cln_pairs` stdlib helper.
+//
+// Expected output:
+//   {"title":"hello"}
+//   {"a":1,"b":2}
+//   {}
+//   {"x":null,"y":"hi"}
+//   first
+//   second
+
+start:
+	// 1. Pairs<string, string> literal — full serialization
+	pairs<string, string> data = { title: "hello" }
+	print(json.encode(data))
+
+	// 2. Pairs<string, integer> — int values dispatch correctly
+	pairs<string, integer> counts = { a: 1, b: 2 }
+	print(json.encode(counts))
+
+	// 3. Empty pairs literal
+	pairs<string, string> empty = {}
+	print(json.encode(empty))
+
+	// 4. Pairs values flowing through Any inside an object literal — null + string
+	any mixed = { x: null, y: "hi" }
+	print(json.encode(mixed))
+
+	// 5. After the literal fix, pairs.get/set also work on typed-literal-init pairs.
+	pairs<string, string> kvs = { a: "first", b: "second" }
+	print(kvs.get("a"))
+	print(kvs.get("b"))
