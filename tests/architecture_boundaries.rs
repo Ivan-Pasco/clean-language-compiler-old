@@ -79,19 +79,24 @@ const EXEMPT_FILES: &[&str] = &[
     "src/codegen/mod.rs",
     // Doc-comment example only — no executable plugin knowledge:
     "src/hir/mod.rs",
-    // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding A):
-    // Resolver pre-registers `req.*`, `_req_*`, `auth.*`, `session.*` as
-    // hardcoded builtin function signatures instead of consuming plugin.toml
-    // `[bridge]` declarations. Fixing requires the resolver to receive a
-    // plugin registry handle during symbol-table seeding.
+    // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding A — partial):
+    // Resolver pre-registers raw bridge names (`_req_*`, `_server_sleep`) as
+    // hardcoded builtin function signatures so direct bridge calls from generated
+    // framework code resolve. Language-level entries (req.*, auth.*, session.*,
+    // server.sleep, jwt.sign/verify/decode) were removed in 0.30.296 once
+    // framework v2.12.26 supplied them via plugin.toml `[[functions]]` maps_to.
+    // Still hardcoded: db.query/db.execute, crypto.*, env.get, time.now/now, and
+    // the `_req_*` bridge names (used directly in framework examples).
     "src/resolver/symbol_table.rs",
     // Note: src/codegen/mir_codegen/utilities.rs (formerly sub-finding B) was
     // cleared in 0.30.289 — `register_http_server_wrappers` deleted (0.30.288)
     // and the Layer-3 prefix classifier replaced with a bridge_functions lookup.
-    // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding C):
-    // Codegen module builder hardcodes `db.begin/commit/rollback` →
-    // `_db_begin/_db_commit/_db_rollback` aliasing instead of reading
-    // language→bridge mappings from plugin.toml. Same refactor.
+    // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding C — partial):
+    // Codegen module builder still wraps `db.query` and `db.execute` because
+    // both need the Clean-string → (ptr+4, len) expand path. The transaction
+    // trio (`db.begin/commit/rollback`) was cleared in 0.30.296 — now resolved
+    // via plugin manifest `language_to_bridge_map`. Also still hardcodes the
+    // `http.*` wrapper family and `_http_route`/`_req_*` direct registrations.
     "src/codegen/codegen_module_builder.rs",
 ];
 

@@ -1229,9 +1229,11 @@ impl GlobalSymbolTable {
                 vec![HirType::String, HirType::String],
                 HirType::Integer,
             ),
-            ("db.begin", vec![], HirType::Boolean),
-            ("db.commit", vec![], HirType::Boolean),
-            ("db.rollback", vec![], HirType::Boolean),
+            // db.begin / db.commit / db.rollback removed in 0.30.296 — now provided by
+            // frame.data plugin.toml `[[functions]]` with `maps_to` + `returns = "integer"`.
+            // Per BUILTIN-NAMESPACE-OVERREACH Sub-C resolution; framework v2.12.26+ supplies
+            // the language-level declarations. Language type changes from Boolean → Integer
+            // (matches the actual i32 bridge ABI).
             // crypto namespace functions — Layer 2 host bridge
             (
                 "crypto.hashPassword",
@@ -1256,35 +1258,18 @@ impl GlobalSymbolTable {
                 vec![HirType::String, HirType::String, HirType::String],
                 HirType::String,
             ),
-            // jwt namespace functions — Layer 2 host bridge
-            (
-                "jwt.sign",
-                vec![HirType::String, HirType::String, HirType::String],
-                HirType::String,
-            ),
-            (
-                "jwt.verify",
-                vec![HirType::String, HirType::String, HirType::String],
-                HirType::String,
-            ),
-            ("jwt.decode", vec![HirType::String], HirType::String),
+            // jwt.sign / jwt.verify / jwt.decode removed in 0.30.296 — provided by
+            // frame.auth plugin.toml. Per BUILTIN-NAMESPACE-OVERREACH Sub-A resolution;
+            // framework v2.12.26+ declares these with maps_to and matching types.
             // env namespace functions — Layer 2 host bridge
             ("env.get", vec![HirType::String], HirType::String),
             // time namespace functions — Layer 2 host bridge
             ("time.now", vec![], HirType::Integer),
             // now() — bare alias for time.now(), used by frame.data plugin-generated code
             ("now", vec![], HirType::Integer),
-            // req namespace functions — Layer 3 server-only (language API)
-            ("req.param", vec![HirType::String], HirType::String),
-            ("req.query", vec![HirType::String], HirType::String),
-            ("req.body", vec![], HirType::String),
-            ("req.header", vec![HirType::String], HirType::String),
-            ("req.headers", vec![], HirType::String),
-            ("req.method", vec![], HirType::String),
-            ("req.path", vec![], HirType::String),
-            ("req.ip", vec![], HirType::String),
-            ("req.form", vec![], HirType::String),
-            ("req.cookie", vec![HirType::String], HirType::String),
+            // req.* removed in 0.30.296 — provided by frame.server plugin.toml `[[functions]]`
+            // entries (lines 228-239) with maps_to and matching String types.
+            // Per BUILTIN-NAMESPACE-OVERREACH Sub-A resolution; framework v2.12.26+.
             // Bridge-level request context functions (underscore prefix) — Layer 3 server-only.
             // These are the raw WASM import names used by frame.server.  They are registered
             // as builtins so the resolver accepts calls to them even when the plugin declaration
@@ -1296,23 +1281,15 @@ impl GlobalSymbolTable {
             ("_req_method", vec![], HirType::String),
             ("_req_path", vec![], HirType::String),
             ("_req_cookie", vec![HirType::String], HirType::String),
-            // auth namespace functions — Layer 3 server-only
-            ("auth.getSession", vec![], HirType::String),
-            ("auth.requireAuth", vec![], HirType::Boolean),
-            ("auth.requireRole", vec![HirType::String], HirType::Boolean),
-            ("auth.can", vec![HirType::String], HirType::Boolean),
-            ("auth.hasAnyRole", vec![HirType::String], HirType::Boolean),
-            ("auth.setSession", vec![HirType::String], HirType::Boolean),
-            ("auth.clearSession", vec![], HirType::Boolean),
-            ("auth.userId", vec![], HirType::Integer),
-            ("auth.userRole", vec![], HirType::String),
-            // session namespace functions — Layer 3 server-only
-            ("session.get", vec![], HirType::String),
-            ("session.delete", vec![], HirType::Boolean),
-            ("session.exists", vec![HirType::String], HirType::Boolean),
-            // server namespace functions — Layer 3 async
-            ("server.sleep", vec![HirType::Integer], HirType::Void),
-            // raw bridge name also callable directly (matches _req_* pattern)
+            // auth.* / session.* / server.sleep removed in 0.30.296 — provided by:
+            //   - frame.server plugin.toml: auth.getSession, auth.requireAuth, auth.requireRole,
+            //     auth.can, auth.hasAnyRole, server.sleep
+            //   - frame.auth plugin.toml: auth.setSession, auth.clearSession, auth.userId,
+            //     auth.userRole, session.get, session.delete, session.exists
+            // Per BUILTIN-NAMESPACE-OVERREACH Sub-A resolution; framework v2.12.26+.
+            //
+            // _server_sleep raw bridge name retained — still called directly from some
+            // framework-generated code (parallel to _req_* below).
             ("_server_sleep", vec![HirType::Integer], HirType::Void),
         ];
 

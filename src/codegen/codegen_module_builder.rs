@@ -1070,36 +1070,11 @@ impl super::CodeGenerator {
             self.function_map.insert("db.execute".to_string(), wrap_idx);
         }
 
-        if let Some(&raw_idx) = self.function_map.get("_db_begin") {
-            let wrap_idx = self.register_function(
-                "db.begin",
-                &[],
-                Some(WasmType::I32),
-                &[Instruction::Call(raw_idx)],
-            )?;
-            self.function_map.insert("db.begin".to_string(), wrap_idx);
-        }
-
-        if let Some(&raw_idx) = self.function_map.get("_db_commit") {
-            let wrap_idx = self.register_function(
-                "db.commit",
-                &[],
-                Some(WasmType::I32),
-                &[Instruction::Call(raw_idx)],
-            )?;
-            self.function_map.insert("db.commit".to_string(), wrap_idx);
-        }
-
-        if let Some(&raw_idx) = self.function_map.get("_db_rollback") {
-            let wrap_idx = self.register_function(
-                "db.rollback",
-                &[],
-                Some(WasmType::I32),
-                &[Instruction::Call(raw_idx)],
-            )?;
-            self.function_map
-                .insert("db.rollback".to_string(), wrap_idx);
-        }
+        // db.begin / db.commit / db.rollback wrappers removed in 0.30.296. The
+        // plugin manifest (frame.data v2.12.26+) declares these aliases via
+        // `[[functions]]` `maps_to` entries; codegen resolves the call through
+        // `language_to_bridge_map` (see `instructions.rs:1585`) directly to the
+        // `_db_*` imports. Per BUILTIN-NAMESPACE-OVERREACH Sub-C.
 
         Ok(())
     }
