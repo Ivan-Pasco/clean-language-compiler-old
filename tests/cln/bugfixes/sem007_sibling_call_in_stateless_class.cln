@@ -1,0 +1,27 @@
+// Test: bugfixes/sem007_sibling_call_in_stateless_class
+// Grammar: class_body → functions_block → method calling sibling method
+// Regression: SEM007 (fingerprint 32e3513b6c13...)
+// Bug:  When a stateless utility class (no parent, no fields, body doesn't
+//       reference `this`) has one method call another sibling method, the
+//       typechecker auto-marks both methods as `is_static`. The sibling
+//       call site was emitted as a MethodCall that pushed `this` as the
+//       receiver, but the callee had no `this` parameter — the receiver
+//       leaked onto the operand stack. The bug surfaced as "this used in
+//       method without instance parameter" via the cross-file `shared:`
+//       manifest path; standalone it produced a silent stack imbalance
+//       caught downstream (CODEGEN-INVALID-WASM). Both share a root cause
+//       — see commit c9e3b55c (mir: skip pushing receiver for is_static
+//       utility-class methods).
+// Expected output:
+//   hi
+
+start:
+	A x = A()
+	print(x.outer())
+
+class A
+	functions:
+		string inner()
+			return "hi"
+		string outer()
+			return inner()
