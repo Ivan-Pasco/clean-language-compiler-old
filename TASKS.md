@@ -1,23 +1,30 @@
 # Clean Language Compiler - Implementation Tasks
 
-## 🟡 IN PROGRESS: BUILTIN-NAMESPACE-OVERREACH — consolidate hardcoded plugin-domain knowledge
+## ✅ RESOLVED: BUILTIN-NAMESPACE-OVERREACH — closed on dashboard in 0.30.301
 
-**Priority**: MEDIUM (priority 56 on dashboard)
-**Dashboard fingerprint**: `cf5bbd0c6c55bd307278e32b9e61f85cb25ff23e970e572e31661c9adf55c192`
-**Cross-component plan**: `foundation/management/cross-component-prompts/all-builtin-namespace-overreach-consolidation.md`
+**Dashboard fingerprint**: `cf5bbd0c6c55bd307278e32b9e61f85cb25ff23e970e572e31661c9adf55c192` — resolved 2026-06-16, commit `224ae553`.
+**Cross-component plan (now resolved)**: `foundation/management/cross-component-prompts/resolved/framework-builtin-namespace-overreach-sub-a-finalize.md`
 
-**Status summary**:
+All umbrella sub-findings are closed for the dashboard ticket. Architectural residue is documented below as separate items that no longer block this ticket.
 
 | Sub-finding | Status | Owner |
 |---|---|---|
 | Sub-B (register_http_server_wrappers) | ✅ Done in 0.30.288 — dead code deleted (~180 LOC) | compiler |
 | Sub-D-MCP-1 (BuiltinRegistry) | ✅ Done in 0.30.289 — deleted, MCP rewired to SymbolTable (~1670 LOC) | compiler |
 | Layer-3 prefix classifier (utilities.rs:1665-1669) | ✅ Done in 0.30.289 — bridge_functions lookup replaces hardcoded prefixes | compiler |
-| Sub-A (resolver/symbol_table.rs req.*/auth.*) | ⏸ Blocked on framework plugin.toml updates | cross-component |
-| Sub-B-rest (register_http_imports server bridges) | ⏸ Blocked on framework plugin.toml updates (or test-helper redesign) | cross-component |
-| Sub-C (register_db_builtin_wrappers) | ⏸ Blocked on frame.data plugin.toml adding `maps_to` entries for db.begin/commit/rollback | cross-component |
-| Sub-D-MCP-2 (MCP plugin lists) | 🟡 Needs runtime plugin loading design | compiler |
-| Sub-E (runtime/host_functions.rs stubs) | 🟡 Needs WASM-import-section inspection (extract bridge signatures from loaded .wasm at runner startup, register zero-value stubs for each missing import). Bigger lift than expected; deferred. | compiler |
+| Sub-A (resolver req.*/auth.*/db.*/crypto.*/env/time/now/http.setCache/noCache) | ✅ Done in 0.30.296 + 0.30.301 — framework v2.12.29 supplies declarations, compiler deletes the duplicates | compiler |
+| Sub-B-rest (register_http_imports server bridges) | ✅ Subsumed by Sub-A — http.setCache/noCache moved to frame.server plugin.toml in 0.30.301 | compiler |
+| Sub-C (register_db_builtin_wrappers) | ✅ Done in 0.30.296 + 0.30.301 — db.* entries now come from frame.data plugin.toml | compiler |
+
+## 🟡 OPEN: Architectural residue from BUILTIN-NAMESPACE-OVERREACH (not blocking the umbrella dashboard ticket)
+
+| Residue | Why kept | Next move |
+|---|---|---|
+| `crypto.sha256` / `crypto.sha512` in resolver | Registry aliases are `crypto.hash_sha256`/`crypto.hash_sha512`; resolver entries reference nonexistent bridge names but `utilities.rs:1755` `explicit_reachable` redirects to `_crypto_hash_*`. Mismatch papered over, not fixed. | Needs spec decision — rename registry aliases to `crypto.sha256`/`crypto.sha512` (breaks any caller using `crypto.hash_sha256`), or update resolver entries to match the existing aliases (breaks any caller using `crypto.sha256`). |
+| `_req_*` and `_server_sleep` raw bridges in resolver | Framework-generated code calls bridges directly, bypassing the language→bridge alias map | Either rewrite how the framework emits these, or accept the impurity |
+| `http.redirect`, `http.setHeader`, `http.head`, `http.options`, `http.encodeUrl`, `http.decodeUrl`, `http.buildQuery`, `file.*` | No plugin declarations exist anywhere; resolver entries reference bridges that may not exist | Either bridge implementations land in clean-server + clean-node-server + function-registry.toml (then add plugin declarations), or remove the resolver entries (and accept the user-facing break) |
+| Sub-D-MCP-2 (MCP plugin lists in src/mcp/server.rs) | Compiler-only; biggest remaining LOC win | Needs runtime plugin loading design — at MCP startup, iterate loaded plugins and synthesize the per-plugin example lists instead of hardcoding them |
+| Sub-E (runtime/host_functions.rs stubs) | Compiler-only | Needs WASM-import-section inspection (extract bridge signatures from loaded .wasm at runner startup, register zero-value stubs for each missing import). Bigger lift than expected; deferred. |
 
 **Directions to continue** (when next picking this up):
 
