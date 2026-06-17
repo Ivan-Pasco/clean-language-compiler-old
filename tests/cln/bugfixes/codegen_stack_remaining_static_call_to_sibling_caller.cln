@@ -1,0 +1,49 @@
+// Test: bugfixes/codegen_stack_remaining_static_call_to_sibling_caller
+// Grammar: static_method_call → ClassName.method(args)  (grammar.ebnf §5
+//   static_method_call) on a method whose body has a sibling method call.
+// Regression: CODEGEN_STACK_REMAINING (dashboard fp df5b8c9b1021).
+//   Reported against compiler 0.30.268. Wrapping bare functions: blocks in
+//   stateless `class CapabilityName` and calling them statically (Law 2
+//   pattern) produced "type mismatch: expected i32 but nothing on stack".
+//   Root cause: the typechecker's auto-static heuristic for utility classes
+//   (no parent, no fields) called body_uses_this(), which conservatively
+//   returned true for any method whose body contained a sibling method
+//   call — because sibling calls lower to MethodCall { receiver: this, ... }.
+//   The "caller" method was therefore left as is_static = false, gaining an
+//   implicit `this` parameter in the WASM signature. But the user invoked
+//   it via static syntax ClassName.method(args), which uses the
+//   StaticMethodCall codegen path — that path pushes only the user-visible
+//   args, not `this`. The call instruction's arity mismatch surfaced as
+//   the WASM validator complaining about a missing stack value.
+//
+//   Fix: for utility classes (no parent, no fields), mark every method as
+//   is_static unconditionally. A class with no state has nothing for `this`
+//   to point at, and the only legitimate use of `this` inside such a class
+//   is the implicit receiver of sibling method calls — which the MIR
+//   builder already drops at the call site when the callee is static.
+//
+// Expected output:
+//   19
+//   11
+//   42
+
+start:
+	integer r = C1.entry(2, 3)
+	print(r.toString())
+	integer s = C1.compute(2, 3)
+	print(s.toString())
+	integer t = C2.passthrough(42)
+	print(t.toString())
+
+class C1
+	functions:
+		integer entry(integer a, integer b)
+			integer x = compute(a, b)
+			return x + 8
+		integer compute(integer a, integer b)
+			return a + b + 6
+
+class C2
+	functions:
+		integer passthrough(integer n)
+			return n

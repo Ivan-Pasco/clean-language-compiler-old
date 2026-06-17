@@ -1587,18 +1587,26 @@ impl<'a> TypeInference<'a> {
 
         let declared_return_type = self.hir_type_to_concrete(&method.return_type);
 
-        // REFINED FIX: Determine if method should be static based on class context
+        // Determine if method should be static based on class context.
         // For classes with inheritance OR instance fields: Always use instance methods
         // - Method signatures must match across inheritance hierarchy for polymorphism
         // - Example: Vehicle.getMaxSpeed() returns 60 (no 'this'), but Car.getMaxSpeed() uses this.isElectric
-        // For utility classes (no parent, no fields): Use heuristic to detect static methods
-        // - Allows methods like MathUtils.add(a, b) to be called statically
+        // For utility classes (no parent, no fields): All methods are static.
+        // - There is no state for `this` to point at.
+        // - The body_uses_this() heuristic mistakenly returned true for methods
+        //   whose only `this` reference was the implicit receiver of a sibling
+        //   method call (e.g. `compute(a, b)` inside another method of the same
+        //   class lowers to MethodCall { receiver: this, ... }). Marking such a
+        //   method non-static gave it an implicit `this` parameter in the WASM
+        //   signature, which then mismatched static call sites (ClassName.method)
+        //   that push only the user-visible args. See CODEGEN_STACK_REMAINING
+        //   (fingerprint df5b8c9b1021).
         let is_static = if has_parent || has_fields {
             // Class has inheritance or state - all methods must be instance methods
             false
         } else {
-            // Utility class - detect static methods using heuristic
-            !self.body_uses_this(&tast_body)
+            // Stateless utility class — all methods are static.
+            true
         };
 
         Ok(TastFunction {
@@ -2203,82 +2211,6 @@ impl<'a> TypeInference<'a> {
             scope,
             location: state_block.location.clone(),
         })
-    }
-
-    /// Check if a block uses 'this' or accesses instance fields
-    /// Returns true if the method is instance-dependent, false if it's static-safe
-    fn body_uses_this(&self, block: &TastBlock) -> bool {
-        // Check all statements in the block
-        for statement in &block.statements {
-            if self.statement_uses_this(statement) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Check if a statement uses 'this'
-    fn statement_uses_this(&self, statement: &TastStatement) -> bool {
-        match statement {
-            TastStatement::Expression { expression, .. } => self.expression_uses_this(expression),
-            TastStatement::VariableDeclaration { initializer, .. } => initializer
-                .as_ref()
-                .is_some_and(|e| self.expression_uses_this(e)),
-            TastStatement::Assignment { target, value, .. } => {
-                self.expression_uses_this(target) || self.expression_uses_this(value)
-            }
-            TastStatement::Return { value, .. } => {
-                value.as_ref().is_some_and(|e| self.expression_uses_this(e))
-            }
-            TastStatement::If {
-                condition,
-                then_block,
-                else_block,
-                ..
-            } => {
-                self.expression_uses_this(condition)
-                    || self.body_uses_this(then_block)
-                    || else_block.as_ref().is_some_and(|b| self.body_uses_this(b))
-            }
-            TastStatement::For { iterable, body, .. } => {
-                self.expression_uses_this(iterable) || self.body_uses_this(body)
-            }
-            _ => false,
-        }
-    }
-
-    /// Check if an expression uses 'this'
-    fn expression_uses_this(&self, expression: &TastExpression) -> bool {
-        match &expression.kind {
-            TastExpressionKind::Variable { name, .. } => name == "this",
-            TastExpressionKind::PropertyAccess { object, .. } => self.expression_uses_this(object),
-            TastExpressionKind::MethodCall {
-                receiver,
-                arguments,
-                ..
-            } => {
-                self.expression_uses_this(receiver)
-                    || arguments.iter().any(|a| self.expression_uses_this(a))
-            }
-            TastExpressionKind::FunctionCall {
-                function,
-                arguments,
-                ..
-            } => {
-                self.expression_uses_this(function)
-                    || arguments.iter().any(|a| self.expression_uses_this(a))
-            }
-            TastExpressionKind::BinaryOperation { left, right, .. } => {
-                self.expression_uses_this(left) || self.expression_uses_this(right)
-            }
-            TastExpressionKind::UnaryOperation { operand, .. } => {
-                self.expression_uses_this(operand)
-            }
-            TastExpressionKind::ArrayLiteral { elements, .. } => {
-                elements.iter().any(|e| self.expression_uses_this(e))
-            }
-            _ => false,
-        }
     }
 
     /// Infer types for a block
@@ -5487,8 +5419,28 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::Any)
             }
 
-            // For unknown static method/class combinations, return Unknown
-            _ => Ok(ConcreteType::Unknown),
+            // User-defined classes: look up the method's declared return type
+            // from the symbol table. Without this, every `ClassName.method(...)`
+            // call on a user-defined class reported `Unknown` as its result
+            // type, which the codegen then treated as a boxed `any` value —
+            // dereferencing the actual i32 result as a pointer and reading
+            // garbage memory. See CODEGEN_STACK_REMAINING (fp df5b8c9b1021).
+            _ => {
+                if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(class_name) {
+                    if let Some(method_symbol_id) = self
+                        .symbol_table
+                        .lookup_class_member(class_symbol_id, method_name)
+                    {
+                        if let Some(method_symbol) = self.symbol_table.get_symbol(method_symbol_id)
+                        {
+                            if let SymbolKind::Method { return_type, .. } = &method_symbol.kind {
+                                return Ok(self.hir_type_to_concrete(return_type));
+                            }
+                        }
+                    }
+                }
+                Ok(ConcreteType::Unknown)
+            }
         }
     }
 

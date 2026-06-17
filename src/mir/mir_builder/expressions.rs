@@ -39,19 +39,40 @@ impl MirBuilder {
                     "Processing variable"
                 );
 
-                // Special case for 'this' - in class methods, 'this' refers to the first parameter
+                // Special case for 'this' - in class methods, 'this' refers to the first parameter.
                 if name == "this" && context.class_context.is_some() {
-                    // In class methods, 'this' is the first parameter
-                    // Get the actual ValueId of the first parameter
+                    // Instance methods have `this` as their first parameter (added in
+                    // functions.rs only when `is_static = false`).
                     if let Some(first_param) = context.function.parameters.first() {
-                        // Return the parameter's ValueId directly - no need to copy
-                        return Ok(first_param.value_id);
-                    } else {
-                        return Err(vec![CompilerError::validation_error(
-                            "'this' used in method without instance parameter",
-                            expression.location.clone(),
-                        )]);
+                        if first_param.name == "this" {
+                            return Ok(first_param.value_id);
+                        }
                     }
+                    // Static methods have no `this` parameter. The only place the
+                    // typechecker leaves a `this` reference reachable from a static
+                    // method body is the implicit receiver of a sibling MethodCall —
+                    // the MethodCall MIR builder drops that receiver when the callee
+                    // is also static. Emit a dummy `i32.const 0` so the receiver
+                    // ValueId is well-defined; it never reaches the operand stack.
+                    let dummy_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(
+                        context,
+                        dummy_id,
+                        MirType::I32,
+                        expression.location.clone(),
+                    );
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: Some(dummy_id),
+                            operation: MirOperation::Copy {
+                                source: MirOperand::Constant(MirConstant::Integer(0)),
+                            },
+                            location: expression.location.clone(),
+                        },
+                    );
+                    return Ok(dummy_id);
                 }
 
                 // Look up variable in scope stack
