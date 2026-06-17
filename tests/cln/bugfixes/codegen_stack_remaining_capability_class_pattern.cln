@@ -1,0 +1,144 @@
+// Test: bugfixes/codegen_stack_remaining_capability_class_pattern
+// Grammar: static_method_call → ClassName.method(args)  (grammar.ebnf §5
+//   static_method_call) where 15+ stateless utility classes ("capability
+//   classes") each expose a void method and a single entrypoint routes
+//   sibling calls through ClassName.method(args) expression-statements.
+// Regression: CODEGEN_STACK_REMAINING (dashboard fp fa0584d8).
+//   Reported 2026-06-17 against compiler 0.30.308 after 06e6cd9c (fp
+//   82badd8d3d63) shipped. The 06e6cd9c fix correctly sets `dest = None`
+//   in the StaticMethodCall MIR lowering when the call is to a void
+//   user-class method, but the codegen Drop decision for `dest = None`
+//   only proves void-ness via (a) the MIR function_signatures registry,
+//   (b) a hardcoded builtin name list, or (c) the plugin-bridge
+//   function_return_types registry. When the function_signatures lookup
+//   misses — e.g. when the resolver fell back to SymbolId(0) placeholder
+//   for an unresolved class member, or the call was lowered via the
+//   NamedFunction path with a name no fallback list recognizes — the
+//   codegen defaulted to non-void and emitted Drop on top of the empty
+//   stack left by the void WASM call. wasmparser then reported
+//   "expected a type but nothing on stack" (the new error pattern
+//   replacing the original "expected i32 but nothing on stack" from
+//   82badd8d3d63).
+//
+//   Fix: add a WASM-level last-resort check to the dest=None void
+//   decision. If the WASM function the call resolves to has no result
+//   type (mirroring the NamedFunction name-variant chain so e.g.
+//   "Auth.find_or_create_user" → "find_or_create_user" resolves), the
+//   call is void at the WASM level and no Drop is needed.
+//
+//   Pins the pattern observed in Clean Studio: 15 stateless capability
+//   classes each with a void method, an entrypoint that issues a
+//   `ClassName.method(args)` static call to each in sequence as the
+//   statement, and a final `print` so the WASM produces visible output
+//   verifying the call sequence executed in order.
+//
+// Expected output:
+//   auth
+//   config
+//   docs
+//   files
+//   email
+//   design
+//   diff
+//   markdown
+//   oauth
+//   projects
+//   review
+//   share
+//   interview
+//   ai
+//   billing
+//   done
+
+start:
+	Auth.find_or_create_user("alice@example.com")
+	Config.load("prod")
+	Documents.list_for_user(1)
+	Files.upload_blob("payload")
+	Email.send_template("welcome", 1)
+	Design.regenerate_thumbnails(1)
+	Diff.compute_for_project(1)
+	Markdown.render("# hi")
+	Oauth.exchange_code("abc")
+	Projects.touch_project(1)
+	Review.queue_for_user(1)
+	Share.create_token(1)
+	Interview.start_session(1)
+	Ai.summarize_for_user(1)
+	Billing.charge_user(1)
+	print("done")
+
+class Auth
+	functions:
+		find_or_create_user(string email)
+			print("auth")
+
+class Config
+	functions:
+		load(string env)
+			print("config")
+
+class Documents
+	functions:
+		list_for_user(integer uid)
+			print("docs")
+
+class Files
+	functions:
+		upload_blob(string blob)
+			print("files")
+
+class Email
+	functions:
+		send_template(string tpl, integer uid)
+			print("email")
+
+class Design
+	functions:
+		regenerate_thumbnails(integer uid)
+			print("design")
+
+class Diff
+	functions:
+		compute_for_project(integer pid)
+			print("diff")
+
+class Markdown
+	functions:
+		render(string md)
+			print("markdown")
+
+class Oauth
+	functions:
+		exchange_code(string code)
+			print("oauth")
+
+class Projects
+	functions:
+		touch_project(integer pid)
+			print("projects")
+
+class Review
+	functions:
+		queue_for_user(integer uid)
+			print("review")
+
+class Share
+	functions:
+		create_token(integer uid)
+			print("share")
+
+class Interview
+	functions:
+		start_session(integer uid)
+			print("interview")
+
+class Ai
+	functions:
+		summarize_for_user(integer uid)
+			print("ai")
+
+class Billing
+	functions:
+		charge_user(integer uid)
+			print("billing")

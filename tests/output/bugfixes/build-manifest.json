@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0.0",
+  "compiler_version": "0.30.308",
+  "contract_version": "1.0.0",
+  "runtime_abi_version": "1.0.0",
+  "generated_at_epoch_seconds": 1781736645,
+  "artifacts": [
+    {
+      "name": "codegen_stack_remaining_capability_class_pattern.wasm",
+      "path_relative": "codegen_stack_remaining_capability_class_pattern.wasm",
+      "purpose": "main_module",
+      "public": false,
+      "content_type": "application/wasm",
+      "size_bytes": 20296,
+      "sha256": "6dd9f27c4b4461564d0e18f31dcb6c35669b2fb74b23a0b2609e93e33fc5aba4",
+      "source_plugin": null
+    },
+    {
+      "name": "frontend.wasm",
+      "path_relative": "frontend.wasm",
+      "purpose": "client_hydration",
+      "public": true,
+      "content_type": "application/wasm",
+      "size_bytes": 19945,
+      "sha256": "e2e18665c7ea5d323169507cd37f6edac1d25671df38b2e328c8367c29718553",
+      "source_plugin": null
+    }
+  ],
+  "callbacks": [],
+  "build_state": {}
+}

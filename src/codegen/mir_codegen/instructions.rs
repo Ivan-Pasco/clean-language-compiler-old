@@ -1889,10 +1889,39 @@ impl MirCodeGenerator<'_> {
                         );
                         true
                     } else {
-                        // NOTE: For functions without signatures called as expression statements,
-                        // default to NON-VOID (add DROP) to prevent stack pollution
-                        debug_mir!(" CALL NO DEST: Unknown function without signature, defaulting to non-void (adding DROP for safety)");
-                        false
+                        // Last-resort WASM-level lookup. CODEGEN_STACK_REMAINING
+                        // (fp fa0584d8): the StaticMethodCall MIR lowering
+                        // already sets `dest = None` when the call is to a
+                        // void user-class method, but the call may reach
+                        // codegen as a NamedFunction whose Clean Language
+                        // name doesn't match any of the hardcoded builtins
+                        // and isn't in `function_return_types` (that registry
+                        // only holds plugin bridge imports). Without this
+                        // check the fallback defaults to non-void → emits
+                        // Drop on top of the empty stack left by the void
+                        // WASM call → wasmparser reports "expected a type
+                        // but nothing on stack". Querying the WASM-level
+                        // type registry by the same name variants the
+                        // NamedFunction resolution uses closes the gap: a
+                        // function registered with no WASM result type IS
+                        // void at the WASM level.
+                        let wasm_says_void = function_name
+                            .as_deref()
+                            .map(|name| self.wasm_function_is_void(name))
+                            .unwrap_or(false);
+
+                        if wasm_says_void {
+                            debug_mir!(
+                                " CALL NO DEST: WASM-level signature is void: {:?}",
+                                function_name
+                            );
+                            true
+                        } else {
+                            // NOTE: For functions without signatures called as expression statements,
+                            // default to NON-VOID (add DROP) to prevent stack pollution
+                            debug_mir!(" CALL NO DEST: Unknown function without signature, defaulting to non-void (adding DROP for safety)");
+                            false
+                        }
                     }
                 }
             };
@@ -1947,6 +1976,60 @@ impl MirCodeGenerator<'_> {
             return None;
         };
         self.bridge_param_types.get(&alt_name).cloned()
+    }
+
+    /// Returns true when the WASM-registered function with the given
+    /// Clean Language name has no result type (i.e. the WASM `call`
+    /// pushes nothing onto the stack). Mirrors the name-variant chain
+    /// used by `MirOperand::NamedFunction` resolution so the same
+    /// Clean Language name a call site uses ("Auth.find_or_create_user",
+    /// "list.set", "input.integer", "req.body", …) resolves to the same
+    /// WASM type entry. Used by the expression-statement Drop decision
+    /// to suppress the Drop when the resolved WASM function returns no
+    /// value — see CODEGEN_STACK_REMAINING (fp fa0584d8).
+    pub(super) fn wasm_function_is_void(&self, name: &str) -> bool {
+        let try_name = |candidate: &str| -> Option<bool> {
+            self.wasm_generator
+                .get_wasm_return_type(candidate)
+                .map(|rt| rt.is_none())
+        };
+
+        if let Some(is_void) = try_name(name) {
+            return is_void;
+        }
+
+        // dot↔underscore conversion (e.g. "input.integer" ↔ "input_integer").
+        let alt_name = if name.contains('.') {
+            Some(name.replace('.', "_"))
+        } else if name.contains('_') {
+            Some(name.replace('_', "."))
+        } else {
+            None
+        };
+        if let Some(alt) = &alt_name {
+            if let Some(is_void) = try_name(alt) {
+                return is_void;
+            }
+        }
+
+        // Strip the first qualifier ("ModuleOrClass.fn" → "fn"). Module
+        // imports and user-class methods are registered under the bare
+        // method name.
+        if let Some(dot_pos) = name.find('.') {
+            let bare = &name[dot_pos + 1..];
+            if let Some(is_void) = try_name(bare) {
+                return is_void;
+            }
+        }
+
+        // Bridge function alias lookup ("req.body" → "_req_body").
+        if let Some(bridge_name) = self.language_to_bridge_map.get(name) {
+            if let Some(is_void) = try_name(bridge_name) {
+                return is_void;
+            }
+        }
+
+        false
     }
 
     /// Resolve a handler argument (function reference) to a handler index.
