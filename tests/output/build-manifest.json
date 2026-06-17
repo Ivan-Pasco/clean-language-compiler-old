@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.30.305",
+  "compiler_version": "0.30.306",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1781715090,
+  "generated_at_epoch_seconds": 1781718475,
   "artifacts": [
     {
-      "name": "file_delete_spec.wasm",
-      "path_relative": "file_delete_spec.wasm",
+      "name": "range_expressions_spec.wasm",
+      "path_relative": "range_expressions_spec.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 23095,
-      "sha256": "f31c69c15d1d54ab45cfd7d15e4dee955cd6137bbcdb02d57ce4e21eae362ec6",
+      "size_bytes": 23489,
+      "sha256": "6717241106288a1a87e7eb96c7a639d2837f2586184439514a1472cddea04a10",
       "source_plugin": null
     }
   ],

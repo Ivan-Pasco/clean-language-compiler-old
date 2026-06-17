@@ -1,0 +1,324 @@
+// Test: bugfixes/sem001_constraint_solver_50_data_models
+// Grammar: plugin-DSL — frame.data data: block, multiple instances.
+// Regression: SEM001 (dashboard fp 7cc56e80f714).
+//   Originally reported against compiler 0.30.268: 9 data: models in a
+//   project triggered the typechecker constraint solver to exit with
+//   "Type inference timeout: too many constraint solving iterations".
+//   By 0.30.305 the threshold had shifted to ~42 models (constraint
+//   solver had been incidentally improved by other type-inference work),
+//   but the 10_000-iteration cap still rejected realistic projects.
+//
+//   Fix: raised the cap to 100_000. The cap is a safety net against
+//   pathological infinite loops in solve_constraint; genuine non-progress
+//   is already detected by the try_alternative_strategies / break.
+//   Each frame.data `data:` block expands into ~250 constraints, so 50
+//   models submit ~12_500 — which the new cap accepts.
+//
+// Expected output:
+//   ok
+
+plugins:
+	frame.data
+
+data M1:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M2:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M3:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M4:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M5:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M6:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M7:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M8:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M9:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M10:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M11:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M12:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M13:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M14:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M15:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M16:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M17:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M18:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M19:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M20:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M21:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M22:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M23:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M24:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M25:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M26:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M27:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M28:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M29:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M30:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M31:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M32:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M33:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M34:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M35:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M36:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M37:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M38:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M39:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M40:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M41:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M42:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M43:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M44:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M45:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M46:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M47:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M48:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M49:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+data M50:
+	id: integer pk auto
+	name: string
+	count: integer
+	created_at: datetime auto
+
+start:
+	print("ok")
