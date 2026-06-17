@@ -23,7 +23,18 @@ impl MirBuilder {
         }
     }
 
-    /// Box a value to any type - emits a BoxAny instruction
+    /// Box a value to any type - emits a BoxAny instruction.
+    ///
+    /// For native Clean collections (`List<T>` / `Pairs<K,V>`) the raw value
+    /// pointer can't be stored directly in the box: `__json_stringify_value`
+    /// and friends expect their `List`-tagged and `Object`-tagged payloads
+    /// to follow the JSON-tree layout (`[count][boxed_elem]…` /
+    /// `[count][key,boxed_val]…`), but Clean's typed-collection heap stores
+    /// raw elements at a different stride. Normalize the value at box time
+    /// by routing it through `__json_from_cln_list` / `__json_from_cln_pairs`
+    /// — the box's payload is then a real JSON tree node, and every Any
+    /// consumer (json.encode, json.dataToText, embedded `any` object
+    /// literals) sees the same canonical representation.
     pub(super) fn emit_box_any(
         &mut self,
         context: &mut FunctionBuildContext,
@@ -33,6 +44,33 @@ impl MirBuilder {
     ) -> ValueId {
         let type_tag = Self::get_any_type_tag(source_type);
         let mir_source_type = self.convert_concrete_type(source_type);
+
+        // Normalize raw Clean collections into the JSON-tree layout before
+        // boxing. The converter result is stored in a fresh local (i32) and
+        // becomes the BoxAny payload. For primitive sources we skip this step.
+        let normalized_value_id = match source_type {
+            ConcreteType::Array(elem_type) => {
+                let elem_tag = Self::get_any_type_tag(elem_type) as i64;
+                self.emit_cln_collection_to_json(
+                    context,
+                    value_id,
+                    "__json_from_cln_list",
+                    elem_tag,
+                    location,
+                )
+            }
+            ConcreteType::Pairs(_key_type, val_type) => {
+                let val_tag = Self::get_any_type_tag(val_type) as i64;
+                self.emit_cln_collection_to_json(
+                    context,
+                    value_id,
+                    "__json_from_cln_pairs",
+                    val_tag,
+                    location,
+                )
+            }
+            _ => value_id,
+        };
 
         let result_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
@@ -45,13 +83,46 @@ impl MirBuilder {
         let instruction = MirInstruction {
             dest: Some(result_id),
             operation: MirOperation::BoxAny {
-                value: MirOperand::Value(value_id),
+                value: MirOperand::Value(normalized_value_id),
                 type_tag,
                 source_type: mir_source_type,
             },
             location: location.clone(),
         };
 
+        self.add_instruction(context, instruction);
+        result_id
+    }
+
+    /// Emit a Call to one of the Clean-collection→JSON-tree converters
+    /// (`__json_from_cln_list` / `__json_from_cln_pairs`) and return the
+    /// ValueId of the converted JSON tree pointer.
+    fn emit_cln_collection_to_json(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        converter_name: &str,
+        type_tag: i64,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, MirType::I32, location.clone());
+
+        let instruction = MirInstruction {
+            dest: Some(result_id),
+            operation: MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: converter_name.to_string(),
+                    symbol_id: SymbolId(0),
+                },
+                arguments: vec![
+                    MirOperand::Value(value_id),
+                    MirOperand::Constant(MirConstant::Integer(type_tag)),
+                ],
+            },
+            location: location.clone(),
+        };
         self.add_instruction(context, instruction);
         result_id
     }

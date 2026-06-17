@@ -7,20 +7,33 @@
 //   0.30.298). Before the fix:
 //     - `list<string> = ["a","b","c"]; json.encode(items)` produced
 //       `[null,0.000…02,null]` because list elements are stored raw (not boxed
-//       Any) but the generic stringify_array path expects boxed Any pointers.
+//       Any) but the generic stringify_array path expected boxed Any pointers.
 //   Fix: `json.encode(List<T>)` routes to the new `__json_encode_cln_list`
 //   stdlib helper, which knows the native Clean list layout and the per-tag
 //   element decoding (Integer / Boolean / Number / String).
 //
-// Note: the present test only exercises `list<string>` because the underlying
-// bump allocator (`generate_list_allocate` in src/stdlib/list_ops.rs) cannot
-// safely host multiple list literals in the same program — see follow-up
-// `report_error` filed alongside this fix for the runtime allocator issue.
-// Sibling tests cover the other element tags one at a time.
+// Earlier versions of this test were split one-list-per-file to work around
+// LIST-ALLOCATE-HEAP-POINTER-COLLISION (compiler 0.30.302) — the list bump
+// allocator used `mem[0]` as its heap pointer and let every list overlap at
+// address 0. Once that was fixed (along with the list.push return-value drop
+// in the codegen and the f64-stride under-allocation), multiple list literals
+// can safely coexist, so the per-element-tag cases live in this one file.
 //
 // Expected output:
 //   ["a","b","c"]
+//   [1,2,3]
+//   [true,false,true]
+//   [1.5,2.5,3.5]
+//   []
 
 start:
 	list<string> ss = ["a", "b", "c"]
+	list<integer> ns = [1, 2, 3]
+	list<boolean> bs = [true, false, true]
+	list<number> fs = [1.5, 2.5, 3.5]
+	list<string> empty = []
 	print(json.encode(ss))
+	print(json.encode(ns))
+	print(json.encode(bs))
+	print(json.encode(fs))
+	print(json.encode(empty))

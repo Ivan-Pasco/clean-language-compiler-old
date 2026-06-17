@@ -3421,11 +3421,31 @@ impl MirBuilder {
                     expression.location.clone(),
                 );
 
+                // The list allocator's byte size is `16 + capacity * 4` — it assumes a
+                // 4-byte element stride. When the element type is f64 (Number, 8-byte
+                // stride), passing the literal element count under-allocates by exactly
+                // half. `list.push_f64` then writes past the end of the allocation and
+                // clobbers adjacent heap memory (visible as garbage past element 0 in
+                // `json.encode(list<number>)`). Compensate by doubling the capacity hint
+                // for f64-element literals so the allocated byte region covers the full
+                // `count * 8` range. This is a localized workaround — a cleaner fix
+                // would add a stride parameter to list.allocate or split into separate
+                // i32/f64 allocators, but the byte budget is what matters at runtime.
+                let element_is_f64 = matches!(
+                    expression.expr_type,
+                    ConcreteType::Array(ref t) if matches!(**t, ConcreteType::Number)
+                );
+                let capacity_hint = if element_is_f64 {
+                    (elements.len() * 2) as i64
+                } else {
+                    elements.len() as i64
+                };
+
                 // Create size constant
                 let size_instruction = MirInstruction {
                     dest: Some(size_value_id),
                     operation: MirOperation::Copy {
-                        source: MirOperand::Constant(MirConstant::Integer(elements.len() as i64)),
+                        source: MirOperand::Constant(MirConstant::Integer(capacity_hint)),
                     },
                     location: expression.location.clone(),
                 };

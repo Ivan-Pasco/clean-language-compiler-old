@@ -1,0 +1,37 @@
+// Test: stdlib/json/json_encode_any_embedded_collection
+// Semantic: FUNC-BUILTIN — `json.encode(any data)` must correctly serialize
+//   typed collections (`list<T>`, `pairs<K,V>`) that are embedded as field
+//   values inside an `any` object literal. The collections must be normalized
+//   into JSON-tree format at boxing time so the recursive stringify walks
+//   them correctly.
+// Regression: JSON-ENCODE-ANY-EMBEDDED-LIST-LOST (dashboard fp 06ad82a75ad3).
+//   Before compiler 0.30.302 a list literal embedded in an Any object literal
+//   was boxed with the raw Clean list pointer as the payload, but the
+//   stringify path expected the JSON-array layout (boxed Any per element).
+//   The result was `{"items":[]}` for `any data = { items: [...] }`.
+// Coupled fixes shipped together (each its own dashboard report):
+//   - Typechecker's `infer_literal_expression` now recurses into nested
+//     `Value::List` and produces a proper `ArrayLiteral` TAST node rather
+//     than collapsing to `Literal(Null)`.
+//   - `emit_box_any` routes `Array<T>` and `Pairs<K,V>` sources through
+//     `__json_from_cln_list` / `__json_from_cln_pairs` stdlib helpers that
+//     materialize the JSON-tree layout with each element re-boxed as Any.
+//   - `wasmtime_runner`'s host `mem_alloc` now reads `__heap_ptr` at the
+//     start so its `NEXT_ALLOCATION_OFFSET` cannot lag behind WASM-side
+//     malloc and overwrite previously WASM-allocated regions.
+//
+// Expected output:
+//   {"items":["a","b","c"]}
+//   {"counts":[1,2,3],"name":"test"}
+//   {"flags":[true,false,true]}
+//   {"scores":[1.5,2.5,3.5]}
+
+start:
+	any d1 = { items: ["a", "b", "c"] }
+	print(json.encode(d1))
+	any d2 = { counts: [1, 2, 3], name: "test" }
+	print(json.encode(d2))
+	any d3 = { flags: [true, false, true] }
+	print(json.encode(d3))
+	any d4 = { scores: [1.5, 2.5, 3.5] }
+	print(json.encode(d4))

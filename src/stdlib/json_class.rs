@@ -556,6 +556,7 @@ impl JsonClass {
                 WasmType::I32, // Local 3: i (loop counter)
                 WasmType::I32, // Local 4: out_len (bytes written, excluding quotes)
                 WasmType::I32, // Local 5: current_byte
+                WasmType::I32, // Local 6: nibble (scratch for \u00XX hex conversion)
             ],
             self.generate_quote_string_instructions(malloc_index),
         )?;
@@ -795,6 +796,51 @@ impl JsonClass {
                 int_to_string_index,
                 quote_string_idx,
             ),
+        )?;
+
+        // __json_from_cln_list(list_ptr: i32, elem_tag: i32) -> i32
+        // Materializes a native Clean list as the JSON-array tree layout
+        // (`[count][boxed_elem_ptr]…`) so the existing __json_stringify_array
+        // helper can walk it. Used by emit_box_any (mir_builder/types.rs) when
+        // a typed list is boxed to Any — for example as a field value inside
+        // an `any data = { items: [...] }` object literal.
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_from_cln_list",
+            &[WasmType::I32, WasmType::I32], // list_ptr, elem_tag
+            Some(WasmType::I32),             // returns json_array_ptr
+            &[
+                WasmType::I32, // 2: count
+                WasmType::I32, // 3: i
+                WasmType::I32, // 4: elem_addr
+                WasmType::I32, // 5: box_ptr
+                WasmType::I32, // 6: json_array_ptr
+                WasmType::I32, // 7: dest_slot_addr
+                WasmType::I32, // 8: elem_stride
+            ],
+            self.generate_from_cln_list_instructions(malloc_index),
+        )?;
+
+        // __json_from_cln_pairs(pairs_ptr: i32, val_tag: i32) -> i32
+        // Materializes a native Clean pairs map as the JSON-object tree layout
+        // (`[count][key_ptr][boxed_val_ptr]…`) so __json_stringify_object can
+        // walk it. Used by emit_box_any when a typed pairs is boxed to Any.
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_from_cln_pairs",
+            &[WasmType::I32, WasmType::I32], // pairs_ptr, val_tag
+            Some(WasmType::I32),             // returns json_object_ptr
+            &[
+                WasmType::I32, // 2: count
+                WasmType::I32, // 3: i
+                WasmType::I32, // 4: entry_addr
+                WasmType::I32, // 5: key_ptr
+                WasmType::I32, // 6: val_raw
+                WasmType::I32, // 7: json_object_ptr
+                WasmType::I32, // 8: box_ptr
+                WasmType::I32, // 9: dest_entry_addr
+            ],
+            self.generate_from_cln_pairs_instructions(malloc_index),
         )?;
 
         // json.dataToText(data: any) -> string
@@ -2560,10 +2606,33 @@ impl JsonClass {
     }
 
     fn generate_quote_string_instructions(&self, malloc_index: u32) -> Vec<Instruction<'static>> {
-        // Locals: 0=str_ptr(param) 1=orig_len 2=result_ptr 3=i 4=out_len 5=current_byte
-        // Escapes special JSON chars: \ → \\ , " → \" , LF → \n , CR → \r , TAB → \t
-        // Memory layout: [4-byte length]['"'][escaped content]['"']
-        // Allocation: orig_len*2+6 (worst case every byte expands to 2 + 2 quotes + 4 length)
+        // RFC 8259 §7-compliant quoting.
+        //
+        // Locals:
+        //   0 = str_ptr (param)
+        //   1 = orig_len
+        //   2 = result_ptr
+        //   3 = i
+        //   4 = out_len
+        //   5 = current_byte
+        //   6 = nibble (scratch for \u00XX hex conversion)
+        //
+        // Escapes implemented:
+        //   " → \"        \ → \\        BS (0x08) → \b
+        //   TAB (0x09) → \t   LF (0x0A) → \n   FF (0x0C) → \f   CR (0x0D) → \r
+        //   any other byte in 0x00..0x1F → \u00XX (six-byte lowercase form)
+        //   all other bytes → emitted as-is (UTF-8 bytes pass through;
+        //   RFC 8259 §7 does not require ASCII escaping of >0x7F).
+        //
+        // Memory layout of the result string:
+        //   [4-byte length][ "  ][escaped content...][ " ]
+        //
+        // Allocation: worst case per input byte is the 6-byte \u00XX form,
+        // plus 2 quote bytes plus the 4-byte length prefix. orig_len*6 + 6
+        // is a safe upper bound. The previous orig_len*2 + 6 sizing assumed
+        // every escape was at most two bytes — true for the implemented set
+        // back then, but adding \u00XX (six bytes) would have overrun by 4
+        // bytes per such input byte under the old math.
         #[rustfmt::skip]
         fn wb(v: &mut Vec<Instruction<'static>>, b: i32) {
             // store byte B at (result_ptr + out_len + 5), then out_len++
@@ -2572,6 +2641,46 @@ impl JsonClass {
                 Instruction::I32Const(b),
                 Instruction::I32Store8(wasm_encoder::MemArg { offset: 5, align: 0, memory_index: 0 }),
                 Instruction::LocalGet(4), Instruction::I32Const(1), Instruction::I32Add,
+                Instruction::LocalSet(4),
+            ]);
+        }
+
+        // Emit one ASCII-hex character for a nibble of `current_byte` (local 5).
+        // `shift` is 4 for the high nibble, 0 for the low nibble. Uses local 6
+        // as scratch (declared via register_stdlib_function_with_locals).
+        // Formula: nibble + 48 + (nibble >= 10 ? 39 : 0) — gives '0'..'9' for
+        // 0..9 and 'a'..'f' for 10..15 with no branches and no temp stack juggling.
+        #[rustfmt::skip]
+        fn wb_hex(v: &mut Vec<Instruction<'static>>, shift: i32) {
+            // local 6 = (current_byte >> shift) & 0xF
+            v.extend([
+                Instruction::LocalGet(5),
+                Instruction::I32Const(shift),
+                Instruction::I32ShrU,
+                Instruction::I32Const(0xF),
+                Instruction::I32And,
+                Instruction::LocalSet(6),
+            ]);
+            // dest = result_ptr + out_len ; written at offset +5 (after length+quote)
+            v.extend([
+                Instruction::LocalGet(2),
+                Instruction::LocalGet(4),
+                Instruction::I32Add,
+                // value = nibble + 48 + (nibble >= 10 ? 39 : 0)
+                Instruction::LocalGet(6),
+                Instruction::I32Const(48),
+                Instruction::I32Add,
+                Instruction::LocalGet(6),
+                Instruction::I32Const(10),
+                Instruction::I32GeU,
+                Instruction::I32Const(39),
+                Instruction::I32Mul,
+                Instruction::I32Add,
+                Instruction::I32Store8(wasm_encoder::MemArg { offset: 5, align: 0, memory_index: 0 }),
+                // out_len++
+                Instruction::LocalGet(4),
+                Instruction::I32Const(1),
+                Instruction::I32Add,
                 Instruction::LocalSet(4),
             ]);
         }
@@ -2588,10 +2697,10 @@ impl JsonClass {
             }),
             Instruction::LocalSet(1),
         ]);
-        // result_ptr = malloc(orig_len * 2 + 6)
+        // result_ptr = malloc(orig_len * 6 + 6)
         v.extend([
             Instruction::LocalGet(1),
-            Instruction::I32Const(2),
+            Instruction::I32Const(6),
             Instruction::I32Mul,
             Instruction::I32Const(6),
             Instruction::I32Add,
@@ -2642,8 +2751,13 @@ impl JsonClass {
             Instruction::LocalSet(5),
         ]);
 
-        // Dispatch on current_byte — 5 nested if/else for special chars
-        // Case: backslash (92) → emit \\
+        // Dispatch ladder. Each named-escape gets its own If/Else; the final
+        // `Else` is a control-byte check that ends in either \u00XX or pass-through.
+        // The order is: \  "  BS  TAB  LF  FF  CR  (control-byte fallback).
+        // Named cases come first so they win even when their value is < 0x20
+        // (BS, TAB, LF, FF, CR all are — without the named cases first the
+        // generic control-byte branch would still escape them, but as \u00XX
+        // instead of the more readable named form RFC 8259 prefers).
         v.extend([
             Instruction::LocalGet(5),
             Instruction::I32Const(92),
@@ -2653,7 +2767,6 @@ impl JsonClass {
         wb(&mut v, 92);
         wb(&mut v, 92);
         v.push(Instruction::Else);
-        // Case: double-quote (34) → emit \"
         v.extend([
             Instruction::LocalGet(5),
             Instruction::I32Const(34),
@@ -2663,37 +2776,66 @@ impl JsonClass {
         wb(&mut v, 92);
         wb(&mut v, 34);
         v.push(Instruction::Else);
-        // Case: newline (10) → emit \n
         v.extend([
             Instruction::LocalGet(5),
-            Instruction::I32Const(10),
+            Instruction::I32Const(8), // BS
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Empty),
         ]);
         wb(&mut v, 92);
-        wb(&mut v, 110);
+        wb(&mut v, 98); // 'b'
         v.push(Instruction::Else);
-        // Case: carriage return (13) → emit \r
         v.extend([
             Instruction::LocalGet(5),
-            Instruction::I32Const(13),
+            Instruction::I32Const(9), // TAB
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Empty),
         ]);
         wb(&mut v, 92);
-        wb(&mut v, 114);
+        wb(&mut v, 116); // 't'
         v.push(Instruction::Else);
-        // Case: tab (9) → emit \t
         v.extend([
             Instruction::LocalGet(5),
-            Instruction::I32Const(9),
+            Instruction::I32Const(10), // LF
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Empty),
         ]);
         wb(&mut v, 92);
-        wb(&mut v, 116);
+        wb(&mut v, 110); // 'n'
         v.push(Instruction::Else);
-        // Default: emit byte as-is
+        v.extend([
+            Instruction::LocalGet(5),
+            Instruction::I32Const(12), // FF
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ]);
+        wb(&mut v, 92);
+        wb(&mut v, 102); // 'f'
+        v.push(Instruction::Else);
+        v.extend([
+            Instruction::LocalGet(5),
+            Instruction::I32Const(13), // CR
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ]);
+        wb(&mut v, 92);
+        wb(&mut v, 114); // 'r'
+        v.push(Instruction::Else);
+        // Control bytes 0x00..0x1F that didn't match a named escape → \u00XX
+        v.extend([
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0x20),
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ]);
+        wb(&mut v, 92); // '\'
+        wb(&mut v, 117); // 'u'
+        wb(&mut v, 48); // '0'
+        wb(&mut v, 48); // '0'
+        wb_hex(&mut v, 4);
+        wb_hex(&mut v, 0);
+        v.push(Instruction::Else);
+        // Pass-through for printable / UTF-8 bytes
         v.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(4),
@@ -2709,8 +2851,11 @@ impl JsonClass {
             Instruction::I32Add,
             Instruction::LocalSet(4),
         ]);
-        // Close 5 if/else blocks
+        // Close 8 if/else blocks (one per named escape + the control-byte branch)
         v.extend([
+            Instruction::End,
+            Instruction::End,
+            Instruction::End,
             Instruction::End,
             Instruction::End,
             Instruction::End,
@@ -3746,6 +3891,354 @@ impl JsonClass {
             Instruction::LocalSet(4),
             Instruction::LocalGet(4),
             Instruction::End, // end count==0 if
+        ]);
+
+        v
+    }
+
+    /// Generate WASM body for `__json_from_cln_list(list_ptr: i32, elem_tag: i32) -> i32`.
+    ///
+    /// Converts a native Clean list (header `[len@0][cap@4][type_id@8][pad@12]`,
+    /// raw elements from offset 16) into the JSON-array tree layout
+    /// `[count:i32][boxed_elem_ptr_0:i32]…` that `__json_stringify_array`
+    /// expects. Each element is wrapped in a fresh 12-byte boxed Any
+    /// `[tag][val_lo][val_hi]` so the recursive stringify walks correctly even
+    /// when the Any value is later embedded in a JSON object literal.
+    /// Element stride is 8 bytes for `elem_tag == 3` (Number/f64) and 4 bytes
+    /// for every other tag.
+    ///
+    /// Used by `emit_box_any` in `mir_builder/types.rs` whenever a typed list
+    /// is boxed to Any — the box's payload is the converter's result rather
+    /// than the raw Clean list pointer.
+    fn generate_from_cln_list_instructions(&self, malloc_idx: u32) -> Vec<Instruction<'static>> {
+        // Locals:
+        //   0: list_ptr (param)
+        //   1: elem_tag (param)
+        //   2: count
+        //   3: i
+        //   4: elem_addr (in clean list)
+        //   5: box_ptr  (12-byte boxed Any per element)
+        //   6: json_array_ptr (result)
+        //   7: dest_slot_addr (in json array)
+        //   8: elem_stride (4 or 8)
+        const LIST_DATA_OFFSET: u32 = 16;
+        let mut v: Vec<Instruction<'static>> = Vec::new();
+
+        // count = mem[list_ptr + 0]
+        v.extend([
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2),
+        ]);
+
+        // json_array_ptr = malloc(4 + count * 4)
+        v.extend([
+            Instruction::LocalGet(2),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::Call(malloc_idx),
+            Instruction::LocalSet(6),
+        ]);
+
+        // Store count at offset 0 of the JSON array
+        v.extend([
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(2),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+        ]);
+
+        // elem_stride = (elem_tag == 3) ? 8 : 4
+        v.extend([
+            Instruction::LocalGet(1),
+            Instruction::I32Const(3),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::I32Const(8),
+            Instruction::Else,
+            Instruction::I32Const(4),
+            Instruction::End,
+            Instruction::LocalSet(8),
+        ]);
+
+        // i = 0
+        v.extend([
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3),
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // if i >= count: break
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // elem_addr = list_ptr + 16 + i * elem_stride
+            Instruction::LocalGet(0),
+            Instruction::I32Const(LIST_DATA_OFFSET as i32),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(4),
+            // box_ptr = malloc(12)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_idx),
+            Instruction::LocalSet(5),
+            // box_ptr[0] = elem_tag
+            Instruction::LocalGet(5),
+            Instruction::LocalGet(1),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Store the value: Number (tag 3) writes a full f64 at offset 4
+            // (spanning bytes 4..12, which is where stringify_value's F64Load
+            // reads). Other tags write a single i32 at offset 4 and leave
+            // offset 8 zero. The store path is selected by a runtime branch
+            // on elem_tag because we do not know the type statically here.
+            Instruction::LocalGet(1),
+            Instruction::I32Const(3),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // f64 case
+            Instruction::LocalGet(5),
+            Instruction::LocalGet(4),
+            Instruction::F64Load(MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::F64Store(MemArg {
+                offset: 4,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::Else,
+            // i32 case
+            Instruction::LocalGet(5),
+            Instruction::LocalGet(4),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32Store(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // Zero the padding at offset 8 so stringify_value never reads
+            // garbage when it walks past the i32 payload (e.g. for an unboxed
+            // f64 reinterpret of a tag=1 box, which would otherwise be
+            // implementation-defined behavior).
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0),
+            Instruction::I32Store(MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::End,
+            // dest_slot_addr = json_array_ptr + 4 + i * 4
+            Instruction::LocalGet(6),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            // mem[dest_slot_addr] = box_ptr
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(5),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // i++
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End, // end loop
+            Instruction::End, // end block
+            Instruction::LocalGet(6),
+        ]);
+
+        v
+    }
+
+    /// Generate WASM body for `__json_from_cln_pairs(pairs_ptr: i32, val_tag: i32) -> i32`.
+    ///
+    /// Converts a native Clean pairs map (header `[count@0][cap@4]`, entries
+    /// from offset 8 as `[key_ptr][val]` of 8 bytes) into the JSON-object
+    /// tree layout `[count:i32][key_ptr][boxed_val_ptr]…` that
+    /// `__json_stringify_object` expects. Each value is wrapped in a fresh
+    /// 12-byte boxed Any tagged with `val_tag`; the key string pointer is
+    /// reused as-is (strings are immutable and `__json_quote_string` does
+    /// not mutate them).
+    fn generate_from_cln_pairs_instructions(&self, malloc_idx: u32) -> Vec<Instruction<'static>> {
+        // Locals:
+        //   0: pairs_ptr (param)
+        //   1: val_tag (param)
+        //   2: count
+        //   3: i
+        //   4: entry_addr (in clean pairs)
+        //   5: key_ptr
+        //   6: val_raw
+        //   7: json_object_ptr (result)
+        //   8: box_ptr (12-byte boxed Any per entry)
+        //   9: dest_entry_addr (in json object)
+        const PAIRS_HEADER_SIZE: u32 = 8;
+        const PAIRS_ENTRY_SIZE: u32 = 8;
+        let mut v: Vec<Instruction<'static>> = Vec::new();
+
+        // count = mem[pairs_ptr + 0]
+        v.extend([
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(2),
+        ]);
+
+        // json_object_ptr = malloc(4 + count * 8)
+        v.extend([
+            Instruction::LocalGet(2),
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::Call(malloc_idx),
+            Instruction::LocalSet(7),
+        ]);
+
+        // Store count
+        v.extend([
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(2),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+        ]);
+
+        // i = 0
+        v.extend([
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3),
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            // if i >= count: break
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // entry_addr = pairs_ptr + 8 + i * 8
+            Instruction::LocalGet(0),
+            Instruction::I32Const(PAIRS_HEADER_SIZE as i32),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(PAIRS_ENTRY_SIZE as i32),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(4),
+            // key_ptr = mem[entry_addr + 0]
+            Instruction::LocalGet(4),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(5),
+            // val_raw = mem[entry_addr + 4]
+            Instruction::LocalGet(4),
+            Instruction::I32Load(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(6),
+            // box_ptr = malloc(12)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_idx),
+            Instruction::LocalSet(8),
+            // box_ptr[0] = val_tag
+            Instruction::LocalGet(8),
+            Instruction::LocalGet(1),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // box_ptr[4] = val_raw  (pairs values are always i32 per spec —
+            // pairs<K, number> is rejected by the typechecker because pairs
+            // entries are only 4 bytes wide)
+            Instruction::LocalGet(8),
+            Instruction::LocalGet(6),
+            Instruction::I32Store(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // box_ptr[8] = 0
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0),
+            Instruction::I32Store(MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // dest_entry_addr = json_object_ptr + 4 + i * 8
+            Instruction::LocalGet(7),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            // mem[dest_entry_addr + 0] = key_ptr
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(5),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // mem[dest_entry_addr + 4] = box_ptr
+            Instruction::LocalGet(9),
+            Instruction::LocalGet(8),
+            Instruction::I32Store(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // i++
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End, // end loop
+            Instruction::End, // end block
+            Instruction::LocalGet(7),
         ]);
 
         v

@@ -890,12 +890,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // Add memory management functions
+    // Add memory management functions.
+    //
+    // mem_alloc shares heap state with the WASM-side bump allocator
+    // (`__malloc` / `list.allocate`) through the `__heap_ptr` global. Without
+    // an initial sync, the host's `NEXT_ALLOCATION_OFFSET` could lag behind
+    // `__heap_ptr` after the WASM side advances it via `__malloc`, and the
+    // next host `mem_alloc` would return an offset that overlaps with a
+    // previously WASM-allocated region. Observed as: JSON converter
+    // boxes (via `__malloc`) being silently overwritten by subsequent
+    // `mem_alloc` of an object literal's outer Any box, corrupting tag bytes.
+    // Mirror the read-then-take-max pattern from `allocate_string_in_memory`.
     linker.func_wrap(
         "memory_runtime",
         "mem_alloc",
         |mut caller: Caller<'_, ()>, _type_id: i32, size: i32| -> i32 {
+            let wasm_heap =
+                if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                    heap_global.get(&mut caller).i32().unwrap_or(0) as usize
+                } else {
+                    0
+                };
             let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
+            if wasm_heap > *next_offset {
+                *next_offset = wasm_heap;
+            }
             let offset = *next_offset;
             let aligned_size = ((size as usize) + 7) & !7;
             let aligned_end = offset + aligned_size;

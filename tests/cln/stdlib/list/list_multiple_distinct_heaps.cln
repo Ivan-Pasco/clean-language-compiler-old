@@ -1,0 +1,25 @@
+// Test: stdlib/list/list_multiple_distinct_heaps
+// Semantic: Multiple list literals in the same program must live at distinct
+//   heap addresses and round-trip independently. Before compiler 0.30.302
+//   this case crashed with `wasm trap: out of bounds memory access` because
+//   `list.allocate` and `mem_alloc` used different heap-pointer storage
+//   (mem[0] vs `__heap_ptr` global), so every list materialized at the same
+//   address and a json.encode of the second one walked off the end of the
+//   shared buffer.
+// Regression: LIST-ALLOCATE-HEAP-POINTER-COLLISION (dashboard fp ab19b3e75d98).
+//   Coupled fixes: list.push's i32 return type (was incorrectly marked Void
+//   in function_return_types) and the f64 element-stride under-allocation
+//   in ArrayLiteral codegen.
+//
+// Expected output:
+//   ["x","y"]
+//   ["p","q"]
+//   2
+
+start:
+	list<string> a = ["x", "y"]
+	list<string> b = ["p", "q"]
+	print(json.encode(a))
+	print(json.encode(b))
+	// `a` must remain undisturbed by `b`'s allocation — assert via length too.
+	print(a.length().toString())

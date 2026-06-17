@@ -65,22 +65,33 @@
 # HOST SCOPING (`hosts` field)
 # ============================================================
 #
-#   hosts = ["server"]            implemented by clean-server linker
+#   hosts = ["server"]            implemented by every server-class host:
+#                                 clean-server (Rust/wasmtime) AND
+#                                 clean-node-server (Node.js). Apps
+#                                 compiled against the framework call
+#                                 these regardless of which server-class
+#                                 host runs them, so both must implement.
 #   hosts = ["browser"]           implemented by browser hosts (frame.ui /
-#                                 frame.canvas / frame.client runtimes); not
-#                                 expected to resolve in clean-server
-#   hosts = ["server", "browser"] portable (both hosts must implement)
+#                                 frame.canvas / frame.client runtimes);
+#                                 not expected to resolve on server-class
+#                                 hosts.
+#   hosts = ["server", "browser"] portable across server-class and browser
+#                                 hosts (UI functions with SSR stubs, etc).
+#   hosts = ["all"]               every host must implement (pure compute,
+#                                 stdlib, primitives).
 #   hosts = []                    legacy / unrestricted; treated as "any host
-#                                 may implement, no host filter applied"
+#                                 may implement, no host filter applied".
 #
 #   The compiler validator (RegistryIndex::check_bridge) requires plugin-
 #   declared hosts to be a subset of the registry's hosts when populated.
 #   Empty hosts disables the host check for backward compatibility with
 #   pre-2026-06 entries.
 #
-#   Contract tests filter probes by host: clean-server's contract test
-#   probes entries where hosts is empty or contains "server"; browser hosts
-#   run their own equivalent contract tests against their linkers.
+#   Contract tests filter probes by host: every server-class host runs the
+#   same probe set (entries where hosts is empty, contains "server", or
+#   contains "all"); browser hosts run their own equivalent contract tests
+#   against their linkers. See foundation/management/scripts/
+#   check_host_parity.py for the parity gate.
 #
 # ============================================================
 
@@ -112,6 +123,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Print raw string to stdout without a newline"
 
 [[functions]]
@@ -122,6 +134,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Print raw string to stdout with a trailing newline"
 
 [[functions]]
@@ -132,6 +145,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Print raw string without newline (alias intent for typed callers)"
 
 [[functions]]
@@ -142,6 +156,7 @@ module      = "env"
 params      = ["integer"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Print a 64-bit signed integer to stdout"
 
 [[functions]]
@@ -152,6 +167,7 @@ module      = "env"
 params      = ["number"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Print a 64-bit float to stdout"
 
 [[functions]]
@@ -162,6 +178,7 @@ module      = "env"
 params      = ["boolean"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Print a boolean value (0 or 1) as 'false' or 'true' to stdout"
 
 [[functions]]
@@ -172,6 +189,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Log message to stdout; also emitted via tracing at INFO level"
 
 [[functions]]
@@ -182,6 +200,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Log message to stderr prefixed with [ERROR]"
 
 [[functions]]
@@ -192,6 +211,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Log message to stderr prefixed with [WARN]"
 
 [[functions]]
@@ -202,6 +222,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Runtime error handler; param is length-prefixed string pointer; logs to stderr and returns 0"
 
 [[functions]]
@@ -212,6 +233,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["console_input"]
+hosts       = ["all"]
 description = "Prompt user for string input; prompt is length-prefixed pointer; in server context returns empty string"
 
 [[functions]]
@@ -222,6 +244,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Prompt user for integer input; prompt is length-prefixed pointer; in server context returns 0"
 
 [[functions]]
@@ -232,6 +255,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "number"
 aliases     = []
+hosts       = ["all"]
 description = "Prompt user for float input; prompt is length-prefixed pointer; in server context returns 0.0"
 
 [[functions]]
@@ -242,6 +266,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "boolean"
 aliases     = []
+hosts       = ["all"]
 description = "Prompt user for yes/no input; prompt is length-prefixed pointer; in server context returns 0 (false)"
 
 [[functions]]
@@ -252,6 +277,7 @@ module      = "env"
 params      = ["i32", "i32", "i32", "i32"]
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Prompt user for integer in [min, max] range with step; prompt is length-prefixed pointer; in server context returns min"
 
 # ============================================================
@@ -266,6 +292,7 @@ module      = "env"
 params      = ["i32", "number"]
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Push an f64 value onto a list in-place; list_ptr is raw i32 pointer to 16-byte-header list"
 
 # ============================================================
@@ -280,6 +307,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.sin"]
+hosts       = ["all"]
 description = "Sine of angle in radians"
 
 [[functions]]
@@ -290,6 +318,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.cos"]
+hosts       = ["all"]
 description = "Cosine of angle in radians"
 
 [[functions]]
@@ -300,6 +329,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.tan"]
+hosts       = ["all"]
 description = "Tangent of angle in radians"
 
 [[functions]]
@@ -310,6 +340,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.asin"]
+hosts       = ["all"]
 description = "Arc sine; returns value in radians in [-pi/2, pi/2]"
 
 [[functions]]
@@ -320,6 +351,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.acos"]
+hosts       = ["all"]
 description = "Arc cosine; returns value in radians in [0, pi]"
 
 [[functions]]
@@ -330,6 +362,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.atan"]
+hosts       = ["all"]
 description = "Arc tangent; returns value in radians in (-pi/2, pi/2)"
 
 [[functions]]
@@ -340,6 +373,7 @@ module      = "env"
 params      = ["number", "number"]
 returns     = "number"
 aliases     = ["math.atan2"]
+hosts       = ["all"]
 description = "Two-argument arc tangent of y/x; returns angle in [-pi, pi]"
 
 [[functions]]
@@ -350,6 +384,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.sinh"]
+hosts       = ["all"]
 description = "Hyperbolic sine"
 
 [[functions]]
@@ -360,6 +395,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.cosh"]
+hosts       = ["all"]
 description = "Hyperbolic cosine"
 
 [[functions]]
@@ -370,6 +406,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.tanh"]
+hosts       = ["all"]
 description = "Hyperbolic tangent"
 
 [[functions]]
@@ -380,6 +417,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.ln"]
+hosts       = ["all"]
 description = "Natural logarithm (base e)"
 
 [[functions]]
@@ -390,6 +428,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.log10"]
+hosts       = ["all"]
 description = "Base-10 logarithm"
 
 [[functions]]
@@ -400,6 +439,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.log2"]
+hosts       = ["all"]
 description = "Base-2 logarithm"
 
 [[functions]]
@@ -410,6 +450,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.exp"]
+hosts       = ["all"]
 description = "e raised to the power x"
 
 [[functions]]
@@ -420,6 +461,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.exp2"]
+hosts       = ["all"]
 description = "2 raised to the power x"
 
 [[functions]]
@@ -430,6 +472,7 @@ module      = "env"
 params      = ["number", "number"]
 returns     = "number"
 aliases     = ["math.pow"]
+hosts       = ["all"]
 description = "Base raised to the exponent power (base^exp)"
 
 [[functions]]
@@ -440,6 +483,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.sqrt"]
+hosts       = ["all"]
 description = "Square root"
 
 [[functions]]
@@ -450,6 +494,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.floor"]
+hosts       = ["all"]
 description = "Round toward negative infinity"
 
 [[functions]]
@@ -460,6 +505,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.ceil"]
+hosts       = ["all"]
 description = "Round toward positive infinity"
 
 [[functions]]
@@ -470,6 +516,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.round"]
+hosts       = ["all"]
 description = "Round to nearest integer (half rounds away from zero)"
 
 [[functions]]
@@ -480,6 +527,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.trunc"]
+hosts       = ["all"]
 description = "Truncate fractional part (round toward zero)"
 
 [[functions]]
@@ -490,6 +538,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.abs"]
+hosts       = ["all"]
 description = "Absolute value"
 
 [[functions]]
@@ -500,6 +549,7 @@ module      = "env"
 params      = ["number", "number"]
 returns     = "number"
 aliases     = ["math.min"]
+hosts       = ["all"]
 description = "Minimum of two values"
 
 [[functions]]
@@ -510,6 +560,7 @@ module      = "env"
 params      = ["number", "number"]
 returns     = "number"
 aliases     = ["math.max"]
+hosts       = ["all"]
 description = "Maximum of two values"
 
 [[functions]]
@@ -520,6 +571,7 @@ module      = "env"
 params      = ["number"]
 returns     = "number"
 aliases     = ["math.sign"]
+hosts       = ["all"]
 description = "Sign of value: -1.0 if negative, 0.0 if zero, 1.0 if positive"
 
 [[functions]]
@@ -530,6 +582,7 @@ module      = "env"
 params      = []
 returns     = "number"
 aliases     = ["math.pi"]
+hosts       = ["all"]
 description = "Return the mathematical constant pi (3.14159...)"
 
 [[functions]]
@@ -540,6 +593,7 @@ module      = "env"
 params      = []
 returns     = "number"
 aliases     = ["math.e"]
+hosts       = ["all"]
 description = "Return Euler's number e (2.71828...)"
 
 [[functions]]
@@ -550,6 +604,7 @@ module      = "env"
 params      = []
 returns     = "number"
 aliases     = ["math.random"]
+hosts       = ["all"]
 description = "Return a cryptographically random float in [0.0, 1.0)"
 
 # ============================================================
@@ -564,6 +619,7 @@ module      = "env"
 params      = ["i32", "i32"]
 returns     = "ptr"
 aliases     = ["string.concat"]
+hosts       = ["all"]
 description = "Concatenate two strings; params are length-prefixed pointers; returns length-prefixed result"
 
 [[functions]]
@@ -574,6 +630,7 @@ module      = "env"
 params      = ["i32", "i32", "i32"]
 returns     = "ptr"
 aliases     = ["string.substring"]
+hosts       = ["all"]
 description = "Extract substring; str_ptr is length-prefixed, start/end are byte offsets"
 
 [[functions]]
@@ -584,6 +641,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["string.trim"]
+hosts       = ["all"]
 description = "Remove leading and trailing ASCII whitespace; param is length-prefixed pointer"
 
 [[functions]]
@@ -594,6 +652,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["string.trimStart"]
+hosts       = ["all"]
 description = "Remove leading ASCII whitespace; param is length-prefixed pointer"
 
 [[functions]]
@@ -604,6 +663,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["string.trimEnd"]
+hosts       = ["all"]
 description = "Remove trailing ASCII whitespace; param is length-prefixed pointer"
 
 [[functions]]
@@ -614,6 +674,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["string.toUpperCase", "string_toUpperCase"]
+hosts       = ["all"]
 description = "Convert string to uppercase; param is length-prefixed pointer"
 
 [[functions]]
@@ -624,6 +685,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["string.toLowerCase", "string_toLowerCase"]
+hosts       = ["all"]
 description = "Convert string to lowercase; param is length-prefixed pointer"
 
 [[functions]]
@@ -634,6 +696,7 @@ module      = "env"
 params      = ["i32", "i32", "i32"]
 returns     = "ptr"
 aliases     = ["string.replace"]
+hosts       = ["all"]
 description = "Replace first occurrence of find with replacement; all params are length-prefixed pointers"
 
 [[functions]]
@@ -644,6 +707,7 @@ module      = "env"
 params      = ["i32", "i32"]
 returns     = "ptr"
 aliases     = ["string.split"]
+hosts       = ["all"]
 description = "Split string by delimiter; params are length-prefixed pointers; returns JSON array"
 
 [[functions]]
@@ -654,6 +718,7 @@ module      = "env"
 params      = ["i32", "i32"]
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Find byte offset of first occurrence of needle in haystack; -1 if not found"
 
 [[functions]]
@@ -664,6 +729,7 @@ module      = "env"
 params      = ["i32", "i32"]
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Lexicographic comparison: -1 if a < b, 0 if a == b, 1 if a > b"
 
 [[functions]]
@@ -674,6 +740,7 @@ module      = "env"
 params      = ["i32", "i32", "i32"]
 returns     = "ptr"
 aliases     = ["string.repeat"]
+hosts       = ["all"]
 description = "Repeat a string N times; str_ptr is length-prefixed pointer, str_len is raw length (ignored), count is repeat count; returns length-prefixed result"
 
 [[functions]]
@@ -684,6 +751,7 @@ module      = "env"
 params      = ["i32", "i32", "i32"]
 returns     = "boolean"
 aliases     = ["string.matches"]
+hosts       = ["all"]
 description = "Validate a string against a compile-time integer pattern ID; params are (str_ptr: i32, str_len: i32, pattern_id: i32); IDs: 0=email 1=url 2=uuid 3=phone 4=date 5=integer 6=number 7=alphanumeric; returns 1 if matches, 0 if not"
 
 [[functions]]
@@ -694,6 +762,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["integer.toString"]
+hosts       = ["all"]
 description = "Convert 32-bit integer to its decimal string representation"
 
 [[functions]]
@@ -704,6 +773,7 @@ module      = "env"
 params      = ["number"]
 returns     = "ptr"
 aliases     = ["number.toString"]
+hosts       = ["all"]
 description = "Convert 64-bit float to its string representation"
 
 [[functions]]
@@ -714,6 +784,7 @@ module      = "env"
 params      = ["boolean"]
 returns     = "ptr"
 aliases     = ["boolean.toString"]
+hosts       = ["all"]
 description = "Convert boolean (i32) to 'true' or 'false'"
 
 [[functions]]
@@ -724,6 +795,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "i32"
 aliases     = ["string.toInteger"]
+hosts       = ["all"]
 description = "Parse string as integer; param is length-prefixed pointer; returns 0 on parse failure"
 
 [[functions]]
@@ -734,6 +806,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "number"
 aliases     = ["string.toNumber"]
+hosts       = ["all"]
 description = "Parse string as 64-bit float; param is length-prefixed pointer; returns 0.0 on parse failure"
 
 [[functions]]
@@ -744,6 +817,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "boolean"
 aliases     = ["string.toBoolean"]
+hosts       = ["all"]
 description = "Parse string as boolean; param is length-prefixed pointer; 'true'/'1'/'yes' return 1"
 
 [[functions]]
@@ -754,6 +828,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["html.escape"]
+hosts       = ["all"]
 description = "Escape HTML entities (&, <, >, \", ') in a string for safe interpolation in html: blocks"
 
 [[functions]]
@@ -764,6 +839,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["html.raw"]
+hosts       = ["all"]
 description = "Pass-through string for raw HTML insertion in html: blocks ({!var} interpolation)"
 
 # ============================================================
@@ -778,6 +854,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = ["db.query"]
+hosts       = ["server"]
 description = "Execute SELECT query with JSON params array; returns JSON result object"
 
 [[functions]]
@@ -788,6 +865,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["db.execute"]
+hosts       = ["server"]
 description = "Execute INSERT/UPDATE/DELETE with JSON params; returns affected row count or -1 on error"
 
 [[functions]]
@@ -798,6 +876,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = ["db.begin"]
+hosts       = ["server"]
 description = "Begin a database transaction; returns 1 on success, 0 on error"
 
 [[functions]]
@@ -808,6 +887,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = ["db.commit"]
+hosts       = ["server"]
 description = "Commit the current database transaction; returns 1 on success, 0 on error"
 
 [[functions]]
@@ -818,6 +898,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = ["db.rollback"]
+hosts       = ["server"]
 description = "Rollback the current database transaction; returns 1 on success, 0 on error"
 
 [[functions]]
@@ -828,6 +909,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "i32"
 aliases     = ["db.register_migration"]
+hosts       = ["server"]
 description = "Register a migration (name, up_sql, down_sql); queued and applied in order before first request; returns 1 on success, 0 on error"
 
 # ============================================================
@@ -935,6 +1017,7 @@ module      = "env"
 params      = ["string", "i32"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["server"]
 description = "Read file at given path (ptr+len) with mode flag; returns contents as length-prefixed string"
 
 [[functions]]
@@ -945,6 +1028,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = []
+hosts       = ["server"]
 description = "Write content to file; path and content as (ptr+len) pairs; returns 0 on success, -1 on error"
 
 [[functions]]
@@ -955,6 +1039,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = []
+hosts       = ["server"]
 description = "Check if file exists; path as (ptr+len); returns 1 if exists, 0 otherwise"
 
 [[functions]]
@@ -965,6 +1050,7 @@ module      = "env"
 params      = ["string"]
 returns     = "i32"
 aliases     = []
+hosts       = ["server"]
 description = "Delete file; path as (ptr+len); returns 0 on success, -1 on error"
 
 [[functions]]
@@ -975,6 +1061,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = []
+hosts       = ["server"]
 description = "Append content to file; path and content as (ptr+len) pairs; returns 0 on success, -1 on error"
 
 # ============================================================
@@ -989,6 +1076,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Execute HTTP GET request to URL; returns response body as length-prefixed string"
 
 [[functions]]
@@ -999,6 +1087,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Execute HTTP POST request with raw body; returns response body"
 
 [[functions]]
@@ -1009,6 +1098,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Execute HTTP PUT request with raw body; returns response body"
 
 [[functions]]
@@ -1019,6 +1109,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Execute HTTP PATCH request with raw body; returns response body"
 
 [[functions]]
@@ -1029,6 +1120,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Execute HTTP DELETE request; returns response body"
 
 [[functions]]
@@ -1039,6 +1131,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Execute HTTP HEAD request; returns response headers as JSON"
 
 [[functions]]
@@ -1049,6 +1142,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Execute HTTP OPTIONS request; returns response body"
 
 [[functions]]
@@ -1059,6 +1153,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "POST JSON body with Content-Type: application/json header; returns response body"
 
 [[functions]]
@@ -1069,6 +1164,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "PUT JSON body with Content-Type: application/json header; returns response body"
 
 [[functions]]
@@ -1079,6 +1175,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "PATCH JSON body with Content-Type: application/json header; returns response body"
 
 [[functions]]
@@ -1089,6 +1186,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "POST form-urlencoded body with appropriate Content-Type header; returns response body"
 
 [[functions]]
@@ -1099,6 +1197,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "HTTP GET with custom headers supplied as JSON object string; returns response body"
 
 [[functions]]
@@ -1109,6 +1208,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "HTTP POST with body and custom headers as JSON object string; returns response body"
 
 [[functions]]
@@ -1119,6 +1219,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "HTTP PUT with body and custom headers as JSON object string; returns response body"
 
 [[functions]]
@@ -1129,6 +1230,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "HTTP PATCH with body and custom headers as JSON object string; returns response body"
 
 [[functions]]
@@ -1139,6 +1241,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "HTTP DELETE with custom headers as JSON object string; returns response body"
 
 [[functions]]
@@ -1149,6 +1252,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Set User-Agent header for subsequent requests (currently no-op)"
 
 [[functions]]
@@ -1159,6 +1263,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Set request timeout in milliseconds for subsequent requests (currently no-op)"
 
 [[functions]]
@@ -1169,6 +1274,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Set maximum number of redirects to follow (currently no-op)"
 
 [[functions]]
@@ -1179,6 +1285,7 @@ module      = "env"
 params      = ["boolean"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Enable or disable cookie jar for subsequent requests (currently no-op)"
 
 [[functions]]
@@ -1189,6 +1296,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Get the HTTP status code of the last response; returns 200 by default"
 
 [[functions]]
@@ -1199,6 +1307,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Get the body of the last response as a length-prefixed string pointer (or 0 if no response is available)"
 
 [[functions]]
@@ -1209,6 +1318,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Get all headers from the last response as a length-prefixed JSON string; returns 0 (null) currently"
 
 [[functions]]
@@ -1219,6 +1329,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Percent-encode a string for safe use in a URL"
 
 [[functions]]
@@ -1229,6 +1340,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Decode a percent-encoded URL string"
 
 [[functions]]
@@ -1239,6 +1351,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["all"]
 description = "Build a URL query string from a JSON object of key-value pairs"
 
 # ============================================================
@@ -1253,6 +1366,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["crypto.hash_password"]
+hosts       = ["all"]
 description = "Hash a plaintext password using bcrypt; returns hash string or empty on failure"
 
 [[functions]]
@@ -1263,6 +1377,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "boolean"
 aliases     = ["crypto.verify_password"]
+hosts       = ["all"]
 description = "Verify plaintext password against bcrypt hash; returns 1 if valid, 0 if invalid"
 
 [[functions]]
@@ -1273,6 +1388,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["crypto.random_bytes"]
+hosts       = ["all"]
 description = "Generate N cryptographically random bytes; returns base64-encoded result"
 
 [[functions]]
@@ -1283,6 +1399,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["crypto.random_hex"]
+hosts       = ["all"]
 description = "Generate N cryptographically random bytes; returns lowercase hex string (2N chars)"
 
 [[functions]]
@@ -1293,6 +1410,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["crypto.hash_sha256"]
+hosts       = ["all"]
 description = "Compute SHA-256 digest of input; returns lowercase hex string"
 
 [[functions]]
@@ -1303,6 +1421,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["crypto.hash_sha512"]
+hosts       = ["all"]
 description = "Compute SHA-512 digest of input; returns lowercase hex string"
 
 [[functions]]
@@ -1313,6 +1432,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "ptr"
 aliases     = ["crypto.hmac"]
+hosts       = ["all"]
 description = "Compute HMAC of data using key and algorithm ('sha256' or 'sha512'); returns hex string"
 
 # ============================================================
@@ -1327,6 +1447,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "ptr"
 aliases     = ["jwt.sign"]
+hosts       = ["all"]
 description = "Sign a JSON payload with secret and algorithm (e.g., 'HS256'); returns JWT token string"
 
 [[functions]]
@@ -1337,6 +1458,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "ptr"
 aliases     = ["jwt.verify"]
+hosts       = ["all"]
 description = "Verify JWT token with secret; returns payload JSON on success, empty string on failure"
 
 [[functions]]
@@ -1347,6 +1469,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["jwt.decode"]
+hosts       = ["all"]
 description = "Decode JWT without signature verification; returns JSON with header and payload fields"
 
 # ============================================================
@@ -1361,6 +1484,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["env.get"]
+hosts       = ["server"]
 description = "Get environment variable by name; returns empty string if not found or access is denied"
 
 # ============================================================
@@ -1375,6 +1499,7 @@ module      = "env"
 params      = []
 returns     = "i64"
 aliases     = ["time.now"]
+hosts       = ["all"]
 description = "Get current Unix timestamp in seconds since epoch as i64"
 
 # ============================================================
@@ -1390,6 +1515,7 @@ module      = "memory_runtime"
 params      = ["i32", "i32"]
 returns     = "i32"
 aliases     = []
+hosts       = ["all"]
 description = "Allocate size bytes with given alignment in WASM linear memory; returns pointer or 0 on failure"
 
 [[functions]]
@@ -1400,6 +1526,7 @@ module      = "memory_runtime"
 params      = ["i32"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Increment reference count for pointer (no-op for bump allocator)"
 
 [[functions]]
@@ -1410,6 +1537,7 @@ module      = "memory_runtime"
 params      = ["i32"]
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Decrement reference count for pointer (no-op for bump allocator)"
 
 [[functions]]
@@ -1420,6 +1548,7 @@ module      = "memory_runtime"
 params      = []
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Push a new memory scope for scope-based allocation tracking (no-op currently)"
 
 [[functions]]
@@ -1430,6 +1559,7 @@ module      = "memory_runtime"
 params      = []
 returns     = "void"
 aliases     = []
+hosts       = ["all"]
 description = "Pop the current memory scope and free all allocations within it (no-op currently)"
 
 [[functions]]
@@ -1440,6 +1570,7 @@ module      = "env"
 params      = []
 returns     = "void"
 aliases     = ["state.reset_all"]
+hosts       = ["all"]
 description = "Reset all WASM frame state (memory allocator) between handler invocations. Emitted by compiler 0.30.155+."
 
 [[functions]]
@@ -1450,6 +1581,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "void"
 aliases     = ["state.reset_named"]
+hosts       = ["all"]
 description = "Reset a named state variable. No-op for bump allocator. Emitted by compiler 0.30.155+."
 
 # ============================================================
@@ -1465,6 +1597,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "i32"
 aliases     = ["http.listen"]
+hosts       = ["server"]
 description = "Configure HTTP server to listen on given port; returns 0 on success"
 
 [[functions]]
@@ -1475,6 +1608,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "i32"
 aliases     = ["http.route"]
+hosts       = ["server"]
 description = "Register public route: method (ptr+len), path pattern (ptr+len), handler export name (ptr+len); returns 0 on success"
 
 [[functions]]
@@ -1485,6 +1619,7 @@ module      = "env"
 params      = ["string", "string", "string", "i32"]
 returns     = "i32"
 aliases     = ["http.redirect_route"]
+hosts       = ["server"]
 description = "Register a static redirect: method (ptr+len), from-path (ptr+len), to-path (ptr+len), HTTP status (i32: 301/302/…); returns 0 on success. No WASM handler needed."
 
 [[functions]]
@@ -1495,6 +1630,7 @@ module      = "env"
 params      = ["string", "string", "string", "string"]
 returns     = "i32"
 aliases     = ["http.route_protected"]
+hosts       = ["server"]
 description = "Register authentication-required route: method (ptr+len), path pattern (ptr+len), handler export name (ptr+len), role constraint (ptr+len); returns 0 on success"
 
 [[functions]]
@@ -1505,6 +1641,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "boolean"
 aliases     = ["http.serve_static"]
+hosts       = ["server"]
 description = "Mount filesystem directory (ptr+len) as static file server at URL prefix (ptr+len); returns true on success"
 
 [[functions]]
@@ -1515,6 +1652,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "i32"
 aliases     = ["island.register"]
+hosts       = ["server"]
 description = "Register an island component for client-side hydration: component name (ptr+len), WASM module path (ptr+len), hydration mode (ptr+len: on|visible|idle|only); returns 0 on success"
 
 # ============================================================
@@ -1529,6 +1667,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["req.param"]
+hosts       = ["server"]
 description = "Get URL path parameter by name (ptr+len) from current request; returns length-prefixed string"
 
 [[functions]]
@@ -1539,6 +1678,7 @@ module      = "env"
 params      = ["string"]
 returns     = "i32"
 aliases     = ["req.param_int"]
+hosts       = ["server"]
 description = "Get URL path parameter by name (ptr+len) parsed as i32; returns 0 if missing or not parseable"
 
 [[functions]]
@@ -1549,6 +1689,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["req.query"]
+hosts       = ["server"]
 description = "Get query string parameter by name (ptr+len) from current request; returns length-prefixed string"
 
 [[functions]]
@@ -1559,6 +1700,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["req.body"]
+hosts       = ["server"]
 description = "Get full raw request body; returns length-prefixed string"
 
 [[functions]]
@@ -1569,6 +1711,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["req.body_field"]
+hosts       = ["server"]
 description = "Get a named field (ptr+len) from a JSON request body; returns length-prefixed string"
 
 [[functions]]
@@ -1579,6 +1722,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["req.header"]
+hosts       = ["server"]
 description = "Get request header by name (ptr+len, case-insensitive); returns length-prefixed string"
 
 [[functions]]
@@ -1589,6 +1733,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["req.headers"]
+hosts       = ["server"]
 description = "Get all request headers as a JSON object string; returns length-prefixed string"
 
 [[functions]]
@@ -1599,6 +1744,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["req.method"]
+hosts       = ["server"]
 description = "Get HTTP method of current request (e.g., 'GET', 'POST'); returns length-prefixed string"
 
 [[functions]]
@@ -1609,6 +1755,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["req.path"]
+hosts       = ["server"]
 description = "Get URL path of current request; returns length-prefixed string"
 
 [[functions]]
@@ -1619,6 +1766,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["req.cookie"]
+hosts       = ["server"]
 description = "Get cookie value by name (ptr+len) from the Cookie request header; returns length-prefixed string"
 
 [[functions]]
@@ -1629,6 +1777,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["req.form"]
+hosts       = ["server"]
 description = "Parse form-urlencoded request body and return as JSON object string"
 
 [[functions]]
@@ -1639,6 +1788,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["req.ip"]
+hosts       = ["server"]
 description = "Get client IP address; checks X-Forwarded-For then X-Real-IP; returns 'unknown' if unavailable"
 
 # ============================================================
@@ -2011,6 +2161,7 @@ module      = "env"
 params      = ["i32", "i32", "i32", "i32", "i32"]
 returns     = "boolean"
 aliases     = ["session.store"]
+hosts       = ["server"]
 description = "Store key-value pair under session ID; params: session_id_ptr, key_ptr, value_ptr, ttl, flags"
 
 [[functions]]
@@ -2021,6 +2172,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["session.get"]
+hosts       = ["server"]
 description = "Get current session data from request context; returns session data as length-prefixed string"
 
 [[functions]]
@@ -2031,6 +2183,7 @@ module      = "env"
 params      = []
 returns     = "boolean"
 aliases     = ["session.delete"]
+hosts       = ["server"]
 description = "Delete current session from request context; returns 1 if deleted, 0 if not found"
 
 [[functions]]
@@ -2041,6 +2194,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = ["session.exists"]
+hosts       = ["server"]
 description = "Check if a session with given ID (ptr+len) exists; returns 1 if it does, 0 otherwise"
 
 [[functions]]
@@ -2051,6 +2205,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = ["session.set_csrf"]
+hosts       = ["server"]
 description = "Store CSRF token (ptr+len) for the current session; returns 1 on success, 0 if no active session"
 
 [[functions]]
@@ -2061,6 +2216,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["session.get_csrf"]
+hosts       = ["server"]
 description = "Get CSRF token for the current session; returns empty string if no active session"
 
 [[functions]]
@@ -2071,6 +2227,7 @@ module      = "env"
 params      = ["i32", "i32"]
 returns     = "boolean"
 aliases     = ["http.set_cookie"]
+hosts       = ["server"]
 description = "Set a response cookie with name and value (length-prefixed pointers); applies default attributes"
 
 # ============================================================
@@ -2085,6 +2242,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["auth.get_session"]
+hosts       = ["server"]
 description = "Get current auth session as JSON with user_id, role, session_id; returns 'null' if unauthenticated"
 
 [[functions]]
@@ -2095,6 +2253,7 @@ module      = "env"
 params      = []
 returns     = "boolean"
 aliases     = ["auth.require_auth"]
+hosts       = ["server"]
 description = "Check if request is authenticated; returns 1 if authenticated, 0 otherwise"
 
 [[functions]]
@@ -2105,6 +2264,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = ["auth.require_role"]
+hosts       = ["server"]
 description = "Check if authenticated user has exactly the given role (ptr+len); returns 1 if yes, 0 otherwise"
 
 [[functions]]
@@ -2115,6 +2275,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = ["auth.can"]
+hosts       = ["server"]
 description = "Check if authenticated user has the given permission (ptr+len); admin role passes all permissions"
 
 [[functions]]
@@ -2125,6 +2286,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = ["auth.has_any_role"]
+hosts       = ["server"]
 description = "Check if user has any role from a JSON array of role strings (ptr+len); returns 1 if match found"
 
 [[functions]]
@@ -2135,6 +2297,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = ["auth.set_session"]
+hosts       = ["server"]
 description = "Create session from JSON with user_id, role, claims (ptr+len); sets session cookie on response"
 
 [[functions]]
@@ -2145,6 +2308,7 @@ module      = "env"
 params      = []
 returns     = "boolean"
 aliases     = ["auth.clear_session"]
+hosts       = ["server"]
 description = "Destroy current user session and clear session cookie; returns 1 on success, 0 if no session"
 
 [[functions]]
@@ -2155,6 +2319,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = ["auth.user_id"]
+hosts       = ["server"]
 description = "Get current authenticated user ID as i32; returns 0 if not authenticated"
 
 [[functions]]
@@ -2165,6 +2330,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["auth.user_role"]
+hosts       = ["server"]
 description = "Get current authenticated user role as length-prefixed string; returns empty if unauthenticated"
 
 # ============================================================
@@ -2179,6 +2345,7 @@ module      = "env"
 params      = ["string"]
 returns     = "boolean"
 aliases     = ["roles.register"]
+hosts       = ["server"]
 description = "Register role definitions from JSON object (ptr+len) mapping role names to permission arrays"
 
 [[functions]]
@@ -2189,6 +2356,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "boolean"
 aliases     = ["role.has_permission"]
+hosts       = ["server"]
 description = "Check if a named role (ptr+len) has a specific permission (ptr+len); returns 1 if yes, 0 otherwise"
 
 [[functions]]
@@ -2199,6 +2367,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["role.get_permissions"]
+hosts       = ["server"]
 description = "Get all permissions for a role (ptr+len) as a JSON array string; returns '[]' if role not found"
 
 # ============================================================
@@ -2213,6 +2382,7 @@ module      = "env"
 params      = ["i32", "string", "string"]
 returns     = "ptr"
 aliases     = ["http.respond"]
+hosts       = ["server"]
 description = "Set response status, Content-Type header (ptr+len), and body (ptr+len) in one call; returns body pointer"
 
 [[functions]]
@@ -2223,6 +2393,7 @@ module      = "env"
 params      = ["i32", "string"]
 returns     = "ptr"
 aliases     = ["http.redirect"]
+hosts       = ["server"]
 description = "Send redirect response with given HTTP status and Location URL (ptr+len)"
 
 [[functions]]
@@ -2233,6 +2404,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = ["http.set_header"]
+hosts       = ["server"]
 description = "Set a response header by name (ptr+len) and value (ptr+len); returns header name pointer"
 
 [[functions]]
@@ -2243,6 +2415,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "boolean"
 aliases     = ["res.set_header"]
+hosts       = ["server"]
 description = "Set a custom response header by name (ptr+len) and value (ptr+len); returns 1 on success, 0 on error"
 
 [[functions]]
@@ -2253,6 +2426,7 @@ module      = "env"
 params      = ["string", "i32"]
 returns     = "boolean"
 aliases     = ["res.redirect"]
+hosts       = ["server"]
 description = "Set redirect to URL (ptr+len) with status code (301/302/303/307/308); invalid codes default to 302"
 
 [[functions]]
@@ -2263,6 +2437,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "void"
 aliases     = ["res.status"]
+hosts       = ["server"]
 description = "Set HTTP response status code"
 
 [[functions]]
@@ -2273,6 +2448,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = ["res.body"]
+hosts       = ["server"]
 description = "Set raw response body from ptr+len pair"
 
 [[functions]]
@@ -2283,6 +2459,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = ["res.json"]
+hosts       = ["server"]
 description = "Set JSON response body from ptr+len pair and automatically sets Content-Type: application/json header"
 
 [[functions]]
@@ -2293,6 +2470,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "boolean"
 aliases     = ["http.set_cache"]
+hosts       = ["server"]
 description = "Set Cache-Control max-age in seconds; 0 or negative sets no-cache headers"
 
 [[functions]]
@@ -2303,6 +2481,7 @@ module      = "env"
 params      = []
 returns     = "boolean"
 aliases     = ["http.no_cache"]
+hosts       = ["server"]
 description = "Set Cache-Control, Pragma, and Expires headers to disable all caching"
 
 [[functions]]
@@ -2313,6 +2492,7 @@ module      = "env"
 params      = ["string"]
 returns     = "void"
 aliases     = ["res.download"]
+hosts       = ["server"]
 description = "Set Content-Disposition: attachment; filename=<filename> header so the browser downloads the response as a file"
 
 # ============================================================
@@ -2327,6 +2507,7 @@ module      = "env"
 params      = ["string", "integer", "boolean", "string", "string", "string"]
 returns     = "void"
 aliases     = ["email.configure"]
+hosts       = ["server"]
 description = "Configure SMTP connection: host, port, secure, username, password, from-address. Called once during startup."
 
 [[functions]]
@@ -2337,6 +2518,7 @@ module      = "env"
 params      = ["string", "string", "string", "string", "string"]
 returns     = "boolean"
 aliases     = ["email.send"]
+hosts       = ["server"]
 description = "Send email: to, subject, html-body, plain-text-body, from-override (empty = use configured default). Returns 1 on success."
 
 [[functions]]
@@ -2347,6 +2529,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["email.last_error"]
+hosts       = ["server"]
 description = "Return the error message from the last failed _email_send call; returns LP empty string when the last send succeeded."
 
 # ============================================================
@@ -2361,6 +2544,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["json.encode"]
+hosts       = ["all"]
 description = "Validate and re-serialize JSON from ptr+len pair; non-JSON strings are encoded as JSON string values"
 
 [[functions]]
@@ -2371,6 +2555,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["json.decode"]
+hosts       = ["all"]
 description = "Parse JSON string from ptr+len pair; returns parsed JSON or an error JSON object on parse failure"
 
 [[functions]]
@@ -2381,6 +2566,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = ["json.get"]
+hosts       = ["all"]
 description = "Extract a value from a JSON object (ptr+len) using a dot-separated path (ptr+len, e.g., 'user.name')"
 
 # ============================================================
@@ -2395,6 +2581,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "void"
 aliases     = ["async.fire"]
+hosts       = ["all"]
 description = "Fire-and-forget async call. fn_name is the Clean function name; args is a JSON array of serialised arguments (currently always '[]')."
 
 [[functions]]
@@ -2405,6 +2592,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = ["async.await"]
+hosts       = ["all"]
 description = "Async call that blocks until the result is available. fn_name is the Clean function name; args is a JSON array. Returns a length-prefixed string pointer."
 
 [[functions]]
@@ -2415,6 +2603,7 @@ module      = "env"
 params      = ["integer"]
 returns     = "void"
 aliases     = ["server.sleep"]
+hosts       = ["all"]
 description = "Suspend execution for the given number of milliseconds."
 
 # ============================================================
@@ -2429,6 +2618,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["browser", "server"]
 description = "Load an HTML layout file; first arg is the full relative path from project root (e.g. app/ui/layouts/main.html); caller is responsible for path construction; returns contents as length-prefixed string or empty string if not found"
 
 [[functions]]
@@ -2439,6 +2629,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["browser", "server"]
 description = "Load an HTML page template; first arg is the full relative path from project root (e.g. app/ui/pages/index.html); caller is responsible for path construction; returns contents as length-prefixed string or empty string if not found"
 
 [[functions]]
@@ -2449,6 +2640,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = []
+hosts       = ["browser", "server"]
 description = "Render an HTML template with {{ key }} substitution; first arg is the full relative path from project root (e.g. app/ui/pages/index.html); second arg is JSON data; caller is responsible for path construction; missing keys produce empty string; returns rendered HTML as length-prefixed string"
 
 [[functions]]
@@ -2459,6 +2651,7 @@ module      = "env"
 params      = ["string"]
 returns     = "i32"
 aliases     = []
+hosts       = ["browser", "server"]
 description = "Accumulate a CSS string for injection into the response <head>; returns 1 on success"
 
 [[functions]]
@@ -2469,6 +2662,7 @@ module      = "env"
 params      = ["string"]
 returns     = "i32"
 aliases     = []
+hosts       = ["browser", "server"]
 description = "Inject <link rel=stylesheet href=...> into response <head>; deduplicated by href — same href injected multiple times produces one tag; returns 1 on success"
 
 [[functions]]
@@ -2479,6 +2673,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = []
+hosts       = ["browser", "server"]
 description = "Register a component's server-side HTML template for expansion in _ui_render_page; first arg is the hyphenated tag name (e.g. my-widget), second arg is the rendered HTML string; returns 1 on success"
 
 # ============================================================
@@ -2493,6 +2688,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["mcp.stdio_read"]
+hosts       = ["server"]
 description = "Read one newline-delimited JSON-RPC 2.0 message from stdin. Blocks until a full line is available. Returns the message without trailing newline as a length-prefixed string. Returns empty string on EOF."
 
 [[functions]]
@@ -2503,6 +2699,7 @@ module      = "env"
 params      = ["string"]
 returns     = "i32"
 aliases     = ["mcp.stdio_write"]
+hosts       = ["server"]
 description = "Stdio mode: write msg + newline to stdout and flush. HTTP mode: send msg as JSON response body to the last client accepted by _mcp_http_accept. Returns 1 on success, 0 on failure."
 
 [[functions]]
@@ -2513,6 +2710,7 @@ module      = "env"
 params      = ["i32", "string"]
 returns     = "i32"
 aliases     = ["mcp.http_serve"]
+hosts       = ["server"]
 description = "Start an HTTP+SSE listener for MCP. Binds to host:port. Exposes POST /mcp (JSON-RPC) and GET /sse (SSE stream) with CORS and Mcp-Session-Id headers. Returns 1 immediately; listener runs in background."
 
 [[functions]]
@@ -2523,6 +2721,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["mcp.http_accept"]
+hosts       = ["server"]
 description = "Block until the next POST /mcp request arrives. Stores the response writer as the current HTTP client context. Returns the raw JSON-RPC request body as a length-prefixed string. Returns empty string on shutdown."
 
 [[functions]]
@@ -2533,6 +2732,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["mcp.sse_send"]
+hosts       = ["server"]
 description = "Send a raw SSE-formatted event string to the identified SSE client (UUID from GET /sse). Returns 1 if sent, 0 if client_id unknown or client disconnected."
 
 [[functions]]
@@ -2543,17 +2743,8 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["mcp.log"]
+hosts       = ["server"]
 description = "Write [frame.mcp] {level}: {msg} to stderr only. Never writes to stdout. level is debug|info|warn|error. Returns 1 always."
-
-[[functions]]
-name        = "_test_http_request"
-layer       = 3
-category    = "test"
-module      = "env"
-params      = ["string", "string", "string", "string", "string"]
-returns     = "i32"
-aliases     = ["test.http_request"]
-description = "Dispatch an in-process HTTP request against the running WASM module. Params: (method, path, body, header_key, header_value). Finds the registered route handler, sets the request context, calls the handler, captures the response, stores it by handle. Returns an i32 handle (>=0) on success, -1 if the route is not found or dispatch fails."
 
 [[functions]]
 name        = "_test_http_request"
@@ -2562,8 +2753,9 @@ category    = "test"
 module      = "env"
 params      = ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"]
 returns     = "i32"
-aliases     = []
-description = "Dispatch an in-process HTTP request to a registered route handler and return an opaque response handle. Params (5 ptr+len pairs, all raw — not Clean string structures): method, path, body, header-key, header-value. Returns handle >= 0 on success, -1 on dispatch failure. Companion functions _test_response_status and _test_response_body read the response. Used by `test \"name\" METHOD \"path\"` endpoint test blocks."
+aliases     = ["test.http_request"]
+hosts       = ["all"]
+description = "Dispatch an in-process HTTP request to a registered route handler and return an opaque response handle. Params: 5 raw (ptr, len) pairs — method, path, body, header-key, header-value — NOT Clean string structures. The compiler (wasmtime_runner.rs) and clean-server (bridge.rs:3347) emit/expect this 10-i32 signature. Returns handle >= 0 on success, -1 on dispatch failure. Companion functions _test_response_status and _test_response_body read the response. Used by `test \"name\" METHOD \"path\"` endpoint test blocks."
 
 [[functions]]
 name        = "_test_response_status"
@@ -2573,6 +2765,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "i32"
 aliases     = ["test.response_status"]
+hosts       = ["all"]
 description = "Return the HTTP status code from a prior _test_http_request call. Param: handle (i32). Returns the status code (e.g. 200, 404), or -1 if the handle is unknown."
 
 [[functions]]
@@ -2583,6 +2776,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "ptr"
 aliases     = ["test.response_body"]
+hosts       = ["all"]
 description = "Return the response body JSON from a prior _test_http_request call as a length-prefixed string. Param: handle (i32). Returns empty string if the handle is unknown."
 
 # ============================================================
@@ -2597,6 +2791,7 @@ module      = "env"
 params      = ["string", "string", "string"]
 returns     = "i32"
 aliases     = ["http.sse_route"]
+hosts       = ["server"]
 description = "Register a STREAM (SSE) route. Always GET. Params: (method, path, handler_name). The server sets Content-Type: text/event-stream and keeps the connection open while the handler runs."
 
 [[functions]]
@@ -2607,6 +2802,7 @@ module      = "env"
 params      = ["string"]
 returns     = "i32"
 aliases     = ["sse.emit"]
+hosts       = ["server"]
 description = "Write 'data: {payload}\\n\\n' to the active SSE response stream. Returns 0 on success, -1 if no active SSE connection."
 
 [[functions]]
@@ -2617,6 +2813,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["sse.emit_event"]
+hosts       = ["server"]
 description = "Write 'event: {name}\\ndata: {payload}\\n\\n' to the active SSE response stream. Returns 0 on success, -1 if no active SSE connection."
 
 [[functions]]
@@ -2627,6 +2824,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = ["sse.close"]
+hosts       = ["server"]
 description = "Drop the SSE sender, flushing and closing the response stream. Returns 0."
 
 [[functions]]
@@ -2637,6 +2835,7 @@ module      = "env"
 params      = ["i32"]
 returns     = "i32"
 aliases     = ["sse.retry"]
+hosts       = ["server"]
 description = "Write 'retry: {ms}\\n\\n' to the SSE stream to set the client reconnect interval. Returns 0."
 
 [[functions]]
@@ -2647,6 +2846,7 @@ module      = "env"
 params      = []
 returns     = "i32"
 aliases     = ["sse.is_connected"]
+hosts       = ["server"]
 description = "Returns 1 if the SSE client connection is still open, 0 if it has disconnected."
 
 # ============================================================
@@ -2664,6 +2864,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["ui.get_bounds"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP empty string on the server. §FEXT-2"
 
 [[functions]]
@@ -2674,6 +2875,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["ui.get_offset_bounds"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP empty string on the server. §FEXT-2"
 
 [[functions]]
@@ -2684,6 +2886,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["ui.get_scroll"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP empty string on the server. §FEXT-2"
 
 [[functions]]
@@ -2694,6 +2897,7 @@ module      = "env"
 params      = ["string", "number", "number"]
 returns     = "i32"
 aliases     = ["ui.set_scroll"]
+hosts       = ["browser", "server"]
 description = "Browser-only no-op on the server. Returns 0. §FEXT-2"
 
 [[functions]]
@@ -2704,6 +2908,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["ui.query_all"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP string '[]' on the server. §FEXT-2"
 
 [[functions]]
@@ -2714,6 +2919,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = ["ui.get_computed_style"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP empty string on the server. §FEXT-2"
 
 [[functions]]
@@ -2724,6 +2930,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["ui.patch"]
+hosts       = ["browser", "server"]
 description = "Browser-only no-op on the server. Returns 0. §FEXT-5"
 
 [[functions]]
@@ -2734,6 +2941,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["ui.iframe_send"]
+hosts       = ["browser", "server"]
 description = "Browser-only no-op on the server. Returns 0. §FEXT-3"
 
 [[functions]]
@@ -2744,6 +2952,7 @@ module      = "env"
 params      = ["string"]
 returns     = "i32"
 aliases     = ["ui.iframe_on_message"]
+hosts       = ["browser", "server"]
 description = "Browser-only no-op on the server. Returns 0. §FEXT-3"
 
 [[functions]]
@@ -2754,6 +2963,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "ptr"
 aliases     = ["ui.iframe_get_bounds"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP empty string on the server. §FEXT-3"
 
 [[functions]]
@@ -2764,6 +2974,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["ui.iframe_inject"]
+hosts       = ["browser", "server"]
 description = "Browser-only no-op on the server. Returns 0. §FEXT-3"
 
 [[functions]]
@@ -2774,6 +2985,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "i32"
 aliases     = ["ui.set_drag_data"]
+hosts       = ["browser", "server"]
 description = "Browser-only no-op on the server. Returns 0. §FEXT-1"
 
 [[functions]]
@@ -2784,6 +2996,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["ui.get_drag_data"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP empty string on the server. §FEXT-1"
 
 [[functions]]
@@ -2794,6 +3007,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["ui.event_data_json"]
+hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP string '{}' on the server. §FEXT-1"
 
 # ============================================================
@@ -5431,7 +5645,7 @@ params      = ["string"]
 returns     = "string"
 aliases     = []
 hosts       = ["all"]
-description = "Read a key from the compiler-owned build_state keystore. Returns the empty string when the key is absent."
+description = "Read a key from the compiler-owned build_state keystore. Returns the empty string when the key is absent. NOTE: Registered by the compiler's WasmPluginAdapter for plugin lifecycle slots; runtime hosts should provide a no-op stub returning empty string (apps don't call this at runtime; the keystore is snapshotted into BuildContext at compile time)."
 
 [[functions]]
 name        = "_build_state_set"
@@ -5442,7 +5656,7 @@ params      = ["string", "string"]
 returns     = "void"
 aliases     = []
 hosts       = ["all"]
-description = "Persist a key-value pair into the compiler-owned build_state keystore. Snapshotted into the BuildContext passed to every lifecycle slot."
+description = "Persist a key-value pair into the compiler-owned build_state keystore. Snapshotted into the BuildContext passed to every lifecycle slot. NOTE: Registered by the compiler's WasmPluginAdapter; runtime hosts should provide a no-op stub (apps don't call this at runtime)."
 
 [[functions]]
 name        = "_storage_local_clear"

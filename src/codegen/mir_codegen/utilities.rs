@@ -463,8 +463,18 @@ impl MirCodeGenerator<'_> {
 
         // Populate name-based return type registry for stdlib/builtin functions
 
-        // Void functions
-        for name in &["print", "printl", "list.set", "list.clear", "list.push"] {
+        // Void functions.
+        // `list.push` is NOT void — it returns the (possibly reallocated)
+        // list pointer for chaining. ArrayLiteral codegen relies on this
+        // return value: it emits a Copy after each push to fold the new
+        // pointer back into the variable's local. Listing it here caused
+        // the codegen to drop the call result, leaving the post-call
+        // Copy reading an uninitialized local (= 0). With multiple list
+        // literals in the same program this looked "fine" only because
+        // every list happened to share address 0 thanks to a separate
+        // bug in the list bump allocator; once that allocator was fixed,
+        // the Copy bug surfaced as cross-list corruption.
+        for name in &["print", "printl", "list.set", "list.clear"] {
             self.function_return_types
                 .insert(name.to_string(), MirType::Void);
         }

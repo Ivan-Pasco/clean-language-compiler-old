@@ -3267,7 +3267,14 @@ impl<'a> TypeInference<'a> {
         value: &crate::ast::Value,
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
-        // Object literals { key: value, ... } must produce ObjectLiteral, not Literal(Null)
+        // Object literals { key: value, ... } must produce ObjectLiteral.
+        // Field values are recursively inferred as literal expressions so a
+        // nested array literal becomes a proper `ArrayLiteral` TAST kind
+        // rather than being flattened to `Literal(Null)`. Without this the
+        // codegen later sees `Literal(Null)` with `expr_type=Array(...)` and
+        // emits `i32.const 0` instead of materializing the list — observed
+        // as `json.encode(any data = { items: [...] })` producing the wrong
+        // output (JSON-ENCODE-ANY-EMBEDDED-LIST-LOST, fp 06ad82a75ad3).
         if let crate::ast::Value::Pairs(pairs) = value {
             let mut fields = Vec::new();
             for (key_val, field_val) in pairs {
@@ -3275,13 +3282,14 @@ impl<'a> TypeInference<'a> {
                     crate::ast::Value::String(s) => s.clone(),
                     other => format!("{}", other),
                 };
-                let (lit, ty) = self.infer_literal(field_val);
+                let (field_kind, field_ty, field_loc) =
+                    self.infer_literal_expression(field_val, location)?;
                 fields.push(TastObjectField {
                     key,
                     value: TastExpression {
-                        kind: TastExpressionKind::Literal { value: lit },
-                        expr_type: ty,
-                        location: location.clone(),
+                        kind: field_kind,
+                        expr_type: field_ty,
+                        location: field_loc,
                     },
                     location: location.clone(),
                 });
@@ -3289,6 +3297,33 @@ impl<'a> TypeInference<'a> {
             return Ok((
                 TastExpressionKind::ObjectLiteral { fields },
                 ConcreteType::Any,
+                location.clone(),
+            ));
+        }
+        // List literals embedded inside an object literal (or any other literal
+        // context) must produce `ArrayLiteral` with each element preserved as
+        // its own TastExpression. The same `infer_literal_expression` recursion
+        // handles arbitrarily-nested lists and lists-of-objects.
+        if let crate::ast::Value::List(elements) = value {
+            let mut tast_elements = Vec::with_capacity(elements.len());
+            let mut elem_type = ConcreteType::Unknown;
+            for elem in elements {
+                let (kind, ty, loc) = self.infer_literal_expression(elem, location)?;
+                if matches!(elem_type, ConcreteType::Unknown) {
+                    elem_type = ty.clone();
+                }
+                tast_elements.push(TastExpression {
+                    kind,
+                    expr_type: ty,
+                    location: loc,
+                });
+            }
+            return Ok((
+                TastExpressionKind::ArrayLiteral {
+                    elements: tast_elements,
+                    element_type: elem_type.clone(),
+                },
+                ConcreteType::Array(Box::new(elem_type)),
                 location.clone(),
             ));
         }
