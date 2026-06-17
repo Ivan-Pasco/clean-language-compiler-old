@@ -2981,7 +2981,22 @@ impl MirBuilder {
                 context.function.next_value_id += 1;
 
                 // Get return type from expression
-                let mir_return_type = self.convert_concrete_type(&expression.expr_type);
+                let inferred_type = &expression.expr_type;
+                let mir_return_type = self.convert_concrete_type(inferred_type);
+
+                // Detect void static methods. Without this, calling a
+                // user-class void method via `ClassName.method(args)` emits a
+                // Call with `dest = Some(...)`; codegen then writes a
+                // `local.set` after a no-result WASM call → stack underflow
+                // at wasmparser validation ("expected i32 but nothing on
+                // stack"). Mirrors the void detection in the MethodCall arm;
+                // `Unknown` stays non-void because that's reserved for
+                // namespace/return-type holes that DO produce a value.
+                // Resolves: CODEGEN_STACK_REMAINING fp 82badd8d3d63.
+                let is_void = !matches!(inferred_type, ConcreteType::Unknown)
+                    && (matches!(inferred_type, ConcreteType::Null | ConcreteType::Undefined)
+                        || matches!(mir_return_type, MirType::Void)
+                        || matches!(&mir_return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void)));
 
                 // Register result local
                 self.register_temp_local(
@@ -2997,6 +3012,7 @@ impl MirBuilder {
                     class_name = %class_name,
                     method_name = %method_name,
                     method_symbol = method_symbol.0,
+                    is_void = is_void,
                     "Static method call"
                 );
                 let function_operand = if method_symbol.0 == 0 {
@@ -3016,9 +3032,12 @@ impl MirBuilder {
                     MirOperand::Function(*method_symbol)
                 };
 
+                // For void static methods, skip dest so codegen doesn't emit a local.set
+                let dest_opt = if is_void { None } else { Some(result_id) };
+
                 // Emit Call instruction - NO 'this' parameter prepended!
                 let instruction = MirInstruction {
-                    dest: Some(result_id),
+                    dest: dest_opt,
                     operation: MirOperation::Call {
                         function: function_operand,
                         arguments: mir_arguments,

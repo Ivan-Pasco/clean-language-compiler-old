@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.30.306",
+  "compiler_version": "0.30.307",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1781718475,
+  "generated_at_epoch_seconds": 1781727211,
   "artifacts": [
     {
-      "name": "range_expressions_spec.wasm",
-      "path_relative": "range_expressions_spec.wasm",
+      "name": "number_unary_negate.wasm",
+      "path_relative": "number_unary_negate.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 23489,
-      "sha256": "6717241106288a1a87e7eb96c7a639d2837f2586184439514a1472cddea04a10",
+      "size_bytes": 18384,
+      "sha256": "8401b97c20e60b9554d72681878e3fef658fd96bf5ab0045363e698918cf54f8",
       "source_plugin": null
     }
   ],

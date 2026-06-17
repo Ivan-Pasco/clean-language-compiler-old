@@ -1,0 +1,38 @@
+// Test: bugfixes/codegen_stack_remaining_static_call_to_void_method
+// Grammar: static_method_call → ClassName.method(args)  (grammar.ebnf §5
+//   static_method_call) where the resolved static method has a void return
+//   type.
+// Regression: CODEGEN_STACK_REMAINING (dashboard fp 82badd8d3d63).
+//   Follow-up to 618571c5 (fp df5b8c9b1021). After that fix propagated
+//   user-class static method return types through the typechecker, calls
+//   to void methods like `ClassName.log(msg)` reached the MIR builder's
+//   StaticMethodCall arm with `expression.expr_type = ConcreteType::Null`
+//   (the canonical void marker). That arm unconditionally emitted the
+//   Call instruction with `dest = Some(result_id)`, so the codegen then
+//   wrote `local.set` after a no-result WASM `call` → wasmparser failed
+//   the module with "type mismatch: expected i32 but nothing on stack".
+//   The instance-MethodCall arm already had the matching void check.
+//
+//   Fix: mirror the MethodCall arm's void detection
+//   (Null / Undefined / MirType::Void / MirType::Ptr(Void)) in the
+//   StaticMethodCall arm and set `dest = None` for void calls so codegen
+//   omits the local.set entirely.
+//
+// Expected output:
+//   hello from void static
+//   after void static
+//   hi from chained
+//   after chained
+
+start:
+	C1.log("hello from void static")
+	print("after void static")
+	C1.both("hi from chained")
+	print("after chained")
+
+class C1
+	functions:
+		log(string msg)
+			print(msg)
+		both(string msg)
+			log(msg)
