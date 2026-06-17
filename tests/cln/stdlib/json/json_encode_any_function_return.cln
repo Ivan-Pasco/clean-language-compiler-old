@@ -1,0 +1,46 @@
+// Test: stdlib/json/json_encode_any_function_return
+// Semantic: FUNC-BUILTIN — `json.encode` on the return value of an
+//   `any`-returning function whose body returns an object or list literal
+//   must produce the same output as if the literal were assigned directly
+//   to an `any`-typed variable. The path matters because the framework's
+//   `frame.ui` plugin rewrites user `any load(Request)` handlers into
+//   `any _impl(any)` and the auto-route handler generates
+//   `string __d = json.encode(_impl(null))` — an `any`-typed argument that
+//   the call-site dispatch can only see as `Any`, not the concrete shape.
+// Regression: JSON-ENCODE-ANY-OBJECT-LITERAL-TRAPS (dashboard fp 7fcf9dc612c7).
+//   Reported against compiler 0.30.298. The original report observed a
+//   `<wasm function 213>` trap inside `json.dataToText` when an object
+//   literal flowed through an `any`-typed slot — same trap signature as
+//   JSON-ENCODE-PAIRS-MALFORMED before its v0.30.302 partial fix. The
+//   coupled v0.30.303 work (typechecker recursion into nested literals
+//   and `emit_box_any` normalization of typed collections) incidentally
+//   fixed this `any`-returning-function path as well. This test pins
+//   the behavior so a future change can't silently regress it back to
+//   the trap.
+//
+// Expected output:
+//   {"title":"hello"}
+//   {"title":"hello","count":42,"tags":["a","b"]}
+//   {"title":"hello","count":42,"tags":["a","b"]}
+
+start:
+	// (1) bare any-returning function
+	string e1 = json.encode(makeSimple())
+	print(e1)
+	// (2) any-returning function with object containing nested list
+	string e2 = json.encode(makeNested())
+	print(e2)
+	// (3) any-typed parameter chain — closest analogue to the
+	//     `_impl(any)` rewrite the frame.ui auto-route emits
+	string e3 = json.encode(makeNestedWithReq(null))
+	print(e3)
+
+functions:
+	any makeSimple()
+		return { title: "hello" }
+
+	any makeNested()
+		return { title: "hello", count: 42, tags: ["a", "b"] }
+
+	any makeNestedWithReq(any req)
+		return { title: "hello", count: 42, tags: ["a", "b"] }
