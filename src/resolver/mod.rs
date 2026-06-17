@@ -447,6 +447,13 @@ pub enum ResolvedHirExpression {
         inclusive: bool,
         location: SourceLocation,
     },
+
+    /// Anonymous object literal `{ key: expr, ... }` with resolved field
+    /// expressions.  Mirrors `HirExpression::ObjectLiteral`.
+    ObjectLiteral {
+        fields: Vec<(crate::ast::Value, ResolvedHirExpression)>,
+        location: SourceLocation,
+    },
 }
 
 impl ResolvedHirExpression {
@@ -471,6 +478,7 @@ impl ResolvedHirExpression {
             ResolvedHirExpression::Conditional { location, .. } => location,
             ResolvedHirExpression::BaseCall { location, .. } => location,
             ResolvedHirExpression::Range { location, .. } => location,
+            ResolvedHirExpression::ObjectLiteral { location, .. } => location,
         }
     }
 }

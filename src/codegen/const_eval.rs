@@ -81,7 +81,8 @@ pub fn try_const_eval(expr: &HirExpression) -> ConstValue {
         | HirExpression::OnError { .. }
         | HirExpression::Conditional { .. }
         | HirExpression::BaseCall { .. }
-        | HirExpression::Range { .. } => ConstValue::NotConst,
+        | HirExpression::Range { .. }
+        | HirExpression::ObjectLiteral { .. } => ConstValue::NotConst,
     }
 }
 

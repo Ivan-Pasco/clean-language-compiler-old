@@ -695,18 +695,25 @@ impl TokenParser {
                 })
             }
             TokenKind::LeftBrace => {
-                // Parse pairs literal: { key: value, key2: value2 } (identifier or string keys)
+                // Parse object literal: { key: expr, key2: expr2 } (identifier or string keys).
+                // Field values are preserved as full Expression nodes — variables, calls,
+                // binary ops, etc. — instead of being stringified.
+                // See ANON-OBJ-LITERAL-NOT-EVALUATED.
+                let literal_location = self.current().location.clone();
                 self.bump(); // consume '{'
                 self.brace_depth += 1;
                 self.skip_whitespace();
 
-                let mut pairs = Vec::new();
+                let mut fields: Vec<(Value, Expression)> = Vec::new();
 
-                // Check for empty pairs
+                // Check for empty object literal
                 if matches!(self.current_kind(), TokenKind::RightBrace) {
                     self.bump(); // consume '}'
                     self.brace_depth -= 1;
-                    return Ok(Expression::Literal(Value::Pairs(pairs)));
+                    return Ok(Expression::ObjectLiteral {
+                        fields,
+                        location: literal_location,
+                    });
                 }
 
                 // Parse key-value pairs
@@ -719,7 +726,7 @@ impl TokenParser {
                         Expression::Variable(name) => Value::String(name),
                         _ => {
                             return Err(CompilerError::parse_error(
-                                "Pairs literal keys must be literals or identifiers".to_string(),
+                                "Object literal keys must be string literals, identifiers, or integers".to_string(),
                                 Some(self.current().location.clone()),
                                 None,
                             ));
@@ -732,16 +739,10 @@ impl TokenParser {
                     self.expect(&TokenKind::Colon)?;
                     self.skip_whitespace();
 
-                    // Parse value — can be any expression (variable, literal, call, etc.)
+                    // Parse value — any expression (variable, literal, call, binary, etc.)
                     let value_expr = self.parse_expression()?;
-                    let value = match value_expr {
-                        Expression::Literal(val) => val,
-                        // Non-literal values (variables, calls, etc.) use debug repr,
-                        // matching the behaviour of the pest-based compiler path
-                        other => Value::String(format!("{:?}", other)),
-                    };
 
-                    pairs.push((key, value));
+                    fields.push((key, value_expr));
                     self.skip_whitespace();
 
                     if matches!(self.current_kind(), TokenKind::Comma) {
@@ -754,7 +755,10 @@ impl TokenParser {
 
                 self.expect(&TokenKind::RightBrace)?;
                 self.brace_depth -= 1;
-                Ok(Expression::Literal(Value::Pairs(pairs)))
+                Ok(Expression::ObjectLiteral {
+                    fields,
+                    location: literal_location,
+                })
             }
             _ => {
                 let token = self.current();

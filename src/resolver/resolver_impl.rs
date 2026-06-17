@@ -1577,6 +1577,17 @@ impl NameResolver {
                 inclusive,
                 location,
             } => self.resolve_range_expression(start, end, step, *inclusive, location),
+            HirExpression::ObjectLiteral { fields, location } => {
+                let mut resolved_fields = Vec::with_capacity(fields.len());
+                for (key, value) in fields {
+                    let resolved_value = self.resolve_expression(value)?;
+                    resolved_fields.push((key.clone(), resolved_value));
+                }
+                Ok(ResolvedHirExpression::ObjectLiteral {
+                    fields: resolved_fields,
+                    location: location.clone(),
+                })
+            }
         }
     }
 

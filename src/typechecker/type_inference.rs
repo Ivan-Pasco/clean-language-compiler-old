@@ -3247,6 +3247,9 @@ impl<'a> TypeInference<'a> {
                 inclusive,
                 location,
             } => self.infer_range_expression(start, end, step, inclusive, location)?,
+            ResolvedHirExpression::ObjectLiteral { fields, location } => {
+                self.infer_object_literal_expression(fields, location)?
+            }
         };
 
         self.recursion_depth -= 1;
@@ -3333,6 +3336,38 @@ impl<'a> TypeInference<'a> {
                 value: tast_literal,
             },
             literal_type,
+            location.clone(),
+        ))
+    }
+
+    /// Helper: infer an `ObjectLiteral` expression — `{ key: expr, ... }`.
+    /// Mirrors the `Value::Pairs` branch in `infer_literal_expression` but
+    /// recurses on `ResolvedHirExpression` for each field value (so variables,
+    /// calls, binary ops are inferred and pass through to MIR as proper
+    /// expressions instead of being stringified).
+    fn infer_object_literal_expression(
+        &mut self,
+        fields: &[(crate::ast::Value, ResolvedHirExpression)],
+        location: &SourceLocation,
+    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        let mut tast_fields = Vec::with_capacity(fields.len());
+        for (key_val, value_expr) in fields {
+            let key = match key_val {
+                crate::ast::Value::String(s) => s.clone(),
+                other => format!("{}", other),
+            };
+            let value_tast = self.infer_expression(value_expr)?;
+            tast_fields.push(TastObjectField {
+                key,
+                value: value_tast,
+                location: location.clone(),
+            });
+        }
+        Ok((
+            TastExpressionKind::ObjectLiteral {
+                fields: tast_fields,
+            },
+            ConcreteType::Any,
             location.clone(),
         ))
     }

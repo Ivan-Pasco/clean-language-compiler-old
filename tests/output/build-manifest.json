@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "compiler_version": "0.30.304",
+  "contract_version": "1.0.0",
+  "runtime_abi_version": "1.0.0",
+  "generated_at_epoch_seconds": 1781673141,
+  "artifacts": [
+    {
+      "name": "console_input_comprehensive.wasm",
+      "path_relative": "console_input_comprehensive.wasm",
+      "purpose": "main_module",
+      "public": false,
+      "content_type": "application/wasm",
+      "size_bytes": 23368,
+      "sha256": "3e8c5f25e08760f53083e4f7c720a3a18705d24b4dd3ee11acc4c1172d446a53",
+      "source_plugin": null
+    }
+  ],
+  "callbacks": [],
+  "build_state": {}
+}

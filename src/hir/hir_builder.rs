@@ -2121,6 +2121,18 @@ impl HirBuilder {
                 })
             }
 
+            Expression::ObjectLiteral { fields, location } => {
+                let mut hir_fields = Vec::with_capacity(fields.len());
+                for (key, value) in fields {
+                    let hir_value = self.build_expression(value)?;
+                    hir_fields.push((key.clone(), hir_value));
+                }
+                Ok(HirExpression::ObjectLiteral {
+                    fields: hir_fields,
+                    location: location.clone(),
+                })
+            }
+
             // `start expr` — async launch marker; strip the wrapper and build the inner call.
             // The async dispatch is handled at statement level (LaterAssignment / Background).
             Expression::StartExpression { expression, .. } => self.build_expression(expression),

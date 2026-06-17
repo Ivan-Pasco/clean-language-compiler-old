@@ -1516,7 +1516,7 @@ params      = ["i32", "i32"]
 returns     = "i32"
 aliases     = []
 hosts       = ["all"]
-description = "Allocate size bytes with given alignment in WASM linear memory; returns pointer or 0 on failure"
+description = "Allocate `size` bytes in WASM linear memory. Args are `(type_id: i32, size: i32)` — the compiler emits a type tag as the first arg for telemetry; hosts may ignore it. Returns a pointer or 0 on failure."
 
 [[functions]]
 name        = "mem_retain"

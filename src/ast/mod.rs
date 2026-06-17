@@ -424,6 +424,21 @@ pub enum Expression {
         location: SourceLocation,
     },
 
+    /// Anonymous object literal `{ key: expr, ... }` — `pairs_literal` per
+    /// grammar.ebnf:167-169.  Field values are `single_line_expression`, so
+    /// they may be variables, calls, or binary expressions — not only
+    /// constant `Value`s.  Lowered through HIR / resolver / typechecker into
+    /// `TastExpressionKind::ObjectLiteral`, which the MIR builder handles.
+    ///
+    /// Keys are restricted by the grammar to `string_literal | identifier |
+    /// decimal_integer`, so the `Value` slot is always `Value::String(_)` or
+    /// `Value::Integer(_)`.  Identifier keys (bare names like `title:`) are
+    /// represented as `Value::String(name)`.
+    ObjectLiteral {
+        fields: Vec<(Value, Expression)>,
+        location: SourceLocation,
+    },
+
     /// Named argument binding — appears ONLY as an element of a call argument list.
     ///
     /// `label: value` inside any function/method/constructor call.

@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "compiler_version": "0.30.302",
+  "contract_version": "1.0.0",
+  "runtime_abi_version": "1.0.0",
+  "generated_at_epoch_seconds": 1781654452,
+  "artifacts": [
+    {
+      "name": "list_multiple_distinct_heaps.wasm",
+      "path_relative": "list_multiple_distinct_heaps.wasm",
+      "purpose": "main_module",
+      "public": false,
+      "content_type": "application/wasm",
+      "size_bytes": 22008,
+      "sha256": "2317be9cce0c259d28530595793e5998ac9ad44fb7f069e68143145b920965e5",
+      "source_plugin": null
+    }
+  ],
+  "callbacks": [],
+  "build_state": {}
+}

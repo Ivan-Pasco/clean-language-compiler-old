@@ -1183,6 +1183,14 @@ impl HirValidator {
                 Self::validate_expression(context, start);
                 Self::validate_expression(context, end);
             }
+
+            HirExpression::ObjectLiteral { fields, .. } => {
+                // Validate each field value expression. Keys are static literal
+                // `Value`s (string or integer) per the grammar — no validation needed.
+                for (_key, value) in fields {
+                    Self::validate_expression(context, value);
+                }
+            }
         }
     }
 

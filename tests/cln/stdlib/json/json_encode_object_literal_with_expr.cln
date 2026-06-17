@@ -1,0 +1,42 @@
+// Test: stdlib/json/json_encode_object_literal_with_expr
+// Grammar: pairs_literal — `pair_element = ( string_literal | identifier |
+//   decimal_integer ) , ":" , single_line_expression` (grammar.ebnf:167-169).
+//   Field values are `single_line_expression` — any expression, not just
+//   literals.
+// Regression: ANON-OBJ-LITERAL-NOT-EVALUATED (dashboard fp 910690b7e20a).
+//   Reported against compiler 0.30.298. An anonymous object literal
+//   `{ field: expr }` in a return statement did not evaluate non-literal
+//   field values: variable references emitted the literal text
+//   `Variable("name")` (the Rust AST debug repr) and binary expressions
+//   emitted `Binary(Literal(...), Add, Literal(...))`. Only string literals
+//   were evaluated correctly. Root cause was both parsers stuffing
+//   non-literal Expression nodes into `Value::String(format!("{:?}", ...))`
+//   because the AST's `Value::Pairs` field-value slot could only hold
+//   runtime `Value`s, not arbitrary `Expression`s. Fix added an
+//   `Expression::ObjectLiteral` AST variant that preserves field
+//   expressions through HIR / resolver / typechecker into
+//   `TastExpressionKind::ObjectLiteral`, which the MIR builder already
+//   handled correctly.
+//
+// Expected output:
+//   {"title":"hello"}
+//   {"doubled":10}
+//   {"title":"world","doubled":6}
+
+start:
+	string e1 = json.encode(makeWithVar("hello"))
+	print(e1)
+	string e2 = json.encode(makeWithBinary(5))
+	print(e2)
+	string e3 = json.encode(makeWithBoth("world", 3))
+	print(e3)
+
+functions:
+	any makeWithVar(string title)
+		return { title: title }
+
+	any makeWithBinary(integer n)
+		return { doubled: n + n }
+
+	any makeWithBoth(string title, integer n)
+		return { title: title, doubled: n + n }

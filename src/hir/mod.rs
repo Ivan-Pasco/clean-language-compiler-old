@@ -498,6 +498,15 @@ pub enum HirExpression {
         inclusive: bool,
         location: SourceLocation,
     },
+
+    /// Anonymous object literal `{ key: expr, ... }`.  Mirrors
+    /// `Expression::ObjectLiteral` — see that variant for the rationale.
+    /// Field values are preserved as `HirExpression`s (variables, calls,
+    /// binary ops, etc.) rather than being coerced into runtime `Value`s.
+    ObjectLiteral {
+        fields: Vec<(Value, HirExpression)>,
+        location: SourceLocation,
+    },
 }
 
 /// HIR L-value (left-hand side of assignment)
@@ -583,6 +592,7 @@ impl HirExpression {
             HirExpression::Conditional { location, .. } => location,
             HirExpression::BaseCall { location, .. } => location,
             HirExpression::Range { location, .. } => location,
+            HirExpression::ObjectLiteral { location, .. } => location,
         }
     }
 }

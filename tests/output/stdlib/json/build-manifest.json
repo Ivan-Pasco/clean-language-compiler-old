@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "compiler_version": "0.30.303",
+  "contract_version": "1.0.0",
+  "runtime_abi_version": "1.0.0",
+  "generated_at_epoch_seconds": 1781660320,
+  "artifacts": [
+    {
+      "name": "json_encode_any_function_return.wasm",
+      "path_relative": "json_encode_any_function_return.wasm",
+      "purpose": "main_module",
+      "public": false,
+      "content_type": "application/wasm",
+      "size_bytes": 23550,
+      "sha256": "dc975d0f30290819847bf2d8a3e824670e03871d1dc1a717c607c1a6941a98bc",
+      "source_plugin": null
+    }
+  ],
+  "callbacks": [],
+  "build_state": {}
+}

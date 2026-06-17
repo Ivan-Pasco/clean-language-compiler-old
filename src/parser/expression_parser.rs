@@ -1139,7 +1139,8 @@ pub fn parse_matrix_literal(pair: Pair<Rule>) -> Result<Expression, CompilerErro
 }
 
 pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let mut pairs = Vec::new();
+    let location = convert_to_ast_location(&get_location(&pair));
+    let mut fields = Vec::new();
 
     for pair_element in pair.into_inner() {
         if let Rule::pair_element = pair_element.as_rule() {
@@ -1150,19 +1151,16 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
                 .next()
                 .expect("invariant: pair_element key child");
             let key_value = match key_part.as_rule() {
-                Rule::string => {
-                    // Parse string and extract the inner value
-                    match parse_string(key_part)? {
-                        Expression::Literal(Value::String(s)) => Value::String(s),
-                        _ => {
-                            return Err(CompilerError::parse_error(
-                                "Invalid string key in pairs literal".to_string(),
-                                None,
-                                None,
-                            ))
-                        }
+                Rule::string => match parse_string(key_part)? {
+                    Expression::Literal(Value::String(s)) => Value::String(s),
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            "Invalid string key in pairs literal".to_string(),
+                            None,
+                            None,
+                        ))
                     }
-                }
+                },
                 Rule::identifier => Value::String(key_part.as_str().to_string()),
                 Rule::decimal_integer => {
                     let num_str = key_part.as_str();
@@ -1187,28 +1185,19 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
                 }
             };
 
-            // Parse the value (single_line_expression)
+            // Parse the value as a full single_line_expression — variables,
+            // calls, binary ops, etc. are preserved as Expression nodes
+            // (not stringified). See ANON-OBJ-LITERAL-NOT-EVALUATED.
             let value_part = pair_parts
                 .next()
                 .expect("invariant: pair_element value child");
             let value_expr = parse_expression(value_part)?;
-            let value_value = match value_expr {
-                Expression::Literal(v) => v,
-                _ => {
-                    // For non-literal expressions, we'll need to handle them differently
-                    // For now, convert to a string representation
-                    Value::String(format!("{:?}", value_expr))
-                }
-            };
 
-            // Create a 2-element list representing the key-value pair
-            let pair_list = Value::List(vec![key_value, value_value]);
-            pairs.push(pair_list);
+            fields.push((key_value, value_expr));
         }
     }
 
-    // Return the pairs as a list of 2-element lists
-    Ok(Expression::Literal(Value::List(pairs)))
+    Ok(Expression::ObjectLiteral { fields, location })
 }
 
 pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
