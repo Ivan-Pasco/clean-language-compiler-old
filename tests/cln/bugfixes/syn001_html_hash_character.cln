@@ -1,0 +1,22 @@
+// Test: bugfixes/syn001_html_hash_character
+// Grammar: html_block (plugin-owned, raw-text body)
+// Regression: SYN001 (fingerprint 9bc6a62dab24...)
+// Bug:  Compiler's main lexer rejected '#' inside an html: block before
+//       frame.ui's expand_block could see the raw bytes. The hash character
+//       appears in HTML text content (CSS fragment ids like "#section",
+//       numbered labels like "#123", and immediately before interpolation
+//       sites like "<td>#{id}</td>"). The lexer now emits it as a pass-through
+//       Identifier token alongside '&' and '\''.
+// Expected output:
+//   <a href='#top'>Row #42 #section</a>
+
+plugins:
+	frame.ui
+
+start:
+	print(render())
+
+functions:
+	string render()
+		html:
+			<a href="#top">Row #42 #section</a>
