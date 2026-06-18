@@ -13,7 +13,6 @@ pub mod async_runtime;
 pub mod file_io;
 pub mod future_resolver;
 pub mod host_functions;
-pub mod http_client;
 pub mod task_scheduler;
 pub mod wasmtime_config;
 
@@ -75,9 +74,6 @@ pub struct FutureValue {
 impl CleanRuntime {
     /// Create a new Clean Language runtime with async support
     pub fn new() -> Result<Self, CompilerError> {
-        // Initialize HTTP client
-        http_client::init_http_client();
-
         // Use centralized wasmtime configuration for consistency
         let engine = wasmtime_config::CleanWasmtimeConfig::create_engine()?;
 
