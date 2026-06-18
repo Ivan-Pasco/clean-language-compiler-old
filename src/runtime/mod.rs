@@ -4,15 +4,14 @@
 use crate::error::CompilerError;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[cfg(feature = "wasmtime-runtime")]
-use wasmtime::{Engine, Linker, Module, Store};
+use wasmtime::Engine;
 
 pub mod async_runtime;
 pub mod file_io;
 pub mod future_resolver;
-pub mod host_functions;
 pub mod task_scheduler;
 pub mod wasmtime_config;
 
@@ -25,11 +24,13 @@ pub mod wasmtime_runtime;
 /// Enhanced WebAssembly runtime with async support
 #[cfg(feature = "wasmtime-runtime")]
 pub struct CleanRuntime {
+    #[allow(dead_code)]
     engine: Engine,
     #[allow(dead_code)] // Async scheduler — constructed but not yet wired into execute()
     task_scheduler: Arc<Mutex<TaskScheduler>>,
     #[allow(dead_code)] // Future resolver — constructed but not yet wired into execute()
     future_resolver: Arc<Mutex<FutureResolver>>,
+    #[allow(dead_code)]
     background_tasks: Arc<Mutex<Vec<BackgroundTask>>>,
 }
 
@@ -83,137 +84,6 @@ impl CleanRuntime {
             future_resolver: Arc::new(Mutex::new(FutureResolver::new())),
             background_tasks: Arc::new(Mutex::new(Vec::new())),
         })
-    }
-
-    /// Execute a WebAssembly module with async support
-    pub async fn execute_async(&self, wasm_bytes: &[u8]) -> Result<(), CompilerError> {
-        let module = Module::new(&self.engine, wasm_bytes).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create WebAssembly module: {e}"),
-                None,
-                None,
-            )
-        })?;
-
-        // Per-instance host state — see `host_functions::HostState` for why
-        // the bump allocator cursors live in the store rather than in a
-        // `static mut`.
-        let mut store = Store::new(&self.engine, host_functions::HostState::default());
-        let mut linker = Linker::<host_functions::HostState>::new(&self.engine);
-
-        // Add all host functions using centralized registry
-        host_functions::register_all_host_functions(&mut linker)?;
-
-        // Instantiate the module
-        let instance = linker
-            .instantiate_async(&mut store, &module)
-            .await
-            .map_err(|e| {
-                CompilerError::runtime_error(
-                    format!("Failed to instantiate WebAssembly module: {e}"),
-                    None,
-                    None,
-                )
-            })?;
-
-        // Honor the compiler's heap-start contract (foundation/platform-architecture/
-        // MEMORY_MODEL.md): every WASM module exports `__heap_ptr` as the address
-        // just past the last static data segment. Host allocators must start
-        // bumping from there — otherwise `mem_alloc` hands out pointers that
-        // overlap static string literals, the boxed-Any tag at offset 0 of the
-        // allocation lands inside (say) `"hello world"`, and downstream readers
-        // see corrupted data. `clean-server` does this in src/wasm.rs; replicating
-        // the contract here keeps the in-process runtime correct too.
-        if let Some(heap_global) = instance.get_global(&mut store, "__heap_ptr") {
-            if let wasmtime::Val::I32(heap_ptr) = heap_global.get(&mut store) {
-                let next_alloc = heap_ptr.max(1);
-                let next_string_alloc = next_alloc.saturating_add(4096);
-                let data = store.data_mut();
-                data.next_alloc = next_alloc;
-                data.next_string_alloc = next_string_alloc;
-            }
-        }
-
-        // Execute the start function
-        if let Some(start_func) = instance.get_func(&mut store, "start") {
-            println!("Executing Clean Language program with async support...");
-            println!("--- Output ---");
-
-            // Check the function signature to create the right results buffer
-            let start_type = start_func.ty(&store);
-            let results_len = start_type.results().len();
-
-            // Create a buffer to store return values
-            let mut results = vec![wasmtime::Val::I32(0); results_len];
-
-            start_func
-                .call_async(&mut store, &[], &mut results)
-                .await
-                .map_err(|e| {
-                    CompilerError::runtime_error(
-                        format!("Runtime error during execution: {e}"),
-                        None,
-                        None,
-                    )
-                })?;
-
-            println!("--- End Output ---");
-
-            // If there are return values, print them
-            if !results.is_empty() {
-                println!("Return value: {:?}", results[0]);
-            }
-
-            // Wait for background tasks to complete
-            self.wait_for_background_tasks().await;
-
-            println!("Execution completed successfully.");
-        } else {
-            return Err(CompilerError::runtime_error(
-                "No start function found in WebAssembly module".to_string(),
-                None,
-                None,
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Wait for all background tasks to complete
-    async fn wait_for_background_tasks(&self) {
-        let mut completed = false;
-        let mut iterations = 0;
-        const MAX_WAIT_ITERATIONS: u32 = 100; // Prevent infinite waiting
-
-        while !completed && iterations < MAX_WAIT_ITERATIONS {
-            {
-                let tasks = self.background_tasks.lock().unwrap();
-                completed = tasks.iter().all(|task| {
-                    matches!(task.status, TaskStatus::Completed | TaskStatus::Failed(_))
-                });
-
-                if !completed {
-                    let running_count = tasks
-                        .iter()
-                        .filter(|task| matches!(task.status, TaskStatus::Running))
-                        .count();
-                    if running_count > 0 {
-                        println!("Waiting for {running_count} background task(s) to complete...");
-                    }
-                }
-            }
-
-            if !completed {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                iterations += 1;
-            }
-        }
-
-        if iterations >= MAX_WAIT_ITERATIONS {
-            println!("Timeout waiting for background tasks to complete");
-        } else {
-            println!("All background tasks completed.");
-        }
     }
 }
 
