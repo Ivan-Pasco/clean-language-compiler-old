@@ -93,8 +93,6 @@ pub mod mcp;
 pub mod mir;
 /// Module system — multi-file resolution and dependency management
 pub mod module;
-/// Package management — dependency resolution and package.clean.toml handling
-pub mod package;
 /// Parser — Stage 2 (tokens to AST via recursive descent)
 pub mod parser;
 /// Plugin artifact orchestration (Plugin Contracts v2 — contracts/artifacts.md)
