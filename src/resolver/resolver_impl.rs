@@ -2057,7 +2057,15 @@ impl NameResolver {
                             resolved_arguments.push(self.resolve_expression(arg)?);
                         }
 
-                        // Look up the static method in the class
+                        // Look up the static method in the class. The method may
+                        // resolve to `SymbolId(0)` when called from inside another
+                        // class whose body is resolved BEFORE the callee class's
+                        // methods are registered (resolve_class processes classes
+                        // sequentially: Class A's bodies run while Class B's
+                        // methods list is still empty). The codegen-side fix
+                        // — populating `function_return_types` by name upfront
+                        // in mir_codegen — backstops void detection regardless
+                        // of whether the method symbol resolved here.
                         let method_symbol_id = self
                             .symbol_table
                             .lookup_class_member(class_symbol_id, method)
@@ -2746,7 +2754,28 @@ impl NameResolver {
             .lookup_symbol(&full_class_name)
             .unwrap_or(SymbolId(0)); // Placeholder for built-in classes
 
-        let method_symbol_id = SymbolId(0); // Placeholder for built-in methods
+        // Resolve the method symbol against the class. For built-in namespaces
+        // (`math`, `string`, …) the class lookup misses, `class_symbol_id`
+        // stays `SymbolId(0)`, and we leave the method symbol as `SymbolId(0)`
+        // so the typechecker / MIR builder route the call as a NamedFunction.
+        // For user-defined classes we MUST resolve the real method symbol so
+        // codegen can find the function signature by symbol; otherwise every
+        // static call to a user-class method lowers as a NamedFunction with
+        // SymbolId(0), `function_signatures` lookup misses, and void detection
+        // falls through to a name-based WASM-level fallback that is incomplete
+        // for MIR-emitted user functions. Concretely: a void user-class method
+        // invoked as an expression-statement (e.g. `B.bar(s)` from inside
+        // `A.foo`) would emit `call B.bar` followed by `drop` even though the
+        // call pushes nothing — wasmparser reports "expected a type but
+        // nothing on stack". See CODEGEN_STACK_REMAINING (dashboard fp
+        // ab7f9b3f) for the full repro.
+        let method_symbol_id = if class_symbol_id.0 != 0 {
+            self.symbol_table
+                .lookup_class_member(class_symbol_id, method)
+                .unwrap_or(SymbolId(0))
+        } else {
+            SymbolId(0)
+        };
 
         // Resolve arguments
         let mut resolved_arguments = Vec::new();

@@ -1896,6 +1896,21 @@ impl super::CodeGenerator {
         self.wasm_function_return_types.get(name).copied()
     }
 
+    /// Record a function's WASM-level return type by name.
+    ///
+    /// MIR functions are emitted through `function_section.function(...)` +
+    /// `code_section.function(...)` rather than the named `register_function`
+    /// path, so they would otherwise be invisible to `get_wasm_return_type`.
+    /// Called from `add_function_to_module` so every function the WASM module
+    /// contains — imports, MIR-emitted user functions, alias names — is
+    /// present in the registry. Necessary for the call-site Drop decision
+    /// in `wasm_function_is_void` to actually reach a verdict for user-class
+    /// methods.
+    pub fn record_wasm_return_type(&mut self, name: &str, return_type: Option<WasmType>) {
+        self.wasm_function_return_types
+            .insert(name.to_string(), return_type);
+    }
+
     pub fn register_function_multi(
         &mut self,
         name: &str,

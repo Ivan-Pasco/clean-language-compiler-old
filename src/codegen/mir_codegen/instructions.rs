@@ -1873,18 +1873,54 @@ impl MirCodeGenerator<'_> {
                     );
                     true
                 } else {
-                    // Check function_return_types registry — populated by register_plugin_bridge_imports
-                    // for plugin.toml bridge functions with returns = "void". Without this check,
-                    // such functions fall through to the non-void default and emit a spurious DROP,
-                    // causing WASM validation failure ("type mismatch: nothing on stack").
+                    // Check function_return_types registry — populated by
+                    // register_plugin_bridge_imports for plugin.toml bridge
+                    // functions with returns = "void", AND seeded upfront
+                    // from `mir_program.functions` (in `generate()`) so user
+                    // functions resolve here too. Without the upfront seed,
+                    // user-class void methods called as expression-statements
+                    // fall through and emit a spurious DROP, causing WASM
+                    // validation failure ("expected a type but nothing on
+                    // stack"). Treat both `Void` and `Ptr(Void)` as void —
+                    // `ConcreteType::Null` (the void marker propagated from
+                    // the typechecker) lowers to `MirType::Ptr(Void)` via
+                    // `MirType::from_concrete_type`, so a user function with
+                    // no declared return type ends up registered as
+                    // `Ptr(Void)`, not `Void`.
+                    //
+                    // Look up by the call-site name AND by a dot-stripped
+                    // variant. `MirOperand::NamedFunction { name }` for a
+                    // static call uses the qualified form "ClassName.method"
+                    // (set in mir_builder/expressions.rs StaticMethodCall
+                    // arm) but functions are registered in `function_signatures`
+                    // / `function_return_types` under the bare method name
+                    // ("method"). Mirroring the strip-prefix chain that
+                    // `wasm_function_is_void` already uses keeps this path
+                    // consistent.
+                    let lookup_void = |name: &str,
+                                       rts: &std::collections::HashMap<String, MirType>|
+                     -> bool {
+                        if let Some(rt) = rts.get(name) {
+                            return matches!(rt, MirType::Void)
+                                || matches!(rt, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+                        }
+                        if let Some(dot_pos) = name.find('.') {
+                            let bare = &name[dot_pos + 1..];
+                            if let Some(rt) = rts.get(bare) {
+                                return matches!(rt, MirType::Void)
+                                    || matches!(rt, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
+                            }
+                        }
+                        false
+                    };
                     let is_registered_void = function_name
                         .as_deref()
-                        .and_then(|name| self.function_return_types.get(name))
-                        .is_some_and(|rt| matches!(rt, MirType::Void));
+                        .map(|name| lookup_void(name, &self.function_return_types))
+                        .unwrap_or(false);
 
                     if is_registered_void {
                         debug_mir!(
-                            " CALL NO DEST: Registered void function (plugin bridge): {:?}",
+                            " CALL NO DEST: Registered void function: {:?}",
                             function_name
                         );
                         true

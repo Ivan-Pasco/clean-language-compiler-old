@@ -629,18 +629,30 @@ impl MirCodeGenerator<'_> {
                 )
             })?;
 
-        let type_index = self.wasm_generator.add_function_type(
-            &param_wasm_types,
-            if return_wasm_types.is_empty() {
-                None
-            } else {
-                Some(return_wasm_types[0])
-            },
-        )?;
+        let wasm_return = if return_wasm_types.is_empty() {
+            None
+        } else {
+            Some(return_wasm_types[0])
+        };
+
+        let type_index = self
+            .wasm_generator
+            .add_function_type(&param_wasm_types, wasm_return)?;
 
         self.wasm_generator.function_section.function(type_index);
         self.wasm_generator.code_section.function(&wasm_function);
         self.wasm_generator.function_names.push(name.clone());
+
+        // Defense in depth for CODEGEN_STACK_REMAINING (fp ab7f9b3f): the
+        // call-site void detection in `wasm_function_is_void` queries this
+        // registry as a last resort. Previously only `register_function` /
+        // `register_function_multi` / `register_import_function` populated
+        // it — MIR-emitted user functions (the ones that go through this
+        // `add_function_to_module` path) were missing, so any user-class
+        // void method called as an expression-statement could not be
+        // proven void by name and a spurious `drop` was emitted.
+        self.wasm_generator
+            .record_wasm_return_type(&name, wasm_return);
 
         tracing::debug!(
             name = %name,

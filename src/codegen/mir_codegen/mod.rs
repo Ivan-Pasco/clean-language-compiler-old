@@ -916,12 +916,33 @@ impl MirCodeGenerator<'_> {
             "State variable globals registered"
         );
 
-        // Build function symbol mapping for proper function resolution
+        // Build function symbol mapping for proper function resolution.
+        //
+        // Also seed `function_return_types` with every user function's return
+        // type, keyed by NAME. The dest=None void detection in
+        // `generate_call_instruction` consults this map before falling back
+        // to a WASM-level last-resort. Without an upfront name-based entry,
+        // a static call like `B.bar(s)` lowered as
+        // `NamedFunction { name: "B.bar", symbol_id: 0 }` (which happens
+        // whenever the resolver could not look up B's method symbol — most
+        // commonly when B's methods aren't registered yet because A's body
+        // is being resolved first) gives the codegen no way to discover the
+        // callee is void: SymbolId(0) misses `function_signatures`, the
+        // hardcoded builtin list doesn't match, the plugin-bridge map
+        // doesn't match, and the WASM-level fallback can only see functions
+        // already emitted — which the callee hasn't been if start: is
+        // generated first. Result: a spurious `drop` after the void call
+        // and "expected a type but nothing on stack" at validation time.
+        // See CODEGEN_STACK_REMAINING (dashboard fp ab7f9b3f) for the full
+        // repro: cross-class user-defined void method invoked as an
+        // expression-statement inside another class's method body.
         for (symbol_id, function) in &mir_program.functions {
             self.function_symbol_map
                 .insert(*symbol_id, function.name.clone());
             self.function_signatures
                 .insert(*symbol_id, function.clone());
+            self.function_return_types
+                .insert(function.name.clone(), function.return_type.clone());
             tracing::debug!(
                 symbol_id = symbol_id.0,
                 name = %function.name,

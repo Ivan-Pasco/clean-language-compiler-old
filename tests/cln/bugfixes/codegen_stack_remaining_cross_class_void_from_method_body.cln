@@ -1,0 +1,72 @@
+// Test: bugfixes/codegen_stack_remaining_cross_class_void_from_method_body
+// Grammar: static_method_call → ClassName.method(args)  (grammar.ebnf §5
+//   static_method_call) where the *receiver class* of the call is a DIFFERENT
+//   user-defined class than the one whose method body contains the call, and
+//   the resolved static method has a void return type. Surfaces as
+//   `MethodCall { receiver: Variable("OtherClass"), method }` in HIR.
+// Regression: CODEGEN_STACK_REMAINING (dashboard fp ab7f9b3f, first reported
+//   in 0.30.268 against Clean Studio's 15 logic-class entrypoint).
+//   Three earlier fixes (618571c5, 06e6cd9c, 1cffab2d) shipped between
+//   0.30.307 and 0.30.310 each closed *one* angle of the bug but left this
+//   case open. Confirmed by the dashboard re-report on 0.30.310:
+//   "bytes near offset still show call followed by drop with no push
+//   between them".
+//
+//   Two compounding root causes:
+//
+//   1. Resolver ordering: the resolver processes classes sequentially via
+//      `resolve_class`. Class A's method bodies are resolved BEFORE class B's
+//      method symbols are registered (B's `SymbolKind::Class.methods` list
+//      is still empty during A's Pass 2). When A's body contains
+//      `B.bar(args)` — parsed as `MethodCall { receiver: Variable("B") }`
+//      and routed through `resolve_method_call_expression`'s class-receiver
+//      shortcut at line 2046 — `lookup_class_member(B_id, "bar")` returns
+//      None and the call is lowered as a `ResolvedHirExpression::StaticMethodCall`
+//      with `method_symbol_id = SymbolId(0)`. MIR codegen then emits it as
+//      `MirOperand::NamedFunction { name: "B.bar", symbol_id: 0 }`.
+//
+//   2. Codegen void-detection gap: the dest=None Drop decision in
+//      `generate_call_instruction` cannot prove void via signature
+//      (SymbolId 0 ⇒ no entry in `function_signatures`), via the hardcoded
+//      builtin list ("B.bar" ≠ "print" et al.), via the plugin-bridge
+//      `function_return_types` map (B is not a plugin), or via the WASM-
+//      level last-resort `wasm_function_is_void` (which only sees functions
+//      that have already been *emitted*, but `start:` is generated before
+//      `B.bar` itself). All four checks fall through → spurious `drop` →
+//      wasmparser reports "expected a type but nothing on stack".
+//
+//   Fix: in `mir_codegen::generate()`, seed `function_return_types` (a
+//   name-keyed registry already used for plugin-bridge void detection)
+//   with every entry from `mir_program.functions` before the first
+//   function is generated. The dest=None Drop decision now treats both
+//   `MirType::Void` and `MirType::Ptr(Void)` (the canonical lowering of
+//   `ConcreteType::Null`) as void, and strips the leading qualifier so
+//   "B.bar" resolves to the bare "bar" entry. The codegen path no longer
+//   depends on resolver method-symbol resolution succeeding, so the
+//   resolver ordering issue stops mattering for void detection.
+//
+//   Tests the failing pattern minimally: 2 classes, 1 void method each,
+//   class A's method body invokes class B's void method as an
+//   expression-statement. Was the bare minimum case to reproduce the
+//   "call · drop" emission Clean Studio observed at scale across 15
+//   logic classes.
+//
+// Expected output:
+//   from B
+//   from A
+//   done
+
+start:
+	A.foo("from A")
+	print("done")
+
+class A
+	functions:
+		foo(string s)
+			B.bar("from B")
+			print(s)
+
+class B
+	functions:
+		bar(string s)
+			print(s)
