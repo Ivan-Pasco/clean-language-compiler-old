@@ -4119,6 +4119,22 @@ fn read_capped(args: &serde_json::Value, key: &str, max_bytes: usize) -> Option<
     })
 }
 
+// The dashboard at errors.cleanlanguage.dev shows the first 12 chars of the
+// fingerprint as the bug's visible ID. MCP responses always carry the full
+// 64-char hash AND the 12-char prefix so users can match what the dashboard
+// shows. See bug MCP-FINGERPRINT-DISPLAY-MISMATCH-DASHBOARD.
+const FINGERPRINT_SHORT_LEN: usize = 12;
+
+fn fingerprint_short(fp: &str) -> &str {
+    let end = fp.len().min(FINGERPRINT_SHORT_LEN);
+    &fp[..end]
+}
+
+/// Render a fingerprint for human-facing text: `#<short>  (full: <full>)`.
+fn fp_display(fp: &str) -> String {
+    format!("#{}  (full: {})", fingerprint_short(fp), fp)
+}
+
 /// Tool: report_error - Submit a structured error report
 fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     use crate::telemetry::{
@@ -4427,17 +4443,18 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             "content": [{
                 "type": "text",
                 "text": format!(
-                    "Dev-mode: recorded locally (not uploaded).\nReason: {}\nComponent: {}\nError: {} \u{00d7}{} (fingerprint {})",
+                    "Dev-mode: recorded locally (not uploaded).\nReason: {}\nComponent: {}\nError: {} \u{00d7}{} (Bug ID: {})",
                     dev_ctx.reason().unwrap_or("dev"),
                     report.error.component,
                     report.error.code,
                     outcome.occurrences,
-                    outcome.fingerprint,
+                    fp_display(&outcome.fingerprint),
                 ),
             }],
             "dev_mode": true,
             "dev_reason": dev_ctx.reason().unwrap_or("dev"),
             "fingerprint": outcome.fingerprint,
+            "fingerprint_short": fingerprint_short(&outcome.fingerprint),
             "occurrences": outcome.occurrences,
         });
         return JsonRpcResponse::success(id, payload);
@@ -4482,6 +4499,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                     "already_fixed": true,
                     "report_id": report_id,
                     "fingerprint": fingerprint,
+                    "fingerprint_short": fingerprint.as_deref().map(fingerprint_short),
                     "fixed_in_version": fixed_in_version,
                     "fix_description": fix_description,
                     "upgrade_command": "cleen install latest",
@@ -4503,6 +4521,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
                 "known_issue": true,
                 "report_id": report_id,
                 "fingerprint": fingerprint,
+                "fingerprint_short": fingerprint.as_deref().map(fingerprint_short),
                 "occurrences": occurrences,
                 "current_status": current_status,
                 "message": message,
@@ -4514,23 +4533,24 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             fingerprint,
             tracking_url: _,
         } => {
-            let fp_line = fingerprint
-                .as_deref()
-                .map(|fp| format!("\nFingerprint: {}", fp))
-                .unwrap_or_default();
+            let header = match fingerprint.as_deref() {
+                Some(fp) => format!("Bug ID: {}\nReport ID: {}", fp_display(fp), report_id),
+                None => format!("Report ID: {}", report_id),
+            };
             JsonRpcResponse::success(
                 id,
                 json!({
                     "content": [{
                         "type": "text",
                         "text": format!(
-                            "Error report submitted successfully.\nReport ID: {}{}\n\nUse `check_reported_fixes` to track the status of this report.",
-                            report_id, fp_line
+                            "Error report submitted successfully.\n{}\n\nUse `check_reported_fixes` to track the status of this report.",
+                            header
                         )
                     }],
                     "success": true,
                     "report_id": report_id,
-                    "fingerprint": fingerprint
+                    "fingerprint": fingerprint,
+                    "fingerprint_short": fingerprint.as_deref().map(fingerprint_short)
                 }),
             )
         }
@@ -4703,6 +4723,7 @@ fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) ->
         .map(|b| {
             json!({
                 "fingerprint": b.fingerprint,
+                "fingerprint_short": fingerprint_short(&b.fingerprint),
                 "error_code": b.error_code,
                 "component": b.component,
                 "subsystem": b.subsystem,
@@ -4774,6 +4795,7 @@ fn build_dev_queue_summary() -> serde_json::Value {
             }
             json!({
                 "fingerprint": e.fingerprint,
+                "fingerprint_short": fingerprint_short(&e.fingerprint),
                 "error_code": e.error_code,
                 "component": e.component,
                 "occurrences": e.occurrences,
@@ -6009,15 +6031,16 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
             "content": [{
                 "type": "text",
                 "text": format!(
-                    "Dev-mode: diagnostic recorded locally (not uploaded).\nReason: {}\nFingerprint: {} \u{00d7}{}",
+                    "Dev-mode: diagnostic recorded locally (not uploaded).\nReason: {}\nBug ID: {} \u{00d7}{}",
                     dev_ctx.reason().unwrap_or("dev"),
-                    outcome.fingerprint,
+                    fp_display(&outcome.fingerprint),
                     outcome.occurrences,
                 ),
             }],
             "dev_mode": true,
             "dev_reason": dev_ctx.reason().unwrap_or("dev"),
             "fingerprint": outcome.fingerprint,
+            "fingerprint_short": fingerprint_short(&outcome.fingerprint),
             "occurrences": outcome.occurrences,
         });
         return JsonRpcResponse::success(id, payload);
@@ -6042,22 +6065,23 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
             let published_dir = diag_path.join("published").join(&full_sha);
             let _ = std::fs::create_dir_all(published_dir.parent().unwrap());
             let _ = std::fs::rename(&diag_entry_path, &published_dir);
-            let fp_line = fingerprint
-                .as_deref()
-                .map(|fp| format!("\nFingerprint: {}", fp))
-                .unwrap_or_default();
+            let header = match fingerprint.as_deref() {
+                Some(fp) => format!("Bug ID: {}\nReport ID: {}", fp_display(fp), rid),
+                None => format!("Report ID: {}", rid),
+            };
             JsonRpcResponse::success(
                 id,
                 json!({
                     "content": [{
                         "type": "text",
                         "text": format!(
-                            "Diagnostic published to the error server.\nReport ID: {}{}\nSHA: {}\n\nThe Clean Language team will be notified. Use `check_reported_fixes` to track status.",
-                            rid, fp_line, full_sha
+                            "Diagnostic published to the error server.\n{}\nSHA: {}\n\nThe Clean Language team will be notified. Use `check_reported_fixes` to track status.",
+                            header, full_sha
                         )
                     }],
                     "success": true, "status": "published", "report_id": rid,
                     "fingerprint": fingerprint,
+                    "fingerprint_short": fingerprint.as_deref().map(fingerprint_short),
                     "sha": full_sha
                 }),
             )
@@ -6163,6 +6187,7 @@ fn tool_list_component_bugs(id: serde_json::Value, args: &serde_json::Value) -> 
         .map(|b| {
             json!({
                 "fingerprint": b.fingerprint,
+                "fingerprint_short": fingerprint_short(&b.fingerprint),
                 "error_code": b.error_code,
                 "component": b.component,
                 "subsystem": b.subsystem,
@@ -6831,5 +6856,30 @@ mod app_structure_tests {
             "tip should reference the decision tree, got: {}",
             tip
         );
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_display_tests {
+    use super::{fingerprint_short, fp_display, FINGERPRINT_SHORT_LEN};
+
+    #[test]
+    fn short_takes_first_12_chars() {
+        let fp = "1cad410a12ce72c3b6d8d1f6f34a5c84ea20cd0be140ea6c615f5231fcc561bb";
+        assert_eq!(fingerprint_short(fp), "1cad410a12ce");
+        assert_eq!(fingerprint_short(fp).len(), FINGERPRINT_SHORT_LEN);
+    }
+
+    #[test]
+    fn short_handles_inputs_below_min_length() {
+        assert_eq!(fingerprint_short(""), "");
+        assert_eq!(fingerprint_short("abc"), "abc");
+        assert_eq!(fingerprint_short("abcdefghijkl"), "abcdefghijkl"); // exactly 12
+    }
+
+    #[test]
+    fn display_matches_dashboard_then_full() {
+        let fp = "1cad410a12ce72c3b6d8d1f6f34a5c84ea20cd0be140ea6c615f5231fcc561bb";
+        assert_eq!(fp_display(fp), format!("#1cad410a12ce  (full: {})", fp));
     }
 }
