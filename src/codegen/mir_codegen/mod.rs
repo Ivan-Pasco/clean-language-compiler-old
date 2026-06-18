@@ -467,6 +467,27 @@ impl MirCodeGenerator<'_> {
         self.language_to_bridge_map = map;
     }
 
+    /// Return `true` when a language alias (e.g. `time.now`) is wired to a
+    /// bridge target that is also declared in the plugin's `[bridge]` section.
+    ///
+    /// The naïve check `language_to_bridge_map.contains_key(alias)` is not
+    /// enough: a plugin can list a `[[language.functions]]` entry whose
+    /// `maps_to` references a bridge name that is missing from the `[bridge]`
+    /// list. When that happens the bridge import is never registered (because
+    /// `register_plugin_bridge_imports` iterates over `bridge_functions`, not
+    /// over `language_to_bridge_map`), so call sites for that language API
+    /// crash later with "Function 'X' not found in function map". Callers
+    /// outside this check fall back to the compiler's built-in Layer-2
+    /// registration for the namespace (e.g. `register_time_builtin_imports`)
+    /// to keep the build successful in that case.
+    fn alias_has_declared_bridge(&self, alias: &str) -> bool {
+        let target = match self.language_to_bridge_map.get(alias) {
+            Some(t) => t,
+            None => return false,
+        };
+        self.bridge_functions.iter().any(|bf| bf.name == *target)
+    }
+
     // -----------------------------------------------------------------------
     // Main generation entry point
     // -----------------------------------------------------------------------
@@ -639,19 +660,19 @@ impl MirCodeGenerator<'_> {
             // (imports must precede local functions in the index space).
             //
             // Skipped when a plugin bridge (e.g. `frame.data`) already provides the functions.
-            if !self.language_to_bridge_map.contains_key("db.query") {
+            if !self.alias_has_declared_bridge("db.query") {
                 debug_mir!("DEBUG MIR: Registering db builtin imports (no plugin bridge for db)");
                 self.wasm_generator
                     .register_db_builtin_imports()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("env.get") {
+            if !self.alias_has_declared_bridge("env.get") {
                 debug_mir!("DEBUG MIR: Registering env builtin imports (no plugin bridge for env)");
                 self.wasm_generator
                     .register_env_builtin_imports()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("time.now") {
+            if !self.alias_has_declared_bridge("time.now") {
                 debug_mir!(
                     "DEBUG MIR: Registering time builtin imports (no plugin bridge for time)"
                 );
@@ -659,7 +680,7 @@ impl MirCodeGenerator<'_> {
                     .register_time_builtin_imports()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("crypto.sha256") {
+            if !self.alias_has_declared_bridge("crypto.sha256") {
                 debug_mir!(
                     "DEBUG MIR: Registering crypto builtin imports (no plugin bridge for crypto)"
                 );
@@ -667,7 +688,7 @@ impl MirCodeGenerator<'_> {
                     .register_crypto_builtin_imports()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("server.sleep") {
+            if !self.alias_has_declared_bridge("server.sleep") {
                 debug_mir!(
                     "DEBUG MIR: Registering server_sleep import (no plugin bridge for server.sleep)"
                 );
@@ -797,31 +818,35 @@ impl MirCodeGenerator<'_> {
 
             // Layer 2 builtin namespace wrappers — created AFTER all imports so
             // WASM function indices are correct (imports before local functions).
-            if !self.language_to_bridge_map.contains_key("db.query") {
+            // The gate mirrors the import block above: emit the built-in wrapper
+            // whenever the language alias is NOT served by a real bridge — either
+            // because no alias was registered at all, or because the alias maps
+            // to a bridge target the plugin forgot to declare.
+            if !self.alias_has_declared_bridge("db.query") {
                 debug_mir!("DEBUG MIR: Registering db builtin wrappers");
                 self.wasm_generator
                     .register_db_builtin_wrappers()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("env.get") {
+            if !self.alias_has_declared_bridge("env.get") {
                 debug_mir!("DEBUG MIR: Registering env builtin wrappers");
                 self.wasm_generator
                     .register_env_builtin_wrappers()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("time.now") {
+            if !self.alias_has_declared_bridge("time.now") {
                 debug_mir!("DEBUG MIR: Registering time builtin wrappers");
                 self.wasm_generator
                     .register_time_builtin_wrappers()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("crypto.sha256") {
+            if !self.alias_has_declared_bridge("crypto.sha256") {
                 debug_mir!("DEBUG MIR: Registering crypto builtin wrappers");
                 self.wasm_generator
                     .register_crypto_builtin_wrappers()
                     .map_err(|e| vec![e])?;
             }
-            if !self.language_to_bridge_map.contains_key("server.sleep") {
+            if !self.alias_has_declared_bridge("server.sleep") {
                 debug_mir!("DEBUG MIR: Registering server_sleep wrapper");
                 self.wasm_generator
                     .register_server_sleep_wrapper()

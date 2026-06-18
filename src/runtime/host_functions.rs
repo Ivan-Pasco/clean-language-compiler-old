@@ -8,9 +8,45 @@ use crate::error::CompilerError;
 use std::io::{self, Write};
 use wasmtime::{Caller, Linker};
 
+/// Per-instance host-side state carried in `Store::data`.
+///
+/// Previous revisions backed the bump allocators with `static mut`
+/// globals shared by every WASM instance in the process. That raced under
+/// concurrent host calls and let one instance's allocations land in another
+/// instance's memory once two stores ran in parallel. Storing the cursors in
+/// `HostState` (per `Store`) gives each instance its own private bump pointer
+/// and lets each module grow/reset its memory independently.
+#[derive(Debug, Clone)]
+pub struct HostState {
+    /// Bump pointer for `mem_alloc`. Starts after a 4KB reserved region so
+    /// the low memory the linear memory model uses for null/sentinels stays
+    /// clear.
+    pub next_alloc: i32,
+    /// Bump pointer for `allocate_string_in_memory`. Kept in a separate
+    /// range so string allocations don't collide with generic `mem_alloc`
+    /// results.
+    pub next_string_alloc: i32,
+}
+
+impl Default for HostState {
+    fn default() -> Self {
+        // 65536 = one WASM page. Any conforming Clean module's `__heap_ptr`
+        // export should overwrite this before the first allocation runs (see
+        // `runtime::mod.rs::execute_async`), but an unknown module without
+        // `__heap_ptr` still gets a heap start that sits *past* the typical
+        // static-data region (modules in the wild use up to ~5KB of statics)
+        // instead of inside it. Spec: foundation/platform-architecture/
+        // MEMORY_MODEL.md §"Heap Pointer".
+        HostState {
+            next_alloc: 65536,
+            next_string_alloc: 65536 + 4096,
+        }
+    }
+}
+
 /// Register all host functions with a wasmtime Linker
 /// This is the single source of truth for all host function definitions
-pub fn register_all_host_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+pub fn register_all_host_functions(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     register_console_functions(linker)?;
     register_type_conversion_functions(linker)?;
     register_file_operations(linker)?;
@@ -23,13 +59,13 @@ pub fn register_all_host_functions(linker: &mut Linker<()>) -> Result<(), Compil
 }
 
 /// Console I/O Functions
-fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_console_functions(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // print(ptr: i32, len: i32) - Output text without newline
     linker
         .func_wrap(
             "env",
             "print",
-            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+            |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -83,7 +119,7 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
         .func_wrap(
             "env",
             "printl",
-            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+            |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -137,7 +173,7 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
         .func_wrap(
             "env",
             "input",
-            |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, prompt_ptr: i32| -> i32 {
                 // Extract prompt from length-prefixed string
                 let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
@@ -171,7 +207,7 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
         .func_wrap(
             "env",
             "input_integer",
-            |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, prompt_ptr: i32| -> i32 {
                 let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
                 loop {
@@ -212,7 +248,7 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
         .func_wrap(
             "env",
             "input_float",
-            |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> f64 {
+            |mut caller: Caller<'_, HostState>, prompt_ptr: i32| -> f64 {
                 let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
                 loop {
@@ -249,7 +285,7 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
         })?;
 
     // input_yesno(prompt_ptr: i32) -> i32 (1 for yes, 0 for no)
-    linker.func_wrap("env", "input_yesno", |mut caller: Caller<'_, ()>, prompt_ptr: i32| -> i32 {
+    linker.func_wrap("env", "input_yesno", |mut caller: Caller<'_, HostState>, prompt_ptr: i32| -> i32 {
         let prompt = extract_length_prefixed_string(&mut caller, prompt_ptr);
 
         loop {
@@ -280,7 +316,7 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
     .map_err(|e| CompilerError::runtime_error(format!("Failed to create input_yesno function: {e}"), None, None))?;
 
     // input_range(prompt_ptr: i32, prompt_len: i32, min: i32, max: i32) -> i32
-    linker.func_wrap("env", "input_range", |mut caller: Caller<'_, ()>, prompt_ptr: i32, prompt_len: i32, min: i32, max: i32| -> i32 {
+    linker.func_wrap("env", "input_range", |mut caller: Caller<'_, HostState>, prompt_ptr: i32, prompt_len: i32, min: i32, max: i32| -> i32 {
         let prompt = extract_string_from_memory(&mut caller, prompt_ptr, prompt_len);
 
         loop {
@@ -316,13 +352,13 @@ fn register_console_functions(linker: &mut Linker<()>) -> Result<(), CompilerErr
 }
 
 /// Type Conversion Functions
-fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_type_conversion_functions(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // int_to_string(value: i32) -> string_ptr: i32
     linker
         .func_wrap(
             "env",
             "int_to_string",
-            |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, value: i32| -> i32 {
                 let string_value = value.to_string();
                 allocate_string_in_memory(&mut caller, &string_value)
             },
@@ -340,7 +376,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "float_to_string",
-            |mut caller: Caller<'_, ()>, value: f64| -> i32 {
+            |mut caller: Caller<'_, HostState>, value: f64| -> i32 {
                 let string_value = value.to_string();
                 allocate_string_in_memory(&mut caller, &string_value)
             },
@@ -358,7 +394,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "bool_to_string",
-            |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, value: i32| -> i32 {
                 let string_value = if value != 0 { "true" } else { "false" };
                 allocate_string_in_memory(&mut caller, string_value)
             },
@@ -376,7 +412,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "string_to_int",
-            |mut caller: Caller<'_, ()>, string_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32| -> i32 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -417,7 +453,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "string_to_float",
-            |mut caller: Caller<'_, ()>, string_ptr: i32| -> f64 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32| -> f64 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -459,7 +495,7 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "string.concat",
-            |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr1: i32, ptr2: i32| -> i32 {
                 let str1 = extract_length_prefixed_string(&mut caller, ptr1);
                 let str2 = extract_length_prefixed_string(&mut caller, ptr2);
                 let result = str1 + &str2;
@@ -478,13 +514,17 @@ fn register_type_conversion_functions(linker: &mut Linker<()>) -> Result<(), Com
 }
 
 /// File I/O Operations
-fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_file_operations(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // file_read(path_ptr: i32, path_len: i32, max_size: i32) -> string_ptr: i32
     linker
         .func_wrap(
             "env",
             "file_read",
-            |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32, _max_size: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>,
+             path_ptr: i32,
+             path_len: i32,
+             _max_size: i32|
+             -> i32 {
                 let path = extract_string_from_memory(&mut caller, path_ptr, path_len);
 
                 match std::fs::read_to_string(&path) {
@@ -509,7 +549,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "file_write",
-            |mut caller: Caller<'_, ()>,
+            |mut caller: Caller<'_, HostState>,
              path_ptr: i32,
              path_len: i32,
              content_ptr: i32,
@@ -537,7 +577,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "file_exists",
-            |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i32 {
                 let path = extract_string_from_memory(&mut caller, path_ptr, path_len);
                 if std::path::Path::new(&path).exists() {
                     1
@@ -559,7 +599,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "file_delete",
-            |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i32 {
                 let path = extract_string_from_memory(&mut caller, path_ptr, path_len);
 
                 match std::fs::remove_file(&path) {
@@ -581,7 +621,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "file_append",
-            |mut caller: Caller<'_, ()>,
+            |mut caller: Caller<'_, HostState>,
              path_ptr: i32,
              path_len: i32,
              content_ptr: i32,
@@ -616,7 +656,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "file_size",
-            |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i64 {
+            |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i64 {
                 let path = extract_string_from_memory(&mut caller, path_ptr, path_len);
 
                 match std::fs::metadata(&path) {
@@ -638,7 +678,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "file_is_directory",
-            |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i32 {
                 let path = extract_string_from_memory(&mut caller, path_ptr, path_len);
 
                 match std::fs::metadata(&path) {
@@ -666,7 +706,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "directory_create",
-            |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i32 {
                 let path = extract_string_from_memory(&mut caller, path_ptr, path_len);
 
                 match std::fs::create_dir_all(&path) {
@@ -688,7 +728,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "directory_list",
-            |mut caller: Caller<'_, ()>, path_ptr: i32, path_len: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i32 {
                 let path = extract_string_from_memory(&mut caller, path_ptr, path_len);
 
                 match std::fs::read_dir(&path) {
@@ -719,7 +759,7 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
         .func_wrap(
             "env",
             "file_copy",
-            |mut caller: Caller<'_, ()>,
+            |mut caller: Caller<'_, HostState>,
              src_ptr: i32,
              src_len: i32,
              dest_ptr: i32,
@@ -745,43 +785,56 @@ fn register_file_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
     Ok(())
 }
 
+/// Lazily-initialized blocking HTTP client shared by every host HTTP bridge.
+///
+/// Previous revisions spawned a thread, built a fresh `tokio::runtime::Runtime`
+/// and a fresh `reqwest::Client` on every host call. That cost ~ms of overhead
+/// per call, leaked threads under concurrency, and would panic if the embedder
+/// already ran inside a Tokio runtime (nested-runtime creation is forbidden).
+/// The blocking client owns its own internal runtime, is `Send + Sync`, and
+/// can be safely reused from any caller, async or sync, without nesting.
+fn shared_blocking_http_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent("Clean-Language/1.0")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    })
+}
+
+fn perform_blocking_text_request(
+    builder: reqwest::blocking::RequestBuilder,
+    method: &str,
+    url: &str,
+) -> String {
+    match builder.send() {
+        Ok(response) => response
+            .text()
+            .unwrap_or_else(|_| format!("Error reading {method} response from {url}")),
+        Err(_) => format!("HTTP {method} failed for URL: {url}"),
+    }
+}
+
 /// HTTP Operations (Real Implementations)
-fn register_http_operations(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_http_operations(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // http_get(url_ptr: i32, url_len: i32) -> response_ptr: i32
     linker.func_wrap(
         "env",
         "http_get",
-        |mut caller: Caller<'_, ()>, url_ptr: i32, url_len: i32| -> i32 {
+        |mut caller: Caller<'_, HostState>, url_ptr: i32, url_len: i32| -> i32 {
             let url = extract_string_from_memory(&mut caller, url_ptr, url_len);
-            let url_clone = url.clone();
-
-            match std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    match reqwest::get(&url).await {
-                        Ok(response) => response
-                            .text()
-                            .await
-                            .unwrap_or_else(|_| format!("Error reading response from {}", url)),
-                        Err(_) => format!("HTTP GET failed for URL: {}", url),
-                    }
-                })
-            })
-            .join()
-            {
-                Ok(response_text) => allocate_string_in_memory(&mut caller, &response_text),
-                Err(_) => {
-                    let error_msg = format!("Failed to execute HTTP GET request to {}", url_clone);
-                    allocate_string_in_memory(&mut caller, &error_msg)
-                }
-            }
+            let client = shared_blocking_http_client();
+            let response_text = perform_blocking_text_request(client.get(&url), "GET", &url);
+            allocate_string_in_memory(&mut caller, &response_text)
         },
     )?;
     // http_post(url_ptr: i32, url_len: i32, body_ptr: i32, body_len: i32) -> response_ptr: i32
     linker.func_wrap(
         "env",
         "http_post",
-        |mut caller: Caller<'_, ()>,
+        |mut caller: Caller<'_, HostState>,
          url_ptr: i32,
          url_len: i32,
          body_ptr: i32,
@@ -789,34 +842,16 @@ fn register_http_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
          -> i32 {
             let url = extract_string_from_memory(&mut caller, url_ptr, url_len);
             let body = extract_string_from_memory(&mut caller, body_ptr, body_len);
-            let url_clone = url.clone();
-
-            match std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    let client = reqwest::Client::new();
-                    match client
-                        .post(&url)
-                        .body(body)
-                        .header("Content-Type", "text/plain")
-                        .send()
-                        .await
-                    {
-                        Ok(response) => response.text().await.unwrap_or_else(|_| {
-                            format!("Error reading POST response from {}", url)
-                        }),
-                        Err(_) => format!("HTTP POST failed for URL: {}", url),
-                    }
-                })
-            })
-            .join()
-            {
-                Ok(response_text) => allocate_string_in_memory(&mut caller, &response_text),
-                Err(_) => {
-                    let error_msg = format!("Failed to execute HTTP POST request to {}", url_clone);
-                    allocate_string_in_memory(&mut caller, &error_msg)
-                }
-            }
+            let client = shared_blocking_http_client();
+            let response_text = perform_blocking_text_request(
+                client
+                    .post(&url)
+                    .header("Content-Type", "text/plain")
+                    .body(body),
+                "POST",
+                &url,
+            );
+            allocate_string_in_memory(&mut caller, &response_text)
         },
     )?;
     linker.func_wrap("env", "http_put", |_: i32, _: i32, _: i32, _: i32| -> i32 {
@@ -831,31 +866,11 @@ fn register_http_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
     linker.func_wrap(
         "env",
         "http_delete",
-        |mut caller: Caller<'_, ()>, url_ptr: i32, url_len: i32| -> i32 {
+        |mut caller: Caller<'_, HostState>, url_ptr: i32, url_len: i32| -> i32 {
             let url = extract_string_from_memory(&mut caller, url_ptr, url_len);
-            let url_clone = url.clone();
-
-            match std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    let client = reqwest::Client::new();
-                    match client.delete(&url).send().await {
-                        Ok(response) => response.text().await.unwrap_or_else(|_| {
-                            format!("Error reading DELETE response from {}", url)
-                        }),
-                        Err(_) => format!("HTTP DELETE failed for URL: {}", url),
-                    }
-                })
-            })
-            .join()
-            {
-                Ok(response_text) => allocate_string_in_memory(&mut caller, &response_text),
-                Err(_) => {
-                    let error_msg =
-                        format!("Failed to execute HTTP DELETE request to {}", url_clone);
-                    allocate_string_in_memory(&mut caller, &error_msg)
-                }
-            }
+            let client = shared_blocking_http_client();
+            let response_text = perform_blocking_text_request(client.delete(&url), "DELETE", &url);
+            allocate_string_in_memory(&mut caller, &response_text)
         },
     )?;
     linker.func_wrap("env", "http_head", |_: i32, _: i32| -> i32 { 0 })?;
@@ -876,7 +891,7 @@ fn register_http_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
     linker.func_wrap(
         "env",
         "http_post_json",
-        |mut caller: Caller<'_, ()>,
+        |mut caller: Caller<'_, HostState>,
          url_ptr: i32,
          url_len: i32,
          json_ptr: i32,
@@ -884,35 +899,16 @@ fn register_http_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
          -> i32 {
             let url = extract_string_from_memory(&mut caller, url_ptr, url_len);
             let json_body = extract_string_from_memory(&mut caller, json_ptr, json_len);
-            let url_clone = url.clone();
-
-            match std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    let client = reqwest::Client::new();
-                    match client
-                        .post(&url)
-                        .header("Content-Type", "application/json")
-                        .body(json_body)
-                        .send()
-                        .await
-                    {
-                        Ok(response) => response.text().await.unwrap_or_else(|_| {
-                            format!("Error reading JSON POST response from {}", url)
-                        }),
-                        Err(_) => format!("HTTP JSON POST failed for URL: {}", url),
-                    }
-                })
-            })
-            .join()
-            {
-                Ok(response_text) => allocate_string_in_memory(&mut caller, &response_text),
-                Err(_) => {
-                    let error_msg =
-                        format!("Failed to execute HTTP JSON POST request to {}", url_clone);
-                    allocate_string_in_memory(&mut caller, &error_msg)
-                }
-            }
+            let client = shared_blocking_http_client();
+            let response_text = perform_blocking_text_request(
+                client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .body(json_body),
+                "JSON POST",
+                &url,
+            );
+            allocate_string_in_memory(&mut caller, &response_text)
         },
     )?;
     linker.func_wrap(
@@ -946,7 +942,7 @@ fn register_http_operations(linker: &mut Linker<()>) -> Result<(), CompilerError
 }
 
 /// Math Functions
-fn register_math_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_math_functions(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // math_abs(value: f64) -> f64
     linker
         .func_wrap("env", "math_abs", |value: f64| -> f64 { value.abs() })
@@ -1271,49 +1267,50 @@ fn register_math_functions(linker: &mut Linker<()>) -> Result<(), CompilerError>
 }
 
 /// Memory Management Functions
-fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_memory_functions(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // mem_alloc(type_id: i32, size: i32) -> i32
     linker
         .func_wrap(
             "memory_runtime",
             "mem_alloc",
-            |mut caller: Caller<'_, ()>, _type_id: i32, size: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, _type_id: i32, size: i32| -> i32 {
                 if size <= 0 {
                     return 0;
                 }
 
-                // Get the memory export from the WASM module
-                if let Some(memory) = caller.get_export("memory") {
-                    if let Some(memory) = memory.into_memory() {
-                        // Get current memory size in bytes
-                        let current_size = memory.data_size(&caller) as i32;
+                let memory = match caller.get_export("memory").and_then(|m| m.into_memory()) {
+                    Some(m) => m,
+                    None => return 0,
+                };
 
-                        // Align the allocation (use a default alignment of 8 bytes)
-                        let alignment = 8;
-                        let aligned_size = ((size + alignment - 1) / alignment) * alignment;
+                // Align to 8 bytes — Clean Language MIR assumes 8-byte
+                // alignment for heap-resident records.
+                let alignment: i32 = 8;
+                let aligned_size = ((size + alignment - 1) / alignment) * alignment;
 
-                        // Simple bump allocator - start after initial 4KB reserved space
-                        static mut NEXT_ALLOC: i32 = 4096;
-                        unsafe {
-                            let ptr = NEXT_ALLOC;
-                            NEXT_ALLOC += aligned_size;
+                // Reserve the next region from this *instance's* bump pointer.
+                // Previously a `static mut NEXT_ALLOC` was shared by every
+                // WASM instance in the process, so two stores running in
+                // parallel could hand out overlapping pointers and stomp
+                // each other's memory. The cursor now lives in HostState
+                // (per Store), so concurrent stores are independent and a
+                // fresh Store automatically starts from a fresh bump pointer.
+                let ptr = caller.data().next_alloc;
+                let new_next = match ptr.checked_add(aligned_size) {
+                    Some(v) => v,
+                    None => return 0, // Overflow → refuse the allocation.
+                };
+                caller.data_mut().next_alloc = new_next;
 
-                            // Check if we need to grow memory
-                            if NEXT_ALLOC > current_size {
-                                let pages_needed = ((NEXT_ALLOC - current_size) + 65535) / 65536; // 64KB pages
-                                if memory.grow(&mut caller, pages_needed as u64).is_err() {
-                                    return 0; // Allocation failed
-                                }
-                            }
-
-                            ptr
-                        }
-                    } else {
-                        0
+                let current_size = memory.data_size(&caller) as i32;
+                if new_next > current_size {
+                    let pages_needed = ((new_next - current_size) as u64).div_ceil(65536);
+                    if memory.grow(&mut caller, pages_needed).is_err() {
+                        return 0;
                     }
-                } else {
-                    0
                 }
+
+                ptr
             },
         )
         .map_err(|e| {
@@ -1329,7 +1326,7 @@ fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerErro
         .func_wrap(
             "memory_runtime",
             "mem_retain",
-            |mut caller: Caller<'_, ()>, ptr: i32| {
+            |mut caller: Caller<'_, HostState>, ptr: i32| {
                 if ptr <= 0 {
                     return; // Invalid pointer, no-op
                 }
@@ -1375,7 +1372,7 @@ fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerErro
         .func_wrap(
             "memory_runtime",
             "mem_release",
-            |mut caller: Caller<'_, ()>, ptr: i32| {
+            |mut caller: Caller<'_, HostState>, ptr: i32| {
                 if ptr <= 0 {
                     return; // Invalid pointer, nothing to do
                 }
@@ -1453,14 +1450,14 @@ fn register_memory_functions(linker: &mut Linker<()>) -> Result<(), CompilerErro
 }
 
 /// Async Functions (Stubs)
-fn register_async_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_async_functions(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // execute_background stub
     linker.func_wrap("env", "execute_background", |_: i32, _: i32| -> i32 { 0 })?;
     Ok(())
 }
 
 /// Method-Style Function Imports
-fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_method_style_functions(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     register_integer_methods(linker)?;
     register_number_methods(linker)?;
     register_boolean_methods(linker)?;
@@ -1472,13 +1469,13 @@ fn register_method_style_functions(linker: &mut Linker<()>) -> Result<(), Compil
 }
 
 /// integer.* method registrations
-fn register_integer_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_integer_methods(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // integer.toString() - Converts integer to string
     linker
         .func_wrap(
             "env",
             "integer.toString",
-            |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, value: i32| -> i32 {
                 let string_value = value.to_string();
                 allocate_string_in_memory(&mut caller, &string_value)
             },
@@ -1562,13 +1559,13 @@ fn register_integer_methods(linker: &mut Linker<()>) -> Result<(), CompilerError
 }
 
 /// number.* method registrations
-fn register_number_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_number_methods(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // number.toString() - Converts float to string
     linker
         .func_wrap(
             "env",
             "number.toString",
-            |mut caller: Caller<'_, ()>, value: f64| -> i32 {
+            |mut caller: Caller<'_, HostState>, value: f64| -> i32 {
                 let string_value = value.to_string();
                 allocate_string_in_memory(&mut caller, &string_value)
             },
@@ -1654,13 +1651,13 @@ fn register_number_methods(linker: &mut Linker<()>) -> Result<(), CompilerError>
 }
 
 /// boolean.* method registrations
-fn register_boolean_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_boolean_methods(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // boolean.toString() - Converts boolean to string
     linker
         .func_wrap(
             "env",
             "boolean.toString",
-            |mut caller: Caller<'_, ()>, value: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, value: i32| -> i32 {
                 let string_value = if value != 0 { "true" } else { "false" };
                 allocate_string_in_memory(&mut caller, string_value)
             },
@@ -1746,13 +1743,13 @@ fn register_boolean_methods(linker: &mut Linker<()>) -> Result<(), CompilerError
 }
 
 /// string.* type-conversion and length method registrations
-fn register_string_conversion_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_string_conversion_methods(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // string.length() - Returns string length
     linker
         .func_wrap(
             "env",
             "string.length",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -1798,7 +1795,7 @@ fn register_string_conversion_methods(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "string.toInteger",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -1839,7 +1836,7 @@ fn register_string_conversion_methods(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "string.toNumber",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> f64 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> f64 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -1880,7 +1877,7 @@ fn register_string_conversion_methods(linker: &mut Linker<()>) -> Result<(), Com
         .func_wrap(
             "env",
             "string.toBoolean",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -1930,13 +1927,13 @@ fn register_string_conversion_methods(linker: &mut Linker<()>) -> Result<(), Com
 }
 
 /// list.* method registrations
-fn register_list_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_list_methods(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // list.length() - Returns list length
     linker
         .func_wrap(
             "env",
             "list.length",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 if ptr <= 0 {
                     return 0; // Invalid pointer
                 }
@@ -1979,13 +1976,15 @@ fn register_list_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
 }
 
 /// string manipulation method registrations (case, search, split, trim, compare, etc.)
-fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_string_manipulation_methods(
+    linker: &mut Linker<HostState>,
+) -> Result<(), CompilerError> {
     // string.toUpperCase() - Convert string to uppercase
     linker
         .func_wrap(
             "env",
             "string.toUpperCase",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -2027,7 +2026,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.toLowerCase",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 if let Some(memory) = caller.get_export("memory") {
                     if let Some(memory) = memory.into_memory() {
                         let data = memory.data(&caller);
@@ -2070,7 +2069,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.split",
-            |mut caller: Caller<'_, ()>, string_ptr: i32, delimiter_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32, delimiter_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
                 let delimiter = extract_length_prefixed_string(&mut caller, delimiter_ptr);
 
@@ -2166,7 +2165,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string_trim",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let trimmed = string_val.trim();
                 allocate_string_in_memory(&mut caller, trimmed)
@@ -2185,7 +2184,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string_trim_start",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let trimmed = string_val.trim_start();
                 allocate_string_in_memory(&mut caller, trimmed)
@@ -2204,7 +2203,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string_trim_end",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let trimmed = string_val.trim_end();
                 allocate_string_in_memory(&mut caller, trimmed)
@@ -2224,7 +2223,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string_compare",
-            |mut caller: Caller<'_, ()>, ptr1: i32, ptr2: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr1: i32, ptr2: i32| -> i32 {
                 let string1 = extract_length_prefixed_string(&mut caller, ptr1);
                 let string2 = extract_length_prefixed_string(&mut caller, ptr2);
                 if string1 == string2 {
@@ -2247,7 +2246,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.indexOf",
-            |mut caller: Caller<'_, ()>, string_ptr: i32, search_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32, search_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
                 let search = extract_length_prefixed_string(&mut caller, search_ptr);
                 match string_val.find(&search) {
@@ -2269,7 +2268,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.lastIndexOf",
-            |mut caller: Caller<'_, ()>, string_ptr: i32, search_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32, search_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
                 let search = extract_length_prefixed_string(&mut caller, search_ptr);
                 match string_val.rfind(&search) {
@@ -2291,7 +2290,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.substring",
-            |mut caller: Caller<'_, ()>, ptr: i32, start: i32, end: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32, start: i32, end: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let len = string_val.len() as i32;
                 let start = start.max(0).min(len) as usize;
@@ -2314,7 +2313,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.charAt",
-            |mut caller: Caller<'_, ()>, ptr: i32, index: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32, index: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 if index >= 0 && (index as usize) < string_val.len() {
                     let ch = string_val.chars().nth(index as usize).unwrap_or('\0');
@@ -2337,7 +2336,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.startsWith",
-            |mut caller: Caller<'_, ()>, string_ptr: i32, prefix_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32, prefix_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
                 let prefix = extract_length_prefixed_string(&mut caller, prefix_ptr);
                 if string_val.starts_with(&prefix) {
@@ -2360,7 +2359,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.endsWith",
-            |mut caller: Caller<'_, ()>, string_ptr: i32, suffix_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32, suffix_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
                 let suffix = extract_length_prefixed_string(&mut caller, suffix_ptr);
                 if string_val.ends_with(&suffix) {
@@ -2383,7 +2382,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.includes",
-            |mut caller: Caller<'_, ()>, string_ptr: i32, search_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, string_ptr: i32, search_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, string_ptr);
                 let search = extract_length_prefixed_string(&mut caller, search_ptr);
                 if string_val.contains(&search) {
@@ -2406,7 +2405,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.replace",
-            |mut caller: Caller<'_, ()>,
+            |mut caller: Caller<'_, HostState>,
              string_ptr: i32,
              search_ptr: i32,
              replace_ptr: i32|
@@ -2431,7 +2430,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string_replace",
-            |mut caller: Caller<'_, ()>,
+            |mut caller: Caller<'_, HostState>,
              string_ptr: i32,
              search_ptr: i32,
              replace_ptr: i32|
@@ -2456,7 +2455,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.replaceFirst",
-            |mut caller: Caller<'_, ()>,
+            |mut caller: Caller<'_, HostState>,
              string_ptr: i32,
              search_ptr: i32,
              replace_ptr: i32|
@@ -2481,7 +2480,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.repeat",
-            |mut caller: Caller<'_, ()>, ptr: i32, count: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32, count: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let count = count.max(0) as usize;
                 let result = string_val.repeat(count);
@@ -2501,7 +2500,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.padStart",
-            |mut caller: Caller<'_, ()>, ptr: i32, target_len: i32, pad_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32, target_len: i32, pad_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let pad_char = extract_length_prefixed_string(&mut caller, pad_ptr);
                 let target_len = target_len.max(0) as usize;
@@ -2538,7 +2537,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.padEnd",
-            |mut caller: Caller<'_, ()>, ptr: i32, target_len: i32, pad_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32, target_len: i32, pad_ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let pad_char = extract_length_prefixed_string(&mut caller, pad_ptr);
                 let target_len = target_len.max(0) as usize;
@@ -2573,7 +2572,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
         .func_wrap(
             "env",
             "string.reverse",
-            |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>, ptr: i32| -> i32 {
                 let string_val = extract_length_prefixed_string(&mut caller, ptr);
                 let reversed: String = string_val.chars().rev().collect();
                 allocate_string_in_memory(&mut caller, &reversed)
@@ -2591,7 +2590,7 @@ fn register_string_manipulation_methods(linker: &mut Linker<()>) -> Result<(), C
 }
 
 /// HTTP server stub registrations (required for compilation but not implemented in standalone runner)
-fn register_http_server_stubs(linker: &mut Linker<()>) -> Result<(), CompilerError> {
+fn register_http_server_stubs(linker: &mut Linker<HostState>) -> Result<(), CompilerError> {
     // Signatures must match what the codegen produces
     linker
         .func_wrap(
@@ -2670,7 +2669,7 @@ fn register_http_server_stubs(linker: &mut Linker<()>) -> Result<(), CompilerErr
 }
 
 /// Utility function to extract string from WASM memory
-fn extract_string_from_memory(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> String {
+fn extract_string_from_memory(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32) -> String {
     if let Some(memory) = caller.get_export("memory") {
         if let Some(memory) = memory.into_memory() {
             let data = memory.data(caller);
@@ -2690,7 +2689,7 @@ fn extract_string_from_memory(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -
 
 /// Utility function to extract a length-prefixed string from WASM memory
 /// String format: [4-byte little-endian length][content bytes]
-fn extract_length_prefixed_string(caller: &mut Caller<'_, ()>, ptr: i32) -> String {
+fn extract_length_prefixed_string(caller: &mut Caller<'_, HostState>, ptr: i32) -> String {
     if let Some(memory) = caller.get_export("memory") {
         if let Some(memory) = memory.into_memory() {
             let data = memory.data(caller);
@@ -2714,55 +2713,57 @@ fn extract_length_prefixed_string(caller: &mut Caller<'_, ()>, ptr: i32) -> Stri
     String::new()
 }
 
-/// Utility function to allocate and write a string to WASM memory
-fn allocate_string_in_memory(caller: &mut Caller<'_, ()>, string_value: &str) -> i32 {
+/// Utility function to allocate and write a string to WASM memory.
+///
+/// Uses the per-instance bump pointer in [`HostState::next_string_alloc`]
+/// instead of a process-wide `static mut`, so two stores running in parallel
+/// can not hand out overlapping string slots to each other.
+fn allocate_string_in_memory(caller: &mut Caller<'_, HostState>, string_value: &str) -> i32 {
     let string_bytes = string_value.as_bytes();
     let string_len = string_bytes.len() as i32;
 
     // Allocate memory for the string (we'll store length + data)
     let total_size = 4 + string_len; // 4 bytes for length + string data
 
-    if let Some(memory) = caller.get_export("memory") {
-        if let Some(memory) = memory.into_memory() {
-            // Simple allocation - find next available spot
-            static mut NEXT_STRING_ALLOC: i32 = 8192; // Start string allocations at 8KB
-            unsafe {
-                let ptr = NEXT_STRING_ALLOC;
-                NEXT_STRING_ALLOC += total_size + 4; // Add padding
+    let memory = match caller.get_export("memory").and_then(|m| m.into_memory()) {
+        Some(m) => m,
+        None => {
+            tracing::error!(string_len = string_value.len(), "memory export missing");
+            return 0;
+        }
+    };
 
-                // Check if we need to grow memory first
-                let current_size = memory.data_size(&*caller);
-                let needed_size = (ptr + total_size) as usize;
+    let ptr = caller.data().next_string_alloc;
+    let advance = match total_size.checked_add(4) {
+        Some(v) => v,
+        None => return 0,
+    };
+    let new_next = match ptr.checked_add(advance) {
+        Some(v) => v,
+        None => return 0,
+    };
+    caller.data_mut().next_string_alloc = new_next;
 
-                if needed_size > current_size {
-                    let pages_needed = (needed_size - current_size).div_ceil(65536);
-                    if memory.grow(&mut *caller, pages_needed as u64).is_err() {
-                        tracing::error!(
-                            pages_needed = pages_needed,
-                            current_size = current_size,
-                            needed_size = needed_size,
-                            "Memory growth failed"
-                        );
-                        return 0; // Growth failed
-                    }
-                }
+    let current_size = memory.data_size(&*caller);
+    let needed_size = (ptr + total_size) as usize;
 
-                // Get memory data as mutable after potential growth
-                let data = memory.data_mut(&mut *caller);
-
-                // Write string length at the pointer location (first 4 bytes)
-                let len_bytes = string_len.to_le_bytes();
-                data[ptr as usize..(ptr + 4) as usize].copy_from_slice(&len_bytes);
-
-                // Write string data after the length
-                data[(ptr + 4) as usize..(ptr + 4 + string_len) as usize]
-                    .copy_from_slice(string_bytes);
-
-                return ptr;
-            }
+    if needed_size > current_size {
+        let pages_needed = (needed_size - current_size).div_ceil(65536);
+        if memory.grow(&mut *caller, pages_needed as u64).is_err() {
+            tracing::error!(
+                pages_needed = pages_needed,
+                current_size = current_size,
+                needed_size = needed_size,
+                "Memory growth failed"
+            );
+            return 0;
         }
     }
 
-    tracing::error!(string_len = string_value.len(), "String allocation failed");
-    0 // Allocation failed
+    let data = memory.data_mut(&mut *caller);
+    let len_bytes = string_len.to_le_bytes();
+    data[ptr as usize..(ptr + 4) as usize].copy_from_slice(&len_bytes);
+    data[(ptr + 4) as usize..(ptr + 4 + string_len) as usize].copy_from_slice(string_bytes);
+
+    ptr
 }

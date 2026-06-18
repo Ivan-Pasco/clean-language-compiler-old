@@ -99,8 +99,11 @@ impl CleanRuntime {
             )
         })?;
 
-        let mut store = Store::new(&self.engine, ());
-        let mut linker = Linker::new(&self.engine);
+        // Per-instance host state — see `host_functions::HostState` for why
+        // the bump allocator cursors live in the store rather than in a
+        // `static mut`.
+        let mut store = Store::new(&self.engine, host_functions::HostState::default());
+        let mut linker = Linker::<host_functions::HostState>::new(&self.engine);
 
         // Add all host functions using centralized registry
         host_functions::register_all_host_functions(&mut linker)?;
@@ -116,6 +119,24 @@ impl CleanRuntime {
                     None,
                 )
             })?;
+
+        // Honor the compiler's heap-start contract (foundation/platform-architecture/
+        // MEMORY_MODEL.md): every WASM module exports `__heap_ptr` as the address
+        // just past the last static data segment. Host allocators must start
+        // bumping from there — otherwise `mem_alloc` hands out pointers that
+        // overlap static string literals, the boxed-Any tag at offset 0 of the
+        // allocation lands inside (say) `"hello world"`, and downstream readers
+        // see corrupted data. `clean-server` does this in src/wasm.rs; replicating
+        // the contract here keeps the in-process runtime correct too.
+        if let Some(heap_global) = instance.get_global(&mut store, "__heap_ptr") {
+            if let wasmtime::Val::I32(heap_ptr) = heap_global.get(&mut store) {
+                let next_alloc = heap_ptr.max(1);
+                let next_string_alloc = next_alloc.saturating_add(4096);
+                let data = store.data_mut();
+                data.next_alloc = next_alloc;
+                data.next_string_alloc = next_string_alloc;
+            }
+        }
 
         // Execute the start function
         if let Some(start_func) = instance.get_func(&mut store, "start") {

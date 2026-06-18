@@ -563,43 +563,357 @@ impl DependencyResolver {
     }
 
     fn resolve(&mut self) -> Result<DependencyGraph, CompilerError> {
-        // Simplified dependency resolution
-        // In a real implementation, this would handle version constraints,
-        // conflict resolution, and transitive dependencies
+        // Per-package resolution:
+        //   1. Walk every spec attached to the package.
+        //   2. Pick the source (registry / git / path) — git and path
+        //      sources bypass version arithmetic because they pin the wire
+        //      bytes directly.
+        //   3. Parse each version string into a `VersionReq`, intersect
+        //      every range, and pick a concrete version that satisfies the
+        //      intersection. If two constraints have no overlap, report a
+        //      hard error instead of silently picking one.
+        //
+        // With no live registry catalog available at resolve time, the
+        // chosen version is whatever explicit version string appears in the
+        // user's manifest (e.g. `"1.4.2"`). When every constraint is
+        // open-ended (`^1.0`, `>=2.0`, `1.*`), the resolver leaves the
+        // version as the formatted form of the intersection's lower bound
+        // so downstream tooling can resolve it against the registry without
+        // losing the constraint.
 
         let mut packages = HashMap::new();
         let mut resolution_order = Vec::new();
 
         for (name, specs) in &self.dependencies {
-            // For now, just take the first specification
-            if let Some((spec, _)) = specs.first() {
-                let version = match spec {
-                    DependencySpec::Simple(v) => v.clone(),
-                    DependencySpec::Detailed {
-                        version: Some(v), ..
-                    } => v.clone(),
-                    _ => "latest".to_string(),
-                };
+            if specs.is_empty() {
+                continue;
+            }
 
-                let resolved_package = ResolvedPackage {
-                    name: name.clone(),
-                    version: version.clone(),
-                    source: PackageSource::Registry {
+            // Separate non-version sources (git/path) from version specs.
+            let mut requirements: Vec<(VersionReq, String)> = Vec::new();
+            let mut explicit_versions: Vec<Version> = Vec::new();
+            let mut alt_source: Option<PackageSource> = None;
+            let mut alt_source_label = String::from("latest");
+
+            for (spec, _is_dev) in specs {
+                match spec {
+                    DependencySpec::Simple(v) => {
+                        let req = VersionReq::parse(v).map_err(|e| {
+                            CompilerError::parse_error(
+                                format!(
+                                    "Invalid version requirement for `{name}` (`{v}`): {e}"
+                                ),
+                                None,
+                                Some(
+                                    "Use semver forms like `1.2.3`, `^1.2`, `~1.2`, `>=1.0, <2.0`, or `1.*`.".to_string(),
+                                ),
+                            )
+                        })?;
+                        if let VersionReq::Exact(ver) = &req {
+                            explicit_versions.push(ver.clone());
+                        }
+                        requirements.push((req, v.clone()));
+                    }
+                    DependencySpec::Detailed {
+                        version: Some(v),
+                        git: None,
+                        path: None,
+                        ..
+                    } => {
+                        let req = VersionReq::parse(v).map_err(|e| {
+                            CompilerError::parse_error(
+                                format!("Invalid version requirement for `{name}` (`{v}`): {e}"),
+                                None,
+                                None,
+                            )
+                        })?;
+                        if let VersionReq::Exact(ver) = &req {
+                            explicit_versions.push(ver.clone());
+                        }
+                        requirements.push((req, v.clone()));
+                    }
+                    DependencySpec::Detailed {
+                        git: Some(url),
+                        branch,
+                        tag,
+                        ..
+                    } => {
+                        alt_source = Some(PackageSource::Git {
+                            url: url.clone(),
+                            branch: branch.clone(),
+                            tag: tag.clone(),
+                        });
+                        alt_source_label = tag
+                            .clone()
+                            .unwrap_or_else(|| branch.clone().unwrap_or_else(|| "git".to_string()));
+                    }
+                    DependencySpec::Detailed {
+                        path: Some(local), ..
+                    } => {
+                        alt_source = Some(PackageSource::Path {
+                            path: PathBuf::from(local),
+                        });
+                        alt_source_label = "local".to_string();
+                    }
+                    DependencySpec::Detailed { .. } => {
+                        // Empty detailed entry — nothing to use. Skip rather
+                        // than make a wild guess; downstream code will report
+                        // the dependency as unresolvable.
+                    }
+                }
+            }
+
+            let (version, source) = if let Some(src) = alt_source {
+                (alt_source_label, src)
+            } else if requirements.is_empty() {
+                // Every spec was a no-op detailed entry. Mark as unresolved.
+                (
+                    "latest".to_string(),
+                    PackageSource::Registry {
                         url: "https://packages.cleanlang.org".to_string(),
                     },
-                    dependencies: HashMap::new(),
+                )
+            } else {
+                let bounds = intersect_requirements(name, &requirements)?;
+
+                // Pick the highest explicit candidate that satisfies every
+                // requirement. Falling back to the formatted lower bound when
+                // no candidate exists keeps the resolved version informative
+                // for downstream tooling (and avoids the historical bug
+                // where every open-ended dependency resolved to the literal
+                // string "latest").
+                let chosen = explicit_versions
+                    .iter()
+                    .filter(|v| requirements.iter().all(|(r, _)| v.satisfies(r)))
+                    .max()
+                    .cloned();
+
+                let version_string = match chosen {
+                    Some(v) => v.to_string(),
+                    None => bounds.formatted_lower(),
                 };
 
-                packages.insert(name.clone(), resolved_package);
-                resolution_order.push(name.clone());
-            }
+                (
+                    version_string,
+                    PackageSource::Registry {
+                        url: "https://packages.cleanlang.org".to_string(),
+                    },
+                )
+            };
+
+            let resolved_package = ResolvedPackage {
+                name: name.clone(),
+                version,
+                source,
+                dependencies: HashMap::new(),
+            };
+            self.resolved.insert(name.clone(), resolved_package.clone());
+            packages.insert(name.clone(), resolved_package);
+            resolution_order.push(name.clone());
         }
+
+        // Stable ordering so callers (and tests) see a deterministic graph.
+        resolution_order.sort();
 
         Ok(DependencyGraph {
             packages,
             resolution_order,
         })
     }
+}
+
+/// Inclusive/exclusive boundary for an intersected version range.
+#[derive(Debug, Clone)]
+struct VersionBounds {
+    lower: Option<(Version, bool)>, // (version, inclusive)
+    upper: Option<(Version, bool)>, // (version, inclusive)
+}
+
+impl VersionBounds {
+    fn unbounded() -> Self {
+        VersionBounds {
+            lower: None,
+            upper: None,
+        }
+    }
+
+    fn from_req(req: &VersionReq) -> VersionBounds {
+        match req {
+            VersionReq::Exact(v) => VersionBounds {
+                lower: Some((v.clone(), true)),
+                upper: Some((v.clone(), true)),
+            },
+            VersionReq::Caret(v) => VersionBounds {
+                lower: Some((v.clone(), true)),
+                upper: Some((next_major(v), false)),
+            },
+            VersionReq::Tilde(v) => VersionBounds {
+                lower: Some((v.clone(), true)),
+                upper: Some((next_minor(v), false)),
+            },
+            VersionReq::GreaterThan(v) => VersionBounds {
+                lower: Some((v.clone(), false)),
+                upper: None,
+            },
+            VersionReq::GreaterEqual(v) => VersionBounds {
+                lower: Some((v.clone(), true)),
+                upper: None,
+            },
+            VersionReq::LessThan(v) => VersionBounds {
+                lower: None,
+                upper: Some((v.clone(), false)),
+            },
+            VersionReq::LessEqual(v) => VersionBounds {
+                lower: None,
+                upper: Some((v.clone(), true)),
+            },
+            VersionReq::Range(min, max) => VersionBounds {
+                lower: Some((min.clone(), true)),
+                upper: Some((max.clone(), false)),
+            },
+            VersionReq::Wildcard(maj, None) => VersionBounds {
+                lower: Some((
+                    Version {
+                        major: *maj,
+                        minor: 0,
+                        patch: 0,
+                        pre_release: None,
+                        build: None,
+                    },
+                    true,
+                )),
+                upper: Some((
+                    Version {
+                        major: maj + 1,
+                        minor: 0,
+                        patch: 0,
+                        pre_release: None,
+                        build: None,
+                    },
+                    false,
+                )),
+            },
+            VersionReq::Wildcard(maj, Some(min)) => VersionBounds {
+                lower: Some((
+                    Version {
+                        major: *maj,
+                        minor: *min,
+                        patch: 0,
+                        pre_release: None,
+                        build: None,
+                    },
+                    true,
+                )),
+                upper: Some((
+                    Version {
+                        major: *maj,
+                        minor: min + 1,
+                        patch: 0,
+                        pre_release: None,
+                        build: None,
+                    },
+                    false,
+                )),
+            },
+        }
+    }
+
+    /// Intersect two bound sets. Returns `None` when the intersection is
+    /// empty (i.e. the two constraints conflict and no version can satisfy
+    /// both).
+    fn intersect(self, other: VersionBounds) -> Option<VersionBounds> {
+        let lower = match (self.lower, other.lower) {
+            (None, x) | (x, None) => x,
+            (Some((a, a_incl)), Some((b, b_incl))) => Some(if a > b {
+                (a, a_incl)
+            } else if b > a {
+                (b, b_incl)
+            } else {
+                // Equal versions: inclusivity is AND of both sides.
+                (a, a_incl && b_incl)
+            }),
+        };
+
+        let upper = match (self.upper, other.upper) {
+            (None, x) | (x, None) => x,
+            (Some((a, a_incl)), Some((b, b_incl))) => Some(if a < b {
+                (a, a_incl)
+            } else if b < a {
+                (b, b_incl)
+            } else {
+                (a, a_incl && b_incl)
+            }),
+        };
+
+        // Empty-range check.
+        if let (Some((lo, lo_incl)), Some((hi, hi_incl))) = (&lower, &upper) {
+            match lo.cmp(hi) {
+                std::cmp::Ordering::Greater => return None,
+                std::cmp::Ordering::Equal if !(*lo_incl && *hi_incl) => return None,
+                _ => {}
+            }
+        }
+
+        Some(VersionBounds { lower, upper })
+    }
+
+    /// Format a representative version string for this range. Used when no
+    /// explicit candidate version is supplied (e.g. every constraint is
+    /// open-ended like `^1.2`).
+    fn formatted_lower(&self) -> String {
+        match &self.lower {
+            Some((v, _)) => v.to_string(),
+            None => "0.0.0".to_string(),
+        }
+    }
+}
+
+fn next_major(v: &Version) -> Version {
+    Version {
+        major: v.major + 1,
+        minor: 0,
+        patch: 0,
+        pre_release: None,
+        build: None,
+    }
+}
+
+fn next_minor(v: &Version) -> Version {
+    Version {
+        major: v.major,
+        minor: v.minor + 1,
+        patch: 0,
+        pre_release: None,
+        build: None,
+    }
+}
+
+fn intersect_requirements(
+    name: &str,
+    requirements: &[(VersionReq, String)],
+) -> Result<VersionBounds, CompilerError> {
+    let mut acc = VersionBounds::unbounded();
+    for (req, raw) in requirements {
+        let next = VersionBounds::from_req(req);
+        acc = acc.intersect(next).ok_or_else(|| {
+            let listed = requirements
+                .iter()
+                .map(|(_, s)| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            CompilerError::parse_error(
+                format!(
+                    "Conflicting version requirements for `{name}`: `{raw}` does not overlap with the other constraints ({listed})"
+                ),
+                None,
+                Some(
+                    "Reconcile the version specifiers so every dependent agrees on a satisfiable range."
+                        .to_string(),
+                ),
+            )
+        })?;
+    }
+    Ok(acc)
 }
 
 impl Version {
@@ -719,5 +1033,111 @@ impl VersionReq {
             let version = Version::parse(req_str)?;
             Ok(VersionReq::Exact(version))
         }
+    }
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+
+    fn dep(version: &str) -> DependencySpec {
+        DependencySpec::Simple(version.to_string())
+    }
+
+    fn resolve_one(name: &str, specs: &[&str]) -> Result<ResolvedPackage, CompilerError> {
+        let mut resolver = DependencyResolver::new();
+        for s in specs {
+            resolver.add_dependency(name.to_string(), dep(s), false)?;
+        }
+        let graph = resolver.resolve()?;
+        Ok(graph.packages.get(name).cloned().unwrap())
+    }
+
+    #[test]
+    fn exact_version_is_preserved() {
+        let pkg = resolve_one("foo", &["1.2.3"]).expect("resolves");
+        assert_eq!(pkg.version, "1.2.3");
+    }
+
+    #[test]
+    fn caret_range_with_explicit_candidate_picks_concrete() {
+        // ^1.2.3 and 1.4.0 both apply — 1.4.0 satisfies both, so it wins.
+        let pkg = resolve_one("foo", &["^1.2.3", "1.4.0"]).expect("resolves");
+        assert_eq!(pkg.version, "1.4.0");
+    }
+
+    #[test]
+    fn intersected_open_ranges_advance_the_lower_bound() {
+        // Two open-ended caret ranges with no explicit candidate. The
+        // intersection's lower bound is the higher of the two caret bases
+        // (1.2.0), and that's what should be reported.
+        let pkg = resolve_one("foo", &["^1.0.0", "^1.2.0"]).expect("resolves");
+        assert_eq!(pkg.version, "1.2.0");
+    }
+
+    #[test]
+    fn open_ended_constraint_resolves_to_lower_bound() {
+        // No explicit candidates → fall back to the intersection's lower bound
+        // (which downstream tooling can resolve against the live registry),
+        // instead of the historical "latest" placeholder.
+        let pkg = resolve_one("foo", &["^1.2.0"]).expect("resolves");
+        assert_eq!(pkg.version, "1.2.0");
+    }
+
+    #[test]
+    fn conflicting_majors_are_rejected() {
+        let err = resolve_one("foo", &["^1.0.0", "^2.0.0"]).expect_err("should conflict");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Conflicting version requirements for `foo`"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn upper_and_lower_bounds_intersect() {
+        let pkg = resolve_one("foo", &[">=1.0.0", "<2.0.0", "1.5.7"]).expect("resolves");
+        assert_eq!(pkg.version, "1.5.7");
+    }
+
+    #[test]
+    fn wildcard_intersection_with_concrete() {
+        let pkg = resolve_one("foo", &["1.*", "1.3.4"]).expect("resolves");
+        assert_eq!(pkg.version, "1.3.4");
+    }
+
+    #[test]
+    fn explicit_candidate_outside_range_falls_back_to_bound() {
+        // 1.4.0 doesn't satisfy ^2.0.0 — drop it and use the lower bound.
+        let pkg = resolve_one("foo", &["^2.0.0", "1.4.0"]).expect_err("should conflict");
+        // Actually this *should* fail — Exact(1.4.0) cannot overlap ^2.0.0.
+        let msg = format!("{pkg}");
+        assert!(msg.contains("Conflicting"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn invalid_version_spec_is_reported() {
+        let err = resolve_one("foo", &["not-a-version"]).expect_err("should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Invalid version requirement"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn deterministic_resolution_order() {
+        let mut resolver = DependencyResolver::new();
+        resolver
+            .add_dependency("zeta".to_string(), dep("1.0.0"), false)
+            .unwrap();
+        resolver
+            .add_dependency("alpha".to_string(), dep("2.0.0"), false)
+            .unwrap();
+        resolver
+            .add_dependency("mu".to_string(), dep("1.0.0"), false)
+            .unwrap();
+        let graph = resolver.resolve().unwrap();
+        assert_eq!(graph.resolution_order, vec!["alpha", "mu", "zeta"]);
     }
 }

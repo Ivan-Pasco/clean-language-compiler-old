@@ -5,10 +5,11 @@
 //! frame.ui's `emit_ui_client_init` output reaches `frontend.wasm`'s `_start`
 //! body.
 //!
-//! Layout (built in a temp dir under /tmp):
+//! Layout (built in a temp dir under /tmp), matching the current frame.ui
+//! plugin contract (manifest declares `owns = ["app/ui/web", ...]`):
 //!   main.cln                                — declares plugins + entry
-//!   app/web/pages/index.cln                 — entry module (start: printl)
-//!   app/web/components/MyToolbar.cln        — component declaration
+//!   app/ui/web/pages/index.cln              — entry module (start: printl)
+//!   app/ui/web/components/MyToolbar.cln     — component declaration
 //!
 //! Drives `compile_multi_file_client_mode` directly (the same path the
 //! `[[artifacts]]` orchestrator uses to produce `frontend.wasm`) and asserts
@@ -16,22 +17,81 @@
 //! `onMount` method somewhere reachable from `_start`. RED before the
 //! snapshot-the-build-state fix, GREEN after.
 //!
-//! Requires frame.ui 2.12.0+ installed at
-//! ~/.cleen/plugins/frame.ui/2.12.0/plugin.wasm. The test silently skips if
-//! the plugin isn't available so CI in environments without `cleen` doesn't
+//! Plugin discovery: probes `$CLEAN_FRAME_UI_PATH` first, then
+//! `$HOME/.cleen/plugins/frame.ui/<.active-version>/plugin.wasm`, then any
+//! `~/.cleen/plugins/frame.ui/*/plugin.wasm` shipped on the box. The test
+//! silently skips when no plugin is available so CI without `cleen` doesn't
 //! fail spuriously.
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Once;
+use std::sync::OnceLock;
 use wasmparser::{Operator, Parser as WasmParser, Payload};
 
-const FRAME_UI_PATH: &str = "/Users/earcandy/.cleen/plugins/frame.ui/2.12.0/plugin.wasm";
+/// Resolve the frame.ui plugin WASM in a way that works on any developer
+/// machine and in CI. Order of precedence:
+///   1. `$CLEAN_FRAME_UI_PATH` (explicit override).
+///   2. `$HOME/.cleen/plugins/frame.ui/<.active-version>/plugin.wasm`.
+///   3. The newest-looking versioned plugin under
+///      `$HOME/.cleen/plugins/frame.ui/*/plugin.wasm`.
+fn resolve_frame_ui_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("CLEAN_FRAME_UI_PATH") {
+        let path = PathBuf::from(p);
+        if path.exists() {
+            return Some(path);
+        }
+    }
 
-static SETUP: Once = Once::new();
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let plugin_root = home.join(".cleen").join("plugins").join("frame.ui");
+    if !plugin_root.exists() {
+        return None;
+    }
+
+    if let Ok(active) = fs::read_to_string(plugin_root.join(".active-version")) {
+        let active = active.trim();
+        if !active.is_empty() {
+            let candidate = plugin_root.join(active).join("plugin.wasm");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    // Fall back to the lexically-greatest version directory that contains
+    // a plugin.wasm. Lexical max is good enough for SemVer-like names with
+    // equal segment counts; ties go to the longer string so 2.12.21 beats
+    // 2.12.2.
+    let mut best: Option<(String, PathBuf)> = None;
+    if let Ok(entries) = fs::read_dir(&plugin_root) {
+        for entry in entries.flatten() {
+            let name = match entry.file_name().into_string() {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            let wasm = entry.path().join("plugin.wasm");
+            if !wasm.exists() {
+                continue;
+            }
+            match &best {
+                Some((existing, _)) if existing.as_str() >= name.as_str() => {}
+                _ => best = Some((name, wasm)),
+            }
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+fn frame_ui_path() -> Option<&'static PathBuf> {
+    static CACHED: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CACHED.get_or_init(resolve_frame_ui_path).as_ref()
+}
 
 fn frame_ui_available() -> bool {
-    PathBuf::from(FRAME_UI_PATH).exists()
+    frame_ui_path().is_some()
 }
 
 fn workspace_root() -> PathBuf {
@@ -39,20 +99,21 @@ fn workspace_root() -> PathBuf {
 }
 
 fn setup_workspace() -> PathBuf {
+    static SETUP: OnceLock<()> = OnceLock::new();
     let root = workspace_root();
-    SETUP.call_once(|| {
+    SETUP.get_or_init(|| {
         // Remove any prior run's artifacts to keep a clean repro.
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("app/web/pages")).expect("create pages dir");
-        fs::create_dir_all(root.join("app/web/components")).expect("create components dir");
+        fs::create_dir_all(root.join("app/ui/web/pages")).expect("create pages dir");
+        fs::create_dir_all(root.join("app/ui/web/components")).expect("create components dir");
 
         fs::write(
             root.join("main.cln"),
-            "package: HydrateAutoE2E\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/web/pages/index.cln\n",
+            "package: HydrateAutoE2E\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/ui/web/pages/index.cln\n",
         )
         .expect("write main.cln");
         fs::write(
-            root.join("app/web/pages/index.cln"),
+            root.join("app/ui/web/pages/index.cln"),
             "start:\n\tprintl(\"hello\")\n",
         )
         .expect("write index.cln");
@@ -62,7 +123,7 @@ fn setup_workspace() -> PathBuf {
         // form. This is what frame.ui v2.12.4+ emits from
         // expand_component once normalize_handlers is a pass-through.
         fs::write(
-            root.join("app/web/components/MyToolbar.cln"),
+            root.join("app/ui/web/components/MyToolbar.cln"),
             r##"component: tag="my-toolbar" client="on"
 	events:
 		onMount():
@@ -194,8 +255,9 @@ fn all_exported_function_names(wasm: &[u8]) -> std::collections::HashSet<String>
 fn client_init_splice_reaches_start_body() {
     if !frame_ui_available() {
         eprintln!(
-            "skipping: frame.ui plugin not installed at {} — install with `cleen frame install latest`",
-            FRAME_UI_PATH
+            "skipping: frame.ui plugin not found. Searched `$CLEAN_FRAME_UI_PATH` and \
+             `$HOME/.cleen/plugins/frame.ui/<version>/plugin.wasm`. Install with \
+             `cleen frame install latest` or point CLEAN_FRAME_UI_PATH at the wasm."
         );
         return;
     }
@@ -290,8 +352,9 @@ fn client_init_splice_reaches_start_body() {
 fn event_handlers_exported_by_bare_name() {
     if !frame_ui_available() {
         eprintln!(
-            "skipping: frame.ui plugin not installed at {} — install with `cleen frame install latest`",
-            FRAME_UI_PATH
+            "skipping: frame.ui plugin not found. Searched `$CLEAN_FRAME_UI_PATH` and \
+             `$HOME/.cleen/plugins/frame.ui/<version>/plugin.wasm`. Install with \
+             `cleen frame install latest` or point CLEAN_FRAME_UI_PATH at the wasm."
         );
         return;
     }
