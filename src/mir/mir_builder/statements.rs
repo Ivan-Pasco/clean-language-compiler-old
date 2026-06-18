@@ -619,8 +619,26 @@ impl MirBuilder {
 
                 // Return type validation already done in type checking phase
                 let return_value = if let Some(expr) = value {
-                    let value_id = self.build_expression(context, expr)?;
+                    let mut value_id = self.build_expression(context, expr)?;
                     trace!(value_id = ?value_id, "Built return expression");
+
+                    // If the function returns `any` but the expression has a
+                    // concrete type, box the value with the appropriate type
+                    // tag. Mirrors the local-assignment path (`any v = expr`)
+                    // so that `json.encode`, `any_to_string`, and the rest of
+                    // the runtime see a tagged box rather than a raw pointer.
+                    //
+                    // Note: the `return_type` field on TastStatement::Return is
+                    // the *expression*'s type (per type_inference.rs:2557), not
+                    // the function's declared return type. The function's
+                    // declared return type lives on `context.function.return_type`.
+                    if matches!(context.function.return_type, MirType::Any)
+                        && !matches!(expr.expr_type, ConcreteType::Any)
+                    {
+                        value_id =
+                            self.emit_box_any(context, value_id, &expr.expr_type, &expr.location);
+                    }
+
                     Some(MirOperand::Value(value_id))
                 } else {
                     trace!("Void return (no value)");

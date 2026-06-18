@@ -71,6 +71,10 @@ pub struct ReportAiContext {
     pub suggested_component: Option<String>,
     pub suggested_fix: Option<String>,
     pub confidence: Option<String>,
+    /// Short plain-English summary for the dashboard tooltip (≤300 chars).
+    /// Aimed at non-engineers browsing the dashboard, not the team.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub friendly_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

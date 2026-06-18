@@ -1128,6 +1128,10 @@ fn get_available_tools() -> Vec<Tool> {
                         "type": "string",
                         "description": "REQUIRED unless the bug is a pure crash with no diagnosis available. Root-cause analysis: which pipeline stage fails, why, and what the likely fix is. Does not contain user code — no privacy reason to omit it."
                     },
+                    "friendly_summary": {
+                        "type": "string",
+                        "description": "OPTIONAL but encouraged. A short plain-English summary (~80–200 chars, max 300) of what went wrong, written for non-engineers browsing the dashboard. No codenames, no API paths, no stack-trace jargon — one sentence describing what the user tried to do and what went wrong. Example: 'The page tried to read item number 5 from a list that only has 3 items, so it gave up.' Counterexample (canonical_message shape, do NOT use): 'IndexOutOfBoundsException at vector_get_unchecked(idx=5, len=3) in expand_block stage 2'. The dashboard tooltip falls back to the technical canonical_message when this is missing."
+                    },
                     "suggested_fix": {
                         "type": "string",
                         "description": "Specific fix location and change (e.g. 'src/codegen/mod.rs line 847: string comparison is inverted, change == to !='). Include when you can identify the exact line."
@@ -4183,6 +4187,7 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             "ai_analysis",
             "suggested_fix",
             "discovered_during",
+            "friendly_summary",
         ];
         for field in &optional_text_fields {
             if let Some(val) = args.get(field).and_then(|v| v.as_str()) {
@@ -4412,13 +4417,19 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
             .get("suggested_component_file")
             .and_then(|v| v.as_str())
             .map(String::from);
+        let friendly_summary = read_capped(args, "friendly_summary", 300);
         // Only attach the struct if there is at least one non-null field
-        if analysis.is_some() || suggested_fix.is_some() || suggested_component.is_some() {
+        if analysis.is_some()
+            || suggested_fix.is_some()
+            || suggested_component.is_some()
+            || friendly_summary.is_some()
+        {
             report.ai_context = Some(ReportAiContext {
                 analysis,
                 suggested_component,
                 suggested_fix,
                 confidence: None,
+                friendly_summary,
             });
         }
     }
@@ -6007,6 +6018,7 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
         suggested_component: Some("codegen".to_string()),
         suggested_fix: None,
         confidence: Some("auto-captured".to_string()),
+        friendly_summary: None,
     });
 
     if let Some(contact) = user_contact {

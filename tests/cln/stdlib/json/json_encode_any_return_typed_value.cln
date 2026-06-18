@@ -1,0 +1,52 @@
+// Test: stdlib/json/json_encode_any_return_typed_value
+// Semantic: FUNC-BUILTIN — An `any`-returning function that returns a typed
+//   value (string literal, string variable, integer, number, boolean, or
+//   function call result) must produce a properly tagged `any` box, not a
+//   raw pointer/value. `json.encode(result)` exercises the tag — if the
+//   return is unboxed, the encoder reads garbage from offset 0 and emits
+//   "null".
+// Regression: CODEGEN-ANY-RETURN-STRING-NOT-BOXED (dashboard fp 4cb4ac3cf4e7).
+//   Reported against compiler 0.30.316. The local-assignment path
+//   (`any v = string_var; return v`) already boxed correctly; only the
+//   direct return path missed the boxing. The fix mirrors the local-assignment
+//   path by routing the return value through emit_box_any when the function's
+//   declared return type is Any and the expression has a concrete type.
+//
+// Expected output:
+//   "hello"
+//   "world"
+//   "from func"
+//   42
+//   3.14
+//   true
+
+start:
+	print(json.encode(returnStringLiteral()))
+	print(json.encode(returnStringVar()))
+	print(json.encode(returnStringCall()))
+	print(json.encode(returnInteger()))
+	print(json.encode(returnNumber()))
+	print(json.encode(returnBoolean()))
+
+functions:
+	any returnStringLiteral()
+		return "hello"
+
+	any returnStringVar()
+		string s = "world"
+		return s
+
+	any returnStringCall()
+		return makeStr()
+
+	string makeStr()
+		return "from func"
+
+	any returnInteger()
+		return 42
+
+	any returnNumber()
+		return 3.14
+
+	any returnBoolean()
+		return true
