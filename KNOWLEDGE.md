@@ -118,3 +118,27 @@ Three workarounds assessed and resolved, two remain as known limitations:
 **Known limitations (kept as-is):**
 4. ~~Ptr(Void) type ambiguity~~ — **FIXED (2026-04-12)**: MIR lowering now emits `MirType::Any` instead of `Ptr(Void)` for unresolved generics and complex type fallbacks. Codegen handles `MirType::Any` as i32 pointer to boxed value. Legacy `Ptr(Void)` checks retained for backward compatibility.
 5. **Name conversion fallback** (~line 2666): Underscore/dot conversion for function lookups. Defensive code that doesn't cause bugs. Rarely triggered.
+
+---
+
+## 11. Bridge Contract Conformance — How It Stays Bulletproof (LANDED 2026-06-18)
+
+**What:** Four-layer enforcement chain that makes bridge drift a build failure, not a dashboard report. The chain is the architectural answer to the recurring framework-regression pattern in 2026-04 to 2026-06.
+
+| Layer | What it catches | Where it runs |
+|---|---|---|
+| Registry (`foundation/platform-architecture/function-registry.toml`) | Single source of truth | spec change control |
+| Plugin-manifest conformance (`framework_plugins_match_registry`) | Plugin `[bridge]` drift from registry | `cargo test` |
+| **Host-registration conformance (`test_host_registration_conformance`)** | **In-repo host signature + param-name drift from registry** | `cargo test` |
+| **Compiler-emission conformance (`test_compiler_emitted_imports_conformance`)** | **Compiler emits imports not in registry, or with wrong signature** | `cargo test` |
+
+**Where:** `src/plugins/host_conformance.rs` (parser + checker), `src/plugins/registry_loader.rs` (registry with `param_names`), `tests/test_host_registration_conformance.rs`, `tests/test_compiler_emitted_imports_conformance.rs`.
+
+**Watch for:**
+- Adding a `linker.func_wrap(...)` registration in `src/plugins/wasm_adapter.rs` or `src/bin/wasmtime_runner.rs` — host_conformance will fail if the registration disagrees with the registry. Either add the registry entry (with developer approval) or align the closure to the registry.
+- Argument-order drift like `mem_alloc(size, _align)` vs registry `(type_id, size)` — only caught when the registry entry has `param_names = [...]`. Currently annotated for the `memory_runtime` namespace; expand coverage as new entry classes need protection.
+- Cross-component hosts (clean-server, clean-node-server) — not covered here; cross-component prompts in `foundation/management/cross-component-prompts/` track the work to extend the chain to them.
+
+**History:** Built in response to the diagnostic that identified plugin-contract drift across four locations as the dominant source of recurring framework bugs. The infrastructure pre-existed for plugin-manifest conformance (2026-04 to 2026-06); the host and compiler-emission layers complete the contract chain.
+
+**Origin bug:** `COMPILER-MEM-ALLOC-NO-GROW`. The fix surfaced two distinct drifts (`(size, _align)` vs `(type_id, size)` AND missing `memory.grow`), both invisible to type-only checking. The semantic `param_names` layer was added specifically to catch the first.

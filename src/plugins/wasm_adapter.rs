@@ -1524,10 +1524,15 @@ impl WasmPluginAdapter {
         )?;
 
         // env.string.repeat - Repeat string n times
+        //
+        // Registry signature: `string_repeat(str_ptr: i32, str_len: i32, count: i32)`.
+        // `str_len` is documented as "raw length (ignored)" — the host reads
+        // the length from the 4-byte prefix at `str_ptr`. Kept in the
+        // signature to match the registry so host conformance checks pass.
         linker.func_wrap(
             "env",
             "string.repeat",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, count: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32, _str_len: i32, count: i32| -> i32 {
                 let string_val = {
                     let memory = caller
                         .get_export("memory")
@@ -1904,13 +1909,47 @@ impl WasmPluginAdapter {
     // MEMORY_RUNTIME NAMESPACE - Memory management
     // =========================================
     fn register_memory_runtime_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
-        // memory_runtime.mem_alloc - Allocate memory
+        // memory_runtime.mem_alloc(type_id: i32, size: i32) -> i32
+        //
+        // Signature per foundation/spec bridge contract and the compiler
+        // emission in src/codegen/mir_codegen/instructions.rs (Alloca lowering):
+        // the first WASM arg is the type tag (for telemetry, hosts may ignore)
+        // and the second is the byte count to allocate.
+        //
+        // The host must:
+        //   1. bump the shared allocator by `size`,
+        //   2. grow linear memory if the returned range exceeds current
+        //      memory size — otherwise writes by the plugin to the returned
+        //      pointer trap once cumulative allocations cross the initial
+        //      memory boundary (32 pages / 2 MB).
+        // Returns 0 on any failure.
         linker.func_wrap(
             "memory_runtime",
             "mem_alloc",
-            |mut caller: Caller<'_, PluginState>, size: i32, _align: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, _type_id: i32, size: i32| -> i32 {
+                if size <= 0 {
+                    return 0;
+                }
+                let size = size as usize;
+
                 let state = caller.data_mut();
-                state.allocate(size as usize) as i32
+                let ptr = state.allocate(size);
+
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => return 0,
+                };
+
+                let current_size = memory.data_size(&caller);
+                let required_size = ptr + size;
+                if required_size > current_size {
+                    let pages_needed = (required_size - current_size).div_ceil(65536);
+                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        return 0;
+                    }
+                }
+
+                ptr as i32
             },
         )?;
 

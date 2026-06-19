@@ -54,6 +54,13 @@ pub struct RegistryFunction {
     pub module: String,
     #[serde(default)]
     pub params: Vec<String>,
+    /// Optional semantic names for each entry in `params`, in the same order.
+    /// When present, host conformance tests check that the corresponding
+    /// host closure uses the same names — this catches argument-order drift
+    /// that pure-type checking can't (e.g. swapping `(type_id, size)` for
+    /// `(size, _align)` when both expand to `(i32, i32)` at the WASM level).
+    #[serde(default)]
+    pub param_names: Vec<String>,
     #[serde(default)]
     pub returns: String,
     #[serde(default)]
@@ -70,6 +77,7 @@ pub struct RegistryFunction {
 pub struct RegistryIndex {
     version: String,
     by_lookup_name: HashMap<String, RegistryFunction>,
+    canonical_order: Vec<String>,
 }
 
 impl RegistryIndex {
@@ -91,8 +99,10 @@ impl RegistryIndex {
         let doc: RegistryDocument =
             toml::from_str(source).map_err(|e| RegistryError::ParseFailed(e.to_string()))?;
         let mut by_lookup_name = HashMap::with_capacity(doc.functions.len() * 2);
+        let mut canonical_order = Vec::with_capacity(doc.functions.len());
         for f in &doc.functions {
             by_lookup_name.insert(f.name.clone(), f.clone());
+            canonical_order.push(f.name.clone());
             for alias in &f.aliases {
                 by_lookup_name
                     .entry(alias.clone())
@@ -102,6 +112,7 @@ impl RegistryIndex {
         Ok(Self {
             version: doc.meta.version,
             by_lookup_name,
+            canonical_order,
         })
     }
 
@@ -111,6 +122,15 @@ impl RegistryIndex {
 
     pub fn lookup(&self, name: &str) -> Option<&RegistryFunction> {
         self.by_lookup_name.get(name)
+    }
+
+    /// Iterate over every canonical `[[functions]]` entry in registry order.
+    /// Each entry appears once (aliases are not yielded). Used by host and
+    /// compiler conformance checks to enumerate the full contract surface.
+    pub fn functions(&self) -> impl Iterator<Item = &RegistryFunction> {
+        self.canonical_order
+            .iter()
+            .filter_map(move |n| self.by_lookup_name.get(n))
     }
 
     /// Verify that a plugin-declared bridge function matches the registry.

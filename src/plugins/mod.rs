@@ -78,6 +78,7 @@ pub mod builtin_assemblers;
 mod discovery;
 pub mod enforcement;
 pub mod expander;
+pub mod host_conformance;
 pub mod language_registry;
 pub mod plugin_abi;
 mod registry;
