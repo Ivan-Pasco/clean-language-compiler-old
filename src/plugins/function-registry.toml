@@ -1026,10 +1026,10 @@ layer       = 2
 category    = "file_io"
 module      = "env"
 params      = ["string", "string"]
-returns     = "i32"
+returns     = "boolean"
 aliases     = []
 hosts       = ["server"]
-description = "Write content to file; path and content as (ptr+len) pairs; returns 0 on success, -1 on error"
+description = "Write content to file; path and content as (ptr+len) pairs; returns 1 on success, 0 on failure"
 
 [[functions]]
 name        = "file_exists"
@@ -1048,10 +1048,10 @@ layer       = 2
 category    = "file_io"
 module      = "env"
 params      = ["string"]
-returns     = "i32"
+returns     = "boolean"
 aliases     = []
 hosts       = ["server"]
-description = "Delete file; path as (ptr+len); returns 0 on success, -1 on error"
+description = "Delete file; path as (ptr+len); returns 1 on success, 0 on failure"
 
 [[functions]]
 name        = "file_append"
@@ -1059,10 +1059,10 @@ layer       = 2
 category    = "file_io"
 module      = "env"
 params      = ["string", "string"]
-returns     = "i32"
+returns     = "boolean"
 aliases     = []
 hosts       = ["server"]
-description = "Append content to file; path and content as (ptr+len) pairs; returns 0 on success, -1 on error"
+description = "Append content to file; path and content as (ptr+len) pairs; returns 1 on success, 0 on failure"
 
 # ============================================================
 # LAYER 2 - HTTP CLIENT (22 functions, all canonical)
