@@ -1324,10 +1324,22 @@ impl MirBuilder {
                     current_scope.insert(iterator_name.clone(), iterator_value_id);
                 }
 
-                // Create local for iterator variable
+                // Create local for iterator variable.
+                //
+                // Derive the MIR type from the iterable's element type. The element is
+                // loaded out of the list and bound to this local; downstream codegen
+                // (e.g. print, method dispatch) reads the local's type to pick the
+                // right runtime path. Hardcoding I32 here breaks list<string> iteration
+                // because the string-pointer element ends up routed through the integer
+                // print path (RUNTIME_ITERATE_LIST_STRING_CRASH).
+                use crate::typechecker::tast::ConcreteType;
+                let element_mir_type = match &iterable.expr_type {
+                    ConcreteType::Array(elem) => MirType::from_concrete_type(elem),
+                    _ => MirType::I32,
+                };
                 let iterator_local = MirLocal {
                     name: Some(iterator_name.clone()),
-                    local_type: MirType::I32, // Iterator index is always i32 (list elements accessed by runtime)
+                    local_type: element_mir_type.clone(),
                     is_mutable: false,
                     location: location.clone(),
                 };
@@ -1434,13 +1446,18 @@ impl MirBuilder {
                 // NOTE: Get the address of the element, then LOAD the value
                 // GetElementPtr returns a pointer, not the value itself!
 
-                // Step 1: Get element pointer
+                // Step 1: Get element pointer.
+                // The pointer carries the element MIR type as its inner T — GEP codegen
+                // reads it to pick the right per-element stride (4 bytes for i32-class,
+                // 8 bytes for f64/i64). Hardcoding Ptr<I32> here made list<number>
+                // iteration decode every element after the first as garbage
+                // (RUNTIME_ITERATE_LIST_NUMBER_WRONG_LOAD).
                 let element_ptr_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
                 self.register_temp_local(
                     context,
                     element_ptr_value_id,
-                    MirType::Ptr(Box::new(MirType::I32)),
+                    MirType::Ptr(Box::new(element_mir_type.clone())),
                     location.clone(),
                 );
 

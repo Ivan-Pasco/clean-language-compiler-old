@@ -327,6 +327,25 @@ impl MirCodeGenerator<'_> {
                     }
                 }
 
+                // For arrays we need a per-element byte stride. The GEP destination is
+                // typed as Ptr<element_type> by the MIR builder, so the inner T tells
+                // us the element MIR type. Elements that lower to f64/i64 must use an
+                // 8-byte stride; everything else (i32-class types and pointers, which
+                // are i32 in WASM MVP) uses 4. The MIR-builder side hardcoded Ptr<I32>
+                // for years, which is why list<number>/list<integer64> read garbage
+                // after element 0 (RUNTIME_ITERATE_LIST_NUMBER_WRONG_LOAD).
+                let element_stride: i32 = if *is_array {
+                    match instruction.dest.and_then(|d| self.value_to_type.get(&d)) {
+                        Some(MirType::Ptr(inner)) => match **inner {
+                            MirType::F64 | MirType::I64 | MirType::U64 => 8,
+                            _ => 4,
+                        },
+                        _ => 4,
+                    }
+                } else {
+                    0 // unused for struct field access
+                };
+
                 // For each index, load it and generate pointer arithmetic
                 for (i, index) in indices.iter().enumerate() {
                     debug_mir!(index_num = i, index = ?index, "Processing index");
@@ -335,15 +354,16 @@ impl MirCodeGenerator<'_> {
                             debug_mir!(index_num = i, "Index loaded successfully");
                             // Calculate element address
                             if *is_array {
-                                // For arrays: multiply index by 4 (element size) and add header
-                                // Array elements are at array_ptr + 16 + (index * 4)
-                                self.current_instructions.push(Instruction::I32Const(4));
+                                // For arrays: multiply index by element_stride and add header
+                                // Array elements are at array_ptr + 16 + (index * stride)
+                                self.current_instructions
+                                    .push(Instruction::I32Const(element_stride));
                                 self.current_instructions.push(Instruction::I32Mul);
                                 self.current_instructions.push(Instruction::I32Add);
                                 // Clean Language array layout:
                                 //   Offset 0-3: Type marker (0)
                                 //   Offset 4-7: Array length (i32)
-                                //   Offset 8-11: Element size (4)
+                                //   Offset 8-11: Element size hint (ignored — driven by Ptr<T>)
                                 //   Offset 12-15: Unused
                                 //   Offset 16+: Elements start here
                                 self.current_instructions.push(Instruction::I32Const(16));

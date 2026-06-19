@@ -3231,12 +3231,30 @@ impl MirBuilder {
                         let result_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
 
+                        // Determine the element type from the array expression type.
+                        // We need this BEFORE registering the GEP result so that the
+                        // pointer can carry the element type — codegen reads it to
+                        // pick the right per-element stride (4 bytes for i32-class
+                        // elements, 8 bytes for i64/f64). Hardcoding Ptr<I32> here
+                        // makes lists of `number` (f64) decode every element after
+                        // the first as garbage (RUNTIME_ITERATE_LIST_NUMBER_WRONG_LOAD).
+                        let element_type = match &array.expr_type {
+                            ConcreteType::Array(elem_type) => self.convert_concrete_type(elem_type),
+                            ConcreteType::Matrix(elem_type) => {
+                                // Matrix is 2D array, so element is 1D array
+                                MirType::Ptr(Box::new(self.convert_concrete_type(elem_type)))
+                            }
+                            _ => MirType::I32, // Default fallback
+                        };
+
                         // NOTE: Register the pointer result as a local
-                        // GetElementPtr returns a pointer to the array element
+                        // GetElementPtr returns a pointer to the array element.
+                        // The inner T encodes the element MIR type so that
+                        // GetElementPtr codegen can pick the right stride.
                         self.register_temp_local(
                             context,
                             result_id,
-                            MirType::Ptr(Box::new(MirType::I32)), // Pointer to element
+                            MirType::Ptr(Box::new(element_type.clone())),
                             expression.location.clone(),
                         );
 
@@ -3255,17 +3273,6 @@ impl MirBuilder {
                         // Load the value from the array element pointer
                         let load_result_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
-
-                        // NOTE: Register the loaded value as a local
-                        // Determine the type from the array expression type
-                        let element_type = match &array.expr_type {
-                            ConcreteType::Array(elem_type) => self.convert_concrete_type(elem_type),
-                            ConcreteType::Matrix(elem_type) => {
-                                // Matrix is 2D array, so element is 1D array
-                                MirType::Ptr(Box::new(self.convert_concrete_type(elem_type)))
-                            }
-                            _ => MirType::I32, // Default fallback
-                        };
 
                         self.register_temp_local(
                             context,

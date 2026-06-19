@@ -1,0 +1,17 @@
+// Test: control/loops/iterate_list_string
+// Grammar: iterate_statement (foundation/spec/grammar.ebnf)
+// Regression for RUNTIME_ITERATE_LIST_STRING_CRASH (dashboard fingerprint db315f11cb8e):
+// the iterate-over-list MIR builder used to type the loop variable as I32 unconditionally,
+// so for list<string> the codegen took the integer print path and emitted
+// int_to_string(elementPtr) -> printl, producing the pointer value as decimal instead of
+// the string contents. The loop variable's MIR type must come from the iterable's element type.
+//
+// Expected output:
+//   Alice
+//   Bob
+//   Carol
+
+start:
+	list<string> names = ["Alice", "Bob", "Carol"]
+	iterate name in names
+		print(name)
