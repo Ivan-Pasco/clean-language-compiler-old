@@ -1,0 +1,35 @@
+// Test: control/loops/iterate_split_list_string
+// Grammar: iterate_statement (foundation/spec/grammar.ebnf)
+// Spec: foundation/spec/stdlib-reference.md — string.split, list iteration
+//
+// Regression guard for the second RUNTIME_ITERATE_LIST_STRING_CRASH report
+// (dashboard fingerprint 0c6cd3cf4af0). The first iterate-string fix
+// (937e1b96 in v0.30.323, regressions guarded by iterate_list_string.cln)
+// targeted iteration over a LITERAL list<string>. A follow-up report
+// claimed iteration over a list<string> obtained from string.split() still
+// trapped. The trap could not be reproduced on 0.30.324 (source-identical
+// to 0.30.323 — no source changes between those releases), strongly
+// suggesting the reporter had a stale install.
+//
+// This test exercises that exact code path so any future regression in
+// iteration over split-derived lists is caught immediately.
+//
+// Expected output:
+//   parts.length() = 4
+//   a
+//   b
+//   c
+//   d
+//   iter_count = 4
+//   DONE
+
+start:
+	string sample = "a```b```c```d"
+	list<string> parts = sample.split("```")
+	print("parts.length() = " + parts.length().toString())
+	integer count = 0
+	iterate part in parts
+		print(part)
+		count = count + 1
+	print("iter_count = " + count.toString())
+	print("DONE")
