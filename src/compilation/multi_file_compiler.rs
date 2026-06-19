@@ -341,7 +341,20 @@ impl MultiFileCompiler {
 
             let mut assemble_output = crate::plugins::plugin_abi::AssembleOutput::default();
             if let Some(ref registry) = self.config.plugin_registry {
-                let hook_output = registry.run_assemble_hooks(&assemble_input);
+                let (hook_output, hook_errors) = registry.run_assemble_hooks(&assemble_input);
+                // Any plugin's `assemble` failure aborts the build with a
+                // proper diagnostic rather than silently producing an empty
+                // WASM. See COMPILER-ASSEMBLE-ERROR-SWALLOWED for the prior
+                // bug where these errors were discarded.
+                if !hook_errors.is_empty() {
+                    return Err(hook_errors
+                        .into_iter()
+                        .map(|(plugin_name, err)| CompilerError::PluginError {
+                            message: format!("plugin `{plugin_name}` assemble hook failed: {err}"),
+                            location: None,
+                        })
+                        .collect());
+                }
                 assemble_output
                     .injected_sources
                     .extend(hook_output.injected_sources);

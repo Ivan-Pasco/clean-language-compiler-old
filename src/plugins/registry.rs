@@ -557,29 +557,63 @@ impl PluginRegistry {
     /// Called once per compilation after source discovery but before parsing.
     /// Results from all plugins are combined: injected sources are appended,
     /// transformed sources are merged (last write wins for duplicate paths).
+    /// Run every loaded plugin's `assemble` hook and merge the outputs.
+    ///
+    /// Returns `(combined_output, errors)`:
+    /// - `combined_output` aggregates successful plugins' contributions so a
+    ///   single broken plugin does not erase work from the rest.
+    /// - `errors` carries every per-plugin `Err` so the caller can decide
+    ///   whether to fail the build (default) or downgrade to a diagnostic.
+    ///
+    /// Prior behaviour silently discarded `Err` results, producing builds
+    /// that "succeeded" with empty injected_sources / transformed_sources —
+    /// the failure mode tracked as COMPILER-ASSEMBLE-ERROR-SWALLOWED. Every
+    /// caller MUST inspect the returned error vec.
     pub fn run_assemble_hooks(
         &self,
         input: &crate::plugins::plugin_abi::AssembleInput,
-    ) -> crate::plugins::plugin_abi::AssembleOutput {
+    ) -> (
+        crate::plugins::plugin_abi::AssembleOutput,
+        Vec<(String, PluginError)>,
+    ) {
         use crate::plugins::plugin_abi::AssembleOutput;
         use std::collections::HashSet;
 
         let mut combined = AssembleOutput::default();
+        let mut errors: Vec<(String, PluginError)> = Vec::new();
         // Deduplicate by raw pointer so each plugin is called exactly once
         // even when registered under multiple block names.
         let mut seen: HashSet<*const dyn FrameworkPlugin> = HashSet::new();
         for plugin in self.handlers.values() {
             let ptr = Arc::as_ptr(plugin);
-            if seen.insert(ptr) {
-                if let Ok(output) = plugin.assemble(input) {
+            if !seen.insert(ptr) {
+                continue;
+            }
+            let plugin_name = plugin.name().to_string();
+            match plugin.assemble(input) {
+                Ok(output) => {
+                    tracing::debug!(
+                        plugin = %plugin_name,
+                        injected = output.injected_sources.len(),
+                        transformed = output.transformed_sources.len(),
+                        "plugin assemble produced",
+                    );
                     combined.injected_sources.extend(output.injected_sources);
                     combined
                         .transformed_sources
                         .extend(output.transformed_sources);
                 }
+                Err(e) => {
+                    tracing::error!(
+                        plugin = %plugin_name,
+                        error = %e,
+                        "plugin assemble failed; the build will surface this as a compile error",
+                    );
+                    errors.push((plugin_name, e));
+                }
             }
         }
-        combined
+        (combined, errors)
     }
 
     /// Get all loaded plugin manifests

@@ -632,8 +632,16 @@ impl MirBuilder {
                     // the *expression*'s type (per type_inference.rs:2557), not
                     // the function's declared return type. The function's
                     // declared return type lives on `context.function.return_type`.
+                    //
+                    // `null` is excluded from boxing: the language contract is
+                    // that `null` round-trips as a raw 0 at the WASM boundary
+                    // so callers can write `if value != 0` against an any-
+                    // returning function. Boxing null produced a non-zero
+                    // heap pointer and silently broke every auto-generated
+                    // guard handler in frame.ui (page-render returned 200 +
+                    // empty body — CODEGEN-ANY-RETURN-NULL-BOXED-AS-NONZERO-BREAKS-GUARD-CHECK).
                     if matches!(context.function.return_type, MirType::Any)
-                        && !matches!(expr.expr_type, ConcreteType::Any)
+                        && !matches!(expr.expr_type, ConcreteType::Any | ConcreteType::Null)
                     {
                         value_id =
                             self.emit_box_any(context, value_id, &expr.expr_type, &expr.location);
