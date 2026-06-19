@@ -13,15 +13,16 @@ use super::{ALIGNMENT, HEAP_PTR_GLOBAL};
 ///   - local 0: size (i32) - requested allocation size
 ///
 /// Returns:
-///   - i32: pointer to allocated memory
+///   - i32: pointer to allocated memory, or 0 (null) on allocation failure
 ///
 /// Algorithm:
 ///   1. Read current heap pointer from global 0
 ///   2. Align the requested size to 8 bytes
 ///   3. Calculate new heap pointer
 ///   4. Grow memory if new_ptr exceeds current memory size
-///   5. Store new heap pointer
-///   6. Return original pointer
+///   5. If memory.grow fails (returns -1), return 0 without advancing heap_ptr
+///   6. Store new heap pointer
+///   7. Return original pointer
 pub fn gen_malloc() -> Vec<Instruction<'static>> {
     vec![
         // local 0: size (parameter)
@@ -63,8 +64,17 @@ pub fn gen_malloc() -> Vec<Instruction<'static>> {
         Instruction::I32Const(1),
         Instruction::I32Add,        // +1 to ensure enough
         Instruction::MemoryGrow(0), // grow memory, returns old size or -1
-        Instruction::Drop,          // ignore result (we proceed regardless)
-        Instruction::End,
+        // If memory.grow returned -1, the host refused to grow (declared max or
+        // host-side cap reached). Return 0 (null) without advancing heap_ptr so
+        // callers / host bridges can detect failure cleanly instead of writing
+        // through an out-of-bounds pointer.
+        Instruction::I32Const(-1),
+        Instruction::I32Eq,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End, // end of grow-failed check
+        Instruction::End, // end of needs-grow check
         // Store new heap pointer
         Instruction::LocalGet(3),
         Instruction::GlobalSet(HEAP_PTR_GLOBAL),
@@ -161,6 +171,48 @@ mod tests {
         assert!(!instructions.is_empty());
         // Should start with GlobalGet to read heap pointer
         assert!(matches!(instructions[0], Instruction::GlobalGet(0)));
+    }
+
+    /// Regression guard for MALLOC-IGNORES-MEMORY-GROW-FAILURE.
+    /// After `memory.grow`, the allocator MUST check the return value for -1
+    /// and bail out by returning a null pointer. A bare `Drop` after
+    /// `memory.grow` corrupts the heap pointer when the host caps memory.
+    #[test]
+    fn test_malloc_handles_memory_grow_failure() {
+        let instructions = gen_malloc();
+        let grow_idx = instructions
+            .iter()
+            .position(|i| matches!(i, Instruction::MemoryGrow(0)))
+            .expect("malloc must call memory.grow");
+
+        // The instruction immediately after memory.grow must NOT be a Drop —
+        // that's the bug we fixed. It must consume the grow result with a
+        // comparison so failure (-1) is detected.
+        let after_grow = &instructions[grow_idx + 1..];
+        assert!(
+            !matches!(after_grow.first(), Some(Instruction::Drop)),
+            "memory.grow result must not be silently dropped (MALLOC-IGNORES-MEMORY-GROW-FAILURE)"
+        );
+
+        // After memory.grow, the allocator must compare against -1 and
+        // return 0 (null) on failure. Verify the sequence is present.
+        let has_failure_check = after_grow.windows(4).any(|w| {
+            matches!(w[0], Instruction::I32Const(-1))
+                && matches!(w[1], Instruction::I32Eq)
+                && matches!(w[2], Instruction::If(_))
+                && matches!(w[3], Instruction::I32Const(0))
+        });
+        assert!(
+            has_failure_check,
+            "malloc must check memory.grow result for -1 and return null (0) on failure"
+        );
+
+        // And the failure branch must use Return to exit before advancing heap_ptr.
+        let has_early_return = after_grow.iter().any(|i| matches!(i, Instruction::Return));
+        assert!(
+            has_early_return,
+            "malloc must Return early on grow failure so heap_ptr is not advanced"
+        );
     }
 
     #[test]
