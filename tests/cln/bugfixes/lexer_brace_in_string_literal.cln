@@ -1,0 +1,21 @@
+// Test: bugfixes/lexer_brace_in_string_literal
+// Grammar: string_part (foundation/spec/grammar.ebnf §1.6)
+// Regression for LEXER_BRACE_IN_NON_HTML_STRING (dashboard fingerprint bf15a0b9dec7):
+// the pre-scan in read_string_literal used to mark any "{<alpha>" as the start of an
+// interpolation expression. A DSL snippet like "color: { family: Inter, weight: 700 }"
+// then failed with `Invalid character ':'` because the expression scanner does not
+// accept ':'. The pre-scan now walks the braced content and falls back to "literal '{'"
+// whenever it sees a character that never appears in a Clean expression.
+//
+// Expected output:
+//   display: { family: Inter, weight: 700 }
+//   {key: value}
+//   plain string
+
+start:
+	string sample = "display: { family: Inter, weight: 700 }"
+	print(sample)
+	string compact = "{key: value}"
+	print(compact)
+	string plain = "plain string"
+	print(plain)

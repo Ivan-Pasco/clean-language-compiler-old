@@ -559,10 +559,59 @@ impl<'a> SpecificationLexer<'a> {
                     self.skip_whitespace();
 
                     if let Some(&next_ch) = self.peek() {
-                        // Valid interpolation starts with letter or underscore; expressions are allowed directly
+                        // A leading letter/underscore is the cheap heuristic for "this might
+                        // be an interpolation expression". But that alone is not enough —
+                        // a string like "color: { family: Inter, weight: 700 }" also starts
+                        // with a letter after `{` yet contains characters (':') that never
+                        // appear inside a Clean expression. Walk the braced content; if we
+                        // see a definite non-expression character or the brace never closes,
+                        // fall back to treating '{' as a literal byte. That way the user
+                        // does not have to escape every '{' in DSL/config snippets.
                         if next_ch.is_alphabetic() || next_ch == '_' {
-                            has_interpolation = true;
-                            break;
+                            let mut sub_depth: u32 = 1;
+                            let mut looks_like_interpolation = true;
+                            while let Some(&c) = self.peek() {
+                                match c {
+                                    '{' => {
+                                        sub_depth += 1;
+                                        self.advance();
+                                    }
+                                    '}' => {
+                                        sub_depth -= 1;
+                                        self.advance();
+                                        if sub_depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    // End-of-string or newline before the matching brace —
+                                    // user did not close the interpolation, treat as literal.
+                                    '"' | '\n' => {
+                                        looks_like_interpolation = false;
+                                        break;
+                                    }
+                                    // Characters that never appear in a Clean expression.
+                                    // ':' is the block-header marker; ';' / '#' / '@' / '$'
+                                    // are not in the expression grammar either. Their
+                                    // presence means the braces are not interpolation.
+                                    ':' | ';' | '#' | '@' | '$' | '?' => {
+                                        looks_like_interpolation = false;
+                                        break;
+                                    }
+                                    _ => {
+                                        self.advance();
+                                    }
+                                }
+                            }
+                            if looks_like_interpolation {
+                                has_interpolation = true;
+                                break;
+                            }
+                            // Not interpolation — treat the original '{' as literal and keep
+                            // scanning. The state-restore at the end of the pre-scan will
+                            // replay the bytes through read_simple_string anyway, so we just
+                            // need to make sure we do not flip has_interpolation here.
+                            content.push('{');
+                            continue;
                         } else {
                             // Not interpolation - treat '{' as literal
                             content.push('{');
