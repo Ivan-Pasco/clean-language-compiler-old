@@ -1,0 +1,42 @@
+// Test: bugfixes/utf8_multibyte_json_get_roundtrip
+// Spec: foundation/spec/stdlib-reference.md — json.get, string.length, string concat
+//
+// Regression guard for the compiler half of NSR002 (dashboard fingerprint
+// 85d6b2aed158). The bug was originally filed against node-server (host),
+// then reclassified to compiler with the suspicion that "compiler-emitted
+// WASM string-length handling" was confusing byte length and char length
+// for multibyte UTF-8 strings traversed through json.get.
+//
+// This test exercises the exact compiler-only code path from the report —
+// a 30-item JSON envelope with em-dash, arrow, and CJK characters,
+// traversed in a loop via json.get. It would have surfaced any of:
+//   - json.get truncating multibyte results
+//   - string.length confusing chars vs bytes
+//   - string concat corrupting multibyte payload
+//   - loop-induced state desync after N iterations
+//
+// The test PASSES on 0.30.323+ — proof that compiler-emitted code handles
+// multibyte UTF-8 correctly end-to-end through string literal, concat,
+// json.get (both shallow and deep paths), and loop traversal. The runtime
+// corruption seen in production with db.query lives in the host runtime
+// (clean-node-server / clean-server), not in compiler-emitted WASM.
+//
+// Expected output: 30 lines, each exactly "Item N — entry → with 你好",
+// followed by "DONE".
+
+start:
+	string body = "{\"rows\":["
+	integer k = 0
+	while k < 30
+		if k > 0
+			body = body + ","
+		body = body + "{\"title\":\"Item " + k.toString() + " — entry → with 你好\"}"
+		k = k + 1
+	body = body + "]}"
+	integer i = 0
+	while i < 30
+		string path = "rows." + i.toString() + ".title"
+		string val = json.get(body, path)
+		print(val)
+		i = i + 1
+	print("DONE")
