@@ -83,6 +83,55 @@ pub fn gen_malloc() -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for native free
+///
+/// The bump allocator cannot reclaim individual blocks — by design.
+/// `free` is provided as a no-op so that host bridges which guard reclaim
+/// with `if (state.exports.free)` (e.g. cln-node-server's `memory-runtime.js`)
+/// proceed instead of silently skipping reclamation. Per-request reclaim is
+/// achieved via the `scope_push` / `scope_pop` pair below.
+///
+/// Parameters:
+///   - local 0: ptr (i32) — ignored
+///
+/// Returns: void
+pub fn gen_free() -> Vec<Instruction<'static>> {
+    // No-op. The ptr argument is consumed by WASM as a function parameter,
+    // not from the operand stack, so no Drop is required.
+    vec![]
+}
+
+/// Generate instructions for native scope_push
+///
+/// Returns the current `__heap_ptr` value so the host can use it as a
+/// save-point. Hosts wrap each unit of work (e.g. an HTTP request) with
+/// `let mark = scope_push();` … work … `scope_pop(mark);` to reclaim every
+/// allocation made during that unit of work in O(1).
+///
+/// Parameters: none
+/// Returns: i32 — current heap pointer (the save-point)
+pub fn gen_scope_push() -> Vec<Instruction<'static>> {
+    vec![Instruction::GlobalGet(HEAP_PTR_GLOBAL)]
+}
+
+/// Generate instructions for native scope_pop
+///
+/// Resets `__heap_ptr` to the supplied save-point. Every allocation made
+/// after the matching `scope_push` becomes reclaimable (and will be
+/// overwritten by subsequent allocations). The caller is responsible for
+/// not holding references to memory allocated within the popped scope.
+///
+/// Parameters:
+///   - local 0: saved_ptr (i32) — value previously returned by `scope_push`
+///
+/// Returns: void
+pub fn gen_scope_pop() -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(0),
+        Instruction::GlobalSet(HEAP_PTR_GLOBAL),
+    ]
+}
+
 /// Generate instructions for native memcpy
 ///
 /// Parameters:
@@ -212,6 +261,64 @@ mod tests {
         assert!(
             has_early_return,
             "malloc must Return early on grow failure so heap_ptr is not advanced"
+        );
+    }
+
+    /// Regression guard for COMPILER-NO-FREE-EXPORT-LEAKS-WASM-MEMORY.
+    /// The compiler must emit a `free` export so host bridges that guard
+    /// reclamation with `if (state.exports.free)` proceed instead of silently
+    /// skipping reclaim.
+    #[test]
+    fn test_free_is_a_noop_body() {
+        // `free` is intentionally a no-op: a bump allocator cannot reclaim
+        // individual blocks. The body must be empty so that wasm-encoder
+        // produces a trivial function with no operand-stack effect.
+        let instructions = gen_free();
+        assert!(
+            instructions.is_empty(),
+            "gen_free must produce zero instructions — bump allocator cannot \
+             reclaim per-block; per-request reclaim is via scope_push/scope_pop"
+        );
+    }
+
+    /// Regression guard for the scope-based reclaim contract.
+    /// `scope_push` must read `__heap_ptr` exactly once and leave that value
+    /// as the only operand on the stack at return.
+    #[test]
+    fn test_scope_push_returns_heap_ptr() {
+        let instructions = gen_scope_push();
+        assert_eq!(
+            instructions.len(),
+            1,
+            "scope_push must be a single GlobalGet — any additional ops would \
+             change the save-point semantics callers depend on"
+        );
+        assert!(
+            matches!(instructions[0], Instruction::GlobalGet(HEAP_PTR_GLOBAL)),
+            "scope_push must read HEAP_PTR_GLOBAL — reading any other global \
+             would return the wrong save-point"
+        );
+    }
+
+    /// Regression guard for `scope_pop`: it must write its argument back to
+    /// `__heap_ptr` so allocations made after the matching `scope_push` are
+    /// reclaimed.
+    #[test]
+    fn test_scope_pop_restores_heap_ptr() {
+        let instructions = gen_scope_pop();
+        // Must consume local 0 and write it to HEAP_PTR_GLOBAL.
+        assert!(
+            instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::LocalGet(0))),
+            "scope_pop must read its saved-ptr argument (local 0)"
+        );
+        assert!(
+            instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::GlobalSet(HEAP_PTR_GLOBAL))),
+            "scope_pop must write HEAP_PTR_GLOBAL — without this the bump \
+             pointer never moves back and memory is never reclaimed"
         );
     }
 

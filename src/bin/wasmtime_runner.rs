@@ -942,23 +942,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Mock release - does nothing (use scope-based release instead)
     })?;
 
-    // Scope-based memory management for arena allocation
-    // Push a scope mark - saves current allocation offset for later reset
-    linker.func_wrap("memory_runtime", "mem_scope_push", || {
-        let next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
-        let mut scope_marks = SCOPE_MARKS.lock().unwrap();
-        scope_marks.push(*next_offset);
-    })?;
+    // Scope-based memory management for arena allocation.
+    //
+    // The mark must capture BOTH the host-side `NEXT_ALLOCATION_OFFSET` and
+    // the WASM-side `__heap_ptr` global, because the WASM-side bump allocator
+    // advances `__heap_ptr` independently (e.g. via `__malloc` / `list.allocate`).
+    // Resetting only the host offset on pop leaves WASM-side allocations
+    // accumulating until the linear-memory cap is reached
+    // (COMPILER-NO-FREE-EXPORT-LEAKS-WASM-MEMORY).
+    linker.func_wrap(
+        "memory_runtime",
+        "mem_scope_push",
+        |mut caller: Caller<'_, ()>| {
+            let host_offset = *NEXT_ALLOCATION_OFFSET.lock().unwrap();
+            let wasm_heap =
+                if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                    heap_global.get(&mut caller).i32().unwrap_or(0) as usize
+                } else {
+                    host_offset
+                };
+            // Save the high-water mark of both to ensure correctness even when
+            // they have temporarily drifted between syncs.
+            let mark = host_offset.max(wasm_heap);
+            SCOPE_MARKS.lock().unwrap().push(mark);
+        },
+    )?;
 
-    // Pop a scope mark - resets allocation offset to saved mark
-    // This instantly "frees" all memory allocated within the scope
-    linker.func_wrap("memory_runtime", "mem_scope_pop", || {
-        let mut scope_marks = SCOPE_MARKS.lock().unwrap();
-        if let Some(mark) = scope_marks.pop() {
-            let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
-            *next_offset = mark;
-        }
-    })?;
+    linker.func_wrap(
+        "memory_runtime",
+        "mem_scope_pop",
+        |mut caller: Caller<'_, ()>| {
+            if let Some(mark) = SCOPE_MARKS.lock().unwrap().pop() {
+                *NEXT_ALLOCATION_OFFSET.lock().unwrap() = mark;
+                if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                    heap_global
+                        .set(&mut caller, wasmtime::Val::I32(mark as i32))
+                        .ok();
+                }
+            }
+        },
+    )?;
 
     // Add method-style function stubs
     linker.func_wrap(

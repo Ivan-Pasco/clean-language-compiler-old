@@ -37,7 +37,10 @@
       "mcp__clean-language__get_stack_recommendation",
       "Bash(rm -rf /tmp/hyd-repro)",
       "Bash(mkdir -p /tmp/hyd-repro/app/web/pages /tmp/hyd-repro/app/web/components)",
-      "Bash(wasm-tools --version)"
+      "Bash(wasm-tools --version)",
+      "Bash(ls -la \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln\")",
+      "Bash(\"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln\" --version)",
+      "Bash('/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln' compile main.cln --output /tmp/cs-2.12.23.wasm)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

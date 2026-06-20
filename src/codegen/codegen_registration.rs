@@ -80,6 +80,46 @@ impl super::CodeGenerator {
         // Create alias for internal use
         self.add_function_alias("malloc", malloc_idx);
 
+        // NATIVE: free - bump-allocator no-op companion to malloc.
+        // The export must exist so host bridges that guard reclamation with
+        // `if (state.exports.free)` (e.g. cln-node-server memory-runtime.js)
+        // proceed. Per-block reclaim is impossible in a bump allocator;
+        // per-request reclaim is provided by `scope_push` / `scope_pop`.
+        // Fixes COMPILER-NO-FREE-EXPORT-LEAKS-WASM-MEMORY.
+        let free_instructions = native_stdlib::memory::gen_free();
+        let free_idx = self.register_function(
+            "__free",
+            &[WasmType::I32],
+            None, // void return
+            &free_instructions,
+        )?;
+        self.add_function_alias("free", free_idx);
+
+        // NATIVE: scope_push - returns current __heap_ptr as a save-point.
+        // Hosts call this at the start of a request, then call scope_pop with
+        // the returned value at the end to reclaim every allocation made in
+        // between. O(1) region-based reclaim.
+        let scope_push_instructions = native_stdlib::memory::gen_scope_push();
+        let scope_push_idx = self.register_function(
+            "__scope_push",
+            &[],
+            Some(WasmType::I32),
+            &scope_push_instructions,
+        )?;
+        self.add_function_alias("scope_push", scope_push_idx);
+
+        // NATIVE: scope_pop - resets __heap_ptr to the supplied save-point.
+        // Pairs with scope_push. Caller must not retain references into the
+        // reclaimed region.
+        let scope_pop_instructions = native_stdlib::memory::gen_scope_pop();
+        let scope_pop_idx = self.register_function(
+            "__scope_pop",
+            &[WasmType::I32],
+            None, // void return
+            &scope_pop_instructions,
+        )?;
+        self.add_function_alias("scope_pop", scope_pop_idx);
+
         // NATIVE: memcpy - byte-by-byte memory copy
         // Parameters: dest (i32), src (i32), len (i32)
         // Returns: void
