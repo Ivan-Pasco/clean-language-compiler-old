@@ -751,36 +751,26 @@ impl WasmPluginAdapter {
 
         // env.string_compare - Compare two strings
         // Returns 0 if equal, 1 if not equal (C/strcmp convention; codegen uses i32.eqz to test equality)
+        //
+        // Bounds-checked via `read_lp_from_data`: when either pointer is
+        // unreadable (negative, OOB header, length larger than memory),
+        // the bridge reads it as an empty string. This is the natural
+        // semantics — an unreadable pointer compares not-equal to any
+        // non-empty literal and equal to the empty literal — and crucially
+        // **does not panic** the way the previous raw-slicing version did
+        // (the COMPILER-PLUGIN-STRING-COMPARE-PANIC-OUT-OF-BOUNDS symptom).
         linker.func_wrap(
             "env",
             "string_compare",
             |mut caller: Caller<'_, PluginState>, ptr1: i32, ptr2: i32| -> i32 {
-                let (string1, string2) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-
-                    // Read first string
-                    let len_start1 = ptr1 as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
-                    let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    // Read second string
-                    let len_start2 = ptr2 as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
-                    let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
-
-                    (s1, s2)
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => return 1, // not equal — no memory means no comparison possible
                 };
-                if string1 == string2 {
+                let data = memory.data(&caller);
+                let s1 = read_lp_from_data(data, ptr1).unwrap_or(&[]);
+                let s2 = read_lp_from_data(data, ptr2).unwrap_or(&[]);
+                if s1 == s2 {
                     0
                 } else {
                     1
@@ -4138,10 +4128,43 @@ impl PluginState {
         }
     }
 
+    /// Bump-allocate `size` bytes from the host-side bridge arena.
+    ///
+    /// **Returns 0 (exhaustion sentinel) when the next allocation would
+    /// push the bump pointer past `i32::MAX`.** Plugin bridges return the
+    /// allocated pointer to WASM as `i32`; if `alloc_offset` ever exceeds
+    /// `i32::MAX as usize` (≈ 2.15 GB), the `as i32` cast wraps to a
+    /// negative value, the plugin treats it as a valid pointer, and
+    /// subsequent pointer arithmetic lands on low data-section addresses
+    /// — clobbering literals and producing the panic recorded as
+    /// COMPILER-PLUGIN-STRING-COMPARE-PANIC-OUT-OF-BOUNDS
+    /// (dashboard fingerprint `e4a5886bd58d26a8...`).
+    ///
+    /// The fix:
+    ///   1. Once a request would push `alloc_offset` past `i32::MAX`,
+    ///      return 0 — every bridge function already handles 0 as a
+    ///      failure case (e.g. `if memory.write(...).is_err() { return 0 }`).
+    ///   2. Cap `alloc_offset` at `i32::MAX` so subsequent calls are
+    ///      idempotent and the offset cannot wrap `usize` on long-running
+    ///      plugins.
+    ///
+    /// See `system-documents/diagnostics/COMPILER-PLUGIN-STRING-COMPARE-PANIC-DIAGNOSIS.md`
+    /// for the full root cause analysis.
     fn allocate(&mut self, size: usize) -> usize {
+        let aligned = (size + 7) & !7;
+        // Use `checked_add` so a malicious / runaway plugin can't wrap
+        // `usize` itself with a huge `size` argument.
+        let Some(new_top) = self.alloc_offset.checked_add(aligned) else {
+            return 0;
+        };
+        if new_top > i32::MAX as usize {
+            // Exhaustion. Cap `alloc_offset` so subsequent calls also
+            // return 0 without further advancing.
+            self.alloc_offset = i32::MAX as usize;
+            return 0;
+        }
         let ptr = self.alloc_offset;
-        // Align to 8 bytes
-        self.alloc_offset = (self.alloc_offset + size + 7) & !7;
+        self.alloc_offset = new_top;
         ptr
     }
 }
@@ -4176,12 +4199,38 @@ fn write_lp_string(caller: &mut Caller<'_, PluginState>, _memory: &Memory, s: &s
     }
 }
 
+/// Bounds-checked read of a Clean LP-string from a borrowed memory slice.
+/// Returns `None` for any pointer that cannot be safely interpreted as a
+/// `[4-byte LE length][data]` value (negative, OOB header, length larger
+/// than what's actually addressable).
+///
+/// Host bridges that read LP-strings without using this helper panic on
+/// the raw slice when a plugin passes a pointer to clobbered memory —
+/// the COMPILER-PLUGIN-STRING-COMPARE-PANIC-OUT-OF-BOUNDS symptom.
+fn read_lp_from_data(data: &[u8], ptr: i32) -> Option<&[u8]> {
+    if ptr < 0 {
+        return None;
+    }
+    let len_start = ptr as usize;
+    let after_header = len_start.checked_add(4)?;
+    if after_header > data.len() {
+        return None;
+    }
+    let len_bytes: [u8; 4] = data[len_start..after_header].try_into().ok()?;
+    let len = u32::from_le_bytes(len_bytes) as usize;
+    let data_end = after_header.checked_add(len)?;
+    if data_end > data.len() {
+        return None;
+    }
+    Some(&data[after_header..data_end])
+}
+
 fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<String> {
     let memory = caller.get_export("memory").and_then(|e| e.into_memory())?;
     let data = memory.data(&*caller);
 
     let len_start = ptr as usize;
-    if len_start + 4 > data.len() {
+    if ptr < 0 || len_start.checked_add(4)? > data.len() {
         return None;
     }
 
@@ -4189,7 +4238,7 @@ fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<S
     let len = u32::from_le_bytes(len_bytes) as usize;
 
     let data_start = len_start + 4;
-    let data_end = data_start + len;
+    let data_end = data_start.checked_add(len)?;
 
     if data_end > data.len() {
         return None;
@@ -4331,6 +4380,73 @@ mod tests {
         let ptr3 = state.allocate(50);
         // 524392 + 200 = 524592, aligned to 8 = 524592
         assert_eq!(ptr3, 524592);
+    }
+
+    /// Regression for COMPILER-PLUGIN-STRING-COMPARE-PANIC-OUT-OF-BOUNDS
+    /// (dashboard fingerprint `e4a5886bd58d26a8...`).
+    ///
+    /// Without the fix: a sustained chain of `string.concat` bridge calls
+    /// (frame.ui 2.12.23's `fuse_literal_concats` loop) advances
+    /// `alloc_offset` past `i32::MAX` (≈ 2.15 GB). The returned pointer
+    /// wraps to negative `i32`; the plugin treats it as a valid base for
+    /// pointer arithmetic and writes plugin-generated bytes into low
+    /// data-section addresses, clobbering literals. `string_compare` later
+    /// reads the clobbered literal's length (now garbage) and panics on
+    /// the slice index.
+    ///
+    /// With the fix: `allocate` caps at `i32::MAX` and returns 0 — every
+    /// bridge already handles 0 as a clean failure.
+    /// See `system-documents/diagnostics/COMPILER-PLUGIN-STRING-COMPARE-PANIC-DIAGNOSIS.md`.
+    #[test]
+    fn allocate_never_returns_pointer_that_wraps_to_negative_i32() {
+        let mut state = PluginState::new();
+        let mut chunk = 1024usize;
+        let mut seen_exhaustion = false;
+
+        for _ in 0..40 {
+            let ptr = state.allocate(chunk);
+            assert!(
+                (ptr as i32) >= 0,
+                "allocate returned {} (raw usize), {} as i32 — would corrupt \
+                 plugin pointer arithmetic. chunk={}, alloc_offset_after={}",
+                ptr,
+                ptr as i32,
+                chunk,
+                state.alloc_offset,
+            );
+            if state.alloc_offset >= i32::MAX as usize {
+                assert_eq!(
+                    ptr, 0,
+                    "after crossing i32::MAX, allocate must return 0, got {}",
+                    ptr
+                );
+                seen_exhaustion = true;
+            }
+            chunk = chunk.saturating_mul(2);
+        }
+
+        assert!(
+            seen_exhaustion,
+            "test must drive alloc_offset past i32::MAX to exercise the overflow path"
+        );
+    }
+
+    #[test]
+    fn allocate_after_exhaustion_remains_at_cap() {
+        let mut state = PluginState::new();
+        // Drive to exhaustion in one massive request.
+        let _first = state.allocate(i32::MAX as usize);
+        let saturated_offset = state.alloc_offset;
+        assert!(saturated_offset >= i32::MAX as usize);
+
+        for _ in 0..1000 {
+            let ptr = state.allocate(8);
+            assert_eq!(ptr, 0, "post-exhaustion allocate must return 0");
+            assert_eq!(
+                state.alloc_offset, saturated_offset,
+                "post-exhaustion alloc_offset must not advance"
+            );
+        }
     }
 
     /// Plugin Contracts v2 §2.5 smoke test — exercises `_build_state_set`
