@@ -795,30 +795,16 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    // Read source string
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    // Read search string
-                    let len_start2 = search_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
-
-                    // Read replace string
-                    let len_start3 = replace_ptr as usize;
-                    let len_bytes3: [u8; 4] = data[len_start3..len_start3 + 4].try_into().unwrap();
-                    let len3 = u32::from_le_bytes(len_bytes3) as usize;
-                    let data_start3 = len_start3 + 4;
-                    let s3 =
-                        String::from_utf8_lossy(&data[data_start3..data_start3 + len3]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, search_ptr).unwrap_or(&[]))
+                            .to_string();
+                    let s3 = String::from_utf8_lossy(
+                        read_lp_from_data(data, replace_ptr).unwrap_or(&[]),
+                    )
+                    .to_string();
 
                     (s1, s2, s3)
                 };
@@ -1146,22 +1132,12 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    // Read source string
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    // Read search string
-                    let len_start2 = search_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, search_ptr).unwrap_or(&[]))
+                            .to_string();
 
                     (s1, s2)
                 };
@@ -1184,20 +1160,12 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    let len_start2 = search_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, search_ptr).unwrap_or(&[]))
+                            .to_string();
 
                     (s1, s2)
                 };
@@ -1220,11 +1188,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = if index >= 0 && (index as usize) < string_val.len() {
@@ -1263,11 +1227,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 if index >= 0 && (index as usize) < string_val.len() {
@@ -1289,20 +1249,12 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    let len_start2 = prefix_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, prefix_ptr).unwrap_or(&[]))
+                            .to_string();
 
                     (s1, s2)
                 };
@@ -1326,20 +1278,12 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    let len_start2 = suffix_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, suffix_ptr).unwrap_or(&[]))
+                            .to_string();
 
                     (s1, s2)
                 };
@@ -1363,20 +1307,12 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    let len_start2 = search_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, search_ptr).unwrap_or(&[]))
+                            .to_string();
 
                     (s1, s2)
                 };
@@ -1400,11 +1336,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_uppercase();
@@ -1434,11 +1366,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_lowercase();
@@ -1472,27 +1400,16 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    let len_start2 = search_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
-
-                    let len_start3 = replace_ptr as usize;
-                    let len_bytes3: [u8; 4] = data[len_start3..len_start3 + 4].try_into().unwrap();
-                    let len3 = u32::from_le_bytes(len_bytes3) as usize;
-                    let data_start3 = len_start3 + 4;
-                    let s3 =
-                        String::from_utf8_lossy(&data[data_start3..data_start3 + len3]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, search_ptr).unwrap_or(&[]))
+                            .to_string();
+                    let s3 = String::from_utf8_lossy(
+                        read_lp_from_data(data, replace_ptr).unwrap_or(&[]),
+                    )
+                    .to_string();
 
                     (s1, s2, s3)
                 };
@@ -1529,11 +1446,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let count = count.max(0) as usize;
@@ -1564,11 +1477,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result: String = string_val.chars().rev().collect();
@@ -1674,20 +1583,12 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-
-                    let len_start1 = string_ptr as usize;
-                    let len_bytes1: [u8; 4] = data[len_start1..len_start1 + 4].try_into().unwrap();
-                    let len1 = u32::from_le_bytes(len_bytes1) as usize;
-                    let data_start1 = len_start1 + 4;
                     let s1 =
-                        String::from_utf8_lossy(&data[data_start1..data_start1 + len1]).to_string();
-
-                    let len_start2 = search_ptr as usize;
-                    let len_bytes2: [u8; 4] = data[len_start2..len_start2 + 4].try_into().unwrap();
-                    let len2 = u32::from_le_bytes(len_bytes2) as usize;
-                    let data_start2 = len_start2 + 4;
+                        String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
+                            .to_string();
                     let s2 =
-                        String::from_utf8_lossy(&data[data_start2..data_start2 + len2]).to_string();
+                        String::from_utf8_lossy(read_lp_from_data(data, search_ptr).unwrap_or(&[]))
+                            .to_string();
 
                     (s1, s2)
                 };
@@ -1710,11 +1611,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = if index >= 0 && (index as usize) < string_val.len() {
@@ -1753,11 +1650,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 if index >= 0 && (index as usize) < string_val.len() {
@@ -1779,11 +1672,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_uppercase();
@@ -1813,11 +1702,7 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_lowercase();
