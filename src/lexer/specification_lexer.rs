@@ -569,6 +569,8 @@ impl<'a> SpecificationLexer<'a> {
                         // does not have to escape every '{' in DSL/config snippets.
                         if next_ch.is_alphabetic() || next_ch == '_' {
                             let mut sub_depth: u32 = 1;
+                            let mut paren_depth: u32 = 0;
+                            let mut bracket_depth: u32 = 0;
                             let mut looks_like_interpolation = true;
                             while let Some(&c) = self.peek() {
                                 match c {
@@ -583,6 +585,22 @@ impl<'a> SpecificationLexer<'a> {
                                             break;
                                         }
                                     }
+                                    '(' => {
+                                        paren_depth += 1;
+                                        self.advance();
+                                    }
+                                    ')' => {
+                                        paren_depth = paren_depth.saturating_sub(1);
+                                        self.advance();
+                                    }
+                                    '[' => {
+                                        bracket_depth += 1;
+                                        self.advance();
+                                    }
+                                    ']' => {
+                                        bracket_depth = bracket_depth.saturating_sub(1);
+                                        self.advance();
+                                    }
                                     // End-of-string or newline before the matching brace —
                                     // user did not close the interpolation, treat as literal.
                                     '"' | '\n' => {
@@ -594,6 +612,16 @@ impl<'a> SpecificationLexer<'a> {
                                     // are not in the expression grammar either. Their
                                     // presence means the braces are not interpolation.
                                     ':' | ';' | '#' | '@' | '$' | '?' => {
+                                        looks_like_interpolation = false;
+                                        break;
+                                    }
+                                    // A top-level ',' (outside any nested '(' or '[') cannot
+                                    // appear in a single logical_expression — commas are only
+                                    // legal as separators inside call-arg lists or list/matrix
+                                    // literals. Seeing one at the outer brace level means the
+                                    // braces are a literal DSL/glob pattern like "{a,b}" or
+                                    // "Hero.{design,behavior}.md", not an interpolation.
+                                    ',' if paren_depth == 0 && bracket_depth == 0 => {
                                         looks_like_interpolation = false;
                                         break;
                                     }

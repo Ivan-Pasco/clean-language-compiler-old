@@ -1,0 +1,23 @@
+// Test: bugfixes/lexer_brace_alpha_comma_in_string
+// Grammar: string_part (foundation/spec/grammar.ebnf §1.6)
+// Regression for LEXER_BRACE_IN_NON_HTML_STRING (dashboard fingerprint 5c4962213b84):
+// the v0.30.323 fix (329b58da) widened the interpolation pre-scan to fall back to
+// literal `{` only when the braced content contains `:` `;` `#` `@` `$` `?`. It did
+// not handle braced content like "{a,b}" or "Hero.{design,behavior}.md" — `,` is
+// legal *inside* expression groups (`f(a,b)`, `[a,b]`) but is never valid at the
+// top level of a single logical_expression. The pre-scan now tracks nested `()` and
+// `[]` depth and treats a top-level `,` as a "not an interpolation" signal, so
+// these DSL-style labels round-trip as ordinary string literals.
+//
+// Expected output:
+//   Hero.{design,behavior}.md
+//   {a,b}
+//   prefix {x,y,z} suffix
+
+start:
+	string label = "Hero.{design,behavior}.md"
+	print(label)
+	string compact = "{a,b}"
+	print(compact)
+	string mixed = "prefix {x,y,z} suffix"
+	print(mixed)
