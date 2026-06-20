@@ -5915,6 +5915,17 @@ hosts       = ["browser", "server"]
 description = "Get value/textContent of current event target element"
 
 [[functions]]
+name        = "_ui_fetch_cb"
+layer       = 2
+category    = "ui"
+module      = "env"
+params      = ["string", "string", "string", "string", "string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Browser fetch with custom headers: url, method, headers JSON object, body, exported handler name. Handler called with (status:integer, body:string); status=0 for network failure, otherwise HTTP status code. Returns 1 if dispatched, 0 if fetch unavailable."
+
+[[functions]]
 name        = "_ui_filter_by_attr"
 layer       = 2
 category    = "ui"
@@ -6885,3 +6896,166 @@ returns     = "string"
 aliases     = []
 hosts       = ["browser"]
 description = "Connection state: connecting, open, closing, closed"
+
+# ============================================================
+# BROWSER-HOST BACKFILL — diagnostic, logging, memory, time, parse
+# Added by browser parity audit (commits b5c8165, 6e7545b) to
+# close UNKNOWN gaps in clean-framework/plugins/frame.canvas/runtime/
+# loader.js. Each entry corresponds to a function the browser host
+# already implements; previously absent from the registry, so the
+# parity gate could not enforce them on future hosts.
+# ============================================================
+
+[[functions]]
+name        = "_log_debug"
+layer       = 2
+category    = "console"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Emit a debug-level log message"
+
+[[functions]]
+name        = "_log_info"
+layer       = 2
+category    = "console"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Emit an info-level log message"
+
+[[functions]]
+name        = "_log_warn"
+layer       = 2
+category    = "console"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Emit a warning-level log message"
+
+[[functions]]
+name        = "_log_error"
+layer       = 2
+category    = "console"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Emit an error-level log message"
+
+[[functions]]
+name        = "_console_info"
+layer       = 2
+category    = "console"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Console info-level message (browser console.info)"
+
+[[functions]]
+name        = "_assert"
+layer       = 2
+category    = "console"
+module      = "env"
+params      = ["integer", "string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Assert that condition is non-zero; if zero, log message and trap"
+
+[[functions]]
+name        = "_panic"
+layer       = 2
+category    = "console"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Log a panic message and trap the WASM module"
+
+[[functions]]
+name        = "_parse_int"
+layer       = 2
+category    = "string"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Parse a string as a base-10 integer; returns 0 on failure"
+
+[[functions]]
+name        = "_parse_float"
+layer       = 2
+category    = "string"
+module      = "env"
+params      = ["string"]
+returns     = "number"
+aliases     = []
+hosts       = ["browser"]
+description = "Parse a string as a floating-point number; returns 0.0 on failure"
+
+[[functions]]
+name        = "_alloc_string"
+layer       = 2
+category    = "memory"
+module      = "env"
+params      = ["integer"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Reserve `len` bytes in the string heap and return the starting offset"
+
+[[functions]]
+name        = "_memory_copy"
+layer       = 2
+category    = "memory"
+module      = "env"
+params      = ["integer", "integer", "integer"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Copy `len` bytes from src to dest within linear memory"
+
+[[functions]]
+name        = "_memory_fill"
+layer       = 2
+category    = "memory"
+module      = "env"
+params      = ["integer", "integer", "integer"]
+returns     = "integer"
+aliases     = []
+hosts       = ["browser"]
+description = "Fill `len` bytes starting at ptr with the given byte value"
+
+[[functions]]
+name        = "_time_now_seconds"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = []
+returns     = "number"
+aliases     = []
+hosts       = ["browser"]
+description = "Current Unix timestamp in fractional seconds (number, not i64). Companion to _time_now which returns integer seconds."
+
+[[functions]]
+name        = "_time_performance_now"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = []
+returns     = "number"
+aliases     = []
+hosts       = ["browser"]
+description = "High-resolution monotonic time in milliseconds since the host started (performance.now() in browsers). Use for elapsed-time measurements, not wall-clock time."
