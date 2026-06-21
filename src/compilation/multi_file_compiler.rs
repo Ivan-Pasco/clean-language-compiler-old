@@ -1415,19 +1415,48 @@ start:
 
     #[test]
     fn test_derive_companion_module_name() {
+        // The base_dir parameter is no longer load-bearing — the canonical
+        // anchor is the `pages/` segment in the path itself. Every result
+        // is prefixed `pages_` to match frame.ui's `derive_module_name` so
+        // the compiler's call sites (which feed the result into
+        // `process_html`'s `companion_json`) agree with what frame.ui's
+        // `assemble` later names the renamed function. See
+        // SEM-PAGE-COMPANION-NAMING-DRIFT for what happens when they don't.
         let base = Path::new("app/pages");
 
         assert_eq!(
             derive_companion_module_name(Path::new("app/pages/dashboard.cln"), base),
-            "dashboard"
+            "pages_dashboard"
         );
         assert_eq!(
             derive_companion_module_name(Path::new("app/pages/blog/post.cln"), base),
-            "blog_post"
+            "pages_blog_post"
         );
         assert_eq!(
             derive_companion_module_name(Path::new("app/pages/blog/[slug].cln"), base),
-            "blog_slug"
+            "pages_blog_slug"
+        );
+        // The real-world layout the page-project hang surfaced: the
+        // historical name was `app_ui_web_pages_home`, which the plugin
+        // never defined, so the synthesized call to `<name>_load_impl`
+        // SEM007'd. The new shape is `pages_home`, matching frame.ui.
+        assert_eq!(
+            derive_companion_module_name(Path::new("app/ui/web/pages/home.cln"), Path::new(""),),
+            "pages_home"
+        );
+        assert_eq!(
+            derive_companion_module_name(
+                Path::new("app/ui/web/pages/blog/index.cln"),
+                Path::new(""),
+            ),
+            "pages_blog_index"
+        );
+        // Identifier-invalid characters in the page name (frame.ui sanitises
+        // these in its `derive_module_name` so the rewritten function name
+        // is a valid Clean identifier; we must do the same).
+        assert_eq!(
+            derive_companion_module_name(Path::new("app/pages/my-page.cln"), Path::new(""),),
+            "pages_my_page"
         );
     }
 
