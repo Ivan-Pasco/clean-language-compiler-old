@@ -172,40 +172,20 @@ that predate the `assemble` export.
 
 ---
 
-## 🔴 OPEN: COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS root cause — `process_html` / inner `process_text_node` runs forever in frame.ui
+## ✅ RESOLVED: COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS — landed 0.30.334
 
-**Priority**: HIGH (timeout mitigation landed in 0.30.333; underlying loop remains)
-**Discovered**: 2026-06-20 (while investigating dashboard fp `f80ee96ce507`)
-**Dashboard**: `COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS` (open)
+**Dashboard fp**: `f80ee96ce507` — close after release.
+**Mitigation**: 0.30.333 (plugin-call epoch deadline → actionable trap + backtrace instead of silent hang).
+**Root cause fix**: 0.30.334 (two MIR → WASM control-flow lowering bugs in `src/codegen/mir_codegen/`).
 
-**Symptom**: `cln compile` on any project with a `.cln` file under `app/ui/web/pages/` and an HTML entry causes `frame.ui`'s `process_html` WASM export to run indefinitely. With the new plugin-call deadline (`CLN_PLUGIN_TIMEOUT_SECS`, default 30 s) the build now errors out with a WASM backtrace instead of hanging the compiler — but the build still fails for every project of this shape until the underlying loop is fixed.
+**What the root cause turned out to be**: not the plugin loop the dashboard reporter suspected, not the `mem_alloc` grow path the frame.ui in-source comment (`plugins/frame.ui/src/main.cln:4033-4040`) accused, and not the recently-removed per-iteration `mem_scope_pop`. It was two independent codegen bugs that silently dropped statements from the emitted WASM for two specific MIR shapes:
 
-**Backtrace (from epoch-interrupt trap on `home.html` + empty companion)**:
-```
-0: <wasm function 259>  → process_text_node
-1: <wasm function 255>  → html_to_render (recursive)
-2: <wasm function 265>  → render_element
-3: <wasm function 264>  → process_element
-4: <wasm function 255>  → html_to_render (first call)
-5: <wasm function 240>  → process_html
-```
+1. **`collect_jump_targets` stopped at the innermost merge.** For an if/else whose both branches contained another if/else, the function reported the inner merge blocks instead of chasing through them to the eventual common continuation. The trailing statement (e.g. `remaining = remaining.substring(brace_end + 1, remaining.length())` in `process_text_node`) was therefore not inlined — `generate_branch_block`'s `generated.contains(...)` check short-circuited and dropped it.
+2. **`is_continuation_not_else` mistook `else: break` for "no else clause".** An `else: break` body is an empty `false_block` with a Jump terminator targeting the loop's exit. The check fired the no-else shortcut, the entire else arm was skipped, and the loop ran forever because nothing ever broke it. Surfaced as the second hang inside `find_unescaped_quote` after fix 1 landed.
 
-**Investigation so far**:
-- Reproduces on every plugin version installed (v2.6.12 … v2.12.22) and on a fresh build with the current compiler — not a recent regression in either repo.
-- Plugin source is correct (terminating loops, safety counters everywhere).
-- Host-side `mem_alloc` already calls `memory.grow()` (commit `6e08bcf8`), so the `COMPILER-MEM-ALLOC-NO-GROW` theory called out in the in-source comment at `plugins/frame.ui/src/main.cln:4033-4040` is not the live cause on current code.
-- Process samples while hung show heavy `_xzm_xzone_malloc_tiny` / `_free` / `_platform_memcmp` inside JIT'd WASM — the plugin is actively running, not deadlocked on a host bridge.
-- A real but unrelated compiler bug was found along the way: a string literal containing `{identifier}` (e.g. `"hello {x}"`) is silently interpreted as string interpolation and collapses to an empty string when the identifier is undefined. Plugin source doesn't trigger this — the plugin contains no such literals — so it does not explain the hang.
+Both fixes live in `src/codegen/mir_codegen/control_flow.rs` (`chase_jump_chain`, `collect_jump_targets`, `is_continuation_not_else`) and `src/codegen/mir_codegen/blocks.rs` (`generate_branch_block`). Regression fixtures live at `tests/cln/control/conditionals/08_stmt_after_nested_if_else.cln` and `tests/cln/control/loops/else_break_inside_while.cln`; the Rust gate is `tests/test_codegen_nested_control_flow.rs`.
 
-**Next moves** (any of these is a valid foothold):
-1. Compile `frame.ui` with the name section preserved (no `--strip-debug`) so the trap backtrace resolves to function names without the wasm2wat lookup dance, then re-run with a 3-second timeout and inspect the trap directly.
-2. Cut `process_text_node` out of `main.cln` into a standalone reproducer plugin and confirm the hang shrinks to just that function — narrows whether the loop is genuinely inside it or in something it calls.
-3. Add per-bridge call counters in `wasm_adapter.rs` (string indexOf / substring / etc.) — a runaway loop will skew the histogram and point at the wrong-by-construction primitive.
-4. Bisect compiler revisions against a fixed plugin binary: take a known-good plugin binary, attempt `cln compile` of the repro across the last ~50 compiler commits, and find the first version that hangs. If it hangs on the very first commit checked, the bug is older than the dashboard window and the bisect should fan out.
-
-**Why not fixed in this commit**: the timeout fix is a real, scoped, requested-by-the-framework improvement that turns indefinite hangs into actionable diagnostics. Identifying the actual broken codegen path requires deeper instrumentation than fits a single change.
-
-**Anchor commit (mitigation)**: this commit (timeout + diagnostic).
+**Bonus bug found during the investigation (still open)**: a string literal containing `{identifier}` (e.g. `"hello {x}"`) is silently parsed as a string interpolation and collapses to an empty string when the identifier is undefined. The plugin source doesn't trigger it (no such literals), so it did not contribute to the page-project hang — but it is a real lexer/parser bug worth filing if you stumble on it again.
 
 ---
 

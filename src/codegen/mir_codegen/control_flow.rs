@@ -90,7 +90,24 @@ impl MirCodeGenerator<'_> {
         // Check #1: Empty block with simple terminator
         if false_blk.instructions.is_empty() {
             match &false_blk.terminator {
-                MirTerminator::Unreachable | MirTerminator::Jump { .. } => return true,
+                MirTerminator::Unreachable => return true,
+                MirTerminator::Jump { target } => {
+                    // EXCEPT: an empty block that Jumps to the innermost loop's
+                    // exit is an `else: break` body, NOT the if's continuation.
+                    // Treating it as a no-else case caused the else branch to be
+                    // silently dropped from the emitted WASM, which kept the
+                    // inner loop running forever (root cause of the inner
+                    // `find_unescaped_quote` hang that surfaced on top of
+                    // COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS after the
+                    // sibling fix to `collect_jump_targets`).
+                    let is_break_to_loop_exit = self
+                        .loop_context_stack
+                        .iter()
+                        .any(|ctx| ctx.exit_block_id == *target);
+                    if !is_break_to_loop_exit {
+                        return true;
+                    }
+                }
                 MirTerminator::Return { value } => {
                     // Empty continuation if returning nothing or undefined
                     if matches!(
@@ -224,9 +241,47 @@ impl MirCodeGenerator<'_> {
         }
     }
 
+    /// Walk a Jump chain through empty merge blocks until landing on a
+    /// block that either carries user instructions or has a non-Jump
+    /// terminator. Returns the first such block.
+    ///
+    /// This is what lets `find_eventual_continuation` see through the
+    /// stack of synthesized merge blocks the MIR builder produces around
+    /// nested if/else inside another if/else — without it, the search
+    /// stops at the innermost merge and the outer caller's inlining
+    /// short-circuits on `generated.contains`, dropping every statement
+    /// that follows the nested control flow (root cause of
+    /// COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS — see
+    /// `process_text_node`, where the `remaining = ...` reassignment after
+    /// the inner `if/else` was silently dropped from the emitted WASM).
+    fn chase_jump_chain(&self, function: &MirFunction, start: BasicBlockId) -> BasicBlockId {
+        let mut cur = start;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            if !seen.insert(cur) {
+                return cur;
+            }
+            let Some(block) = function.blocks.get(&cur) else {
+                return cur;
+            };
+            if !block.instructions.is_empty() {
+                return cur;
+            }
+            match &block.terminator {
+                MirTerminator::Jump { target } => {
+                    cur = *target;
+                }
+                _ => return cur,
+            }
+        }
+    }
+
     /// Recursively collect all Jump targets from a block's control flow.
     ///
-    /// Follows through nested Branches to find where non-returning paths jump.
+    /// Follows through nested Branches to find where non-returning paths
+    /// jump, then through chains of empty merge blocks via
+    /// [`chase_jump_chain`] so a stack of nested if/else collapses to a
+    /// single eventual continuation rather than the innermost merge.
     pub(super) fn collect_jump_targets(
         &self,
         function: &MirFunction,
@@ -245,7 +300,7 @@ impl MirCodeGenerator<'_> {
 
         match &block.terminator {
             MirTerminator::Jump { target } => {
-                targets.insert(*target);
+                targets.insert(self.chase_jump_chain(function, *target));
             }
             MirTerminator::Branch {
                 true_block,

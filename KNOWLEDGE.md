@@ -158,3 +158,42 @@ Three workarounds assessed and resolved, two remain as known limitations:
 - `CLN_PLUGIN_TIMEOUT_SECS=0` disables the deadline for diagnostic reproduction — keep that escape hatch.
 
 **Origin bug:** `COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS` (dashboard fp `f80ee96ce507`). A plugin call inside `process_html` for any project containing a `.cln` file under `app/ui/web/pages/` enters a loop and never returns; before the timeout there was no diagnostic and `cln compile` hung indefinitely. The deadline does not fix the underlying codegen issue — it converts the silent hang into an actionable error so the user (or a CI run) can stop waiting and a backtrace pins down where in the plugin the loop lives.
+
+---
+
+## 13. Structured Control-Flow Lowering — Two Drop-the-Trailing-Edge Pitfalls (LANDED 2026-06-21)
+
+**What:** Two independent bugs in `src/codegen/mir_codegen/` silently dropped statements from the emitted WASM whenever the MIR they were lowering had certain nested control-flow shapes. Both passed the type checker and produced runnable WASM — the missing instructions only surfaced as infinite loops or wrong output at runtime.
+
+### 13.1 `collect_jump_targets` stopped at the innermost merge
+
+`find_eventual_continuation` (and the inlining call sites in `generate_branch_block`) collect non-returning Jump targets via `collect_jump_targets`. For a Jump terminator, the function inserted the *immediate* target into the returned set. In a shape like:
+
+```clean
+if A
+    if B
+        if C: x else: y      -- inner1 if/else
+    else
+        if D: a else: b      -- inner2 if/else
+
+    stmt                      -- statement to keep
+```
+
+both inner if/elses merge through their own continue blocks (let's call them 8 and 11) before reaching block 5, where `stmt` lives. The collector saw `{8, 11}` rather than `{5}`, decided "branches merge at different points → no common continuation → inline nothing," and `stmt` never made it into the WASM.
+
+`chase_jump_chain` (new helper in `control_flow.rs`) walks through *empty* merge blocks that end in their own Jump, so the collector reports the eventual single merge `{5}` and the inliner emits it.
+
+### 13.2 `is_continuation_not_else` mistook `else: break` for "no else clause"
+
+`is_continuation_not_else` returned true when the if's `false_block` was empty and had a Jump terminator — the assumption being that an empty-Jump `false_block` is the merge point of a no-else `if`. An `else: break`, however, also produces an empty `false_block` with a Jump terminator (Jump to the loop's exit). The check fired, the codegen skipped the else clause entirely, and the loop ran forever because nothing ever broke it.
+
+The fix excludes Jumps that target any `exit_block_id` in `self.loop_context_stack` — those are breaks, and the else branch holding them must be lowered as an explicit `else` arm.
+
+**Where:** `src/codegen/mir_codegen/control_flow.rs` (`chase_jump_chain`, `collect_jump_targets`, `is_continuation_not_else`), `src/codegen/mir_codegen/blocks.rs` (`generate_branch_block` Branch handler also updated to route through `find_eventual_continuation` when nested branches end in Branch terminators rather than only Jump).
+
+**Watch for:**
+- Any new code path that walks MIR blocks looking for "the continuation" of an if/else. Use `find_eventual_continuation`, not a single-step terminator inspection — otherwise this bug class reappears the next time someone nests three levels deep.
+- Any new "empty-block + Jump → must be continuation" shortcut. The break/continue exceptions must be preserved; `LoopCodegenContext` is the canonical source for which Jump targets are loop control points.
+- New regression fixtures live under `tests/cln/control/conditionals/08_stmt_after_nested_if_else.cln` and `tests/cln/control/loops/else_break_inside_while.cln`; the Rust gate is `tests/test_codegen_nested_control_flow.rs`. Don't delete either side.
+
+**Origin bug:** `COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS` (dashboard fp `f80ee96ce507`). frame.ui's `process_text_node` was the canonical reproducer for §13.1 (the `remaining = remaining.substring(...)` statement following the inner if/else got dropped, so the `while` loop never advanced — the safety counter `if c > 100: break` the plugin author added masked it as a bounded but redundant 100-iteration loop instead of an outright hang). With §13.1 fixed, `find_unescaped_quote` surfaced §13.2 as the next hang. With both fixed, page-project compiles run end-to-end instead of trapping on the plugin-call deadline.

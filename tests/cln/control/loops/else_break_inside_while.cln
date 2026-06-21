@@ -1,0 +1,28 @@
+// Test Description: `else: break` inside a `while` loop must terminate the loop
+// Category: control
+// Dependencies: none
+// Expected: PASS
+//
+// Regression for COMPILER-CODEGEN-DROPS-ELSE-BREAK: codegen's
+// `is_continuation_not_else` treated any empty `false_block` with a Jump
+// terminator as the if's continuation (no else clause), but an `else: break`
+// produces exactly that shape — the else block is empty and Jumps to the
+// loop's exit. The check incorrectly returned true, so the entire else
+// branch was dropped from the emitted WASM, the `break` never fired, and
+// the loop spun forever. Surfaced as the secondary hang in frame.ui's
+// `find_unescaped_quote` after the primary
+// COMPILER-CODEGEN-DROPS-STATEMENT-AFTER-NESTED-IF was fixed.
+//
+// Expected output:
+//   exited cleanly inner=1
+
+start:
+	integer inner = 0
+	integer safety = 0
+	while inner < 100 and safety < 1000
+		safety = safety + 1
+		if inner == 0
+			inner = 1
+		else
+			break
+	printl("exited cleanly inner=" + inner.toString())

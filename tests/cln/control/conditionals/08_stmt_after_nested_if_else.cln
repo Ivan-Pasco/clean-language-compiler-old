@@ -1,0 +1,36 @@
+// Test Description: Statement following a nested if/else whose both branches contain another if/else
+// Category: control
+// Dependencies: none
+// Expected: PASS
+//
+// Regression for COMPILER-CODEGEN-DROPS-STATEMENT-AFTER-NESTED-IF (the root
+// cause of COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS): when an
+// `if/else` was nested inside another `if/else` and both inner branches
+// contained yet another `if/else`, the codegen's `collect_jump_targets`
+// stopped at the innermost merge block instead of chasing the Jump chain
+// to the eventual continuation, so the OUTER statement after the nested
+// if/else got short-circuited on `generated.contains(...)` and was dropped
+// from the emitted WASM entirely. frame.ui's `process_text_node` had this
+// exact shape; the `remaining = remaining.substring(...)` reassignment
+// that advances its `while` loop was the dropped statement, so the loop
+// ran forever (bounded only by the safety counter the plugin author added
+// as a workaround).
+//
+// Expected output (one line per printl):
+//   inner-a
+//   AFTER
+
+start:
+	if true
+		if true
+			if true
+				printl("inner-a")
+			else
+				printl("inner-b")
+		else
+			if true
+				printl("inner-c")
+			else
+				printl("inner-d")
+
+		printl("AFTER")
