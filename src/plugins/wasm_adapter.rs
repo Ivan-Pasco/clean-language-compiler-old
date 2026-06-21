@@ -4004,7 +4004,7 @@ impl FrameworkPlugin for WasmPluginAdapter {
                     "warning: plugin '{}' assemble() returned 0 bytes for {}-byte input. \
                      This almost always means the plugin exhausted its WASM memory \
                      (`memory.grow()` failed). If you control the plugin, rebuild it with \
-                     `--target=plugin` so it gets the 256 MB plugin tier instead of the \
+                     `--target=plugin` so it gets the 1 GB plugin tier instead of the \
                      32 MB standard tier. If you don't, please report this — the host can't \
                      safely fall back to anything useful here.",
                     self.name,
