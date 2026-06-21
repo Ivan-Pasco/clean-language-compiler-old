@@ -1,0 +1,41 @@
+// Test Description: String interpolation evaluates each {expr} and concatenates with surrounding text
+// Category: strings
+// Dependencies: none
+// Expected: PASS
+//
+// Regression for SEM-INTERP-UNDEFINED (dashboard fp 224922a73397):
+// before the fix, a string literal like `"hello {x}"` was silently
+// lowered to a Void literal whenever the HIR builder fell through the
+// catch-all `_ => Literal { Void }` arm — so the runtime saw an empty
+// string with no diagnostic, even when `x` was a defined variable.
+// The fix wires up `Expression::StringInterpolation` to a proper
+// left-folded concatenation where every interpolated subexpression
+// is built normally (so the resolver visits it) and wrapped in
+// `.toString()` to force the unified-type concat contract.
+//
+// Expected output:
+//   hello world
+//   answer is 42
+//   ratio is 3.14
+//   trailing
+//   between A and B
+//   no interps here
+
+start:
+	string who = "world"
+	printl("hello {who}")
+
+	integer n = 42
+	printl("answer is {n}")
+
+	number r = 3.14
+	printl("ratio is {r}")
+
+	printl("trailing {who}")
+
+	string a = "A"
+	string b = "B"
+	printl("between {a} and {b}")
+
+	// A literal with no interpolation must round-trip unchanged.
+	printl("no interps here")

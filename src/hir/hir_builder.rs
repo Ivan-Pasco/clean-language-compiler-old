@@ -9,7 +9,8 @@
 use crate::ast::SourceLocation;
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Class, Constructor, Expression, Function, ListBehavior,
-    Parameter, Program, ResetTarget, Statement, Type, UnaryOperator, ValidateConstraint, Value,
+    Parameter, Program, ResetTarget, Statement, StringPart, Type, UnaryOperator,
+    ValidateConstraint, Value,
 };
 use crate::error::CompilerError;
 use crate::hir::*;
@@ -2154,6 +2155,68 @@ impl HirBuilder {
                 ),
                 Some(location.clone()),
             )),
+
+            Expression::StringInterpolation(parts) => {
+                // Lower `"hello {x}"` to a left-folded string concatenation:
+                //   "hello " + x.toString()
+                //
+                // **Why this needs its own arm**: the catch-all below converts
+                // any unmatched expression into `HirExpression::Literal { Value::Void }`,
+                // which means before this fix a string literal with interpolation
+                // silently became an empty string at runtime — no compile error
+                // even when the interpolated identifier was undefined. The Void
+                // literal also bypassed the resolver entirely, so the user got
+                // no diagnostic. That is dashboard fp 224922a73397
+                // (SEM-INTERP-UNDEFINED). The fix: build a proper HIR expression
+                // so the resolver visits each interpolated subexpression like any
+                // other use, emitting SEM006/SEM007 for undefined identifiers in
+                // exactly the same way it would for `print(undefined_x)`.
+                //
+                // Wrapping every interpolation in `.toString()` mirrors what the
+                // user would write by hand and forces the unified-type concat
+                // contract. Calling `.toString()` on a value that's already a
+                // string is harmless (string has an identity `toString`); calling
+                // it on a value that has no `toString` produces a clear SEM007
+                // pointing at the interpolation site rather than silently dropping
+                // the result.
+                let loc = SourceLocation::default();
+                if parts.is_empty() {
+                    return Ok(HirExpression::Literal {
+                        value: Value::String(String::new()),
+                        location: loc,
+                    });
+                }
+
+                let mut acc: Option<HirExpression> = None;
+                for part in parts {
+                    let piece = match part {
+                        StringPart::Text(text) => HirExpression::Literal {
+                            value: Value::String(text.clone()),
+                            location: loc.clone(),
+                        },
+                        StringPart::Interpolation(inner_expr) => {
+                            let inner_hir = self.build_expression(inner_expr)?;
+                            HirExpression::MethodCall {
+                                receiver: Box::new(inner_hir),
+                                method: "toString".to_string(),
+                                arguments: vec![],
+                                location: loc.clone(),
+                            }
+                        }
+                    };
+                    acc = Some(match acc {
+                        None => piece,
+                        Some(prev) => HirExpression::BinaryOp {
+                            left: Box::new(prev),
+                            op: HirBinaryOp::Add,
+                            right: Box::new(piece),
+                            location: loc.clone(),
+                        },
+                    });
+                }
+
+                Ok(acc.expect("non-empty parts already produced acc above"))
+            }
 
             _ => {
                 // For unsupported expressions, create a void literal
