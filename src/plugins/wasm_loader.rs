@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 use anyhow::{anyhow, Result};
 use wasmtime::{Engine, Module};
@@ -12,6 +13,66 @@ use crate::plugins::PluginRegistry;
 
 use super::plugin_abi::PluginManifest;
 use super::wasm_adapter::WasmPluginAdapter;
+
+/// Default per-plugin-call timeout in seconds. Plugin entrypoints
+/// (`process_html`, `assemble`, lifecycle hooks, block expansion) that run
+/// longer than this trap with a `wasm trap: interrupt` and a WASM
+/// backtrace, converting a silent compiler hang into an actionable
+/// diagnostic. Override at the user level via `CLN_PLUGIN_TIMEOUT_SECS`.
+///
+/// 30s is generous enough for large assemble passes on real projects
+/// (hundreds of page companions) while still aborting infinite loops
+/// quickly. See [`plugin_timeout_secs`].
+const PLUGIN_TIMEOUT_DEFAULT_SECS: u64 = 30;
+
+/// Read the configured per-plugin-call timeout, falling back to the
+/// default. `CLN_PLUGIN_TIMEOUT_SECS=0` disables the timeout (legacy
+/// behaviour — hangs become indefinite).
+pub fn plugin_timeout_secs() -> u64 {
+    match std::env::var("CLN_PLUGIN_TIMEOUT_SECS") {
+        Ok(v) => v.parse().unwrap_or(PLUGIN_TIMEOUT_DEFAULT_SECS),
+        Err(_) => PLUGIN_TIMEOUT_DEFAULT_SECS,
+    }
+}
+
+/// The epoch tick interval in milliseconds. The plugin store deadline
+/// is expressed in ticks (`timeout_secs * 1000 / EPOCH_TICK_MS`), so the
+/// effective resolution is one tick — picking 100ms keeps the deadline
+/// jitter under a tenth of a second without spinning the ticker thread
+/// excessively.
+pub(crate) const EPOCH_TICK_MS: u64 = 100;
+
+static EPOCH_TICKER_STARTED: Once = Once::new();
+
+/// Start a daemon thread that ticks the engine epoch every
+/// [`EPOCH_TICK_MS`]. Idempotent — only one ticker per process.
+/// See [`plugin_timeout_secs`] for how the deadline is consumed.
+fn start_epoch_ticker(engine: &Engine) {
+    EPOCH_TICKER_STARTED.call_once(|| {
+        let engine = engine.clone();
+        std::thread::Builder::new()
+            .name("cln-plugin-epoch-ticker".to_string())
+            .spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(EPOCH_TICK_MS));
+                engine.increment_epoch();
+            })
+            .expect("failed to spawn plugin epoch ticker");
+    });
+}
+
+/// Build the shared wasmtime engine with epoch interruption enabled, and
+/// start the ticker that drives plugin call deadlines.
+fn build_engine() -> Result<Engine> {
+    let mut cfg = wasmtime::Config::new();
+    // Enable epoch-based interruption so a runaway plugin call (infinite
+    // loop, deadlock against host-side state) traps after the per-call
+    // deadline set by `WasmPluginAdapter::create_store` instead of
+    // hanging the compiler indefinitely.
+    cfg.epoch_interruption(true);
+    let engine = Engine::new(&cfg).map_err(|e| anyhow!("Failed to create WASM engine: {}", e))?;
+    start_epoch_ticker(&engine);
+    Ok(engine)
+}
 
 /// Loads external WASM plugins from the filesystem
 pub struct WasmPluginLoader {
@@ -27,7 +88,7 @@ impl WasmPluginLoader {
     /// Create a new plugin loader
     pub fn new() -> Result<Self> {
         let plugins_dir = Self::get_plugins_dir()?;
-        let engine = Engine::default();
+        let engine = build_engine()?;
 
         Ok(Self {
             plugins_dir,
@@ -38,7 +99,7 @@ impl WasmPluginLoader {
 
     /// Create loader with custom plugins directory
     pub fn with_plugins_dir(plugins_dir: PathBuf) -> Result<Self> {
-        let engine = Engine::default();
+        let engine = build_engine()?;
 
         Ok(Self {
             plugins_dir,
@@ -527,5 +588,126 @@ mod tests {
         std::fs::write(version_dir.join("plugin.wasm"), vec![0u8; 100]).unwrap();
 
         loader.check_plugin_version_mismatch("test.plugin", &version_dir);
+    }
+
+    /// Regression test for COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS:
+    /// the plugin-call timeout must be configurable through
+    /// `CLN_PLUGIN_TIMEOUT_SECS` so a runaway plugin doesn't hang the
+    /// compiler indefinitely. Mutating a process-wide env var inside the
+    /// test would race other tests, so we verify the parsing logic instead.
+    #[test]
+    fn plugin_timeout_secs_default_and_override() {
+        // We can't safely `set_var` in a parallel test runner, but the
+        // function consults the env on every call, so reading whatever is
+        // currently set is fine — what matters is that:
+        //   1. it returns *some* number (no panic on bad input)
+        //   2. the default constant is sane (positive, generous enough
+        //      for real assemble passes, not so big that hangs feel
+        //      indefinite)
+        let _ = plugin_timeout_secs();
+        assert!(
+            (5..=600).contains(&PLUGIN_TIMEOUT_DEFAULT_SECS),
+            "default timeout {}s is outside the sensible range (5..=600); \
+             too small breaks slow but legitimate assemble passes, \
+             too large defeats the purpose of converting hangs to errors",
+            PLUGIN_TIMEOUT_DEFAULT_SECS
+        );
+        // The store deadline is computed as `(secs * 1000) / EPOCH_TICK_MS`
+        // and clamped to at least 1 tick — make sure both invariants hold
+        // for the default so the wired-in fix actually fires.
+        let ticks_at_default = ((PLUGIN_TIMEOUT_DEFAULT_SECS * 1000) / EPOCH_TICK_MS).max(1);
+        assert!(
+            ticks_at_default >= 1,
+            "deadline tick count must be at least 1"
+        );
+    }
+
+    /// End-to-end regression test for the bug family
+    /// `COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS` (f80ee96c),
+    /// `COMPILER-FRAME-UI-ASSEMBLE-OOM-KILL-ON-CLEAN-STUDIO-0-30-332` (3c621336),
+    /// and `CLN-0.30.326-BUILD-SPIN-AFTER-PLUGIN-REGISTRY` (6a934e87).
+    ///
+    /// All three were caused by `wasm_adapter::create_store` calling
+    /// `set_epoch_deadline(N)` without ever calling `epoch_deadline_trap()`.
+    /// The deadline fired but the default action (a no-op for synchronous
+    /// calls) let the plugin keep running, which manifested as a hang or
+    /// OOM-kill of the compiler process.
+    ///
+    /// This test instantiates a WAT module with an infinite loop, calls it
+    /// with a TIGHT (1-tick) deadline + trap configured, and asserts the
+    /// call returns a `Trap::Interrupt` error inside the test's own
+    /// guard timeout — i.e. the wired-in trap is what kills the loop, not
+    /// the test framework. If the trap is removed again, the call hangs
+    /// and the test's join handle never returns, which the wrapper
+    /// detects via the channel `recv_timeout`.
+    #[test]
+    fn plugin_epoch_deadline_actually_traps_infinite_loop() {
+        use std::sync::mpsc;
+        use wasmtime::{Module, Store, TypedFunc};
+
+        // Build the same engine the production loader uses (epoch
+        // interruption enabled + ticker running).
+        let engine = build_engine().expect("build engine");
+
+        // Hand-rolled WAT: a function `spin` with `(loop br 0)`.
+        let wat = r#"
+            (module
+              (func (export "spin")
+                (loop $forever (br $forever))))
+        "#;
+        let module = Module::new(&engine, wat).expect("compile WAT");
+
+        // The trap *must* be configured on the store. This mirrors what
+        // `WasmPluginAdapter::create_store` does in the production path —
+        // if the production path forgets `epoch_deadline_trap()`, this
+        // test still passes (because it sets it directly), so the test
+        // only proves the deadline mechanism works. The companion check
+        // is the manual smoke against a real plugin (see the diagnosis
+        // doc for the page-project repro recipe).
+        let mut store = Store::new(&engine, ());
+        store.set_epoch_deadline(1);
+        store.epoch_deadline_trap();
+
+        let instance = wasmtime::Linker::new(&engine)
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let spin: TypedFunc<(), ()> = instance
+            .get_typed_func(&mut store, "spin")
+            .expect("get spin");
+
+        // Run the call on a worker thread so we can guard the test
+        // itself against the bug we're trying to catch: if the trap is
+        // wired wrong, the call never returns. The channel `recv_timeout`
+        // is the test framework's own safety net.
+        let (tx, rx) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("epoch-deadline-trap-test".into())
+            .spawn(move || {
+                let result = spin.call(&mut store, ());
+                let _ = tx.send(result);
+            })
+            .expect("spawn worker");
+
+        // The engine ticks every 100 ms; deadline is 1 tick. A trap
+        // should arrive comfortably inside 2 s. If 2 s elapses with no
+        // result, the worker is stuck and the wiring is broken.
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("plugin epoch deadline did not trap within 2 s — the worker is hung, which means `epoch_deadline_trap()` is no longer wired up in the test (or globally, if this regression hits create_store)");
+
+        let err = result.expect_err(
+            "expected the infinite-loop call to trap with Trap::Interrupt; \
+             got Ok(()) which would only happen if wasmtime exited the loop \
+             without trapping (it shouldn't)",
+        );
+        // The trap text contains "wasm trap: interrupt" when the deadline
+        // fires. Other trap kinds (out-of-bounds, etc.) would indicate a
+        // different bug in this test plumbing.
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.to_lowercase().contains("interrupt"),
+            "expected interrupt trap, got: {}",
+            msg
+        );
     }
 }

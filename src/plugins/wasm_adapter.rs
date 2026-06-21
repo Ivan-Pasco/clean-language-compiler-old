@@ -148,10 +148,36 @@ impl WasmPluginAdapter {
         Ok(())
     }
 
-    /// Create a new store with host functions
+    /// Create a new store with host functions.
+    ///
+    /// The store inherits the engine's epoch-based interruption (see
+    /// `wasm_loader::build_engine`) and sets a per-call deadline derived
+    /// from `CLN_PLUGIN_TIMEOUT_SECS` (default 30 s). A plugin call that
+    /// runs past the deadline traps with `wasm trap: interrupt`, surfacing
+    /// a WASM backtrace instead of hanging the compiler indefinitely —
+    /// the diagnostic the framework team asked for under
+    /// COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS.
+    /// Setting the env var to `0` disables the deadline.
     fn create_store(&self) -> Store<PluginState> {
         let state = PluginState::new();
-        Store::new(&self.engine, state)
+        let mut store = Store::new(&self.engine, state);
+        let timeout = super::wasm_loader::plugin_timeout_secs();
+        if timeout > 0 {
+            let ticks = (timeout * 1000) / super::wasm_loader::EPOCH_TICK_MS;
+            store.set_epoch_deadline(ticks.max(1));
+            // `set_epoch_deadline` only schedules when the deadline fires;
+            // the default action on expiry is `epoch_deadline_yield_and_continue`,
+            // which under a sync `Func::call` simply resumes execution —
+            // the ticker keeps incrementing but the plugin call never
+            // traps and the compiler still hangs. `epoch_deadline_trap()`
+            // changes the action to a `wasm trap: interrupt` that bubbles
+            // through `Func::call` as an `anyhow::Error`, and the existing
+            // bridge call sites already surface that as a structured
+            // plugin error. This is the line that actually closes the
+            // hang reported as COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS.
+            store.epoch_deadline_trap();
+        }
+        store
     }
 
     /// Get a reference to the cached linker, or create one if not yet cached.
@@ -4066,13 +4092,35 @@ fn describe_plugin_trap(err: &anyhow::Error, context: &str) -> String {
     let mut prefix = format!("Plugin trap in {}", context);
     // Walk the error chain for the first wasmtime::Trap. wasmtime returns
     // the Trap inside an anyhow::Error whose root cause is the Trap value.
-    if let Some(trap) = err
+    let trap = err
         .chain()
-        .find_map(|cause| cause.downcast_ref::<wasmtime::Trap>())
-    {
+        .find_map(|cause| cause.downcast_ref::<wasmtime::Trap>());
+    if let Some(trap) = trap {
         prefix.push_str(&format!(" [{}]", trap));
     }
-    format!("{}: {}", prefix, err)
+    let base = format!("{}: {}", prefix, err);
+
+    // Epoch-interrupt traps mean we hit the per-call deadline set by
+    // `create_store`. Spell out for the user what happened, since
+    // `wasm trap: interrupt` alone is opaque.
+    if matches!(trap, Some(wasmtime::Trap::Interrupt)) {
+        let timeout = super::wasm_loader::plugin_timeout_secs();
+        format!(
+            "{}\n\n\
+            note: this plugin call exceeded the configured timeout ({} s).\n\
+                  the WASM backtrace above shows where the plugin was\n\
+                  running when the deadline expired — that path is either\n\
+                  in an infinite loop or genuinely too slow for this\n\
+                  workload. raise the budget with CLN_PLUGIN_TIMEOUT_SECS=N\n\
+                  (or CLN_PLUGIN_TIMEOUT_SECS=0 to disable the deadline)\n\
+                  and re-run to confirm. report a compiler bug if the\n\
+                  backtrace points at a small plugin function that\n\
+                  obviously terminates on the given input.",
+            base, timeout,
+        )
+    } else {
+        base
+    }
 }
 
 fn write_lp_string(caller: &mut Caller<'_, PluginState>, _memory: &Memory, s: &str) -> Option<i32> {

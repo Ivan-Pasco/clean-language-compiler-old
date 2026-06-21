@@ -142,3 +142,19 @@ Three workarounds assessed and resolved, two remain as known limitations:
 **History:** Built in response to the diagnostic that identified plugin-contract drift across four locations as the dominant source of recurring framework bugs. The infrastructure pre-existed for plugin-manifest conformance (2026-04 to 2026-06); the host and compiler-emission layers complete the contract chain.
 
 **Origin bug:** `COMPILER-MEM-ALLOC-NO-GROW`. The fix surfaced two distinct drifts (`(size, _align)` vs `(type_id, size)` AND missing `memory.grow`), both invisible to type-only checking. The semantic `param_names` layer was added specifically to catch the first.
+
+---
+
+## 12. Plugin Call Timeout — Why Silent Hangs Are Errors (LANDED 2026-06-20)
+
+**What:** Every WASM plugin call (`process_html`, `assemble`, lifecycle hooks, block expansion) runs inside a wasmtime store with epoch-based interruption enabled. A daemon thread ticks the engine epoch every `EPOCH_TICK_MS` (100 ms), and `create_store` sets a per-call deadline of `CLN_PLUGIN_TIMEOUT_SECS` (default 30 s). Plugins that run past the deadline trap with `wasm trap: interrupt` and the trap is turned into a `CompilerError::PluginError` with a WASM backtrace plus an explanation of the timeout, the env-var override, and what to investigate next.
+
+**Where:** `src/plugins/wasm_loader.rs` (`build_engine`, `start_epoch_ticker`, `plugin_timeout_secs`), `src/plugins/wasm_adapter.rs` (`create_store`, `describe_plugin_trap`).
+
+**Watch for:**
+- Adding a new `Engine::default()` call for plugins — must go through `build_engine` so the ticker and epoch interruption are active.
+- Adding a new `Store::new(...)` for a plugin — must use `create_store` (or call `set_epoch_deadline` itself) or the timeout silently won't apply.
+- Tests or environments where a plugin call legitimately exceeds 30 s — raise `CLN_PLUGIN_TIMEOUT_SECS` for that run; do not move the default upward without a real workload to justify it.
+- `CLN_PLUGIN_TIMEOUT_SECS=0` disables the deadline for diagnostic reproduction — keep that escape hatch.
+
+**Origin bug:** `COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS` (dashboard fp `f80ee96ce507`). A plugin call inside `process_html` for any project containing a `.cln` file under `app/ui/web/pages/` enters a loop and never returns; before the timeout there was no diagnostic and `cln compile` hung indefinitely. The deadline does not fix the underlying codegen issue — it converts the silent hang into an actionable error so the user (or a CI run) can stop waiting and a backtrace pins down where in the plugin the loop lives.
