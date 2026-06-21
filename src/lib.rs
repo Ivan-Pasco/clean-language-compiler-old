@@ -195,10 +195,10 @@ pub enum MemoryTier {
     /// RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED).
     ///
     /// Empirical cliff progression with this tier's max cap:
-    ///   - Standard (32 MB):   SEM007 silent failure at  n=51 pages
-    ///   - Plugin (256 MB):    SEM007 silent failure at  n=~140 pages
-    ///   - Plugin (1 GB):      comfortably fits Clean Studio's ~170 files
-    ///                         with headroom for several × growth.
+    /// - Standard (32 MB):   SEM007 silent failure at n=51 pages
+    /// - Plugin (256 MB):    SEM007 silent failure at n=~140 pages
+    /// - Plugin (1 GB):      fits Clean Studio's ~170 files with
+    ///   headroom for several × growth.
     ///
     /// On the previous Standard default, the plugin received a 0 from
     /// `mem_alloc` once `memory.grow()` couldn't extend further, the
