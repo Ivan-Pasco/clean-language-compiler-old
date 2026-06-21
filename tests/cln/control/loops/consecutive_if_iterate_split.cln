@@ -1,0 +1,54 @@
+// Test: control/loops/consecutive_if_iterate_split
+// Grammar: iterate_statement, if_statement (foundation/spec/grammar.ebnf)
+// Spec: foundation/spec/stdlib-reference.md — string.split, list iteration
+//
+// Regression guard for RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED (dashboard
+// fingerprint 8954b2bd828f, reported against 0.30.326). Two consecutive
+// `if X.length() > 0 / iterate Y in X.split(...)` blocks where the first
+// branch fires were reported to silently drop the second branch — the
+// guard expression evaluated false at runtime even though the same string
+// had non-zero length one statement earlier.
+//
+// The bug could not be reproduced on 0.30.330. Memory-related fixes between
+// 0.30.326 and 0.30.330 (efb9513c export free/scope_pop, 3564b5ec LP-string
+// empty-string fallback) most likely addressed the underlying cause.
+//
+// This test exercises the exact shape from the report so any future
+// regression in consecutive if/iterate-over-split control flow is caught
+// immediately.
+//
+// Expected output:
+//   U:stranger
+//   U:cat
+//   M:body
+//   M:head
+//   DONE
+
+start:
+	string result = build_errors("stranger\x1fcat", "body\x1fhead")
+	print(result)
+	print("DONE")
+
+functions:
+	string err_obj(string field, string kind)
+		return field + "/" + kind
+
+	string add_err(string acc, string entry)
+		if acc.length() > 0
+			return acc + "\n" + entry
+		return entry
+
+	string build_errors(string unused, string missing)
+		string errs = ""
+
+		if unused.length() > 0
+			list<string> us = unused.split("\x1f")
+			iterate u in us
+				errs = add_err(errs, "U:" + u)
+
+		if missing.length() > 0
+			list<string> ms = missing.split("\x1f")
+			iterate m in ms
+				errs = add_err(errs, "M:" + m)
+
+		return errs

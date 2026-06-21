@@ -186,6 +186,14 @@ enum Commands {
         /// Release mode: strip always: invariant checks for smaller, faster output
         #[arg(long)]
         release: bool,
+
+        /// Promote BRIDGE-HOST-MISMATCH warnings to hard errors. By default,
+        /// calls to bridge functions not available on the target host class
+        /// are silently replaced with no-op stubs and a warning is emitted.
+        /// With --strict-hosts the compile fails instead.
+        /// See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
+        #[arg(long)]
+        strict_hosts: bool,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -479,6 +487,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             include_tests,
             plugins,
             release,
+            strict_hosts,
         } => {
             handle_compile(
                 input,
@@ -490,6 +499,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 include_tests,
                 plugins,
                 release,
+                strict_hosts,
                 &output_config,
             )
             .await?
@@ -683,6 +693,7 @@ async fn handle_serve(
         false,                // include_tests
         true,                 // plugins enabled
         false,                // release mode: off for serve
+        false,                // strict_hosts off for serve
         output_config,
     )
     .await;
@@ -1392,8 +1403,21 @@ async fn handle_compile(
     _include_tests: bool,
     plugins: bool,
     release: bool,
+    strict_hosts: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Plugin Contracts v2 — thread `--target` and `--strict-hosts` into the
+    // compile pipeline via thread-local overrides so the codegen bridge-host
+    // validator uses the right host class (browser/server). Without this the
+    // validator silently defaulted to "server" and replaced every
+    // browser-only bridge call with a `0`-returning stub.
+    // See bridge-host-classes.md §6 and `set_target_host_class_override`.
+    if let Some(hc) = clean_language_compiler::target_to_host_class(&target) {
+        clean_language_compiler::set_target_host_class_override(Some(hc.to_string()));
+    } else {
+        clean_language_compiler::set_target_host_class_override(None);
+    }
+    clean_language_compiler::set_strict_hosts_override(strict_hosts);
     if !output_config.quiet {
         let opt_desc = match opt_level {
             0 => "none (fastest compilation)",

@@ -289,6 +289,72 @@ pub fn init_logging(level: &str) {
         .init();
 }
 
+// ----------------------------------------------------------------------------
+// Plugin Contracts v2 — CLI-supplied host class overrides
+// ----------------------------------------------------------------------------
+//
+// `cln compile --target browser|node|server` and `--strict-hosts` need to
+// reach the codegen stage's bridge-host validator without changing the public
+// signatures of every `compile_multi_file_*` entry point (24 callers across
+// src/, tests/, and binaries). The CLI writes these into thread-local state
+// before invoking the compile function; the compile function reads them in
+// the WASM-generation stage. When unset (library or test consumers calling
+// the API directly), behaviour falls back to the previous `client_mode`-derived
+// host class and `CLEAN_STRICT_HOSTS` env var.
+//
+// See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
+
+thread_local! {
+    static TARGET_HOST_CLASS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static STRICT_HOSTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Set the bridge-host-class override for the current thread.
+///
+/// Maps `--target` CLI values to the host classes used by bridge declarations
+/// (see `bridge-host-classes.md` §2):
+///
+/// | CLI `--target`         | host class |
+/// |------------------------|------------|
+/// | `browser`, `web`       | `browser`  |
+/// | `node`, `nodejs`, `server`, `wasi`, `native` (default) | `server` |
+///
+/// Pass `None` to clear the override (subsequent compiles fall back to the
+/// `client_mode`-derived default).
+pub fn set_target_host_class_override(host_class: Option<String>) {
+    TARGET_HOST_CLASS.with(|cell| {
+        *cell.borrow_mut() = host_class;
+    });
+}
+
+/// Read the active host-class override for the current thread, if any.
+pub fn target_host_class_override() -> Option<String> {
+    TARGET_HOST_CLASS.with(|cell| cell.borrow().clone())
+}
+
+/// Set the `--strict-hosts` flag for the current thread. When true, the
+/// codegen bridge-host validator promotes `BRIDGE-HOST-MISMATCH` warnings to
+/// hard errors instead of substituting server stubs.
+pub fn set_strict_hosts_override(strict: bool) {
+    STRICT_HOSTS.with(|cell| cell.set(strict));
+}
+
+/// Read the active `--strict-hosts` override for the current thread.
+pub fn strict_hosts_override() -> bool {
+    STRICT_HOSTS.with(|cell| cell.get())
+}
+
+/// Translate a CLI `--target` value into the bridge host class it implies.
+/// Returns `None` for unknown targets (caller leaves the override unset and
+/// gets the `client_mode`-derived default).
+pub fn target_to_host_class(target: &str) -> Option<&'static str> {
+    match target.to_lowercase().as_str() {
+        "browser" | "web" => Some("browser"),
+        "node" | "nodejs" | "server" | "wasi" | "native" | "auto" | "embedded" => Some("server"),
+        _ => None,
+    }
+}
+
 /// Compiles Clean Language source code to WebAssembly using the specification-compliant 7-stage pipeline
 ///
 /// **Note:** This compiles with NO plugins (pure Clean Language).
@@ -2570,21 +2636,30 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         mir_codegen.set_language_to_bridge_map(lang_to_bridge);
     }
 
-    // Plugin Contracts v2 — derive host class from client_mode so the bridge
-    // enforcement check in codegen knows which `hosts` declarations apply.
+    // Plugin Contracts v2 — derive host class from (in priority order):
+    //   1. CLI-supplied override via `set_target_host_class_override` (thread-local),
+    //      typically set by `handle_compile` from `--target browser|node|server`.
+    //   2. client_mode flag — the nested `frontend.wasm` build forces "browser".
+    //   3. "server" default.
+    //
     // See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
     //
-    // - client_mode = true  → the nested `frontend.wasm` build → "browser"
-    // - client_mode = false → the server build (default for `cln compile`) → "server"
-    //
-    // Strict mode (warnings → errors) is opt-in via the CLEAN_STRICT_HOSTS=1
-    // environment variable for now. Phase D will flip the default.
-    let host_class = if client_mode { "browser" } else { "server" };
-    mir_codegen.set_host_class(Some(host_class.to_string()));
-    let strict = std::env::var("CLEAN_STRICT_HOSTS")
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    // Strict mode (warnings → errors) is opt-in via either:
+    //   - CLI flag `--strict-hosts` (sets the thread-local override), or
+    //   - CLEAN_STRICT_HOSTS=1 environment variable (compat).
+    let host_class = target_host_class_override().unwrap_or_else(|| {
+        if client_mode {
+            "browser".to_string()
+        } else {
+            "server".to_string()
+        }
+    });
+    mir_codegen.set_host_class(Some(host_class));
+    let strict = strict_hosts_override()
+        || std::env::var("CLEAN_STRICT_HOSTS")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
     mir_codegen.set_strict_hosts(strict);
     mir_codegen.set_client_mode(client_mode);
 
@@ -2948,6 +3023,19 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     if !lang_to_bridge.is_empty() {
         mir_codegen.set_language_to_bridge_map(lang_to_bridge);
     }
+    // Plugin Contracts v2 — release path must also honour the CLI target
+    // override so that `cln compile --release --target browser` produces a
+    // browser-targeted WASM. Without this, the release path silently kept
+    // bridge enforcement disabled and emitted server stubs for every
+    // browser-only bridge function. See bridge-host-classes.md §6.
+    let host_class = target_host_class_override().unwrap_or_else(|| "server".to_string());
+    mir_codegen.set_host_class(Some(host_class));
+    let strict = strict_hosts_override()
+        || std::env::var("CLEAN_STRICT_HOSTS")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+    mir_codegen.set_strict_hosts(strict);
     let codegen_result = mir_codegen.generate(mir_result.program)?;
     crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
         .map_err(|e| vec![e])?;

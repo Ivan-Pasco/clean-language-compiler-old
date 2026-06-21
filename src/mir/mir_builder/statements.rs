@@ -1427,21 +1427,21 @@ impl MirBuilder {
                 // Switch to body block (already pre-allocated)
                 self.current_block = Some(body_block_id);
 
-                // MEMORY MANAGEMENT: Push scope mark at start of collection loop iteration
-                // This saves the current allocation offset so we can reset it at the end
-                // of each iteration, freeing all temporary allocations made in the loop body
-                let scope_push_instruction = MirInstruction {
-                    dest: None, // mem_scope_push has no return value
-                    operation: MirOperation::Call {
-                        function: MirOperand::NamedFunction {
-                            name: "mem_scope_push".to_string(),
-                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                        },
-                        arguments: vec![],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, scope_push_instruction);
+                // MEMORY MANAGEMENT: Per-iteration mem_scope_push/pop was
+                // removed (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). The
+                // intent was to free transient allocations made inside the
+                // body, but any allocation assigned to an OUTER variable
+                // (e.g. an accumulator `errs = errs + ...` or a function
+                // call result `errs = add_err(errs, ...)`) gets freed at
+                // iteration end, leaving the outer variable pointing into
+                // memory that the next iteration's allocator overwrites.
+                // Two consecutive loops that mutate an outer string then
+                // observe the prior iterations' results as garbage, then
+                // the second loop's allocations clobber the first loop's
+                // entries entirely. The host's per-request scope_pop
+                // (COMPILER-NO-FREE-EXPORT-LEAKS-WASM-MEMORY) handles
+                // reclamation at request boundaries — that is the correct
+                // granularity for an arena-allocator design.
 
                 // NOTE: Get the address of the element, then LOAD the value
                 // GetElementPtr returns a pointer, not the value itself!
@@ -1513,21 +1513,10 @@ impl MirBuilder {
                     "After processing iterate body statements"
                 );
 
-                // MEMORY MANAGEMENT: Pop scope mark at end of collection loop iteration
-                // This resets the allocation offset to where it was at the start of the iteration,
-                // freeing all temporary allocations made in the loop body
-                let scope_pop_instruction = MirInstruction {
-                    dest: None, // mem_scope_pop has no return value
-                    operation: MirOperation::Call {
-                        function: MirOperand::NamedFunction {
-                            name: "mem_scope_pop".to_string(),
-                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                        },
-                        arguments: vec![],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, scope_pop_instruction);
+                // MEMORY MANAGEMENT: Per-iteration mem_scope_pop removed —
+                // see RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED comment at the
+                // loop-body entry above. Reclamation is handled by the
+                // host's per-request scope, not per-iteration.
 
                 // NOTE: Check if body block already has a terminator
                 // (IF statements may have set one). If not, jump to increment block.
@@ -1701,21 +1690,13 @@ impl MirBuilder {
                     break_block: exit_block_id,
                 });
 
-                // MEMORY MANAGEMENT: Push scope mark at start of while loop iteration
-                // This saves the current allocation offset so we can reset it at the end
-                // of each iteration, freeing all temporary allocations made in the loop body
-                let scope_push_instruction = MirInstruction {
-                    dest: None, // mem_scope_push has no return value
-                    operation: MirOperation::Call {
-                        function: MirOperand::NamedFunction {
-                            name: "mem_scope_push".to_string(),
-                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                        },
-                        arguments: vec![],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, scope_push_instruction);
+                // MEMORY MANAGEMENT: Per-iteration mem_scope_push/pop was
+                // removed (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). See the
+                // detailed comment in the For-loop body above. The same
+                // unsoundness applies to while loops: any body allocation
+                // assigned to an outer accumulator gets freed at the end of
+                // the iteration. Reclamation is handled by the host's
+                // per-request scope, not per-iteration.
 
                 // Process body statements
                 for stmt in &body.statements {
@@ -1724,22 +1705,6 @@ impl MirBuilder {
 
                 // Pop loop context after processing body
                 context.loop_stack.pop();
-
-                // MEMORY MANAGEMENT: Pop scope mark at end of while loop iteration
-                // This resets the allocation offset to where it was at the start of the iteration,
-                // freeing all temporary allocations made in the loop body
-                let scope_pop_instruction = MirInstruction {
-                    dest: None, // mem_scope_pop has no return value
-                    operation: MirOperation::Call {
-                        function: MirOperand::NamedFunction {
-                            name: "mem_scope_pop".to_string(),
-                            symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                        },
-                        arguments: vec![],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, scope_pop_instruction);
 
                 // After body, check if we still have a current block (not terminated by return)
                 // If so, jump back to header for next iteration
@@ -1936,26 +1901,15 @@ impl MirBuilder {
             }
 
             TastStatement::Break { location } => {
-                // Break jumps to the exit block of the innermost loop
-                // Copy the break block first to avoid borrow conflicts
+                // Break jumps to the exit block of the innermost loop.
+                // The matching per-iteration mem_scope_pop was removed when
+                // the body-level push/pop was removed
+                // (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). Calling
+                // mem_scope_pop here without a matching push would pop the
+                // outer (request-level) scope and corrupt memory.
                 let break_block = context.loop_stack.last().map(|ctx| ctx.break_block);
 
                 if let Some(target_block) = break_block {
-                    // Pop memory scope before jumping out of loop
-                    let scope_pop_instruction = MirInstruction {
-                        dest: None,
-                        operation: MirOperation::Call {
-                            function: MirOperand::NamedFunction {
-                                name: "mem_scope_pop".to_string(),
-                                symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                            },
-                            arguments: vec![],
-                        },
-                        location: location.clone(),
-                    };
-                    self.add_instruction(context, scope_pop_instruction);
-
-                    // Jump to break block
                     self.set_block_terminator(
                         context,
                         MirTerminator::Jump {
@@ -1971,26 +1925,12 @@ impl MirBuilder {
             }
 
             TastStatement::Continue { location } => {
-                // Continue jumps to the header block of the innermost loop
-                // Copy the continue block first to avoid borrow conflicts
+                // Continue jumps to the header block of the innermost loop.
+                // See Break above for why the prior mem_scope_pop call was
+                // removed (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED).
                 let continue_block = context.loop_stack.last().map(|ctx| ctx.continue_block);
 
                 if let Some(target_block) = continue_block {
-                    // Pop memory scope before jumping back to loop header
-                    let scope_pop_instruction = MirInstruction {
-                        dest: None,
-                        operation: MirOperation::Call {
-                            function: MirOperand::NamedFunction {
-                                name: "mem_scope_pop".to_string(),
-                                symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                            },
-                            arguments: vec![],
-                        },
-                        location: location.clone(),
-                    };
-                    self.add_instruction(context, scope_pop_instruction);
-
-                    // Jump to continue block (loop header)
                     self.set_block_terminator(
                         context,
                         MirTerminator::Jump {
@@ -2322,21 +2262,11 @@ impl MirBuilder {
         // Switch to body block (already pre-allocated)
         self.current_block = Some(body_block_id);
 
-        // MEMORY MANAGEMENT: Push scope mark at start of loop iteration
-        // This saves the current allocation offset so we can reset it at the end
-        // of each iteration, freeing all temporary allocations made in the loop body
-        let scope_push_instruction = MirInstruction {
-            dest: None, // mem_scope_push has no return value
-            operation: MirOperation::Call {
-                function: MirOperand::NamedFunction {
-                    name: "mem_scope_push".to_string(),
-                    symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                },
-                arguments: vec![],
-            },
-            location: location.clone(),
-        };
-        self.add_instruction(context, scope_push_instruction);
+        // MEMORY MANAGEMENT: Per-iteration mem_scope_push/pop was removed
+        // (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). See the For-loop body
+        // comment in this file for the full explanation. Range-based for
+        // loops have the same unsoundness: any body allocation assigned to
+        // an outer accumulator gets freed at iteration end.
 
         // Push a new scope for the loop body
         context.scope_stack.push(HashMap::new());
@@ -2363,21 +2293,9 @@ impl MirBuilder {
         // Pop the loop body scope
         context.scope_stack.pop();
 
-        // MEMORY MANAGEMENT: Pop scope mark at end of loop iteration
-        // This resets the allocation offset to where it was at the start of the iteration,
-        // freeing all temporary allocations made in the loop body (e.g., Rectangle objects)
-        let scope_pop_instruction = MirInstruction {
-            dest: None, // mem_scope_pop has no return value
-            operation: MirOperation::Call {
-                function: MirOperand::NamedFunction {
-                    name: "mem_scope_pop".to_string(),
-                    symbol_id: SymbolId(0), // stdlib placeholder; codegen resolves by name
-                },
-                arguments: vec![],
-            },
-            location: location.clone(),
-        };
-        self.add_instruction(context, scope_pop_instruction);
+        // MEMORY MANAGEMENT: Per-iteration mem_scope_pop removed — see
+        // the loop-body entry comment above
+        // (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED).
 
         // NOTE: increment_block_id and exit_block_id were pre-allocated at the start
         // of this function to prevent block ID collisions with nested control flow.
