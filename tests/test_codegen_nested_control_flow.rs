@@ -43,17 +43,22 @@ fn compile_to_wasm(source_path: &str, out_path: &str) {
 }
 
 fn run_via_wasmtime_runner(wasm_path: &str) -> String {
-    // Same lookup pattern as the other in-repo regression tests so this
-    // works under `cargo test` from any subdirectory.
+    // `cargo test` (CI's default) builds the debug binary; `cargo test
+    // --release` (local) builds the release one. Try both so CI and dev
+    // workflows pass without extra plumbing. CARGO_TARGET_DIR override is
+    // also honoured for the same reason as `test_consecutive_if_iterate`.
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
-        PathBuf::from("target/release/wasmtime_runner"),
-        PathBuf::from("../target/release/wasmtime_runner"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/wasmtime_runner"),
+        PathBuf::from(format!("{}/release/wasmtime_runner", target_dir)),
+        PathBuf::from(format!("{}/debug/wasmtime_runner", target_dir)),
+        manifest_dir.join(format!("{}/release/wasmtime_runner", target_dir)),
+        manifest_dir.join(format!("{}/debug/wasmtime_runner", target_dir)),
     ];
     let runner = candidates.iter().find(|p| p.exists()).unwrap_or_else(|| {
         panic!(
-            "wasmtime_runner not built — `cargo build --release --bin wasmtime_runner`. \
-             Looked in: {candidates:?}"
+            "wasmtime_runner not built — `cargo build --bin wasmtime_runner` (debug) or \
+             `cargo build --release --bin wasmtime_runner`. Looked in: {candidates:?}"
         )
     });
 
