@@ -172,7 +172,7 @@ impl CompilationTarget {
 pub enum MemoryTier {
     /// IoT, constrained devices — 4 initial pages, 16 max (1 MB)
     Embedded,
-    /// CLI tools, simple scripts, plugins — 8 initial pages, 128 max (8 MB)
+    /// CLI tools, simple scripts — 8 initial pages, 128 max (8 MB)
     Minimal,
     /// Web apps, APIs, PWAs, mobile, server — 32 initial pages, 512 max (32 MB)
     #[default]
@@ -181,6 +181,30 @@ pub enum MemoryTier {
     Heavy,
     /// Games, real-time rendering — 256 initial pages, 1024 max (64 MB)
     Canvas,
+    /// Compile-time plugin tools — 32 initial pages, 4096 max (256 MB).
+    ///
+    /// Plugins are compile-time artifacts that process the user's entire source
+    /// tree inside a single `process_html` / `assemble` call: every page
+    /// companion gets renamed, every HTML body is walked, the synthesized route
+    /// module accumulates routes for every page, etc. frame.ui's per-page
+    /// intermediate allocation footprint is roughly 600 KB (each iteration
+    /// generates several strings — load wrapper, normalize wrapper, render
+    /// shim — plus the diagnostic counters), and the host-side bump allocator
+    /// has no per-iteration reclamation (mem_scope_pop is a no-op since the
+    /// per-iteration push/pop was removed in
+    /// RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). On the previous default of
+    /// Standard (32 MB cap), a project of ~50 pages exhausted the cap and
+    /// `memory.grow()` failed; the plugin received a 0 from `mem_alloc`,
+    /// the assemble output silently became empty, and the build failed
+    /// downstream with `error[SEM007]: Function 'pages_home_load_impl' not
+    /// found`. The cliff was sharp at exactly 51 pages and reproduced on
+    /// Clean Studio at ~170 files. Raising the per-build memory cap to
+    /// 256 MB clears the cliff for any realistic project and costs nothing
+    /// at runtime — plugins only live as long as one `cln compile`
+    /// invocation. Fixes the next layer of
+    /// COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS that surfaced after
+    /// the codegen drop-statement fixes landed in 0.30.334.
+    Plugin,
 }
 
 impl MemoryTier {
@@ -192,6 +216,7 @@ impl MemoryTier {
             MemoryTier::Standard => 32,
             MemoryTier::Heavy => 64,
             MemoryTier::Canvas => 256,
+            MemoryTier::Plugin => 32,
         }
     }
 
@@ -203,6 +228,7 @@ impl MemoryTier {
             MemoryTier::Standard => 512,
             MemoryTier::Heavy => 1024,
             MemoryTier::Canvas => 1024,
+            MemoryTier::Plugin => 4096,
         }
     }
 
@@ -219,6 +245,7 @@ impl MemoryTier {
             MemoryTier::Standard => "standard",
             MemoryTier::Heavy => "heavy",
             MemoryTier::Canvas => "canvas",
+            MemoryTier::Plugin => "plugin",
         }
     }
 
@@ -230,6 +257,7 @@ impl MemoryTier {
             "standard" => Some(MemoryTier::Standard),
             "heavy" => Some(MemoryTier::Heavy),
             "canvas" => Some(MemoryTier::Canvas),
+            "plugin" => Some(MemoryTier::Plugin),
             _ => None,
         }
     }
@@ -241,13 +269,17 @@ impl MemoryTier {
     /// - native → heavy
     /// - embedded → embedded
     /// - wasi → minimal
-    /// - auto/standalone/plugin → standard (default)
+    /// - plugin → plugin (256 MB cap — compile-time tools that walk the whole
+    ///   project; see `MemoryTier::Plugin` doc for the SEM007-on-many-pages
+    ///   cliff this fixed)
+    /// - auto/standalone → standard (default)
     pub fn default_for_target(target: &str) -> Self {
         match target.to_lowercase().as_str() {
             "web" | "pwa" | "nodejs" | "server" => MemoryTier::Standard,
             "native" => MemoryTier::Heavy,
             "embedded" => MemoryTier::Embedded,
             "wasi" => MemoryTier::Minimal,
+            "plugin" => MemoryTier::Plugin,
             _ => MemoryTier::Standard,
         }
     }
@@ -3306,6 +3338,29 @@ start:
         );
         assert_eq!(MemoryTier::default_for_target("wasi"), MemoryTier::Minimal);
         assert_eq!(MemoryTier::default_for_target("auto"), MemoryTier::Standard);
+        // Plugins are compile-time tools that walk the whole user project in
+        // one assemble call. Standard (32 MB cap) silently failed at ~50
+        // pages — `mem_alloc` returned 0 once `memory.grow()` couldn't
+        // extend further, the plugin's result string also went to 0, and
+        // the build failed downstream with SEM007. Plugin tier (256 MB cap)
+        // clears the cliff for any realistic project. See
+        // `COMPILER-FRAME-UI-ASSEMBLE-OOM-KILL-ON-CLEAN-STUDIO` for the
+        // case that exhausted the old cap at scale.
+        assert_eq!(MemoryTier::default_for_target("plugin"), MemoryTier::Plugin);
+        assert_eq!(MemoryTier::Plugin.max_pages(), 4096);
+        assert_eq!(MemoryTier::Plugin.max_bytes(), 256 * 1024 * 1024);
+    }
+
+    #[test]
+    fn plugin_tier_is_orderable_and_round_trips_through_from_str() {
+        // Plugin tier is greater than Canvas in declaration order so
+        // `max()`-based tier resolution (`max(plugin_declared, target_default)`
+        // in `lib.rs::compile_multi_file_with_memory_tier`) prefers it when
+        // a plugin opts into the larger heap.
+        assert!(MemoryTier::Plugin > MemoryTier::Canvas);
+        assert_eq!(MemoryTier::from_str("plugin"), Some(MemoryTier::Plugin));
+        assert_eq!(MemoryTier::from_str("PLUGIN"), Some(MemoryTier::Plugin));
+        assert_eq!(MemoryTier::Plugin.name(), "plugin");
     }
 
     #[test]

@@ -3987,6 +3987,30 @@ impl FrameworkPlugin for WasmPluginAdapter {
         })?;
 
         if result_bytes.is_empty() {
+            // Empty result from a non-trivial input is almost always the
+            // signature of an out-of-memory failure inside the plugin:
+            // `mem_alloc` returns 0 once `memory.grow()` can't extend further
+            // (capped by the plugin's `[memory]` max), the plugin propagates
+            // that 0 through its accumulator strings, and the final result
+            // pointer is also 0 — which we then read as zero bytes. Without
+            // a warning the failure is invisible (downstream SEM007 makes it
+            // look like the plugin "just didn't emit the renamed function")
+            // and bisecting takes hours. Surface it the first time we see it.
+            //
+            // The 0-input edge case (no source files at all) is legitimately
+            // empty — only warn if we sent the plugin something to chew on.
+            if input_json.len() > 256 {
+                eprintln!(
+                    "warning: plugin '{}' assemble() returned 0 bytes for {}-byte input. \
+                     This almost always means the plugin exhausted its WASM memory \
+                     (`memory.grow()` failed). If you control the plugin, rebuild it with \
+                     `--target=plugin` so it gets the 256 MB plugin tier instead of the \
+                     32 MB standard tier. If you don't, please report this — the host can't \
+                     safely fall back to anything useful here.",
+                    self.name,
+                    input_json.len()
+                );
+            }
             return Ok(AssembleOutput::default());
         }
 
