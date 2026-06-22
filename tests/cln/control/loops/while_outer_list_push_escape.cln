@@ -1,0 +1,61 @@
+// Test: control/loops/while_outer_list_push_escape
+// Grammar: while_statement, method_call (foundation/spec/grammar.ebnf)
+// Spec: foundation/spec/stdlib-reference.md — list.push
+//
+// Regression guard for COMPILER-0-30-342-CLASS-METHOD-STRING-OPS-WASM-UNREACHABLE
+// (dashboard fingerprint ab0a0bf80973, reported against 0.30.342).
+//
+// `a3a8e521` (0.30.342) added per-iteration `mem_scope_push` / `mem_scope_pop`
+// around while bodies that `body_is_iter_scope_safe` classifies as safe.
+// The original analyzer detected only direct assignments to outer-scope
+// arena variables and missed the canonical frame.ui `read_block_body`
+// shape:
+//
+//     while ...
+//         string line = lines[index]      // inner var, arena
+//         block_lines.push(line)          // method call on OUTER list
+//         index = index + 1
+//
+// `block_lines.push(line)` is a `TastStatement::Expression` wrapping a
+// MethodCall — the prior analyzer fell through `_ => {}` and returned
+// `safe`. Push/pop wrapped the body, freeing `line` at the body-end pop;
+// the next iteration's allocator overlapped the freed slot and the
+// pointer stored in `block_lines` decoded to garbage. When the corrupted
+// list was later walked by `string.split` / `iterate` / `substring`,
+// the bounds-check guards in those helpers fired as
+// `wasm unreachable`.
+//
+// This test stresses the exact shape with a large iteration count and
+// then iterates the resulting list to print every element. If any
+// element decoded to garbage, either the iteration would trap or one of
+// the printed substrings would not match the expected "L<n>" form, and
+// the final count would be wrong.
+//
+// Expected output:
+//   count=400
+//   first=L0
+//   last=L399
+//   total_len=1490
+//   DONE
+//
+// total_len breakdown: 10 entries with len 2 ("L0".."L9") + 90 entries
+// with len 3 ("L10".."L99") + 300 entries with len 4 ("L100".."L399")
+// = 20 + 270 + 1200 = 1490.
+
+start:
+	list<string> block_lines = []
+	integer index = 0
+	while index < 400
+		string line = "L" + index.toString()
+		block_lines.push(line)
+		index = index + 1
+
+	print("count=" + block_lines.length().toString())
+	print("first=" + block_lines[0])
+	print("last=" + block_lines[block_lines.length() - 1])
+
+	integer total_len = 0
+	iterate item in block_lines
+		total_len = total_len + item.length()
+	print("total_len=" + total_len.toString())
+	print("DONE")

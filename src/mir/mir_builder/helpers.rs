@@ -376,12 +376,23 @@ impl MirBuilder {
     ///    accumulator would point into the per-iter region after `pop`,
     ///    and the next iteration's allocator would clobber it.
     ///
-    /// 2. No `return` inside the body. A `return` would jump straight to
-    ///    the function exit, skipping the paired `mem_scope_pop` and
-    ///    leaving an unbalanced mark on the host's scope stack. `break`
-    ///    and `continue` are fine — they go through the dedicated
-    ///    handlers, which emit the matching `mem_scope_pop` when the
-    ///    enclosing `LoopContext::has_iter_scope` flag is set.
+    /// 2. No `return`, `throw`, or `background` inside the body. `return`
+    ///    and `throw` jump straight past the paired `mem_scope_pop`, and
+    ///    `background` fires off a closure that retains body-local
+    ///    pointers beyond the iteration. `break` and `continue` are fine
+    ///    — they go through the dedicated handlers, which emit the
+    ///    matching `mem_scope_pop` when the enclosing
+    ///    `LoopContext::has_iter_scope` flag is set.
+    ///
+    /// 3. No bare method-call or function-call statement (a
+    ///    `TastStatement::Expression` whose expression is a call). The
+    ///    canonical escape is `outer_list.push(inner_string)` — the
+    ///    receiver lives outside the body, the argument was allocated
+    ///    this iteration, and the call stores the pointer into outer
+    ///    state. The analyzer can't trace arbitrary call effects, so any
+    ///    call statement is conservatively flagged as an escape. Calls
+    ///    that appear as the RHS of a variable declaration or assignment
+    ///    are still examined by the target rules in (1).
     ///
     /// Property/array-index targets and `LaterAssignment` are treated as
     /// escapes too (the receiver is by construction declared outside the
@@ -468,6 +479,28 @@ impl MirBuilder {
                         return true;
                     }
                 }
+                // A call statement (`outer_list.push(inner)`, `Foo.bar(x)`, etc.)
+                // can mutate any receiver or pass arguments to outer-scope
+                // state without going through a TastStatement::Assignment.
+                // The canonical shape from frame.ui's `read_block_body` —
+                // `block_lines.push(line)` inside a while body, where
+                // `block_lines` is declared outside the loop — stores the
+                // iter-allocated `line` pointer into outer state. The
+                // matching `mem_scope_pop` then frees the pointer's target,
+                // and the next iteration's allocator overlaps it. The
+                // resulting garbage `block_lines` entries surface as
+                // `wasm unreachable` traps once the corrupted list is
+                // walked by `string.split` / `iterate` / `substring`
+                // (COMPILER-0-30-342-CLASS-METHOD-STRING-OPS-WASM-UNREACHABLE).
+                TastStatement::Expression { expression, .. } => {
+                    if Self::expr_contains_call(expression) {
+                        return true;
+                    }
+                }
+                // `throw` unwinds past the body-end pop the same way
+                // `return` does. `background` fires off a closure that
+                // retains body-local pointers across the pop.
+                TastStatement::Throw { .. } | TastStatement::Background { .. } => return true,
                 TastStatement::If {
                     then_block,
                     else_block,
@@ -516,6 +549,36 @@ impl MirBuilder {
             }
         }
         false
+    }
+
+    /// Returns true if the expression (or any sub-expression) is a
+    /// method/function/static-method call. Used by
+    /// `body_escapes_or_returns` to disqualify loop bodies that contain
+    /// a discarded call statement — those can mutate outer state in
+    /// ways the analyzer cannot trace.
+    ///
+    /// Walks through wrapper kinds (BinaryOperation, UnaryOperation,
+    /// PropertyAccess, ArrayAccess, ArrayLiteral, Cast, etc.) because a
+    /// statement like `outer.list.add(inner)` is parsed as a
+    /// PropertyAccess whose inner expression is the MethodCall.
+    fn expr_contains_call(e: &TastExpression) -> bool {
+        match &e.kind {
+            TastExpressionKind::FunctionCall { .. }
+            | TastExpressionKind::MethodCall { .. }
+            | TastExpressionKind::StaticMethodCall { .. } => true,
+            TastExpressionKind::BinaryOperation { left, right, .. } => {
+                Self::expr_contains_call(left) || Self::expr_contains_call(right)
+            }
+            TastExpressionKind::UnaryOperation { operand, .. } => Self::expr_contains_call(operand),
+            TastExpressionKind::PropertyAccess { object, .. } => Self::expr_contains_call(object),
+            TastExpressionKind::ArrayAccess { array, index, .. } => {
+                Self::expr_contains_call(array) || Self::expr_contains_call(index)
+            }
+            TastExpressionKind::ArrayLiteral { elements, .. } => {
+                elements.iter().any(Self::expr_contains_call)
+            }
+            _ => false,
+        }
     }
 
     fn is_arena_alloc_type(t: &ConcreteType) -> bool {

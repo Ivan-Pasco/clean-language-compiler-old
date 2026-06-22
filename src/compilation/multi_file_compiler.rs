@@ -320,6 +320,47 @@ impl MultiFileCompiler {
                 }
             }
 
+            // Build the source-file list for assemble: every discovered .cln
+            // module in the compilation unit, deduplicated by canonical path
+            // against the shared-folder walk above.
+            //
+            // The AssembleInput contract (see
+            // src/plugins/plugin_abi.rs::AssembleInput::source_files —
+            // "All source files in the compilation unit") requires this to
+            // be the full set. Restricting it to `shared_files` excluded the
+            // entry file and any module discovered through Stage 2.5 expansion
+            // — frame.ui's page-companion detection, custom routing plugins,
+            // and any third-party file-pattern hook then could not see them.
+            // Reported as COMPILER-ASSEMBLE-INPUT-OMITS-ENTRY-AND-NON-OWNED-FILES
+            // (fp 38323eb59c33). Manifested as
+            // PAGE-COMPANION-NO-ROUTE-GENERATED on the framework dashboard.
+            let mut source_files: Vec<crate::plugins::AssembleSourceFile> = shared_files
+                .iter()
+                .map(|(p, _, c)| crate::plugins::AssembleSourceFile {
+                    path: p.to_string_lossy().into_owned(),
+                    content: c.clone(),
+                })
+                .collect();
+
+            let shared_paths: HashSet<PathBuf> = shared_files
+                .iter()
+                .map(|(p, _, _)| p.canonicalize().unwrap_or_else(|_| p.clone()))
+                .collect();
+
+            for module in unit.modules.values() {
+                let module_canonical = module
+                    .file_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| module.file_path.clone());
+                if shared_paths.contains(&module_canonical) {
+                    continue;
+                }
+                source_files.push(crate::plugins::AssembleSourceFile {
+                    path: module.file_path.to_string_lossy().into_owned(),
+                    content: module.source.clone(),
+                });
+            }
+
             // Pass 2: run assemble hooks.
             //
             // Assembly is owned by whichever loaded plugin declares
@@ -327,13 +368,7 @@ impl MultiFileCompiler {
             // The compiler does not contain a Rust fallback — manifests that
             // load no assemble-capable plugin simply get an empty output here.
             let assemble_input = crate::plugins::AssembleInput {
-                source_files: shared_files
-                    .iter()
-                    .map(|(p, _, c)| crate::plugins::AssembleSourceFile {
-                        path: p.to_string_lossy().into_owned(),
-                        content: c.clone(),
-                    })
-                    .collect(),
+                source_files,
                 project_root: project_root.to_string_lossy().into_owned(),
                 manifest_dir: manifest_dir.to_string_lossy().into_owned(),
                 has_frame_server: info.has_frame_server,
