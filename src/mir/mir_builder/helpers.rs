@@ -456,10 +456,10 @@ impl MirBuilder {
                         }
                     }
                     TastExpressionKind::PropertyAccess { .. }
-                    | TastExpressionKind::ArrayAccess { .. } => {
-                        if Self::is_arena_alloc_type(&target.expr_type) {
-                            return true;
-                        }
+                    | TastExpressionKind::ArrayAccess { .. }
+                        if Self::is_arena_alloc_type(&target.expr_type) =>
+                    {
+                        return true;
                     }
                     _ => {}
                 },
