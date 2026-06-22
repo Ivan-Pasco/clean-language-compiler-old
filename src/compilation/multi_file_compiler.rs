@@ -404,7 +404,15 @@ impl MultiFileCompiler {
                 .map(|t| (t.path, t.content))
                 .collect();
 
-            // Pass 3: add files to the compilation unit with transformations applied.
+            // Track which transformed_map entries we have already applied so
+            // pass 3b can finish whatever pass 3a missed without
+            // double-applying (canonicalized to match the lookup key used in
+            // `module_id_for_path`).
+            let mut applied_transforms: HashSet<PathBuf> = HashSet::new();
+
+            // Pass 3a: add shared-folder files to the compilation unit with
+            // transformations applied. Files inside the plugin's owned paths
+            // flow through this branch.
             for (file_path, shared_dir, raw_source) in shared_files {
                 let path_str = file_path.to_string_lossy().into_owned();
                 if let Some(existing_id) = unit.module_id_for_path(&file_path) {
@@ -412,6 +420,11 @@ impl MultiFileCompiler {
                     if let Some(transformed) = transformed_map.get(&path_str) {
                         if let Some(module) = unit.get_module_mut(existing_id) {
                             module.source = transformed.clone();
+                            applied_transforms.insert(
+                                file_path
+                                    .canonicalize()
+                                    .unwrap_or_else(|_| file_path.clone()),
+                            );
                         }
                     }
                 } else {
@@ -421,12 +434,52 @@ impl MultiFileCompiler {
                                 &file_path,
                                 &shared_dir,
                             );
+                        applied_transforms.insert(
+                            file_path
+                                .canonicalize()
+                                .unwrap_or_else(|_| file_path.clone()),
+                        );
                         (module_name, transformed.clone())
                     } else {
                         (Self::derive_module_name(&file_path), raw_source)
                     };
                     let id = unit.add_module(name, file_path, source);
                     graph.add_module(id);
+                }
+            }
+
+            // Pass 3b: apply transformations for modules outside every
+            // shared folder.
+            //
+            // The plugin sees these files in `source_files` thanks to
+            // COMPILER-ASSEMBLE-INPUT-OMITS-ENTRY-AND-NON-OWNED-FILES — the
+            // entry file and any import-discovered module now reach the
+            // assemble hook regardless of `[paths].owns`. The previous
+            // implementation only applied transformations during pass 3a,
+            // which iterated `shared_files`, so any `transformed_sources`
+            // entry the plugin emitted for the entry (e.g. frame.ui's
+            // companion rename of `any load(Request)` to
+            // `any pages_<name>_load_impl(any)` plus the
+            // `pages_<name>_load` wrapper) was silently dropped. Downstream
+            // the injected route module called the renamed name, the
+            // entry still defined the original `load`, and the build
+            // failed with `error[SEM007]: Function 'pages_<name>_load' not found`.
+            // That is dashboard bug `d275648c7452` /
+            // `CLN-0-30-345-PLUGIN-BUILD-EMITS-UNDEFINED-FN-REF-CAUSING-SEM007`,
+            // which the dashboard reporter correctly diagnosed as
+            // post-plugin-expansion symbol-table fallout — the actual
+            // cause is here, in the apply-transformations pass that didn't
+            // mirror the input-collection pass.
+            for (path_str, content) in &transformed_map {
+                let path = PathBuf::from(path_str);
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                if applied_transforms.contains(&canonical) {
+                    continue;
+                }
+                if let Some(existing_id) = unit.module_id_for_path(&path) {
+                    if let Some(module) = unit.get_module_mut(existing_id) {
+                        module.source = content.clone();
+                    }
                 }
             }
 
