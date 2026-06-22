@@ -1722,6 +1722,98 @@ pub fn discover_plugin_manifests<P: AsRef<std::path::Path>>(
     registry.loaded_manifests().clone()
 }
 
+/// Extend the resolver's bridge-function set with declarations from the
+/// source plugin manifest when one is being built.
+///
+/// PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED: the per-plugin
+/// `PluginRegistry` is loaded from `~/.cleen/plugins/<name>/plugin.toml`
+/// — the previously installed copy. When a plugin author adds a new
+/// `[bridge].functions` entry and immediately calls it from
+/// `src/main.cln`, the resolver looks the call up against the stale
+/// installed manifest and SEM007s on the new function name. The plugin
+/// cannot be rebuilt in a single commit, because the rebuild needs the
+/// new bridge to be visible AT BUILD TIME, but only the rebuild can
+/// install it.
+///
+/// Resolution: when the entry being compiled lives next to (or one
+/// `src/` level below) a `plugin.toml`, parse THAT manifest and append
+/// its bridge declarations to the resolver's bridge_functions set. The
+/// installed-registry path stays canonical for everyone else; the
+/// source-manifest path only fires when the directory layout matches
+/// the framework's plugin source convention. Bridges already known by
+/// canonical name are not duplicated.
+///
+/// The detection is conservative on purpose:
+/// 1. `<entry>.parent()/plugin.toml`  — top-level layout (rare).
+/// 2. `<entry>.parent().parent()/plugin.toml` ONLY IF `<entry>.parent()`
+///    is named `src` — the standard framework layout (`plugins/<name>/src/main.cln`).
+///
+/// If a regular user project happens to have `plugin.toml` two levels
+/// above its entry but no `src/` segment between them, nothing
+/// happens — the function bails out silently. The framework's pattern
+/// is the only one this fires on.
+fn extend_with_source_plugin_bridges(
+    entry_path: &std::path::Path,
+    bridge_functions: &mut Vec<plugins::BridgeFunction>,
+) {
+    let parent = match entry_path.parent() {
+        Some(p) => p,
+        None => return,
+    };
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    candidates.push(parent.join("plugin.toml"));
+    if parent.file_name().and_then(|n| n.to_str()) == Some("src") {
+        if let Some(grand) = parent.parent() {
+            candidates.push(grand.join("plugin.toml"));
+        }
+    }
+
+    let manifest_path = match candidates.into_iter().find(|p| p.is_file()) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let source = match std::fs::read_to_string(&manifest_path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    let manifest: plugins::plugin_abi::PluginManifest = match toml::from_str(&source) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(
+                path = %manifest_path.display(),
+                error = %e,
+                "PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED: source plugin.toml \
+                 found but failed to parse — falling back to installed-registry bridges only"
+            );
+            return;
+        }
+    };
+
+    let already: std::collections::HashSet<String> =
+        bridge_functions.iter().map(|bf| bf.name.clone()).collect();
+
+    let added: usize = manifest
+        .bridge
+        .functions
+        .into_iter()
+        .filter(|bf| !already.contains(&bf.name))
+        .map(|bf| bridge_functions.push(bf))
+        .count();
+
+    if added > 0 {
+        tracing::info!(
+            plugin = %manifest.plugin.name,
+            path = %manifest_path.display(),
+            added = added,
+            "Source plugin.toml found — extended bridge set with declarations not yet \
+             present in the installed registry"
+        );
+    }
+}
+
 fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> Vec<String> {
     let mut plugins: Vec<String> = extract_plugins(entry_source);
 
@@ -2039,10 +2131,20 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     };
 
     // Get bridge functions and language-to-bridge mapping from plugin registry
-    let bridge_functions = registry
+    let mut bridge_functions = registry
         .as_ref()
         .map(|r| r.bridge_functions().to_vec())
         .unwrap_or_default();
+    // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED:
+    // When a plugin is being built from source, the bridge declarations
+    // it CALLS through `--target=plugin` must be drawn from the source
+    // plugin.toml that lives next to (or one level above) the .cln entry
+    // — not the previously-installed `~/.cleen/plugins/<name>/plugin.toml`.
+    // Otherwise adding a new bridge to a plugin in a single commit is
+    // impossible: the source manifest declares it, but resolution looks
+    // up against the stale installed manifest and SEM007 fires before the
+    // plugin can be rebuilt.
+    extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
     let lang_to_bridge_multifile = registry
         .as_ref()
         .map(|r| r.language_to_bridge_map())
@@ -2464,10 +2566,13 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         }
     };
 
-    let bridge_functions = registry
+    let mut bridge_functions = registry
         .as_ref()
         .map(|r| r.bridge_functions().to_vec())
         .unwrap_or_default();
+    // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED — see the matching
+    // call in `compile_multi_file_with_memory_tier`.
+    extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
     let lang_to_bridge = registry
         .as_ref()
         .map(|r| r.language_to_bridge_map())
@@ -2963,10 +3068,13 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
         }
     };
 
-    let bridge_functions = registry
+    let mut bridge_functions = registry
         .as_ref()
         .map(|r| r.bridge_functions().to_vec())
         .unwrap_or_default();
+    // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED — see the matching
+    // call in `compile_multi_file_with_memory_tier`.
+    extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
     let lang_to_bridge = registry
         .as_ref()
         .map(|r| r.language_to_bridge_map())
