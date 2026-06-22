@@ -813,6 +813,56 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
+            // Short-circuit `a and b` / `a or b`. The rhs only executes
+            // when the lhs cannot already determine the result; the rhs
+            // instructions are inlined into the branch that runs in
+            // that case.
+            MirOperation::LogicalShortCircuit {
+                is_and,
+                lhs,
+                rhs_instructions,
+                rhs_value,
+            } => {
+                // Snapshot args before any &mut self call invalidates them.
+                let is_and = *is_and;
+                let lhs = lhs.clone();
+                let rhs_instructions = rhs_instructions.clone();
+                let rhs_value = rhs_value.clone();
+
+                // Load the lhs onto the stack, then open an `if (result i32)`.
+                self.load_operand(&lhs)?;
+                self.current_instructions
+                    .push(Instruction::If(wasm_encoder::BlockType::Result(
+                        wasm_encoder::ValType::I32,
+                    )));
+
+                if is_and {
+                    // `and`: when lhs is true, evaluate rhs; else push 0.
+                    for instr in &rhs_instructions {
+                        self.generate_instruction(instr)?;
+                    }
+                    self.load_operand(&rhs_value)?;
+                    self.current_instructions.push(Instruction::Else);
+                    self.current_instructions.push(Instruction::I32Const(0));
+                } else {
+                    // `or`: when lhs is true, push 1; else evaluate rhs.
+                    self.current_instructions.push(Instruction::I32Const(1));
+                    self.current_instructions.push(Instruction::Else);
+                    for instr in &rhs_instructions {
+                        self.generate_instruction(instr)?;
+                    }
+                    self.load_operand(&rhs_value)?;
+                }
+                self.current_instructions.push(Instruction::End);
+
+                // Store the result in the dest local.
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                } else {
+                    self.current_instructions.push(Instruction::Drop);
+                }
+            }
+
             // Async host bridge: background someFunc(args)
             // Calls _async_fire(fn_name_ptr, fn_name_len, args_ptr, args_len) -> void
             MirOperation::AsyncFireCall { fn_name, arguments } => {

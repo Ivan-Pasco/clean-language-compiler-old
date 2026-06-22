@@ -531,6 +531,25 @@ impl DeadCodeEliminationPass {
                 // Mark the value being stored to the global as live
                 self.mark_operand_live(value, function);
             }
+            MirOperation::LogicalShortCircuit {
+                lhs,
+                rhs_instructions,
+                rhs_value,
+                ..
+            } => {
+                // Both the lhs and the rhs value are live; rhs_instructions
+                // produce the rhs_value via Copy/Call chains whose own
+                // operands must also remain live. Recurse the same way
+                // the per-instruction walker does for ordinary blocks.
+                self.mark_operand_live(lhs, function);
+                self.mark_operand_live(rhs_value, function);
+                for instr in rhs_instructions {
+                    self.mark_operands_live(&instr.operation, function);
+                    if let Some(dest) = instr.dest {
+                        self.mark_live(dest, function);
+                    }
+                }
+            }
         }
     }
 

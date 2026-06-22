@@ -312,6 +312,35 @@ impl MirBuilder {
                 left,
                 right,
             } => {
+                // Short-circuit lowering for the logical operators `and` / `or`.
+                //
+                // The right-hand operand must not execute when the left
+                // already decides the result — otherwise boundary-guarded
+                // expressions like
+                // `i < s.length() and s.substring(i, i+1) == " "` evaluate
+                // substring with an out-of-bounds index and trap.
+                //
+                // We capture the right-hand operand's MIR instructions
+                // into a side buffer (without leaving them in any block)
+                // and pack them into a single
+                // `MirOperation::LogicalShortCircuit`. The codegen emits a
+                // WASM `if (result i32) ... else ... end` whose
+                // then-branch inlines those instructions, so the rhs only
+                // executes when the lhs cannot short-circuit.
+                //
+                // Bitwise variants (`BitwiseAnd`, `BitwiseOr`, `Xor`,
+                // `Shl`, `Shr`) fall through to the generic BinaryOp path
+                // below.
+                if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
+                    return self.build_short_circuit_logical(
+                        context,
+                        operator,
+                        left,
+                        right,
+                        &expression.location,
+                    );
+                }
+
                 // NOTE: Handle Power operator as runtime function call
                 if matches!(operator, BinaryOperator::Power) {
                     // Power operation requires runtime pow function
@@ -4118,5 +4147,109 @@ impl MirBuilder {
                 )])
             }
         }
+    }
+
+    /// Lower `a and b` / `a or b` with short-circuit semantics.
+    ///
+    /// Both operands are boolean. The right-hand operand only executes
+    /// when the left-hand cannot already determine the result.
+    ///
+    /// The emitted shape is a single `MirOperation::LogicalShortCircuit`
+    /// in the current basic block — the rhs instructions are captured
+    /// into a side buffer and packed into the op so the codegen can emit
+    /// them inside a WASM `if (result i32) ... else ... end`. Keeping
+    /// the operation inside a single MIR block (rather than splitting
+    /// into multiple blocks joined by a Phi) means downstream passes —
+    /// including the while-loop codegen, which expects the loop
+    /// header's `Branch` terminator to point straight at body/exit —
+    /// see only one block and continue working unchanged.
+    ///
+    /// `and`:
+    ///   load lhs ; if (result i32) [emit rhs_instructions] load rhs_value
+    ///   else                       i32.const 0                            end
+    /// `or`:
+    ///   load lhs ; if (result i32) i32.const 1
+    ///   else                       [emit rhs_instructions] load rhs_value end
+    fn build_short_circuit_logical(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        operator: &BinaryOperator,
+        left: &TastExpression,
+        right: &TastExpression,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        debug_assert!(matches!(operator, BinaryOperator::And | BinaryOperator::Or));
+        let is_and = matches!(operator, BinaryOperator::And);
+
+        // Evaluate the left operand inline in the current block.
+        let lhs_id = self.build_expression(context, left)?;
+
+        // Capture the right-hand operand's MIR instructions without
+        // leaving them in any reachable block. Use a temporary scratch
+        // block, swap `current_block` to it, build rhs, then steal the
+        // instructions and discard the scratch block. Any locals
+        // allocated during rhs evaluation remain registered on the
+        // function (their definitions live in `function.locals`), so
+        // the codegen will allocate WASM locals for them normally.
+        let saved_block = self
+            .current_block
+            .expect("short-circuit lowered without an active current_block");
+        let scratch_block_id = BasicBlockId(context.function.next_block_id);
+        context.function.next_block_id += 1;
+        context.function.blocks.insert(
+            scratch_block_id,
+            MirBasicBlock {
+                id: scratch_block_id,
+                label: Some("logical_rhs_scratch".to_string()),
+                instructions: Vec::new(),
+                terminator: MirTerminator::Unreachable,
+                predecessors: HashSet::new(),
+                successors: HashSet::new(),
+                location: location.clone(),
+            },
+        );
+        self.current_block = Some(scratch_block_id);
+        let rhs_id = self.build_expression(context, right)?;
+        // If the rhs evaluation itself opened new control-flow blocks
+        // (nested short-circuit chains compose without issue because
+        // each one nests recursively; here we just need a single linear
+        // scratch). For anything beyond a linear sequence the rhs
+        // landed in a different block and we cannot inline-emit it.
+        if self.current_block != Some(scratch_block_id) {
+            return Err(vec![CompilerError::validation_error(
+                "Right-hand operand of logical `and`/`or` introduced control flow \
+                 that cannot be inlined into the short-circuit WASM if/else. \
+                 Hoist the sub-expression to a local before the operator.",
+                location.clone(),
+            )]);
+        }
+        let scratch = context
+            .function
+            .blocks
+            .remove(&scratch_block_id)
+            .expect("scratch block disappeared during rhs build");
+        let rhs_instructions = scratch.instructions;
+        self.current_block = Some(saved_block);
+
+        // Allocate the result local.
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, MirType::I32, location.clone());
+
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::LogicalShortCircuit {
+                    is_and,
+                    lhs: MirOperand::Value(lhs_id),
+                    rhs_instructions,
+                    rhs_value: MirOperand::Value(rhs_id),
+                },
+                location: location.clone(),
+            },
+        );
+
+        Ok(result_id)
     }
 }

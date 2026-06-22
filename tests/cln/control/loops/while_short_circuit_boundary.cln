@@ -1,0 +1,37 @@
+// Test: control/loops/while_short_circuit_boundary
+// Grammar: while_loop, binary_expression (and)
+// Semantic: spec/type-system.md §11 short-circuit `and` / `or`
+// Expected output:
+//   pos=4
+//   len=4
+//   side_effect_count=0
+//
+// `and` MUST short-circuit. Without short-circuit, `s.substring(i, i+1)`
+// would be invoked at `i == s.length()` and trap the WASM substring
+// intrinsic on the out-of-bounds load.
+//
+// This is the pattern frame.ui's `extract_json_field` and
+// `find_unescaped_quote` use — the dashboard's
+// `FRAME-UI-EXTRACT-JSON-FIELD-NON-SHORT-CIRCUIT-AND-OOB` repro.
+
+start:
+	string spaces = "    "
+	integer pos = find_first_non_space(spaces)
+	println("pos=" + pos.toString())
+	println("len=" + spaces.length().toString())
+
+	integer never_count = 0
+	boolean lhs = false
+	boolean result = lhs and increments_counter(never_count)
+	println("side_effect_count=" + never_count.toString())
+
+functions:
+	integer find_first_non_space(string s)
+		integer i = 0
+		while i < s.length() and s.substring(i, i + 1) == " "
+			i = i + 1
+		return i
+
+	boolean increments_counter(integer count)
+		count = count + 1
+		return true

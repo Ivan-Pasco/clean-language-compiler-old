@@ -1635,6 +1635,96 @@ impl MirCodeGenerator<'_> {
                                 names.insert("string.compare".to_string());
                             }
                         }
+                        // `a and b` / `a or b` short-circuit. The rhs's MIR
+                        // instructions are embedded in the operation rather
+                        // than living in any block — walk them so the
+                        // call-graph BFS sees their callees, named imports,
+                        // and string-comparison BinaryOps. Without this,
+                        // e.g. `i < len and substring(i, i+1) == " "` would
+                        // tree-shake `string_compare` (the rhs's `==` never
+                        // appears in a block) and codegen would silently
+                        // fall back to pointer-equality `i32.eq`. The walk
+                        // is intentionally a flat scan rather than a
+                        // recursive descent — at present rhs_instructions
+                        // is always a linear sequence (the MIR builder
+                        // rejects rhs expressions that open control flow,
+                        // see `build_short_circuit_logical`).
+                        MirOperation::LogicalShortCircuit {
+                            rhs_instructions, ..
+                        } => {
+                            for sub in rhs_instructions {
+                                match &sub.operation {
+                                    MirOperation::Call {
+                                        function: MirOperand::NamedFunction { name, symbol_id },
+                                        ..
+                                    } => {
+                                        insert_name(&mut names, name);
+                                        let callee = if symbol_id.0 != 0 {
+                                            Some(*symbol_id)
+                                        } else {
+                                            name_to_symbol.get(name.as_str()).copied()
+                                        };
+                                        if let Some(s) = callee {
+                                            if visited.insert(s) {
+                                                worklist.push(s);
+                                            }
+                                        }
+                                    }
+                                    MirOperation::Call {
+                                        function: MirOperand::Function(callee_sym),
+                                        ..
+                                    } => {
+                                        if let Some(name) =
+                                            mir_program.symbol_name_map.get(callee_sym)
+                                        {
+                                            insert_name(&mut names, name);
+                                        }
+                                        if visited.insert(*callee_sym) {
+                                            worklist.push(*callee_sym);
+                                        }
+                                    }
+                                    MirOperation::Copy {
+                                        source: MirOperand::Function(callee_sym),
+                                    } => {
+                                        if let Some(name) =
+                                            mir_program.symbol_name_map.get(callee_sym)
+                                        {
+                                            insert_name(&mut names, name);
+                                        }
+                                        if visited.insert(*callee_sym) {
+                                            worklist.push(*callee_sym);
+                                        }
+                                    }
+                                    MirOperation::BinaryOp {
+                                        op: MirBinaryOp::Eq | MirBinaryOp::Ne,
+                                        left,
+                                        right,
+                                    } => {
+                                        let left_is_str = match left {
+                                            MirOperand::Value(vid) => current_func
+                                                .locals
+                                                .get(vid)
+                                                .map(|l| is_string_type(&l.local_type))
+                                                .unwrap_or(false),
+                                            _ => false,
+                                        };
+                                        let right_is_str = match right {
+                                            MirOperand::Value(vid) => current_func
+                                                .locals
+                                                .get(vid)
+                                                .map(|l| is_string_type(&l.local_type))
+                                                .unwrap_or(false),
+                                            _ => false,
+                                        };
+                                        if left_is_str || right_is_str {
+                                            names.insert("string_compare".to_string());
+                                            names.insert("string.compare".to_string());
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }

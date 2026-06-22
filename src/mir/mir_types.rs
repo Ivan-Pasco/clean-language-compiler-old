@@ -437,6 +437,40 @@ pub enum MirOperation {
         /// Type of the global (needed for proper WASM type)
         global_type: MirType,
     },
+
+    /// Short-circuit logical `and` / `or`.
+    ///
+    /// The rhs is evaluated only when the lhs cannot already determine
+    /// the result. Codegen emits a WASM `if (result i32) … else … end`
+    /// — the rhs instructions are inlined into the branch that runs
+    /// when the lhs DOES NOT short-circuit, so any boundary-guarded
+    /// or side-effectful sub-expression on the rhs is skipped exactly
+    /// when the spec says it should be.
+    ///
+    /// Layout (for `and`):
+    ///   load lhs
+    ///   if (result i32)
+    ///     <rhs_instructions>      ;; runs only when lhs is true
+    ///     load rhs_value
+    ///   else
+    ///     i32.const 0             ;; short-circuit constant
+    ///   end
+    ///
+    /// `or` flips the arms: the constant arm pushes `1` and the rhs
+    /// arm runs in the else branch.
+    LogicalShortCircuit {
+        /// `true` for `and`, `false` for `or`.
+        is_and: bool,
+        /// Already-evaluated left-hand operand (boolean i32).
+        lhs: MirOperand,
+        /// MIR instructions that compute the rhs value. They are
+        /// inlined into the WASM `if`'s rhs arm at codegen time so
+        /// they only run when the lhs cannot short-circuit.
+        rhs_instructions: Vec<MirInstruction>,
+        /// The value the rhs_instructions ultimately produce. Loaded
+        /// after rhs_instructions complete in the rhs arm.
+        rhs_value: MirOperand,
+    },
 }
 
 /// MIR terminator instructions (end basic blocks)
