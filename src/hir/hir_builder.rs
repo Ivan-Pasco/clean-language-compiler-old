@@ -1314,6 +1314,38 @@ impl HirBuilder {
                 let loc = location.clone().unwrap_or_default();
                 let mut expanded = self.desugar_validate_check(check, &loc)?;
                 hir_statements.append(&mut expanded);
+            } else if let Statement::Error { message, location } = stmt {
+                // Desugar `error("msg")` into a print-then-trap pair so:
+                //   1. The message string literal is embedded in the data
+                //      section (would otherwise vanish under DCE).
+                //   2. The message is observable on the host's stdout
+                //      before the trap fires.
+                //   3. `require false` produces the unconditional WASM
+                //      trap that callers of `error()` expect.
+                //
+                // Pre-fix `Statement::Error` fell through the wildcard
+                // `_ => Ok(HirStatement::Expression { Void })` arm in
+                // `build_statement`, silently becoming a no-op — every
+                // `error("...")` call disappeared, its argument string
+                // vanished from the binary, and execution continued past
+                // the would-be trap. Reported as
+                // COMPILER-SYNTHETIC-MODULE-START-BLOCK-DROPPED (the
+                // dropped synthetic module's start: body was just
+                // `error("diagnostic fired!")`, which lowered to nothing).
+                let loc = location.clone().unwrap_or_default();
+                let message_expr = self.build_expression(message)?;
+                hir_statements.push(HirStatement::Print {
+                    expression: message_expr,
+                    newline: true,
+                    location: loc.clone(),
+                });
+                hir_statements.push(HirStatement::Require {
+                    condition: HirExpression::Literal {
+                        value: Value::Boolean(false),
+                        location: loc.clone(),
+                    },
+                    location: loc,
+                });
             } else {
                 // Regular statement processing
                 hir_statements.push(self.build_statement(stmt)?);

@@ -1,0 +1,35 @@
+// Test: error_statement/error_statement_traps_with_message
+// Grammar: error_statement (foundation/spec/grammar.ebnf)
+// Spec: foundation/spec/semantic-rules.md — SEM error()
+//
+// Regression guard for COMPILER-SYNTHETIC-MODULE-START-BLOCK-DROPPED
+// (dashboard fingerprint 4e740d00a254, reported against 0.30.326+).
+//
+// Pre-fix the parser produced `Statement::Error { message }` but the HIR
+// builder had no explicit handler — the variant fell through the
+// wildcard `_ => Ok(HirStatement::Expression { Void })` arm and the
+// entire statement (including the message argument) became a no-op
+// void literal. Every `error("...")` call disappeared from the WASM,
+// the message string vanished from the data section, and execution
+// continued past the would-be trap.
+//
+// This was discovered as PAGE-COMPANION-NO-ROUTE-GENERATED's downstream
+// guard never firing: frame.ui injects diagnostic synthetic modules
+// containing `start:\n\terror("...")` to surface plugin-side build
+// failures, but the entire start: body got swallowed by this bug.
+//
+// Fix lowers `error("msg")` to a `print(msg)` followed by a
+// `require false` so:
+//   - The message string is preserved in the data section.
+//   - The host observes the message on stdout before the trap.
+//   - `require false` always traps (the canonical Clean Language
+//     way to express an unconditional runtime trap).
+//
+// This test is structural: the .cln file is just `start: error(...)`.
+// Standalone execution exits 0 on the broken compiler (the trap is
+// silently dropped) and non-zero on the fixed compiler (require false
+// fails). A companion Rust test in tests/test_error_statement_traps.rs
+// also asserts the WASM data section contains the message literal.
+
+start:
+	error("error-statement-must-trap")
