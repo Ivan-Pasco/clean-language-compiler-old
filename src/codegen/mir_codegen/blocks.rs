@@ -527,85 +527,97 @@ impl MirCodeGenerator<'_> {
                 } else {
                     // Find the merge block that the non-returning branch(es) flow into.
                     //
-                    // **Critical**: a branch may end in `Jump { target }` (simple case where
-                    // the body is straight-line and merges via a jump) OR in
-                    // `Branch { .. }` (nested if/else where the merge happens at the inner
-                    // if's continuation). We must handle BOTH — the prior implementation
-                    // only inspected `Jump` terminators, which silently dropped every
-                    // statement after a nested if/else inside a branch.
+                    // Two cases, handled separately because they have very different
+                    // continuation semantics:
                     //
-                    // Symptom: `if A else { if B else { if C else D } stmt }` would
-                    // emit code for A/B/C/D but never `stmt`, because the merge block
-                    // holding `stmt` is reached from the inner if's continuation Jump
-                    // (handled by `find_eventual_continuation`), not from a direct Jump
-                    // terminator on the outer branch's body. See
-                    // COMPILER-CODEGEN-DROPS-STATEMENT-AFTER-NESTED-IF-IN-NESTED-CONTEXT
-                    // (root cause of COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS —
-                    // `process_text_node`'s `remaining = ...` was dropped, the safety
-                    // counter alone kept the loop bounded). The outer
-                    // `generate_structured_blocks` already handled this via
-                    // `find_eventual_continuation`; that logic is mirrored here.
+                    // 1. has_else_clause = false (single-arm if). The MIR builder
+                    //    allocates `false_block` AS this if's merge point — it is the
+                    //    correct continuation by construction. We MUST NOT chase via
+                    //    `find_eventual_continuation` here: that walks every empty
+                    //    Jump in the chain (including past the if's own merge into
+                    //    the surrounding scope's merge, and possibly past several
+                    //    enclosing scopes' merges) and lands on a block that
+                    //    logically belongs to an OUTER scope. Inlining that block
+                    //    inside this if's body marks it `generated`, so when the
+                    //    top-level `generate_structured_blocks` walks the function's
+                    //    natural Jump chain to emit the trailing code, the block is
+                    //    skipped — every statement after this if disappears from
+                    //    the emitted WASM, the function falls off its end without a
+                    //    return value, and execution traps on the missing return.
+                    //    Regression introduced by `efc89cd1` (chase_jump_chain in
+                    //    `find_eventual_continuation`); reported as
+                    //    FRAME-DATA-2-1-4-DATA-BLOCK-TRAP (fp 908a9fc55653), where
+                    //    `parse_field_line` has a 3-level nested `if/if/if` (no
+                    //    else) followed by trailing code that the broken codegen
+                    //    silently dropped.
+                    //
+                    // 2. has_else_clause = true. Both branches end at a real merge
+                    //    point. A branch may end in `Jump { target }` (simple body)
+                    //    OR in `Branch { .. }` (nested if/else); the latter needs
+                    //    `find_eventual_continuation` to chase through the inner
+                    //    if's synthesized merge blocks until the common outer merge
+                    //    is found. The pre-`efc89cd1` implementation only handled
+                    //    `Jump` and silently dropped every statement after a nested
+                    //    if/else inside a branch (root cause of
+                    //    COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS). Both
+                    //    branches' continuations must agree, otherwise the outer
+                    //    structure will emit it.
                     let mut continuation: Option<BasicBlockId> = None;
 
-                    let true_cont = if !true_has_return {
-                        function
-                            .blocks
-                            .get(true_block)
-                            .and_then(|b| match &b.terminator {
-                                MirTerminator::Jump { target } => Some(*target),
-                                MirTerminator::Branch { .. } => {
-                                    self.find_eventual_continuation(function, *true_block)
-                                }
-                                _ => None,
-                            })
-                    } else {
-                        None
-                    };
-
-                    if let Some(tc) = true_cont {
-                        let is_loop_exit_target = self
-                            .loop_context_stack
-                            .iter()
-                            .any(|ctx| ctx.exit_block_id == tc);
-                        if !is_loop_exit_target {
-                            continuation = Some(tc);
+                    if !has_else_clause {
+                        if !is_loop_exit {
+                            continuation = Some(*false_block);
                         }
-                    }
-
-                    if !false_has_return && has_else_clause {
-                        let false_cont =
+                    } else {
+                        let true_cont = if !true_has_return {
                             function
                                 .blocks
-                                .get(false_block)
+                                .get(true_block)
                                 .and_then(|b| match &b.terminator {
                                     MirTerminator::Jump { target } => Some(*target),
                                     MirTerminator::Branch { .. } => {
-                                        self.find_eventual_continuation(function, *false_block)
+                                        self.find_eventual_continuation(function, *true_block)
                                     }
                                     _ => None,
-                                });
+                                })
+                        } else {
+                            None
+                        };
 
-                        if let Some(fc) = false_cont {
-                            if let Some(tc) = continuation {
-                                if tc != fc {
-                                    // Branches merge at different points — can't inline a
-                                    // single continuation here; outer structure will pick it up.
-                                    continuation = None;
-                                }
-                            } else {
-                                continuation = Some(fc);
+                        if let Some(tc) = true_cont {
+                            let is_loop_exit_target = self
+                                .loop_context_stack
+                                .iter()
+                                .any(|ctx| ctx.exit_block_id == tc);
+                            if !is_loop_exit_target {
+                                continuation = Some(tc);
                             }
                         }
-                    }
 
-                    // If no else clause, false branch goes to continuation directly.
-                    // BUT: if false_block is a loop exit continuation (generated by the outer
-                    // loop structure after the loop ends), do NOT inline it here — the outer
-                    // generate_structured_blocks call for the loop will emit it.
-                    if !has_else_clause && continuation.is_none() && !is_loop_exit {
-                        debug_mir!("DEBUG BRANCH_BLOCK: No else clause in nested if, setting continuation to false_block {:?} in function '{}'",
-                            false_block, function.name);
-                        continuation = Some(*false_block);
+                        if !false_has_return {
+                            let false_cont =
+                                function.blocks.get(false_block).and_then(|b| {
+                                    match &b.terminator {
+                                        MirTerminator::Jump { target } => Some(*target),
+                                        MirTerminator::Branch { .. } => {
+                                            self.find_eventual_continuation(function, *false_block)
+                                        }
+                                        _ => None,
+                                    }
+                                });
+
+                            if let Some(fc) = false_cont {
+                                if let Some(tc) = continuation {
+                                    if tc != fc {
+                                        // Branches merge at different points — can't inline a
+                                        // single continuation here; outer structure will pick it up.
+                                        continuation = None;
+                                    }
+                                } else {
+                                    continuation = Some(fc);
+                                }
+                            }
+                        }
                     }
 
                     // Inline continuation if found

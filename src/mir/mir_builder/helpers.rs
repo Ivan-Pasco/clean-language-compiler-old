@@ -361,4 +361,219 @@ impl MirBuilder {
         );
         None
     }
+
+    /// Decide whether wrapping the loop body in a per-iteration
+    /// `mem_scope_push` / `mem_scope_pop` pair is sound.
+    ///
+    /// Returns `true` when the body cannot leak a pointer into outer scope
+    /// across a `mem_scope_pop`. That requires both:
+    ///
+    /// 1. No assignment whose target lives outside the body and whose value
+    ///    type allocates on the bump arena (string, list, matrix, pairs,
+    ///    class, interface, tuple, any, or an optional of any of those).
+    ///    Such an assignment is the exact escape that
+    ///    RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED tripped on — the outer
+    ///    accumulator would point into the per-iter region after `pop`,
+    ///    and the next iteration's allocator would clobber it.
+    ///
+    /// 2. No `return` inside the body. A `return` would jump straight to
+    ///    the function exit, skipping the paired `mem_scope_pop` and
+    ///    leaving an unbalanced mark on the host's scope stack. `break`
+    ///    and `continue` are fine — they go through the dedicated
+    ///    handlers, which emit the matching `mem_scope_pop` when the
+    ///    enclosing `LoopContext::has_iter_scope` flag is set.
+    ///
+    /// Property/array-index targets and `LaterAssignment` are treated as
+    /// escapes too (the receiver is by construction declared outside the
+    /// body).
+    ///
+    /// Called once per loop builder; result drives whether the loop emits
+    /// the push/pop pair and what flag it pushes onto `loop_stack`.
+    ///
+    /// Restores the per-iter scope hygiene needed for
+    /// FRAME-UI-ASSEMBLE-PAGE-COMPANION-NO-ROUTES-MOUNTED (frame.ui's
+    /// `find_unescaped_quote` allocates a fresh `substring` every inner
+    /// while iteration and never escapes it) without re-introducing the
+    /// regression `8c25d971` was guarding against.
+    pub(super) fn body_is_iter_scope_safe(&self, body: &TastBlock) -> bool {
+        let mut inner = HashSet::new();
+        Self::collect_inner_decls(&body.statements, &mut inner);
+        !Self::body_escapes_or_returns(&body.statements, &inner)
+    }
+
+    fn collect_inner_decls(stmts: &[TastStatement], out: &mut HashSet<SymbolId>) {
+        for stmt in stmts {
+            match stmt {
+                TastStatement::VariableDeclaration { symbol_id, .. } => {
+                    out.insert(*symbol_id);
+                }
+                TastStatement::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    Self::collect_inner_decls(&then_block.statements, out);
+                    if let Some(eb) = else_block {
+                        Self::collect_inner_decls(&eb.statements, out);
+                    }
+                }
+                TastStatement::While { body, .. } => {
+                    Self::collect_inner_decls(&body.statements, out);
+                }
+                TastStatement::For { iterator, body, .. } => {
+                    out.insert(*iterator);
+                    Self::collect_inner_decls(&body.statements, out);
+                }
+                TastStatement::Try {
+                    body,
+                    catch_clause,
+                    finally_clause,
+                    ..
+                } => {
+                    Self::collect_inner_decls(&body.statements, out);
+                    if let Some(c) = catch_clause {
+                        Self::collect_inner_decls(&c.body.statements, out);
+                    }
+                    if let Some(f) = finally_clause {
+                        Self::collect_inner_decls(&f.statements, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn body_escapes_or_returns(stmts: &[TastStatement], inner: &HashSet<SymbolId>) -> bool {
+        for stmt in stmts {
+            match stmt {
+                TastStatement::Return { .. } => return true,
+                TastStatement::Assignment { target, .. } => match &target.kind {
+                    TastExpressionKind::Variable { symbol_id, .. } => {
+                        if !inner.contains(symbol_id)
+                            && Self::is_arena_alloc_type(&target.expr_type)
+                        {
+                            return true;
+                        }
+                    }
+                    TastExpressionKind::PropertyAccess { .. }
+                    | TastExpressionKind::ArrayAccess { .. } => {
+                        if Self::is_arena_alloc_type(&target.expr_type) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                },
+                TastStatement::LaterAssignment { symbol_id, .. } => {
+                    if !inner.contains(symbol_id) {
+                        return true;
+                    }
+                }
+                TastStatement::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    if Self::body_escapes_or_returns(&then_block.statements, inner) {
+                        return true;
+                    }
+                    if let Some(eb) = else_block {
+                        if Self::body_escapes_or_returns(&eb.statements, inner) {
+                            return true;
+                        }
+                    }
+                }
+                TastStatement::While { body, .. } => {
+                    if Self::body_escapes_or_returns(&body.statements, inner) {
+                        return true;
+                    }
+                }
+                TastStatement::For { body, .. } => {
+                    if Self::body_escapes_or_returns(&body.statements, inner) {
+                        return true;
+                    }
+                }
+                TastStatement::Try {
+                    body,
+                    catch_clause,
+                    finally_clause,
+                    ..
+                } => {
+                    if Self::body_escapes_or_returns(&body.statements, inner) {
+                        return true;
+                    }
+                    if let Some(c) = catch_clause {
+                        if Self::body_escapes_or_returns(&c.body.statements, inner) {
+                            return true;
+                        }
+                    }
+                    if let Some(f) = finally_clause {
+                        if Self::body_escapes_or_returns(&f.statements, inner) {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn is_arena_alloc_type(t: &ConcreteType) -> bool {
+        match t {
+            ConcreteType::String
+            | ConcreteType::Array(_)
+            | ConcreteType::Matrix(_)
+            | ConcreteType::Pairs(_, _)
+            | ConcreteType::Class { .. }
+            | ConcreteType::Interface { .. }
+            | ConcreteType::Tuple(_)
+            | ConcreteType::Any => true,
+            ConcreteType::Optional(inner) => Self::is_arena_alloc_type(inner),
+            ConcreteType::Union(parts) | ConcreteType::Intersection(parts) => {
+                parts.iter().any(Self::is_arena_alloc_type)
+            }
+            _ => false,
+        }
+    }
+
+    /// Emit a `mem_scope_push` call on the current block. No return value.
+    /// Pair with `emit_mem_scope_pop` at every exit from the iteration.
+    pub(super) fn emit_mem_scope_push(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        location: SourceLocation,
+    ) {
+        let instr = MirInstruction {
+            dest: None,
+            operation: MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: "mem_scope_push".to_string(),
+                    symbol_id: SymbolId(0),
+                },
+                arguments: vec![],
+            },
+            location,
+        };
+        self.add_instruction(context, instr);
+    }
+
+    /// Emit a `mem_scope_pop` call on the current block. No return value.
+    pub(super) fn emit_mem_scope_pop(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        location: SourceLocation,
+    ) {
+        let instr = MirInstruction {
+            dest: None,
+            operation: MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: "mem_scope_pop".to_string(),
+                    symbol_id: SymbolId(0),
+                },
+                arguments: vec![],
+            },
+            location,
+        };
+        self.add_instruction(context, instr);
+    }
 }

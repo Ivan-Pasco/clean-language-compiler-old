@@ -1,0 +1,47 @@
+// Test Description: Trailing statements after a sequence of nested if-without-else blocks
+// Category: control
+// Dependencies: none
+// Expected: PASS
+//
+// Regression for FRAME-DATA-2-1-4-DATA-BLOCK-TRAP (fp 908a9fc55653).
+// Codegen regression introduced by `efc89cd1` (chase_jump_chain in
+// find_eventual_continuation). When an outer `if A` (no else) contained
+// a nested `if B` (no else) whose body had a third nested `if C` (no else),
+// `find_eventual_continuation(B.true_block)` chased every empty merge in
+// the chain — across A's, B's, AND the function's merge — and landed on the
+// block that holds the statements AFTER if A. `generate_branch_block` then
+// inlined that block INSIDE if A's body, marking it `generated`. At the
+// top-level, `generate_structured_blocks` saw the trailing-code block as
+// already generated and skipped it entirely. When A's condition was false,
+// the function reached its end without emitting the trailing code (no
+// return value, undefined locals), producing a WASM trap.
+//
+// frame.data's `parse_field_line` has this exact shape — three nested
+// `if/if/if` (string-default quoting) followed by `if field_type == "datetime"`
+// and the final `return result`. With the broken codegen, calling the
+// function with a non-string field type traps before reaching the return.
+//
+// Expected output:
+//   skip-A: AFTER  KEEP1  KEEP2
+//   skip-B: A-body  AFTER  KEEP1  KEEP2
+//   enter:  A-body  B-body  C-body  AFTER  KEEP1  KEEP2
+
+start:
+	printl("skip-A: " + trace(false, false, false))
+	printl("skip-B: " + trace(true, false, false))
+	printl("enter:  " + trace(true, true, true))
+
+functions:
+	string trace(boolean a, boolean b, boolean c)
+		string result = ""
+		if a
+			result = result + "A-body "
+			if b
+				result = result + "B-body "
+				if c
+					result = result + "C-body "
+		if true
+			result = result + "AFTER "
+		result = result + "KEEP1 "
+		result = result + "KEEP2"
+		return result

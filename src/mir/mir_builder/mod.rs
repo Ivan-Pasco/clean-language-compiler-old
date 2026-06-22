@@ -186,6 +186,19 @@ pub(super) struct LoopContext {
 
     /// Basic block to jump to on break
     pub(super) break_block: BasicBlockId,
+
+    /// True if the loop body is wrapped in a per-iteration
+    /// `mem_scope_push`/`mem_scope_pop` pair. When set, `break` and
+    /// `continue` must emit a matching `mem_scope_pop` BEFORE jumping out
+    /// of the body so the per-iteration mark stays paired (otherwise the
+    /// jump targets execute with a stale mark and the next iteration's
+    /// allocator overlaps the previous frame).
+    ///
+    /// Default `false`: tracks the conservative no-scope behavior from
+    /// `8c25d971` (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED) for loops
+    /// whose body may escape pointers via outer-scope reference
+    /// assignment. See `body_is_iter_scope_safe` for the disqualifiers.
+    pub(super) has_iter_scope: bool,
 }
 
 impl MirBuilder {

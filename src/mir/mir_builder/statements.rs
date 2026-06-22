@@ -1684,19 +1684,31 @@ impl MirBuilder {
                 // Switch to body block
                 self.current_block = Some(body_block_id);
 
+                // MEMORY MANAGEMENT: per-iteration `mem_scope_push`/`pop`
+                // is sound (and necessary for long-running loops with many
+                // transient string allocations — e.g. frame.ui's
+                // `find_unescaped_quote` substring-per-iter scanner) ONLY
+                // when the body cannot leak a pointer into outer scope
+                // across the pop. `body_is_iter_scope_safe` enforces that
+                // — see its doc comment for the exact disqualifiers.
+                //
+                // Skipping per-iter scope on unsafe loops preserves the
+                // fix for RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED. Emitting
+                // it on safe loops restores the memory hygiene
+                // `8c25d971` over-corrected away
+                // (FRAME-UI-ASSEMBLE-PAGE-COMPANION-NO-ROUTES-MOUNTED).
+                let has_iter_scope = self.body_is_iter_scope_safe(body);
+
                 // Push loop context for break/continue statements
                 context.loop_stack.push(LoopContext {
                     continue_block: header_block_id,
                     break_block: exit_block_id,
+                    has_iter_scope,
                 });
 
-                // MEMORY MANAGEMENT: Per-iteration mem_scope_push/pop was
-                // removed (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). See the
-                // detailed comment in the For-loop body above. The same
-                // unsoundness applies to while loops: any body allocation
-                // assigned to an outer accumulator gets freed at the end of
-                // the iteration. Reclamation is handled by the host's
-                // per-request scope, not per-iteration.
+                if has_iter_scope {
+                    self.emit_mem_scope_push(context, location.clone());
+                }
 
                 // Process body statements
                 for stmt in &body.statements {
@@ -1705,6 +1717,14 @@ impl MirBuilder {
 
                 // Pop loop context after processing body
                 context.loop_stack.pop();
+
+                if has_iter_scope {
+                    // Match the entry `mem_scope_push` before jumping back
+                    // to the header. Break/Continue handlers emit their
+                    // own pop when `LoopContext::has_iter_scope` is set,
+                    // so every exit path is paired.
+                    self.emit_mem_scope_pop(context, location.clone());
+                }
 
                 // After body, check if we still have a current block (not terminated by return)
                 // If so, jump back to header for next iteration
@@ -1902,14 +1922,21 @@ impl MirBuilder {
 
             TastStatement::Break { location } => {
                 // Break jumps to the exit block of the innermost loop.
-                // The matching per-iteration mem_scope_pop was removed when
-                // the body-level push/pop was removed
-                // (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). Calling
-                // mem_scope_pop here without a matching push would pop the
-                // outer (request-level) scope and corrupt memory.
-                let break_block = context.loop_stack.last().map(|ctx| ctx.break_block);
+                // When that loop wraps its body in a per-iteration
+                // `mem_scope_push`/`pop` pair (LoopContext::has_iter_scope),
+                // we MUST emit the matching `mem_scope_pop` here — the
+                // natural body-end pop is skipped by the jump, and leaving
+                // it unpaired would put a stale mark on the host's scope
+                // stack and leak the entry frame on every break exit.
+                let loop_info = context
+                    .loop_stack
+                    .last()
+                    .map(|ctx| (ctx.break_block, ctx.has_iter_scope));
 
-                if let Some(target_block) = break_block {
+                if let Some((target_block, has_iter_scope)) = loop_info {
+                    if has_iter_scope {
+                        self.emit_mem_scope_pop(context, location.clone());
+                    }
                     self.set_block_terminator(
                         context,
                         MirTerminator::Jump {
@@ -1926,11 +1953,19 @@ impl MirBuilder {
 
             TastStatement::Continue { location } => {
                 // Continue jumps to the header block of the innermost loop.
-                // See Break above for why the prior mem_scope_pop call was
-                // removed (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED).
-                let continue_block = context.loop_stack.last().map(|ctx| ctx.continue_block);
+                // Same `has_iter_scope` invariant as Break above: when the
+                // body is wrapped in per-iter push/pop, the natural pop
+                // sits at the body end; jumping back to the header would
+                // skip it and unbalance the host's scope stack.
+                let loop_info = context
+                    .loop_stack
+                    .last()
+                    .map(|ctx| (ctx.continue_block, ctx.has_iter_scope));
 
-                if let Some(target_block) = continue_block {
+                if let Some((target_block, has_iter_scope)) = loop_info {
+                    if has_iter_scope {
+                        self.emit_mem_scope_pop(context, location.clone());
+                    }
                     self.set_block_terminator(
                         context,
                         MirTerminator::Jump {

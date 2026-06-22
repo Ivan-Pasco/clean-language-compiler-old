@@ -1,0 +1,47 @@
+// Test Description: While loop with many transient substring allocations and no outer-scope escape
+// Category: control
+// Dependencies: none
+// Expected: PASS
+//
+// Regression for FRAME-UI-ASSEMBLE-PAGE-COMPANION-NO-ROUTES-MOUNTED
+// (fp e8ce04051112). Codegen regression introduced by `8c25d971`
+// (removed per-iteration mem_scope_push/pop from all loop forms).
+//
+// The removal was necessary to fix RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED
+// (per-iter pop freed memory that escaped via outer accumulator
+// assignment), but it overcorrected: loops whose body allocates many
+// short-lived strings and DOES NOT assign them to outer-scope variables
+// now leak every allocation until the host's per-request scope_pop. For
+// long-running plugin entry points (e.g. frame.ui's `find_unescaped_quote`
+// scanning a large JSON body with thousands of substring calls) this
+// exhausts plugin memory and produces a `string.substring` trap halfway
+// through `assemble()`.
+//
+// This test exercises the exact safe shape: a `while` loop whose body
+// allocates a fresh substring each iteration but never assigns it to an
+// outer-scope reference. The fix detects "no outer ref escape" + "no
+// early return" at MIR build time and restores per-iteration scope
+// push/pop for that case. RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED stays
+// fixed because its body has `errs = add_err(errs, ...)` — an outer ref
+// assignment that disqualifies the loop from per-iter scope.
+//
+// 4000 iterations × ~10 bytes per substring ≈ 40 KB of transient
+// allocations. Without per-iter reclaim, the standalone wasmtime runner
+// (1 GB heap) tolerates this, so the FUNCTIONAL guard here just verifies
+// the loop terminates with the right count — the bit-level guard is in
+// `tests/test_loop_iter_scope.rs` (asserts the emitted WASM contains
+// `mem_scope_push`/`mem_scope_pop` calls inside the loop body).
+//
+// Expected output:
+//   matched=4000
+
+start:
+	integer i = 0
+	integer matched = 0
+	string source = "abcdefghij"
+	while i < 4000
+		string ch = source.substring(i % 10, (i % 10) + 1)
+		if ch == "a" or ch == "b" or ch == "c" or ch == "d" or ch == "e" or ch == "f" or ch == "g" or ch == "h" or ch == "i" or ch == "j"
+			matched = matched + 1
+		i = i + 1
+	printl("matched=" + matched.toString())
