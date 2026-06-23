@@ -1837,6 +1837,70 @@ impl MirCodeGenerator<'_> {
             }
         }
 
+        // Fixpoint: preserve plugin-preamble helpers transitively called from
+        // any non-preamble function that will be retained
+        // (ORM-MUTATION-OPS-MISSING-IN-CLIENT-CODEGEN-FUNCTION-MAP, fp
+        // 44c1dc978900).
+        //
+        // In client builds (and in plugin-source builds in general) the BFS
+        // roots above intentionally exclude user-defined functions to keep
+        // server-only bridge imports from leaking. But user functions are
+        // *kept* in MIR unconditionally (see `mod.rs::generate()` DCE
+        // filter, which only filters PLUGIN_OUTPUT_MARKER). A user function
+        // that calls a plugin-emitted helper (e.g. frame.data's
+        // `__Widget_raw_update`/`__Widget_raw_delete`) would leave a
+        // dangling reference once the helper is DCE'd:
+        //     `Function '__Widget_raw_update' not found in function map`
+        //
+        // Sweep every non-preamble function (regardless of BFS reachability)
+        // plus every preamble already in `names`, collect preamble names
+        // they call, and iterate until no new names are added. Bridge
+        // imports inside the kept preamble bodies still flow through the
+        // host-mismatch stubbing path in `register_plugin_bridge_imports`,
+        // so the Import Minimality Rule remains intact.
+        let preamble_names_in_mir: HashSet<String> = mir_program
+            .functions
+            .values()
+            .filter(|f| f.location.file == crate::ast::PLUGIN_OUTPUT_MARKER)
+            .map(|f| f.name.clone())
+            .collect();
+
+        if !preamble_names_in_mir.is_empty() {
+            loop {
+                let mut grew = false;
+                for f in mir_program.functions.values() {
+                    let is_preamble = f.location.file == crate::ast::PLUGIN_OUTPUT_MARKER;
+                    // Only walk functions that will actually be retained:
+                    // non-preamble are always kept; preamble is kept only
+                    // when its name is in `names`.
+                    if is_preamble && !names.contains(&f.name) {
+                        continue;
+                    }
+                    for block in f.blocks.values() {
+                        for instr in &block.instructions {
+                            if let MirOperation::Call { function, .. } = &instr.operation {
+                                let called = match function {
+                                    MirOperand::NamedFunction { name, .. } => Some(name.clone()),
+                                    MirOperand::Function(sym) => {
+                                        mir_program.symbol_name_map.get(sym).cloned()
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(name) = called {
+                                    if preamble_names_in_mir.contains(&name) && names.insert(name) {
+                                        grew = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !grew {
+                    break;
+                }
+            }
+        }
+
         // Expand language-level names to the WASM import field names used by
         // host bridges. A call to `http.get` in the program maps to the
         // import `http_get` on the WASM module. Plugin bridge functions use

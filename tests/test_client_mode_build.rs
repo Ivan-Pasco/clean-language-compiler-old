@@ -177,3 +177,96 @@ fn client_mode_does_not_leak_server_bridge_imports() {
          Imported functions: {imports:?}"
     );
 }
+
+/// Regression test for ORM-MUTATION-OPS-MISSING-IN-CLIENT-CODEGEN-FUNCTION-MAP
+/// (fingerprint `44c1dc978900`).
+///
+/// `Widget.update:` and `Widget.delete:` lower to calls to plugin-emitted helper
+/// functions `__Widget_raw_update` / `__Widget_raw_delete` (frame.data preamble).
+/// In client builds the BFS roots intentionally exclude user-defined functions
+/// to keep server-only bridge imports from leaking — but user-defined functions
+/// are *kept* in MIR unconditionally. When such a function called the preamble
+/// helper, DCE removed the helper and codegen failed with
+/// `Function '__Widget_raw_update' not found in function map`.
+///
+/// `Widget.find:` and `Widget.count:` always worked because they lower to inline
+/// `_db_query(…)` expressions (no synthesized helper to be DCE'd).
+///
+/// The fix is in `collect_all_called_names_from_mir`: a fixpoint pass that adds
+/// preamble names called from any retained function back into the reachable set.
+#[test]
+fn client_mode_orm_mutation_in_user_function_compiles() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Single-file repro: model + user function calling Widget.update in the
+    // same module. Client mode keeps the user function in MIR (user code is
+    // never DCE'd) but BFS-seeds only _start + exports + v2 roots — so
+    // touch_widget() is a kept-but-unreachable caller of the preamble helper
+    // __Widget_raw_update. Before the fix in
+    // `collect_all_called_names_from_mir`, the DCE in `mod.rs::generate()`
+    // dropped the helper and codegen failed at the touch_widget() body.
+    std::fs::write(
+        root.join("main.cln"),
+        concat!(
+            "plugins:\n",
+            "\tframe.data\n",
+            "\n",
+            "data Widget:\n",
+            "\tid: integer pk auto\n",
+            "\tname: string\n",
+            "\n",
+            "start:\n",
+            "\tprintl(\"client build\")\n",
+            "\n",
+            "functions:\n",
+            "\tinteger touch_widget()\n",
+            "\t\tWidget.update:\n",
+            "\t\t\tset:\n",
+            "\t\t\t\tname = \"x\"\n",
+            "\t\t\twhere:\n",
+            "\t\t\t\tid == 1\n",
+            "\t\treturn 1\n",
+        ),
+    )
+    .unwrap();
+
+    let entry = root.join("main.cln");
+    let result = clean_language_compiler::compile_multi_file_client_mode(
+        &entry,
+        vec![root.to_path_buf()],
+        0,
+    );
+
+    let bytes = match result {
+        Ok(b) => b,
+        Err(errors) => {
+            // Skip if frame.data is not installed locally — this test only
+            // verifies the codegen fix, not plugin availability.
+            let msg: String = errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if msg.contains("frame.data") && msg.contains("not found") {
+                eprintln!("Skipping ORM mutation regression: frame.data not installed");
+                return;
+            }
+            panic!("client_mode compile failed for ORM mutation regression:\n{msg}");
+        }
+    };
+    assert!(
+        bytes.starts_with(b"\0asm"),
+        "client_mode output must be a valid WASM module"
+    );
+
+    // Bonus check: _db_execute (the server-only bridge that the mutation
+    // helpers call) must still be stub-replaced, not imported.
+    let imports = wasm_imported_functions(&bytes);
+    assert!(
+        !imports.contains(&"_db_execute".to_string()),
+        "frontend.wasm must not import _db_execute — server-only bridge \
+         leaked through plugin-preamble retention.\n\
+         Imported functions: {imports:?}"
+    );
+}
