@@ -270,3 +270,126 @@ fn client_mode_orm_mutation_in_user_function_compiles() {
          Imported functions: {imports:?}"
     );
 }
+
+/// Regression test for CODEGEN-ORM-METHOD-NOT-IN-FN-MAP
+/// (fingerprint `ea5d66dcf89e`).
+///
+/// Sibling of `client_mode_orm_mutation_in_user_function_compiles`. Same root
+/// cause (plugin-preamble helper DCE'd while still called from retained user
+/// code) but with two extra wrinkles found in the user's failing repro:
+///   1. the call site is a **class method**, not a top-level function; and
+///   2. the model and the caller live in **separate files** in a `shared:`
+///      package layout, so the model file goes through
+///      `expand_program_without_preambles` while only the entry module gets
+///      preambles. The ORM helper `__DesignComponent_count` is emitted by
+///      `expand_data_model` running on the model file — its `location.file`
+///      points at the model file, NOT at `<plugin-output>`, even though it
+///      IS a plugin-generated helper that the client artifact can never
+///      reach via `_db_query` and therefore must be DCE-eligible.
+///
+/// Before the fix in `collect_all_called_names_from_mir`'s preamble fixpoint,
+/// only `location.file == "<plugin-output>"` was treated as preamble. When
+/// the user's class method called the helper, the fixpoint missed it and the
+/// codegen failed with `Function '__DesignComponent_count' not found in
+/// function map`.
+#[test]
+fn client_mode_orm_count_in_class_method_compiles() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("app/data/models")).unwrap();
+    std::fs::create_dir_all(root.join("app/logic")).unwrap();
+    std::fs::create_dir_all(root.join("app/ui/web/pages")).unwrap();
+
+    // Model file — only this file declares `data:`, so only this file's
+    // expansion emits the `__DesignComponent_count` ORM helper.
+    std::fs::write(
+        root.join("app/data/models/DesignComponent.cln"),
+        concat!(
+            "data DesignComponent:\n",
+            "\tid: integer pk auto\n",
+            "\tproject_id: integer\n",
+            "\tname: string\n",
+        ),
+    )
+    .unwrap();
+
+    // Logic file — class method calls the helper via ORM syntax.
+    std::fs::write(
+        root.join("app/logic/lookup.cln"),
+        concat!(
+            "class Lookup\n",
+            "\tfunctions:\n",
+            "\t\tinteger componentExists(integer compId, integer projId)\n",
+            "\t\t\tinteger n = DesignComponent.count:\n",
+            "\t\t\t\twhere:\n",
+            "\t\t\t\t\tid == compId\n",
+            "\t\t\t\t\tproject_id == projId\n",
+            "\t\t\tif n > 0\n",
+            "\t\t\t\treturn 1\n",
+            "\t\t\treturn 0\n",
+        ),
+    )
+    .unwrap();
+
+    // Web entry — never calls componentExists, so the BFS from _start
+    // does not reach the helper. The helper survives only via the fixpoint
+    // that preserves preamble helpers called from any retained user code.
+    std::fs::write(
+        root.join("app/ui/web/pages/dashboard.cln"),
+        "start:\n\tprintl(\"client build\")\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        root.join("main.cln"),
+        concat!(
+            "package: OrmCountRepro\n",
+            "\tversion: \"0.0.1\"\n",
+            "\n",
+            "\tshared: [app/logic/, app/data/]\n",
+            "\n",
+            "\ttarget: web\n",
+            "\t\tplugins: [frame.data]\n",
+            "\t\tentry: app/ui/web/pages/dashboard.cln\n",
+        ),
+    )
+    .unwrap();
+
+    let entry = root.join("main.cln");
+    let result = clean_language_compiler::compile_multi_file_client_mode(
+        &entry,
+        vec![root.to_path_buf()],
+        0,
+    );
+
+    let bytes = match result {
+        Ok(b) => b,
+        Err(errors) => {
+            let msg: String = errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if msg.contains("frame.data") && msg.contains("not found") {
+                eprintln!(
+                    "Skipping ORM count-in-class-method regression: frame.data not installed"
+                );
+                return;
+            }
+            panic!("client_mode compile failed for ORM count-in-class-method regression:\n{msg}");
+        }
+    };
+    assert!(
+        bytes.starts_with(b"\0asm"),
+        "client_mode output must be a valid WASM module"
+    );
+
+    let imports = wasm_imported_functions(&bytes);
+    assert!(
+        !imports.contains(&"_db_query".to_string()),
+        "frontend.wasm must not import _db_query — server-only bridge \
+         leaked through plugin-preamble retention.\n\
+         Imported functions: {imports:?}"
+    );
+}

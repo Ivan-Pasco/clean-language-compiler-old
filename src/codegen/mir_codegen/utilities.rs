@@ -1866,8 +1866,58 @@ impl MirCodeGenerator<'_> {
             .collect();
 
         if !preamble_names_in_mir.is_empty() {
+            // Resolve any MIR operation form that can reference a callee to
+            // the name we'd find in `preamble_names_in_mir`. The fixpoint
+            // walked only `MirOperation::Call` initially, but ORM blocks like
+            // `Model.count: where: …` can be lowered in shapes the simple
+            // Call walk misses (e.g. inside a `LogicalShortCircuit` rhs, or
+            // surfaced as a function-pointer `Copy` when handed to a host
+            // bridge). Centralizing the resolution keeps every variant on the
+            // same path. (CODEGEN-ORM-METHOD-NOT-IN-FN-MAP, fp `ea5d66dcf89e`)
+            let called_names_in_instr =
+                |instr: &crate::mir::mir_types::MirInstruction, out: &mut Vec<String>| {
+                    let push_operand = |op: &MirOperand, out: &mut Vec<String>| match op {
+                        MirOperand::NamedFunction { name, .. } => out.push(name.clone()),
+                        MirOperand::Function(sym) => {
+                            if let Some(n) = mir_program.symbol_name_map.get(sym) {
+                                out.push(n.clone());
+                            }
+                        }
+                        _ => {}
+                    };
+                    match &instr.operation {
+                        MirOperation::Call { function, .. } => push_operand(function, out),
+                        MirOperation::Copy {
+                            source: source @ MirOperand::Function(_),
+                        } => push_operand(source, out),
+                        MirOperation::AsyncFireCall { fn_name, .. }
+                        | MirOperation::AsyncAwaitCall { fn_name, .. } => out.push(fn_name.clone()),
+                        MirOperation::LogicalShortCircuit {
+                            rhs_instructions, ..
+                        } => {
+                            for sub in rhs_instructions {
+                                match &sub.operation {
+                                    MirOperation::Call { function, .. } => {
+                                        push_operand(function, out)
+                                    }
+                                    MirOperation::Copy {
+                                        source: source @ MirOperand::Function(_),
+                                    } => push_operand(source, out),
+                                    MirOperation::AsyncFireCall { fn_name, .. }
+                                    | MirOperation::AsyncAwaitCall { fn_name, .. } => {
+                                        out.push(fn_name.clone())
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                };
+
             loop {
                 let mut grew = false;
+                let mut buf: Vec<String> = Vec::new();
                 for f in mir_program.functions.values() {
                     let is_preamble = f.location.file == crate::ast::PLUGIN_OUTPUT_MARKER;
                     // Only walk functions that will actually be retained:
@@ -1878,18 +1928,11 @@ impl MirCodeGenerator<'_> {
                     }
                     for block in f.blocks.values() {
                         for instr in &block.instructions {
-                            if let MirOperation::Call { function, .. } = &instr.operation {
-                                let called = match function {
-                                    MirOperand::NamedFunction { name, .. } => Some(name.clone()),
-                                    MirOperand::Function(sym) => {
-                                        mir_program.symbol_name_map.get(sym).cloned()
-                                    }
-                                    _ => None,
-                                };
-                                if let Some(name) = called {
-                                    if preamble_names_in_mir.contains(&name) && names.insert(name) {
-                                        grew = true;
-                                    }
+                            buf.clear();
+                            called_names_in_instr(instr, &mut buf);
+                            for name in buf.drain(..) {
+                                if preamble_names_in_mir.contains(&name) && names.insert(name) {
+                                    grew = true;
                                 }
                             }
                         }
