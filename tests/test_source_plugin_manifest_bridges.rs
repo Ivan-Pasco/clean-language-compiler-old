@@ -1,5 +1,7 @@
 //! Regression test for PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED
-//! (dashboard fingerprint `c7d3cefee5c3`).
+//! (dashboard fingerprint `c7d3cefee5c3`), also resolves
+//! PLUGIN-BRIDGE-RESOLVE-USES-INSTALLED-NOT-SOURCE (same root cause,
+//! re-filed 52 min after the original fix shipped).
 //!
 //! Background: `~/.cleen/plugins/<name>/plugin.toml` is the canonical
 //! source of bridge declarations the resolver checks against — so a

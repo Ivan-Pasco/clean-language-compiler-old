@@ -10,6 +10,35 @@
 //! If either call traps, the bug described in
 //! `compiler-frame-ui-v2-followup-trap-and-silent-orchestrator.md` §1
 //! is reproduced in isolation — no frame.ui, no framework dependency.
+//!
+//! Regression coverage for `CLN-0-30-348-BUILD-STATE-SET-IMPORT-TYPE-MISMATCH`:
+//! the dashboard report claimed cln 0.30.348 emitted `_build_state_set` with
+//! an import type that disagreed with what the same cln 0.30.348 runtime
+//! registered. The signature actually agrees on `(param i32 i32) (result i32)`
+//! — Type::Void on an `external:` declaration flows through
+//! HirType::Void → ConcreteType::Null → MirType::Ptr(Void), which
+//! `mir_type_to_wasm_type_for_import` maps to WasmType::I32. The host adapter
+//! at `src/plugins/wasm_adapter.rs::register_build_state_bridges` registers
+//! the matching `-> i32` return. This test instantiates the adapter against
+//! the compiled plugin and would trap on any future divergence.
+//!
+//! Related dashboard reports verified non-reproducing on cln 0.30.348 with
+//! frame.ui 2.12.34 / frame.server 2.7.10 installed (compile cleanly with no
+//! diagnostics — the compiler/plugin combination that originally tripped each
+//! one has shipped enough fixes that the symptom no longer fires):
+//!
+//! - `FRAME_UI_HTML_EXPANSION_LITERAL_NEWLINE_IN_STRING` (2026-05-01) — a
+//!   minimal `html: <div>Hello</div>` block in a `plugins: frame.ui` program
+//!   compiles cleanly. The original tokenizer crash on plugin-emitted literal
+//!   newlines was closed by subsequent lexer commits in the 0.30.99–0.30.348
+//!   range (29-character lexer pass-through extensions + plugin-side
+//!   escape-handling rework).
+//! - `E001` "Plugin 'frame.server' failed to expand 'endpoints:'… Pairs
+//!   literal keys must be constant literals" (2026-04-29) — an
+//!   `endpoints:`/`GET /test`/`return "ok"` program compiles cleanly. The
+//!   original Pairs-literal rejection on plugin output was closed by the
+//!   parser/HIR object-literal-field-value preservation work (b343e79a) plus
+//!   the plugin's own template rework.
 
 use std::fs;
 use std::path::PathBuf;
