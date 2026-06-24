@@ -1,0 +1,24 @@
+# Test plugin manifest — declares the build_state bridges the round-trip
+# smoke test calls, using the canonical (expand_strings = true) contract from
+# foundation/platform-architecture/function-registry.toml. The compiler's
+# `extend_with_source_plugin_bridges` resolver picks this up because it sits
+# next to main.cln.
+
+[plugin]
+name = "test.build_state_round_trip"
+version = "0.0.1"
+description = "Round-trip smoke test for the build_state bridges"
+author = "clean-language-tests"
+
+[handles]
+blocks = ["build_state_round_trip"]
+expressions = []
+
+[exports]
+expand = "expand_block"
+
+[bridge]
+functions = [
+  { name = "_build_state_set", params = ["string", "string"], returns = "void", expand_strings = true, hosts = ["all"], description = "Persist a key-value pair into the per-build keystore." },
+  { name = "_build_state_get", params = ["string"], returns = "string", expand_strings = true, hosts = ["all"], description = "Read a key from the per-build keystore; empty string if absent." },
+]

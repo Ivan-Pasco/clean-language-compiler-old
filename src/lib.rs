@@ -1441,7 +1441,47 @@ pub fn compile_with_target(
     // Stage 2: Parsing to AST
     use crate::parser::SpecificationParser;
     let mut parser = SpecificationParser::new(tokens, file_path.to_string());
-    let ast = parser.parse_program().map_err(|e| vec![e])?;
+    let mut ast = parser.parse_program().map_err(|e| vec![e])?;
+
+    // Stage 2.6: Source plugin.toml bridge resolution.
+    //
+    // When compiling a single Clean source file as a plugin (or any other
+    // target), honor a sibling `plugin.toml` if present so its `[bridge]`
+    // declarations resolve through the canonical
+    // `register_plugin_bridge_imports` path. Plugins that declare bridges
+    // here pick up `expand_strings = true` semantics and produce WASM
+    // imports that match the host registration in
+    // `src/plugins/wasm_adapter.rs`.
+    //
+    // Without this hook, declaring the same bridges via an `external:`
+    // block falls through `register_external_function_imports`, which
+    // collapses each `string` param to a single i32 and maps `void` returns
+    // to an i32 result — disagreeing with the canonical contract in
+    // `foundation/platform-architecture/function-registry.toml`.
+    let mut source_bridges: Vec<plugins::BridgeFunction> = Vec::new();
+    extend_with_source_plugin_bridges(std::path::Path::new(file_path), &mut source_bridges);
+    for bf in &source_bridges {
+        if ast.externals.iter().any(|e| e.name == bf.name) {
+            continue;
+        }
+        let parameters: Vec<crate::ast::Parameter> = bf
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, type_str)| crate::ast::Parameter {
+                name: format!("arg{}", i),
+                type_: parse_bridge_type(type_str),
+                default_value: None,
+            })
+            .collect();
+        ast.externals.push(crate::ast::ExternalFunction {
+            name: bf.name.clone(),
+            parameters,
+            return_type: parse_bridge_type(&bf.returns),
+            module: bf.module.clone(),
+            location: None,
+        });
+    }
 
     // Stage 3: AST to HIR
     use crate::hir::hir_builder::HirBuilder;
@@ -1453,7 +1493,11 @@ pub fn compile_with_target(
     HirValidator::validate(&hir_result.hir)?;
 
     // Stage 4: Name and Module Resolution
-    let resolution_result = Resolver::resolve(hir_result.hir)?;
+    let resolution_result = if source_bridges.is_empty() {
+        Resolver::resolve(hir_result.hir)?
+    } else {
+        Resolver::resolve_with_bridge_functions(hir_result.hir, &source_bridges)?
+    };
     let resolved_hir = resolution_result.resolved_hir;
 
     // Stage 5: Type Inference and Checking
@@ -1465,6 +1509,9 @@ pub fn compile_with_target(
     // Stage 7: WASM Code Generation with specific target
     use crate::codegen::mir_codegen::MirCodeGenerator;
     let mut mir_codegen = MirCodeGenerator::with_target(target);
+    if !source_bridges.is_empty() {
+        mir_codegen.set_bridge_functions(source_bridges);
+    }
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 

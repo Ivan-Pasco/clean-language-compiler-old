@@ -1,0 +1,31 @@
+// Test: plugins/build_state_round_trip
+// Plugin Contracts v2 — exercises the _build_state_get + string == "" +
+// _build_state_set sequence that frame.ui 2.12.0 uses in expand_component.
+//
+// Regression: HYDRATE_AUTO — UI-bearing apps hit a wasm `unreachable` trap
+// when the plugin's compiled Clean code runs through the build_state bridge
+// sequence. See compiler-frame-ui-v2-followup-trap-and-silent-orchestrator.md.
+//
+// Compiled as a plugin via `cln compile --target=plugin`. Loaded by
+// tests/test_plugin_build_state_round_trip.rs with the build_state bridges
+// registered. The test calls `expand_block` twice and asserts no trap.
+//
+// Bridges are declared in the sibling plugin.toml's [bridge] section with
+// `expand_strings = true`, matching the canonical contract in
+// foundation/platform-architecture/function-registry.toml. This is the same
+// declaration path frame.ui uses — the compiler reads plugin.toml, expands
+// each "string" param into (ptr, len) pairs on the host import side, and
+// generates wrapper functions that adapt LP-pointer call sites in the .cln
+// source to the raw import. An `external:` block here would emit the
+// pre-canonical LP-pointer signature (single i32 per string, void mapped to
+// i32 return) and disagree with the host adapter — the exact mismatch that
+// closed CMP-PLUGIN-ABI-BUILD-STATE-SET-MISMATCH.
+
+functions:
+	string expand_block(string name, string attrs, string body)
+		string current = _build_state_get("test:key")
+		if current == ""
+			_build_state_set("test:key", "first")
+		else
+			_build_state_set("test:key", current + ";next")
+		return body

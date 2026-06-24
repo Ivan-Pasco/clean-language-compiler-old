@@ -1,7 +1,7 @@
 //! Plugin Contracts v2 §2.5 — end-to-end smoke test for the build_state
 //! bridges from a real compiled Clean plugin source.
 //!
-//! Compiles `tests/cln/plugins/build_state_round_trip.cln` as a plugin and
+//! Compiles `tests/cln/plugins/build_state_round_trip/main.cln` as a plugin and
 //! drives it through the SAME `WasmPluginAdapter` host code production uses,
 //! so the full ~50 runtime stubs (mem_alloc, string_compare, string.concat,
 //! …) plus the build_state bridges are all in scope. Calls `expand_block`
@@ -11,16 +11,25 @@
 //! `compiler-frame-ui-v2-followup-trap-and-silent-orchestrator.md` §1
 //! is reproduced in isolation — no frame.ui, no framework dependency.
 //!
-//! Regression coverage for `CLN-0-30-348-BUILD-STATE-SET-IMPORT-TYPE-MISMATCH`:
-//! the dashboard report claimed cln 0.30.348 emitted `_build_state_set` with
-//! an import type that disagreed with what the same cln 0.30.348 runtime
-//! registered. The signature actually agrees on `(param i32 i32) (result i32)`
-//! — Type::Void on an `external:` declaration flows through
-//! HirType::Void → ConcreteType::Null → MirType::Ptr(Void), which
-//! `mir_type_to_wasm_type_for_import` maps to WasmType::I32. The host adapter
-//! at `src/plugins/wasm_adapter.rs::register_build_state_bridges` registers
-//! the matching `-> i32` return. This test instantiates the adapter against
-//! the compiled plugin and would trap on any future divergence.
+//! Regression coverage for `CMP-PLUGIN-ABI-BUILD-STATE-SET-MISMATCH`:
+//! the test plugin source now declares `_build_state_set` and
+//! `_build_state_get` via `plugin.toml` `[bridge]` with `expand_strings =
+//! true`, matching the canonical contract in
+//! `foundation/platform-architecture/function-registry.toml`. The compiler
+//! emits the raw `(ptr, len, ptr, len) -> ()` import and a wrapper that
+//! adapts LP-pointer call sites. The host adapter at
+//! `src/plugins/wasm_adapter.rs::register_build_state_bridges` registers
+//! the same shape. Any future drift on either side will trap this test.
+//!
+//! Why declare bridges via plugin.toml rather than an `external:` block:
+//! when the compiler builds the import signature from an `external:` block,
+//! `string` params collapse to a single i32 (LP-pointer) and a `void` return
+//! threads through `HirType::Void → ConcreteType::Null → MirType::Ptr(Void)`
+//! which `mir_type_to_wasm_type_for_import` maps to `WasmType::I32` — a
+//! double drift from the canonical contract. plugin.toml's `[bridge]` path
+//! goes through `register_plugin_bridge_imports`, which honors
+//! `expand_strings = true` and the explicit `returns = "void"`. Shipped
+//! plugins (frame.ui, frame.server) all use this path.
 //!
 //! Related dashboard reports verified non-reproducing on cln 0.30.348 with
 //! frame.ui 2.12.34 / frame.server 2.7.10 installed (compile cleanly with no
@@ -97,7 +106,7 @@ fn build_block(content: &str) -> FrameworkBlock {
 #[test]
 fn build_state_round_trip_does_not_trap() {
     // 1. Compile the .cln source to plugin WASM bytes (same path `cleen` uses).
-    let source_path = "tests/cln/plugins/build_state_round_trip.cln";
+    let source_path = "tests/cln/plugins/build_state_round_trip/main.cln";
     let source = fs::read_to_string(source_path).unwrap_or_else(|e| {
         panic!("plugin source {} unreadable: {}", source_path, e);
     });
@@ -143,7 +152,7 @@ fn build_state_round_trip_does_not_trap() {
 /// returns, this catches it before the round-trip test loads the bytes.
 #[test]
 fn build_state_round_trip_plugin_compiles() {
-    let source_path = "tests/cln/plugins/build_state_round_trip.cln";
+    let source_path = "tests/cln/plugins/build_state_round_trip/main.cln";
     let source = fs::read_to_string(source_path).expect("source readable");
     let wasm = clean_language_compiler::compile_for_plugin(&source, source_path);
     assert!(
@@ -154,10 +163,10 @@ fn build_state_round_trip_plugin_compiles() {
     let bytes = wasm.unwrap();
     assert!(bytes.len() > 1024, "plugin WASM unexpectedly tiny");
 
-    // Sanity-check the imports include both build_state bridges with the
-    // contract-mandated signatures (set: (i32,i32)->i32, get: (i32)->i32).
-    // We do a string-grep on disk via wasm-tools when available; otherwise
-    // just check the bytes contain the names.
+    // Sanity-check the imports include both build_state bridges. The
+    // canonical signatures (set: (i32,i32,i32,i32) -> (); get: (i32,i32) -> i32)
+    // are validated end-to-end by `build_state_round_trip_does_not_trap`,
+    // which fails on any signature drift at instantiation time.
     let bytes_str = String::from_utf8_lossy(&bytes);
     assert!(
         bytes_str.contains("_build_state_set"),
