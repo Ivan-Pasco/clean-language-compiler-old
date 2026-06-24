@@ -393,3 +393,105 @@ fn client_mode_orm_count_in_class_method_compiles() {
          Imported functions: {imports:?}"
     );
 }
+
+/// Regression test for ORM-NOW-BRIDGE-CODEGEN-MISS-IN-CLEAN-STUDIO-CONTEXT
+/// (fingerprint `6e78a9f165f8`).
+///
+/// `Document.update: set: deleted_at = now()` lowers into the plugin preamble
+/// helper `__Document_raw_update`, which itself emits a `Call(now)`. The
+/// preamble fixpoint introduced in 55dbca08 correctly preserves the helper
+/// when a user function calls it, but only propagated *preamble* names to
+/// `names`. `now` is a bare alias for the `_time_now` bridge — not a preamble
+/// function — so it never reached the expansion at line ~1756 that adds
+/// `_time_now`. With `_time_now` tree-shaken at `register_import_function`,
+/// the `time.now` wrapper was never created, `function_map["now"]` stayed
+/// empty, and codegen for `__Document_raw_update`'s body failed with
+/// `Function 'now' (SymbolId(N)) not found in function map during code generation`.
+///
+/// The fix extends the fixpoint: when walking a *preserved preamble* body,
+/// propagate every callee (not just preamble names) into `names`. User-code
+/// walks still propagate only preamble names so server-only bridges inside
+/// dead user code don't leak into frontend.wasm.
+#[test]
+fn client_mode_orm_mutation_with_now_compiles() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Single-file repro: model + user function calling Document.update with
+    // `now()` in the set: clause. Mirrors the Clean Studio scenario where the
+    // user-code call site is unreached by BFS in client mode (`doc_delete` is
+    // not exported, not _start, not a route handler) — only the preamble-
+    // helper fixpoint can pull `__Document_raw_update` (and its transitive
+    // `now()` reference) into the reachable set.
+    std::fs::write(
+        root.join("main.cln"),
+        concat!(
+            "plugins:\n",
+            "\tframe.data\n",
+            "\n",
+            "data Document:\n",
+            "\tid: integer pk auto\n",
+            "\tuser_id: integer\n",
+            "\tdeleted_at: integer\n",
+            "\n",
+            "start:\n",
+            "\tprintl(\"client build\")\n",
+            "\n",
+            "functions:\n",
+            "\tinteger doc_delete(integer id, integer uid)\n",
+            "\t\tDocument.update:\n",
+            "\t\t\tset:\n",
+            "\t\t\t\tdeleted_at = now()\n",
+            "\t\t\twhere:\n",
+            "\t\t\t\tid == id\n",
+            "\t\t\t\tuser_id == uid\n",
+            "\t\treturn 1\n",
+        ),
+    )
+    .unwrap();
+
+    let entry = root.join("main.cln");
+    let result = clean_language_compiler::compile_multi_file_client_mode(
+        &entry,
+        vec![root.to_path_buf()],
+        0,
+    );
+
+    let bytes = match result {
+        Ok(b) => b,
+        Err(errors) => {
+            let msg: String = errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if msg.contains("frame.data") && msg.contains("not found") {
+                eprintln!("Skipping ORM now() regression: frame.data not installed");
+                return;
+            }
+            // The specific symptom we're guarding against — make it loud in CI.
+            assert!(
+                !msg.contains("'now'") || !msg.contains("not found in function map"),
+                "ORM-NOW-BRIDGE-CODEGEN-MISS regression — `now()` inside \
+                 Model.update: set: still fails codegen in client mode:\n{msg}"
+            );
+            panic!("client_mode compile failed for ORM now() regression:\n{msg}");
+        }
+    };
+    assert!(
+        bytes.starts_with(b"\0asm"),
+        "client_mode output must be a valid WASM module"
+    );
+
+    // Import Minimality cross-check: even though we now propagate non-preamble
+    // callees from preserved preamble bodies, server-only bridges referenced
+    // from those bodies must still be stubbed (host-mismatch path), not
+    // imported. _db_execute is the bridge __Document_raw_update calls.
+    let imports = wasm_imported_functions(&bytes);
+    assert!(
+        !imports.contains(&"_db_execute".to_string()),
+        "frontend.wasm must not import _db_execute — host-mismatched bridge \
+         leaked through preamble-callee propagation.\n\
+         Imported functions: {imports:?}"
+    );
+}

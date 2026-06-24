@@ -1750,12 +1750,14 @@ impl MirCodeGenerator<'_> {
             names.insert("string.concat".to_string());
         }
 
-        // now() is a bare alias for time.now() used by frame.data plugin-generated code.
-        // language_to_bridge_map only has "time.now" → "_time_now", not "now" → "_time_now",
-        // so without this explicit expansion _time_now is tree-shaken when only now() is called.
-        if names.contains("now") || names.contains("time.now") {
-            names.insert("_time_now".to_string());
-        }
+        // NOTE: the `now → _time_now` expansion is deliberately deferred to
+        // run *after* the preamble-helper fixpoint below — the fixpoint can
+        // add `now` to `names` when a kept-but-not-BFS-reachable user
+        // function calls it (e.g. `doc_delete` doing
+        // `Document.update: set: x = now()` in client mode). Expanding here
+        // would miss those late additions and re-introduce
+        // ORM-NOW-BRIDGE-CODEGEN-MISS-IN-CLEAN-STUDIO-CONTEXT (fp
+        // `6e78a9f165f8`).
 
         // Flat scan for synthetic utility imports (SymbolId >= 1000).
         //
@@ -1931,7 +1933,36 @@ impl MirCodeGenerator<'_> {
                             buf.clear();
                             called_names_in_instr(instr, &mut buf);
                             for name in buf.drain(..) {
-                                if preamble_names_in_mir.contains(&name) && names.insert(name) {
+                                // Filter for server-only bridges — these MUST NOT
+                                // be propagated from non-BFS-reachable code or
+                                // they'd appear as imports in the client build
+                                // (CLIENT_MODULE_LEAK). Preserved preamble bodies
+                                // (`is_preamble == true`) get to keep them too —
+                                // the host-mismatch stubbing path handles those
+                                // separately, so adding the name to `names` is a
+                                // no-op for import registration.
+                                if !is_preamble && server_only_bridge_names.contains(&name) {
+                                    continue;
+                                }
+                                let is_pa = preamble_names_in_mir.contains(&name);
+                                // Add EVERY remaining callee to `names`. Two
+                                // reasons: (1) preamble names trigger another
+                                // fixpoint iteration so their bodies get walked;
+                                // (2) non-preamble names (bridge aliases like
+                                // `now`, `today`, namespace fns like
+                                // `string.concat`) feed the alias-expansion
+                                // machinery further down — e.g. `names
+                                // .contains("now")` flips `_time_now` into
+                                // `names`, which keeps it from being tree-shaken
+                                // at `register_import_function`. Without this,
+                                // `now()` referenced inside a kept-but-not-BFS-
+                                // reachable user function (e.g. `doc_delete`
+                                // calling `Document.update: set: x = now()`)
+                                // fails codegen with `Function 'now' not found
+                                // in function map`.
+                                // (ORM-NOW-BRIDGE-CODEGEN-MISS-IN-CLEAN-STUDIO-
+                                // CONTEXT, fp `6e78a9f165f8`.)
+                                if names.insert(name) && is_pa {
                                     grew = true;
                                 }
                             }
@@ -1942,6 +1973,16 @@ impl MirCodeGenerator<'_> {
                     break;
                 }
             }
+        }
+
+        // now() is a bare alias for time.now() used by frame.data plugin-generated code.
+        // language_to_bridge_map only has "time.now" → "_time_now", not "now" → "_time_now",
+        // so without this explicit expansion _time_now is tree-shaken when only now() is called.
+        // Runs after the preamble-helper fixpoint so additions from that pass are picked up
+        // (e.g. user functions kept by the fixpoint that call now() — ORM-NOW-BRIDGE-CODEGEN-
+        // MISS-IN-CLEAN-STUDIO-CONTEXT, fp `6e78a9f165f8`).
+        if names.contains("now") || names.contains("time.now") {
+            names.insert("_time_now".to_string());
         }
 
         // Expand language-level names to the WASM import field names used by
