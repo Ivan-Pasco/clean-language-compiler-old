@@ -209,85 +209,8 @@ impl WasmPluginAdapter {
     /// Plugin Contracts v2 — register the `_build_state_set` /
     /// `_build_state_get` bridges that plugins use to communicate state
     /// across calls within one build. See `lifecycle.md` §2.5.
-    ///
-    /// **Calling convention:** both bridges take **LP-pointers** (single i32
-    /// per string arg pointing to a `[length: 4 bytes LE][data]` allocation
-    /// — `HOST_BRIDGE.md` §"LP-pointer convention"). This matches what Clean
-    /// emits for `string` parameters declared in an `external:` block, so
-    /// plugins can call these bridges directly without raw (ptr, len) glue.
     fn register_build_state_bridges(&self, linker: &mut Linker<PluginState>) -> Result<()> {
-        // `_build_state_set(key_lp_ptr, value_lp_ptr) -> i32` — stores a value
-        // under a key in the per-build state. Each argument is a single LP
-        // pointer (length prefix at ptr, data at ptr+4).
-        //
-        // The `i32` return is a Clean convention quirk: every `external:` block
-        // declaration emits a `(result i32)` import regardless of whether the
-        // Clean-side return type is `void`. The host adapter MUST match the
-        // imported signature, so void-style bridges return `0` here. Same
-        // pattern as clean-server's `_http_respond` and every other host-side
-        // void-return bridge.
-        let state_for_set = std::sync::Arc::clone(&self.build_state);
-        linker.func_wrap(
-            "env",
-            "_build_state_set",
-            move |mut caller: Caller<'_, PluginState>, key_ptr: i32, value_ptr: i32| -> i32 {
-                let Some(key) = read_clean_string(&mut caller, key_ptr) else {
-                    return 0;
-                };
-                let Some(value) = read_clean_string(&mut caller, value_ptr) else {
-                    return 0;
-                };
-                if key.is_empty() {
-                    return 0;
-                }
-                if let Ok(mut guard) = state_for_set.lock() {
-                    guard.insert(key, value);
-                }
-                0
-            },
-        )?;
-
-        // `_build_state_get(key_lp_ptr) -> string_lp_ptr` — returns an LP
-        // pointer to the value, or an LP-pointer to a cached empty string if
-        // the key is absent.
-        //
-        // The empty-string return is the hot path during plugin warmup (every
-        // plugin's first lookup hits a cold cache). To avoid bump-allocating a
-        // fresh 4-byte zero block on every miss — which churns the host's
-        // bump pointer and risks aliasing the plugin's own runtime allocations
-        // — we cache the empty LP-string pointer in `PluginState` and reuse it.
-        // See `compiler-build-state-bridge-runtime-trap.md` for the third
-        // bug in this series that prompted the change.
-        let state_for_get = std::sync::Arc::clone(&self.build_state);
-        linker.func_wrap(
-            "env",
-            "_build_state_get",
-            move |mut caller: Caller<'_, PluginState>, key_ptr: i32| -> i32 {
-                let Some(key) = read_clean_string(&mut caller, key_ptr) else {
-                    return 0;
-                };
-                let value = state_for_get
-                    .lock()
-                    .ok()
-                    .and_then(|g| g.get(&key).cloned())
-                    .unwrap_or_default();
-                if value.is_empty() {
-                    if let Some(cached) = caller.data().cached_empty_lp_ptr {
-                        return cached;
-                    }
-                }
-                let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
-                    return 0;
-                };
-                let ptr = write_lp_string(&mut caller, &memory, &value).unwrap_or(0);
-                if value.is_empty() && ptr != 0 {
-                    caller.data_mut().cached_empty_lp_ptr = Some(ptr);
-                }
-                ptr
-            },
-        )?;
-
-        Ok(())
+        register_build_state_bridges(linker, &self.build_state)
     }
 
     // =========================================
@@ -4182,6 +4105,104 @@ fn read_lp_from_data(data: &[u8], ptr: i32) -> Option<&[u8]> {
     Some(&data[after_header..data_end])
 }
 
+/// Plugin Contracts v2 — register the `_build_state_set` / `_build_state_get`
+/// bridges on the given linker, sharing the provided `BuildState` store.
+///
+/// **Calling convention:** both bridges follow the canonical contract in
+/// `foundation/platform-architecture/function-registry.toml`, which the
+/// registry loader expands with `expand_strings=true` — every `"string"`
+/// param becomes a raw `(ptr: i32, len: i32)` pair, and `"void"` returns
+/// nothing. The compiler emits an unpacking wrapper on the plugin side, so
+/// plugins can still call these bridges with a Clean `string` value; the
+/// host just sees the unpacked pair.
+fn register_build_state_bridges(
+    linker: &mut Linker<PluginState>,
+    build_state: &crate::plugins::BuildState,
+) -> Result<()> {
+    // `_build_state_set(key_ptr, key_len, value_ptr, value_len)` — stores a
+    // value under a key in the per-build state. `void` return per the
+    // canonical contract; the WASM import has no result.
+    let state_for_set = std::sync::Arc::clone(build_state);
+    linker.func_wrap(
+        "env",
+        "_build_state_set",
+        move |mut caller: Caller<'_, PluginState>,
+              key_ptr: i32,
+              key_len: i32,
+              value_ptr: i32,
+              value_len: i32| {
+            let Some(key) = read_raw_string(&mut caller, key_ptr, key_len) else {
+                return;
+            };
+            if key.is_empty() {
+                return;
+            }
+            let Some(value) = read_raw_string(&mut caller, value_ptr, value_len) else {
+                return;
+            };
+            if let Ok(mut guard) = state_for_set.lock() {
+                guard.insert(key, value);
+            }
+        },
+    )?;
+
+    // `_build_state_get(key_ptr, key_len) -> string_lp_ptr` — returns an LP
+    // pointer to the value, or an LP-pointer to a cached empty string when
+    // the key is absent. The empty-string LP pointer is cached in
+    // `PluginState` so warmup-time misses don't churn the bump allocator.
+    let state_for_get = std::sync::Arc::clone(build_state);
+    linker.func_wrap(
+        "env",
+        "_build_state_get",
+        move |mut caller: Caller<'_, PluginState>, key_ptr: i32, key_len: i32| -> i32 {
+            let Some(key) = read_raw_string(&mut caller, key_ptr, key_len) else {
+                return 0;
+            };
+            let value = state_for_get
+                .lock()
+                .ok()
+                .and_then(|g| g.get(&key).cloned())
+                .unwrap_or_default();
+            if value.is_empty() {
+                if let Some(cached) = caller.data().cached_empty_lp_ptr {
+                    return cached;
+                }
+            }
+            let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                return 0;
+            };
+            let ptr = write_lp_string(&mut caller, &memory, &value).unwrap_or(0);
+            if value.is_empty() && ptr != 0 {
+                caller.data_mut().cached_empty_lp_ptr = Some(ptr);
+            }
+            ptr
+        },
+    )?;
+
+    Ok(())
+}
+
+/// Read a raw `(ptr, len)` UTF-8 string from plugin memory. This is the
+/// counterpart to `read_clean_string` for bridges that follow the
+/// `expand_strings=true` convention from `function-registry.toml`, where a
+/// `"string"` param is emitted as two i32s (pointer + byte length) rather
+/// than a single LP pointer.
+fn read_raw_string(caller: &mut Caller<'_, PluginState>, ptr: i32, len: i32) -> Option<String> {
+    if ptr < 0 || len < 0 {
+        return None;
+    }
+    let memory = caller.get_export("memory").and_then(|e| e.into_memory())?;
+    let data = memory.data(&*caller);
+    let start = ptr as usize;
+    let end = start.checked_add(len as usize)?;
+    if end > data.len() {
+        return None;
+    }
+    std::str::from_utf8(&data[start..end])
+        .ok()
+        .map(str::to_string)
+}
+
 fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<String> {
     let memory = caller.get_export("memory").and_then(|e| e.into_memory())?;
     let data = memory.data(&*caller);
@@ -4408,46 +4429,59 @@ mod tests {
 
     /// Plugin Contracts v2 §2.5 smoke test — exercises `_build_state_set`
     /// and `_build_state_get` end-to-end via a hand-crafted WAT module that
-    /// imports them with the contract-mandated signatures.
+    /// imports them with the **canonical** signatures from
+    /// `foundation/platform-architecture/function-registry.toml`
+    /// (`expand_strings=true`):
     ///
-    /// Guards against the three bugs that hit this surface in 0.30.258–0.30.260:
-    /// param convention (signature-mismatch), return type (return-type-mismatch),
-    /// and runtime trap on empty returns (runtime-trap). Future regressions in
-    /// either bridge or the shared `PluginState` allocator will trip this test
-    /// before a framework AI eats another revert cycle.
+    ///   `_build_state_set(key_ptr, key_len, value_ptr, value_len) -> ()`
+    ///   `_build_state_get(key_ptr, key_len) -> i32`  (LP-pointer)
+    ///
+    /// Calls the production `register_build_state_bridges` rather than
+    /// redeclaring stubs, so the import-shape contract between this test and
+    /// the linker is what every shipped plugin actually sees.
+    ///
+    /// Guards against:
+    /// - Signature drift between the host adapter and the registry
+    ///   (CMP-PLUGIN-ABI-BUILD-STATE-SET-MISMATCH).
+    /// - Param convention, return type, and runtime trap regressions on the
+    ///   empty-return path (0.30.258–0.30.260).
     #[test]
     fn test_build_state_bridges_round_trip() {
-        use crate::plugins::{new_build_state, BuildState};
+        use crate::plugins::new_build_state;
         use wasmtime::{Engine, Linker, Module, Store};
 
         let engine = Engine::default();
-        let build_state: BuildState = new_build_state();
+        let build_state = new_build_state();
 
-        // Mini plugin: 64KB memory, LP-strings "k" / "v" / "missing" in the
-        // data section, exports `round_trip` (set + get) and two `missing_*`
-        // exports that probe the empty-string cache path.
+        // Mini plugin matching the canonical expand_strings=true shape: the
+        // data section holds raw UTF-8 bytes (no LP prefix) for "k" / "v" /
+        // "missing", and the wrappers pass each as a (ptr, len) pair.
         let wat = r#"
             (module
               (import "env" "_build_state_set"
-                (func $set (param i32 i32) (result i32)))
+                (func $set (param i32 i32 i32 i32)))
               (import "env" "_build_state_get"
-                (func $get (param i32) (result i32)))
+                (func $get (param i32 i32) (result i32)))
               (memory (export "memory") 1)
-              (data (i32.const 16) "\01\00\00\00k")
-              (data (i32.const 32) "\01\00\00\00v")
-              (data (i32.const 48) "\07\00\00\00missing")
+              (data (i32.const 16) "k")
+              (data (i32.const 32) "v")
+              (data (i32.const 48) "missing")
               (func (export "round_trip") (result i32)
                 i32.const 16
+                i32.const 1
                 i32.const 32
+                i32.const 1
                 call $set
-                drop
                 i32.const 16
+                i32.const 1
                 call $get)
               (func (export "missing_get") (result i32)
                 i32.const 48
+                i32.const 7
                 call $get)
               (func (export "missing_get_again") (result i32)
                 i32.const 48
+                i32.const 7
                 call $get))
         "#;
 
@@ -4455,60 +4489,12 @@ mod tests {
         let mut store = Store::new(&engine, PluginState::new());
         let mut linker: Linker<PluginState> = Linker::new(&engine);
 
-        let state_for_set = std::sync::Arc::clone(&build_state);
-        linker
-            .func_wrap(
-                "env",
-                "_build_state_set",
-                move |mut caller: Caller<'_, PluginState>, key_ptr: i32, value_ptr: i32| -> i32 {
-                    let Some(key) = read_clean_string(&mut caller, key_ptr) else {
-                        return 0;
-                    };
-                    let Some(value) = read_clean_string(&mut caller, value_ptr) else {
-                        return 0;
-                    };
-                    if key.is_empty() {
-                        return 0;
-                    }
-                    if let Ok(mut guard) = state_for_set.lock() {
-                        guard.insert(key, value);
-                    }
-                    0
-                },
-            )
-            .unwrap();
-
-        let state_for_get = std::sync::Arc::clone(&build_state);
-        linker
-            .func_wrap(
-                "env",
-                "_build_state_get",
-                move |mut caller: Caller<'_, PluginState>, key_ptr: i32| -> i32 {
-                    let Some(key) = read_clean_string(&mut caller, key_ptr) else {
-                        return 0;
-                    };
-                    let value = state_for_get
-                        .lock()
-                        .ok()
-                        .and_then(|g| g.get(&key).cloned())
-                        .unwrap_or_default();
-                    if value.is_empty() {
-                        if let Some(cached) = caller.data().cached_empty_lp_ptr {
-                            return cached;
-                        }
-                    }
-                    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory())
-                    else {
-                        return 0;
-                    };
-                    let ptr = write_lp_string(&mut caller, &memory, &value).unwrap_or(0);
-                    if value.is_empty() && ptr != 0 {
-                        caller.data_mut().cached_empty_lp_ptr = Some(ptr);
-                    }
-                    ptr
-                },
-            )
-            .unwrap();
+        // Exercise the production code path. If the signature here drifts
+        // away from what plugins import, instantiation will fail with the
+        // exact "incompatible import type for `env::_build_state_set`" error
+        // that bit frame.ui 2.12.36.
+        super::register_build_state_bridges(&mut linker, &build_state)
+            .expect("register_build_state_bridges");
 
         let instance = linker
             .instantiate(&mut store, &module)
