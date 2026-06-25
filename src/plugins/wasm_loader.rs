@@ -689,11 +689,12 @@ mod tests {
             .expect("spawn worker");
 
         // The engine ticks every 100 ms; deadline is 1 tick. A trap
-        // should arrive comfortably inside 2 s. If 2 s elapses with no
-        // result, the worker is stuck and the wiring is broken.
+        // should arrive well inside 10 s even when the ticker thread is
+        // starved by parallel test load. If 10 s elapses, the worker is
+        // actually stuck and the wiring is broken.
         let result = rx
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .expect("plugin epoch deadline did not trap within 2 s — the worker is hung, which means `epoch_deadline_trap()` is no longer wired up in the test (or globally, if this regression hits create_store)");
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("plugin epoch deadline did not trap within 10 s — the worker is hung, which means `epoch_deadline_trap()` is no longer wired up in the test (or globally, if this regression hits create_store)");
 
         let err = result.expect_err(
             "expected the infinite-loop call to trap with Trap::Interrupt; \

@@ -43,7 +43,7 @@ function.wasm
 
 # Test results and QA artifacts
 tests/results/
-tests/output/*.wasm
+tests/output/
 
 # Build outputs
 --output
