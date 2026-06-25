@@ -1,5 +1,6 @@
 // Spec Section: 2.1 - Core Types (integer)
-// Spec Section: 5.2 - Print Statements
+// Grammar: matrix_type, matrix_literal
+// Semantic: IDX002 — matrix index must be integer
 // Tests: Basic integer variables (placeholder for matrix tests)
 
 start:

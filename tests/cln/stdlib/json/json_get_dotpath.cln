@@ -1,6 +1,6 @@
 // Test: json.get with dot-separated path
 // Grammar: function_call → namespace "." function_name "(" args ")"
-// Semantic: FUNC-BUILTIN — json.get(any, string) -> any
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — json.get(any, string) -> any
 // Spec: foundation/spec/stdlib-reference.md §8 —
 //   "json.get function uses dot-separated paths: json.get(result, \"data.rows.0.name\")"
 // Regression: STDLIB-JSON-GET-DOTPATH-UNIMPLEMENTED — before the fix the wrapper

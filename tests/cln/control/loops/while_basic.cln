@@ -1,4 +1,6 @@
 // Basic while loop test
+// Grammar: while_statement
+// Semantic: SEM001 — while-condition must be boolean
 // Tests simple while loop with counter
 
 start:

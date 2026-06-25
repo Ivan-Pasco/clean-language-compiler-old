@@ -217,9 +217,11 @@ impl HirValidator {
         // Collect functions
         for function in &hir.functions {
             if context.functions.contains_key(&function.name) {
-                context.error(
+                // SEM003: symbol declared more than once in the same scope.
+                context.error_with_code(
                     &format!("Function '{}' is already defined", function.name),
                     function.location.clone(),
+                    "SEM003",
                 );
             } else {
                 context
@@ -231,12 +233,14 @@ impl HirValidator {
         // Collect start function if present
         if let Some(start_func) = &hir.start_function {
             if context.functions.contains_key(&start_func.name) {
-                context.error(
+                // SEM003: `start` cannot share a name with an existing function.
+                context.error_with_code(
                     &format!(
                         "Function '{}' conflicts with start function",
                         start_func.name
                     ),
                     start_func.location.clone(),
+                    "SEM003",
                 );
             } else {
                 context
@@ -248,9 +252,11 @@ impl HirValidator {
         // Collect classes
         for class in &hir.classes {
             if context.classes.contains_key(&class.name) {
-                context.error(
+                // SEM003: class declared more than once.
+                context.error_with_code(
                     &format!("Class '{}' is already defined", class.name),
                     class.location.clone(),
+                    "SEM003",
                 );
             } else {
                 context.classes.insert(class.name.clone(), class.clone());
@@ -458,11 +464,12 @@ impl HirValidator {
                 );
             }
 
-            // Check for circular inheritance (SEM008: InheritanceCycle)
+            // SEM008: direct or indirect circular inheritance.
             if Self::has_circular_inheritance(&context.classes, &class.name, parent_name) {
-                context.error(
+                context.error_with_code(
                     &format!("Circular inheritance detected for class '{}'", class.name),
                     class.location.clone(),
+                    "SEM008",
                 );
             }
         }

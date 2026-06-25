@@ -1659,6 +1659,57 @@ hosts       = ["server"]
 description = "Register an island component for client-side hydration: component name (ptr+len), WASM module path (ptr+len), hydration mode (ptr+len: on|visible|idle|only); returns 0 on success"
 
 # ============================================================
+# LAYER 3 - SERVER RUNTIME CONFIG (4 functions)
+# Populated during WASM init from the `server:` block. Values
+# are stashed in the shared runtime config and read by the
+# server when building the axum router. See frame-server.ebnf.
+# ============================================================
+
+[[functions]]
+name        = "_http_listen_on"
+layer       = 3
+category    = "http_server"
+module      = "env"
+params      = ["string", "i32"]
+returns     = "i32"
+aliases     = ["http.listen_on"]
+hosts       = ["server"]
+description = "Configure HTTP server to bind host (ptr+len) and port (i32, 1..=65535); supersedes _http_listen when the `server: host:` field is declared. Returns 0 on success, -1 on invalid host or out-of-range port."
+
+[[functions]]
+name        = "_cors_configure"
+layer       = 3
+category    = "http_server"
+module      = "env"
+params      = ["string", "string", "string", "i32", "boolean"]
+returns     = "i32"
+aliases     = ["cors.configure"]
+hosts       = ["server"]
+description = "Configure CORS: allowed_origins (ptr+len, comma-separated or '*'), allowed_methods, allowed_headers, max_age_secs (i32, 0=no Max-Age), allow_credentials (boolean). Returns 0 on success, -1 if max_age_secs is negative."
+
+[[functions]]
+name        = "_rate_limit_configure"
+layer       = 3
+category    = "http_server"
+module      = "env"
+params      = ["i32", "i32", "string"]
+returns     = "i32"
+aliases     = ["rate.limit_configure"]
+hosts       = ["server"]
+description = "Configure fixed-window rate limiting: per_window (i32, > 0), window_secs (i32, > 0), strategy (ptr+len: 'ip' or 'user'; defaults to 'ip'). Returns 0 on success, -1 on non-positive values."
+
+[[functions]]
+name        = "_http_set_global_error_handler"
+layer       = 3
+category    = "http_server"
+module      = "env"
+params      = ["string"]
+returns     = "i32"
+aliases     = ["http.set_global_error_handler"]
+hosts       = ["server"]
+description = "Register the WASM export name (ptr+len) invoked when a route handler errors. The server forwards the error message in the X-Clean-Error request header before dispatching. Returns 0 on success, -1 on empty handler name."
+
+# ============================================================
 # LAYER 3 - REQUEST CONTEXT (11 functions)
 # ============================================================
 

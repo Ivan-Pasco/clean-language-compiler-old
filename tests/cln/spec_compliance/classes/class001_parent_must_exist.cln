@@ -1,0 +1,29 @@
+// Test: spec_compliance/classes/class001_parent_must_exist
+// Grammar: class_body_item, class_name, base_call
+// Semantic: CLASS001 — `is ParentName` resolves to an existing class
+// Expected output:
+//   Rex barks
+//   Animal
+
+start:
+	Dog d = Dog("Rex")
+	print(d.speak())
+	print(d.kind())
+
+class Animal
+	string name
+
+	constructor(string nameParam)
+		name = nameParam
+
+	functions:
+		string kind()
+			return "Animal"
+
+class Dog is Animal
+	constructor(string nameParam)
+		base(nameParam)
+
+	functions:
+		string speak()
+			return name + " barks"

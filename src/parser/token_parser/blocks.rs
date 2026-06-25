@@ -1124,10 +1124,11 @@ impl TokenParser {
         self.skip_whitespace();
 
         if !self.check(&TokenKind::Assign) {
-            return Err(CompilerError::syntax_error(
+            return Err(CompilerError::syntax_error_with_code(
                 "Expected '=' in test assertion (format: expr = expected)",
                 Some("Use 'expr = expected_value' syntax in tests: block".to_string()),
                 Some(self.current().location.clone()),
+                "SYN002",
             ));
         }
         self.bump(); // consume '='
@@ -1167,10 +1168,11 @@ impl TokenParser {
                 s
             }
             _ => {
-                return Err(CompilerError::syntax_error(
+                return Err(CompilerError::syntax_error_with_code(
                     "Expected string literal after `test` in endpoint test",
                     Some("Use: test \"name\"".to_string()),
                     Some(self.current().location.clone()),
+                    "SYN002",
                 ));
             }
         };
@@ -1268,10 +1270,11 @@ impl TokenParser {
                     "DELETE" => HttpMethod::Delete,
                     "PATCH" => HttpMethod::Patch,
                     other => {
-                        return Err(CompilerError::syntax_error(
+                        return Err(CompilerError::syntax_error_with_code(
                             format!("Unknown HTTP method '{}' in endpoint test", other),
                             Some("Valid methods: GET POST PUT DELETE PATCH".to_string()),
                             Some(self.current().location.clone()),
+                            "SYN002",
                         ));
                     }
                 };
@@ -1279,10 +1282,11 @@ impl TokenParser {
                 m
             }
             _ => {
-                return Err(CompilerError::syntax_error(
+                return Err(CompilerError::syntax_error_with_code(
                     "Expected HTTP method (GET POST PUT DELETE PATCH) in endpoint test",
                     None,
                     Some(self.current().location.clone()),
+                    "SYN002",
                 ));
             }
         };
@@ -1296,10 +1300,11 @@ impl TokenParser {
                 s
             }
             _ => {
-                return Err(CompilerError::syntax_error(
+                return Err(CompilerError::syntax_error_with_code(
                     "Expected path string after HTTP method",
                     None,
                     Some(self.current().location.clone()),
+                    "SYN002",
                 ));
             }
         };
@@ -1359,10 +1364,11 @@ impl TokenParser {
                         k
                     }
                     _ => {
-                        return Err(CompilerError::syntax_error(
+                        return Err(CompilerError::syntax_error_with_code(
                             "Expected string key in header(...)",
                             None,
                             Some(self.current().location.clone()),
+                            "SYN002",
                         ));
                     }
                 };
@@ -1376,10 +1382,11 @@ impl TokenParser {
                         v
                     }
                     _ => {
-                        return Err(CompilerError::syntax_error(
+                        return Err(CompilerError::syntax_error_with_code(
                             "Expected string value in header(...)",
                             None,
                             Some(self.current().location.clone()),
+                            "SYN002",
                         ));
                     }
                 };
@@ -1414,10 +1421,11 @@ impl TokenParser {
                 name
             }
             _ => {
-                return Err(CompilerError::syntax_error(
+                return Err(CompilerError::syntax_error_with_code(
                     "Expected assertion keyword (status or json)",
                     None,
                     Some(self.current().location.clone()),
+                    "SYN002",
                 ));
             }
         };
@@ -1434,10 +1442,11 @@ impl TokenParser {
                         n
                     }
                     _ => {
-                        return Err(CompilerError::syntax_error(
+                        return Err(CompilerError::syntax_error_with_code(
                             "Expected integer status code after comparison operator",
                             None,
                             Some(self.current().location.clone()),
+                            "SYN002",
                         ));
                     }
                 };
@@ -1506,10 +1515,11 @@ impl TokenParser {
                 let value = self.parse_expression()?;
                 Ok(HttpTestAssertion::JsonField { path, op, value })
             }
-            other => Err(CompilerError::syntax_error(
+            other => Err(CompilerError::syntax_error_with_code(
                 format!("Unknown assertion keyword '{}' in endpoint test", other),
                 Some("Valid keywords: status, json".to_string()),
                 Some(self.current().location.clone()),
+                "SYN002",
             )),
         }
     }
@@ -1525,10 +1535,11 @@ impl TokenParser {
             TokenKind::LessEqual => HttpComparisonOp::LessEqual,
             TokenKind::GreaterEqual => HttpComparisonOp::GreaterEqual,
             _ => {
-                return Err(CompilerError::syntax_error(
+                return Err(CompilerError::syntax_error_with_code(
                     "Expected comparison operator (= != < > <= >=) in assertion",
                     None,
                     Some(self.current().location.clone()),
+                    "SYN002",
                 ));
             }
         };

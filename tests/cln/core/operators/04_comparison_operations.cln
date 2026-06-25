@@ -1,4 +1,6 @@
 // Spec Section: 4.4 - Comparison Operators
+// Grammar: comparison_op, expression
+// Semantic: SEM001 — comparison operator yields boolean
 // Tests: Equality comparison operator (==)
 
 start:

@@ -520,8 +520,16 @@ pub enum MirOperand {
 /// MIR constant values
 #[derive(Debug, Clone)]
 pub enum MirConstant {
-    /// Integer constant
+    /// 32-bit integer constant — default integer literal type. Maps to `i32.const` in WASM.
+    /// The `i64` payload is for convenience during the lex/parse phase; codegen narrows to i32.
     Integer(i64),
+
+    /// 64-bit integer constant — used when the destination slot is `integer:64`. Maps to
+    /// `i64.const` in WASM, preserving the full signed-64 range. Routed at MIR-build time
+    /// by `convert_literal` when the typechecker tags the literal's expression with
+    /// `ConcreteType::IntegerSized { bits: 64, unsigned: false }`. Without this variant, large
+    /// i64 literals get truncated to i32 by `load_constant`.
+    Integer64(i64),
 
     /// Floating point constant
     Float(f64),

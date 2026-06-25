@@ -521,3 +521,493 @@ Implemented static analysis in `src/hir/validation.rs`:
 Implemented full WASM instruction sequences: early-out if `str_len >= width`, allocate `4 + width`
 bytes via `__malloc`, cyclically fill pad bytes, copy original string, return new pointer.
 Falls back to returning original string if malloc is unavailable or width already satisfied.
+
+---
+
+## ✅ RESOLVED: COVERAGE-INT64-LITERAL-LEXER — Lexer now accepts the full i64 range
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Resolved**: 2026-06-25 in 0.30.358
+
+The lexer at `src/lexer/specification_lexer.rs:read_number_literal` already calls
+`i64::from_str_radix` / `i64::from_str` (lines 1018, 1043, 1068, 1248-1257, 1326), so the
+underlying capacity was always there. The earlier rejection observed in the `/coverage` pass
+was a stale-build artifact — re-running on a clean compile of `tests/cln/future/integer_64_edges.cln`
+shows `9223372036854775807` parses successfully.
+
+The companion bug COVERAGE-INT64-LITERAL-TRUNCATION (codegen-side truncation) remains open
+below — fixing the lexer alone does not produce correct runtime values.
+
+---
+
+## 🔴 OPEN: COVERAGE-INT64-LITERAL-TRUNCATION — Sized integers collapse to base Integer in HIR→Concrete conversion
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Repro**: `tests/cln/future/integer_64_edges.cln`
+
+```clean
+integer:64 over32 = 4294967296    // lexer + parser preserve i64 value correctly
+print(over32.toString())          // expected: "4294967296"; actual: "0"
+```
+
+**Root cause** (deeper than originally traced): the typechecker's `hir_type_to_concrete`
+at `src/typechecker/type_inference.rs:5778-5797` collapses **every** sized integer
+(`HirType::Integer8/16/32/64`) and sized number (`HirType::Number32/64`) to the base type
+`ConcreteType::Integer` / `ConcreteType::Number`. Width information is lost at the variable
+declaration step — by the time the MIR builder runs, `integer:64 x = ...` looks identical to
+`integer x = ...`. As a result every codegen path downstream sees i32 and emits i32.
+
+Note the static helper `Self::hir_type_to_concrete_type` at line 980 of the same file
+already preserves `IntegerSized`/`NumberSized` correctly — the instance method at 5778 is a
+divergent copy that drops the precision modifier.
+
+**Why a one-line fix in `hir_type_to_concrete` is insufficient** (validated in 0.30.358):
+fixing line 5778 alone surfaces a cascade of missing arms throughout the pipeline:
+- `src/mir/mir_builder/types.rs::convert_value_to_string` (line 299) has arms for `Integer`,
+  `Number`, `Boolean` but `IntegerSized` falls through to "use as-is", breaking `.toString()`
+  in `print(x.toString())`.
+- `src/mir/mir_builder/types.rs::mir_type_to_concrete` (line 410) has no `I64` arm — it
+  maps every pointer-ish thing through `Ptr(I8)→String` etc., but `MirType::I64` falls
+  through to a generic case.
+- `int_to_string` host signature is declared in `src/codegen/mir_codegen/utilities.rs:446`
+  as parameterless `create_builtin_signature("int_to_string", 5, Ptr(I32))` — the real WASM
+  import is `(i64) → i32` but the MIR signature table doesn't reflect that.
+- `MirConstant` arithmetic (Add, Sub, Mul, etc.) emits i32 ops; mixing i64 operands triggers
+  WASM validation errors.
+
+**Infrastructure landed in 0.30.358** (ready for the broader refactor):
+- `MirConstant::Integer64(i64)` variant added at `src/mir/mir_types.rs:524-530`.
+- `load_constant` handles `Integer64` → `Instruction::I64Const` at
+  `src/codegen/mir_codegen/operands.rs:86-89`.
+- `get_operand_mir_type` returns `MirType::I64` for `Integer64` at
+  `src/codegen/mir_codegen/utilities.rs:59`.
+- `convert_literal` and `convert_literal_type` accept `expr_type: &ConcreteType` and route
+  to the appropriate width at `src/mir/mir_builder/types.rs:209-265`.
+- `widen_literal_to_declared_type` helper at `src/typechecker/type_inference.rs:4232-4256`
+  retags literal expressions to match a 64-bit declared destination, ready to fire once
+  the HIR→Concrete conversion preserves the precision modifier.
+
+**Full fix plan** (when ready to take this on):
+1. Change `hir_type_to_concrete` at line 5778 to mirror `hir_type_to_concrete_type` at
+   line 980 — emit `IntegerSized`/`NumberSized` for sized variants. (Or unify the two
+   functions to a single source.)
+2. Extend `convert_value_to_string` to handle `IntegerSized { bits: 64 }` (emit
+   `int_to_string` call with i64 arg, signature already matches).
+3. Add an `I64 → Integer` arm in `mir_type_to_concrete`.
+4. Update `convert_value_to_string` and other type-bridging helpers to handle the wider
+   variants. Likely also need updates in:
+   - `print` codegen (load_string_argument_for_print)
+   - Binary-op codegen (i64 add/sub/mul/div instead of i32)
+   - Type-cast instructions for narrowing (`Cast` with `i32.wrap_i64` when storing i64 into
+     a smaller slot).
+5. Update the host signature table to reflect `(i64) → i32` for `int_to_string`,
+   `print_integer`, etc.
+
+Each step is mechanical but the cascade is wide. Tests for each step should live alongside
+`tests/cln/future/integer_64_edges.cln`.
+
+---
+
+## ✅ RESOLVED: COVERAGE-BASE-CONSTRUCTOR-NOT-PROPAGATED — `base(arg)` now propagates correctly
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Resolved**: 2026-06-25 in 0.30.358
+
+**Root cause**: NOT in the BaseCall lowering itself — args were always being passed to the
+parent constructor correctly. The bug was in `build_function_body`'s auto-return path:
+constructors have non-void return type (the class type), so when the body's last statement
+was an `Expression { expression: BaseCall }`, the auto-return logic at
+`src/mir/mir_builder/functions.rs:164` overwrote the implicit "return this" with the void
+result of the base call. The subsequent `ensure_function_termination` saw the block already
+had a `Return` terminator and skipped the constructor-specific "return this" injection in
+`src/mir/mir_builder/helpers.rs:132-141`.
+
+**Fix**: detect constructor functions (`class_context.is_some() && name == "constructor"`)
+and skip the auto-return path. The implicit "return this" from `ensure_function_termination`
+then handles the return value correctly.
+
+**Diff**: `src/mir/mir_builder/functions.rs:162-172` — added `is_constructor` check before
+deriving `has_non_void_return`.
+
+**Test**: `tests/cln/spec_compliance/classes/class001_parent_must_exist.cln` (promoted out
+of `future/`) — `Dog("Rex").speak()` now prints "Rex barks" as expected. CI tier-3
+`t3_class_inheritance` and the rest of the class test suite remain green.
+
+---
+
+## 🟡 OPEN: COVERAGE-RESET-STATEMENT-NOOP — `reset` no-ops in standalone runner (NOT a compiler bug)
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Reclassified**: 2026-06-25 — compiler emits the bridge call correctly; the standalone test
+runner intentionally stubs `_state_reset_named` / `_state_reset_all` as no-ops because
+restoring initializers requires runtime state tracking that lives in `clean-server`, not in
+this component.
+
+**Compiler-side traced** (all correct):
+- AST: `src/ast/mod.rs:770-773` (`ResetStmt { target: ResetTarget, … }`)
+- Parser: `src/parser/token_parser/statements.rs:697-721`
+- HIR: `src/hir/hir_builder.rs:1644-1668` lowers `reset state` to a `Call("_state_reset_all", [])` and `reset <name>` to a `Call("_state_reset_named", [name])`
+- Codegen: `src/codegen/mir_codegen/instructions.rs:1675` emits the `Instruction::Call(idx)`. `_state_reset_*` registered as void builtins (`instructions.rs:1935-1936`).
+
+**Runner-side documented no-op**:
+- `src/bin/wasmtime_runner.rs:308-310` — `linker.func_wrap("env", "_state_reset_all", || {})?;`
+- `src/plugins/wasm_adapter.rs:2507-2512` — same in plugin wasm adapter
+
+The runner stub comment already says "runtime resets are no-ops in standalone test runner".
+Implementing real state-reset semantics here would require designing initializer-snapshot
+tracking that duplicates the production `clean-server` implementation. Out of scope for the
+compiler component (Principle 1 — Component Isolation).
+
+**Test status**: `tests/cln/future/reset_statement.cln` updated to document this as
+COMPILER-CORRECT / RUNNER-NO-OP. Promote out of `future/` once the standalone runner is
+enhanced or once an integration harness in `clean-server` covers reset semantics.
+
+---
+
+## ✅ RESOLVED: COVERAGE-STRING-INTERP-METHODCALL — Interpolation now accepts any expression start
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Resolved**: 2026-06-25 in 0.30.358
+
+**Root cause**: The lexer's "is this an interpolation?" heuristic at
+`src/lexer/specification_lexer.rs:570` required the first non-whitespace character inside
+`{...}` to be `is_alphabetic() || == '_'`. Strings like `"{1.toString()}"`, `"{(x + 1)}"`,
+and even `"{1}"` started with a digit/paren and fell through to literal-brace handling —
+the braces and their contents were emitted verbatim.
+
+**Fix**: extend the heuristic to accept any character that can begin a `logical_expression`:
+digit, `(`, `-`, `+`, `!`, `[`, `"`, in addition to the existing alphabetic/underscore.
+The downstream inner-scan rules (rejecting `:`, `;`, `#`, `@`, `$`, `?`, and top-level `,`)
+still veto DSL/glob strings like `"{a,b,c}"` or `"color: { family: Inter, weight: 700 }"`,
+so the fix doesn't introduce new false positives.
+
+**Diff**: `src/lexer/specification_lexer.rs:570-582` — replaced single-char check with
+named boolean `is_expression_start`.
+
+**Test**: `tests/cln/spec_compliance/expressions/string_interpolation_edges.cln` updated
+to use the inline method-call form `"{1.toString()}-{2.toString()}-{3.toString()}"` (was
+working around the bug with pre-computed bindings).
+
+---
+
+## ✅ RESOLVED: COVERAGE-SPEC-DRIFT — Test files cited semantic codes not in `semantic-rules.md`
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Resolved**: 2026-06-25
+
+Developer decision: keep the `(tracking: …)` parenthesized form as the long-term convention.
+The 14 affected test files were renormalized to cite existing codes from
+`foundation/spec/semantic-rules.md` with the original tracking ID preserved in parens. The
+convention is now documented in `tests/UNIFIED_TESTING_STRATEGY.md` §4 "Test Header Citation
+Convention". Future recurring tracking IDs that justify formal codes should be raised here
+for developer approval before being added to the spec.
+
+Tracking IDs encountered and normalized: `SEM-COMPARE-01` → `SEM001`, `SEM-CTRL-01` →
+`FUNC004`, `FUNC-BUILTIN` → `FUNC001`, `SEM-JSON-ENCODE-TRAP` → `RUN002`, `CODEGEN001` →
+`COM001`, `RUNTIME002` → `RUN002`.
+
+---
+
+## ✅ RESOLVED: COVERAGE-PARITY-ITERATE — false positive
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Resolved**: 2026-06-25
+
+`iterate_statement` and `range_iterate_statement` ARE present in
+`foundation/spec/grammar.ebnf` at lines 542–550 and match the Pest grammar exactly. The
+original `/coverage` report flagged this as a parity gap based on an extraction false
+positive. No spec change required.
+
+---
+
+## ✅ RESOLVED: COVERAGE-STDLIB-LAYERING — `stdlib-reference.md` restructured into Part A / Part B
+
+**Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
+**Resolved**: 2026-06-25
+
+Developer decision: move categories 9–12 + 14 under a "Part B — Plugin- and Server-Provided
+Functions" section header in `foundation/spec/stdlib-reference.md`. Categories 1–8 + 13
+remain in Part A as Layer-1 language built-ins. The spec now explicitly maps each Part B
+category to its provider component and test location, removing the ambiguity that made the
+coverage picture confusing.
+
+---
+
+## /audit residue — 2026-06-25
+
+A full spec audit (compiler section) found 45 candidate gaps; most turned out to be
+audit false positives where the grep-based search couldn't locate the emission site.
+Truly-actionable items are listed below.
+
+### ✅ Fixed in this session
+
+| Item | Fix | File |
+|------|-----|------|
+| Audit #1 (SEM003) | function/class redefinition now tagged with code | `hir/validation.rs:215-258`, `resolver/resolver_impl.rs:219` |
+| Audit #2 (FUNC008–11) | new `semantic_error_with_code()` helper; all 10 emission sites updated | `error/mod.rs:472`, `hir/hir_builder.rs` (10 sites) |
+| Audit #5 (Array.get instance method) | added to `inferred_method_return_type` | `typechecker/type_inference.rs:4975` |
+| Audit #6 / #12 / #13 (Integer/Number conversion methods) | toInteger/toNumber/toBoolean added on both Integer and Number; Number.toBoolean + identity conversions added to MIR codegen | `typechecker/type_inference.rs:4908-4925`, `mir/mir_builder/expressions.rs:2180-2240` |
+| Audit #8 (SEM008) | inheritance cycle now tagged with code | `hir/validation.rs:464` |
+| Audit #13 (Array.isNotEmpty) | added to `inferred_method_return_type` | `typechecker/type_inference.rs:4972` |
+
+### 🟢 OPEN — truly-missing items
+
+#### AUDIT-26 — `list.push` returns `Void`, spec says `list`
+
+Stdlib reference `foundation/spec/stdlib-reference.md:235` declares `.push(item) → list`
+(chainable), but the resolver signature in `src/resolver/symbol_table.rs:910` returns Void.
+Codegen treats it as a void statement throughout. Changing it to return the receiver list
+would enable `xs.push(a).push(b)` chaining but risks breaking every site that uses
+`xs.push(x)` as a statement.
+
+**Decision needed (developer)**: keep Void and amend the spec, or change to chainable and
+audit every existing call site for breakage.
+
+#### AUDIT-3 — grammar.pest `list_behavior` only handles single modifiers
+
+`grammar.pest:65` defines `list_behavior = { "." ~ ("line" | "pile" | "unique") }`. The
+spec EBNF (`grammar.ebnf:181-187`) allows canonical ordering combinations
+`.line.unique.pile`. The token parser (`token_parser/declarations.rs:1611-1622`) correctly
+handles all 8 ListBehavior variants, so user-facing parsing already works. Only the pest
+grammar file is out of sync.
+
+**Decision needed (developer)**: update grammar.pest to express the combinations, or
+formally mark grammar.pest as non-authoritative (the token parser is the real parser).
+Same root cause covers AUDIT-4, AUDIT-23, AUDIT-24, AUDIT-29, AUDIT-31, AUDIT-32 — all of
+which are pest-only gaps that the token parser already handles.
+
+#### AUDIT-25 — generic parser errors not tagged with SYN002 / SYN004 / SYN005
+
+Parser errors for unexpected-token, unterminated-construct, and malformed-construct are
+emitted but they all carry the default `SYN001` code. To fix, classify each error site in
+`src/parser/token_parser/` and `src/lexer/` and pick the right code.
+
+**Effort**: ~1 day. Each call site to `CompilerError::syntax_error` needs review.
+
+#### AUDIT-9, 10, 11 — `math.random`, `math.sign`, `file.lines`
+
+Listed in `stdlib-reference.md` as built-ins but absent from the compiler registry. These
+are Layer-2 (I/O) functions. Per the `BUILTIN-NAMESPACE-OVERREACH` refactor (≥0.30.289),
+all Layer-2 functions belong in plugin `[bridge]` declarations, not the compiler. Adding
+them to the compiler would reverse that decision.
+
+**Decision needed (developer)**: confirm these should move to a plugin (probably
+`frame.server` for `math.random`/`math.sign`, `frame.server` or a new `frame.fs` for
+`file.lines`). The spec then needs a note marking them plugin-provided.
+
+#### AUDIT-38–45 — EXTRA items in code, absent from spec
+
+All of these need a "remove from code OR add to spec" decision and explicit approval per
+Principle 25:
+
+- **#38** `validator.*` namespace (~15 functions in `resolver/symbol_table.rs:1138-1222`)
+- **#39** `StringUtils_*` legacy aliases (length/concat/substring/indexOf/replace)
+- **#40** `list.fill`, `list.setFlags`, `list.removeLast`, `list.peek` — `setFlags` is the
+  runtime carrier for ListBehavior and likely an INTENTIONAL hidden function; others may
+  also be intentional
+- **#41** Input function underscore variants coexist with dot form
+- **#42** `FUNC012` (method-call on standalone function) — implemented in
+  `error/mod.rs:571`, no entry in `semantic-rules.md`
+- **#43** `FUNC008–FUNC011` named-arg codes — in code and in `error-codes.md`, but not in
+  `semantic-rules.md` (which still cuts off at FUNC007)
+- **#44** Compiler hardcodes `crypto.sha256`/`crypto.sha512` while other `crypto.*` are
+  delegated to plugin — inconsistent boundary
+- **#45** Cosmetic EBNF naming differences (`if_stmt` vs `if_statement` etc.); not
+  worth fixing unless we standardise the whole grammar.pest naming convention
+
+### 🔵 Audit corrections (false negatives — already implemented)
+
+These items appeared in the audit's MISSING list but a code search confirms they are
+implemented. No action needed; recorded for future audit-tool calibration.
+
+| Audit item | Spec code | Actual location |
+|---|---|---|
+| #7 | SEM010 | `mir/mir_builder/expressions.rs:1672-1714` (string.matches compile-time check) |
+| #14 | SYN007 | `parser/token_parser/mod.rs:188-217` |
+| #15 | SYN008 | `parser/token_parser/blocks.rs:427-437` |
+| #16 | SCOPE004 | `typechecker/type_inference.rs:1217-1256` |
+| #17 | SCOPE005 | `hir/mod.rs:34-80` + resolver enforcement |
+| #18 | FUNC006 | `hir/validation.rs:425` |
+| #19 | CLASS004 | `hir/validation.rs:505` (warning, not error) |
+| #20 | CLASS005 | `hir/validation.rs:643` + tests at 1601-1646 |
+| #21 | CLASS006 | (see validation.rs; verified during audit) |
+| #22 | STATE004 | `typechecker/type_inference.rs:2802` |
+| #27 | IMPORT004 | `hir/validation.rs:366` |
+| #28 | COM002 / COM006 | `error/enhanced_hierarchy.rs:294,298` |
+| #30 | FUNC005 | `hir/validation.rs:709` |
+| #33 | BLD-LAYOUT | `compilation/multi_file_compiler.rs:820` (the format is in the spec at line 685, just non-standard) |
+| #35 | STATE005 | `typechecker/type_inference.rs:2194` |
+| #36 | FUNC007 | `hir/validation.rs:435` |
+
+### 🟢 Approved-but-deferred — work items with decisions captured 2026-06-25
+
+The developer reviewed each of these and gave a directional answer; the work itself is
+scheduled for dedicated future sessions.
+
+#### AUDIT-9, AUDIT-10, AUDIT-11 — math.random / math.sign / file.lines as bridge declarations
+
+**Decision (2026-06-25)**: Add back to compiler as Layer-2 bridge declarations only.
+
+**Scope**: Add three rows to `src/resolver/symbol_table.rs` registering the dot-form names
+with their bridge targets. Bridges referenced:
+
+| Clean Language name | Bridge name | Notes |
+|---|---|---|
+| `math.random` | `_math_random` | takes nothing, returns `number` |
+| `math.sign` | `_math_sign` | takes `number`, returns `number` (−1.0/0.0/1.0) |
+| `file.lines` | `_file_lines` | takes `string` (path), returns `list<string>` |
+
+Host implementations must land in clean-server, clean-node-server and (where applicable)
+the browser bridge before these names will work at runtime. Filing a separate
+`server-` / `node-server-` prompt is recommended.
+
+**Risk**: Adding declarations without host implementations means code compiles but traps
+at runtime. Mitigation: add a `_TODO: missing host` note in the symbol_table entry until
+the bridges land.
+
+#### AUDIT-25 — tag parser/lexer errors as SYN002 / SYN004 / SYN005
+
+**Decision (2026-06-25)**: Fix now (this session). **Status**: deferred to a dedicated
+session — the session-scope check at end of `/audit` flagged this as ~2-3 hours of
+mechanical work touching every `CompilerError::syntax_error` call site.
+
+**Scope**:
+- Search every call to `CompilerError::syntax_error(` in `src/parser/token_parser/` and
+  `src/lexer/`. For each, classify:
+  - Lexer unterminated string / comment / block → switch to a new helper
+    `syntax_error_with_code(_, _, _, "SYN004")`
+  - Parser unexpected-token (saw X expected Y) → `"SYN002"`
+  - Parser malformed-construct (saw partial valid structure) → `"SYN005"`
+- Add the helper to `src/error/mod.rs` next to `semantic_error_with_code`.
+- No new behavior; only error codes change. Run the full lib test suite and inspect any
+  test that pattern-matches against the old `SYN001` code.
+
+**Effort estimate**: ~2-3 hours. ~30-50 call sites.
+
+#### AUDIT-3 family — sync grammar.pest with spec EBNF
+
+**Decision (2026-06-25)**: Sync grammar.pest to spec.
+
+**Scope** (each is independent):
+
+1. **Compound `list_behavior`** — grammar.pest:65 currently
+   `{ "." ~ ("line" | "pile" | "unique") }`. Expand to all 7 combinations (Default,
+   Line, Pile, Unique, LinePile, LineUnique, PileUnique, LineUniquePile) per
+   grammar.ebnf:181-187. Canonical order: line → unique → pile.
+2. **`required_op` (`!`)** — add to grammar.pest and reference from a new
+   `postfix_primary = { primary ~ "!"? }`.
+3. **`print:` block** — add `print_block_stmt` production matching
+   `token_parser/blocks.rs:368`.
+4. **`default_op`** — add `default` operator rule + `default_expression` production at
+   the right precedence level (between logical-or and not).
+5. **`handler_type`** — add as a `variable_type` alternative.
+6. **`argument_expression`** precedence — rework grammar.pest:202-211 to delegate to
+   `expression` instead of building a parallel chain.
+
+**Risk**: Each addition may interact with PEG-style ordering rules and break the parse of
+unrelated constructs. Test the full `tests/cln/` suite after each addition individually
+(do not bundle).
+
+**Effort estimate**: ~3-4 hours; ~7 separate landings.
+
+#### AUDIT-#45 — standardise EBNF naming in grammar.pest
+
+**Decision (2026-06-25)**: Standardise now. **Status**: deferred — paired with the
+AUDIT-3 work above since both modify grammar.pest.
+
+**Scope**: ~19 mechanical renames in `src/parser/grammar.pest` and any downstream
+`Rule::xxx` enum references in `src/parser/*.rs`. Examples:
+
+- `if_stmt` → `if_statement`
+- `while_stmt` → `while_statement`
+- `break_stmt` → `break_statement`
+- `boolean` (literal) → `boolean_literal`
+- `integer` (literal) → `integer_literal`
+- `float` → `float_literal`
+- `null` → `none_literal` (already partly done)
+- `type_` → consider keeping the trailing underscore for Pest keyword-collision safety,
+  document the exception
+
+After the rename, `cargo check` and the full test suite must pass with no test changes
+beyond pattern updates.
+
+**Effort estimate**: ~1 hour. Tight enough to bundle with AUDIT-3.
+
+---
+
+## /audit done — outstanding work
+
+Net changes this session:
+
+- 7 code edits across 5 files (SEM003 + SEM008 tagged, FUNC008-12 routed through
+  code-aware helper, Number/Integer conversion methods + Array.get/.isNotEmpty added,
+  StringUtils_* aliases removed).
+- 4 spec changes applied with developer approval (Principle 25):
+  - stdlib-reference.md: list.push returns void, list.fill/removeLast/peek documented,
+    validator.* §15 added.
+  - semantic-rules.md: FUNC012 entry added.
+  - error-codes.md: reserved range narrowed to FUNC013+.
+- 2 new `.cln` tests landed (numeric conversions, list method dispatch).
+- 1 cross-component prompt filed (crypto.sha256/512 plugin migration).
+- Audit's coverage methodology was found to under-count by ~16 items due to grep
+  false-negatives. Audit corrections table preserved above so future audits don't re-flag.
+
+**Approved-but-deferred** items above keep the open work tracked with each decision
+captured, so the next session can pick them up without re-asking.
+
+---
+
+## /audit residue follow-up — 2026-06-25 (same day continuation)
+
+After the initial /audit residue landed, the developer chose `proceed` and we worked
+through the remaining approved-but-deferred items.
+
+### ✅ Closed in follow-up
+
+**AUDIT-25 — SYN002 / SYN004 / SYN005 tagged.**
+- `src/error/mod.rs:455-471` — new `syntax_error_with_code()` helper.
+- `src/lexer/specification_lexer.rs:1768-1788` — `From<LexError>` now lifts
+  `UnterminatedString` / `UnterminatedComment` into a `Syntax` variant tagged
+  `SYN004`.
+- `src/parser/preprocessor.rs:321`, `src/parser/function_parser.rs:87,117` —
+  three "no function found" sites now tagged `SYN005`.
+- `src/parser/token_parser/blocks.rs` — eleven "expected X" / "unknown X" sites
+  in the endpoint-test parser now tagged `SYN002`.
+- Three remaining "Failed to parse" sites in preprocessor / function_parser /
+  parser_impl kept as the generic `SYN001` — they are not "unexpected token" or
+  "malformed construct" specifically.
+
+**AUDIT-9 — `math.random` declared.**
+**AUDIT-10 — `math.sign` declared.**
+- `src/resolver/symbol_table.rs:768-775` — both added with bridge mapping comments.
+- `src/resolver/symbol_table.rs:1300-1302` — both added to math namespace.
+- Bridges `math_random` and `math_sign` already exist in
+  `foundation/platform-architecture/function-registry.toml:858-897` with the
+  `math.random` / `math.sign` aliases. No registry or host changes needed.
+- New smoke test: `tests/cln/stdlib/math_random_sign.cln` (compiles clean).
+
+**AUDIT-11 — `file.lines` deferred until host bridge exists.**
+- No bridge in `function-registry.toml`. Adding the declaration without a bridge
+  would compile but trap at runtime — worse UX than the current "function not found"
+  compile error.
+- Cross-component prompt filed:
+  `foundation/management/cross-component-prompts/all-file-lines-bridge.md`.
+
+**AUDIT-3 family + AUDIT-#45 — `grammar.pest` documented as non-authoritative.**
+- Per developer decision (`Document reality`), the cheap path was chosen over the
+  ~3-4 hour Pest sync. The canonical parser is `token_parser/`; Pest is only
+  invoked from legacy test paths and a small handful of `parser_impl.rs` consumers.
+- `src/parser/grammar.pest:1-39` — added a header comment block enumerating the
+  six known drift points (compound list_behavior, postfix `!`, print: block,
+  default operator, handler type, argument_expression precedence) and the
+  ~19 cosmetic naming differences, each pointing at the canonical
+  `token_parser/` file. New contributors will see the warning and the pointer.
+- This closes AUDIT-3, AUDIT-4, AUDIT-23, AUDIT-24, AUDIT-29, AUDIT-31, AUDIT-32,
+  and AUDIT-#45 in the residue list — all "documented intentional drift" now.
+
+### Outstanding (none from /audit)
+
+All audit-derived items are now either fixed, filed as cross-component prompts,
+or documented as intentional drift with the developer's explicit decision.
+
+The audit is closed.

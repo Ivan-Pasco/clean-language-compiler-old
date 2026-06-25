@@ -1,0 +1,27 @@
+// Test: parser_compliance/integer_literal_bases
+// Grammar: hex_integer, binary_integer, octal_integer, integer_literal
+// Semantic: SEM001 — integer literal in any base must have type integer
+// Expected output:
+//   255
+//   255
+//   255
+//   10
+//   -16
+//   -8
+//   -10
+
+start:
+	integer hexLower = 0xff
+	integer hexUpper = 0xFF
+	integer hexAlt = 0Xff
+	integer bin = 0b1010
+	integer hexNeg = -0x10
+	integer octNeg = -0o10
+	integer binNeg = -0b1010
+	print(hexLower.toString())
+	print(hexUpper.toString())
+	print(hexAlt.toString())
+	print(bin.toString())
+	print(hexNeg.toString())
+	print(octNeg.toString())
+	print(binNeg.toString())

@@ -453,6 +453,22 @@ impl CompilerError {
         }
     }
 
+    /// Syntax error tagged with an explicit code. Use SYN002 for unexpected-token,
+    /// SYN004 for unterminated constructs (string/comment/block), SYN005 for
+    /// malformed-construct (partially valid structure missing required pieces).
+    pub fn syntax_error_with_code<T: Into<String>>(
+        message: T,
+        help: Option<String>,
+        location: Option<SourceLocation>,
+        code: &'static str,
+    ) -> Self {
+        CompilerError::Syntax {
+            context: Box::new(
+                ErrorContext::new(message, help, ErrorType::Syntax, location).with_error_code(code),
+            ),
+        }
+    }
+
     /// Semantic error: a well-formed program that violates a language semantic rule
     /// (type mismatches, undeclared variables, FUNC008–FUNC011, etc.).
     /// Maps to the `Syntax` variant with error type `Semantic` and code `SEM002` (UndefinedSymbol).
@@ -465,6 +481,23 @@ impl CompilerError {
             context: Box::new(
                 ErrorContext::new(message, help, ErrorType::Semantic, location)
                     .with_error_code("SEM002"),
+            ),
+        }
+    }
+
+    /// Semantic error tagged with an explicit error code (e.g. FUNC008, FUNC009).
+    /// Use this when the call site knows the precise rule being violated; prefer it over
+    /// `semantic_error` (which always tags `SEM002`).
+    pub fn semantic_error_with_code<T: Into<String>>(
+        message: T,
+        help: Option<String>,
+        location: Option<SourceLocation>,
+        code: &'static str,
+    ) -> Self {
+        CompilerError::Syntax {
+            context: Box::new(
+                ErrorContext::new(message, help, ErrorType::Semantic, location)
+                    .with_error_code(code),
             ),
         }
     }

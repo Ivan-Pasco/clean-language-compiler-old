@@ -2416,7 +2416,14 @@ impl<'a> TypeInference<'a> {
                         }
                     } else {
                         // Normal inference for non-empty literals
-                        let tast_init = self.infer_expression(init_expr)?;
+                        let mut tast_init = self.infer_expression(init_expr)?;
+
+                        // Widen literal type to match a sized integer destination so the MIR
+                        // builder emits the correct constant width. Without this, an
+                        // `integer:64 x = 9223372036854775807` literal keeps the typechecker's
+                        // default `ConcreteType::Integer` tag and codegen narrows it to i32 in
+                        // `load_constant`, truncating the high bits.
+                        Self::widen_literal_to_declared_type(&mut tast_init, &declared_type);
 
                         // Add constraint that initializer type matches declared type.
                         // SEM004: If a declared type annotation is provably incompatible
@@ -4222,6 +4229,44 @@ impl<'a> TypeInference<'a> {
         ))
     }
 
+    /// Widen an integer-literal expression's `expr_type` from the default `Integer` to a
+    /// sized integer type when the surrounding declaration demands it. This is what tells the
+    /// MIR builder to emit `MirConstant::Integer64` for an `integer:64 x = 999999999999`
+    /// instead of the default `MirConstant::Integer` (which codegen narrows to i32).
+    ///
+    /// Only widens when:
+    /// - the initializer is a plain integer literal (not a binary op, call, etc.)
+    /// - the typechecker tagged it with the default `ConcreteType::Integer`
+    /// - the declared type is `IntegerSized { bits, unsigned: false }`
+    ///
+    /// Non-literal initializers (e.g. arithmetic results) are not retagged here — they keep
+    /// their inferred type and rely on the existing assignment-side cast logic.
+    fn widen_literal_to_declared_type(
+        tast_init: &mut TastExpression,
+        declared_type: &ConcreteType,
+    ) {
+        if !matches!(
+            tast_init.kind,
+            TastExpressionKind::Literal {
+                value: TastLiteral::Integer(_)
+            }
+        ) {
+            return;
+        }
+        if !matches!(tast_init.expr_type, ConcreteType::Integer) {
+            return;
+        }
+        if let ConcreteType::IntegerSized {
+            bits,
+            unsigned: false,
+        } = declared_type
+        {
+            if *bits == 64 {
+                tast_init.expr_type = declared_type.clone();
+            }
+        }
+    }
+
     /// Infer type for a literal
     fn infer_literal(&self, literal: &crate::ast::Value) -> (TastLiteral, ConcreteType) {
         match literal {
@@ -4904,16 +4949,22 @@ impl<'a> TypeInference<'a> {
     ) -> Result<ConcreteType, CompilerError> {
         // For now, implement basic built-in method type inference
         match (receiver_type, method_name) {
-            // Integer methods
+            // Integer methods — type-system.md §7, §12 conversion methods
             (ConcreteType::Integer, "toString") => Ok(ConcreteType::String),
             (ConcreteType::Integer, "abs") => Ok(ConcreteType::Integer),
+            (ConcreteType::Integer, "toInteger") => Ok(ConcreteType::Integer),
+            (ConcreteType::Integer, "toNumber") => Ok(ConcreteType::Number),
+            (ConcreteType::Integer, "toBoolean") => Ok(ConcreteType::Boolean),
 
-            // Number methods
+            // Number methods — type-system.md §12 conversion methods
             (ConcreteType::Number, "toString") => Ok(ConcreteType::String),
             (ConcreteType::Number, "abs") => Ok(ConcreteType::Number),
             (ConcreteType::Number, "floor") => Ok(ConcreteType::Integer),
             (ConcreteType::Number, "ceil") => Ok(ConcreteType::Integer),
             (ConcreteType::Number, "round") => Ok(ConcreteType::Integer),
+            (ConcreteType::Number, "toInteger") => Ok(ConcreteType::Integer),
+            (ConcreteType::Number, "toNumber") => Ok(ConcreteType::Number),
+            (ConcreteType::Number, "toBoolean") => Ok(ConcreteType::Boolean),
 
             // String methods
             (ConcreteType::String, "length") => Ok(ConcreteType::Integer),
@@ -4953,15 +5004,17 @@ impl<'a> TypeInference<'a> {
             (ConcreteType::Pairs(_, _), "len" | "size") => Ok(ConcreteType::Integer),
             (ConcreteType::Pairs(_, _), "set" | "remove") => Ok(ConcreteType::Undefined),
 
-            // Array methods
+            // Array methods — type-system.md §12
             (ConcreteType::Array(_), "length") => Ok(ConcreteType::Integer),
             (ConcreteType::Array(_), "size") => Ok(ConcreteType::Integer), // Alias for length
             (ConcreteType::Array(_), "push") => Ok(ConcreteType::Undefined), // void return
             (ConcreteType::Array(element_type), "pop") => Ok((**element_type).clone()),
             (ConcreteType::Array(element_type), "removeLast") => Ok((**element_type).clone()), // canonical name for pop
             (ConcreteType::Array(element_type), "remove") => Ok((**element_type).clone()), // remove() behaves like pop()
+            (ConcreteType::Array(element_type), "get") => Ok((**element_type).clone()),
             (ConcreteType::Array(_), "contains") => Ok(ConcreteType::Boolean), // contains() returns boolean
             (ConcreteType::Array(_), "isEmpty") => Ok(ConcreteType::Boolean), // isEmpty() returns boolean
+            (ConcreteType::Array(_), "isNotEmpty") => Ok(ConcreteType::Boolean),
             (ConcreteType::Array(_), "toString") => Ok(ConcreteType::String),
 
             // Boolean methods
@@ -5734,6 +5787,12 @@ impl<'a> TypeInference<'a> {
             HirType::Void => ConcreteType::Null,
             // BOOK: null-support - HirType::Null maps to ConcreteType::Null
             HirType::Null => ConcreteType::Null,
+            // NOTE: Sized integers/numbers currently collapse to the base `Integer`/`Number`
+            // type. Promoting them to `IntegerSized`/`NumberSized` here surfaces a chain of
+            // downstream sites (toString conversion, mir_type_to_concrete, host import call
+            // signatures, etc.) that have no I64 arm — see COVERAGE-INT64-LITERAL-TRUNCATION
+            // in TASKS.md for the full plan. Keeping the collapse for now preserves the
+            // current behavior; the i64 codegen fix is tracked separately.
             HirType::Integer8 => ConcreteType::Integer,
             HirType::Integer8u => ConcreteType::Integer,
             HirType::Integer16 => ConcreteType::Integer,

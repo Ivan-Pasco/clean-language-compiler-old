@@ -1,0 +1,14 @@
+// Test: core/collections/list_method_get_isNotEmpty
+// Grammar: method_call on list type
+// Semantic: type-system.md §12 — list.get(index), list.isNotEmpty()
+// Covers: instance-method dispatch resolves list.get / list.isNotEmpty correctly.
+// Expected: compiles cleanly, prints the chosen element and the boolean.
+
+start:
+	list<integer> xs = [10, 20, 30]
+
+	integer first = xs.get(0)
+	boolean has   = xs.isNotEmpty()
+
+	print(first)
+	print(has)

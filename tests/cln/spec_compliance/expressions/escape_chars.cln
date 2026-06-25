@@ -1,0 +1,22 @@
+// Test: spec_compliance/expressions/escape_chars
+// Grammar: escaped_char = "\" ( '"' | "{" | "}" | "\" | "n" | "r" | "t" | "0" )
+// Semantic: SEM001 — every escape produces a string with the documented byte
+// Expected output:
+//   he said "hi"
+//   path\to\file
+//   line1
+//   line2
+//   tab	end
+//   {literal}
+
+start:
+	string quote = "he said \"hi\""
+	string backslash = "path\\to\\file"
+	string newl = "line1\nline2"
+	string tabbed = "tab\tend"
+	string braces = "\{literal\}"
+	print(quote)
+	print(backslash)
+	print(newl)
+	print(tabbed)
+	print(braces)

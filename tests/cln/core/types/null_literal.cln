@@ -1,4 +1,6 @@
 // Test: Null literal support
+// Grammar: null_literal, none_literal
+// Semantic: SEM001 — null is assignable to any
 // BOOK: null-support - Basic null literal test
 
 start:

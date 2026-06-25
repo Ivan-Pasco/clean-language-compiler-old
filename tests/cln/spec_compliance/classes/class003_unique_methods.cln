@@ -1,0 +1,27 @@
+// Test: spec_compliance/classes/class003_unique_methods
+// Grammar: method_name
+// Semantic: CLASS003 — method names within a class must be unique (positive case)
+// Expected output:
+//   12
+//   2
+
+start:
+	Calculator c = Calculator()
+	c.add(5)
+	c.add(7)
+	print(c.total.toString())
+	c.sub(10)
+	print(c.total.toString())
+
+class Calculator
+	integer total
+
+	constructor()
+		total = 0
+
+	functions:
+		void add(integer x)
+			total = total + x
+
+		void sub(integer x)
+			total = total - x

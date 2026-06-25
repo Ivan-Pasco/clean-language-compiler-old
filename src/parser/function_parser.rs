@@ -84,7 +84,7 @@ impl FunctionParser {
             }
         }
 
-        Err(CompilerError::syntax_error(
+        Err(CompilerError::syntax_error_with_code(
             format!(
                 "No function found in segment for {}",
                 segment.boundary.function_name
@@ -97,6 +97,7 @@ impl FunctionParser {
                 byte_start: None,
                 byte_end: None,
             }),
+            "SYN005",
         ))
     }
 
@@ -114,7 +115,7 @@ impl FunctionParser {
             }
         }
 
-        Err(CompilerError::syntax_error(
+        Err(CompilerError::syntax_error_with_code(
             "No function declaration found",
             None,
             Some(SourceLocation {
@@ -124,6 +125,7 @@ impl FunctionParser {
                 byte_start: None,
                 byte_end: None,
             }),
+            "SYN005",
         ))
     }
 

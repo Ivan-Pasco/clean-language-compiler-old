@@ -1,6 +1,6 @@
 // Test: stdlib/json/json_encode_pairs
 // Grammar: function_call → namespace "." function_name "(" args ")"
-// Semantic: FUNC-BUILTIN — json.encode on a typed Pairs<K,V> walks the native
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — json.encode on a typed Pairs<K,V> walks the native
 //   pairs heap layout and emits a JSON object directly.
 // Regression: JSON-ENCODE-PAIRS-MALFORMED (compiler 0.30.298, dashboard
 //   fingerprint ce3b02d0fd48). Before the fix:

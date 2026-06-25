@@ -11,12 +11,12 @@ impl MirBuilder {
         trace!(expression_kind = ?std::mem::discriminant(&expression.kind), "Processing expression");
         match &expression.kind {
             TastExpressionKind::Literal { value } => {
-                let constant = self.convert_literal(value);
+                let constant = self.convert_literal(value, &expression.expr_type);
                 let value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
                 // Register the ValueId as a temporary local for codegen
-                let mir_type = self.convert_literal_type(value);
+                let mir_type = self.convert_literal_type(value, &expression.expr_type);
                 self.register_temp_local(context, value_id, mir_type, expression.location.clone());
 
                 let instruction = MirInstruction {
@@ -2176,6 +2176,39 @@ impl MirBuilder {
                             self.add_instruction(context, instruction);
 
                             return Ok(result_id);
+                        }
+                        // Number to Boolean conversion (f64 -> i32, non-zero = true)
+                        (ConcreteType::Number, "toBoolean") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32,
+                                expression.location.clone(),
+                            );
+
+                            // Emit comparison: receiver != 0.0
+                            let zero_const = MirConstant::Float(0.0);
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::BinaryOp {
+                                    op: MirBinaryOp::Ne,
+                                    left: MirOperand::Value(receiver_id),
+                                    right: MirOperand::Constant(zero_const),
+                                },
+                                location: expression.location.clone(),
+                            };
+
+                            self.add_instruction(context, instruction);
+
+                            return Ok(result_id);
+                        }
+                        // Identity conversions — return the receiver unchanged.
+                        (ConcreteType::Integer, "toInteger")
+                        | (ConcreteType::Number, "toNumber") => {
+                            return Ok(receiver_id);
                         }
                         _ => {
                             // Not a type conversion method, continue to built-in method handling

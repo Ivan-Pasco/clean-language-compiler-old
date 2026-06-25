@@ -1,3 +1,41 @@
+// ============================================================================
+// grammar.pest — LEGACY PEST GRAMMAR (non-authoritative)
+//
+// The canonical Clean Language parser is the token-driven parser in
+// `src/parser/token_parser/`. That parser is what `SpecificationParser` and the
+// `cln compile` / `cln check` entry points actually run.
+//
+// This Pest grammar is kept for:
+//   - Legacy test paths (`src/parser/expression_parser.rs`, `property_tests.rs`)
+//   - Pre-token-parser code in `src/parser/parser_impl.rs` / `function_parser.rs`
+//     that processes a handful of Pest rules directly.
+//
+// It is INTENTIONALLY OUT OF SYNC with `foundation/spec/grammar.ebnf` in several
+// places. The drift is documented per-construct below. When the spec EBNF and
+// this file disagree, the EBNF (and the token_parser implementation that matches
+// it) wins.
+//
+// Known drift from spec EBNF (last reviewed 2026-06-25, /audit residue):
+//   - list_behavior: this file accepts a single .line | .pile | .unique; the spec
+//     allows canonical ordered combinations (.line.unique.pile). The token parser
+//     handles all 8 ListBehavior variants — see token_parser/declarations.rs:1611.
+//   - required_op (postfix `!`): not in this file; token_parser/expressions.rs:400.
+//   - print: block (indented form): not in this file; token_parser/blocks.rs:368.
+//   - default operator: not in this file; token_parser/expressions.rs (parse_default).
+//   - handler type: not in this file. Token parser does not implement it either yet.
+//   - argument_expression precedence: this file builds a parallel precedence chain
+//     (lines 202-211) instead of delegating to expression. Token parser delegates
+//     correctly.
+//   - Naming: this file uses `if_stmt` / `while_stmt` / `boolean` (for literal) etc.
+//     The spec EBNF uses `if_statement` / `while_statement` / `boolean_literal`.
+//     Behavioral equivalence is intact; only the rule names differ. The token parser
+//     does not use Pest Rules at all, so this divergence has no user-facing impact.
+//
+// DO NOT add new spec features here unless you also update the dependent Rust
+// `Rule::xxx` match arms. The cheaper path is to add the feature to token_parser
+// and leave this file alone.
+// ============================================================================
+
 // Basic tokens - DISABLE AUTOMATIC WHITESPACE for indentation-sensitive parsing
 WHITESPACE = _{ " " | "\r" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }

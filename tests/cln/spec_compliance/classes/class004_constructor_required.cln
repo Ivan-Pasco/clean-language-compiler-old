@@ -1,0 +1,17 @@
+// Test: spec_compliance/classes/class004_constructor_required
+// Grammar: constructor
+// Semantic: CLASS004 — a class that is instantiated must have a constructor
+// Expected output:
+//   point: 3 4
+
+start:
+	Point p = Point(3, 4)
+	print("point: " + p.x.toString() + " " + p.y.toString())
+
+class Point
+	integer x
+	integer y
+
+	constructor(integer xParam, integer yParam)
+		x = xParam
+		y = yParam

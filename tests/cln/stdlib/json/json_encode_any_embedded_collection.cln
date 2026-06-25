@@ -1,5 +1,5 @@
 // Test: stdlib/json/json_encode_any_embedded_collection
-// Semantic: FUNC-BUILTIN — `json.encode(any data)` must correctly serialize
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — `json.encode(any data)` must correctly serialize
 //   typed collections (`list<T>`, `pairs<K,V>`) that are embedded as field
 //   values inside an `any` object literal. The collections must be normalized
 //   into JSON-tree format at boxing time so the recursive stringify walks

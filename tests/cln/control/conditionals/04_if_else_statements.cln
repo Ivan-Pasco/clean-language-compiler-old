@@ -1,5 +1,7 @@
 // Test Description: If/else conditional statements
 // Category: control
+// Grammar: if_statement, else_block
+// Semantic: SEM001 — if-condition must be boolean
 // Dependencies: none
 // Expected: PASS
 

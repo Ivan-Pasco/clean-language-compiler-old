@@ -1,6 +1,6 @@
 // Test: control/conditionals/07_consecutive_if_return
 // Grammar: IfStatement IfStatement ReturnStatement (sequential, not nested)
-// Semantic: SEM-CTRL-01 — consecutive if blocks must not suppress the trailing return
+// Semantic: FUNC004 (tracking: SEM-CTRL-01) — consecutive if blocks must not suppress the trailing return
 // Expected output:
 //   hello_a_b
 //   hello_a

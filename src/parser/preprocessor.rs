@@ -318,10 +318,11 @@ impl FunctionPreprocessor {
             }
         }
 
-        Err(CompilerError::syntax_error(
+        Err(CompilerError::syntax_error_with_code(
             "No function found in isolated source",
             None,
             None,
+            "SYN005",
         ))
     }
 

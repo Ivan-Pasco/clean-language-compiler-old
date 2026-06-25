@@ -56,6 +56,7 @@ impl MirCodeGenerator<'_> {
             MirOperand::Value(vid) => self.get_value_type(*vid),
             MirOperand::Constant(constant) => Some(match constant {
                 MirConstant::Integer(_) => MirType::I32,
+                MirConstant::Integer64(_) => MirType::I64,
                 MirConstant::Float(_) => MirType::F64,
                 MirConstant::Boolean(_) => MirType::I32,
                 MirConstant::String(_) => MirType::I32, // String pointers are i32

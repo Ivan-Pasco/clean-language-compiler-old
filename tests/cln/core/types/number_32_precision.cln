@@ -1,0 +1,18 @@
+// Test: core/types/number_32_precision
+// Grammar: sized_type, size_specifier (number:32)
+// Semantic: SEM001 — number:32 holds 32-bit float values; number:64 is the default
+// Expected output:
+//   half32: 0.5
+//   quarter32: 0.25
+//   sum32: 0.75
+//   pi64: 3.141592653589793
+
+start:
+	number:32 half32 = 0.5
+	number:32 quarter32 = 0.25
+	number:32 sum32 = half32 + quarter32
+	number:64 pi64 = 3.141592653589793
+	print("half32: " + half32.toString())
+	print("quarter32: " + quarter32.toString())
+	print("sum32: " + sum32.toString())
+	print("pi64: " + pi64.toString())

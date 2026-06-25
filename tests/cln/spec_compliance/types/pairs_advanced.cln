@@ -1,0 +1,22 @@
+// Test: spec_compliance/types/pairs_advanced
+// Grammar: pairs_type, pairs_literal, pair_element, method_call
+// Semantic: SEM001 — pairs.get returns the value type associated with the key
+// Expected output:
+//   one
+//   two
+//   three
+//   3
+//   true
+//   false
+
+start:
+	pairs<string, string> words = {}
+	words.set("1", "one")
+	words.set("2", "two")
+	words.set("3", "three")
+	print(words.get("1"))
+	print(words.get("2"))
+	print(words.get("3"))
+	print(words.len().toString())
+	print(words.has("1").toString())
+	print(words.has("999").toString())

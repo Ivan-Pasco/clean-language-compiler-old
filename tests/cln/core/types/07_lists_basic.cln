@@ -1,3 +1,7 @@
+// Test: core/types/lists_basic
+// Grammar: list_type, list_literal, list_access
+// Semantic: IDX001 — list index must be integer
+// Tests: list declaration, literal, bracket access
 
 start:
 	list<integer> numbers = [1, 2, 3, 4, 5]

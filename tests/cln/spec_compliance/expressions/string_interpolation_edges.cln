@@ -1,0 +1,24 @@
+// Test: spec_compliance/expressions/string_interpolation_edges
+// Grammar: string_part = escaped_char | string_interpolation | string_content
+// Semantic: SEM001 — interpolation expressions are converted to string
+// Expected output:
+//   value=42
+//   pi=3.14
+//   name: Alice
+//   escaped braces: {not interpolated}
+//   chain: 1-2-3
+
+start:
+	integer x = 42
+	number pi = 3.14
+	string name = "Alice"
+	string a = "value={x}"
+	string b = "pi={pi}"
+	string c = "name: {name}"
+	string d = "escaped braces: \{not interpolated\}"
+	string e = "chain: {1.toString()}-{2.toString()}-{3.toString()}"
+	print(a)
+	print(b)
+	print(c)
+	print(d)
+	print(e)

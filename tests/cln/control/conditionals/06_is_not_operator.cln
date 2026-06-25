@@ -1,6 +1,6 @@
 // Test: control/conditionals/is_not_operator
 // Grammar: comparison_expression → expr 'is' 'not' expr | expr 'is' expr
-// Semantic: SEM-COMPARE-01
+// Semantic: SEM001 (tracking: SEM-COMPARE-01 — `is`/`is not` operator typing)
 // Expected output:
 //   a is b: true
 //   c is not d: true

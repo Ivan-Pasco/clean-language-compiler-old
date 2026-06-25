@@ -1,6 +1,6 @@
 // Test: arrays of objects must be indexable past element 0.
 // Grammar: function_call → namespace "." function_name "(" args ")"
-// Semantic: FUNC-BUILTIN — json.get(any, string) -> any
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — json.get(any, string) -> any
 // Spec: foundation/spec/stdlib-reference.md §8
 // Regression: STDLIB-JSON-INDEX-OBJECT-ARRAY-PAST-ZERO — before the fix,
 //   __json_parse_array and __json_parse_object emitted Br(2) where Br(3)

@@ -159,8 +159,15 @@ impl MirBuilder {
             trace!(field_count = class.fields.len(), "Class context fields");
         }
 
-        // Handle automatic return for last expression in non-void functions
-        let has_non_void_return = !matches!(tast_function.return_type, ConcreteType::Undefined);
+        // Handle automatic return for last expression in non-void functions.
+        // Constructors are excluded: their return value is always `this`, set by
+        // `ensure_function_termination` below. Auto-returning the body's last expression
+        // would overwrite the implicit `return this` with whatever the body produced
+        // (e.g. the void result of a `base(arg)` call, which leaves the caller with an
+        // uninitialized instance pointer — CLASS001 inheritance bug).
+        let is_constructor = context.class_context.is_some() && tast_function.name == "constructor";
+        let has_non_void_return =
+            !matches!(tast_function.return_type, ConcreteType::Undefined) && !is_constructor;
         self.build_function_body(&mut context, &tast_function.body, has_non_void_return)?;
 
         // Inject state rules checking at operation boundaries (start:, frame:)

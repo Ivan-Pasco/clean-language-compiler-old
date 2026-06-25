@@ -79,9 +79,16 @@ impl MirCodeGenerator<'_> {
     pub(super) fn load_constant(&mut self, constant: &MirConstant) -> Result<(), CompilerError> {
         match constant {
             MirConstant::Integer(i) => {
-                // Clean Language integers map to WASM i32, not i64
+                // Default `integer` (32-bit) maps to WASM i32. Codegen narrows the i64
+                // payload — large literals destined for an i64 slot must be routed through
+                // `MirConstant::Integer64` at MIR-build time to preserve the high bits.
                 self.current_instructions
                     .push(Instruction::I32Const(*i as i32));
+            }
+            MirConstant::Integer64(i) => {
+                // `integer:64` literals map to WASM i64. Preserves the full signed-64 range
+                // including i64::MAX (9223372036854775807) and i64::MIN.
+                self.current_instructions.push(Instruction::I64Const(*i));
             }
             MirConstant::Float(f) => {
                 self.current_instructions.push(Instruction::F64Const(*f));

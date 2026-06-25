@@ -1,7 +1,7 @@
 // Test: stdlib/json/json_encode_primitives
 // Grammar: function_call → namespace "." function_name "(" args ")"
-// Semantic: FUNC-BUILTIN — json.encode boxes primitive arguments before passing to json.dataToText
-// Regression: SEM-JSON-ENCODE-TRAP — json.encode("non-empty") trapped in WASM before RUNTIME002 fix
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — json.encode boxes primitive arguments before passing to json.dataToText
+// Regression: SEM-JSON-ENCODE-TRAP — json.encode("non-empty") trapped in WASM before RUN002 (tracking: RUNTIME002) fix
 //   Root cause: string/integer/boolean args were not boxed to Any before calling __json_stringify_value.
 //   Fix: emit_box_any is called for all non-Any arguments when calling Any-parameter builtins.
 //

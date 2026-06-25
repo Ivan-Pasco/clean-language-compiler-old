@@ -1,5 +1,5 @@
 // Test: stdlib/json/json_encode_any_function_return
-// Semantic: FUNC-BUILTIN — `json.encode` on the return value of an
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — `json.encode` on the return value of an
 //   `any`-returning function whose body returns an object or list literal
 //   must produce the same output as if the literal were assigned directly
 //   to an `any`-typed variable. The path matters because the framework's

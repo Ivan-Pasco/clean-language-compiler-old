@@ -1,0 +1,23 @@
+// Test: spec_compliance/classes/class002_unique_fields
+// Grammar: class_field
+// Semantic: CLASS002 — field names within a class must be unique (positive case)
+// Expected output:
+//   Alice 30 alice@example.com
+
+start:
+	Person p = Person("Alice", 30, "alice@example.com")
+	print(p.describe())
+
+class Person
+	string name
+	integer age
+	string email
+
+	constructor(string n, integer a, string e)
+		name = n
+		age = a
+		email = e
+
+	functions:
+		string describe()
+			return name + " " + age.toString() + " " + email

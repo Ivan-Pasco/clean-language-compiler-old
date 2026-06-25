@@ -1,7 +1,7 @@
 // Test: plugins/orm_exists_verb
 // Grammar: expression = Variable "." identifier ":" indented_block  (ORM query expression)
-// Semantic: PLUGIN001/CODEGEN001 — Item.exists: must route to expand_exists and __Item_exists helper
-// Regression: CODEGEN001 — integer-returning ORM exists: emitted i32.const 0 instead of calling
+// Semantic: PLUGIN001/COM001 (tracking: CODEGEN001) — Item.exists: must route to expand_exists and __Item_exists helper
+// Regression: COM001 — integer-returning ORM exists: emitted i32.const 0 instead of calling
 //   __Item_exists. Root cause: "exists" was missing from the ORM verb dispatch list in call_expand,
 //   and "*.exists:" was missing from the plugin's expression_patterns (plugin.toml omits it).
 //   Fixed by: (1) adding "exists" to the verb dispatch list in call_expand,

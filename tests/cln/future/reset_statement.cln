@@ -1,0 +1,31 @@
+// Test: future/reset_statement (was spec_compliance/statements/reset_statement)
+// Grammar: reset_statement = "reset" , ( ( "state" , NOT (ALPHANUMERIC | "_") ) | identifier )
+// Semantic: SEM001 — reset returns a state variable (or the whole state) to its declared initializer
+// Status: COMPILER-CORRECT, RUNNER-NO-OP
+//   The compiler correctly emits the `_state_reset_named` / `_state_reset_all` bridge calls
+//   (verified: both functions appear in the compiled WASM exports list). The standalone
+//   wasmtime_runner (src/bin/wasmtime_runner.rs:308-310) intentionally stubs these as
+//   no-ops — restoring state to initializers requires tracking the initial values, which
+//   is a runner/server feature, not a compiler responsibility.
+//   The production behavior lives in clean-server; this test exercises the codegen path
+//   but cannot validate runtime semantics from this component. Promote out of future/
+//   once a state-tracking standalone runner is built, or once an integration test
+//   harness in clean-server covers this.
+// Expected output:
+//   before: 100
+//   after-single: 0
+//   re-set: 100
+//   after-all: 0
+
+start:
+	counter = 100
+	print("before: " + counter.toString())
+	reset counter
+	print("after-single: " + counter.toString())
+	counter = 100
+	print("re-set: " + counter.toString())
+	reset state
+	print("after-all: " + counter.toString())
+
+state:
+	integer counter = 0

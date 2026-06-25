@@ -25,6 +25,43 @@ This unified strategy combines proven QA methodology with modern intelligent age
 - **NO placeholders or todo!() implementations** - production-grade code only
 - **NO regressions** - previously passing tests must continue to pass
 
+### **4. Test Header Citation Convention**
+
+Every `.cln` test should declare which spec rules it exercises in its header comment.
+This is how `/coverage` measures spec-implementation citation coverage. The required
+forms:
+
+```
+// Test: <category>/<name>
+// Grammar: <production-name>[, <production-name>...]
+// Semantic: <rule-code>[, <rule-code>...]
+// Expected output:
+//   <line 1>
+//   <line 2>
+```
+
+**Citation rules:**
+- `Grammar:` MUST cite production names from `foundation/spec/grammar.ebnf`
+- `Semantic:` MUST cite rule codes from `foundation/spec/semantic-rules.md`
+  (SYN001–SYN101, SEM001–SEM010, SCOPE001–SCOPE005, FUNC001–FUNC011,
+  CLASS001–CLASS006, IDX001–IDX004, STATE001–STATE005, IMPORT001–IMPORT004,
+  PLUGIN001–PLUGIN002, COM001–COM006, RUN001–RUN005). Never invent new codes
+  without developer approval (Principle 25).
+- For regression markers that don't fit any existing code, cite the closest
+  existing code and append the tracking marker in parens:
+
+  ```
+  // Semantic: SEM001 (tracking: SEM-COMPARE-01 — `is`/`is not` operator typing)
+  // Semantic: FUNC001 (tracking: FUNC-BUILTIN) — builtin call-site arg boxing
+  // Semantic: COM001 (tracking: CODEGEN001) — codegen regression marker
+  // Semantic: RUN002 (tracking: RUNTIME002) — runtime trap marker
+  ```
+
+  The parenthesized tracking ID preserves the historical fingerprint while the
+  canonical code keeps the citation valid for `/coverage`. Tracking IDs that recur
+  enough to warrant a formalized spec code should be raised in `TASKS.md` for
+  developer approval rather than added unilaterally.
+
 ## 🔍 **PROVEN ERROR CLASSIFICATION SYSTEM**
 
 ### **CRITICAL (🔴) - Blocks All Tests**

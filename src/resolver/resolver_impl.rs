@@ -215,8 +215,10 @@ impl NameResolver {
                 .symbol_table
                 .has_symbol_in_current_scope(&function.name)
             {
-                self.error(
+                // SEM003: function name already declared in this scope.
+                self.error_with_code(
                     &format!("Function '{}' is already defined", function.name),
+                    "SEM003",
                     function.location.clone(),
                 );
             } else {

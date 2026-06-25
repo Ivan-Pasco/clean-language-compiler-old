@@ -1,0 +1,30 @@
+// Test: core/types/numeric_method_conversions
+// Grammar: variable_type, method_call
+// Semantic: type-system.md §7, §12 — Integer/Number conversion methods
+// Covers: Integer.toInteger, Integer.toNumber, Integer.toBoolean,
+//         Number.toInteger, Number.toNumber, Number.toBoolean
+// Expected: compiles cleanly, prints the eight conversion results.
+
+start:
+	integer i = 5
+	number  n = 3.5
+
+	integer i_id      = i.toInteger()
+	number  i_widen   = i.toNumber()
+	boolean i_bool    = i.toBoolean()
+
+	integer n_trunc   = n.toInteger()
+	number  n_id      = n.toNumber()
+	boolean n_bool    = n.toBoolean()
+
+	integer zero      = 0
+	number  zero_f    = 0.0
+
+	print(i_id)
+	print(i_widen)
+	print(i_bool)
+	print(n_trunc)
+	print(n_id)
+	print(n_bool)
+	print(zero.toBoolean())
+	print(zero_f.toBoolean())

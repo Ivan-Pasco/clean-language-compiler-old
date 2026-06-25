@@ -1,4 +1,6 @@
 // Spec Section: 4.3 - Arithmetic Operators
+// Grammar: additive_op, power_op, expression
+// Semantic: SEM001 — arithmetic operator result type matches operand types
 // Tests: Addition, subtraction, multiplication, division, modulo, exponentiation
 
 start:

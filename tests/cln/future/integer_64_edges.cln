@@ -1,0 +1,30 @@
+// Test: future/integer_64_edges (was core/types/integer_64_edges)
+// Grammar: sized_type, size_specifier (integer:64), integer_literal
+// Semantic: SEM001 — integer:64 holds 64-bit signed values exactly
+// Status: PENDING — Lexer fix complete (0.30.358); codegen requires wide pipeline refactor.
+//   (a) [FIXED 0.30.358] Lexer parses the full i64 range; `i64::MAX` no longer rejected.
+//   (b) [OPEN] Sized integers collapse to `ConcreteType::Integer` at the typechecker's
+//       `hir_type_to_concrete` (src/typechecker/type_inference.rs:5778) — `integer:64`
+//       becomes indistinguishable from `integer` before MIR building. Infrastructure for
+//       the full fix (MirConstant::Integer64, load_constant I64 handling, widen_literal_to_
+//       declared_type helper) landed in 0.30.358 but is dormant until the HIR→Concrete
+//       collapse is removed AND the downstream cascade (convert_value_to_string,
+//       int_to_string signature, binary-op widening, mir_type_to_concrete) is updated.
+//       See TASKS.md COVERAGE-INT64-LITERAL-TRUNCATION for the full plan.
+// See TASKS.md.
+// Expected output:
+//   4294967296
+//   sum: 4294967300
+//   8589934592
+//   2147483648
+
+start:
+	integer:64 over32 = 4294967296
+	integer:64 small = 4
+	integer:64 sum = over32 + small
+	integer:64 doubled = over32 + over32
+	integer:64 twoToThe31 = 2147483648
+	print(over32.toString())
+	print("sum: " + sum.toString())
+	print(doubled.toString())
+	print(twoToThe31.toString())

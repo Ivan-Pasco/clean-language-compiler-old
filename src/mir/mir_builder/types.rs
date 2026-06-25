@@ -205,10 +205,24 @@ impl MirBuilder {
         result_id
     }
 
-    /// Convert TAST literal to MIR constant
-    pub(super) fn convert_literal(&mut self, literal: &TastLiteral) -> MirConstant {
+    /// Convert TAST literal to MIR constant. `expr_type` is the type the typechecker assigned
+    /// to the surrounding expression — used to decide whether an integer literal should be
+    /// emitted as 32-bit (`MirConstant::Integer`) or 64-bit (`MirConstant::Integer64`).
+    /// Without this routing the codegen narrows every literal to i32 in `load_constant`,
+    /// silently truncating values destined for `integer:64` slots.
+    pub(super) fn convert_literal(
+        &mut self,
+        literal: &TastLiteral,
+        expr_type: &ConcreteType,
+    ) -> MirConstant {
         match literal {
-            TastLiteral::Integer(i) => MirConstant::Integer(*i),
+            TastLiteral::Integer(i) => {
+                if Self::is_i64_target(expr_type) {
+                    MirConstant::Integer64(*i)
+                } else {
+                    MirConstant::Integer(*i)
+                }
+            }
             TastLiteral::Number(f) => MirConstant::Float(*f),
             TastLiteral::String(s) => {
                 let index = self.get_string_index(s.clone());
@@ -220,16 +234,38 @@ impl MirBuilder {
         }
     }
 
-    /// Convert TAST literal to its corresponding MIR type
-    pub(super) fn convert_literal_type(&self, literal: &TastLiteral) -> MirType {
+    /// Convert TAST literal to its corresponding MIR type, using the surrounding expression's
+    /// type to widen integer literals to i64 when appropriate.
+    pub(super) fn convert_literal_type(
+        &self,
+        literal: &TastLiteral,
+        expr_type: &ConcreteType,
+    ) -> MirType {
         match literal {
-            TastLiteral::Integer(_) => MirType::I32, // Default integer type
-            TastLiteral::Number(_) => MirType::F64,  // Default float type
+            TastLiteral::Integer(_) => {
+                if Self::is_i64_target(expr_type) {
+                    MirType::I64
+                } else {
+                    MirType::I32 // Default integer type
+                }
+            }
+            TastLiteral::Number(_) => MirType::F64, // Default float type
             TastLiteral::String(_) => MirType::Ptr(Box::new(MirType::I8)), // String as i8 pointer
             TastLiteral::Boolean(_) => MirType::Bool,
             TastLiteral::Null => MirType::Ptr(Box::new(MirType::Void)),
             TastLiteral::Undefined => MirType::Void,
         }
+    }
+
+    /// True when the expression's inferred type indicates a 64-bit signed integer destination.
+    fn is_i64_target(expr_type: &ConcreteType) -> bool {
+        matches!(
+            expr_type,
+            ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: false
+            }
+        )
     }
 
     /// Register a ValueId as a temporary local for codegen

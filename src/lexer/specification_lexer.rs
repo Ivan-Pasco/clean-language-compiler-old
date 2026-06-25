@@ -559,15 +559,29 @@ impl<'a> SpecificationLexer<'a> {
                     self.skip_whitespace();
 
                     if let Some(&next_ch) = self.peek() {
-                        // A leading letter/underscore is the cheap heuristic for "this might
-                        // be an interpolation expression". But that alone is not enough —
-                        // a string like "color: { family: Inter, weight: 700 }" also starts
-                        // with a letter after `{` yet contains characters (':') that never
-                        // appear inside a Clean expression. Walk the braced content; if we
-                        // see a definite non-expression character or the brace never closes,
-                        // fall back to treating '{' as a literal byte. That way the user
-                        // does not have to escape every '{' in DSL/config snippets.
-                        if next_ch.is_alphabetic() || next_ch == '_' {
+                        // A leading expression-start character is the cheap heuristic for
+                        // "this might be an interpolation expression". But that alone is not
+                        // enough — a string like "color: { family: Inter, weight: 700 }" also
+                        // starts with a letter after `{` yet contains characters (':') that
+                        // never appear inside a Clean expression. Walk the braced content; if
+                        // we see a definite non-expression character or the brace never
+                        // closes, fall back to treating '{' as a literal byte. That way the
+                        // user does not have to escape every '{' in DSL/config snippets.
+                        //
+                        // Expression starts: identifier (alpha / underscore), numeric literal
+                        // (digit), parenthesized sub-expression, unary operator, list literal,
+                        // or nested string literal. Anything else (':', whitespace-only,
+                        // closing brace, etc.) is treated as a literal '{'.
+                        let is_expression_start = next_ch.is_alphabetic()
+                            || next_ch == '_'
+                            || next_ch.is_ascii_digit()
+                            || next_ch == '('
+                            || next_ch == '-'
+                            || next_ch == '+'
+                            || next_ch == '!'
+                            || next_ch == '['
+                            || next_ch == '"';
+                        if is_expression_start {
                             let mut sub_depth: u32 = 1;
                             let mut paren_depth: u32 = 0;
                             let mut bracket_depth: u32 = 0;
@@ -1767,7 +1781,25 @@ pub enum LexError {
 
 impl From<LexError> for CompilerError {
     fn from(error: LexError) -> Self {
-        CompilerError::LexError(error)
+        // Surface SYN004 (unterminated construct) at the conversion site so the rest of
+        // the toolchain receives a Syntax variant carrying both a SourceLocation and the
+        // spec error code. Other LexError kinds remain in the catch-all LexError variant
+        // until they too earn an explicit classification.
+        match &error {
+            LexError::UnterminatedString { location } => CompilerError::syntax_error_with_code(
+                error.to_string(),
+                Some("Close the string literal with the matching quote.".to_string()),
+                Some(location.clone()),
+                "SYN004",
+            ),
+            LexError::UnterminatedComment { location } => CompilerError::syntax_error_with_code(
+                error.to_string(),
+                Some("Close the comment with `*/`.".to_string()),
+                Some(location.clone()),
+                "SYN004",
+            ),
+            _ => CompilerError::LexError(error),
+        }
     }
 }
 

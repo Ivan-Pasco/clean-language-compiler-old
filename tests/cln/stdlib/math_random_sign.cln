@@ -1,0 +1,15 @@
+// Test: stdlib/math_random_sign
+// Spec: stdlib-reference.md §2 (Math)
+// Covers: math.random() and math.sign(x) — Layer-2 bridges added in audit cleanup.
+// Expected: type-checks and compiles cleanly. Runtime values are host-dependent.
+
+start:
+	number r = math.random()
+	number s_pos = math.sign(7.0)
+	number s_zero = math.sign(0.0)
+	number s_neg = math.sign(-3.14)
+
+	print(r)
+	print(s_pos)
+	print(s_zero)
+	print(s_neg)

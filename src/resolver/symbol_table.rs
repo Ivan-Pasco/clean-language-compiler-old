@@ -768,6 +768,12 @@ impl GlobalSymbolTable {
                 vec![HirType::Number, HirType::Number],
                 HirType::Number,
             ),
+            // math.random / math.sign — Layer 2 bridges; registered in
+            // foundation/platform-architecture/function-registry.toml as
+            // `math_random` / `math_sign` with `aliases = ["math.random"]` /
+            // `aliases = ["math.sign"]`. spec/stdlib-reference.md §2.
+            ("math.random", vec![], HirType::Number),
+            ("math.sign", vec![HirType::Number], HirType::Number),
             // String namespace functions
             // Use string.length to match semantic analyzer and codegen
             ("string.length", vec![HirType::String], HirType::Integer),
@@ -855,32 +861,6 @@ impl GlobalSymbolTable {
             ),
             (
                 "string.replaceAll",
-                vec![HirType::String, HirType::String, HirType::String],
-                HirType::String,
-            ),
-            // StringUtils namespace functions (for StringUtils.length() syntax)
-            (
-                "StringUtils_length",
-                vec![HirType::String],
-                HirType::Integer,
-            ),
-            (
-                "StringUtils_concat",
-                vec![HirType::String, HirType::String],
-                HirType::String,
-            ),
-            (
-                "StringUtils_substring",
-                vec![HirType::String, HirType::Integer, HirType::Integer],
-                HirType::String,
-            ),
-            (
-                "StringUtils_indexOf",
-                vec![HirType::String, HirType::String],
-                HirType::Integer,
-            ),
-            (
-                "StringUtils_replace",
                 vec![HirType::String, HirType::String, HirType::String],
                 HirType::String,
             ),
@@ -1318,6 +1298,8 @@ impl GlobalSymbolTable {
             self.lookup_symbol("math.pow").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math.max").unwrap_or(SymbolId(0)),
             self.lookup_symbol("math.min").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math.random").unwrap_or(SymbolId(0)),
+            self.lookup_symbol("math.sign").unwrap_or(SymbolId(0)),
         ];
 
         let math_namespace_id = self.create_symbol(

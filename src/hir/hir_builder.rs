@@ -195,7 +195,7 @@ impl HirBuilder {
 
         // FUNC011: argument count must match parameter count.
         if arg_count != param_count {
-            return Err(CompilerError::semantic_error(
+            return Err(CompilerError::semantic_error_with_code(
                 format!(
                     "FUNC011: `{}` expects {} argument(s), got {}",
                     callee, param_count, arg_count
@@ -206,6 +206,7 @@ impl HirBuilder {
                     sig.param_names.join(", ")
                 )),
                 Some(location.clone()),
+                "FUNC011",
             ));
         }
 
@@ -221,7 +222,7 @@ impl HirBuilder {
                 // Positional argument.
                 // FUNC010: positional args must precede all named args.
                 if let Some(named_start) = first_named_idx {
-                    return Err(CompilerError::semantic_error(
+                    return Err(CompilerError::semantic_error_with_code(
                         format!(
                             "FUNC010: positional argument at position {} appears after named \
                              argument at position {} in call to `{}`",
@@ -231,6 +232,7 @@ impl HirBuilder {
                             "All positional arguments must come before named arguments".to_string(),
                         ),
                         Some(location.clone()),
+                        "FUNC010",
                     ));
                 }
                 last_positional_idx = Some(i);
@@ -260,13 +262,14 @@ impl HirBuilder {
             {
                 // FUNC009: no duplicate labels.
                 if seen_labels.contains(&label.as_str()) {
-                    return Err(CompilerError::semantic_error(
+                    return Err(CompilerError::semantic_error_with_code(
                         format!(
                             "FUNC009: duplicate named argument `{}` in call to `{}`",
                             label, callee
                         ),
                         Some(format!("Remove the duplicate `{}:` argument", label)),
                         Some(arg_loc.clone()),
+                        "FUNC009",
                     ));
                 }
                 seen_labels.push(label.as_str());
@@ -275,7 +278,7 @@ impl HirBuilder {
                 let param_idx = sig.param_names.iter().position(|n| n == label);
                 match param_idx {
                     None => {
-                        return Err(CompilerError::semantic_error(
+                        return Err(CompilerError::semantic_error_with_code(
                             format!(
                                 "FUNC008: `{}` has no parameter named `{}` in call to `{}`",
                                 callee, label, callee
@@ -285,11 +288,12 @@ impl HirBuilder {
                                 sig.param_names.join(", ")
                             )),
                             Some(arg_loc.clone()),
+                            "FUNC008",
                         ));
                     }
                     Some(idx) => {
                         if idx < positional_count {
-                            return Err(CompilerError::semantic_error(
+                            return Err(CompilerError::semantic_error_with_code(
                                 format!(
                                     "FUNC011: parameter `{}` (position {}) is already covered \
                                      by a positional argument in call to `{}`",
@@ -300,6 +304,7 @@ impl HirBuilder {
                                     label
                                 )),
                                 Some(arg_loc.clone()),
+                                "FUNC011",
                             ));
                         }
                         slots[idx] = Some(arg);
@@ -314,7 +319,7 @@ impl HirBuilder {
             match slot {
                 Some(expr) => result.push(*expr),
                 None => {
-                    return Err(CompilerError::semantic_error(
+                    return Err(CompilerError::semantic_error_with_code(
                         format!(
                             "FUNC011: parameter `{}` (position {}) is not covered in call to `{}`",
                             sig.param_names[i], i, callee
@@ -325,6 +330,7 @@ impl HirBuilder {
                             sig.param_names[i]
                         )),
                         Some(location.clone()),
+                        "FUNC011",
                     ));
                 }
             }
@@ -357,7 +363,7 @@ impl HirBuilder {
         match sig {
             None => {
                 // Unknown callee — named args not supported (FUNC008).
-                Err(CompilerError::semantic_error(
+                Err(CompilerError::semantic_error_with_code(
                     format!(
                         "FUNC008: named arguments are not supported for unknown or built-in \
                          function `{}`; only user-defined functions with known parameter lists \
@@ -366,6 +372,7 @@ impl HirBuilder {
                     ),
                     Some("Remove the named argument labels".to_string()),
                     Some(location.clone()),
+                    "FUNC008",
                 ))
             }
             Some(sig_owned) => {
@@ -1815,7 +1822,7 @@ impl HirBuilder {
 
                     match candidates.len() {
                         0 => {
-                            return Err(CompilerError::semantic_error(
+                            return Err(CompilerError::semantic_error_with_code(
                                 format!(
                                     "FUNC008: named arguments used in method call `.{}()` but no \
                                      matching method signature was found in any class",
@@ -1827,6 +1834,7 @@ impl HirBuilder {
                                         .to_string(),
                                 ),
                                 Some(location.clone()),
+                                "FUNC008",
                             ));
                         }
                         1 => {
@@ -1850,7 +1858,7 @@ impl HirBuilder {
                                 .collect::<Result<Vec<_>, _>>()?
                         }
                         _ => {
-                            return Err(CompilerError::semantic_error(
+                            return Err(CompilerError::semantic_error_with_code(
                                 format!(
                                     "FUNC008: named arguments in method call `.{}()` are \
                                      ambiguous — multiple classes define a method with this \
@@ -1863,6 +1871,7 @@ impl HirBuilder {
                                         .to_string(),
                                 ),
                                 Some(location.clone()),
+                                "FUNC008",
                             ));
                         }
                     }
@@ -2176,7 +2185,7 @@ impl HirBuilder {
             // Emit a clear semantic error rather than silently producing garbage code.
             Expression::NamedArgBinding {
                 label, location, ..
-            } => Err(CompilerError::semantic_error(
+            } => Err(CompilerError::semantic_error_with_code(
                 format!(
                     "FUNC008: named argument `{}:` used outside of a function call argument list",
                     label
@@ -2186,6 +2195,7 @@ impl HirBuilder {
                         .to_string(),
                 ),
                 Some(location.clone()),
+                "FUNC008",
             )),
 
             Expression::StringInterpolation(parts) => {

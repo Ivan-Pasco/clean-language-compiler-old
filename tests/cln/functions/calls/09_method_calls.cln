@@ -1,5 +1,7 @@
 // Test Description: Method calls as statements and property access
 // Category: functions
+// Grammar: method_call, property_access
+// Semantic: FUNC001 — method must be defined before use; FUNC002 — argument count must match
 // Dependencies: none
 // Expected: PASS
 

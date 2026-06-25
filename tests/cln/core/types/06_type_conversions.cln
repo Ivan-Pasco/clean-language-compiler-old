@@ -1,5 +1,6 @@
 // Spec Section: 2.1 - Core Types (integer, number, string)
-// Spec Section: 5.2 - Print Statements
+// Grammar: core_type, variable_type
+// Semantic: SEM001 — variable initializer must match declared type
 // Tests: Basic type declarations and print output
 
 start:

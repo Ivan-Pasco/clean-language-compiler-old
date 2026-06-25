@@ -1,5 +1,5 @@
 // Test: stdlib/json/json_encode_any_return_typed_value
-// Semantic: FUNC-BUILTIN — An `any`-returning function that returns a typed
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — An `any`-returning function that returns a typed
 //   value (string literal, string variable, integer, number, boolean, or
 //   function call result) must produce a properly tagged `any` box, not a
 //   raw pointer/value. `json.encode(result)` exercises the tag — if the

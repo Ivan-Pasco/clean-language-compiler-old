@@ -1,6 +1,6 @@
 // Test: stdlib/json/json_encode_typed_list
 // Grammar: function_call → namespace "." function_name "(" args ")"
-// Semantic: FUNC-BUILTIN — json.encode on a typed List<T> walks the native
+// Semantic: FUNC001 (tracking: FUNC-BUILTIN) — json.encode on a typed List<T> walks the native
 //   list heap layout and emits a JSON array directly, dispatching per element
 //   type tag for correct primitive formatting.
 // Regression: discovered while fixing JSON-ENCODE-PAIRS-MALFORMED (compiler

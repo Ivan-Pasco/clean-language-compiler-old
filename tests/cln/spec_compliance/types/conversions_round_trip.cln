@@ -1,0 +1,28 @@
+// Test: spec_compliance/types/conversions_round_trip
+// Grammar: method_call (toInteger, toNumber, toString)
+// Semantic: SEM001 — explicit conversions preserve representable values
+// Expected output:
+//   42
+//   42
+//   42
+//   42
+//   3.14
+//   3
+//   -7
+
+start:
+	integer x = 42
+	string xs = x.toString()
+	integer xRound = xs.toInteger()
+	number xn = x.toNumber()
+	integer xFromN = xn.toInteger()
+	number pi = 3.14
+	integer piTrunc = pi.toInteger()
+	integer negFromStr = "-7".toInteger()
+	print(x.toString())
+	print(xRound.toString())
+	print(xn.toString())
+	print(xFromN.toString())
+	print(pi.toString())
+	print(piTrunc.toString())
+	print(negFromStr.toString())
