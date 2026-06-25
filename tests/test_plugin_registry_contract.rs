@@ -161,10 +161,16 @@ fn synthetic_plugin_with_unknown_name_is_rejected() {
 #[test]
 fn synthetic_plugin_with_param_mismatch_is_rejected() {
     let idx = RegistryIndex::load().expect("registry loads");
-    // print takes (string), not (integer, integer)
+    // print takes (string) → expands to (i32, i32) at the WASM level.
+    // Declare a single `integer` (one i32 after lowering) — fewer i32s than
+    // the registry expects, so the mismatch is on shape arity, not type
+    // designator. (Pre-SYNC-PLUGIN-DRIFT this asserted `["integer", "integer"]`
+    // mismatched, but `integer` now correctly lowers to i32 same as
+    // expand_strings on `"string"`, so two-integer would coincidentally
+    // match the (i32, i32) shape and miss the test's intent.)
     let decl = clean_language_compiler::plugins::plugin_abi::BridgeFunction {
         name: "print".to_string(),
-        params: vec!["integer".to_string(), "integer".to_string()],
+        params: vec!["integer".to_string()],
         returns: "void".to_string(),
         ..Default::default()
     };

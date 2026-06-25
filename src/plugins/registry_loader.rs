@@ -206,11 +206,18 @@ declaration from this plugin.",
 /// uses "ptr" mechanistically while plugin authors often write "string"
 /// semantically. We treat them as the same shape for validation.
 fn normalize_return(t: &str) -> &'static str {
+    // Clean Language `integer` is i32 (foundation/spec/type-system.md §"Primitive
+    // types": unqualified `integer` = Signed 32-bit integer = I32). Functions that
+    // genuinely need 64-bit range declare `"i64"` explicitly in the registry
+    // entry (e.g. `print_integer`, `_server_sleep`, `_time_now`). Per
+    // foundation/spec/plugins/plugin-contract.md §"Type vocabulary", plugin
+    // bridge `"integer"` parameters/returns lower to WASM i32 to match what
+    // `register_plugin_bridge_imports` actually emits (SYNC-PLUGIN-DRIFT).
     match strip_tag(t) {
         "string" | "ptr" => "i32_ptr",
-        "integer" | "i64" => "i64",
+        "i64" => "i64",
         "number" | "f64" => "f64",
-        "boolean" | "i32" => "i32",
+        "integer" | "boolean" | "i32" => "i32",
         "void" | "" => "void",
         _ => "unknown",
     }
@@ -230,6 +237,7 @@ fn normalize_return(t: &str) -> &'static str {
 ///
 /// All other primitives expand 1:1.
 fn params_to_wasm_shape(params: &[String], expand_strings: bool) -> Vec<&'static str> {
+    // See `normalize_return` above for the `integer` → i32 rationale (SYNC-PLUGIN-DRIFT).
     let mut shape = Vec::with_capacity(params.len() * 2);
     for p in params {
         match strip_tag(p) {
@@ -238,9 +246,9 @@ fn params_to_wasm_shape(params: &[String], expand_strings: bool) -> Vec<&'static
                 shape.push("i32"); // len
             }
             "string" | "ptr" => shape.push("i32"), // single lp-ptr
-            "integer" | "i64" => shape.push("i64"),
+            "i64" => shape.push("i64"),
             "number" | "f64" => shape.push("f64"),
-            "boolean" | "i32" | "handler" => shape.push("i32"),
+            "integer" | "boolean" | "i32" | "handler" => shape.push("i32"),
             "void" | "" => {} // void params don't exist in WASM
             _ => shape.push("unknown"),
         }
@@ -461,13 +469,22 @@ mod tests {
     }
 
     #[test]
-    fn wasm_shape_catches_integer_vs_i32() {
-        // Real mismatch: integer (i64) vs i32 must still be flagged.
-        let plugin_shape = params_to_wasm_shape(&["integer".into()], false);
-        let registry_shape = params_to_wasm_shape(&["i32".into()], true);
-        assert_ne!(plugin_shape, registry_shape);
-        assert_eq!(plugin_shape, vec!["i64"]);
-        assert_eq!(registry_shape, vec!["i32"]);
+    fn wasm_shape_integer_is_i32_per_spec() {
+        // Per foundation/spec/type-system.md §"Primitive types" and
+        // plugin-contract.md §"Type vocabulary", unqualified `integer` lowers
+        // to WASM i32 — same as the explicit `"i32"` designator. SYNC-PLUGIN-DRIFT
+        // arose from this loader previously mapping `"integer"` to i64, which
+        // disagreed with what `register_plugin_bridge_imports` actually emits.
+        let integer_shape = params_to_wasm_shape(&["integer".into()], false);
+        let i32_shape = params_to_wasm_shape(&["i32".into()], true);
+        assert_eq!(integer_shape, i32_shape);
+        assert_eq!(integer_shape, vec!["i32"]);
+
+        // Real 64-bit integer ABI is opt-in via the explicit `"i64"` designator
+        // (used by `print_integer`, `_server_sleep`, `_time_now`).
+        let i64_shape = params_to_wasm_shape(&["i64".into()], false);
+        assert_eq!(i64_shape, vec!["i64"]);
+        assert_ne!(integer_shape, i64_shape);
     }
 
     #[test]
