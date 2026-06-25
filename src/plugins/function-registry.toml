@@ -2456,10 +2456,10 @@ layer       = 3
 category    = "response"
 module      = "env"
 params      = ["string", "string"]
-returns     = "ptr"
+returns     = "void"
 aliases     = ["http.set_header"]
 hosts       = ["server"]
-description = "Set a response header by name (ptr+len) and value (ptr+len); returns header name pointer"
+description = "Set a response header by name (ptr+len) and value (ptr+len); fire-and-forget — both clean-server (Rust) and clean-node-server (TypeScript) hosts implement this as void"
 
 [[functions]]
 name        = "_res_set_header"
