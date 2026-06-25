@@ -1427,21 +1427,32 @@ impl MirBuilder {
                 // Switch to body block (already pre-allocated)
                 self.current_block = Some(body_block_id);
 
-                // MEMORY MANAGEMENT: Per-iteration mem_scope_push/pop was
-                // removed (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). The
-                // intent was to free transient allocations made inside the
-                // body, but any allocation assigned to an OUTER variable
-                // (e.g. an accumulator `errs = errs + ...` or a function
-                // call result `errs = add_err(errs, ...)`) gets freed at
-                // iteration end, leaving the outer variable pointing into
-                // memory that the next iteration's allocator overwrites.
-                // Two consecutive loops that mutate an outer string then
-                // observe the prior iterations' results as garbage, then
-                // the second loop's allocations clobber the first loop's
-                // entries entirely. The host's per-request scope_pop
-                // (COMPILER-NO-FREE-EXPORT-LEAKS-WASM-MEMORY) handles
-                // reclamation at request boundaries — that is the correct
-                // granularity for an arena-allocator design.
+                // MEMORY MANAGEMENT: per-iteration `mem_scope_push`/`pop`
+                // is sound (and necessary for long-running handlers that
+                // walk data with `iterate` + `string.split` + `string.trim`
+                // chains — see
+                // COMPILER-NO-PER-ITERATION-SCOPE-POP-LEAKS-INTRA-REQUEST-HEAP)
+                // ONLY when the body cannot leak a pointer into outer
+                // scope across the pop. `body_is_iter_scope_safe` enforces
+                // that — see its doc comment for the exact disqualifiers.
+                //
+                // Skipping per-iter scope on unsafe loops preserves the
+                // fix for RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED (the
+                // `errs = add_err(errs, ...)` accumulator shape).
+                // Mirrors the while-loop pattern introduced in a3a8e521.
+                let has_iter_scope = self.body_is_iter_scope_safe(body);
+
+                // Push loop context so break/continue can emit the
+                // matching `mem_scope_pop` when `has_iter_scope` is set.
+                context.loop_stack.push(LoopContext {
+                    continue_block: increment_block_id,
+                    break_block: exit_block_id,
+                    has_iter_scope,
+                });
+
+                if has_iter_scope {
+                    self.emit_mem_scope_push(context, location.clone());
+                }
 
                 // NOTE: Get the address of the element, then LOAD the value
                 // GetElementPtr returns a pointer, not the value itself!
@@ -1513,10 +1524,16 @@ impl MirBuilder {
                     "After processing iterate body statements"
                 );
 
-                // MEMORY MANAGEMENT: Per-iteration mem_scope_pop removed —
-                // see RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED comment at the
-                // loop-body entry above. Reclamation is handled by the
-                // host's per-request scope, not per-iteration.
+                // Pop loop context now that body statements are done.
+                context.loop_stack.pop();
+
+                if has_iter_scope {
+                    // Match the entry `mem_scope_push` before jumping to
+                    // the increment block. Break/Continue handlers emit
+                    // their own pop when `LoopContext::has_iter_scope` is
+                    // set, so every exit path is paired.
+                    self.emit_mem_scope_pop(context, location.clone());
+                }
 
                 // NOTE: Check if body block already has a terminator
                 // (IF statements may have set one). If not, jump to increment block.
@@ -2297,11 +2314,31 @@ impl MirBuilder {
         // Switch to body block (already pre-allocated)
         self.current_block = Some(body_block_id);
 
-        // MEMORY MANAGEMENT: Per-iteration mem_scope_push/pop was removed
-        // (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED). See the For-loop body
-        // comment in this file for the full explanation. Range-based for
-        // loops have the same unsoundness: any body allocation assigned to
-        // an outer accumulator gets freed at iteration end.
+        // MEMORY MANAGEMENT: per-iteration `mem_scope_push`/`pop` is
+        // sound (and necessary for long-running range loops with many
+        // transient string allocations) ONLY when the body cannot leak
+        // a pointer into outer scope across the pop.
+        // `body_is_iter_scope_safe` enforces that — see its doc comment
+        // for the exact disqualifiers. Mirrors the iterate / while loop
+        // pattern; preserves the fix for
+        // RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED on accumulator shapes
+        // and restores per-iter hygiene for the
+        // COMPILER-NO-PER-ITERATION-SCOPE-POP-LEAKS-INTRA-REQUEST-HEAP
+        // family of leaks.
+        let has_iter_scope = self.body_is_iter_scope_safe(body);
+
+        // Push loop context so break/continue inside this range loop
+        // can target our exit/increment blocks and emit the matching
+        // `mem_scope_pop` when `has_iter_scope` is set.
+        context.loop_stack.push(LoopContext {
+            continue_block: increment_block_id,
+            break_block: exit_block_id,
+            has_iter_scope,
+        });
+
+        if has_iter_scope {
+            self.emit_mem_scope_push(context, location.clone());
+        }
 
         // Push a new scope for the loop body
         context.scope_stack.push(HashMap::new());
@@ -2328,9 +2365,16 @@ impl MirBuilder {
         // Pop the loop body scope
         context.scope_stack.pop();
 
-        // MEMORY MANAGEMENT: Per-iteration mem_scope_pop removed — see
-        // the loop-body entry comment above
-        // (RUNTIME-CONSECUTIVE-IF-ITERATE-DROPPED).
+        // Pop loop context now that body statements are done.
+        context.loop_stack.pop();
+
+        if has_iter_scope {
+            // Match the entry `mem_scope_push` before the natural jump
+            // to the increment block. Break/Continue handlers emit
+            // their own pop when `LoopContext::has_iter_scope` is set,
+            // so every exit path is paired.
+            self.emit_mem_scope_pop(context, location.clone());
+        }
 
         // NOTE: increment_block_id and exit_block_id were pre-allocated at the start
         // of this function to prevent block ID collisions with nested control flow.
