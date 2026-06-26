@@ -1,9 +1,12 @@
-// Spec Section: grammar §6.4 - private_class_fields_section + private_class_methods_section
-// Feature: private: fields section and private: methods section inside a class
+// Spec Section: grammar §6.4a public_class_fields_section + §6.4b public_class_methods_section
+// Feature: public: fields section and public: methods section inside a class
 // Grammar:
-//   private_class_fields_section = "private" ":" NEWLINE class_field_line+
-//   private_class_methods_section = INDENT+ "private" ":" NEWLINE class_function_line+
-// Tests: private fields accessible from class own methods; private methods accessible internally
+//   public_class_fields_section  = "public" ":" NEWLINE class_field_line+
+//   public_class_methods_section = INDENT+ "public" ":" NEWLINE class_function_line+
+// Tests: private fields accessible from class own methods; private methods accessible internally;
+//        public fields/methods readable from outside the class
+// Visibility model (2026-06-25): class members are PRIVATE by default; a `public:`
+// sub-section exposes the members inside it to outside callers (SEM005).
 
 start:
 	BankAccount account = BankAccount("Alice", 100)
@@ -16,31 +19,30 @@ start:
 	account.withdraw(30)
 	print("After withdraw 30: " + account.getBalance().toString())
 
-	print("Private class members test passed")
+	print("Public class members test passed")
 
 class BankAccount
-	string owner
-
-	private:
-		integer balance
+	string owner       // private by default — owner is read via getOwner()
+	integer balance    // private by default — balance is read via getBalance()
 
 	constructor(string name, integer initialBalance)
 		owner = name
 		balance = initialBalance
 
 	functions:
-		string getOwner()
-			return owner
+		public:
+			string getOwner()
+				return owner
 
-		integer getBalance()
-			return balance
+			integer getBalance()
+				return balance
 
-		void deposit(integer amount)
-			balance = balance + amount
+			void deposit(integer amount)
+				balance = balance + amount
 
-		void withdraw(integer amount)
-			balance = balance - amount
+			void withdraw(integer amount)
+				balance = balance - amount
 
-		private:
-			boolean hasSufficientFunds(integer amount)
-				return balance >= amount
+		// Private helper — only callable from inside BankAccount.
+		boolean hasSufficientFunds(integer amount)
+			return balance >= amount

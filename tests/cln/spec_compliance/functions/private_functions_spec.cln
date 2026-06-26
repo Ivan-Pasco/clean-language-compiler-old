@@ -1,19 +1,21 @@
-// Spec Section: grammar §6.2 - private_functions_section
-// Feature: private: sub-section inside a top-level functions: block
-// Grammar: private_functions_section = INDENT+ "private" ":" NEWLINE function_declaration_line+
+// Spec Section: grammar §6.2a - public_functions_section
+// Feature: public: sub-section inside a top-level functions: block
+// Grammar: public_functions_section = INDENT+ "public" ":" NEWLINE function_declaration_line+
 // Tests: private helper functions callable from public functions in the same file
-// Note: private: section must appear before public functions in the functions: block
+// Visibility model (2026-06-25): module-level functions are PRIVATE by default;
+// a `public:` sub-section inside `functions:` exposes the listed functions to
+// importing modules (SEM005). Functions outside the section remain private.
 
 start:
-	// Test 1: Public function calls private helper
+	// Test 1: function in this file calls a private helper
 	string result1 = formatGreeting("Bob")
 	print(result1)
 
-	// Test 2: Public function using private computation
+	// Test 2: function in this file using a private computation
 	integer doubled = doubleValue(7)
 	print("Doubled: " + doubled.toString())
 
-	// Test 3: Two public functions both use the same private helper
+	// Test 3: two functions both use the same private helper
 	string msg1 = buildMessage("World")
 	string msg2 = buildMessage("Clean")
 	print(msg1)
@@ -22,18 +24,22 @@ start:
 	print("Private functions test passed")
 
 functions:
-	private:
-		string addPrefix(string text)
-			return "Hello, " + text
+	// Private helpers (default — no annotation needed). Callable from
+	// other functions in this file and from start:, but NOT from
+	// importing modules.
+	string addPrefix(string text)
+		return "Hello, " + text
 
-		integer multiply(integer a, integer b)
-			return a * b
+	integer multiply(integer a, integer b)
+		return a * b
 
-	string formatGreeting(string name)
-		return addPrefix(name)
+	public:
+		// Public API of this module — visible to importing modules.
+		string formatGreeting(string name)
+			return addPrefix(name)
 
-	integer doubleValue(integer n)
-		return multiply(n, 2)
+		integer doubleValue(integer n)
+			return multiply(n, 2)
 
-	string buildMessage(string subject)
-		return addPrefix(subject)
+		string buildMessage(string subject)
+			return addPrefix(subject)

@@ -60,28 +60,32 @@ pub enum TokenKind {
     Description, // description
     Input,       // input
     Unit,        // unit
-    Private,     // private
-    Constant,    // constant
-    Functions,   // functions
-    Plugins,     // plugins - Plugin loading block
-    State,       // state - State management block
-    Watch,       // watch - State change observer
-    Computed,    // computed - Derived state value
-    Guard,       // guard - State validation constraint
-    Reset,       // reset - Reset state to initial value
-    Screen,      // screen - Screen-level state scope
-    None,        // none  // null-support - None literal keyword
-    Default,     // default - Null-coalescing binary operator (spec grammar.ebnf line 232)
-    Break,       // break - Loop control flow
-    Continue,    // continue - Loop control flow
-    Require,     // require - Contract precondition
-    Ensure,      // ensure - Contract postcondition
-    Always,      // always - Class invariant block keyword
-    Rules,       // rules - State invariants
-    Spec,        // spec - AI metadata: links function to specification
-    Intent,      // intent - AI metadata: describes function purpose
-    Source,      // source - AI metadata: marks file as generated from spec
-    Build,       // build - Build configuration block
+    Private,     // private — reserved, no longer matched by the parser
+    // (kept after the 2026-06-25 visibility flip; remove once all
+    // call sites and tests are confirmed migrated)
+    Public, // public — opens a public: sub-section that exposes the
+    // contained members; default visibility otherwise is private
+    Constant,  // constant
+    Functions, // functions
+    Plugins,   // plugins - Plugin loading block
+    State,     // state - State management block
+    Watch,     // watch - State change observer
+    Computed,  // computed - Derived state value
+    Guard,     // guard - State validation constraint
+    Reset,     // reset - Reset state to initial value
+    Screen,    // screen - Screen-level state scope
+    None,      // none  // null-support - None literal keyword
+    Default,   // default - Null-coalescing binary operator (spec grammar.ebnf line 232)
+    Break,     // break - Loop control flow
+    Continue,  // continue - Loop control flow
+    Require,   // require - Contract precondition
+    Ensure,    // ensure - Contract postcondition
+    Always,    // always - Class invariant block keyword
+    Rules,     // rules - State invariants
+    Spec,      // spec - AI metadata: links function to specification
+    Intent,    // intent - AI metadata: describes function purpose
+    Source,    // source - AI metadata: marks file as generated from spec
+    Build,     // build - Build configuration block
 
     // Operators (§5.1 - Binary and Unary operators from specification)
     Plus,     // +
@@ -194,6 +198,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Input => write!(f, "input"),
             TokenKind::Unit => write!(f, "unit"),
             TokenKind::Private => write!(f, "private"),
+            TokenKind::Public => write!(f, "public"),
             TokenKind::Constant => write!(f, "constant"),
             TokenKind::Functions => write!(f, "functions"),
             TokenKind::Plugins => write!(f, "plugins"),
@@ -421,6 +426,7 @@ impl Keywords {
             "input" => Some(TokenKind::Input),
             "unit" => Some(TokenKind::Unit),
             "private" => Some(TokenKind::Private),
+            "public" => Some(TokenKind::Public),
             "constant" => Some(TokenKind::Constant),
             "functions" => Some(TokenKind::Functions),
             "plugins" => Some(TokenKind::Plugins),
@@ -503,6 +509,7 @@ impl TokenKind {
             TokenKind::OnError => "onError".to_string(),
             TokenKind::Or => "or".to_string(),
             TokenKind::Private => "private".to_string(),
+            TokenKind::Public => "public".to_string(),
             TokenKind::Return => "return".to_string(),
             TokenKind::Start => "start".to_string(),
             TokenKind::Tests => "tests".to_string(),

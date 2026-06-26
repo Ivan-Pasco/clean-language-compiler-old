@@ -1,7 +1,11 @@
-// Spec Section: grammar §6.8 - private_state_section inside state:
-// Feature: private: sub-section inside state: block
-// Grammar: private_state_section = "private" ":" NEWLINE INDENT state_declaration+
-// Tests: state block with a private: section; public state is readable, private state is managed internally
+// Spec Section: grammar §6.8a - public_state_section inside state:
+// Feature: public: sub-section inside state: block
+// Grammar: public_state_section = "public" ":" NEWLINE INDENT state_declaration+
+// Tests: state block with a public: section; private state is internal-only,
+//        public state can be imported by other modules.
+// Visibility model (2026-06-25): state declarations are PRIVATE by default;
+// a `public:` sub-section inside `state:` exposes the declarations to
+// importing modules (SEM005).
 
 start:
 	print("Score: " + score.toString())
@@ -9,14 +13,18 @@ start:
 	print("After +10: " + score.toString())
 	addPoints(5)
 	print("After +5: " + score.toString())
-	print("State private section test passed")
+	print("State public section test passed")
 
 state:
-	integer score = 0
+	// Private state (default — no annotation needed). Accessible only
+	// from within this file.
+	integer bonus = 0
 
-	private:
-		integer bonus = 0
+	public:
+		// Exposed to importing modules.
+		integer score = 0
 
 functions:
-	void addPoints(integer points)
-		score = score + points
+	public:
+		void addPoints(integer points)
+			score = score + points

@@ -1537,7 +1537,7 @@ impl Function {
             body,
             description: None,
             syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
+            visibility: Visibility::Private,
             modifier: FunctionModifier::None,
             location,
         }
@@ -1560,23 +1560,28 @@ pub struct Field {
 }
 
 impl Field {
-    /// Create a public, non-static field with no default value.
+    /// Create a private, non-static field with no default value.
+    /// Visibility defaults to Private per the spec (2026-06-25 flip);
+    /// callers that need a public field must set `visibility` explicitly
+    /// after construction (the parser does this when the field appears
+    /// inside a `public:` sub-section).
     pub fn new(name: String, type_: Type) -> Self {
         Self {
             name,
             type_,
-            visibility: Visibility::Public,
+            visibility: Visibility::Private,
             is_static: false,
             default_value: None,
         }
     }
 
-    /// Create a public, non-static field with a default value.
+    /// Create a private, non-static field with a default value.
+    /// See `Field::new` for the visibility default rationale.
     pub fn new_with_default(name: String, type_: Type, default_value: Expression) -> Self {
         Self {
             name,
             type_,
-            visibility: Visibility::Public,
+            visibility: Visibility::Private,
             is_static: false,
             default_value: Some(default_value),
         }

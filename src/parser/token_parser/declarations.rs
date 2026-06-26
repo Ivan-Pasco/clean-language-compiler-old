@@ -61,7 +61,10 @@ impl TokenParser {
             body,
             description: None,
             syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
+            // Private by default per the 2026-06-25 visibility flip;
+            // a function becomes Public only when it appears inside a
+            // `public:` sub-section (parse_public_functions_section).
+            visibility: Visibility::Private,
             modifier: FunctionModifier::None,
             location: Some(location),
         })
@@ -194,12 +197,13 @@ impl TokenParser {
                     // Still in the block, parse the next function
                     self.skip_indentation();
 
-                    // Check for inline private: sub-section
-                    // Grammar: private_functions_section = INDENT+ "private" ":" NEWLINE function_declaration_line+
-                    if matches!(self.current_kind(), TokenKind::Private) {
-                        let private_funcs =
-                            self.parse_private_functions_section(functions_block_level)?;
-                        functions.extend(private_funcs);
+                    // Check for inline public: sub-section
+                    // Grammar (foundation/spec/grammar.ebnf §6.2a):
+                    //   public_functions_section = INDENT+ "public" ":" NEWLINE function_declaration_line+
+                    if matches!(self.current_kind(), TokenKind::Public) {
+                        let public_funcs =
+                            self.parse_public_functions_section(functions_block_level)?;
+                        functions.extend(public_funcs);
                         continue;
                     }
 
@@ -249,22 +253,24 @@ impl TokenParser {
         Ok(functions)
     }
 
-    /// Parse an inline `private:` sub-section inside a `functions:` block.
+    /// Parse an inline `public:` sub-section inside a `functions:` block.
     ///
-    /// Called after the leading indent and the `private` keyword have been detected.
-    /// Consumes `private` `:` NEWLINE then parses each function inside the section,
-    /// setting `visibility: Visibility::Private` on each one before returning them.
+    /// Called after the leading indent and the `public` keyword have been detected.
+    /// Consumes `public` `:` NEWLINE then parses each function inside the section,
+    /// setting `visibility: Visibility::Public` on each one before returning them.
+    /// Functions outside this section remain `Visibility::Private` (the new default
+    /// per the 2026-06-25 visibility flip).
     ///
-    /// Grammar (foundation/spec/grammar.ebnf §6.2):
-    ///   private_functions_section = INDENT+ "private" ":" NEWLINE
-    ///                               function_declaration_line
-    ///                               { NEWLINE { empty_line } function_declaration_line }
-    fn parse_private_functions_section(
+    /// Grammar (foundation/spec/grammar.ebnf §6.2a):
+    ///   public_functions_section = INDENT+ "public" ":" NEWLINE
+    ///                              function_declaration_line
+    ///                              { NEWLINE { empty_line } function_declaration_line }
+    fn parse_public_functions_section(
         &mut self,
         parent_block_level: usize,
     ) -> Result<Vec<Function>, CompilerError> {
-        // Consume "private"
-        self.expect(&TokenKind::Private)?;
+        // Consume "public"
+        self.expect(&TokenKind::Public)?;
         self.skip_whitespace();
 
         // Consume ":"
@@ -275,11 +281,11 @@ impl TokenParser {
         self.eat(&TokenKind::Newline);
         self.skip_whitespace();
 
-        let mut private_functions: Vec<Function> = Vec::new();
+        let mut public_functions: Vec<Function> = Vec::new();
 
-        // The private functions are indented one level deeper than the parent block.
+        // The public functions are indented one level deeper than the parent block.
         // We parse them in the same manner as regular functions in a functions: block,
-        // but mark each one private after parsing.
+        // but mark each one public after parsing (overriding the new Private default).
         loop {
             self.skip_whitespace();
 
@@ -336,8 +342,8 @@ impl TokenParser {
                 | TokenKind::Step
                 | TokenKind::Description => match self.parse_function_in_block() {
                     Ok(mut func) => {
-                        func.visibility = Visibility::Private;
-                        private_functions.push(func);
+                        func.visibility = Visibility::Public;
+                        public_functions.push(func);
                     }
                     Err(e) => return Err(e),
                 },
@@ -345,13 +351,13 @@ impl TokenParser {
                     self.bump();
                 }
                 _ => {
-                    // Nothing more belongs to this private section.
+                    // Nothing more belongs to this public section.
                     break;
                 }
             }
         }
 
-        Ok(private_functions)
+        Ok(public_functions)
     }
 
     /// Parse a single function within a functions: block
@@ -482,7 +488,10 @@ impl TokenParser {
             body,
             description: None,
             syntax: FunctionSyntax::Simple,
-            visibility: Visibility::Public,
+            // Private by default per the 2026-06-25 visibility flip;
+            // a function becomes Public only when it appears inside a
+            // `public:` sub-section (parse_public_functions_section).
+            visibility: Visibility::Private,
             modifier,
             location: Some(start_location),
         })
@@ -726,14 +735,14 @@ impl TokenParser {
                             break;
                         }
 
-                        // Check for inline private: sub-section inside class functions: block
-                        // Grammar (foundation/spec/grammar.ebnf §6.4):
-                        //   private_class_methods_section = INDENT+ "private" ":" NEWLINE
-                        //                                   { class_function_line | empty_line }
-                        if matches!(self.current_kind(), TokenKind::Private) {
-                            let private_methods =
-                                self.parse_private_functions_section(functions_indent_level)?;
-                            methods.extend(private_methods);
+                        // Check for inline public: sub-section inside class functions: block
+                        // Grammar (foundation/spec/grammar.ebnf §6.4b):
+                        //   public_class_methods_section = INDENT+ "public" ":" NEWLINE
+                        //                                  { class_function_line | empty_line }
+                        if matches!(self.current_kind(), TokenKind::Public) {
+                            let public_methods =
+                                self.parse_public_functions_section(functions_indent_level)?;
+                            methods.extend(public_methods);
                             continue;
                         }
 
@@ -762,12 +771,13 @@ impl TokenParser {
                     let parsed = self.parse_invariant_block()?;
                     invariants.extend(parsed);
                 }
-                TokenKind::Private => {
-                    // Inline private: sub-section inside a class body.
-                    // Handles private class fields (grammar §6.4 private_class_fields_section).
-                    // A private: sub-section at the top of the class body (not inside functions:)
-                    // contains field declarations.
-                    self.bump(); // consume 'private'
+                TokenKind::Public => {
+                    // Inline public: sub-section inside a class body.
+                    // Handles public class fields (grammar §6.4a public_class_fields_section).
+                    // A public: sub-section at the top of the class body (not inside functions:)
+                    // contains field declarations that are visible from outside the class.
+                    // Fields outside this section default to Private (SEM005).
+                    self.bump(); // consume 'public'
                     self.skip_whitespace();
                     self.expect(&TokenKind::Colon)?;
                     self.skip_whitespace();
@@ -775,28 +785,28 @@ impl TokenParser {
                     if let TokenKind::Newline = self.current_kind() {
                         self.bump();
                     }
-                    // Consume the indent that opens the private block
-                    let private_indent_level =
-                        if matches!(self.current_kind(), TokenKind::Indent(_)) {
-                            if let TokenKind::Indent(level) = self.current_kind() {
-                                let level = *level;
-                                self.bump();
-                                level
-                            } else {
-                                1
-                            }
+                    // Consume the indent that opens the public block
+                    let public_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_))
+                    {
+                        if let TokenKind::Indent(level) = self.current_kind() {
+                            let level = *level;
+                            self.bump();
+                            level
                         } else {
                             1
-                        };
+                        }
+                    } else {
+                        1
+                    };
 
                     loop {
                         self.skip_whitespace();
                         if self.is_at_end() {
                             break;
                         }
-                        // Dedent exits private block
+                        // Dedent exits public block
                         if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                            if *dedent_level < private_indent_level {
+                            if *dedent_level < public_indent_level {
                                 break;
                             }
                             self.bump();
@@ -805,7 +815,7 @@ impl TokenParser {
                         }
                         // Skip continuation indent tokens
                         if let TokenKind::Indent(indent_level) = self.current_kind() {
-                            if *indent_level < private_indent_level {
+                            if *indent_level < public_indent_level {
                                 break;
                             }
                             self.bump();
@@ -828,8 +838,8 @@ impl TokenParser {
                         }
                         if matches!(self.current_kind(), TokenKind::Identifier(_)) {
                             let mut field = self.parse_field()?;
-                            // Fields in a private: sub-section are private (SEM005).
-                            field.visibility = Visibility::Private;
+                            // Fields in a public: sub-section are public (SEM005).
+                            field.visibility = Visibility::Public;
                             fields.push(field);
                         } else {
                             break;
@@ -899,6 +909,7 @@ impl TokenParser {
                                     | TokenKind::Functions
                                     | TokenKind::Always
                                     | TokenKind::Private
+                                    | TokenKind::Public
                                     | TokenKind::Constructor
                             ) {
                                 break;
@@ -999,6 +1010,7 @@ impl TokenParser {
                                         | TokenKind::Constructor
                                         | TokenKind::Always
                                         | TokenKind::Private
+                                        | TokenKind::Public
                                         | TokenKind::Class
                                         | TokenKind::Start
                                         | TokenKind::Dedent(_)
@@ -1127,6 +1139,7 @@ impl TokenParser {
                 TokenKind::Functions
                     | TokenKind::Constructor
                     | TokenKind::Private
+                    | TokenKind::Public
                     | TokenKind::Always
                     | TokenKind::Class
                     | TokenKind::Start
@@ -1172,7 +1185,10 @@ impl TokenParser {
         Ok(Field {
             name,
             type_,
-            visibility: Visibility::Public,
+            // Private by default per the 2026-06-25 visibility flip;
+            // a field becomes Public only when it appears inside the
+            // class's `public:` sub-section (parse_class_body handler).
+            visibility: Visibility::Private,
             is_static: false,
             default_value,
         })
@@ -1214,7 +1230,10 @@ impl TokenParser {
         Ok(Field {
             name,
             type_,
-            visibility: Visibility::Public,
+            // Private by default per the 2026-06-25 visibility flip;
+            // a field becomes Public only when it appears inside the
+            // class's `public:` sub-section (parse_class_body handler).
+            visibility: Visibility::Private,
             is_static: false,
             default_value,
         })
@@ -1319,6 +1338,7 @@ impl TokenParser {
                     | TokenKind::Start
                     | TokenKind::Tests
                     | TokenKind::Private
+                    | TokenKind::Public
             ) {
                 // Hit next top-level block
                 break;

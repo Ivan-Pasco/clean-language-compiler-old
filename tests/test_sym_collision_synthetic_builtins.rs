@@ -117,12 +117,14 @@ start:
 	print(render(it))
 
 class Item
-	string name
-	integer count
+	public:
+		string name
+		integer count
 
 functions:
-	string render(Item it)
-		return it.name
+	public:
+		string render(Item it)
+			return it.name
 "#;
 
     for attempt in 0..20 {

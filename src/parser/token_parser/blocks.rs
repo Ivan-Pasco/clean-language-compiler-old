@@ -1897,9 +1897,13 @@ impl TokenParser {
 
             // Parse a state declaration: type name = value
             // Look for a type identifier (integer, string, number, boolean, etc.)
+            //
+            // State declarations are private by default per the 2026-06-25 visibility flip.
+            // A declaration becomes public only when it appears inside a `public:`
+            // sub-section (parse_public_state_section).
             match self.current_kind() {
                 TokenKind::Identifier(_) => {
-                    let decl = self.parse_one_state_declaration(false, block_level, "state")?;
+                    let decl = self.parse_one_state_declaration(true, block_level, "state")?;
                     declarations.push(decl);
 
                     // Skip newline after declaration (if guard didn't consume it)
@@ -1942,15 +1946,17 @@ impl TokenParser {
                         location: None,
                     });
                 }
-                TokenKind::Private => {
-                    // Inline private: sub-section inside a state: block.
-                    // Grammar (foundation/spec/grammar.ebnf §6.8):
-                    //   private_state_section = "private" ":" NEWLINE
-                    //                           INDENT+ state_declaration
-                    //                           { NEWLINE { empty_line } INDENT+ state_declaration }
-                    // All state declarations inside this sub-section are private (SEM005).
-                    let private_decls = self.parse_private_state_section(block_level)?;
-                    declarations.extend(private_decls);
+                TokenKind::Public => {
+                    // Inline public: sub-section inside a state: block.
+                    // Grammar (foundation/spec/grammar.ebnf §6.8a):
+                    //   public_state_section = "public" ":" NEWLINE
+                    //                          INDENT+ state_declaration
+                    //                          { NEWLINE { empty_line } INDENT+ state_declaration }
+                    // All state declarations inside this sub-section are public
+                    // (visible to importing modules). State declarations outside
+                    // this section default to private (SEM005).
+                    let public_decls = self.parse_public_state_section(block_level)?;
+                    declarations.extend(public_decls);
                 }
                 _ => {
                     // Unknown token, skip and continue
@@ -2046,24 +2052,26 @@ impl TokenParser {
         })
     }
 
-    /// Parse an inline `private:` sub-section inside a `state:` block.
+    /// Parse an inline `public:` sub-section inside a `state:` block.
     ///
-    /// Called when `TokenKind::Private` is encountered while parsing state declarations.
-    /// Parses `private` `:` NEWLINE then each state declaration within it, marking
-    /// all declarations `is_private: true` (SEM005).
+    /// Called when `TokenKind::Public` is encountered while parsing state declarations.
+    /// Parses `public` `:` NEWLINE then each state declaration within it, marking
+    /// all declarations `is_private: false` so that importing modules can read/write
+    /// them (SEM005). Declarations outside this section default to `is_private: true`
+    /// per the 2026-06-25 visibility flip.
     ///
-    /// Grammar (foundation/spec/grammar.ebnf §6.8):
-    ///   private_state_section = "private" ":" NEWLINE
-    ///                           INDENT+ state_declaration
-    ///                           { NEWLINE { empty_line } INDENT+ state_declaration }
-    fn parse_private_state_section(
+    /// Grammar (foundation/spec/grammar.ebnf §6.8a):
+    ///   public_state_section = "public" ":" NEWLINE
+    ///                          INDENT+ state_declaration
+    ///                          { NEWLINE { empty_line } INDENT+ state_declaration }
+    fn parse_public_state_section(
         &mut self,
         parent_block_level: usize,
     ) -> Result<Vec<crate::ast::StateDeclaration>, CompilerError> {
         use crate::ast::StateDeclaration;
 
-        // Consume "private"
-        self.expect(&TokenKind::Private)?;
+        // Consume "public"
+        self.expect(&TokenKind::Public)?;
         self.skip_whitespace();
 
         // Consume ":"
@@ -2075,7 +2083,7 @@ impl TokenParser {
             self.bump();
         }
 
-        let mut private_decls: Vec<StateDeclaration> = Vec::new();
+        let mut public_decls: Vec<StateDeclaration> = Vec::new();
 
         loop {
             self.skip_whitespace();
@@ -2084,7 +2092,7 @@ impl TokenParser {
                 break;
             }
 
-            // A dedent at or below the parent block level ends the private section.
+            // A dedent at or below the parent block level ends the public section.
             if let TokenKind::Dedent(level) = self.current_kind() {
                 if *level <= parent_block_level {
                     break;
@@ -2093,7 +2101,7 @@ impl TokenParser {
                 continue;
             }
 
-            // Top-level keywords exit the private section.
+            // Top-level keywords exit the public section.
             if matches!(
                 self.current_kind(),
                 TokenKind::Functions
@@ -2108,7 +2116,7 @@ impl TokenParser {
                 break;
             }
 
-            // An indent at or below parent level signals the private section is over.
+            // An indent at or below parent level signals the public section is over.
             if let TokenKind::Indent(level) = self.current_kind() {
                 let lvl = *level;
                 if lvl <= parent_block_level {
@@ -2126,11 +2134,11 @@ impl TokenParser {
             match self.current_kind() {
                 TokenKind::Identifier(_) => {
                     let decl = self.parse_one_state_declaration(
-                        true,
+                        false,
                         parent_block_level + 1,
-                        "private state",
+                        "public state",
                     )?;
-                    private_decls.push(decl);
+                    public_decls.push(decl);
 
                     // Consume trailing newline and check next indent.
                     if matches!(self.current_kind(), TokenKind::Newline) {
@@ -2160,7 +2168,7 @@ impl TokenParser {
             }
         }
 
-        Ok(private_decls)
+        Ok(public_decls)
     }
 
     /// Parse a rules: block containing state invariant expressions

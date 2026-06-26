@@ -3015,47 +3015,63 @@ list<integer>.line.unique uniqueQueue = []
 ```
 
 ## Classes
+Class fields and methods are **private by default**. To expose members to outside callers, group them inside a single `public:` sub-section. There is no per-member visibility modifier — the absence of `public:` is what makes a member private.
 ```
 class Person
-	string name
-	integer age
+	integer age              // private — internal only
+
+	public:
+		string name          // public — readable as p.name
 
 	constructor(string nameParam, integer ageParam)
 		name = nameParam
 		age = ageParam
 
 	functions:
-		string greet()
-			return "I'm " + name
+		public:
+			string greet()
+				return "I'm " + name
 
 start:
 	Person p = Person("Alice", 30)
-	print(p.greet())
-	print(p.name)
+	print(p.greet())     // OK — greet is in public: methods block
+	print(p.name)        // OK — name is in public: fields block
+	// print(p.age)      // ERROR (SEM005) — age is private
 ```
+
+## Visibility model
+- **Classes:** Fields and methods are private by default. A `public:` field block exposes fields; a `public:` method block inside `functions:` exposes methods. At most one of each per class.
+- **Modules:** Top-level functions are private to their file by default. A `public:` sub-section inside `functions:` exposes them to importing modules.
+- **State:** `state:` declarations are private to their file by default. A `public:` sub-section inside `state:` exposes them to importing modules.
+- **Inheritance:** Subclasses inherit only public members of their parent. Overrides of a parent's public method must themselves live inside the child's `public:` method block.
+- **Error code:** SEM005 — Access Violation.
 
 ## Inheritance
 ```
 class Animal
-	string name
+	public:
+		string name
 
 	constructor(string nameParam)
 		name = nameParam
 
 	functions:
-		string speak()
-			return name + " speaks"
+		public:
+			string speak()
+				return name + " speaks"
 
 class Dog is Animal
-	string breed
+	public:
+		string breed
 
 	constructor(string nameParam, string breedParam)
 		base(nameParam)
 		breed = breedParam
 
 	functions:
-		string speak()
-			return name + " barks"
+		public:
+			string speak()
+				return name + " barks"
 ```
 
 ## Event Handlers (events: class section)

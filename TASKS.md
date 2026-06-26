@@ -64,6 +64,188 @@ After each sub-finding lands, remove the corresponding `EXEMPT_FILES` entry from
 
 ---
 
+## 🟡 IN PROGRESS: VISIBILITY-FLIP — Private-by-default visibility model (compiler landed, framework migration pending)
+
+**Priority**: CRITICAL — Principle 24 violation resolved for compiler-internal scope; remains open for the framework/plugin ecosystem.
+**Discovered**: 2026-06-25
+**Compiler implementation landed**: 2026-06-26
+**Reported error code**: VISIBILITY-FLIP
+**Cross-component**: spec is shared; compiler change is local; .cln migrations span every component.
+
+### Status snapshot (2026-06-26)
+
+| Layer | Status |
+|---|---|
+| Spec files (Clean_Language_Specification.md, EBNF, semantic-rules, type-system, ast.md) | ✅ Landed 2026-06-25 |
+| Compiler lexer (`TokenKind::Public`) | ✅ Landed 2026-06-26 |
+| Compiler AST (`Function`/`Field` defaults flipped to `Visibility::Private`) | ✅ Landed 2026-06-26 |
+| Compiler parser (`public:` sections, default-Private for plain decls) | ✅ Landed 2026-06-26 |
+| Compiler resolver/typechecker (SEM005 enforcement) | ✅ Already structurally correct; works under flipped flags |
+| HIR builder (lowers `Visibility::Private` → `is_private: true`) | ✅ Already correct; no edit needed |
+| Compiler test suite (`cargo test --lib`) | ✅ 431/431 passing |
+| Compiler test suite (8 .cln fixtures migrated to `public:` syntax) | ✅ Migrated 2026-06-26 |
+| Compiler test suite (`test_sym_collision_synthetic_builtins`) | ✅ Test source migrated, all tests in file passing |
+| MCP `get_quick_reference` class examples | ✅ Updated 2026-06-26 |
+| **Cross-component: frame.ui plugin emits user-callable classes (HYDRATE_AUTO)** | ❌ Blocker — see §"Framework blocker" below |
+| Cross-component: clean-framework `.cln` examples migration | ⏳ Pending (separate session) |
+| Cross-component: Studio, clean-errors, Web Site Clean `.cln` migration | ⏳ Pending (separate session) |
+| Books 1–5 class examples | ⏳ Pending (separate session) |
+| VS Code extension (`public` add, `private` keep-or-deprecate) | ⏳ Pending (separate session) |
+| Lexer cleanup: remove `TokenKind::Private` once no consumers remain | ⏳ Pending (after all migrations) |
+| Parser cleanup: remove `parse_private` top-level block once no consumers remain | ⏳ Pending (after all migrations) |
+
+### Framework blocker — frame.ui emits classes whose methods the framework calls externally (HYDRATE_AUTO)
+
+After the compiler-side flip, two integration tests fail:
+- `tests/test_hydrate_auto_e2e.rs::client_init_splice_reaches_start_body`
+- `tests/test_hydrate_auto_e2e.rs::event_handlers_exported_by_bare_name`
+
+**Symptom**: both compile a `component:` block via the frame.ui plugin and then attempt to invoke the synthesized class methods (e.g. `MyToolbar.render()`) from the framework's spliced code. Under the new spec these calls are SEM005 violations because the synthesized class has no `public:` block.
+
+**Diagnosis**: this is NOT a compiler bug. The plugin output is now spec-non-conforming. The framework's `expand_component` (and presumably `expand_page`, `expand_screen`) macros emit user-shaped classes without wrapping the framework-callable methods in a `public:` section.
+
+**Resolution path**: the frame.ui (and any other framework plugin that synthesizes classes which the framework itself calls) must be updated to emit `public:` sections around the methods that participate in the framework dispatch contract. Specifically:
+1. `expand_component` must wrap the synthesized `render` method, lifecycle methods (`onMount`, etc.), and any event handler whose name is referenced from `events:` in a `public:` method section.
+2. `expand_page` / `expand_screen` need the same treatment for their respective lifecycle methods.
+3. Component instance fields that the framework reads from outside the class (e.g. `instance_my_toolbar.handler`) must live in a `public:` field section, or the framework must reach them via a `public:` getter.
+
+**Compiler-side mitigation**: NONE. Per `.claude/rules/compiler-work.md` "No Plugin Logic in the Compiler" and ARCHITECTURE_BOUNDARIES.md "Workaround Trap", the compiler will not bypass SEM005 for plugin-synthesized classes. The fix lives in `clean-framework/plugins/frame.ui/`.
+
+**Cross-component prompt filed**: see `foundation/management/cross-component-prompts/framework-visibility-flip-public-sections-in-component-expansion.md` (to be authored alongside this commit).
+
+**Test status**: the two failing `test_hydrate_auto_e2e.rs` tests gate on `frame_ui_available()` and skip silently when the plugin is not installed. Locally they fail when a frame.ui is present (any version up to and including 2.12.68). When the framework lands public-section emission in `expand_component`, these tests should turn green automatically. Until then, expect a red signal on dev machines with frame.ui installed.
+
+### Compiler implementation details (landed 2026-06-26)
+
+Files touched:
+
+| File | Change |
+|---|---|
+| `src/lexer/specification_token.rs` | Added `TokenKind::Public` variant + Display/keyword/source-string mappings. `TokenKind::Private` retained as reserved-but-unmatched. |
+| `src/ast/mod.rs` | `Function::new()` and `Field::new()` / `Field::new_with_default()` now default `visibility` to `Visibility::Private`. |
+| `src/parser/token_parser/declarations.rs` | `parse_private_functions_section` → `parse_public_functions_section`, matches `TokenKind::Public`, sets `Visibility::Public` on contents. Class-body inline section (was `TokenKind::Private`) now matches `TokenKind::Public` and sets `Visibility::Public`. `parse_function`, `parse_function_in_block`, `parse_field`, `parse_field_name_colon_type` now produce `Visibility::Private` by default (overridden inside `public:` sections). `parse_start_function` and `parse_event_handler_in_block` keep `Visibility::Public` (entry-points / plugin contract). |
+| `src/parser/token_parser/blocks.rs` | `parse_private_state_section` → `parse_public_state_section`, matches `TokenKind::Public`, marks contents `is_private: false`. Default state declaration now `is_private: true`. |
+| `tests/cln/spec_compliance/classes/private_class_members_spec.cln` | Rewritten using `public:` blocks; kept original filename for spec-test discovery. |
+| `tests/cln/spec_compliance/functions/private_functions_spec.cln` | Rewritten using `public:` block inside `functions:`. |
+| `tests/cln/spec_compliance/statements/state_private_section_spec.cln` | Rewritten using `public:` block inside `state:`. |
+| `tests/cln/language/classes/91_inline_private_visibility.cln` | Rewritten using `public:` blocks. |
+| `tests/cln/future/91_inline_private_visibility.cln` | Same migration (duplicate of above). |
+| `tests/cln/advanced/modules/53_import_export_blocks.cln` | Rewritten; removed top-level `private:` block; moved exported functions into a `public:` sub-section of `functions:`. |
+| `tests/cln/advanced/modules/67_import_export_comprehensive.cln` | Same as above. |
+| `tests/cln/examples/54_integration_test.cln` | Same as above. |
+| `tests/test_sym_collision_synthetic_builtins.rs` | Migrated inline `class Item` source to use `public:` blocks. |
+| `src/mcp/server.rs` | `get_quick_reference()` class examples rewritten to use `public:` sections. Added a short "Visibility model" section before the inheritance example. |
+
+Intentional non-edits (to be cleaned up in a follow-up after no remaining consumers):
+- `src/parser/token_parser/declarations.rs::parse_private` (top-level `private:` block) — kept as dead code path so any unmigrated `.cln` files in the wild still parse. Remove once cross-component migration is done.
+- `src/parser/grammar.pest` `private_block` rule — same rationale.
+- `TokenKind::Private` enum variant — same rationale.
+- `src/parser/token_parser/mod.rs::TokenKind::Private =>` dispatch arm — same rationale.
+
+### Background
+
+The Clean Language specification was updated on 2026-06-25 to flip the visibility default for class fields, class methods, module functions, and module state. The new rule is:
+
+> Members are **private by default**. The `public:` sub-section header (replacing the old `private:` sub-section) is the sole mechanism for making a member visible outside its declaring scope. There is no per-member visibility modifier.
+
+**Spec changes landed in this commit** (single source of truth — implementation must follow):
+
+- `Clean_Language_Specification.md` — Classes and Objects section (§"Visibility: Private by Default"), Visibility Model section, all class examples migrated to `public:` blocks. `private` removed from the reserved-keyword list; `public` added.
+- `foundation/spec/grammar.ebnf` — Five productions renamed and inverted:
+  - `private_block` → REMOVED (top-level visibility now lives inside `functions:` only).
+  - `private_functions_section` → `public_functions_section`.
+  - `private_class_fields_section` → `public_class_fields_section`.
+  - `private_class_methods_section` → `public_class_methods_section`.
+  - `private_state_section` → `public_state_section`.
+  - Keyword `"private"` removed from the reserved set; `"public"` added.
+- `foundation/spec/semantic-rules.md` — SEM005 rewritten (private-by-default model), CLASS007 added (at most one `public:` block per scope), CLASS008 added (override must match parent visibility), CLASS001–CLASS008 range update.
+- `foundation/spec/type-system.md` — new "Member Visibility and Resolution" subsection in §4 documents the resolution algorithm.
+- `foundation/spec/ast.md` — `Visibility` enum semantics flipped (default is `Private`), `Function.visibility` and `Field.visibility` descriptions updated.
+
+### Compiler work required (this component)
+
+1. **Lexer (`src/lexer/specification_token.rs`)**: register `public` as a reserved keyword token. Optionally remove `private` if no other syntax depends on it.
+2. **Parser (`src/parser/token_parser/declarations.rs` and `src/parser/grammar.rs`)**:
+   - Rename and invert all five `private_*` productions to match the EBNF: `public_functions_section`, `public_class_fields_section`, `public_class_methods_section`, `public_state_section`.
+   - Remove the top-level `private_block` parser path (§6.7).
+   - Default-emit `Visibility::Private` for every declaration; set `Visibility::Public` only for declarations that appear inside a `public:` sub-section.
+   - Enforce CLASS007 at parse time (at most one `public:` block per enclosing scope).
+3. **AST (`src/ast/mod.rs`)**: confirm `Visibility::Private` is the default for `Function`, `Field`, and module/state declarations. No structural enum change; only default flip.
+4. **HIR validation (`src/hir/validation.rs`)**: enforce CLASS007 (single public block) and CLASS008 (override matches parent visibility). Carry visibility through HIR lowering unchanged.
+5. **Resolver (`src/resolver/resolver_impl.rs`)**: SEM005 enforcement against the new default. The check at member-access time becomes: "if `member.visibility == Private` and the access site is outside the declaring scope, emit SEM005." Subclass-resolution must skip private parent members rather than inheriting them.
+6. **Typechecker (`src/typechecker/type_inference.rs`)**: only relevant if visibility affects type resolution (it should not — visibility is a SCOPE/SEM concern, not a TYPE concern).
+7. **Codegen (`src/codegen/mod.rs`)**: no runtime impact — visibility is fully checked at compile time. No WASM changes expected.
+8. **Existing tests that assume the old `private:` section model** must be migrated:
+   - `tests/cln/spec_compliance/classes/private_class_members_spec.cln` → rename to `public_class_members_spec.cln`, rewrite to declare private-default fields with `public:` exposing the methods. Update grammar-rule citation in header comment.
+   - `tests/cln/spec_compliance/functions/private_functions_spec.cln` → migrate similarly for module-level functions.
+   - `tests/cln/spec_compliance/statements/state_private_section_spec.cln` → migrate for `state:`.
+   - `tests/cln/language/classes/91_inline_private_visibility.cln` → migrate.
+
+### Ecosystem `.cln` migration required (separate sessions)
+
+Every `.cln` file in the ecosystem that defines a class with externally-called methods (or a module with externally-called functions) needs review. Without a `public:` block, the file will fail to compile under the new model — every existing class becomes opaque to its callers.
+
+Estimated scope (from the surface-area survey):
+- `clean-language-compiler/tests/cln/` — ~50+ files with class declarations.
+- `clean-framework/examples/` — all example projects.
+- `clean-framework/plugins/frame.*/src/` — plugin source files with classes.
+- `clean-framework/tests/framework/unit/plugins/` — framework tests.
+- `Clean Studio/app/logic/` — Studio codebase.
+- `clean-errors/app/` — error tracking app.
+- `Web Site Clean/app/logic/` — website backend.
+- Books 1–5 — every class example.
+- `clean-language-compiler/src/mcp/server.rs` `get_quick_reference` — embedded examples.
+- `clean-extension/syntaxes/clean.tmLanguage.json` — keyword highlighting (`public` add, `private` remove).
+
+Total `.cln` impact: ~150 files (rough estimate from the surface-area report, 2026-06-25).
+
+### Migration mechanics for `.cln` files
+
+The mechanical rewrite is:
+
+1. Find every `class` declaration.
+2. Wrap fields that are read from outside the class (or that the example clearly intends to expose) in a `public:` field sub-section at the position they currently occupy in the class body.
+3. Inside each `functions:` block, wrap methods that are called from outside the class in a `public:` method sub-section.
+4. Delete every `private:` sub-section header — its members are already private by default, so the section becomes redundant. Indentation of its contents drops one level.
+5. For module-level `functions:` blocks in files that are imported elsewhere, wrap the exported functions in a `public:` block. Helper functions stay outside (private by default).
+
+Judgment calls remain (deciding which method is "really" part of the API vs. an implementation accident), so this is not a pure search-and-replace.
+
+### Acceptance criteria
+
+- `cargo test --lib` and `cargo test --test integration` pass.
+- All `.cln` files in `tests/cln/` compile.
+- The renamed `public_class_members_spec.cln` test verifies that:
+  - private fields/methods inside a class are NOT accessible from `start:`.
+  - public fields/methods (inside `public:` blocks) ARE accessible from `start:`.
+- `tests/test_dual_naming_imports.rs` continues to pass (this change is orthogonal to bridge-import dual-emission).
+- A new compiler test verifies CLASS007 (single `public:` block per scope) and CLASS008 (override matches parent visibility).
+- MCP `get_quick_reference` returns class examples using the new `public:` syntax.
+
+### Risks / open questions
+
+- **`private` keyword removal**: the EBNF still has scattered references in identifier-NOT predicates and example comments. The grammar's reserved keyword list dropped `private` and added `public`. The compiler's lexer must match. If any currently-released `.cln` file in the wild uses `private` as a regular identifier (unlikely — it was reserved), this would silently start parsing differently. Mitigate by surveying all known `.cln` files before flipping the lexer.
+- **Inheritance interaction with CLASS008**: the spec says an override of a public parent method must itself be public. This is enforceable at HIR validation. There is no implicit-override; the developer must literally place the overriding method inside the child's `public:` block.
+- **`state:` migration**: the spec flipped `state:` too. Any framework or app code that relies on importing a state variable from another module must add the variable to the `public:` state sub-section. Survey before flipping.
+
+### Suggested order of execution (multiple sessions)
+
+1. **Session A (compiler core)**: lexer + parser + AST default + HIR validation + resolver SEM005. Run `cargo test --lib`. Expect ~10–20 existing tests to fail; migrate those `.cln` test fixtures alongside the code change.
+2. **Session B (compiler tests + MCP)**: migrate remaining `tests/cln/` files. Update `src/mcp/server.rs::get_quick_reference()` and `get_ecosystem_catalog()`. Run full `cargo test`.
+3. **Session C (extension + framework)**: VS Code extension keyword update. Cross-component `.cln` example survey for clean-framework — coordinate with framework owner via `report_error` or cross-component prompt.
+4. **Session D (other components)**: Studio, clean-errors, Web Site Clean. Each owns its own .cln files; treat as cross-component (file `report_error` or cross-component prompt for each).
+5. **Session E (books)**: Books 1–5 chapter-by-chapter rewrite. This is documentation, not code — can lag the implementation.
+
+### Reference / authority
+
+- Prose spec section: `Clean_Language_Specification.md` §"Classes and Objects" → §"Visibility: Private by Default" and §"Visibility Model".
+- Grammar: `foundation/spec/grammar.ebnf` §6.2a, §6.4a, §6.4b, §6.8a.
+- Semantic rules: `foundation/spec/semantic-rules.md` SEM005, CLASS007, CLASS008.
+- Type resolution: `foundation/spec/type-system.md` §4 "Member Visibility and Resolution".
+- AST: `foundation/spec/ast.md` `Visibility` enum.
+
+---
+
 ## ✅ COMPLETED: BUILD_FRONTEND — `cln build` does not generate `frontend.wasm` for client-side components
 
 **Priority**: HIGH (priority 56)
