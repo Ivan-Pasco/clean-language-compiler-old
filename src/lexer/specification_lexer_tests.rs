@@ -160,7 +160,6 @@ mod tests {
             ("description", TokenKind::Description),
             ("input", TokenKind::Input),
             ("unit", TokenKind::Unit),
-            ("private", TokenKind::Private),
             ("public", TokenKind::Public),
             ("constant", TokenKind::Constant),
             ("functions", TokenKind::Functions),

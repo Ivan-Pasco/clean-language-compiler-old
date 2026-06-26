@@ -842,9 +842,6 @@ later_assignment = { "later" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "=" ~ WH
 
 // Import and export blocks (consolidate with import_stmt)
 import_block = { "import" ~ ":" ~ import_list }
-private_block = { "private" ~ ":" ~ indented_private_list }
-indented_private_list = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ private_item)* }
-private_item = { identifier | function_in_block }
 
 // External function block - declares functions provided by the WASM host
 // Syntax: external: (for "env" module) or external "module_name": (for custom module)
@@ -1009,7 +1006,7 @@ statement = {
 // Program with proper newline handling
 // State management blocks: state_block (app-level), watch_block (top-level observers), screen_block (UI screens)
 // External blocks: external_block for WASM host-provided functions
-program_item = { import_block | import_stmt | private_block | external_block | state_block | watch_block | screen_block | framework_block | validate_block | start_block | functions_block | tests_block | class_decl | apply_block }
+program_item = { import_block | import_stmt | external_block | state_block | watch_block | screen_block | framework_block | validate_block | start_block | functions_block | tests_block | class_decl | apply_block }
 program = { SOI ~ (empty_line)* ~ (program_item ~ (empty_line)*)* ~ EOI }
 
 // Start block - the entry point of a Clean Language program

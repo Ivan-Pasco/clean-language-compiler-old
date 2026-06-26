@@ -4,7 +4,7 @@
 //! - `parse_function` / `parse_start_function` / `parse_functions_block`
 //! - `parse_function_in_block` — function inside `functions:` block
 //! - `parse_class` / `parse_class_body` / `parse_field` / `parse_constructor`
-//! - `parse_import` / `parse_import_item` / `parse_private`
+//! - `parse_import` / `parse_import_item`
 //! - `parse_parameter_list` / `parse_parameter` / `parse_type`
 //! - `parse_block` — the indentation-aware statement block
 //! - `expect_identifier` / `expect_name` — token utilities
@@ -908,7 +908,6 @@ impl TokenParser {
                                     | TokenKind::Tests
                                     | TokenKind::Functions
                                     | TokenKind::Always
-                                    | TokenKind::Private
                                     | TokenKind::Public
                                     | TokenKind::Constructor
                             ) {
@@ -1009,7 +1008,6 @@ impl TokenParser {
                                     TokenKind::Functions
                                         | TokenKind::Constructor
                                         | TokenKind::Always
-                                        | TokenKind::Private
                                         | TokenKind::Public
                                         | TokenKind::Class
                                         | TokenKind::Start
@@ -1148,7 +1146,6 @@ impl TokenParser {
                 self.current_kind(),
                 TokenKind::Functions
                     | TokenKind::Constructor
-                    | TokenKind::Private
                     | TokenKind::Public
                     | TokenKind::Always
                     | TokenKind::Class
@@ -1347,7 +1344,6 @@ impl TokenParser {
                     | TokenKind::Class
                     | TokenKind::Start
                     | TokenKind::Tests
-                    | TokenKind::Private
                     | TokenKind::Public
             ) {
                 // Hit next top-level block
@@ -1433,92 +1429,6 @@ impl TokenParser {
             name,
             alias,
             is_file_import: false,
-        })
-    }
-
-    /// Parse a private: block listing function names to mark as private
-    /// Example: private:\n\thelperFunction\n\tinternalProcessor
-    pub(super) fn parse_private(&mut self) -> Result<Statement, CompilerError> {
-        let private_token = self.expect(&TokenKind::Private)?;
-        let location = private_token.location.clone();
-
-        self.skip_whitespace();
-
-        // Expect colon after private keyword
-        self.expect(&TokenKind::Colon)?;
-        self.skip_whitespace();
-
-        // Skip newline after colon
-        self.eat(&TokenKind::Newline);
-        self.skip_whitespace();
-
-        let mut items = Vec::new();
-
-        // Determine the private block's indentation level
-        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
-
-        // Parse indented function names
-        while !self.is_at_end() {
-            self.skip_whitespace();
-
-            if self.is_at_end() {
-                break;
-            }
-
-            // Check for Dedent that exits the private block
-            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                if *dedent_level < block_indent_level {
-                    // This Dedent exits the private block - DON'T consume it
-                    break;
-                }
-                // Dedent at our level or higher - consume it and continue
-                self.bump();
-                self.skip_whitespace();
-            }
-
-            // Check for indentation or end of block
-            if matches!(self.current_kind(), TokenKind::Indent(_)) {
-                self.skip_indentation();
-
-                // Parse function name (identifier)
-                if let TokenKind::Identifier(name) = self.current_kind() {
-                    let name = name.clone();
-                    self.bump();
-
-                    // Create an Expression statement with the function name as a Variable
-                    items.push(Statement::Expression {
-                        expr: crate::ast::Expression::Variable(name),
-                        location: Some(self.current().location.clone()),
-                    });
-                }
-                self.skip_whitespace();
-            } else if matches!(
-                self.current_kind(),
-                TokenKind::Functions
-                    | TokenKind::Class
-                    | TokenKind::Start
-                    | TokenKind::Tests
-                    | TokenKind::Import
-            ) {
-                // Hit next top-level block
-                break;
-            } else {
-                // Not indented and not a dedent = end of block
-                break;
-            }
-        }
-
-        Ok(Statement::PrivateBlock {
-            items,
-            location: Some(location),
         })
     }
 

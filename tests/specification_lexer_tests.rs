@@ -189,7 +189,6 @@ fn test_all_keywords() {
         ("description", TokenKind::Description),
         ("input", TokenKind::Input),
         ("unit", TokenKind::Unit),
-        ("private", TokenKind::Private),
         ("constant", TokenKind::Constant),
         ("functions", TokenKind::Functions),
     ];

@@ -60,10 +60,7 @@ pub enum TokenKind {
     Description, // description
     Input,       // input
     Unit,        // unit
-    Private,     // private — reserved, no longer matched by the parser
-    // (kept after the 2026-06-25 visibility flip; remove once all
-    // call sites and tests are confirmed migrated)
-    Public, // public — opens a public: sub-section that exposes the
+    Public,      // public — opens a public: sub-section that exposes the
     // contained members; default visibility otherwise is private
     Constant,  // constant
     Functions, // functions
@@ -197,7 +194,6 @@ impl fmt::Display for TokenKind {
             TokenKind::Description => write!(f, "description"),
             TokenKind::Input => write!(f, "input"),
             TokenKind::Unit => write!(f, "unit"),
-            TokenKind::Private => write!(f, "private"),
             TokenKind::Public => write!(f, "public"),
             TokenKind::Constant => write!(f, "constant"),
             TokenKind::Functions => write!(f, "functions"),
@@ -425,7 +421,6 @@ impl Keywords {
             "description" => Some(TokenKind::Description),
             "input" => Some(TokenKind::Input),
             "unit" => Some(TokenKind::Unit),
-            "private" => Some(TokenKind::Private),
             "public" => Some(TokenKind::Public),
             "constant" => Some(TokenKind::Constant),
             "functions" => Some(TokenKind::Functions),
@@ -508,7 +503,6 @@ impl TokenKind {
             TokenKind::Not => "not".to_string(),
             TokenKind::OnError => "onError".to_string(),
             TokenKind::Or => "or".to_string(),
-            TokenKind::Private => "private".to_string(),
             TokenKind::Public => "public".to_string(),
             TokenKind::Return => "return".to_string(),
             TokenKind::Start => "start".to_string(),

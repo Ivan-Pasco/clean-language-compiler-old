@@ -673,12 +673,6 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
-    // Private declaration block
-    PrivateBlock {
-        items: Vec<Statement>,
-        location: Option<SourceLocation>,
-    },
-
     // Standalone error handler (global error handling for previous statements)
     StandaloneErrorHandler {
         body: Vec<Statement>,
@@ -838,7 +832,6 @@ impl Statement {
             Statement::LaterAssignment { location, .. } => location,
             Statement::Background { location, .. } => location,
             Statement::OnErrorBlock { location, .. } => location,
-            Statement::PrivateBlock { location, .. } => location,
             Statement::StandaloneErrorHandler { location, .. } => location,
             Statement::ClassDefinition { location, .. } => location,
             Statement::Description { location, .. } => location,

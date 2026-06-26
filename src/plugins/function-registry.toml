@@ -2779,6 +2779,17 @@ hosts       = ["server"]
 description = "Block until the next POST /mcp request arrives. Stores the response writer as the current HTTP client context. Returns the raw JSON-RPC request body as a length-prefixed string. Returns empty string on shutdown."
 
 [[functions]]
+name        = "_mcp_http_respond"
+layer       = 3
+category    = "mcp"
+module      = "env"
+params      = ["string"]
+returns     = "i32"
+aliases     = ["mcp.http_respond"]
+hosts       = ["server"]
+description = "Deliver the JSON response body to the HTTP client whose request was returned by the most recent _mcp_http_accept call. Each accept must be followed by exactly one respond before the next accept. Returns 1 on success, 0 if no in-flight HTTP response context is set or the client disconnected."
+
+[[functions]]
 name        = "_mcp_sse_send"
 layer       = 3
 category    = "mcp"

@@ -47,7 +47,6 @@ pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
         Rule::background_stmt => parse_background_statement(inner, ast_location),
         Rule::later_assignment => parse_later_assignment_statement(inner, ast_location),
         Rule::import_block => parse_import_block_statement(inner, ast_location),
-        Rule::private_block => parse_private_block_statement(inner, ast_location),
         Rule::start_expr => {
             let expr = parse_start_expression(inner)?;
             Ok(Statement::Expression {
@@ -1030,53 +1029,6 @@ fn parse_import_block_statement(
 
     Ok(Statement::Import {
         imports,
-        location: Some(ast_location),
-    })
-}
-
-fn parse_private_block_statement(
-    pair: Pair<Rule>,
-    ast_location: crate::ast::SourceLocation,
-) -> Result<Statement, CompilerError> {
-    // For now, treat private blocks as import statements with a special marker
-    // This is a simplified implementation - in a full implementation, you'd want
-    // to handle private visibility properly
-    let mut private_items = Vec::new();
-
-    for part in pair.into_inner() {
-        if part.as_rule() == Rule::indented_private_list {
-            for private_pair in part.into_inner() {
-                if private_pair.as_rule() == Rule::private_item {
-                    // Handle private function or identifier
-                    let mut item_inner = private_pair.into_inner();
-                    if let Some(item) = item_inner.next() {
-                        match item.as_rule() {
-                            Rule::identifier => {
-                                private_items.push(crate::ast::ImportItem {
-                                    name: format!("private:{}", item.as_str()),
-                                    alias: None,
-                                    is_file_import: false,
-                                });
-                            }
-                            Rule::function_in_block => {
-                                // Handle private function - parse as regular function but mark as private
-                                // This is a simplified approach
-                                private_items.push(crate::ast::ImportItem {
-                                    name: "private:function".to_string(),
-                                    alias: None,
-                                    is_file_import: false,
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(Statement::Import {
-        imports: private_items,
         location: Some(ast_location),
     })
 }

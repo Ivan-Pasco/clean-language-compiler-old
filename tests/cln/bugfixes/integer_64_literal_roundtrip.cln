@@ -1,0 +1,16 @@
+// Test: bugfixes/integer_64_literal_roundtrip
+// Grammar: declaration_statement, integer_literal with type integer:64
+// Regression: SYN001 / COM001 — integer:64 literal silently truncated to i32 in
+// codegen, producing "-1" for i64::MAX and "-1294967296" for values in u32 range.
+// Expected output:
+//   9223372036854775807
+//   3000000000
+//   4294967296
+
+start:
+	integer:64 maxv = 9223372036854775807
+	printl(maxv.toString())
+	integer:64 over32 = 3000000000
+	printl(over32.toString())
+	integer:64 over_u32 = 4294967296
+	printl(over_u32.toString())

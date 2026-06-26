@@ -858,14 +858,6 @@ impl<'a> PluginExpander<'a> {
                     });
                 }
 
-                Statement::PrivateBlock { items, location } => {
-                    let expanded_items = self.expand_statements(items)?;
-                    result.push(Statement::PrivateBlock {
-                        items: expanded_items,
-                        location,
-                    });
-                }
-
                 Statement::ClassDefinition { class, location } => {
                     let expanded_class = self.expand_class(class)?;
                     result.push(Statement::ClassDefinition {

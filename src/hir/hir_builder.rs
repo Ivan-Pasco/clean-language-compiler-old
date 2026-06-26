@@ -431,7 +431,6 @@ impl HirBuilder {
                 | Statement::ScreenBlockStmt { .. }
                 | Statement::ScreenBlock { .. }
                 | Statement::FrameworkBlock { .. }
-                | Statement::PrivateBlock { .. }
                 | Statement::TestsBlock { .. } => None,
                 _ => None,
             }

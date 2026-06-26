@@ -1,0 +1,17 @@
+// Test: bugfixes/reset_state_named_restores_initial
+// Grammar: reset_statement = "reset" , ( "state" | identifier )
+// Regression: RUN002 — `reset <name>` lowered to a host bridge that was a no-op
+// across every host, so the state variable kept its mutated value instead of
+// restoring the initial value declared in the `state:` block.
+// Expected output:
+//   42
+//   10
+
+start:
+	counter = 42
+	printl(counter.toString())
+	reset counter
+	printl(counter.toString())
+
+state:
+	integer counter = 10

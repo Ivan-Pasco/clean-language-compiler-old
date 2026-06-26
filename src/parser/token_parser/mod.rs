@@ -248,10 +248,6 @@ impl TokenParser {
                     Ok(mut import_items) => imports.append(&mut import_items),
                     Err(e) => self.errors.push(e),
                 },
-                TokenKind::Private => match self.parse_private() {
-                    Ok(private_stmt) => statements.push(private_stmt),
-                    Err(e) => self.errors.push(e),
-                },
                 TokenKind::Start => {
                     // Parse start() function (special case - no 'function' keyword)
                     match self.parse_start_function() {
