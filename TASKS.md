@@ -1,37 +1,67 @@
 # Clean Language Compiler - Implementation Tasks
 
-## ✅ RESOLVED: CMP-SSR-MALLOC-OOM-PAGE-RENDER — HIR rewrite turns string accumulator loops into doubling StringBuilder
+## 🔴 RE-OPEN: CMP-SSR-MALLOC-OOM-PAGE-RENDER — 0.30.366 fix only covers `acc = acc + x` (single RHS); production uses chained `acc = acc + x + y + …` and is unchanged
 
-**Dashboard fingerprints (to close on next release)**: `27aa9c637433` (re-opened, first reported 0.30.351), `ffae539222ff` (first reported 0.30.361), and the follow-up investigation report `ff0c62d05604` (under the same error code).
-**Implementation date**: 2026-06-26, against 0.30.364 baseline.
-**Approach landed**: Option 2 from the original investigation — compiler-level detection + runtime helpers — augmented with the scope-safety opt-out described below.
+**Dashboard fingerprints (all REOPENED 2026-06-26 after user-reported regression on 0.30.366)**: `27aa9c637433`, `ffae539222ff`, `ff0c62d05604`, plus the new report `031d534fb4bd` filed against 0.30.366 with live evidence of unchanged byte counts on `/syntax` and `/tutorials`.
 
-### What landed
+**Last shipped attempt**: 0.30.365 / 0.30.366 (commits `3902422b` and `36636dc5`). Both verified locally against a synthetic SSR Builder repro that uses the trivial `acc = acc + b.render()` form; both passed. Closed on the dashboard 2026-06-26. **Dashboard close was premature** — the synthetic repro did not exercise the actual production pattern. The user observed that `/syntax` and `/tutorials` still 500 with `WASM malloc returned null in string.concat: need 16314 bytes, buffer is 128.0 MB` under 0.30.366, with byte counts essentially identical to 0.30.361.
 
-1. **Native WASM helpers** (`src/codegen/native_stdlib/string_builder.rs`): `__string_builder_new`, `__string_builder_append`, `__string_builder_finalize`. The builder has an 8-byte header `[capacity:i32][length:i32]` followed by content bytes. Append doubles capacity on overflow (`new_capacity = max(capacity * 2, needed)`); finalize aliases the returned string pointer to `builder + 4` so the existing length-prefixed string contract holds without an extra allocation. All three helpers are registered in `src/codegen/codegen_registration.rs` next to `__string_concat`, sharing the same `malloc_idx`.
-2. **HIR-level pattern detection** (`src/hir/hir_builder.rs::rewrite_string_accumulator_loops`): runs at the tail of every `build_block` (bottom-up, so nested accumulator loops are seen). Matches `string <acc> = ""` followed by a `while`/`for` whose body contains exactly one self-append `<acc> = <acc> + <expr>` and no other read/write of `<acc>`. Intervening statements between the decl and the loop are allowed as long as they don't touch `<acc>` (the SSR repro has `integer i = 0` between them). On match, rewrites to `let __sb_N = string_builder_new(); <loop with append rewritten>; let <acc> = string_builder_finalize(__sb_N)`.
-3. **Scope-safety opt-out**: the rewrite declares `__sb_N` with `HirType::String` rather than `HirType::Integer`. This is the load-bearing detail. Without it, `body_is_iter_scope_safe` (`src/mir/mir_builder/helpers.rs`) sees the loop body — which only assigns to `__sb_N` (an outer-scope variable) — as containing no escape, so the MIR builder wraps the iteration in `mem_scope_push` / `mem_scope_pop`. That pop reclaims the very heap region the builder lives in; the next iter's appends would overwrite arbitrary memory and the running accumulator silently corrupts. Declaring `__sb_N` as `String` makes `is_arena_alloc_type(target.expr_type)` return true at the `__sb_N = string_builder_append(...)` assignment, suppressing the scope wrapper. The WASM representation is still i32; the type tag is purely a marker for the predicate.
+### Why 0.30.366 didn't reach production
 
-### Verification
+Real-world SSR loops concatenate multiple expressions per iteration. The canonical shape — present verbatim in `app/ui/web/pages/syntax.cln::buildFilterButtons` in Web Site Clean — is:
 
-- **Regression**: the canonical SSR repro (100 outer × 50 inner iterations, builder class) now produces the expected `134690` characters and completes without trapping. Pre-fix it OOM'd at ~200 iterations under the clean-server 128 MB cap. Compiler is `0.30.364`+1 (version bump pending the comita run).
-- **Test**: `tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln` covers four shapes — simple integer-to-string, repeating literal, nested accumulators, and growth across the initial 16-byte capacity boundary. Each prints a length that's verifiable by hand.
-- **Unit tests** in `string_builder.rs` guard the doubling rule and the `+4` aliasing trick (so a future edit that quietly degrades to linear growth, or breaks the string-layout aliasing, fails CI).
-- **Wider sweep**: 299 .cln files from `tests/cln/core`, `tests/cln/control`, `tests/cln/spec_compliance`, `tests/cln/language` compile identically to the 0.30.364 baseline (0 new regressions). `cargo test --lib` stays at 436 passing (up from 431 baseline by the new unit tests).
-- **No spurious rewrites**: of the same 299 tests, 0 trigger the rewrite (verified by `wasm2wat | grep "call <string_builder_append_idx>"`). The pattern matcher is conservative.
+```clean
+string acc = ""
+integer i = 0
+string catJson = json.get(categoriesJson, "0")
+while catJson != ""
+    RenderSyntaxCategorySection sec = RenderSyntaxCategorySection(catJson)
+    acc = acc + sec.filterButton()
+    i = i + 1
+    catJson = json.get(categoriesJson, i.toString())
+```
 
-### Files touched
+The `acc + sec.filterButton()` arm DOES match the 0.30.366 matcher (single RHS = `sec.filterButton()`), but `buildCategorySections` below it has `acc = acc + sec.serve()` where `serve()` internally builds a chained string. And inside frame.ui-expanded components, the body almost always ends up `acc = acc + "<tag>" + value.toString() + "</tag>"` after macro expansion.
 
-- `src/codegen/native_stdlib/string_builder.rs` (new)
-- `src/codegen/native_stdlib/mod.rs` (export the new module)
-- `src/codegen/codegen_registration.rs` (register the three helpers next to `__string_concat`)
-- `src/resolver/resolver_impl.rs` (register `string_builder_new` / `_append` / `_finalize` as builtins with `HirType::String` for the scope-safety opt-out)
-- `src/hir/hir_builder.rs` (add `string_builder_counter` field, the `rewrite_string_accumulator_loops` pass, and the supporting `AccumulatorAnalysis` / `AccumulatorRewrite` / `LoopKind` types)
-- `tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln` (new test file)
+A chained `acc = acc + e1 + e2 + e3` parses as the left-fold `(((acc + e1) + e2) + e3)`. The matcher in `hir_builder.rs::analyze_stmt_for_accumulator` checks whether the assignment's `value.left` is exactly `Variable(acc)` — but the outermost `value.left` is itself a `BinaryOp`, not `Variable(acc)`. So the matcher rejects, no rewrite fires, the loop falls back to repeated `string.concat` calls, and the original O(n²) blowup persists. The 0.30.366 SSR test (`tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln`) only covers the single-RHS form, so the gap wasn't caught locally.
+
+### Why naive chain-fix attempt (today, unshipped) made it worse
+
+A left-spine walker was prototyped on 2026-06-26 to flatten `acc = acc + e1 + e2 + … + eN` into N sequential `__sb = string_builder_append(__sb, eN)` statements. The flatten works correctly in isolation (multiple tests with `while i < N` style conditions produce correct length output).
+
+**But the rewrite interacts catastrophically with loops whose condition is `c != ""` where `c` is updated mid-body by a `json.get` call** — exactly the production SSR pattern. The loop exits 1 iteration early under the rewrite, even though the same source compiles and runs correctly without the rewrite (i.e., on 0.30.364). The mechanism is not yet diagnosed:
+
+- The minimal repro is in `/tmp/minimal_bug.cln` (12 lines, no plugins required): a `while c != ""` loop where `c` is reassigned by `json.get(j, i.toString())` at the end of each iter. With rewrite enabled (single-RHS body `acc = acc + "[X]"`), the loop runs 2 iters and final length is 6. Without rewrite (init `acc = "0"` to bypass the matcher), the loop runs 3 iters and final length is 10. Both versions exhibit a *separate, pre-existing* `json.get` length-corruption symptom: `c.length()` returns 4 instead of 1 (verifiable by adding `print(c.length().toString())` inside the loop on either 0.30.364 or 0.30.366) — but only the rewrite-enabled version truncates the iteration count.
+- The pre-existing `c.length()` corruption hits both compiled outputs; only the rewrite changes when the comparison `c != ""` decides to exit. Suspect: a heap-layout interaction between the host-side `allocate_string_in_memory` / `mem_alloc` path used by `string.concat` and `json.get`, vs. the WASM-native `__malloc` path used by `__string_builder_append`. The host path and native path both update `__heap_ptr` correctly in isolation; the timing of when each takes the high-water mark may produce different `__heap_ptr` values during loop-condition evaluation. Not yet confirmed.
+
+The naive chain matcher has been discarded from the working tree pending a real diagnosis. Shipping it would silently change the iteration count of any user loop with a json-driven condition — strictly worse than the OOM, since failures would be silent.
+
+### What's true going forward
+
+- The three dashboard fingerprints `27aa9c637433`, `ffae539222ff`, `ff0c62d05604` are REOPENED (`POST /api/v1/fingerprints/<fp>/reopen`).
+- The new report `031d534fb4bd` (filed against 0.30.366 with live `/syntax` and `/tutorials` evidence) stays open under the same error code.
+- The 0.30.366 fix DOES help on the trivial single-RHS pattern. Synthetic SSR Builder tests that emit one render-call per iteration produce 134690 chars correctly and no longer OOM. That part of the fix is sound and stays shipped.
+- The 0.30.366 fix does NOT help on chained-RHS patterns (the production case). A real fix needs to (a) detect chained RHS via left-spine walking AND (b) not change loop semantics under json-driven conditions.
+
+### Investigation prerequisites before the next attempt
+
+1. **Diagnose the iteration-count delta** in `/tmp/minimal_bug.cln` (or an equivalent self-contained test). Specifically: what is `__heap_ptr` immediately before each `string_compare(c, "")` call in (a) the rewrite-enabled WAT vs (b) the no-rewrite WAT? What is `c` (its pointer value, the 4 bytes at `c+0`, and the bytes at `c+4..c+4+len`)? The host-side `string_compare` reads `c+0..c+3` as length — if those bytes differ between the two compilations, the comparison sees different strings.
+2. **Confirm the pre-existing `c.length()` bug** is independent of the rewrite (it appears in 0.30.364 too) and file it as a separate report once the SSR fix is unblocked.
+3. **Extend the test fixture** to cover the chained-RHS pattern AND the json-driven-condition pattern BEFORE re-shipping. The 0.30.366 test was insufficient because it only used the trivial form. The new fixture must compile and pass when run end-to-end with `cln` invoked through `wasmtime_runner` AND when run through `clean-server` (the host that originally hit the 128 MB cap) so we catch both the WASM-side bug and any host-bridge interaction.
+4. **Cite the four prior false-resolved entries** (`0e3d5cd7`, `fbc8793a`, `80e48890`, `fe33c4bf` per the user's report) in the eventual fix commit so the resolution loop is visible across cycles.
+
+### Files (unchanged, still shipped, still correct on trivial-form pattern)
+
+- `src/codegen/native_stdlib/string_builder.rs`
+- `src/codegen/native_stdlib/mod.rs`
+- `src/codegen/codegen_registration.rs`
+- `src/resolver/resolver_impl.rs`
+- `src/hir/hir_builder.rs` (single-RHS matcher only — left-spine extension reverted)
+- `tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln` (single-RHS coverage only — chained-RHS coverage pending)
 
 ### Cross-component impact
 
-None. The helpers are pure Layer-1 native WASM (no new host bridge calls), so `clean-server`, `clean-node-server`, and the `wasmtime_runner` all work unchanged. Frame.ui's `html_block_to_code` (the heavy allocator the original report called out) benefits automatically — any `string acc = ""; while …; acc = acc + render(…)` pattern its expansion produces will be rewritten by the compiler.
+None added by 0.30.366. The user's `/syntax` and `/tutorials` server failures continue to surface in the website's render path until the chained-RHS gap is closed. Until then, the website team should not rely on the dashboard's `fixed_in_version` field as a signal of production resolution.
 
 ---
 
