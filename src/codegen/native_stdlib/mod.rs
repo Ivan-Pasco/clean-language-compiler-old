@@ -16,6 +16,7 @@
 pub mod list_ops;
 pub mod memory;
 pub mod pairs_ops;
+pub mod string_builder;
 pub mod string_ops;
 pub mod type_conversions;
 

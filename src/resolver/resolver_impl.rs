@@ -3132,6 +3132,38 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
+        // String-accumulator-loop helpers — emitted by the HIR-level
+        // rewrite that resolves CMP-SSR-MALLOC-OOM-PAGE-RENDER. At the
+        // WASM level the builder handle is an i32 pointer, but we declare
+        // the signatures with `String` so the MIR-level
+        // `body_is_iter_scope_safe` predicate treats writes to a
+        // builder-typed outer variable as escape (an outer String IS an
+        // arena-allocated type). Without this, the predicate marks the
+        // rewritten loop body as scope-safe and the MIR builder emits
+        // `mem_scope_push` / `mem_scope_pop` around each iteration —
+        // which reclaims the very heap region the builder lives in,
+        // corrupting the running accumulator. Treating the builder as
+        // String suppresses that scope wrapper. The WASM-level i32
+        // representation is unchanged.
+        self.register_builtin_fn(
+            "string_builder_new",
+            vec![],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "string_builder_append",
+            vec![HirType::String, HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "string_builder_finalize",
+            vec![HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+
         // Testing functions
         self.register_builtin_fn(
             "mustBeTrue",

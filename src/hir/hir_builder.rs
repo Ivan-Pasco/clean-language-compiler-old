@@ -23,6 +23,49 @@ struct CallableSignature {
     param_names: Vec<String>,
 }
 
+/// Accumulator analysis result — populated by walking a loop body to decide
+/// whether the string-accumulator-loop rewrite is safe to apply.
+#[derive(Debug, Default)]
+struct AccumulatorAnalysis {
+    /// Number of canonical self-appends (`acc = acc + …`) seen.
+    self_appends: u32,
+    /// Number of reads of `acc` outside the canonical self-append's LHS slot.
+    reads: u32,
+    /// Set to true if any disqualifier is observed (early return,
+    /// suspension point, prepend, write to `acc` from a non-canonical
+    /// site, etc.). Short-circuits the walk.
+    disqualified: bool,
+}
+
+impl AccumulatorAnalysis {
+    fn is_rewritable(&self) -> bool {
+        !self.disqualified && self.self_appends == 1 && self.reads == 0
+    }
+}
+
+/// Result of a successful accumulator-pattern match. Constructed by
+/// `try_match_accumulator_pair` and consumed by
+/// `rewrite_string_accumulator_loops` to splice the rewrite into the
+/// caller's statement vector.
+struct AccumulatorRewrite {
+    /// Replaces the original `string acc = ""` decl with the builder init.
+    decl_replacement: HirStatement,
+    /// Replaces the original `while`/`for` with the same loop whose body
+    /// has the self-append rewritten to `string_builder_append`.
+    replacement_loop: HirStatement,
+    /// Inserted immediately after the loop: rebinds `acc` to the
+    /// finalized string so any downstream reader sees a normal string.
+    finalize_decl: HirStatement,
+}
+
+/// Internal marker used during accumulator-pattern detection to remember
+/// which kind of loop we matched (so we reconstruct the same variant
+/// after rewriting the body).
+enum LoopKind {
+    While,
+    For,
+}
+
 /// HIR Builder - constructs HIR from AST
 pub struct HirBuilder {
     type_inference_counter: usize,
@@ -52,6 +95,12 @@ pub struct HirBuilder {
     /// expand inline to `<name> = <initializer>` without depending on a host
     /// bridge to remember the original value.
     state_initializers: std::collections::HashMap<String, crate::ast::Expression>,
+    /// Monotonic counter used to name temporaries introduced by the
+    /// string-accumulator-loop rewrite that resolves
+    /// CMP-SSR-MALLOC-OOM-PAGE-RENDER. Each rewritten loop gets a unique
+    /// `__sb_N` local. Mirrors `later_counter` — never reset, so a single
+    /// build never produces colliding names.
+    string_builder_counter: usize,
 }
 
 impl HirBuilder {
@@ -70,6 +119,7 @@ impl HirBuilder {
             current_function_name: String::new(),
             api_response_vars: std::collections::HashMap::new(),
             state_initializers: std::collections::HashMap::new(),
+            string_builder_counter: 0,
         }
     }
 
@@ -1096,8 +1146,23 @@ impl HirBuilder {
     fn build_block(&mut self, statements: &[Statement]) -> Result<HirBlock, CompilerError> {
         // Enter a nested scope: apply blocks and imports are now forbidden.
         self.scope_depth += 1;
-        let result = self.build_block_inner(statements);
+        let mut result = self.build_block_inner(statements);
         self.scope_depth -= 1;
+
+        // Post-pass: detect the `string acc = ""; while … { acc = acc + … }`
+        // pattern and rewrite it to use a doubling-capacity string builder.
+        // Resolves CMP-SSR-MALLOC-OOM-PAGE-RENDER by converting the O(n²)
+        // accumulator pattern (each iteration strands the old `acc`) into
+        // an O(n) one.
+        //
+        // Runs on every lowered block. Because `build_block` recurses for
+        // function bodies, method bodies, loop bodies, and if branches,
+        // inner blocks are rewritten before their enclosing ones — so an
+        // outer accumulator loop containing an inner accumulator loop
+        // (e.g. the SSR repro) gets both rewritten.
+        if let Ok(block) = &mut result {
+            self.rewrite_string_accumulator_loops(&mut block.statements);
+        }
         result
     }
 
@@ -2505,6 +2570,627 @@ impl HirBuilder {
     //       errors = validator.getErrors(__result)
     //       <error_branch>
     // =========================================================================
+
+    // =========================================================================
+    // String-accumulator-loop rewrite (CMP-SSR-MALLOC-OOM-PAGE-RENDER)
+    //
+    // Detects:
+    //     string acc = ""
+    //     while <cond>             // or `for` over a range
+    //         …
+    //         acc = acc + <expr>   // exactly one self-append, anywhere in body
+    //         …
+    //
+    // and rewrites it to:
+    //
+    //     integer __sb_N = string_builder_new()
+    //     while <cond>
+    //         …
+    //         __sb_N = string_builder_append(__sb_N, <expr>)
+    //         …
+    //     string acc = string_builder_finalize(__sb_N)
+    //
+    // Disqualifiers (any one falls back to the slow path):
+    //   - The initializer isn't a literal "" empty string.
+    //   - `acc` is read anywhere in the loop body other than as the LHS of the
+    //     unique self-append (e.g. `print(acc)`, `acc.length()`, `other = acc`).
+    //   - `acc` is written anywhere else in the body.
+    //   - The body contains an early `return` (would observe partial state).
+    //   - The body contains a `LaterAssignment` or `Background` (suspension
+    //     points could observe `acc`).
+    //   - The body contains a `break` (would leave the builder unfinalized
+    //     in a way that exposes `acc` mid-flight).
+    //   - `acc = expr + acc` (prepend) — design is append-only.
+    //
+    // The rewrite is bottom-up because `build_block` runs this pass at the
+    // tail of every recursive call, so nested accumulator loops are
+    // rewritten before their enclosing ones.
+    // =========================================================================
+
+    /// Walk the block's statements looking for `string acc = ""` declarations
+    /// and a downstream loop that uses `acc` in the accumulator pattern.
+    /// Rewrite each match in place.
+    ///
+    /// Adjacency rule: the decl does NOT have to be immediately before the
+    /// loop. The original sketch required strict adjacency, but the
+    /// canonical SSR repro intersperses an `integer i = 0` between
+    /// `string acc = ""` and `while`, so strict adjacency would never
+    /// fire on the very pattern the rewrite exists to handle. We instead
+    /// scan forward from each candidate decl, verifying no intervening
+    /// statement reads or writes `acc`, until we hit either:
+    ///   - a matching loop (rewrite),
+    ///   - a statement that observes `acc` (give up on this decl),
+    ///   - the end of the block (give up).
+    fn rewrite_string_accumulator_loops(&mut self, stmts: &mut Vec<HirStatement>) {
+        let mut i = 0;
+        while i + 1 < stmts.len() {
+            // Quick filter: this position must hold `string <name> = ""`.
+            let Some(acc_name) = Self::accumulator_decl_name(&stmts[i]) else {
+                i += 1;
+                continue;
+            };
+
+            // Scan forward for the loop that consumes this accumulator,
+            // bailing if any intervening statement touches `acc`.
+            let mut scan = i + 1;
+            let mut matched_loop_idx: Option<usize> = None;
+            while scan < stmts.len() {
+                if Self::stmt_is_accumulator_loop(&stmts[scan], &acc_name) {
+                    matched_loop_idx = Some(scan);
+                    break;
+                }
+                // Intervening statement — verify it doesn't touch `acc`.
+                let mut probe = AccumulatorAnalysis::default();
+                Self::analyze_stmt_for_accumulator(&stmts[scan], &acc_name, &mut probe);
+                if probe.disqualified || probe.reads > 0 || probe.self_appends > 0 {
+                    break;
+                }
+                scan += 1;
+            }
+
+            let Some(loop_idx) = matched_loop_idx else {
+                i += 1;
+                continue;
+            };
+
+            // Pattern is committed; clone the decl + loop, run the
+            // full rewrite, splice the result back in.
+            let decl_clone = stmts[i].clone();
+            let loop_clone = stmts[loop_idx].clone();
+            let Some(rewrite) = self.try_match_accumulator_pair(&decl_clone, &loop_clone) else {
+                i += 1;
+                continue;
+            };
+
+            // Splice the rewrite:
+            //   - replace decl at i with decl_replacement,
+            //   - replace loop at loop_idx with replacement_loop,
+            //   - insert finalize_decl at loop_idx + 1.
+            // (Inserting at the higher index first keeps the lower index
+            // valid; here we mutate the higher index after the lower,
+            // which is also safe because we're not yet inserting.)
+            stmts[i] = rewrite.decl_replacement;
+            stmts[loop_idx] = rewrite.replacement_loop;
+            stmts.insert(loop_idx + 1, rewrite.finalize_decl);
+
+            // Resume scanning after the newly inserted finalize.
+            i = loop_idx + 2;
+        }
+    }
+
+    /// Cheap filter: is this statement `string <name> = ""`?
+    /// Returns the variable name when it matches, `None` otherwise.
+    fn accumulator_decl_name(stmt: &HirStatement) -> Option<String> {
+        let HirStatement::VariableDeclaration {
+            name,
+            var_type,
+            initializer,
+            ..
+        } = stmt
+        else {
+            return None;
+        };
+        if !matches!(var_type, HirType::String) {
+            return None;
+        }
+        match initializer {
+            Some(HirExpression::Literal {
+                value: Value::String(s),
+                ..
+            }) if s.is_empty() => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// Is this statement a `while`/`for` whose body contains the canonical
+    /// self-append on `acc_name` (and is otherwise rewrite-safe)?
+    /// Used as the candidate-loop predicate while scanning forward from a
+    /// matched decl.
+    fn stmt_is_accumulator_loop(stmt: &HirStatement, acc_name: &str) -> bool {
+        let body = match stmt {
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => body,
+            _ => return false,
+        };
+        let mut analysis = AccumulatorAnalysis::default();
+        Self::analyze_block_for_accumulator(body, acc_name, &mut analysis);
+        analysis.is_rewritable()
+    }
+
+    /// If `(decl, loop_stmt)` matches the accumulator pattern, mutate the
+    /// loop body in place (replacing the self-append) and return the
+    /// replacement declarations. Returns `None` otherwise (and leaves the
+    /// loop body untouched).
+    fn try_match_accumulator_pair(
+        &mut self,
+        decl: &HirStatement,
+        loop_stmt: &HirStatement,
+    ) -> Option<AccumulatorRewrite> {
+        // -- Step 1: decl must be `string <name> = ""`.
+        let (acc_name, decl_loc) = match decl {
+            HirStatement::VariableDeclaration {
+                name,
+                var_type,
+                initializer,
+                location,
+                ..
+            } => {
+                if !matches!(var_type, HirType::String) {
+                    return None;
+                }
+                match initializer {
+                    Some(HirExpression::Literal {
+                        value: Value::String(s),
+                        ..
+                    }) if s.is_empty() => (name.clone(), location.clone()),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+
+        // -- Step 2: loop_stmt must be a While or For; clone its body so we
+        // can decide whether to commit before mutating the caller's slice.
+        let (mut new_body, loop_kind) = match loop_stmt {
+            HirStatement::While { body, .. } => (body.clone(), LoopKind::While),
+            HirStatement::For { body, .. } => (body.clone(), LoopKind::For),
+            _ => return None,
+        };
+
+        // -- Step 3: scan the body for exactly one canonical self-append and
+        // verify `acc` is not touched anywhere else.
+        let mut analysis = AccumulatorAnalysis::default();
+        Self::analyze_block_for_accumulator(&new_body, &acc_name, &mut analysis);
+        if !analysis.is_rewritable() {
+            return None;
+        }
+
+        // -- Step 4: commit. Allocate a fresh builder name and mutate the
+        // body in place, replacing the self-append.
+        let sb_name = format!("__sb_{}", self.string_builder_counter);
+        self.string_builder_counter += 1;
+
+        Self::rewrite_self_append_in_block(&mut new_body, &acc_name, &sb_name);
+
+        // Stitch the (now-rewritten) body back into the loop statement.
+        let new_loop = match loop_stmt {
+            HirStatement::While {
+                condition,
+                location,
+                ..
+            } => HirStatement::While {
+                condition: condition.clone(),
+                body: new_body,
+                location: location.clone(),
+            },
+            HirStatement::For {
+                variable,
+                iterable,
+                location,
+                ..
+            } => HirStatement::For {
+                variable: variable.clone(),
+                iterable: iterable.clone(),
+                body: new_body,
+                location: location.clone(),
+            },
+            _ => unreachable!("loop_kind matched above"),
+        };
+        let _ = loop_kind; // kept for clarity; both arms produce the right variant.
+
+        // Step 4b: emit the builder-init decl. At the WASM level the
+        // builder handle is an i32 pointer, but we declare it as
+        // `String` so the MIR-level `body_is_iter_scope_safe` predicate
+        // sees writes to `__sb_N` from inside the loop body as an
+        // outer-scope assignment of an arena-allocated type — which
+        // suppresses the per-iteration `mem_scope_push` / `mem_scope_pop`
+        // pair. Without that suppression, scope_pop reclaims the heap
+        // region the builder lives in and the next iter's appends
+        // overwrite it. The String shape is purely a marker; the WASM
+        // representation (i32 ptr) is unchanged.
+        let decl_replacement = HirStatement::VariableDeclaration {
+            name: sb_name.clone(),
+            var_type: HirType::String,
+            initializer: Some(HirExpression::Call {
+                function: "string_builder_new".to_string(),
+                arguments: vec![],
+                location: decl_loc.clone(),
+            }),
+            is_mutable: true,
+            location: decl_loc.clone(),
+        };
+
+        // Step 4c: emit the post-loop finalize decl. This re-binds the
+        // original `acc` name to a real Clean string for any downstream
+        // reader. The original decl was `is_mutable: true` by spec for
+        // assignments to work; we preserve that.
+        let finalize_decl = HirStatement::VariableDeclaration {
+            name: acc_name.clone(),
+            var_type: HirType::String,
+            initializer: Some(HirExpression::Call {
+                function: "string_builder_finalize".to_string(),
+                arguments: vec![HirExpression::Variable {
+                    name: sb_name.clone(),
+                    location: decl_loc.clone(),
+                }],
+                location: decl_loc.clone(),
+            }),
+            is_mutable: true,
+            location: decl_loc.clone(),
+        };
+
+        // Note: the *loop* in the caller's slice is still the original
+        // statement at `stmts[i+1]`. We need to overwrite it. Return the
+        // replacement loop in a side channel.
+        Some(AccumulatorRewrite {
+            decl_replacement,
+            finalize_decl,
+            replacement_loop: new_loop,
+        })
+    }
+
+    /// Walk every statement and every expression in the block, accumulating
+    /// info about how `acc_name` is touched.
+    fn analyze_block_for_accumulator(
+        block: &HirBlock,
+        acc_name: &str,
+        out: &mut AccumulatorAnalysis,
+    ) {
+        for stmt in &block.statements {
+            Self::analyze_stmt_for_accumulator(stmt, acc_name, out);
+            if out.disqualified {
+                return;
+            }
+        }
+    }
+
+    fn analyze_stmt_for_accumulator(
+        stmt: &HirStatement,
+        acc_name: &str,
+        out: &mut AccumulatorAnalysis,
+    ) {
+        match stmt {
+            HirStatement::Assignment { target, value, .. } => {
+                // Is this the canonical self-append?
+                let HirLValue::Variable { name: lhs_name, .. } = target else {
+                    // Field/index assignment — recurse into LHS object/index expressions.
+                    Self::analyze_lvalue_for_accumulator(target, acc_name, out);
+                    Self::analyze_expr_for_accumulator(value, acc_name, out);
+                    return;
+                };
+                let is_self_append = lhs_name == acc_name
+                    && match value {
+                        HirExpression::BinaryOp { left, op, .. } => {
+                            matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat)
+                                && matches!(
+                                    left.as_ref(),
+                                    HirExpression::Variable { name, .. } if name == acc_name
+                                )
+                        }
+                        _ => false,
+                    };
+                if is_self_append {
+                    // Check the RHS sub-expression for any *other* read of acc.
+                    // (We allow only the LHS of `acc + …`, not the RHS.)
+                    if let HirExpression::BinaryOp { right, .. } = value {
+                        let mut rhs_out = AccumulatorAnalysis::default();
+                        Self::analyze_expr_for_accumulator(right, acc_name, &mut rhs_out);
+                        if rhs_out.reads > 0 || rhs_out.disqualified {
+                            // e.g. `acc = acc + acc` — the second `acc` is a real read.
+                            out.disqualified = true;
+                            return;
+                        }
+                    }
+                    out.self_appends += 1;
+                } else if lhs_name == acc_name {
+                    // Some other write to acc (e.g. `acc = "literal"` or
+                    // `acc = other + acc` prepend). Disqualified.
+                    out.disqualified = true;
+                } else {
+                    // Unrelated assignment — but its RHS might still read acc.
+                    Self::analyze_expr_for_accumulator(value, acc_name, out);
+                }
+            }
+            HirStatement::VariableDeclaration { initializer, .. } => {
+                if let Some(init) = initializer {
+                    Self::analyze_expr_for_accumulator(init, acc_name, out);
+                }
+            }
+            HirStatement::Expression { expression, .. } => {
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+            }
+            HirStatement::Print { expression, .. } => {
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+            }
+            HirStatement::Return { value, .. } => {
+                // An early return inside the loop body is an escape — even if
+                // it doesn't reference `acc` directly, the user might
+                // depend on `acc` having been observable. Bail.
+                out.disqualified = true;
+                if let Some(v) = value {
+                    Self::analyze_expr_for_accumulator(v, acc_name, out);
+                }
+            }
+            HirStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::analyze_expr_for_accumulator(condition, acc_name, out);
+                Self::analyze_block_for_accumulator(then_branch, acc_name, out);
+                if let Some(else_b) = else_branch {
+                    Self::analyze_block_for_accumulator(else_b, acc_name, out);
+                }
+            }
+            HirStatement::While {
+                condition, body, ..
+            } => {
+                Self::analyze_expr_for_accumulator(condition, acc_name, out);
+                Self::analyze_block_for_accumulator(body, acc_name, out);
+            }
+            HirStatement::For { iterable, body, .. } => {
+                Self::analyze_expr_for_accumulator(iterable, acc_name, out);
+                Self::analyze_block_for_accumulator(body, acc_name, out);
+            }
+            HirStatement::Break { .. } => {
+                // A break leaves the builder in a state where the rebound
+                // `acc = finalize(...)` after the loop would still execute,
+                // but mixing partial state with the original semantics is
+                // risky enough to bail on. Most break-using loops are not
+                // simple accumulators anyway.
+                out.disqualified = true;
+            }
+            HirStatement::Continue { .. } => {
+                // Continue is fine — it just skips the remainder of this
+                // iteration. No bail needed.
+            }
+            HirStatement::LaterAssignment { expression, .. }
+            | HirStatement::Background { expression, .. } => {
+                // Suspension points could observe `acc` from elsewhere.
+                out.disqualified = true;
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+            }
+            HirStatement::Require { condition, .. } | HirStatement::Ensure { condition, .. } => {
+                Self::analyze_expr_for_accumulator(condition, acc_name, out);
+            }
+        }
+    }
+
+    fn analyze_lvalue_for_accumulator(
+        lvalue: &HirLValue,
+        acc_name: &str,
+        out: &mut AccumulatorAnalysis,
+    ) {
+        match lvalue {
+            HirLValue::Variable { .. } => {
+                // Handled by the caller (this is for non-Variable lvalues only).
+            }
+            HirLValue::FieldAccess { object, .. } => {
+                Self::analyze_expr_for_accumulator(object, acc_name, out);
+            }
+            HirLValue::Index { array, index, .. } => {
+                Self::analyze_expr_for_accumulator(array, acc_name, out);
+                Self::analyze_expr_for_accumulator(index, acc_name, out);
+            }
+        }
+    }
+
+    fn analyze_expr_for_accumulator(
+        expr: &HirExpression,
+        acc_name: &str,
+        out: &mut AccumulatorAnalysis,
+    ) {
+        match expr {
+            HirExpression::Variable { name, .. } => {
+                if name == acc_name {
+                    out.reads += 1;
+                }
+            }
+            HirExpression::Literal { .. } => {}
+            HirExpression::BinaryOp { left, right, .. } => {
+                Self::analyze_expr_for_accumulator(left, acc_name, out);
+                Self::analyze_expr_for_accumulator(right, acc_name, out);
+            }
+            HirExpression::UnaryOp { operand, .. } => {
+                Self::analyze_expr_for_accumulator(operand, acc_name, out);
+            }
+            HirExpression::Call { arguments, .. } => {
+                for arg in arguments {
+                    Self::analyze_expr_for_accumulator(arg, acc_name, out);
+                }
+            }
+            HirExpression::MethodCall {
+                receiver,
+                arguments,
+                ..
+            } => {
+                Self::analyze_expr_for_accumulator(receiver, acc_name, out);
+                for arg in arguments {
+                    Self::analyze_expr_for_accumulator(arg, acc_name, out);
+                }
+            }
+            HirExpression::FieldAccess { object, .. } => {
+                Self::analyze_expr_for_accumulator(object, acc_name, out);
+            }
+            HirExpression::Index { array, index, .. } => {
+                Self::analyze_expr_for_accumulator(array, acc_name, out);
+                Self::analyze_expr_for_accumulator(index, acc_name, out);
+            }
+            HirExpression::Array { elements, .. } => {
+                for e in elements {
+                    Self::analyze_expr_for_accumulator(e, acc_name, out);
+                }
+            }
+            HirExpression::Constructor { arguments, .. } => {
+                for arg in arguments {
+                    Self::analyze_expr_for_accumulator(arg, acc_name, out);
+                }
+            }
+            HirExpression::Cast { expression, .. } => {
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+            }
+            HirExpression::Assignment { target, value, .. } => {
+                // An assignment-expression to `acc` is an escape we don't model.
+                if let HirLValue::Variable { name, .. } = target {
+                    if name == acc_name {
+                        out.disqualified = true;
+                    }
+                }
+                Self::analyze_lvalue_for_accumulator(target, acc_name, out);
+                Self::analyze_expr_for_accumulator(value, acc_name, out);
+            }
+            HirExpression::NamespaceCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::analyze_expr_for_accumulator(arg, acc_name, out);
+                }
+            }
+            HirExpression::StaticMethodCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::analyze_expr_for_accumulator(arg, acc_name, out);
+                }
+            }
+            HirExpression::OnError {
+                expression,
+                fallback,
+                ..
+            } => {
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+                Self::analyze_expr_for_accumulator(fallback, acc_name, out);
+            }
+            HirExpression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                Self::analyze_expr_for_accumulator(condition, acc_name, out);
+                Self::analyze_expr_for_accumulator(then_expr, acc_name, out);
+                Self::analyze_expr_for_accumulator(else_expr, acc_name, out);
+            }
+            HirExpression::BaseCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::analyze_expr_for_accumulator(arg, acc_name, out);
+                }
+            }
+            HirExpression::Range {
+                start, end, step, ..
+            } => {
+                Self::analyze_expr_for_accumulator(start, acc_name, out);
+                Self::analyze_expr_for_accumulator(end, acc_name, out);
+                if let Some(s) = step {
+                    Self::analyze_expr_for_accumulator(s, acc_name, out);
+                }
+            }
+            HirExpression::ObjectLiteral { fields, .. } => {
+                for (_, value) in fields {
+                    Self::analyze_expr_for_accumulator(value, acc_name, out);
+                }
+            }
+        }
+    }
+
+    /// After analysis confirms the body is rewritable, walk it again to
+    /// replace the single canonical self-append statement.
+    fn rewrite_self_append_in_block(block: &mut HirBlock, acc_name: &str, sb_name: &str) {
+        for stmt in &mut block.statements {
+            Self::rewrite_self_append_in_stmt(stmt, acc_name, sb_name);
+        }
+    }
+
+    fn rewrite_self_append_in_stmt(stmt: &mut HirStatement, acc_name: &str, sb_name: &str) {
+        match stmt {
+            HirStatement::Assignment {
+                target,
+                value,
+                location,
+            } => {
+                if let HirLValue::Variable { name: lhs_name, .. } = target {
+                    if lhs_name == acc_name {
+                        if let HirExpression::BinaryOp {
+                            left,
+                            op,
+                            right,
+                            location: bin_loc,
+                        } = value
+                        {
+                            if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat)
+                                && matches!(
+                                    left.as_ref(),
+                                    HirExpression::Variable { name, .. } if name == acc_name
+                                )
+                            {
+                                // Rewrite to: sb_name = string_builder_append(sb_name, <right>).
+                                // Use a sentinel Literal as the placeholder; the
+                                // `*stmt = …` immediately below overwrites the
+                                // whole statement, so the placeholder is never
+                                // observed by anything downstream.
+                                let rhs = std::mem::replace(
+                                    right.as_mut(),
+                                    HirExpression::Literal {
+                                        value: Value::None,
+                                        location: bin_loc.clone(),
+                                    },
+                                );
+                                *stmt = HirStatement::Assignment {
+                                    target: HirLValue::Variable {
+                                        name: sb_name.to_string(),
+                                        location: location.clone(),
+                                    },
+                                    value: HirExpression::Call {
+                                        function: "string_builder_append".to_string(),
+                                        arguments: vec![
+                                            HirExpression::Variable {
+                                                name: sb_name.to_string(),
+                                                location: location.clone(),
+                                            },
+                                            rhs,
+                                        ],
+                                        location: location.clone(),
+                                    },
+                                    location: location.clone(),
+                                };
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::rewrite_self_append_in_block(then_branch, acc_name, sb_name);
+                if let Some(else_b) = else_branch {
+                    Self::rewrite_self_append_in_block(else_b, acc_name, sb_name);
+                }
+            }
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                Self::rewrite_self_append_in_block(body, acc_name, sb_name);
+            }
+            _ => {}
+        }
+    }
 
     /// Build a `name.setFlags(flags)` method call statement.
     /// Emitted after a list variable declaration when the type has a non-Default behavior.

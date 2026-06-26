@@ -1,88 +1,37 @@
 # Clean Language Compiler - Implementation Tasks
 
-## 🔴 OPEN: CMP-SSR-MALLOC-OOM-PAGE-RENDER — bump allocator strands intermediates in concat-in-loop patterns
+## ✅ RESOLVED: CMP-SSR-MALLOC-OOM-PAGE-RENDER — HIR rewrite turns string accumulator loops into doubling StringBuilder
 
-**Dashboard fingerprints**: `27aa9c637433` (re-opened, first reported 0.30.351) and `ffae539222ff` (first reported 0.30.361).
-**Investigation date**: 2026-06-26 against 0.30.364.
+**Dashboard fingerprints (to close on next release)**: `27aa9c637433` (re-opened, first reported 0.30.351), `ffae539222ff` (first reported 0.30.361), and the follow-up investigation report `ff0c62d05604` (under the same error code).
+**Implementation date**: 2026-06-26, against 0.30.364 baseline.
+**Approach landed**: Option 2 from the original investigation — compiler-level detection + runtime helpers — augmented with the scope-safety opt-out described below.
 
-### Reproducer (self-contained, no plugins)
+### What landed
 
-```clean
-start:
-    string acc = ""
-    integer i = 0
-    while i < 100
-        Builder b = Builder(i)
-        acc = acc + b.render()
-        i = i + 1
-    print(acc.length().toString())
+1. **Native WASM helpers** (`src/codegen/native_stdlib/string_builder.rs`): `__string_builder_new`, `__string_builder_append`, `__string_builder_finalize`. The builder has an 8-byte header `[capacity:i32][length:i32]` followed by content bytes. Append doubles capacity on overflow (`new_capacity = max(capacity * 2, needed)`); finalize aliases the returned string pointer to `builder + 4` so the existing length-prefixed string contract holds without an extra allocation. All three helpers are registered in `src/codegen/codegen_registration.rs` next to `__string_concat`, sharing the same `malloc_idx`.
+2. **HIR-level pattern detection** (`src/hir/hir_builder.rs::rewrite_string_accumulator_loops`): runs at the tail of every `build_block` (bottom-up, so nested accumulator loops are seen). Matches `string <acc> = ""` followed by a `while`/`for` whose body contains exactly one self-append `<acc> = <acc> + <expr>` and no other read/write of `<acc>`. Intervening statements between the decl and the loop are allowed as long as they don't touch `<acc>` (the SSR repro has `integer i = 0` between them). On match, rewrites to `let __sb_N = string_builder_new(); <loop with append rewritten>; let <acc> = string_builder_finalize(__sb_N)`.
+3. **Scope-safety opt-out**: the rewrite declares `__sb_N` with `HirType::String` rather than `HirType::Integer`. This is the load-bearing detail. Without it, `body_is_iter_scope_safe` (`src/mir/mir_builder/helpers.rs`) sees the loop body — which only assigns to `__sb_N` (an outer-scope variable) — as containing no escape, so the MIR builder wraps the iteration in `mem_scope_push` / `mem_scope_pop`. That pop reclaims the very heap region the builder lives in; the next iter's appends would overwrite arbitrary memory and the running accumulator silently corrupts. Declaring `__sb_N` as `String` makes `is_arena_alloc_type(target.expr_type)` return true at the `__sb_N = string_builder_append(...)` assignment, suppressing the scope wrapper. The WASM representation is still i32; the type tag is purely a marker for the predicate.
 
-class Builder
-    integer id
-    constructor(integer idParam)
-        id = idParam
-    functions:
-        public:
-            string render()
-                string s = "<section><h2>Heading number " + id.toString() + " padding</h2><ul>"
-                integer j = 0
-                while j < 50
-                    s = s + "<li>item " + j.toString() + " in " + id.toString() + " row</li>"
-                    j = j + 1
-                s = s + "</ul></section>"
-                return s
-```
+### Verification
 
-Wasmtime_runner traps at ~100×50 iterations with `memory fault ... out of bounds`. Clean-server traps earlier with `WASM malloc returned null in string.concat: need ~16 KB, buffer is 128.0 MB`. Same root cause; the host's 128 MB cap is just a tighter ceiling than the runner's default.
+- **Regression**: the canonical SSR repro (100 outer × 50 inner iterations, builder class) now produces the expected `134690` characters and completes without trapping. Pre-fix it OOM'd at ~200 iterations under the clean-server 128 MB cap. Compiler is `0.30.364`+1 (version bump pending the comita run).
+- **Test**: `tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln` covers four shapes — simple integer-to-string, repeating literal, nested accumulators, and growth across the initial 16-byte capacity boundary. Each prints a length that's verifiable by hand.
+- **Unit tests** in `string_builder.rs` guard the doubling rule and the `+4` aliasing trick (so a future edit that quietly degrades to linear growth, or breaks the string-layout aliasing, fails CI).
+- **Wider sweep**: 299 .cln files from `tests/cln/core`, `tests/cln/control`, `tests/cln/spec_compliance`, `tests/cln/language` compile identically to the 0.30.364 baseline (0 new regressions). `cargo test --lib` stays at 436 passing (up from 431 baseline by the new unit tests).
+- **No spurious rewrites**: of the same 299 tests, 0 trigger the rewrite (verified by `wasm2wat | grep "call <string_builder_append_idx>"`). The pattern matcher is conservative.
 
-### Root cause
+### Files touched
 
-1. **Bump allocator never reclaims per-block** (`src/codegen/native_stdlib/memory.rs`). `gen_malloc` only bumps `__heap_ptr` forward; `gen_free` is intentionally a no-op (`gen_free` doc comment). Per-request reclaim is via `scope_push` / `scope_pop`.
-2. **Per-iteration `mem_scope_push`/`pop` is disabled for accumulator loops** (`src/mir/mir_builder/helpers.rs::body_is_iter_scope_safe`). The shape `acc = acc + iter_alloc(...)` where `acc` is declared outside the loop is correctly disqualified — emitting a pop would dangle `acc`. See commit `8c25d971` ("remove unsound per-iteration scope_pop") and the recovery in `a3a8e521` (gated re-enable for safe loops).
-3. **Concat in loop is O(n²) memory**: each iteration allocates `len(acc)+len(extra)+4` bytes for the new buffer, the OLD `acc` is left in place, and the next iteration's allocations land on top. After N iterations carrying an accumulator that grows to S bytes, total heap consumed is O(N·S) for the live accumulator alone, plus all the stranded older copies — quadratic in S over the loop.
-4. **Inside `render()`, the same pattern**: the inner accumulator `s` strands every old copy. So the outer accumulator strands `O(inner_iters · inner_S)` bytes PER outer iteration. The product overwhelms even 128 MB at fairly modest scales.
+- `src/codegen/native_stdlib/string_builder.rs` (new)
+- `src/codegen/native_stdlib/mod.rs` (export the new module)
+- `src/codegen/codegen_registration.rs` (register the three helpers next to `__string_concat`)
+- `src/resolver/resolver_impl.rs` (register `string_builder_new` / `_append` / `_finalize` as builtins with `HirType::String` for the scope-safety opt-out)
+- `src/hir/hir_builder.rs` (add `string_builder_counter` field, the `rewrite_string_accumulator_loops` pass, and the supporting `AccumulatorAnalysis` / `AccumulatorRewrite` / `LoopKind` types)
+- `tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln` (new test file)
 
-### Why a one-line fix is insufficient (and what was tried)
+### Cross-component impact
 
-Two `string.concat` fast paths were prototyped 2026-06-26:
-
-- **Opt A** (str1 in-place extend) — when `str1_ptr + aligned(STRING_DATA_OFFSET + len1) == __heap_ptr`, extend str1's buffer in place. Handles left-associative chains like `s + "lit" + i.toString() + "lit"` cleanly: every intermediate IS str1 of the next concat.
-- **Opt B** (str2 compact-overwrite) — when `str2_ptr + aligned(STRING_DATA_OFFSET + len2) == __heap_ptr`, place the combined result at `str2_ptr` with a backwards-overlap memmove. Handles `acc = acc + fresh_alloc()` by reclaiming the fresh_alloc but NOT the old `acc` (str1's region is still stranded).
-
-Measured impact on a simple `while (i<N) { acc = acc + i.toString() }` accumulator:
-| N | Baseline | With Opt A+B |
-|---|---|---|
-| 100 | OK (190 chars) | OK |
-| 1000 | OK (2890 chars) | OK |
-| 10000 | OOM after ~5700 grow failures, length corrupted to 4 | Same OOM, same corruption |
-
-Measured impact on the SSR reproducer (100 outer × 50 inner):
-| Pattern | Baseline | With Opt A+B |
-|---|---|---|
-| Memory.grow failures before trap | 200 | 200 |
-
-**Conclusion**: the prototyped Opt A+B improve correctness/perf for the inner concat chains but do NOT move the SSR threshold meaningfully, because the OLD `acc` always ends up stranded between successive outer-loop iterations. The reproducer's allocation pattern is `[stranded old acc] [stranded Builder obj] [stranded render() intermediates] [new acc]` per outer iteration, and Opt B only reclaims the LAST of those four regions.
-
-Prototype was reverted in 0.30.364; the codegen still matches the description above.
-
-### Real fix space (in increasing scope)
-
-1. **Compacting reclaim at request boundary** — Layer 3 hosts already call `scope_pop` per request, so memory IS reclaimed BETWEEN requests. The bug only manifests when the render path inside ONE request blows the 128 MB cap. Possible mitigation: raise the host cap. Doesn't address the underlying O(n²); just buys headroom. Probably what's actually being used as a workaround today.
-2. **Compiler-level loop-body allocator** — detect accumulator-pattern loops in MIR. Emit code that allocates a separate region for the accumulator (large pre-sized buffer that doubles when needed), updates `acc` via append instead of concat. Requires changes to: (a) MIR analysis to detect the pattern, (b) a new MIR op for "append to growable buffer", (c) backend lowering, (d) a runtime helper for the growable buffer. Substantial design but contained to the compiler.
-3. **Promote-and-pop for accumulator loops** — extend `body_is_iter_scope_safe` to a more powerful analysis: for accumulator-pattern loops, emit `scope_push` at the top, do the body, then BEFORE `scope_pop` copy the accumulator's contents to the OUTER scope's heap region and rewrite the local to point at the copy. This way every iteration reclaims everything except the (copied) accumulator. Tricky because the "copy" itself requires an allocation that survives the pop.
-4. **Switch to a compacting allocator** — design change that affects every host. Out of scope for the compiler component in isolation.
-
-Approach (2) is the most tractable. The signal pattern is `iter_var = iter_var binop expr` where iter_var is mutable and declared outside, and the typechecker can recognize "list append" / "string concat" as the binop. Implementation steps:
-
-- HIR pass: identify accumulator-pattern loops and tag them.
-- MIR builder: when a tagged loop is lowered, allocate a `StringBuilder` (header [capacity][length] + content region) before the loop, replace the accumulator local with a pointer to it, replace `acc = acc + x` with `string_builder_append(builder, x)`, and at the end of the loop convert the builder to a regular string.
-- Native stdlib: add `gen_string_builder_new`, `gen_string_builder_append`, `gen_string_builder_finalize`. These can use realloc-style doubling backed by `__malloc` + memcpy.
-
-Estimated effort: 2–3 day implementation + tests.
-
-### Cross-component dependencies
-
-Frame.ui's `html_block_to_code` emits the fused concat path that the original report calls out as the heavy allocator. The Layer-0 fix above would benefit it automatically; no plugin change required.
+None. The helpers are pure Layer-1 native WASM (no new host bridge calls), so `clean-server`, `clean-node-server`, and the `wasmtime_runner` all work unchanged. Frame.ui's `html_block_to_code` (the heavy allocator the original report called out) benefits automatically — any `string acc = ""; while …; acc = acc + render(…)` pattern its expansion produces will be rewritten by the compiler.
 
 ---
 

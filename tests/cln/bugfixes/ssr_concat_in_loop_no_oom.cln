@@ -1,0 +1,77 @@
+// Test: bugfixes/ssr_concat_in_loop_no_oom
+// Regression: CMP-SSR-MALLOC-OOM-PAGE-RENDER
+//
+// Before the fix, the canonical `string acc = ""; while …; acc = acc + …`
+// pattern allocated a fresh `acc` every iteration and stranded the old one
+// in the bump allocator — O(n²) heap consumption. The SSR repro
+// (100 outer × 50 inner iterations of HTML concatenation) OOM'd on the
+// host-side 128 MB cap at ~200 iterations.
+//
+// The fix: HIR-level pattern detection rewrites the loop to use a
+// doubling-capacity string builder (mirrors Go's `strings.Builder`),
+// turning the pattern into O(n) total heap consumption.
+//
+// This test exercises four shapes of the accumulator pattern that the
+// HIR rewrite must handle correctly:
+//   1. Simple accumulator over an integer-to-string conversion.
+//   2. Accumulator over a string literal (constant RHS).
+//   3. Accumulator inside a nested loop (the inner case mirrors the SSR
+//      repro's inner Builder.render() loop).
+//   4. Accumulator with a verifiable byte-count that crosses several
+//      growth boundaries (initial capacity 16, doubles each grow).
+//
+// Expected output:
+//   190
+//   500
+//   2950
+//   110
+
+start:
+	// Case 1: acc = digits 0..99 concatenated.
+	//   "0" through "9" (10 single-digit) + "10" through "99" (90 × 2-digit)
+	//   = 10 + 180 = 190.
+	string digits = ""
+	integer i = 0
+	while i < 100
+		digits = digits + i.toString()
+		i = i + 1
+	printl(digits.length().toString())
+
+	// Case 2: acc = 50 copies of "x" + "y" + "z" + "w" + "v" (10 chars per outer iter, 50 outers → 500).
+	string letters = ""
+	integer k = 0
+	while k < 50
+		letters = letters + "xyzwvxyzwv"
+		k = k + 1
+	printl(letters.length().toString())
+
+	// Case 3: nested accumulator — outer acc collects per-iteration
+	// inner-acc results. Inner inner loop builds "ab" 5 times = 10 chars,
+	// outer collects that 295 times → 2950 (verifies the rewrite handles
+	// the outer-while + outer-acc + inner-while + inner-acc shape, which
+	// is the SSR Builder.render() pattern).
+	string outerAcc = ""
+	integer m = 0
+	while m < 295
+		string innerAcc = ""
+		integer n = 0
+		while n < 5
+			innerAcc = innerAcc + "ab"
+			n = n + 1
+		outerAcc = outerAcc + innerAcc
+		m = m + 1
+	printl(outerAcc.length().toString())
+
+	// Case 4: accumulator with 100 single-char appends, then a post-loop
+	// regular concat to verify the finalized string behaves like any
+	// other Clean string. Initial builder capacity is 16; appending 100
+	// single chars triggers growth at 16, 32, 64, 128 — exercising the
+	// doubling-growth path.
+	string chars = ""
+	integer p = 0
+	while p < 100
+		chars = chars + "a"
+		p = p + 1
+	// Verify post-finalize concat still works: 100 + 10 = 110.
+	chars = chars + "1234567890"
+	printl(chars.length().toString())

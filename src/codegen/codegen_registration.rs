@@ -149,6 +149,54 @@ impl super::CodeGenerator {
         // registered separately. The host import is preferred because it
         // handles memory allocation more reliably in the runtime environment.
 
+        // NATIVE: string_builder_new/_append/_finalize — doubling-capacity
+        // growable buffer used by the HIR-level accumulator-loop rewrite
+        // that resolves CMP-SSR-MALLOC-OOM-PAGE-RENDER. See
+        // `src/codegen/native_stdlib/string_builder.rs` for layout and
+        // `src/hir/hir_builder.rs::rewrite_string_accumulator_loops` for
+        // the pattern that emits these calls.
+        //
+        // The trio is registered here (next to __string_concat) so they
+        // share the same `malloc_idx` and live in the same WASM type
+        // partition as every other native allocator helper.
+        let sb_new_instructions = native_stdlib::string_builder::gen_string_builder_new(malloc_idx);
+        let sb_new_idx = self.register_function_with_locals(
+            "__string_builder_new",
+            &[],
+            Some(WasmType::I32),
+            &[WasmType::I32], // local 0: builder_ptr
+            &sb_new_instructions,
+        )?;
+        self.add_function_alias("string_builder_new", sb_new_idx);
+
+        let sb_append_instructions =
+            native_stdlib::string_builder::gen_string_builder_append(malloc_idx);
+        let sb_append_idx = self.register_function_with_locals(
+            "__string_builder_append",
+            &[WasmType::I32, WasmType::I32], // builder_ptr, str_ptr
+            Some(WasmType::I32),             // returns possibly-relocated builder
+            &[
+                WasmType::I32, // local 2: capacity
+                WasmType::I32, // local 3: length
+                WasmType::I32, // local 4: str_len
+                WasmType::I32, // local 5: needed
+                WasmType::I32, // local 6: new_capacity
+                WasmType::I32, // local 7: new_builder_ptr
+                WasmType::I32, // local 8: i
+            ],
+            &sb_append_instructions,
+        )?;
+        self.add_function_alias("string_builder_append", sb_append_idx);
+
+        let sb_finalize_instructions = native_stdlib::string_builder::gen_string_builder_finalize();
+        let sb_finalize_idx = self.register_function(
+            "__string_builder_finalize",
+            &[WasmType::I32], // builder_ptr
+            Some(WasmType::I32),
+            &sb_finalize_instructions,
+        )?;
+        self.add_function_alias("string_builder_finalize", sb_finalize_idx);
+
         // NATIVE: string_index_of - finds substring in string
         // Parameters: str_ptr (i32), search_ptr (i32)
         // Returns: index (i32) or -1 if not found
