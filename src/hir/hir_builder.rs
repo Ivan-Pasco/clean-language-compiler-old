@@ -3120,60 +3120,56 @@ impl HirBuilder {
     fn rewrite_self_append_in_stmt(stmt: &mut HirStatement, acc_name: &str, sb_name: &str) {
         match stmt {
             HirStatement::Assignment {
-                target,
-                value,
+                target: HirLValue::Variable { name: lhs_name, .. },
+                value:
+                    HirExpression::BinaryOp {
+                        left,
+                        op,
+                        right,
+                        location: bin_loc,
+                    },
                 location,
-            } => {
-                if let HirLValue::Variable { name: lhs_name, .. } = target {
-                    if lhs_name == acc_name {
-                        if let HirExpression::BinaryOp {
-                            left,
-                            op,
-                            right,
-                            location: bin_loc,
-                        } = value
-                        {
-                            if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat)
-                                && matches!(
-                                    left.as_ref(),
-                                    HirExpression::Variable { name, .. } if name == acc_name
-                                )
-                            {
-                                // Rewrite to: sb_name = string_builder_append(sb_name, <right>).
-                                // Use a sentinel Literal as the placeholder; the
-                                // `*stmt = …` immediately below overwrites the
-                                // whole statement, so the placeholder is never
-                                // observed by anything downstream.
-                                let rhs = std::mem::replace(
-                                    right.as_mut(),
-                                    HirExpression::Literal {
-                                        value: Value::None,
-                                        location: bin_loc.clone(),
-                                    },
-                                );
-                                *stmt = HirStatement::Assignment {
-                                    target: HirLValue::Variable {
-                                        name: sb_name.to_string(),
-                                        location: location.clone(),
-                                    },
-                                    value: HirExpression::Call {
-                                        function: "string_builder_append".to_string(),
-                                        arguments: vec![
-                                            HirExpression::Variable {
-                                                name: sb_name.to_string(),
-                                                location: location.clone(),
-                                            },
-                                            rhs,
-                                        ],
-                                        location: location.clone(),
-                                    },
-                                    location: location.clone(),
-                                };
-                                return;
-                            }
-                        }
-                    }
-                }
+            } if lhs_name == acc_name
+                && matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat)
+                && matches!(
+                    left.as_ref(),
+                    HirExpression::Variable { name, .. } if name == acc_name
+                ) =>
+            {
+                // Rewrite to: sb_name = string_builder_append(sb_name, <right>).
+                // Use a sentinel Literal as the placeholder; the `*stmt = …`
+                // immediately below overwrites the whole statement, so the
+                // placeholder is never observed by anything downstream.
+                let rhs = std::mem::replace(
+                    right.as_mut(),
+                    HirExpression::Literal {
+                        value: Value::None,
+                        location: bin_loc.clone(),
+                    },
+                );
+                *stmt = HirStatement::Assignment {
+                    target: HirLValue::Variable {
+                        name: sb_name.to_string(),
+                        location: location.clone(),
+                    },
+                    value: HirExpression::Call {
+                        function: "string_builder_append".to_string(),
+                        arguments: vec![
+                            HirExpression::Variable {
+                                name: sb_name.to_string(),
+                                location: location.clone(),
+                            },
+                            rhs,
+                        ],
+                        location: location.clone(),
+                    },
+                    location: location.clone(),
+                };
+            }
+            HirStatement::Assignment { .. } => {
+                // Other assignments — including non-Variable lvalues — are not
+                // the canonical self-append. The accumulator analysis pass has
+                // already verified `acc_name` is not touched here.
             }
             HirStatement::If {
                 then_branch,
