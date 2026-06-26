@@ -209,6 +209,169 @@ pub fn gen_int_to_string(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for int64_to_string
+/// Converts a 64-bit integer to its decimal string representation.
+///
+/// Parameter `local 0` is i64; everything else mirrors `gen_int_to_string` but
+/// using i64 arithmetic so values outside the i32 range round-trip correctly.
+///
+/// Local layout:
+///   0: value (i64, param)
+///   1: is_negative (i32)
+///   2: abs_value (i64)
+///   3: digit_count (i32)
+///   4: temp (i64, used during digit extraction)
+///   5: new_ptr (i32, malloc result)
+///   6: write_pos (i32)
+///   7: digit (i32, low byte after %10)
+pub fn gen_int64_to_string(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // is_negative = value < 0
+        Instruction::LocalGet(0),
+        Instruction::I64Const(0),
+        Instruction::I64LtS,
+        Instruction::LocalSet(1),
+        // abs_value = is_negative ? 0 - value : value
+        Instruction::LocalGet(1),
+        Instruction::If(BlockType::Result(ValType::I64)),
+        Instruction::I64Const(0),
+        Instruction::LocalGet(0),
+        Instruction::I64Sub,
+        Instruction::Else,
+        Instruction::LocalGet(0),
+        Instruction::End,
+        Instruction::LocalSet(2),
+        // value == 0 → return "0" early
+        Instruction::LocalGet(2),
+        Instruction::I64Eqz,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::I32Const(5),
+        Instruction::Call(malloc_func),
+        Instruction::LocalTee(5),
+        Instruction::I32Const(1),
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalGet(5),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::I32Const(48), // '0'
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalGet(5),
+        Instruction::Else,
+        // Count digits
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::LocalGet(2),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::I64Eqz,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::LocalGet(4),
+        Instruction::I64Const(10),
+        Instruction::I64DivU,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // total_len = digit_count + (is_negative ? 1 : 0)
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::I32Const(1),
+        Instruction::Else,
+        Instruction::I32Const(0),
+        Instruction::End,
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        // malloc(STRING_DATA_OFFSET + total_len)
+        Instruction::LocalGet(3),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::Call(malloc_func),
+        Instruction::LocalSet(5),
+        // store length
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(3),
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        // write_pos = total_len - 1
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(6),
+        // temp = abs_value
+        Instruction::LocalGet(2),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::I64Eqz,
+        Instruction::BrIf(1),
+        // digit_i32 = (temp % 10) wrapped to i32
+        Instruction::LocalGet(4),
+        Instruction::I64Const(10),
+        Instruction::I64RemU,
+        Instruction::I32WrapI64,
+        Instruction::LocalSet(7),
+        // store digit char
+        Instruction::LocalGet(5),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(6),
+        Instruction::I32Add,
+        Instruction::LocalGet(7),
+        Instruction::I32Const(48),
+        Instruction::I32Add,
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalGet(6),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(6),
+        Instruction::LocalGet(4),
+        Instruction::I64Const(10),
+        Instruction::I64DivU,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // minus sign
+        Instruction::LocalGet(1),
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(5),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::I32Const(45), // '-'
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::End,
+        Instruction::LocalGet(5),
+        Instruction::End,
+    ]
+}
+
 /// Generate instructions for string_to_int
 /// Parses a decimal string to integer
 ///

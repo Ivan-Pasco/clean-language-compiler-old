@@ -3099,6 +3099,14 @@ impl NameResolver {
             Some(HirType::String),
             builtin_location.clone(),
         );
+        // int64_to_string handles `integer:64`.toString() — distinct from int_to_string
+        // because the WASM param is i64 not i32.
+        self.register_builtin_fn(
+            "int64_to_string",
+            vec![HirType::Integer64],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
         self.register_builtin_fn(
             "float_to_string",
             vec![HirType::Number],

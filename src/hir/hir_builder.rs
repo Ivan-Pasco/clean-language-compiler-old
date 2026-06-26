@@ -47,6 +47,11 @@ pub struct HirBuilder {
     /// API namespace (e.g. "result" → "api"). Used by `build_expression` to
     /// substitute `result.ok` → `api.ok()`, `result.json(p)` → `api.json(p)`, etc.
     api_response_vars: std::collections::HashMap<String, String>,
+    /// Initial values of top-level state variables, keyed by name. Pre-scanned in
+    /// `build_hir` before functions are lowered so `reset <name>` statements can
+    /// expand inline to `<name> = <initializer>` without depending on a host
+    /// bridge to remember the original value.
+    state_initializers: std::collections::HashMap<String, crate::ast::Expression>,
 }
 
 impl HirBuilder {
@@ -64,6 +69,7 @@ impl HirBuilder {
             later_counter: 0,
             current_function_name: String::new(),
             api_response_vars: std::collections::HashMap::new(),
+            state_initializers: std::collections::HashMap::new(),
         }
     }
 
@@ -473,6 +479,17 @@ impl HirBuilder {
         // Pre-scan phase: populate the named-argument signature registry so that
         // named args can be validated and reordered when expressions are lowered.
         self.prescan_signatures(&program);
+
+        // Pre-scan state initializers so that `reset <name>` statements lowered later
+        // can expand inline to an assignment of the original initializer expression.
+        // Top-level `state:` is the only scope `reset name` can target outside of a
+        // screen block (per grammar.ebnf reset_statement = "reset" , ( "state" | identifier )).
+        if let Some(state_block) = &program.state {
+            for decl in &state_block.declarations {
+                self.state_initializers
+                    .insert(decl.name.clone(), decl.initializer.clone());
+            }
+        }
 
         let mut functions = Vec::new();
         let mut classes = Vec::new();
@@ -1640,13 +1657,22 @@ impl HirBuilder {
                 })
             }
 
-            // reset_statement — emit a host call: _state_reset_all or _state_reset_named
+            // reset_statement — lower to inline assignment from the captured state initializer.
             // grammar.ebnf: reset_statement = "reset" , ( "state" | identifier ) ;
+            //
+            // Host bridges historically left `_state_reset_named` / `_state_reset_all` as
+            // no-ops, so `reset <name>` produced no effect at runtime. The initializer is
+            // captured during the build_hir pre-scan, so we can rewrite the statement here
+            // to `<name> = <initializer>` and bypass the host entirely.
             Statement::ResetStmt { target, location } => {
                 let loc = location.clone().unwrap_or_default();
                 match target {
                     ResetTarget::AllState => {
-                        // reset state → call _state_reset_all()
+                        // `reset state` — fall back to the host bridge for now. Lowering this
+                        // inline requires emitting multiple assignments from a single
+                        // statement node, which build_statement's single-return shape doesn't
+                        // accommodate. Tracked as a follow-up; `reset state` is the rarer
+                        // form and most hosts already stub it.
                         Ok(HirStatement::Expression {
                             expression: HirExpression::Call {
                                 function: "_state_reset_all".to_string(),
@@ -1657,19 +1683,32 @@ impl HirBuilder {
                         })
                     }
                     ResetTarget::Variable(name) => {
-                        // reset <name> → call _state_reset_named(name_ptr, name_len)
-                        // We encode the name as a string literal argument
-                        Ok(HirStatement::Expression {
-                            expression: HirExpression::Call {
-                                function: "_state_reset_named".to_string(),
-                                arguments: vec![HirExpression::Literal {
-                                    value: Value::String(name.clone()),
+                        if let Some(init_expr) = self.state_initializers.get(name).cloned() {
+                            let value = self.build_expression(&init_expr)?;
+                            Ok(HirStatement::Assignment {
+                                target: HirLValue::Variable {
+                                    name: name.clone(),
                                     location: loc.clone(),
-                                }],
-                                location: loc.clone(),
-                            },
-                            location: loc,
-                        })
+                                },
+                                value,
+                                location: loc,
+                            })
+                        } else {
+                            // Variable was not declared in any state: block — keep the call
+                            // so semantic analysis emits the right diagnostic instead of
+                            // silently succeeding on a missing target.
+                            Ok(HirStatement::Expression {
+                                expression: HirExpression::Call {
+                                    function: "_state_reset_named".to_string(),
+                                    arguments: vec![HirExpression::Literal {
+                                        value: Value::String(name.clone()),
+                                        location: loc.clone(),
+                                    }],
+                                    location: loc.clone(),
+                                },
+                                location: loc,
+                            })
+                        }
                     }
                 }
             }

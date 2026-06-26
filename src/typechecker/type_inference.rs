@@ -5787,20 +5787,24 @@ impl<'a> TypeInference<'a> {
             HirType::Void => ConcreteType::Null,
             // BOOK: null-support - HirType::Null maps to ConcreteType::Null
             HirType::Null => ConcreteType::Null,
-            // NOTE: Sized integers/numbers currently collapse to the base `Integer`/`Number`
-            // type. Promoting them to `IntegerSized`/`NumberSized` here surfaces a chain of
-            // downstream sites (toString conversion, mir_type_to_concrete, host import call
-            // signatures, etc.) that have no I64 arm — see COVERAGE-INT64-LITERAL-TRUNCATION
-            // in TASKS.md for the full plan. Keeping the collapse for now preserves the
-            // current behavior; the i64 codegen fix is tracked separately.
+            // 8/16/32-bit integers collapse to `Integer` (i32 in WASM) — no precision loss.
+            // 64-bit integers preserve their precision modifier so the MIR builder can route
+            // literals to `MirConstant::Integer64` and codegen can emit i64 ops; otherwise
+            // `integer:64 x = 9223372036854775807` silently truncates to -1.
             HirType::Integer8 => ConcreteType::Integer,
             HirType::Integer8u => ConcreteType::Integer,
             HirType::Integer16 => ConcreteType::Integer,
             HirType::Integer16u => ConcreteType::Integer,
             HirType::Integer32 => ConcreteType::Integer,
             HirType::Integer32u => ConcreteType::Integer,
-            HirType::Integer64 => ConcreteType::Integer,
-            HirType::Integer64u => ConcreteType::Integer,
+            HirType::Integer64 => ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: false,
+            },
+            HirType::Integer64u => ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: true,
+            },
             HirType::Number32 => ConcreteType::Number,
             HirType::Number64 => ConcreteType::Number,
             HirType::List(element_type) => {

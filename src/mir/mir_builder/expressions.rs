@@ -1498,6 +1498,39 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
+                // NOTE: Handle IntegerSized{64}.toString() EARLY — bypass the regular
+                // `integer.toString` dispatch which lowers to native `int_to_string(i32)` and
+                // would corrupt the high bits. Route to `int64_to_string` which takes i64.
+                if matches!(
+                    &receiver_actual_type,
+                    ConcreteType::IntegerSized { bits: 64, .. }
+                ) && method_name == "toString"
+                {
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::Ptr(Box::new(MirType::U8)),
+                        expression.location.clone(),
+                    );
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: "int64_to_string".to_string(),
+                                symbol_id: SymbolId(0),
+                            },
+                            arguments: vec![MirOperand::Value(receiver_id)],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
                 // NOTE: Handle Any.toInteger() EARLY for chained calls
                 // For chained calls like c.get().toInteger() where c.get() returns Any,
                 // the method_symbol might be non-zero, but we need to use UnboxAnyToI32 operation

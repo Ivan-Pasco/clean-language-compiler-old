@@ -333,6 +333,45 @@ impl MirBuilder {
                 self.add_instruction(context, conversion_instruction);
                 Ok(converted_id)
             }
+            ConcreteType::IntegerSized { bits: 64, .. } => {
+                // 64-bit integers use int64_to_string (registered with i64 param)
+                // so the full signed-64 range round-trips through .toString() without
+                // narrowing through int_to_string's i32 parameter.
+                let converted_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+
+                self.register_temp_local(
+                    context,
+                    converted_id,
+                    MirType::Ptr(Box::new(MirType::U8)),
+                    location.clone(),
+                );
+
+                let symbol_id = self
+                    .symbol_table
+                    .lookup_symbol("int64_to_string")
+                    .ok_or_else(|| {
+                        vec![CompilerError::Codegen {
+                            context: Box::new(crate::error::ErrorContext::new(
+                                "int64_to_string host bridge function is not registered",
+                                Some("Ensure function-registry.toml declares int64_to_string and the host implements it".to_string()),
+                                crate::error::ErrorType::Codegen,
+                                Some(location.clone()),
+                            )),
+                        }]
+                    })?;
+
+                let conversion_instruction = MirInstruction {
+                    dest: Some(converted_id),
+                    operation: MirOperation::Call {
+                        function: MirOperand::Function(symbol_id),
+                        arguments: vec![MirOperand::Value(value_id)],
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, conversion_instruction);
+                Ok(converted_id)
+            }
             ConcreteType::Number => {
                 // Convert float to string using float_to_string
                 let converted_id = ValueId(context.function.next_value_id);

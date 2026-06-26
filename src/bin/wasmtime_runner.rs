@@ -472,6 +472,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     linker.func_wrap(
         "env",
+        "int64_to_string",
+        |mut caller: Caller<'_, ()>, value: i64| -> i32 {
+            let string_value = value.to_string();
+
+            if let Some(memory) = caller.get_export("memory") {
+                if let Some(memory) = memory.into_memory() {
+                    return allocate_string_in_memory(&memory, &mut caller, &string_value);
+                }
+            }
+
+            0
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
         "float_to_string",
         |mut caller: Caller<'_, ()>, value: f64| -> i32 {
             let string_value = value.to_string();

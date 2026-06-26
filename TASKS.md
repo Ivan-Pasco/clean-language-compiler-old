@@ -722,10 +722,32 @@ below — fixing the lexer alone does not produce correct runtime values.
 
 ---
 
-## 🔴 OPEN: COVERAGE-INT64-LITERAL-TRUNCATION — Sized integers collapse to base Integer in HIR→Concrete conversion
+## ✅ RESOLVED: COVERAGE-INT64-LITERAL-TRUNCATION — Sized integers collapse to base Integer in HIR→Concrete conversion
 
 **Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
-**Repro**: `tests/cln/future/integer_64_edges.cln`
+**Resolved**: 2026-06-26 in 0.30.362
+**Repro test**: `tests/cln/bugfixes/integer_64_literal_roundtrip.cln`
+
+`integer:64 maxv = 9223372036854775807; print(maxv.toString())` now correctly outputs
+`9223372036854775807` instead of `-1`. Values in the u32 range (e.g. 3000000000) and
+beyond (e.g. 4294967296) also round-trip correctly.
+
+**Fix landed**:
+1. `hir_type_to_concrete` (instance method) now maps `HirType::Integer64` →
+   `ConcreteType::IntegerSized{bits:64, unsigned:false}` (and Integer64u → unsigned: true).
+   8/16/32-bit integers continue to collapse to `Integer` since they fit in i32.
+2. New native `gen_int64_to_string` (src/codegen/native_stdlib/type_conversions.rs)
+   emits a parallel of `gen_int_to_string` using i64 arithmetic. Registered as
+   `__int64_to_string` with alias `int64_to_string` in `codegen_registration.rs`.
+3. `int64_to_string` registered in `function-registry.toml`, builtin resolver
+   (`register_builtin_fn`), and wasmtime_runner (linker stub).
+4. `convert_value_to_string` (mir_builder/types.rs) and a new EARLY-handler in
+   `expressions.rs` route `IntegerSized{64}.toString()` to `int64_to_string` instead
+   of narrowing through `int_to_string(i32)`.
+5. Cross-component bridge gap reported against clean-server and clean-node-server —
+   they must register `int64_to_string` for production WASM to load.
+
+**Original analysis (kept for reference)**:
 
 ```clean
 integer:64 over32 = 4294967296    // lexer + parser preserve i64 value correctly
@@ -817,32 +839,33 @@ of `future/`) — `Dog("Rex").speak()` now prints "Rex barks" as expected. CI ti
 
 ---
 
-## 🟡 OPEN: COVERAGE-RESET-STATEMENT-NOOP — `reset` no-ops in standalone runner (NOT a compiler bug)
+## ✅ RESOLVED: COVERAGE-RESET-STATEMENT-NOOP — `reset <name>` now lowers to inline assignment
 
 **Discovered**: 2026-06-25 (via `/coverage` spec gap pass)
-**Reclassified**: 2026-06-25 — compiler emits the bridge call correctly; the standalone test
-runner intentionally stubs `_state_reset_named` / `_state_reset_all` as no-ops because
-restoring initializers requires runtime state tracking that lives in `clean-server`, not in
-this component.
+**Resolved**: 2026-06-26 in 0.30.362
+**Repro test**: `tests/cln/bugfixes/reset_state_named_restores_initial.cln`
 
-**Compiler-side traced** (all correct):
-- AST: `src/ast/mod.rs:770-773` (`ResetStmt { target: ResetTarget, … }`)
-- Parser: `src/parser/token_parser/statements.rs:697-721`
-- HIR: `src/hir/hir_builder.rs:1644-1668` lowers `reset state` to a `Call("_state_reset_all", [])` and `reset <name>` to a `Call("_state_reset_named", [name])`
-- Codegen: `src/codegen/mir_codegen/instructions.rs:1675` emits the `Instruction::Call(idx)`. `_state_reset_*` registered as void builtins (`instructions.rs:1935-1936`).
+The earlier classification ("not a compiler bug") was wrong. Every host stubbed
+`_state_reset_named` / `_state_reset_all` as a no-op, so the feature was completely broken
+across the ecosystem — there was no working implementation anywhere. The fix lives in the
+compiler because it's the only component that knows the initializer expression at compile
+time.
 
-**Runner-side documented no-op**:
-- `src/bin/wasmtime_runner.rs:308-310` — `linker.func_wrap("env", "_state_reset_all", || {})?;`
-- `src/plugins/wasm_adapter.rs:2507-2512` — same in plugin wasm adapter
+**Fix landed**:
+- `HirBuilder` gained a `state_initializers: HashMap<String, Expression>` map populated
+  in `build_hir` before functions are lowered (so the map is ready by the time any
+  `ResetStmt` in `start:` is visited).
+- The `Statement::ResetStmt` arm for `ResetTarget::Variable(name)` now rewrites to
+  `HirStatement::Assignment { target: name, value: <initializer-expr> }` directly,
+  bypassing the host bridge entirely. The fallback to `_state_reset_named` is kept for
+  the case where the name doesn't match a known state declaration (so semantic analysis
+  still surfaces the right diagnostic).
+- `reset state` (the all-state form) still falls back to `_state_reset_all` because
+  `build_statement` can only return a single `HirStatement` and unrolling the multi-
+  assignment requires a richer return shape. Tracked as a follow-up.
 
-The runner stub comment already says "runtime resets are no-ops in standalone test runner".
-Implementing real state-reset semantics here would require designing initializer-snapshot
-tracking that duplicates the production `clean-server` implementation. Out of scope for the
-compiler component (Principle 1 — Component Isolation).
-
-**Test status**: `tests/cln/future/reset_statement.cln` updated to document this as
-COMPILER-CORRECT / RUNNER-NO-OP. Promote out of `future/` once the standalone runner is
-enhanced or once an integration harness in `clean-server` covers reset semantics.
+The `_state_reset_*` host stubs remain (compiled WASM still imports them via Layer-2
+boilerplate) but are no longer load-bearing for `reset <name>`.
 
 ---
 

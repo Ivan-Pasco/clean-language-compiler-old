@@ -303,6 +303,31 @@ impl super::CodeGenerator {
             self.add_function_alias("integer.toString", its_idx);
         }
 
+        // NATIVE: int64_to_string - converts 64-bit integer to string using malloc
+        // Parameter local 0 is i64; the function mirrors __int_to_string but with i64
+        // arithmetic so values outside the i32 range round-trip correctly. Locals 1, 3,
+        // 5, 6, 7 are i32 (flag, counts, pointers); locals 2 and 4 are i64 (abs_value, temp).
+        let int64_to_string_instructions =
+            native_stdlib::type_conversions::gen_int64_to_string(malloc_idx);
+        self.register_function_with_locals(
+            "__int64_to_string",
+            &[WasmType::I64],
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // local 1: is_negative
+                WasmType::I64, // local 2: abs_value
+                WasmType::I32, // local 3: digit_count
+                WasmType::I64, // local 4: temp
+                WasmType::I32, // local 5: new_ptr
+                WasmType::I32, // local 6: write_pos
+                WasmType::I32, // local 7: digit
+            ],
+            &int64_to_string_instructions,
+        )?;
+        if let Some(idx) = self.get_function_index("__int64_to_string") {
+            self.add_function_alias("int64_to_string", idx);
+        }
+
         // NATIVE: bool_to_string - returns pointer to pre-allocated "true" or "false" string
         // Parameters: bool_value (i32, 0 or non-zero)
         // Returns: pointer (i32) to "true" or "false" string
