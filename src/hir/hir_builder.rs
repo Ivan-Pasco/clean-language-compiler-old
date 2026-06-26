@@ -2877,28 +2877,24 @@ impl HirBuilder {
                     Self::analyze_expr_for_accumulator(value, acc_name, out);
                     return;
                 };
-                let is_self_append = lhs_name == acc_name
-                    && match value {
-                        HirExpression::BinaryOp { left, op, .. } => {
-                            matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat)
-                                && matches!(
-                                    left.as_ref(),
-                                    HirExpression::Variable { name, .. } if name == acc_name
-                                )
-                        }
-                        _ => false,
-                    };
-                if is_self_append {
-                    // Check the RHS sub-expression for any *other* read of acc.
-                    // (We allow only the LHS of `acc + …`, not the RHS.)
-                    if let HirExpression::BinaryOp { right, .. } = value {
-                        let mut rhs_out = AccumulatorAnalysis::default();
-                        Self::analyze_expr_for_accumulator(right, acc_name, &mut rhs_out);
-                        if rhs_out.reads > 0 || rhs_out.disqualified {
-                            // e.g. `acc = acc + acc` — the second `acc` is a real read.
-                            out.disqualified = true;
-                            return;
-                        }
+                // Single-RHS form: `acc = acc + e`.
+                // Chained-RHS form: `acc = acc + e1 + e2 + … + eN` which parses
+                // as `((acc + e1) + e2) + … + eN`. The leftmost atom of the
+                // left-spine must be `Variable(acc)`; no intermediate node may
+                // read `acc` in its right operand.
+                let is_chained_self_append = Self::is_chained_self_append(value, acc_name);
+                if is_chained_self_append {
+                    // Every right operand of the left-spine must not read `acc`.
+                    let mut rhs_out = AccumulatorAnalysis::default();
+                    Self::analyze_chain_right_operands_for_accumulator(
+                        value,
+                        acc_name,
+                        &mut rhs_out,
+                    );
+                    if rhs_out.reads > 0 || rhs_out.disqualified {
+                        // e.g. `acc = acc + acc + x` — a chain RHS reads acc.
+                        out.disqualified = true;
+                        return;
                     }
                     out.self_appends += 1;
                 } else if lhs_name == acc_name {
@@ -2972,6 +2968,54 @@ impl HirBuilder {
             }
             HirStatement::Require { condition, .. } | HirStatement::Ensure { condition, .. } => {
                 Self::analyze_expr_for_accumulator(condition, acc_name, out);
+            }
+        }
+    }
+
+    /// True when `expr` is a left-folded chain of `+`/`StringConcat` whose
+    /// leftmost atom is `Variable(acc_name)`. Examples that return true:
+    ///   `acc + e`                       (depth 1, single-RHS)
+    ///   `(acc + e1) + e2`               (depth 2)
+    ///   `((acc + e1) + e2) + e3`        (depth 3, three-fragment chain)
+    /// Returns false if the leftmost atom is anything else, or if any node
+    /// uses a non-concatenating operator.
+    fn is_chained_self_append(expr: &HirExpression, acc_name: &str) -> bool {
+        let mut cur = expr;
+        loop {
+            match cur {
+                HirExpression::BinaryOp { left, op, .. }
+                    if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat) =>
+                {
+                    cur = left.as_ref();
+                }
+                HirExpression::Variable { name, .. } => return name == acc_name,
+                _ => return false,
+            }
+        }
+    }
+
+    /// Walk the right operands of a left-folded `+` chain rooted at `expr`
+    /// (whose leftmost atom is `acc_name`) and accumulate reads/disqualifiers.
+    /// Called by `analyze_stmt_for_accumulator` to verify the chain's RHS
+    /// fragments don't read `acc` (which would break the rewrite invariant).
+    fn analyze_chain_right_operands_for_accumulator(
+        expr: &HirExpression,
+        acc_name: &str,
+        out: &mut AccumulatorAnalysis,
+    ) {
+        let mut cur = expr;
+        loop {
+            match cur {
+                HirExpression::BinaryOp {
+                    left, op, right, ..
+                } if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat) => {
+                    Self::analyze_expr_for_accumulator(right, acc_name, out);
+                    if out.disqualified {
+                        return;
+                    }
+                    cur = left.as_ref();
+                }
+                _ => return,
             }
         }
     }
@@ -3112,79 +3156,123 @@ impl HirBuilder {
     /// After analysis confirms the body is rewritable, walk it again to
     /// replace the single canonical self-append statement.
     fn rewrite_self_append_in_block(block: &mut HirBlock, acc_name: &str, sb_name: &str) {
-        for stmt in &mut block.statements {
-            Self::rewrite_self_append_in_stmt(stmt, acc_name, sb_name);
+        // Two-pass walk because chained-RHS rewrites turn a single
+        // assignment into N sequential statements. Pass 1 transforms each
+        // statement *in place* into a possibly-Vec-valued replacement;
+        // Pass 2 flattens the Vec back into the block.
+        let mut new_stmts: Vec<HirStatement> = Vec::with_capacity(block.statements.len());
+        for stmt in std::mem::take(&mut block.statements).into_iter() {
+            Self::rewrite_self_append_collect(stmt, acc_name, sb_name, &mut new_stmts);
         }
+        block.statements = new_stmts;
     }
 
-    fn rewrite_self_append_in_stmt(stmt: &mut HirStatement, acc_name: &str, sb_name: &str) {
+    /// Lower one input statement into 1+ output statements, appending them
+    /// to `out`. The chained-RHS case is the only one that produces more
+    /// than one output: `acc = acc + e1 + e2 + e3` becomes three
+    /// `sb = string_builder_append(sb, eK)` statements in source order.
+    fn rewrite_self_append_collect(
+        stmt: HirStatement,
+        acc_name: &str,
+        sb_name: &str,
+        out: &mut Vec<HirStatement>,
+    ) {
         match stmt {
             HirStatement::Assignment {
                 target: HirLValue::Variable { name: lhs_name, .. },
-                value:
-                    HirExpression::BinaryOp {
-                        left,
-                        op,
-                        right,
-                        location: bin_loc,
-                    },
+                value,
                 location,
-            } if lhs_name == acc_name
-                && matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat)
-                && matches!(
-                    left.as_ref(),
-                    HirExpression::Variable { name, .. } if name == acc_name
-                ) =>
-            {
-                // Rewrite to: sb_name = string_builder_append(sb_name, <right>).
-                // Use a sentinel Literal as the placeholder; the `*stmt = …`
-                // immediately below overwrites the whole statement, so the
-                // placeholder is never observed by anything downstream.
-                let rhs = std::mem::replace(
-                    right.as_mut(),
-                    HirExpression::Literal {
-                        value: Value::None,
-                        location: bin_loc.clone(),
-                    },
-                );
-                *stmt = HirStatement::Assignment {
-                    target: HirLValue::Variable {
-                        name: sb_name.to_string(),
+            } if lhs_name == acc_name && Self::is_chained_self_append(&value, acc_name) => {
+                // Flatten the left-folded chain into source-order RHS
+                // fragments. For `((acc + e1) + e2) + e3`, the walk yields
+                // `[e3, e2, e1]` (because we descend `left` while
+                // collecting `right`), so we reverse before emitting.
+                let mut fragments: Vec<HirExpression> = Vec::new();
+                let mut cur = value;
+                loop {
+                    match cur {
+                        HirExpression::BinaryOp {
+                            left, op, right, ..
+                        } if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat) => {
+                            fragments.push(*right);
+                            cur = *left;
+                        }
+                        _ => break,
+                    }
+                }
+                fragments.reverse();
+
+                for frag in fragments {
+                    out.push(HirStatement::Assignment {
+                        target: HirLValue::Variable {
+                            name: sb_name.to_string(),
+                            location: location.clone(),
+                        },
+                        value: HirExpression::Call {
+                            function: "string_builder_append".to_string(),
+                            arguments: vec![
+                                HirExpression::Variable {
+                                    name: sb_name.to_string(),
+                                    location: location.clone(),
+                                },
+                                frag,
+                            ],
+                            location: location.clone(),
+                        },
                         location: location.clone(),
-                    },
-                    value: HirExpression::Call {
-                        function: "string_builder_append".to_string(),
-                        arguments: vec![
-                            HirExpression::Variable {
-                                name: sb_name.to_string(),
-                                location: location.clone(),
-                            },
-                            rhs,
-                        ],
-                        location: location.clone(),
-                    },
-                    location: location.clone(),
-                };
+                    });
+                }
             }
             HirStatement::Assignment { .. } => {
                 // Other assignments — including non-Variable lvalues — are not
                 // the canonical self-append. The accumulator analysis pass has
                 // already verified `acc_name` is not touched here.
+                out.push(stmt);
             }
             HirStatement::If {
-                then_branch,
-                else_branch,
-                ..
+                condition,
+                mut then_branch,
+                mut else_branch,
+                location,
             } => {
-                Self::rewrite_self_append_in_block(then_branch, acc_name, sb_name);
-                if let Some(else_b) = else_branch {
-                    Self::rewrite_self_append_in_block(else_b, acc_name, sb_name);
+                Self::rewrite_self_append_in_block(&mut then_branch, acc_name, sb_name);
+                if let Some(eb) = else_branch.as_mut() {
+                    Self::rewrite_self_append_in_block(eb, acc_name, sb_name);
                 }
+                out.push(HirStatement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    location,
+                });
             }
-            HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
-                Self::rewrite_self_append_in_block(body, acc_name, sb_name);
+            HirStatement::While {
+                condition,
+                mut body,
+                location,
+            } => {
+                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name);
+                out.push(HirStatement::While {
+                    condition,
+                    body,
+                    location,
+                });
             }
-            _ => {}
+            HirStatement::For {
+                variable,
+                iterable,
+                mut body,
+                location,
+            } => {
+                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name);
+                out.push(HirStatement::For {
+                    variable,
+                    iterable,
+                    body,
+                    location,
+                });
+            }
+            other => out.push(other),
         }
     }
 

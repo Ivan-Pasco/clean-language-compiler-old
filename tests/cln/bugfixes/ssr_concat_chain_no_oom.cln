@@ -1,0 +1,61 @@
+// Test: bugfixes/ssr_concat_chain_no_oom
+// Regression: CMP-SSR-MALLOC-OOM-PAGE-RENDER (chained-RHS extension, 2026-06-26)
+//
+// The 0.30.365/0.30.366 SSR matcher only handled the single-RHS form
+// `acc = acc + e`. Real-world SSR loops chain multiple fragments per
+// iteration: `acc = acc + e1 + e2 + e3`, which parses left-folded as
+// `((acc + e1) + e2) + e3`. The original matcher rejected this because
+// the outermost `value.left` is a `BinaryOp`, not `Variable(acc)`.
+// Result: production pages like /tutorials (buildExamples,
+// buildKeyPoints) kept using O(n²) string.concat and OOMed under load.
+//
+// 0.30.368's matcher walks the left spine and accepts any chain whose
+// leftmost atom is `Variable(acc)`. The rewriter flattens the chain into
+// N sequential `__sb = string_builder_append(__sb, eK)` statements.
+//
+// Case 1: 2-fragment chain `acc = acc + "<li>" + kp` (mirrors buildKeyPoints).
+// Case 2: 3-fragment chain `acc = acc + "<li>" + kp + "</li>"`.
+// Case 3: 6-fragment chain matching buildExamples shape with conditional
+//         HTML fragments — exercises the full production pattern.
+//
+// Expected output:
+//   15
+//   41
+//   45
+
+start:
+	// Case 1: 2-fragment chain.
+	string j1 = "[\"a\",\"b\",\"c\"]"
+	string acc1 = ""
+	integer i1 = 0
+	string kp1 = json.get(j1, "0")
+	while kp1 != ""
+		acc1 = acc1 + "<li>" + kp1
+		i1 = i1 + 1
+		kp1 = json.get(j1, i1.toString())
+	// 3 iters * ("<li>"=4 + 1-char value) = 15.
+	printl(acc1.length().toString())
+
+	// Case 2: 3-fragment chain (mirrors buildKeyPoints).
+	string j2 = "[\"alpha\",\"beta\",\"gamma\"]"
+	string acc2 = ""
+	integer i2 = 0
+	string kp2 = json.get(j2, "0")
+	while kp2 != ""
+		acc2 = acc2 + "<li>" + kp2 + "</li>"
+		i2 = i2 + 1
+		kp2 = json.get(j2, i2.toString())
+	// "<li>"=4 + word + "</li>"=5 per iter. (5+9)+(4+9)+(5+9) = 41.
+	printl(acc2.length().toString())
+
+	// Case 3: 6-fragment chain (mirrors buildExamples shape).
+	string j3 = "[\"x\",\"y\",\"z\"]"
+	string acc3 = ""
+	integer i3 = 0
+	string code = json.get(j3, "0")
+	while code != ""
+		acc3 = acc3 + "<div>" + "[" + code + "]" + code + "</div>"
+		i3 = i3 + 1
+		code = json.get(j3, i3.toString())
+	// Per iter: 5+1+1+1+1+6 = 15. 3 iters * 15 = 45.
+	printl(acc3.length().toString())
