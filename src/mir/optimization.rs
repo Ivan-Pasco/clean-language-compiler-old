@@ -411,7 +411,17 @@ impl DeadCodeEliminationPass {
         }
     }
 
-    /// Mark a value as live and recursively mark its dependencies
+    /// Mark a value as live and recursively mark its dependencies.
+    ///
+    /// The MIR is NOT in SSA form — a single ValueId can be the destination
+    /// of multiple instructions (e.g. `c = json.get(...)` re-assigned in a
+    /// loop body, plus the initial `string c = ...` declaration). Every
+    /// defining instruction's operands must be marked live, not just the
+    /// first one encountered. Stopping at the first match (the old
+    /// `break`) silently dropped operand-liveness from every subsequent
+    /// re-definition; downstream the codegen would emit a `local.get` on a
+    /// local that was never written to, surfacing as garbage `c` values
+    /// (CMP-SSR-MALLOC-OOM-PAGE-RENDER).
     fn mark_live(&mut self, value_id: ValueId, function: &MirFunction) {
         if self.live_values.contains(&value_id) {
             return; // Already marked
@@ -419,13 +429,11 @@ impl DeadCodeEliminationPass {
 
         self.live_values.insert(value_id);
 
-        // Find the instruction that defines this value and mark its operands as live
+        // Find every instruction that defines this value and mark its operands as live.
         for block in function.blocks.values() {
             for instruction in &block.instructions {
                 if instruction.dest == Some(value_id) {
-                    // Mark operands as live
                     self.mark_operands_live(&instruction.operation, function);
-                    break;
                 }
             }
         }

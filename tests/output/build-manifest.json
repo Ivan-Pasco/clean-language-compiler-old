@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.30.317",
+  "compiler_version": "0.30.364",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1781823167,
+  "generated_at_epoch_seconds": 1782496010,
   "artifacts": [
     {
-      "name": "vld004_html_as_response_helper.wasm",
-      "path_relative": "vld004_html_as_response_helper.wasm",
+      "name": "ssr_concat_in_loop_no_oom.wasm",
+      "path_relative": "ssr_concat_in_loop_no_oom.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 22415,
-      "sha256": "5e383d7d304e76e0945ff182a07ed44af4cc6c196841dd3b160eb2cc7ee175a3",
+      "size_bytes": 23751,
+      "sha256": "e7c19d2bddc3cdd1c5c698aa91d849a0bcb59c198ff817b8eeb8f71a281669e9",
       "source_plugin": null
     },
     {
@@ -21,8 +21,8 @@
       "purpose": "client_hydration",
       "public": true,
       "content_type": "application/wasm",
-      "size_bytes": 18269,
-      "sha256": "efd87aa0c86ae4242920469f63700d23190098576747459444e16fb30c9cf688",
+      "size_bytes": 18923,
+      "sha256": "ff9b978c0b91a4f5ffe4745bcaa4cb1a5431b69c070cef8d1afef92535cf7a16",
       "source_plugin": null
     }
   ],

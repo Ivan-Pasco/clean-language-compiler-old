@@ -1,0 +1,65 @@
+// Test: bugfixes/assignment_unbox_any_for_non_any_target
+// Regression: CMP-SSR-MALLOC-OOM-PAGE-RENDER (root cause, 2026-06-26)
+//
+// Before the fix, a re-assignment `c = json.get(...)` where `c` was declared
+// as `string` and the RHS returned `Any` (the boxed JSON value) silently
+// wrote the wrapper pointer into `c`. Subsequent reads of `c` as a Clean
+// string interpreted the wrapper's tag bytes (`04 00 00 00`) as a length-4
+// string. In an SSR loop `while c != "":` this either truncated iteration
+// count (when the bytes encoded as `""`) or kept reading garbage.
+//
+// The fix mirrors VariableDeclaration's `needs_unboxing` logic in the
+// Assignment handler so that an Any RHS into a non-Any target emits
+// `emit_unbox_any` instead of passing the wrapper pointer through.
+//
+// This test exercises the four shapes that exposed the bug:
+//   1. `c = json.get(arr, "1")` on indices beyond 0 — was returning wrapper.
+//   2. `c.length()` on a re-assigned outer-scope c — must be 1 (was 4).
+//   3. `while c != ""` loop driven by `c = json.get(arr, i.toString())` —
+//      must complete the natural number of iterations.
+//   4. Sequential re-assignments — each must produce the inner string ptr.
+//
+// Expected output:
+//   1 1 1 1
+//   3
+//   2
+
+start:
+	// Case 1: re-assignment of outer-scope `c` to json.get result.
+	// Each c.length() must be 1 (the inner string length), NOT 4 (the wrapper tag).
+	string j = "[\"a\",\"b\",\"c\",\"d\"]"
+	string c = json.get(j, "0")
+	print(c.length().toString())
+	print(" ")
+	c = json.get(j, "1")
+	print(c.length().toString())
+	print(" ")
+	c = json.get(j, "2")
+	print(c.length().toString())
+	print(" ")
+	c = json.get(j, "3")
+	printl(c.length().toString())
+
+	// Case 2: while-loop driven by `c != ""` with `c = json.get` in body.
+	// Must complete 3 iterations (one for each array element) before
+	// json.get(j2, "3") returns null/empty and the loop exits.
+	string j2 = "[\"x\",\"y\",\"z\"]"
+	integer iters = 0
+	string c2 = json.get(j2, "0")
+	while c2 != ""
+		iters = iters + 1
+		c2 = json.get(j2, iters.toString())
+	printl(iters.toString())
+
+	// Case 3: SSR-style accumulator. Must run 2 iterations (matching the
+	// original /tmp/minimal_bug.cln shape that produced len=6 instead of
+	// the expected — but the EXPECTED count for `["a","b"]` is 2).
+	string j3 = "[\"a\",\"b\"]"
+	string acc = ""
+	integer i = 0
+	string c3 = json.get(j3, "0")
+	while c3 != ""
+		acc = acc + "[X]"
+		i = i + 1
+		c3 = json.get(j3, i.toString())
+	printl(i.toString())

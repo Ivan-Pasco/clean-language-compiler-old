@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.30.313",
+  "compiler_version": "0.30.366",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1781751806,
+  "generated_at_epoch_seconds": 1782513177,
   "artifacts": [
     {
-      "name": "codegen_stack_remaining_cross_class_void_from_method_body.wasm",
-      "path_relative": "codegen_stack_remaining_cross_class_void_from_method_body.wasm",
+      "name": "ssr_concat_in_loop_no_oom.wasm",
+      "path_relative": "ssr_concat_in_loop_no_oom.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 18539,
-      "sha256": "27c7f14b26ec15b1b228b02a561d04c7f1d1ce7403f0f5f721311f958ac5fed4",
+      "size_bytes": 23751,
+      "sha256": "6a4f237ae5bd0334e4663ae786ddd23d5684a9ac3de484182bc18955a5e40755",
       "source_plugin": null
     },
     {
@@ -21,8 +21,8 @@
       "purpose": "client_hydration",
       "public": true,
       "content_type": "application/wasm",
-      "size_bytes": 18470,
-      "sha256": "c251d79aa514d2d0b004ad5735b37f71e548a6fe9f74725d41ebfb209d1e33c9",
+      "size_bytes": 18923,
+      "sha256": "7de59e3f443c7eea1399793167e5e42e3ac10a6d16cd4ba95961d43ed5c82dff",
       "source_plugin": null
     }
   ],

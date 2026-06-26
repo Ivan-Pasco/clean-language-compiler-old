@@ -321,12 +321,38 @@ impl MirBuilder {
                         // If the actual MIR type is Any, don't try to box - it's already Any format
                         let value_is_actually_any = matches!(actual_mir_type, Some(MirType::Any));
 
-                        // Check if we need to box: target type is Any but value type is not Any
-                        // NOTE: Also check actual MIR type - if already Any, no boxing needed
-                        let final_value_id = if matches!(target.expr_type, ConcreteType::Any)
+                        // Mirror the VariableDeclaration logic above: check both directions —
+                        // boxing (target Any, value non-Any) and unboxing (target non-Any, value Any).
+                        // The original code only handled boxing. Without unboxing here,
+                        // `c = json.get(...)` where `c: string` writes the raw Any wrapper pointer
+                        // (`[tag=4, inner_string_ptr, 0]`) into `c` instead of the inner string.
+                        // Downstream `string_compare`/`string.length` then read the wrapper's
+                        // tag byte (`04 00 00 00`) as a length-4 string — the surface symptom of
+                        // CMP-SSR-MALLOC-OOM-PAGE-RENDER (the re-assigned outer-scope
+                        // `c = json.get(...)` inside a `while c != ""` loop reads garbage
+                        // length+content and exits one iter early when the wrapper bytes happen
+                        // to encode as `""`).
+                        let needs_unboxing = (matches!(value.expr_type, ConcreteType::Any)
+                            || value_is_actually_any)
+                            && !matches!(target.expr_type, ConcreteType::Any);
+                        let needs_boxing = matches!(target.expr_type, ConcreteType::Any)
                             && !matches!(value.expr_type, ConcreteType::Any)
-                            && !value_is_actually_any
-                        {
+                            && !value_is_actually_any;
+
+                        let final_value_id = if needs_unboxing {
+                            trace!(
+                                var_name = %name,
+                                value_type = ?value.expr_type,
+                                target_type = ?target.expr_type,
+                                "Unboxing any value for variable assignment"
+                            );
+                            self.emit_unbox_any(
+                                context,
+                                value_id,
+                                &target.expr_type,
+                                &value.location,
+                            )
+                        } else if needs_boxing {
                             trace!(
                                 var_name = %name,
                                 value_type = ?value.expr_type,

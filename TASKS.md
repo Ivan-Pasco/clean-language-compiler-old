@@ -1,5 +1,49 @@
 # Clean Language Compiler - Implementation Tasks
 
+## ✅ FIXED (pending ship): CMP-SSR-MALLOC-OOM-PAGE-RENDER — root cause was `c = json.get(...)` assignment never unboxing Any→string + DCE breaking after first defining-instruction match
+
+**Fix landed locally 2026-06-26** (commit pending). Two surgical changes:
+
+1. **`src/mir/mir_builder/statements.rs::TastStatement::Assignment` → `TastExpressionKind::Variable`**: Added `needs_unboxing` check mirroring the existing `VariableDeclaration` logic. When the RHS type is `Any` (or its actual MIR type is `Any`) and the target type is not `Any`, emit `emit_unbox_any` to convert the boxed-Any wrapper into the underlying scalar/pointer. Without this, `c = json.get(...)` (where `c: string`) silently wrote the wrapper-struct pointer (`[tag=4, inner_ptr, 0]`) into `c`'s WASM local. Downstream `string_compare`/`string.length` then read the wrapper's tag byte (`04 00 00 00`) as a length-4 string. This is the actual SSR symptom: the loop's `while c != ""` condition either truncated iteration count (when the 4 content bytes encoded as `""`) or kept reading garbage strings.
+
+2. **`src/mir/optimization.rs::DeadCodeEliminationPass::mark_live`**: Removed the `break` after finding the first defining instruction. The MIR is NOT in SSA form — a single ValueId can be the destination of multiple instructions (the canonical case is an outer-scope variable re-assigned inside a loop). Stopping at the first match silently dropped operand-liveness from every subsequent re-definition; the codegen would emit `local.get N` on a WASM local that was never written to, producing garbage values. The fix walks all defining instructions and marks all operands live. Strictly more values live → strictly fewer dead instructions eliminated → no correctness regressions possible (only potential minor WASM size increase).
+
+The first change alone is insufficient: my UnboxAnyToI32 MIR instruction was being correctly added for every re-assignment, but DCE was killing all but the first one's dispatch. The two bugs compound: the missing unbox at the MIR-builder level + the DCE bug that wouldn't have manifested before because the unbox was missing.
+
+### Verification
+
+| Test | Before fix | After fix | Expected |
+|---|---|---|---|
+| `/tmp/minimal_bug.cln` (rewrite path) | 2 iters, len=6 | 3 iters, len=9 | 3 iters, len=9 ✓ |
+| `/tmp/minimal_no_rewrite.cln` (matcher bypassed via `acc = "0"`) | 3 iters, len=10 | 3 iters, len=10 | 3 iters, len=10 ✓ |
+| `/tmp/loop_no_rewrite_probe.cln` (`c.length()` per iter) | 1, 4, 4 → exit at iter 3 | 1, 1, 1 → exit at iter 3 | 1, 1, 1 ✓ |
+| `/tmp/loop_indep.cln` (counter exit, `c` inside loop scope) | 1, 1, 1 | 1, 1, 1 | 1, 1, 1 ✓ |
+| `tests/cln/bugfixes/assignment_unbox_any_for_non_any_target.cln` (new regression test) | `1 _ _ _\n3\n2` (3 lengths corrupted) | `1 1 1 1\n3\n2` | `1 1 1 1\n3\n2` ✓ |
+| `tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln` (existing SSR test) | 190 500 2950 110 | 190 500 2950 110 | 190 500 2950 110 ✓ |
+| `cargo test --lib --release` | 436/436 | 436/436 | 436/436 ✓ |
+
+### Files changed
+
+- `src/mir/mir_builder/statements.rs` — Added `needs_unboxing` check + `emit_unbox_any` call in the `TastStatement::Assignment` → `Variable` branch (parallel to the existing logic in `VariableDeclaration` at line ~67-90).
+- `src/mir/optimization.rs` — Removed `break` in `DeadCodeEliminationPass::mark_live`; added doc comment explaining why MIR is not SSA-form and why all defining instructions must be visited.
+- `tests/cln/bugfixes/assignment_unbox_any_for_non_any_target.cln` — New regression test covering the four shapes that exposed the bug: sequential re-assignment with `c.length()` (catches the wrapper-tag-as-length symptom), `while c != ""` driven by `c = json.get(...)` (the SSR pattern), and the rewrite-enabled accumulator (the original failing case).
+
+### Cross-component impact
+
+This is a pure compiler-side fix. No framework, server, or plugin changes required. The user's `/syntax` and `/tutorials` 500 errors should resolve once a release is cut with this fix and the SSR rendering path re-runs against the new compiler.
+
+The four prior false-resolved dashboard entries (`0e3d5cd7`, `fbc8793a`, `80e48890`, `fe33c4bf` from the user's report, plus `27aa9c637433`, `ffae539222ff`, `ff0c62d05604`, and `031d534fb4bd` reopened 2026-06-26) all share this root cause. Future `/resolve-fix CMP-SSR-MALLOC-OOM-PAGE-RENDER <VERSION>` should cite this commit so the resolution loop is auditable.
+
+### Side benefit: the 0.30.365/0.30.366 SSR matcher
+
+The single-RHS string accumulator matcher (`hir_builder.rs::rewrite_string_accumulator_loops`) shipped in 0.30.365/0.30.366 stays in. It IS a real O(n)-from-O(n²) win on the trivial single-RHS pattern, and the new fix makes its iteration semantics correct for the json-driven-condition case (which was the trap that blocked extending it to chained-RHS). The next step is to extend the matcher to chained-RHS (left-spine walking) — that work is no longer blocked by the iteration-count regression.
+
+---
+
+## 🔴 SUPERSEDED: original "CMP-SSR-MALLOC-OOM-PAGE-RENDER 0.30.366 only covers single-RHS" entry (kept for history below)
+
+The diagnosis section below was the WORKING THEORY before the actual root cause was identified. It correctly noted that the SSR rewrite changed iteration count under json-driven conditions, but pursued three wrong hypotheses (heap-sync, JSON-parser inconsistency, scope_pop reclamation) before converging on the right one (missing unbox in Assignment + DCE break-after-first). Kept here for archaeology — the actual fix is documented above.
+
 ## 🔴 RE-OPEN: CMP-SSR-MALLOC-OOM-PAGE-RENDER — 0.30.366 fix only covers `acc = acc + x` (single RHS); production uses chained `acc = acc + x + y + …` and is unchanged
 
 **Dashboard fingerprints (all REOPENED 2026-06-26 after user-reported regression on 0.30.366)**: `27aa9c637433`, `ffae539222ff`, `ff0c62d05604`, plus the new report `031d534fb4bd` filed against 0.30.366 with live evidence of unchanged byte counts on `/syntax` and `/tutorials`.
@@ -49,6 +93,101 @@ The naive chain matcher has been discarded from the working tree pending a real 
 2. **Confirm the pre-existing `c.length()` bug** is independent of the rewrite (it appears in 0.30.364 too) and file it as a separate report once the SSR fix is unblocked.
 3. **Extend the test fixture** to cover the chained-RHS pattern AND the json-driven-condition pattern BEFORE re-shipping. The 0.30.366 test was insufficient because it only used the trivial form. The new fixture must compile and pass when run end-to-end with `cln` invoked through `wasmtime_runner` AND when run through `clean-server` (the host that originally hit the 128 MB cap) so we catch both the WASM-side bug and any host-bridge interaction.
 4. **Cite the four prior false-resolved entries** (`0e3d5cd7`, `fbc8793a`, `80e48890`, `fe33c4bf` per the user's report) in the eventual fix commit so the resolution loop is visible across cycles.
+
+### Investigation update 2026-06-26 — iteration delta is a SYMPTOM of a JSON return-type bug, not a heap-sync issue
+
+Followed step 1 with a temporary trace patch to `src/bin/wasmtime_runner.rs` (revert after — DO NOT ship). Patched `string_compare`, `mem_alloc`, and `allocate_string_in_memory` to dump `__heap_ptr`, the input pointers, the bytes at `[ptr1-16 .. ptr1+32]`, and (for mem_alloc) the pre/post host offsets. Then ran `/tmp/minimal_bug.cln` (rewrite path) and `/tmp/minimal_no_rewrite.cln` (same source with `acc = "0"` to bypass the matcher) both built with 0.30.366.
+
+**The heap-sync hypothesis is RULED OUT.** The trace shows the host-side `NEXT_ALLOCATION_OFFSET` syncs correctly with `__heap_ptr` on every host call. Both versions consume heap monotonically. The rewrite version's extra `string_builder_new` (24 bytes via the WASM-native `__malloc` in `func 159`) shifts subsequent allocations by 24 bytes but does NOT introduce overlap.
+
+**The real bug is in the WASM-internal JSON path-lookup.** `json.get(arr, "N")` returns a pointer that is sometimes a Clean-string pointer and sometimes a JSON-node-wrapper pointer, depending on the index. Concretely, with `j = "[\"a\",\"b\",\"c\"]"`:
+
+| call | pointer returned | bytes at ptr+0..7 | host reads length as |
+|---|---|---|---|
+| `json.get(j, "0")` | 1048616 | `01 00 00 00 61 00 00 00` | **1 (correct — points at Clean string "a")** |
+| `json.get(j, "1")` | 1048864 | `04 00 00 00 08 01 10 00` | **4 (WRONG — pointing at JSON node `{tag=4, ptr=1048840}`)** |
+| `json.get(j, "2")` | 1049088 | `04 00 00 00 e8 01 10 00` | **4 (WRONG — pointing at JSON node `{tag=4, ptr=1049064}`)** |
+| `json.get(j, "3")` | 0 | n/a | 0 (correct null) |
+
+The bytes `04 00 00 00 <ptr>` are the wrapper struct `[tag=4, inner_ptr]` — the JSON-internal representation of a string. Index 0 is special-cased to return the inner string pointer; indices 1+ return the wrapper. **This is a bug in the JSON array-index extractor.** It is fully reproducible without the SSR rewrite (`/tmp/loop_no_rewrite_probe.cln` is a 14-line repro). `c.length()` returns 4 instead of 1 for indices ≥ 1, on both 0.30.364 and 0.30.366.
+
+**How this manifests as the iter-count delta:**
+- Both versions exit the loop only when `string_compare(c, "")` returns 0 (equal).
+- In the no-rewrite path, the wrapper bytes at iter 1 are `04 00 00 00 08 01 10 00` → reads as "length 4, content `\x08\x01\x10\x00`" → NOT equal to "" → loop continues.
+- In the rewrite path, the heap layout is shifted by 24 bytes (the StringBuilder header), so the wrapper at iter 2 happens to land at a region where the 4 content bytes are `00 00 00 00` → reads as "length 4, content `\0\0\0\0`" → which `from_utf8` decodes as "" → EQUAL to "" → loop EXITS one iter early.
+- The pre-existing JSON bug + the rewrite's heap shift combine to produce the user-visible iteration-count delta.
+
+**Where the JSON bug lives** (compiler-side, WASM-internal — `tests/output/minimal_366.wat` decoded):
+- `func 239` (json.get entry): `if wrapper.tag == 4 { call 220(wrapper.ptr) } else { wrapper }` → calls `call 238` path navigator.
+- `func 238` (path navigator): splits path on `.`, dispatches to `call 237` (array index) or `call 236` (object key) per segment.
+- `func 237` (array index): loads `array[i]` from `array+4+i*4` (32-bit slot). Returns the slot value directly unless it equals sentinels 1 or 2 (null/false), in which case it boxes.
+- **The bug**: the array slots store inconsistent pointer types. Slot 0 contains a Clean-string pointer; slots 1+ contain wrapper pointers. The parser that writes the slots is in `func 217` and its array-handling helper (probably `func 218` or `func 219`). The fix is to make the parser store one consistent form (likely the inner Clean-string pointer, matching slot 0).
+
+The bug should be filed as a separate `report_error` once the SSR fix can ship — but it is **on the critical path for the SSR fix**, because the rewrite without addressing this bug will silently change iteration counts for any user loop that walks JSON arrays via `json.get(arr, i.toString())`. The chained-RHS extension cannot ship while this trap is live.
+
+### Path forward (revised)
+
+The original "chain matcher" approach is the wrong starting point. Order of work:
+
+1. **First fix the JSON array slot inconsistency in the parser.** Most likely in the array-parsing helper called by `func 217`. The fix should make every array slot store the same pointer type (Clean-string ptr for strings, wrapper ptr otherwise — pick one consistently). This is a pure-WASM compiler-side bug; no host changes needed.
+2. **Add a non-loop regression test** that asserts `json.get(j, "1").length() == 1` for a JSON string array. Should fail today, pass after fix #1.
+3. **Re-test the rewrite-enabled SSR loop** (`/tmp/minimal_bug.cln`). After fix #1, both rewrite and no-rewrite versions should produce the same iteration count.
+4. **THEN extend the matcher to chained-RHS** (the original plan). Safe to do once the JSON bug is closed because the rewrite no longer changes loop semantics.
+5. **Add tests for both patterns** to `tests/cln/bugfixes/`:
+   - `ssr_concat_chain_no_oom.cln` — chained RHS form.
+   - `json_array_get_index_returns_string.cln` — regression for the JSON parser bug.
+6. **Ship as a single coordinated release** so dashboard resolution covers the actual user-visible failure (the chained-RHS production form), not just the trivial single-RHS form.
+
+### Minimal repros (kept for the next session)
+
+- `/tmp/minimal_bug.cln` — 12 lines, single-RHS, rewrite fires, loops 2× (wrong).
+- `/tmp/minimal_no_rewrite.cln` — same source with `acc = "0"`, rewrite skipped, loops 3× (correct).
+- `/tmp/loop_no_rewrite_probe.cln` — adds `print(c.length().toString())` per iter, proves `c.length() = 4` for indices 1+ even without the rewrite.
+- `/tmp/prove_json_bug.cln` — sequential `json.get` (no loop) — shows lengths are all correct (1).
+- `/tmp/seq_with_alloc.cln` — sequential with allocation between — still correct (1, 1, 1).
+- `/tmp/seq_dynamic_path.cln` — sequential with dynamic `i.toString()` paths — still correct (1, 1, 1).
+- `/tmp/loop_indep.cln` — **CRUCIAL**: loop with counter exit (`while i < 3`) where `c` is declared *inside* the loop body — produces correct lengths (1, 1, 1).
+
+### Final diagnosis 2026-06-26 — the bug is `mem_scope_pop` reclaiming the heap region a re-assigned outer-scope string points at
+
+The JSON-extractor-returns-wrapper hypothesis is also RULED OUT. `prove_json_bug.cln`, `seq_with_alloc.cln`, `seq_dynamic_path.cln`, and `loop_indep.cln` all return the correct lengths (1) for every index. The JSON parser is fine.
+
+**The bug is specifically about variable scoping inside a loop.** It fires only when:
+- A string variable (`c`) is declared in the OUTER scope (before the loop), AND
+- That variable is re-assigned inside the loop body to a freshly-allocated heap string (e.g. `c = json.get(...)`), AND
+- The loop body otherwise advances the heap (other allocations), AND
+- The loop generates a `mem_scope_push` / `mem_scope_pop` pair per iteration.
+
+The codegen pushes a scope mark at the top of each loop iter and pops at the bottom. The pop resets `__heap_ptr` back to the mark, reclaiming everything allocated during the iter. **But `c` still points into that reclaimed region.** The next iter's allocations write over the bytes that `c` points at. By the time `string_compare(c, "")` runs at the top of the next iter, the bytes at `c` have been overwritten — first by the wrapper's `mem_alloc(0,12)` (writing `04 00 00 00 <ptr>`), then by the JSON parser's internal allocations.
+
+This is the SAME class of bug that `body_is_iter_scope_safe` exists to prevent (per the comment in `src/hir/hir_builder.rs:2806`). For the `__sb` builder, the rewrite already declares the outer variable as `String` so the predicate suppresses scope_pop. **For `c = json.get(...)`, no such suppression exists** — the loop body unconditionally runs scope_pop, reclaiming the heap region `c` points into.
+
+**Why the rewrite makes it worse than no-rewrite:**
+- In no-rewrite, the `acc = acc + "[X]"` body emits `string.concat` (host alloc), which uses `allocate_string_in_memory` — that DOES sync `__heap_ptr` after the alloc but does NOT prevent the loop's scope_pop from reclaiming everything afterwards. So `c`'s bytes are also reclaimed, but happen to be overwritten with non-zero JSON data → string_compare reads len=4 + non-zero bytes → still != "" → loop continues to iter 3 (where `c=0` returns from json.get).
+- In rewrite, the body does `string_builder_append` (pure WASM) which writes into the pre-loop `__sb` buffer (which lives OUTSIDE the per-iter scope region, so survives scope_pop). After scope_pop, `__heap_ptr` resets to the iter-mark. Next iter's `mem_alloc` then lands AT THE SAME OFFSET as the previous iter's wrapper, writing `04 00 00 00 00 00 00 00` (12 bytes, last 4 are still zero because `int_to_string(2)` writes "2" to a different offset). `c` ends up pointing at `04 00 00 00 00 00 00 00` → string_compare reads len=4, content all-zero → from_utf8 returns "" → equal to "" → loop EXITS.
+- The 24-byte StringBuilder allocation before the loop ALSO shifts the per-iter mark by 24 bytes, which deterministically lines up the wrapper bytes to produce the all-zero content. Without the rewrite, the offset is different and the bytes that happen to land at `c` are non-zero.
+
+**The real fix lives in the loop scope-management logic, not in the SSR rewrite matcher.** The matcher is correct. The codegen for the loop body must not pop the scope mark for an outer-scope variable that has been re-assigned to a heap pointer during the iter. Either:
+1. **Skip scope_pop entirely** if any outer-scope variable was written-to during the iter (conservative; loses arena benefit). OR
+2. **Copy the outer-scope variable's heap data to a survivor region** before scope_pop (preserves arena benefit, costs one copy per assignment). OR
+3. **Promote any heap value assigned to an outer-scope variable to allocate from a region above the iter mark** (e.g. via `mem_alloc` with the host-side `NEXT_ALLOCATION_OFFSET`, which is not affected by scope_pop). This is what `allocate_string_in_memory` already does, but the host-side advancement is undone by `mem_scope_pop`'s `*NEXT_ALLOCATION_OFFSET = mark`.
+
+Option 3 needs a finer scope semantic: scope_pop should reclaim ONLY allocations made for values that did NOT escape the scope. Tracking escapes precisely is hard, but a simple sound approximation: scope_pop reclaims back to the higher of (a) the iter mark and (b) `__heap_ptr` AT THE LAST WRITE to any outer-scope variable during the iter. This preserves anything that an outer-scope write could reach.
+
+### Path forward (corrected)
+
+1. **First fix the loop scope-pop reclamation bug.** Most likely in:
+   - The loop codegen that emits `mem_scope_push`/`mem_scope_pop` — `src/codegen/mir_codegen/` (search for `mem_scope_pop` emission).
+   - The `body_is_iter_scope_safe` predicate logic in MIR — extend to detect outer-scope string assignments and either suppress the per-iter scope_pop, or generate a copy.
+2. **Add a regression test** matching `/tmp/minimal_no_rewrite.cln` semantics: outer-scope string variable reassigned via `json.get` in a while-loop body, with the loop condition reading the same variable. Should produce 3 iters end-to-end.
+3. **After fix #1**, re-test `/tmp/minimal_bug.cln` (rewrite path). Should also produce 3 iters.
+4. **THEN extend the matcher to chained-RHS** (the original plan). Safe to do once the scope bug is closed.
+5. **Add tests for both patterns** to `tests/cln/bugfixes/`:
+   - `ssr_concat_chain_no_oom.cln` — chained-RHS coverage.
+   - `loop_outer_string_assignment_survives_scope_pop.cln` — regression for the scope-pop bug.
+6. **Ship as a single coordinated release** so dashboard resolution covers the actual production failure.
+
+The scope-pop bug is the gating issue. It almost certainly affects more than just SSR rendering — any user code with `while x != ""` where `x` is updated by a heap-allocating function inside the loop body would hit it. The reason it hasn't surfaced widely is that most such loops are also subject to the SSR rewrite (the same pattern), and the rewrite's heap shift is what makes the corruption deterministic. Without the rewrite, the corruption is heap-layout-dependent and easier to miss.
 
 ### Files (unchanged, still shipped, still correct on trivial-form pattern)
 
