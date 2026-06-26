@@ -6,6 +6,7 @@ start:
 
 class Animal
 	functions:
-		string getName()
-			return "Animal"
+		public:
+			string getName()
+				return "Animal"
 

@@ -35,10 +35,11 @@ state:
 
 class Widget
 	functions:
-		void render()
-			printl("widget rendered")
-		void do_thing()
-			printl("widget did thing")
+		public:
+			void render()
+				printl("widget rendered")
+			void do_thing()
+				printl("widget did thing")
 
 functions:
 	string render(string name)

@@ -38,9 +38,10 @@ class SimpleObject
 		print("Created " + name + " with value " + value.toString())
 
 	functions:
-		string getName()
-			return name
+		public:
+			string getName()
+				return name
 
-		integer getValue()
-			return value
+			integer getValue()
+				return value
 

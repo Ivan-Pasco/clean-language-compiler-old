@@ -22,11 +22,12 @@ class Animal
 		age = age
 
 	functions:
-		string getName()
-			return name
+		public:
+			string getName()
+				return name
 
-		integer getAge()
-			return age
+			integer getAge()
+				return age
 
 class Dog is Animal
 	string breed
@@ -36,9 +37,10 @@ class Dog is Animal
 		breed = breed
 
 	functions:
-		string getBreed()
-			return breed
+		public:
+			string getBreed()
+				return breed
 
-		string speak()
-			return "Woof!"
+			string speak()
+				return "Woof!"
 

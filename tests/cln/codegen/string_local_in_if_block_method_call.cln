@@ -14,8 +14,9 @@ start:
 
 class Helper
 	functions:
-		string label(string s)
-			return "[" + s + "]"
+		public:
+			string label(string s)
+				return "[" + s + "]"
 
 class Demo
 	string lang
@@ -24,10 +25,11 @@ class Demo
 		lang = langParam
 
 	functions:
-		string run()
-			Helper h = Helper()
-			string out = ""
-			if lang != ""
-				string tmp = h.label(lang)
-				out = tmp + " ok"
-			return out
+		public:
+			string run()
+				Helper h = Helper()
+				string out = ""
+				if lang != ""
+					string tmp = h.label(lang)
+					out = tmp + " ok"
+				return out

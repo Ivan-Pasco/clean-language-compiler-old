@@ -19,15 +19,16 @@ class Person
 		age = personAge
 
 	functions:
-		string getName()
-			return name
+		public:
+			string getName()
+				return name
 
-		integer getAge()
-			return age
+			integer getAge()
+				return age
 
-		void setAge(integer newAge)
-			age = newAge
+			void setAge(integer newAge)
+				age = newAge
 
-		string toString()
-			return name + " is " + age.toString() + " years old"
+			string toString()
+				return name + " is " + age.toString() + " years old"
 

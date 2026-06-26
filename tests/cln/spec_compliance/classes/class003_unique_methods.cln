@@ -14,14 +14,16 @@ start:
 	print(c.total.toString())
 
 class Calculator
-	integer total
+	public:
+		integer total
 
 	constructor()
 		total = 0
 
 	functions:
-		void add(integer x)
-			total = total + x
+		public:
+			void add(integer x)
+				total = total + x
 
-		void sub(integer x)
-			total = total - x
+			void sub(integer x)
+				total = total - x

@@ -47,11 +47,12 @@ class Container
 		value = val
 
 	functions:
-		any get()
-			return value
+		public:
+			any get()
+				return value
 
-		void set(any newValue)
-			value = newValue
+			void set(any newValue)
+				value = newValue
 
 class Wrapper
 	any data
@@ -62,5 +63,6 @@ class Wrapper
 		label = l
 
 	functions:
-		string describe()
-			return label + ": " + data.toString()
+		public:
+			string describe()
+				return label + ": " + data.toString()

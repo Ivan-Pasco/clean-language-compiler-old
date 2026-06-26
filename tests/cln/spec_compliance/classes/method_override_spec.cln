@@ -32,19 +32,21 @@ start:
 // Tests: Method overriding in child classes
 
 class Vehicle
-	string brand
-	integer speed
+	public:
+		string brand
+		integer speed
 
 	constructor(string vehicleBrand, integer vehicleSpeed)
 		brand = vehicleBrand
 		speed = vehicleSpeed
 
 	functions:
-		string describe()
-			return brand + " vehicle at " + speed.toString() + " mph"
+		public:
+			string describe()
+				return brand + " vehicle at " + speed.toString() + " mph"
 
-		integer getMaxSpeed()
-			return 100
+			integer getMaxSpeed()
+				return 100
 
 class Car is Vehicle
 	integer numDoors
@@ -55,12 +57,13 @@ class Car is Vehicle
 
 	functions:
 		// Override parent method
-		string describe()
-			return brand + " car with " + numDoors.toString() + " doors at " + speed.toString() + " mph"
+		public:
+			string describe()
+				return brand + " car with " + numDoors.toString() + " doors at " + speed.toString() + " mph"
 
-		// Override max speed
-		integer getMaxSpeed()
-			return 150
+			// Override max speed
+			integer getMaxSpeed()
+				return 150
 
 class SportsCar is Vehicle
 	boolean hasTurbo
@@ -71,16 +74,17 @@ class SportsCar is Vehicle
 
 	functions:
 		// Override with different implementation
-		string describe()
-			if hasTurbo
-				return brand + " sports car with TURBO at " + speed.toString() + " mph"
-			else
-				return brand + " sports car at " + speed.toString() + " mph"
+		public:
+			string describe()
+				if hasTurbo
+					return brand + " sports car with TURBO at " + speed.toString() + " mph"
+				else
+					return brand + " sports car at " + speed.toString() + " mph"
 
-		// Override max speed - higher for sports car
-		integer getMaxSpeed()
-			if hasTurbo
-				return 200
-			else
-				return 180
+			// Override max speed - higher for sports car
+			integer getMaxSpeed()
+				if hasTurbo
+					return 200
+				else
+					return 180
 

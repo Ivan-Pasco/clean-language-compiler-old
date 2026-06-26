@@ -31,11 +31,12 @@ class Point
 		y = yVal
 
 	functions:
-		integer getX()
-			return x
+		public:
+			integer getX()
+				return x
 
-		integer getY()
-			return y
+			integer getY()
+				return y
 
 class Rectangle
 	integer width
@@ -46,12 +47,13 @@ class Rectangle
 		height = h
 
 	functions:
-		integer getWidth()
-			return width
+		public:
+			integer getWidth()
+				return width
 
-		integer getHeight()
-			return height
+			integer getHeight()
+				return height
 
-		integer area()
-			return width * height
+			integer area()
+				return width * height
 

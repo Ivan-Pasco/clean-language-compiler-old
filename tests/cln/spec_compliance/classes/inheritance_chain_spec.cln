@@ -33,5 +33,6 @@ class NamedCounter is Counter
 		label = lbl
 
 	functions:
-		string getLabel()
-			return label
+		public:
+			string getLabel()
+				return label

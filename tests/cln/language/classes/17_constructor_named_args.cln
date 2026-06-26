@@ -24,8 +24,9 @@ class Animal
 		age = age
 
 	functions:
-		string getName()
-			return name
+		public:
+			string getName()
+				return name
 
-		integer getAge()
-			return age
+			integer getAge()
+				return age

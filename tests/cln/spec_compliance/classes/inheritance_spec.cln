@@ -24,8 +24,9 @@ start:
 // Tests: Class inheritance with is keyword and base() calls
 
 class Animal
-	string name
-	integer age
+	public:
+		string name
+		integer age
 
 	constructor(string animalName, integer animalAge)
 		name = animalName
@@ -49,14 +50,15 @@ class Dog is Animal
 		breed = dogBreed
 
 	functions:
-		string getBreed()
-			return breed
+		public:
+			string getBreed()
+				return breed
 
-		string speak()
-			return name + " barks"
+			string speak()
+				return name + " barks"
 
-		string describe()
-			return name + " is a " + breed + ", " + age.toString() + " years old"
+			string describe()
+				return name + " is a " + breed + ", " + age.toString() + " years old"
 
 class Cat is Animal
 	boolean indoor
@@ -66,9 +68,10 @@ class Cat is Animal
 		indoor = isIndoor
 
 	functions:
-		boolean isIndoor()
-			return indoor
+		public:
+			boolean isIndoor()
+				return indoor
 
-		string speak()
-			return name + " meows"
+			string speak()
+				return name + " meows"
 

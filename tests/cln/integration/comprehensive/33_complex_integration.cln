@@ -113,17 +113,18 @@ class Shape
 		area = 0.0
 
 	functions:
-		string getName()
-			return name
-
-		number:64 getArea()
-			return area
-
 		void setArea(number:64 newArea)
 			area = newArea
 
 		string toString()
 			return name + " with area " + area.toString()
+
+		public:
+			string getName()
+				return name
+
+			number:64 getArea()
+				return area
 
 class Rectangle is Shape
 	number:32 width

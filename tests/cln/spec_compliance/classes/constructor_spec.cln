@@ -37,8 +37,9 @@ class Person
 		integer getAge()
 			return age
 
-		string describe()
-			return name + " is " + age.toString() + " years old"
+		public:
+			string describe()
+				return name + " is " + age.toString() + " years old"
 
 class Counter
 	integer count
@@ -47,14 +48,15 @@ class Counter
 		count = initialValue
 
 	functions:
-		integer getValue()
-			return count
+		public:
+			integer getValue()
+				return count
 
-		void increment()
-			count = count + 1
+			void increment()
+				count = count + 1
 
-		void decrement()
-			count = count - 1
+			void decrement()
+				count = count - 1
 
 class Config
 	string host
@@ -67,12 +69,13 @@ class Config
 		debug = debugMode
 
 	functions:
-		string getHost()
-			return host
+		public:
+			string getHost()
+				return host
 
-		integer getPort()
-			return port
+			integer getPort()
+				return port
 
-		boolean isDebug()
-			return debug
+			boolean isDebug()
+				return debug
 

@@ -82,15 +82,17 @@ start:
 	print("All expression types parsed successfully")
 
 class TestObject
-	integer value
-	TestData data
+	public:
+		integer value
+		TestData data
 
 	constructor()
 		value = 42
 		data = TestData()
 
 class TestData
-	string name
+	public:
+		string name
 
 	constructor()
 		name = "test"

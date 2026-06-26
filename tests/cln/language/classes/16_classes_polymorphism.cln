@@ -56,9 +56,10 @@ start:
 // Tests: Polymorphic behavior with inheritance and method overriding
 
 class Vehicle
-	string make
-	string model
 	integer year
+	public:
+		string make
+		string model
 
 	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
 		make = vehicleMake
@@ -66,17 +67,18 @@ class Vehicle
 		year = vehicleYear
 
 	functions:
-		string getInfo()
-			return year.toString() + " " + make + " " + model
+		public:
+			string getInfo()
+				return year.toString() + " " + make + " " + model
 
-		string startEngine()
-			return "Vehicle starting..."
+			string startEngine()
+				return "Vehicle starting..."
 
-		string stopEngine()
-			return "Vehicle stopping..."
+			string stopEngine()
+				return "Vehicle stopping..."
 
-		integer getMaxSpeed()
-			return 60
+			integer getMaxSpeed()
+				return 60
 
 class Car is Vehicle
 	integer doors
@@ -103,13 +105,14 @@ class Car is Vehicle
 			else
 				return 100
 
-		string getCarDetails()
-			string electric_status = ""
-			if isElectric
-				electric_status = "Electric"
-			else
-				electric_status = "Gasoline"
-			return getInfo() + ", " + doors.toString() + " doors, " + electric_status
+		public:
+			string getCarDetails()
+				string electric_status = ""
+				if isElectric
+					electric_status = "Electric"
+				else
+					electric_status = "Gasoline"
+				return getInfo() + ", " + doors.toString() + " doors, " + electric_status
 
 class Motorcycle is Vehicle
 	boolean hasSidecar
@@ -131,13 +134,14 @@ class Motorcycle is Vehicle
 			else
 				return 140
 
-		string getBikeDetails()
-			string sidecar_status = ""
-			if hasSidecar
-				sidecar_status = "with sidecar"
-			else
-				sidecar_status = "solo bike"
-			return getInfo() + " (" + sidecar_status + ")"
+		public:
+			string getBikeDetails()
+				string sidecar_status = ""
+				if hasSidecar
+					sidecar_status = "with sidecar"
+				else
+					sidecar_status = "solo bike"
+				return getInfo() + " (" + sidecar_status + ")"
 
 functions:
 	void demonstratePolymorphism(Vehicle vehicle)

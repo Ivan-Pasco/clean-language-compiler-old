@@ -43,32 +43,33 @@ class Calculator
 		value = initialValue
 
 	functions:
-		integer getValue()
-			return value
+		public:
+			integer getValue()
+				return value
 
-		void setValue(integer newValue)
-			value = newValue
+			void setValue(integer newValue)
+				value = newValue
 
-		integer add(integer n)
-			value = value + n
-			return value
+			integer add(integer n)
+				value = value + n
+				return value
 
-		integer subtract(integer n)
-			value = value - n
-			return value
+			integer subtract(integer n)
+				value = value - n
+				return value
 
-		integer multiply(integer n)
-			value = value * n
-			return value
+			integer multiply(integer n)
+				value = value * n
+				return value
 
-		boolean isPositive()
-			return value > 0
+			boolean isPositive()
+				return value > 0
 
-		boolean isZero()
-			return value == 0
+			boolean isZero()
+				return value == 0
 
-		string toString()
-			return "Value: " + value.toString()
+			string toString()
+				return "Value: " + value.toString()
 
 class StringBuffer
 	string content
@@ -77,18 +78,19 @@ class StringBuffer
 		content = initial
 
 	functions:
-		string get()
-			return content
-
 		void set(string newContent)
 			content = newContent
 
-		void append(string text)
-			content = content + text
+		public:
+			string get()
+				return content
 
-		void clear()
-			content = ""
+			void append(string text)
+				content = content + text
 
-		boolean isEmpty()
-			return content == ""
+			void clear()
+				content = ""
+
+			boolean isEmpty()
+				return content == ""
 

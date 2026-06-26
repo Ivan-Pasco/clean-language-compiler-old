@@ -17,8 +17,9 @@ class MyComponent
 		string getName()
 			return this.name
 
-		string render()
-			string result = "<" + this.tag + ">"
-			result = result + this.getName()
-			result = result + "</" + this.tag + ">"
-			return result
+		public:
+			string render()
+				string result = "<" + this.tag + ">"
+				result = result + this.getName()
+				result = result + "</" + this.tag + ">"
+				return result

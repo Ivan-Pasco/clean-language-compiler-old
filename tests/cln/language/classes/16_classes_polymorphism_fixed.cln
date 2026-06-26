@@ -7,10 +7,13 @@ start:
 
 	demonstratePolymorphism(tesla)
 	demonstratePolymorphism(honda)
-	demonstratePolymorphism(harley)class Vehicle
-	string make
-	string model
+	demonstratePolymorphism(harley)
+
+class Vehicle
 	integer year
+	public:
+		string make
+		string model
 
 	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
 		make = vehicleMake
@@ -18,17 +21,18 @@ start:
 		year = vehicleYear
 
 	functions:
-		string getInfo()
-			return year.toString() + " " + make + " " + model
+		public:
+			string getInfo()
+				return year.toString() + " " + make + " " + model
 
-		string startEngine()
-			return "Vehicle starting..."
+			string startEngine()
+				return "Vehicle starting..."
 
-		string stopEngine()
-			return "Vehicle stopping..."
+			string stopEngine()
+				return "Vehicle stopping..."
 
-		integer getMaxSpeed()
-			return 60
+			integer getMaxSpeed()
+				return 60
 
 class Car is Vehicle
 	integer doors

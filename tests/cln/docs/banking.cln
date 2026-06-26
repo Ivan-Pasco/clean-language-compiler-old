@@ -9,7 +9,8 @@ start:
 
 class BankAccount
 	string owner
-	number balance
+	public:
+		number balance
 
 	constructor(string initialOwner, number initialBalance)
 		owner = initialOwner

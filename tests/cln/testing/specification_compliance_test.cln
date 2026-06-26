@@ -20,22 +20,24 @@ start:
 
 // Test 1: Basic class with functions block
 class Point
-	integer x
-	integer y
+	public:
+		integer x
+		integer y
 
 	constructor(integer xParam, integer yParam)
 		x = xParam
 		y = yParam
 
 	functions:
-		integer getX()
-			return x
+		public:
+			integer getX()
+				return x
 
-		void move(integer dx, integer dy)
-			x = x + dx
-			y = y + dy
+			void move(integer dx, integer dy)
+				x = x + dx
+				y = y + dy
 
-// Test 2: Inheritance with base constructor
+	// Test 2: Inheritance with base constructor
 class ColoredPoint is Point
 	string color
 
@@ -44,10 +46,11 @@ class ColoredPoint is Point
 		color = colorParam
 
 	functions:
-		string getInfo()
-			return color + " point at " + x.toString() + "," + y.toString()
+		public:
+			string getInfo()
+				return color + " point at " + x.toString() + "," + y.toString()
 
-// Test 3: Static-style methods (class methods)
+	// Test 3: Static-style methods (class methods)
 class MathUtils
 	functions:
 		integer add(integer a, integer b)

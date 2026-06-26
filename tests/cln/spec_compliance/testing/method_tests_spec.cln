@@ -30,22 +30,24 @@ class Counter
 		value = 0
 
 	functions:
-		void increment()
-			value = value + 1
+		public:
+			void increment()
+				value = value + 1
 
-		integer getValue()
-			return value
+			integer getValue()
+				return value
 
 class Calculator
 	functions:
-		integer add(integer a, integer b)
-			return a + b
+		public:
+			integer add(integer a, integer b)
+				return a + b
 
-		integer subtract(integer a, integer b)
-			return a - b
+			integer subtract(integer a, integer b)
+				return a - b
 
-tests:
-	"basic arithmetic": 2 + 2 = 4
-	"subtraction": 10 - 3 = 7
-	"calculator pattern": 5 * 4 = 20
+	tests:
+		"basic arithmetic": 2 + 2 = 4
+		"subtraction": 10 - 3 = 7
+		"calculator pattern": 5 * 4 = 20
 

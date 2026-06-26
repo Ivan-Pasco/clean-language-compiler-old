@@ -36,27 +36,31 @@ start:
 // Tests: base() constructor calls in child classes
 
 class Animal
-	string name
-	integer age
+	public:
+		string name
+		integer age
 
 	constructor(string animalName, integer animalAge)
 		name = animalName
 		age = animalAge
 
 	functions:
-		string describe()
-			return name + " is " + age.toString() + " years old"
+		public:
+			string describe()
+				return name + " is " + age.toString() + " years old"
 
 class Dog is Animal
-	string breed
+	public:
+		string breed
 
 	constructor(string dogName, integer dogAge, string dogBreed)
 		base(dogName, dogAge)
 		breed = dogBreed
 
 	functions:
-		string fullDescription()
-			return name + " is a " + breed + ", " + age.toString() + " years old"
+		public:
+			string fullDescription()
+				return name + " is a " + breed + ", " + age.toString() + " years old"
 
 class Cat is Animal
 	boolean isIndoor
@@ -66,9 +70,10 @@ class Cat is Animal
 		isIndoor = indoor
 
 	functions:
-		string getLocation()
-			if isIndoor
-				return name + " is an indoor cat"
-			else
-				return name + " is an outdoor cat"
+		public:
+			string getLocation()
+				if isIndoor
+					return name + " is an indoor cat"
+				else
+					return name + " is an outdoor cat"
 

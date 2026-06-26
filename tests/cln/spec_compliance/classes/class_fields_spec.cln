@@ -42,23 +42,24 @@ class SimpleClass
 		active = a
 
 	functions:
-		integer getValue()
-			return value
+		public:
+			integer getValue()
+				return value
 
-		string getName()
-			return name
+			string getName()
+				return name
 
-		boolean isActive()
-			return active
+			boolean isActive()
+				return active
 
-		void setValue(integer newValue)
-			value = newValue
+			void setValue(integer newValue)
+				value = newValue
 
-		void setName(string newName)
-			name = newName
+			void setName(string newName)
+				name = newName
 
-		void setActive(boolean newActive)
-			active = newActive
+			void setActive(boolean newActive)
+				active = newActive
 
 class Counter
 	integer count
@@ -67,12 +68,13 @@ class Counter
 		count = 0
 
 	functions:
-		void increment()
-			count = count + 1
+		public:
+			void increment()
+				count = count + 1
 
-		void decrement()
-			count = count - 1
+			void decrement()
+				count = count - 1
 
-		integer getCount()
-			return count
+			integer getCount()
+				return count
 

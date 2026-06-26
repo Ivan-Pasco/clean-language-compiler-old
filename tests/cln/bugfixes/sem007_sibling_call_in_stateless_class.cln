@@ -23,5 +23,6 @@ class A
 	functions:
 		string inner()
 			return "hi"
-		string outer()
-			return inner()
+		public:
+			string outer()
+				return inner()

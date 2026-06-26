@@ -13,6 +13,7 @@ class Point
 		y = yParam
 
 	functions:
-		integer getX()
-			return x
+		public:
+			integer getX()
+				return x
 

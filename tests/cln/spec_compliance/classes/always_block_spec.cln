@@ -26,11 +26,12 @@ class Counter
 		value >= 0
 
 	functions:
-		integer getValue()
-			return value
+		public:
+			integer getValue()
+				return value
 
-		void increment()
-			value = value + 1
+			void increment()
+				value = value + 1
 
-		void add(integer n)
-			value = value + n
+			void add(integer n)
+				value = value + n

@@ -25,32 +25,36 @@ start:
 // Requirement: object.property = value assignment
 
 class Point
-	integer x
-	integer y
+	public:
+		integer x
+		integer y
 
 	constructor(integer xVal, integer yVal)
 		x = xVal
 		y = yVal
 
 	functions:
-		void setX(integer val)
-			x = val
+		public:
+			void setX(integer val)
+				x = val
 
-		void setY(integer val)
-			y = val
+			void setY(integer val)
+				y = val
 
 class Rectangle
-	integer width
-	integer height
+	public:
+		integer width
+		integer height
 
 	constructor()
 		width = 0
 		height = 0
 
 	functions:
-		void setWidth(integer w)
-			width = w
+		public:
+			void setWidth(integer w)
+				width = w
 
-		void setHeight(integer h)
-			height = h
+			void setHeight(integer h)
+				height = h
 

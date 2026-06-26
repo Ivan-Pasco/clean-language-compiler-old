@@ -17,8 +17,9 @@ class Counter
 		count = 0
 
 	functions:
-		void increment()
-			count = count + 1
+		public:
+			void increment()
+				count = count + 1
 
-		integer value()
-			return count
+			integer value()
+				return count

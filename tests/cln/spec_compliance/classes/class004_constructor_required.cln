@@ -9,8 +9,9 @@ start:
 	print("point: " + p.x.toString() + " " + p.y.toString())
 
 class Point
-	integer x
-	integer y
+	public:
+		integer x
+		integer y
 
 	constructor(integer xParam, integer yParam)
 		x = xParam

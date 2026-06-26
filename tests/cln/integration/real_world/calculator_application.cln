@@ -17,35 +17,36 @@ class Calculator
 		memory = 0.0
 
 	functions:
-		number add(number a, number b)
-			return a + b
+		public:
+			number add(number a, number b)
+				return a + b
 
-		number subtract(number a, number b)
-			return a - b
+			number subtract(number a, number b)
+				return a - b
 
-		number multiply(number a, number b)
-			return a * b
+			number multiply(number a, number b)
+				return a * b
 
-		number divide(number a, number b)
-			if b == 0.0
-				print("Error: Division by zero")
-				return 0.0
-			return a / b
+			number divide(number a, number b)
+				if b == 0.0
+					print("Error: Division by zero")
+					return 0.0
+				return a / b
 
-		number power(number base, number exponent)
-			return math.pow(base, exponent)
+			number power(number base, number exponent)
+				return math.pow(base, exponent)
 
-		number sqrt(number value)
-			return math.sqrt(value)
+			number sqrt(number value)
+				return math.sqrt(value)
 
-		void storeInMemory(number value)
-			memory = value
+			void storeInMemory(number value)
+				memory = value
 
-		number recallFromMemory()
-			return memory
+			number recallFromMemory()
+				return memory
 
-		void clearMemory()
-			memory = 0.0
+			void clearMemory()
+				memory = 0.0
 
 functions:
 	void performBasicOperations()

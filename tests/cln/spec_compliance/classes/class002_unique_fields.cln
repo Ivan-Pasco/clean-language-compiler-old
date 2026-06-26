@@ -19,5 +19,6 @@ class Person
 		email = e
 
 	functions:
-		string describe()
-			return name + " " + age.toString() + " " + email
+		public:
+			string describe()
+				return name + " " + age.toString() + " " + email

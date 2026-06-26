@@ -11,10 +11,13 @@ start:
 
 	print("Tesla max speed: " + tesla.getMaxSpeed().toString())
 	print("Honda max speed: " + honda.getMaxSpeed().toString())
-	print("Harley max speed: " + harley.getMaxSpeed().toString())class Vehicle
-	string make
-	string model
+	print("Harley max speed: " + harley.getMaxSpeed().toString())
+
+class Vehicle
 	integer year
+	public:
+		string make
+		string model
 
 	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
 		make = vehicleMake
@@ -44,20 +47,21 @@ class Car is Vehicle
 		isElectric = electric
 
 	functions:
-		string startEngine()
-			if isElectric
-				return make + " " + model + " starting silently"
-			else
-				return make + " " + model + " engine starting"
-
 		string stopEngine()
 			return make + " " + model + " parking"
 
-		integer getMaxSpeed()
-			if isElectric
-				return 120
-			else
-				return 100
+		public:
+			string startEngine()
+				if isElectric
+					return make + " " + model + " starting silently"
+				else
+					return make + " " + model + " engine starting"
+
+			integer getMaxSpeed()
+				if isElectric
+					return 120
+				else
+					return 100
 
 class Motorcycle is Vehicle
 	boolean hasSidecar
@@ -67,15 +71,16 @@ class Motorcycle is Vehicle
 		hasSidecar = sidecar
 
 	functions:
-		string startEngine()
-			return make + " " + model + " motorcycle starting"
-
 		string stopEngine()
 			return make + " " + model + " motorcycle stopping"
 
-		integer getMaxSpeed()
-			if hasSidecar
-				return 80
-			else
-				return 140
+		public:
+			string startEngine()
+				return make + " " + model + " motorcycle starting"
+
+			integer getMaxSpeed()
+				if hasSidecar
+					return 80
+				else
+					return 140
 

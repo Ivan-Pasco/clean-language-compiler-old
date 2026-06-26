@@ -32,37 +32,41 @@ start:
 // Tests: Method overriding and polymorphic behavior
 
 class Animal
-	string name
+	public:
+		string name
 
 	constructor(string n)
 		name = n
 
 	functions:
-		string speak()
-			return "Some sound"
+		public:
+			string speak()
+				return "Some sound"
 
-		string describe()
-			return "Animal: " + name
+			string describe()
+				return "Animal: " + name
 
 class Dog is Animal
 	constructor(string n)
 		base(n)
 
 	functions:
-		string speak()
-			return "Woof!"
+		public:
+			string speak()
+				return "Woof!"
 
-		string describe()
-			return "Dog: " + name
+			string describe()
+				return "Dog: " + name
 
 class Cat is Animal
 	constructor(string n)
 		base(n)
 
 	functions:
-		string speak()
-			return "Meow!"
+		public:
+			string speak()
+				return "Meow!"
 
-		string describe()
-			return "Cat: " + name
+			string describe()
+				return "Cat: " + name
 

@@ -11,7 +11,8 @@ start:
 	print(d.kind())
 
 class Animal
-	string name
+	public:
+		string name
 
 	constructor(string nameParam)
 		name = nameParam
@@ -25,5 +26,6 @@ class Dog is Animal
 		base(nameParam)
 
 	functions:
-		string speak()
-			return name + " barks"
+		public:
+			string speak()
+				return name + " barks"

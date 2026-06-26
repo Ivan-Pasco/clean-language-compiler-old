@@ -8,8 +8,9 @@ class Vehicle
 		make = vehicleMake
 
 	functions:
-		string getInfo()
-			return make
+		public:
+			string getInfo()
+				return make
 
 functions:
 	void testFunction(Vehicle vehicle)

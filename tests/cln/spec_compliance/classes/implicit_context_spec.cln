@@ -47,18 +47,19 @@ class Point
 		y = py
 
 	functions:
-		integer sum()
-			return x + y
+		public:
+			integer sum()
+				return x + y
 
-		integer product()
-			return x * y
+			integer product()
+				return x * y
 
-		void move(integer dx, integer dy)
-			x = x + dx
-			y = y + dy
+			void move(integer dx, integer dy)
+				x = x + dx
+				y = y + dy
 
-		string display()
-			return "(" + x.toString() + ", " + y.toString() + ")"
+			string display()
+				return "(" + x.toString() + ", " + y.toString() + ")"
 
 class Rectangle
 	integer width
@@ -69,16 +70,17 @@ class Rectangle
 		height = h
 
 	functions:
-		integer area()
-			return width * height
+		public:
+			integer area()
+				return width * height
 
-		integer perimeter()
-			return 2 * (width + height)
+			integer perimeter()
+				return 2 * (width + height)
 
-		boolean isSquare()
-			return width == height
+			boolean isSquare()
+				return width == height
 
-		void scale(integer factor)
-			width = width * factor
-			height = height * factor
+			void scale(integer factor)
+				width = width * factor
+				height = height * factor
 

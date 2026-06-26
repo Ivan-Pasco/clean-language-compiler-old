@@ -13,8 +13,9 @@ start:
 // Tests: Class inheritance with base() calls and method overriding
 
 class Animal
-	string name
-	integer age
+	public:
+		string name
+		integer age
 
 	constructor(string animalName, integer animalAge)
 		name = animalName
@@ -38,14 +39,15 @@ class Dog is Animal
 		breed = dogBreed
 
 	functions:
-		string makeSound()
-			return name + " barks"
-
 		string getBreed()
 			return breed
 
-		string getInfo()
-			return name + " is a " + breed + ", " + age.toString() + " years old"
+		public:
+			string makeSound()
+				return name + " barks"
+
+			string getInfo()
+				return name + " is a " + breed + ", " + age.toString() + " years old"
 
 class Cat is Animal
 	boolean isIndoor
@@ -55,12 +57,13 @@ class Cat is Animal
 		isIndoor = indoorFlag
 
 	functions:
-		string makeSound()
-			return name + " meows"
+		public:
+			string makeSound()
+				return name + " meows"
 
-		string getHabitat()
-			if isIndoor
-				return "indoor cat"
-			else
-				return "outdoor cat"
+			string getHabitat()
+				if isIndoor
+					return "indoor cat"
+				else
+					return "outdoor cat"
 

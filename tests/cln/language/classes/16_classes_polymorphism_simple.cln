@@ -21,10 +21,13 @@ start:
 	Vehicle myVehicle = tesla
 	print("=== Polymorphic Vehicle ===")
 	print("Type: " + myVehicle.getInfo())
-	print("Starting: " + myVehicle.startEngine())class Vehicle
-	string make
-	string model
+	print("Starting: " + myVehicle.startEngine())
+
+class Vehicle
 	integer year
+	public:
+		string make
+		string model
 
 	constructor(string vehicleMake, string vehicleModel, integer vehicleYear)
 		make = vehicleMake
@@ -32,14 +35,15 @@ start:
 		year = vehicleYear
 
 	functions:
-		string getInfo()
-			return year.toString() + " " + make + " " + model
-
-		string startEngine()
-			return "Vehicle starting..."
-
 		integer getMaxSpeed()
 			return 60
+
+		public:
+			string getInfo()
+				return year.toString() + " " + make + " " + model
+
+			string startEngine()
+				return "Vehicle starting..."
 
 class Car is Vehicle
 	integer doors
@@ -51,15 +55,16 @@ class Car is Vehicle
 		isElectric = electric
 
 	functions:
-		string startEngine()
-			if isElectric
-				return make + " " + model + " starting silently (electric)"
-			else
-				return make + " " + model + " engine starting"
+		public:
+			string startEngine()
+				if isElectric
+					return make + " " + model + " starting silently (electric)"
+				else
+					return make + " " + model + " engine starting"
 
-		integer getMaxSpeed()
-			if isElectric
-				return 120
-			else
-				return 100
+			integer getMaxSpeed()
+				if isElectric
+					return 120
+				else
+					return 100
 
