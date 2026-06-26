@@ -1025,10 +1025,20 @@ impl TokenParser {
                             }
                             // Synthesize a class from the sub-section if it has fields.
                             // e.g. `inputs:` + [string title] → class Inputs { string title }
+                            //
+                            // VISIBILITY-FLIP (spec change 2026-06-25): fields default to
+                            // Private under the new model. A plugin sub-section like
+                            // `inputs:` defines a component's external interface — the
+                            // framework reads these fields via `inputs.<field>` from
+                            // outside the synthesized class, so they must be Public or
+                            // every component using `inputs:` trips SEM007.
                             if !section_name.is_empty() && !sub_fields.is_empty() {
                                 let mut synthetic_name = section_name.clone();
                                 if let Some(first) = synthetic_name.get_mut(0..1) {
                                     first.make_ascii_uppercase();
+                                }
+                                for field in sub_fields.iter_mut() {
+                                    field.visibility = Visibility::Public;
                                 }
                                 self.pending_synthetic_classes.push(Class {
                                     name: synthetic_name,
