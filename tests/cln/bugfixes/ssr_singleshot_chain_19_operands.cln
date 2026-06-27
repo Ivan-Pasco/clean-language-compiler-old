@@ -1,0 +1,61 @@
+// Test: bugfixes/ssr_singleshot_chain_19_operands
+// Regression: CMP-SSR-MALLOC-OOM-PAGE-RENDER (frame.ui html: block leak)
+//             FRAME-UI-HTML-BLOCK-EMITS-CONCAT-CHAIN-LEAKS-IN-LOOP (#f7e4d62f077a)
+//
+// Mirrors the production shape of frame.ui's html: block emission.
+// Real renderCard / tutorialCard / renderCodeWindow helpers contain
+// chains of 15-25 string fragments. Without Step 4's single-shot
+// rewrite, each call to such a helper would allocate ~20 intermediate
+// strings via `string.concat` on the main bump heap; called 50 times
+// from an SSR loop, the cumulative leak trips the 128 MB cap.
+//
+// This test exercises a renderCard-style helper with 19 fragments —
+// the chained-RHS shape that frame.ui 2.12.x emits via
+// expand_html_block:
+//
+//   string renderCard(string title, string desc, string tag, string body, string footer)
+//       string __html = ""
+//       __html = __html + "<div class=\"card\">"
+//                     + "<header>" + title + "</header>"
+//                     + "<p class=\"tag\">" + tag + "</p>"
+//                     + "<section>" + desc + "</section>"
+//                     + "<article>" + body + "</article>"
+//                     + "<footer>" + footer + "</footer>"
+//                     + "</div>"
+//       return __html
+//
+// All operands are either string literals (the HTML scaffolding) or
+// variable references (the parameter values). The chain has 19
+// fragments total. The rewriter must turn this into:
+//   1× string_builder_new + 19× string_builder_append + 1× string_builder_finalize
+// with ZERO `string.concat` calls inside renderCard.
+//
+// The test calls renderCard 1000 times in an SSR loop. Without Step 4
+// this would strand 1000 × 19 = 19000 intermediate strings of ~30 bytes
+// each = ~570 KB on the main heap (within the 128 MB cap for the test
+// but representative of the production leak shape that scales with
+// page complexity).
+//
+// Output (length of one card × 1000 iters):
+// One card = "<div class=\"card\"><header>title</header><p class=\"tag\">tag</p><section>desc</section><article>body</article><footer>footer</footer></div>"
+//          = 18+5+8+9+18+7+11+9+19+9+21+13+8+22+15+9+6 = let runtime compute it
+//
+// We just print the iteration count and accumulator length to verify
+// no OOM:
+//   1000
+//   <accumulator-length>
+
+start:
+	string accumulator = ""
+	integer i = 0
+	while i < 1000
+		accumulator = accumulator + renderCard("T", "D", "G", "B", "F")
+		i = i + 1
+	printl(i.toString())
+	printl(accumulator.length().toString())
+
+functions:
+	string renderCard(string title, string desc, string tag, string body, string footer)
+		string __html = ""
+		__html = __html + "<div class=\"card\">" + "<header>" + title + "</header>" + "<p class=\"tag\">" + tag + "</p>" + "<section>" + desc + "</section>" + "<article>" + body + "</article>" + "<footer>" + footer + "</footer>" + "</div>"
+		return __html

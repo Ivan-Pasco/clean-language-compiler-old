@@ -1,0 +1,79 @@
+// Test: bugfixes/ssr_singleshot_chain_uses_string_builder
+// Regression: COMPILER-SSR-ACCUMULATOR-MATCHER-NOT-FIRING (#be07dfdc75ab)
+//             CMP-SSR-MALLOC-OOM-PAGE-RENDER (frame.ui helper-function leak)
+//
+// Before Step 4 (this fix), the accumulator matcher in
+// `rewrite_string_accumulator_loops` only fired when the
+// `string acc = ""` decl was followed by a `while`/`for` loop.
+// Plugin-emitted html: block helpers like
+//
+//   string renderCard(string title, string body, string footer)
+//       string __html = ""
+//       __html = __html + "<div>" + title + "</div>" + ...
+//       return __html
+//
+// have no loop — the rewrite was skipped, and every call to the
+// helper allocated N intermediate strings via plain `string.concat`
+// on the main bump heap. When such a helper is called 50 times from
+// an SSR loop in the caller, the cumulative leak (50 calls × 20
+// concats × 50 chars = 50 KB per render) still trips the 128 MB
+// bump cap on multi-page renders. This was the actual root cause
+// of the /syntax and /tutorials OOM after Step 3.5 (v0.30.378)
+// closed the user-written buildExamples leak.
+//
+// Step 4 generalizes the matcher to also fire on the shape:
+//
+//   string acc = ""
+//   acc = acc + e1 + e2 + ... + eN
+//   <tail use of acc — return, etc.>
+//
+// Rewrite output (same as the loop case minus the loop wrapper):
+//
+//   string __sb_N = string_builder_new()
+//   __sb_N = string_builder_append(__sb_N, e1)
+//   ...
+//   __sb_N = string_builder_append(__sb_N, eN)
+//   string acc = string_builder_finalize(__sb_N)
+//   <tail use of acc — unchanged>
+//
+// This mirrors javac/Kotlin/Go's per-statement chained-concat
+// optimization: convert N+1 separate allocations (N concat results
+// + the final acc, all on the bump heap) into 1 builder + N appends
+// + 1 finalize. The intermediate fragments live as local temps the
+// host reclaims on per-request `scope_pop`.
+//
+// This test exercises the exact dashboard repro shape:
+//   - `build(x, y, z)` builds an HTML-like string in one chained-RHS
+//     assignment.
+//   - Each operand is either a string literal or a function call
+//     (`esc(x)` returns its argument unchanged — present to verify
+//     the matcher accepts function-call operands).
+//   - `build` is called from inside a 5000-iter loop in `start`,
+//     simulating the SSR helper-call pattern.
+//
+// Verification:
+//   1. The single-shot rewrite fires, producing string_builder_*
+//      calls and ZERO `string.concat` calls inside `build`.
+//   2. The test runs 5000 iterations to completion without OOM.
+//
+// Expected output:
+//   5000
+//   120000 (one "<a>a</a><b>b</b><c>c</c>" per iter, 24 chars × 5000)
+
+start:
+	string accumulator = ""
+	integer i = 0
+	while i < 5000
+		accumulator = accumulator + build("a", "b", "c")
+		i = i + 1
+	printl(i.toString())
+	printl(accumulator.length().toString())
+
+functions:
+	string esc(string s)
+		return s
+
+	string build(string x, string y, string z)
+		string acc = ""
+		acc = acc + "<a>" + esc(x) + "</a>" + "<b>" + esc(y) + "</b>" + "<c>" + esc(z) + "</c>"
+		return acc

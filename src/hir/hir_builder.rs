@@ -1171,6 +1171,19 @@ impl HirBuilder {
         // (e.g. the SSR repro) gets both rewritten.
         if let Ok(block) = &mut result {
             self.rewrite_string_accumulator_loops(&mut block.statements);
+            // Single-shot (loop-free) accumulator rewrite — Step 4.
+            // Catches plugin-emitted html: block helpers like:
+            //   string __html = ""
+            //   __html = __html + e1 + e2 + ... + eN
+            //   return __html
+            // and user-written render helpers with the same shape. These
+            // are called from inside SSR loops in the caller; each call
+            // would otherwise allocate N intermediate strings on the main
+            // heap. The single-shot rewrite turns N concat calls into one
+            // string_builder_new + N string_builder_append + one
+            // string_builder_finalize, mirroring what javac/Kotlin/Go
+            // do for chained concatenation regardless of loop context.
+            self.rewrite_string_accumulator_singleshot(&mut block.statements);
         }
         result
     }
@@ -2725,6 +2738,270 @@ impl HirBuilder {
 
             // Resume scanning after the newly inserted finalize.
             i = shifted_loop_idx + 2;
+        }
+    }
+
+    /// Single-shot (loop-free) accumulator rewrite. Catches the pattern
+    ///
+    ///   string acc = ""
+    ///   acc = acc + e1 + e2 + ... + eN     [+ further chained appends]
+    ///   <any non-write use of acc, or end of block>
+    ///
+    /// and rewrites it to
+    ///
+    ///   string __sb_M = string_builder_new()
+    ///   __sb_M = string_builder_append(__sb_M, e1)
+    ///   __sb_M = string_builder_append(__sb_M, e2)
+    ///   ...
+    ///   __sb_M = string_builder_append(__sb_M, eN)
+    ///   string acc = string_builder_finalize(__sb_M)
+    ///   <any non-write use of acc — unchanged because `acc` is rebound
+    ///    by the finalize, so downstream readers see a normal string>
+    ///
+    /// This mirrors what javac/Kotlin/Go do for chained concatenation
+    /// outside loops: turn N+1 separate allocations (N concat results,
+    /// each stranded on the bump heap, plus the final acc) into one
+    /// builder + N appends + one finalize.
+    ///
+    /// Why a separate pass from `rewrite_string_accumulator_loops`:
+    /// the loop matcher requires a `while`/`for` to follow the decl
+    /// and runs `try_match_accumulator_pair` which does loop-specific
+    /// work (transient-scope wrap, conditional-helper routing). The
+    /// single-shot case has none of that — no scope, no helpers, just
+    /// a linear sequence of statements producing the final string. We
+    /// deliberately do NOT thread the transient arena into this path:
+    /// the StringBuilder lives in the function's frame and gets
+    /// finalized into a normal __malloc-allocated string before any
+    /// caller sees it. The intermediate fragments (`e1..eN`) are local
+    /// temporaries the host reclaims on per-request `scope_pop`.
+    ///
+    /// Plugin emission shape this catches (canonical case for the
+    /// outstanding /syntax + /tutorials OOM as of v0.30.378):
+    /// `frame.ui` 2.12.x's expand_html_block emits exactly the
+    /// chained-RHS shape above for every html: block, and the helpers
+    /// it wraps (renderCard, tutorialCard, renderCodeWindow, etc.) get
+    /// called from inside SSR loops in the page file. The single-shot
+    /// rewrite turns each helper call from ~20 stranded main-heap
+    /// allocations into 1.
+    fn rewrite_string_accumulator_singleshot(&mut self, stmts: &mut Vec<HirStatement>) {
+        let mut i = 0;
+        while i + 1 < stmts.len() {
+            // Quick filter: this position must hold `string <name> = ""`.
+            let Some(acc_name) = Self::accumulator_decl_name(&stmts[i]) else {
+                i += 1;
+                continue;
+            };
+
+            // Scan forward collecting consecutive chained-RHS self-appends.
+            // Stop at the first statement that is NOT a self-append (a tail
+            // use of `acc` is allowed but does not extend the chain).
+            //
+            // An intervening statement that reads `acc` outside the LHS slot
+            // disqualifies the match — the rewrite invariant requires that
+            // `acc` is never observed in its intermediate (pre-finalize)
+            // shape, because between the new `__sb_M` decl and the inserted
+            // `string acc = string_builder_finalize(__sb_M)` there is no
+            // binding named `acc` at all.
+            let mut last_append_idx: Option<usize> = None;
+            let mut scan = i + 1;
+            let mut window_disqualified = false;
+            while scan < stmts.len() {
+                if Self::stmt_is_chained_self_append(&stmts[scan], &acc_name) {
+                    last_append_idx = Some(scan);
+                    scan += 1;
+                    continue;
+                }
+                // Not a self-append. Check that it doesn't write `acc`
+                // in a disqualifying way. Reads, returns, and other
+                // statements are allowed here — they just stop the
+                // append window.
+                //
+                // NOTE: We deliberately do NOT use the full
+                // `analyze_stmt_for_accumulator` here — that analyzer
+                // treats `return acc` as a disqualifying "early return"
+                // because it was designed for the loop case. In the
+                // single-shot case, `return acc` is the canonical tail
+                // use (every plugin-emitted html: block ends with
+                // `return __html`) and must be allowed. The
+                // `stmt_writes_acc` predicate only checks for writes.
+                if Self::stmt_writes_acc(&stmts[scan], &acc_name) {
+                    window_disqualified = true;
+                    break;
+                }
+                // Tail use: end the append window, continue to tail-check.
+                break;
+            }
+
+            let Some(last_append) = last_append_idx else {
+                i += 1;
+                continue;
+            };
+
+            if window_disqualified {
+                i = scan + 1;
+                continue;
+            }
+
+            // Now verify the rest of the block (after the last append) does
+            // not contain a non-canonical write to `acc`. Tail reads are
+            // fine (they see the post-finalize string). Tail writes would
+            // observe the pre-rewrite shape and break.
+            //
+            // The rewrite inserts `string acc = string_builder_finalize(__sb)`
+            // right after the appends, so all downstream readers see a
+            // normal string. We disqualify only on tail writes to `acc`
+            // that are not themselves chained-self-appends.
+            let mut tail_write_violation = false;
+            for stmt in &stmts[last_append + 1..] {
+                if Self::stmt_writes_acc(stmt, &acc_name) {
+                    tail_write_violation = true;
+                    break;
+                }
+            }
+            if tail_write_violation {
+                i += 1;
+                continue;
+            }
+
+            // Commit. Allocate a fresh builder name.
+            let sb_name = format!("__sb_{}", self.string_builder_counter);
+            self.string_builder_counter += 1;
+            let decl_loc = match &stmts[i] {
+                HirStatement::VariableDeclaration { location, .. } => location.clone(),
+                _ => {
+                    unreachable!("accumulator_decl_name pre-validated this is VariableDeclaration")
+                }
+            };
+
+            // Build the replacement statements:
+            //   - decl_replacement: `string __sb_M = string_builder_new()`
+            //   - flattened appends:   one statement per fragment, replacing
+            //                          the N chained self-append statements
+            //   - finalize_decl:    `string acc = string_builder_finalize(__sb_M)`
+            //                       inserted after the last append
+            let decl_replacement = HirStatement::VariableDeclaration {
+                name: sb_name.clone(),
+                var_type: HirType::String,
+                initializer: Some(HirExpression::Call {
+                    function: "string_builder_new".to_string(),
+                    arguments: vec![],
+                    location: decl_loc.clone(),
+                }),
+                is_mutable: true,
+                location: decl_loc.clone(),
+            };
+            let finalize_decl = HirStatement::VariableDeclaration {
+                name: acc_name.clone(),
+                var_type: HirType::String,
+                initializer: Some(HirExpression::Call {
+                    function: "string_builder_finalize".to_string(),
+                    arguments: vec![HirExpression::Variable {
+                        name: sb_name.clone(),
+                        location: decl_loc.clone(),
+                    }],
+                    location: decl_loc.clone(),
+                }),
+                is_mutable: true,
+                location: decl_loc.clone(),
+            };
+
+            // Drain the chained self-append window (i+1..=last_append) and
+            // flatten each into per-fragment `__sb = string_builder_append(__sb, eK)`
+            // statements via the existing `rewrite_self_append_collect` machinery.
+            let mut flattened_appends: Vec<HirStatement> = Vec::new();
+            let drained: Vec<HirStatement> = stmts.drain(i + 1..=last_append).collect();
+            for stmt in drained {
+                Self::rewrite_self_append_collect(
+                    stmt,
+                    &acc_name,
+                    &sb_name,
+                    &mut flattened_appends,
+                );
+            }
+
+            // Splice in the rewrite output:
+            //   - replace stmts[i] with decl_replacement
+            //   - insert flattened_appends + finalize_decl right after it
+            stmts[i] = decl_replacement;
+            let mut to_insert = flattened_appends;
+            to_insert.push(finalize_decl);
+            let new_segment_len = to_insert.len();
+            stmts.splice(i + 1..i + 1, to_insert);
+            // Resume scanning after the newly inserted finalize.
+            // i (decl) + 1 + new_segment_len (appends + finalize) = next index
+            i = i + 1 + new_segment_len;
+        }
+    }
+
+    /// True iff `stmt` is `acc = acc + e1 + e2 + ... + eN` (a chained
+    /// self-append on `acc_name`). Mirrors the predicate used inside
+    /// `analyze_stmt_for_accumulator`, exposed as a top-level filter for
+    /// the single-shot matcher's window scan.
+    fn stmt_is_chained_self_append(stmt: &HirStatement, acc_name: &str) -> bool {
+        match stmt {
+            HirStatement::Assignment {
+                target: HirLValue::Variable { name, .. },
+                value,
+                ..
+            } if name == acc_name => Self::is_chained_self_append(value, acc_name),
+            _ => false,
+        }
+    }
+
+    /// True iff `stmt` (or any nested statement inside it) writes the
+    /// variable named `acc_name`. Used by the single-shot matcher to
+    /// reject tail statements that would re-assign the accumulator
+    /// after the chained-RHS window closes — those would observe the
+    /// pre-rewrite shape and break.
+    ///
+    /// Reads of `acc_name` are NOT rejected: the rewrite inserts a
+    /// `string acc = string_builder_finalize(__sb)` right after the
+    /// last append, so all downstream readers see a normal post-rewrite
+    /// string with the original name. `return acc`, `printl(acc)`,
+    /// `someFunc(acc)` etc. are all safe tail uses.
+    fn stmt_writes_acc(stmt: &HirStatement, acc_name: &str) -> bool {
+        match stmt {
+            HirStatement::Assignment {
+                target: HirLValue::Variable { name, .. },
+                ..
+            } => name == acc_name,
+            HirStatement::VariableDeclaration { name, .. } if name == acc_name => {
+                // Shadowing inside an inner scope (e.g. an `if` branch)
+                // would not reach here because nested statements are
+                // wrapped in If/While/For. A top-level redecl of `acc`
+                // would mean two `string acc = ...` decls in the same
+                // block — illegal in Clean, but treat as a write to be
+                // safe.
+                true
+            }
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if then_branch
+                    .statements
+                    .iter()
+                    .any(|s| Self::stmt_writes_acc(s, acc_name))
+                {
+                    return true;
+                }
+                if let Some(eb) = else_branch {
+                    if eb
+                        .statements
+                        .iter()
+                        .any(|s| Self::stmt_writes_acc(s, acc_name))
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => body
+                .statements
+                .iter()
+                .any(|s| Self::stmt_writes_acc(s, acc_name)),
+            _ => false,
         }
     }
 
