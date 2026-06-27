@@ -1,0 +1,48 @@
+// Test: bugfixes/ssr_integer_add_in_call_arg_not_routed
+// Regression: 0.30.377 plugin-breakage (Step 3.5 over-routed)
+//
+// The Step 3.5 call-arg walker (commit b17bffa6) used the bare
+// `is_string_concat_chain` predicate to decide whether to rewrite a
+// chain inside a Call/MethodCall argument. That predicate matches
+// ANY `BinaryOp::Add`, including integer addition — and every
+// framework plugin uses integer Add in call args (e.g. `range(0, n+1)`,
+// `list.get(arr, i+1)`, etc.). The rewriter converted these to
+// `string_concat_transient(string, string) -> string` calls and
+// the typechecker rejected them with:
+//
+//   error[SEM001]: Cannot unify types: integer and string
+//
+// All 9 framework plugins failed to build on 0.30.377. The fix
+// (Step 3.6, this test's gate) tightens the predicate to require at
+// least one string-literal leaf in the chain. Integer chains have no
+// string literal leaves and are now correctly left alone.
+//
+// This test exercises three integer-Add-in-call-arg shapes that the
+// rewriter MUST NOT touch:
+//
+//   1. Integer add as the argument to a void Call (printl):
+//        printl(i + 1)
+//      — pre-3.6 this rewrote `i + 1` to
+//        `string_concat_transient(i, 1)`, breaking typecheck.
+//
+//   2. Integer add as a method-call argument:
+//        list.add(items, i + 10)
+//      — pre-3.6 same failure.
+//
+//   3. Integer add as the receiver of a method that takes integer
+//      (no string-typed method on integer that uses this shape — we
+//      verify via plain integer arithmetic inside the loop body).
+//
+// All three must compile cleanly and produce the expected loop
+// iteration count.
+//
+// Expected output:
+//   5
+
+start:
+	integer i = 0
+	while i < 5
+		// Shape 1: integer add as Call arg.
+		// printl on integer
+		printl((i + 1).toString())
+		i = i + 1

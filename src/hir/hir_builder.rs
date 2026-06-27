@@ -3660,7 +3660,7 @@ impl HirBuilder {
                     // Recurse into the arg's sub-structure first so any
                     // nested calls inside it get rewritten too.
                     Self::rewrite_call_arg_concats_in_expression(arg);
-                    if !already_transient && Self::is_string_concat_chain(arg) {
+                    if !already_transient && Self::is_provably_string_concat_chain(arg) {
                         let owned = std::mem::replace(arg, Self::placeholder_void_expression());
                         *arg = Self::fold_concat_chain_to_transient_calls(owned);
                     }
@@ -3673,21 +3673,22 @@ impl HirBuilder {
             } => {
                 Self::rewrite_call_arg_concats_in_expression(receiver);
                 // Also rewrite the receiver itself if it is a concat
-                // chain. Strings are immutable in Clean Language, so a
-                // string-typed receiver value cannot be stored beyond
-                // the call by a method invocation — its lifetime ends
-                // at the method's return, same guarantee as a call-arg.
+                // chain with at least one string literal. Strings are
+                // immutable in Clean Language, so a string-typed
+                // receiver value cannot be stored beyond the call by a
+                // method invocation — its lifetime ends at the
+                // method's return, same guarantee as a call-arg.
                 // Concrete shape: `("[" + idx + "]").length()` — the
                 // concat is the receiver of `length`, dies at length's
                 // return, transient-safe.
-                if Self::is_string_concat_chain(receiver) {
+                if Self::is_provably_string_concat_chain(receiver) {
                     let owned =
                         std::mem::replace(receiver.as_mut(), Self::placeholder_void_expression());
                     *receiver.as_mut() = Self::fold_concat_chain_to_transient_calls(owned);
                 }
                 for arg in arguments.iter_mut() {
                     Self::rewrite_call_arg_concats_in_expression(arg);
-                    if Self::is_string_concat_chain(arg) {
+                    if Self::is_provably_string_concat_chain(arg) {
                         let owned = std::mem::replace(arg, Self::placeholder_void_expression());
                         *arg = Self::fold_concat_chain_to_transient_calls(owned);
                     }
@@ -3698,7 +3699,7 @@ impl HirBuilder {
             | HirExpression::Constructor { arguments, .. } => {
                 for arg in arguments.iter_mut() {
                     Self::rewrite_call_arg_concats_in_expression(arg);
-                    if Self::is_string_concat_chain(arg) {
+                    if Self::is_provably_string_concat_chain(arg) {
                         let owned = std::mem::replace(arg, Self::placeholder_void_expression());
                         *arg = Self::fold_concat_chain_to_transient_calls(owned);
                     }
@@ -3710,7 +3711,7 @@ impl HirBuilder {
                 // function-call argument.
                 Self::rewrite_call_arg_concats_in_expression(array);
                 Self::rewrite_call_arg_concats_in_expression(index);
-                if Self::is_string_concat_chain(index) {
+                if Self::is_provably_string_concat_chain(index) {
                     let owned =
                         std::mem::replace(index.as_mut(), Self::placeholder_void_expression());
                     *index.as_mut() = Self::fold_concat_chain_to_transient_calls(owned);
@@ -3746,6 +3747,16 @@ impl HirBuilder {
     /// Is this expression a (possibly chained) `BinaryOp::Add` /
     /// `StringConcat`? Used as the predicate for transient-routing the
     /// RHS of a body-local string-typed assignment.
+    ///
+    /// NOTE: This predicate is intentionally type-blind because the
+    /// Step 3 call sites pre-gate on the LHS being a body-local
+    /// `string`, which guarantees the chain is on strings. For
+    /// call-arg and method-receiver routing (Step 3.5), use
+    /// `is_provably_string_concat_chain` — at those sites we have NO
+    /// type information about the operands and must conservatively
+    /// avoid rewriting integer addition into a string concat call,
+    /// which would produce SEM001 "Cannot unify types: integer and
+    /// string" errors at typecheck time.
     fn is_string_concat_chain(expr: &HirExpression) -> bool {
         matches!(
             expr,
@@ -3754,6 +3765,59 @@ impl HirBuilder {
                 ..
             }
         )
+    }
+
+    /// Stricter version of `is_string_concat_chain` for use at call-arg
+    /// and method-receiver sites where we have no surrounding type
+    /// information.
+    ///
+    /// A chain qualifies as "provably string concat" only if at least
+    /// one leaf operand is a string literal. The Step 3.5 production
+    /// shapes all satisfy this:
+    ///   - `idx + ".preamble"` — leaf `".preamble"` is a string literal
+    ///   - `"[" + idx + "]"` — leaves `"["` and `"]"` are literals
+    ///   - `"<h2>" + head + "</h2>"` — multiple literal leaves
+    ///
+    /// Integer chains like `i + 1`, `count + offset`, or chains where
+    /// every leaf is a Variable / Call / Index / FieldAccess are
+    /// rejected. The leaves COULD be string-typed at runtime, but
+    /// without explicit type information we cannot know — and
+    /// rewriting an integer Add into `string_concat_transient` (whose
+    /// signature is `(string, string) -> string`) produces a
+    /// typecheck failure.
+    ///
+    /// False negatives (provably string but predicate says no) are
+    /// fine: those concats just stay on the main heap, same as
+    /// pre-Step-3.5 behavior. False positives (predicate says yes but
+    /// chain is integer) would be CORRECTNESS bugs producing SEM001 —
+    /// must be impossible.
+    fn is_provably_string_concat_chain(expr: &HirExpression) -> bool {
+        if !Self::is_string_concat_chain(expr) {
+            return false;
+        }
+        Self::chain_contains_string_literal_leaf(expr)
+    }
+
+    /// Walk a `BinaryOp::Add` chain's leaves looking for a string
+    /// literal. Returns true if any leaf is a `Literal(String(_))`.
+    /// Non-chain expressions are inspected as a single leaf.
+    fn chain_contains_string_literal_leaf(expr: &HirExpression) -> bool {
+        match expr {
+            HirExpression::BinaryOp {
+                left,
+                op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                right,
+                ..
+            } => {
+                Self::chain_contains_string_literal_leaf(left)
+                    || Self::chain_contains_string_literal_leaf(right)
+            }
+            HirExpression::Literal {
+                value: Value::String(_),
+                ..
+            } => true,
+            _ => false,
+        }
     }
 
     /// Left-fold a `BinaryOp::Add` chain into a sequence of
