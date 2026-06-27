@@ -139,7 +139,11 @@ impl CodeGenerator {
         let type_manager = TypeManager::new();
 
         // Create global section with heap pointer global at index 0
-        // HEAP_PTR_GLOBAL (index 0) is a mutable i32 initialized to HEAP_START
+        // HEAP_PTR_GLOBAL (index 0) is a mutable i32 initialized to HEAP_START.
+        // Globals 1-3 are the __json_get parse-result cache (src ptr, parsed
+        // ptr, heap floor) — see utilities.rs's MIR-path global emission and
+        // the json.get shim in src/stdlib/json_class.rs for the cache layout.
+        // Reserved here so the non-MIR codegen path has the same indices.
         let mut global_section = GlobalSection::new();
         global_section.global(
             GlobalType {
@@ -148,6 +152,15 @@ impl CodeGenerator {
             },
             &ConstExpr::i32_const(native_stdlib::HEAP_START as i32),
         );
+        for _ in 0..3 {
+            global_section.global(
+                GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                },
+                &ConstExpr::i32_const(0),
+            );
+        }
 
         Self {
             function_section: FunctionSection::new(),

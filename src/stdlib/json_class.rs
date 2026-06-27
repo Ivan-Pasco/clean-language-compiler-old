@@ -250,7 +250,11 @@ impl JsonClass {
                 "json.get",
                 &[WasmType::I32, WasmType::I32], // (json_ptr, path_ptr)
                 Some(WasmType::I32),
-                &[WasmType::I32, WasmType::I32], // Local 2: type_tag, Local 3: obj_boxed_ptr
+                // Local 2: type_tag
+                // Local 3: obj_boxed_ptr (the parsed-tree pointer fed to __json_get_path)
+                // Local 4: str_ptr (cache key — the inner JSON source string ptr)
+                // Local 5: parsed_ptr (cache miss path stages the result here)
+                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
                 vec![
                     // null guard
                     Instruction::LocalGet(0),
@@ -266,21 +270,65 @@ impl JsonClass {
                         memory_index: 0,
                     }),
                     Instruction::LocalSet(2), // type_tag
-                    // if type_tag == 4 (String): extract str_ptr and auto-parse
+                    // if type_tag == 4 (String): extract str_ptr and check cache before parsing.
+                    //
+                    // The SSR shape `while c != "": c = json.get(j, i.toString())` calls into
+                    // json.get N times per loop with the same `j` source. Without this cache
+                    // every call re-runs the recursive-descent JSON parser, allocating a fresh
+                    // tree on the bump heap. With a 1000-element source the per-iter tree is
+                    // ~24 KB, blowing the 32 MB default WASM memory cap in <1500 iters
+                    // (CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER, fp e4c682d19d00).
+                    //
+                    // Cache invariant (validated below): the cached parsed pointer is still
+                    // intact in heap memory iff (a) the cached source ptr matches the one we
+                    // just loaded AND (b) __heap_ptr (global 0) is still >= the heap floor we
+                    // recorded when we landed the tree (global 3). Condition (b) catches
+                    // mem_scope_pop reclamation between calls — when the bump pointer rolls
+                    // back below our tree, the bytes are unsafe to read and we must re-parse.
                     Instruction::LocalGet(2),
                     Instruction::I32Const(JSON_TAG_STRING),
                     Instruction::I32Eq,
                     Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+                    // str_ptr = memory[json_ptr + 4]
                     Instruction::LocalGet(0),
                     Instruction::I32Load(MemArg {
                         offset: 4,
                         align: 2,
                         memory_index: 0,
-                    }), // str_ptr = memory[json_ptr + 4]
-                    Instruction::Call(text_to_data_idx), // → boxed Any (parsed JSON)
+                    }),
+                    Instruction::LocalSet(4),
+                    // Cache hit predicate:
+                    //   str_ptr == cache_src  &&  cache_src != 0  &&  __heap_ptr >= cache_floor
+                    Instruction::LocalGet(4),
+                    Instruction::GlobalGet(1), // cache_src
+                    Instruction::I32Eq,
+                    Instruction::GlobalGet(1),
+                    Instruction::I32Const(0),
+                    Instruction::I32Ne, // cache_src != 0
+                    Instruction::I32And,
+                    Instruction::GlobalGet(0), // __heap_ptr
+                    Instruction::GlobalGet(3), // cache_floor
+                    Instruction::I32GeU,
+                    Instruction::I32And,
+                    Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+                    // hit — reuse cached parsed tree
+                    Instruction::GlobalGet(2),
+                    Instruction::Else,
+                    // miss — parse, then memoize (source ptr, parsed ptr, floor)
+                    Instruction::LocalGet(4),
+                    Instruction::Call(text_to_data_idx),
+                    Instruction::LocalSet(5), // parsed_ptr
+                    Instruction::LocalGet(4),
+                    Instruction::GlobalSet(1), // cache_src := str_ptr
+                    Instruction::LocalGet(5),
+                    Instruction::GlobalSet(2), // cache_parsed := parsed_ptr
+                    Instruction::GlobalGet(0),
+                    Instruction::GlobalSet(3), // cache_floor := __heap_ptr (post-parse)
+                    Instruction::LocalGet(5),
+                    Instruction::End, // closes cache hit/miss
                     Instruction::Else,
                     Instruction::LocalGet(0), // already a boxed Any object or other type
-                    Instruction::End,
+                    Instruction::End,         // closes tag==String check
                     Instruction::LocalSet(3), // obj_boxed_ptr
                     // __json_get_path expects the boxed Any directly (not the raw inner
                     // pointer) because it must re-read the tag for every segment to

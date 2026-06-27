@@ -1086,7 +1086,32 @@ impl MirCodeGenerator<'_> {
             &wasm_encoder::ConstExpr::i32_const(heap_start as i32),
         );
 
-        // State variable globals (indices start at 1)
+        // Globals 1-3: __json_get parse-result cache. Avoids re-parsing the
+        // same source string when the SSR shape calls json.get(j, path) in a
+        // loop with a stable `j`. Without this each iteration re-runs the
+        // recursive descent parser, allocating a fresh tree on the bump
+        // heap — drives O(n × tree_size) cumulative leak that hit
+        // CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER (e4c682d19d00) for n≈30
+        // with large items. See json.get shim in src/stdlib/json_class.rs.
+        //
+        // Global 1: cached source string ptr (the `str_ptr` extracted from
+        //           the boxed Any wrapper passed to json.get). 0 = empty.
+        // Global 2: cached parsed-tree boxed Any ptr.
+        // Global 3: heap floor — the __heap_ptr value immediately after the
+        //           parse landed the tree. On subsequent json.get calls we
+        //           require __heap_ptr >= Global 3, otherwise some
+        //           mem_scope_pop has reclaimed the tree and we must re-parse.
+        for _ in 0..3 {
+            global_section.global(
+                wasm_encoder::GlobalType {
+                    val_type: wasm_encoder::ValType::I32,
+                    mutable: true,
+                },
+                &wasm_encoder::ConstExpr::i32_const(0),
+            );
+        }
+
+        // State variable globals (indices start at 4, after heap pointer + 3 json cache slots)
         for (symbol_id, name, mir_type, initializer) in &self.state_globals {
             let (val_type, init_expr) = match (mir_type, initializer) {
                 (MirType::I32, Some(MirConstant::Integer(n))) => (

@@ -1,0 +1,56 @@
+// Test: bugfixes/json_get_parse_cache
+// Regression: CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER (fp e4c682d19d00, 2026-06-27)
+//
+// Before the fix, every json.get(j, path) call re-ran the recursive-descent
+// JSON parser against `j`, allocating a fresh tree on the bump heap with no
+// reclamation. In the SSR shape `while c != "": c = json.get(j, ...)`, the
+// per-iter tree leak (~24 KB for a 1000-element array) blew the 32 MB WASM
+// memory cap inside ~1500 iters — surfacing as
+//   `WASM malloc returned null in string.concat: need NNNN bytes, buffer is 128 MB`
+// at the next host-side allocation, which originally looked like an SSR
+// concat bug but was actually a JSON-parse leak hitting the OOM ceiling
+// faster than the concat code could.
+//
+// 0.30.369 caches the most recent (source_ptr → parsed_tree_ptr, heap_floor)
+// triple in three new WASM globals (1, 2, 3 — see src/stdlib/json_class.rs
+// json.get shim). A second call with the same source ptr reuses the tree
+// when the heap floor is still intact; mem_scope_pop reclamation invalidates
+// the cache via the heap-floor check.
+//
+// Case 1: 50K repeated calls on the same source — without the cache this
+//   parses 50K times and either OOMs or takes minutes; with the cache it
+//   parses once and returns immediately.
+// Case 2: cache hits with varying paths — the cache key is the source ptr,
+//   not the path. Different paths against the same source all hit.
+// Case 3: cache miss when the source changes — switching `j` mid-loop
+//   forces a re-parse and the new tree must be used.
+//
+// Expected output:
+//   50000
+//   v0v5v9
+//   42v0
+
+start:
+	// Case 1: 50K calls on a stable 10-element JSON.
+	string j1 = "[{\"k\":\"v0\"},{\"k\":\"v1\"},{\"k\":\"v2\"},{\"k\":\"v3\"},{\"k\":\"v4\"},{\"k\":\"v5\"},{\"k\":\"v6\"},{\"k\":\"v7\"},{\"k\":\"v8\"},{\"k\":\"v9\"}]"
+	integer hits = 0
+	integer i = 0
+	while i < 50000
+		string v = json.get(j1, "5.k")
+		if v == "v5"
+			hits = hits + 1
+		i = i + 1
+	printl(hits.toString())
+
+	// Case 2: cache key = source ptr, not path. Several distinct paths must
+	// all return the right value when the cached tree is reused.
+	string a0 = json.get(j1, "0.k")
+	string a5 = json.get(j1, "5.k")
+	string a9 = json.get(j1, "9.k")
+	printl(a0 + a5 + a9)
+
+	// Case 3: switch source — cache must invalidate and re-parse.
+	string j2 = "[{\"k\":\"42\"}]"
+	string b42 = json.get(j2, "0.k")
+	string b0 = json.get(j1, "0.k")
+	printl(b42 + b0)

@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.30.367",
+  "compiler_version": "0.30.368",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1782517768,
+  "generated_at_epoch_seconds": 1782523768,
   "artifacts": [
     {
-      "name": "assignment_unbox_any_for_non_any_target.wasm",
-      "path_relative": "assignment_unbox_any_for_non_any_target.wasm",
+      "name": "json_get_parse_cache.wasm",
+      "path_relative": "json_get_parse_cache.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 24422,
-      "sha256": "b96936bd091d64500c613705fd6a38dbd04df81b1b1aaef8923c632298afc2dc",
+      "size_bytes": 24085,
+      "sha256": "d4411c1e87e14ba5b4e311362c02b587ca356422adc478b499ad2b41dfe340d2",
       "source_plugin": null
     },
     {
@@ -21,8 +21,8 @@
       "purpose": "client_hydration",
       "public": true,
       "content_type": "application/wasm",
-      "size_bytes": 18923,
-      "sha256": "e4c6c8401e9559a55f7bd24a6dceb3da4bee318dc790dbff526b8e0f1096b550",
+      "size_bytes": 18985,
+      "sha256": "ff3cc7e26ab5daac7954e63047fe86fd228a45a99d451e7a59f28a66b253dd95",
       "source_plugin": null
     }
   ],
