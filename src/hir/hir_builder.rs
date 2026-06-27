@@ -2983,9 +2983,11 @@ impl HirBuilder {
         let mut cur = expr;
         loop {
             match cur {
-                HirExpression::BinaryOp { left, op, .. }
-                    if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat) =>
-                {
+                HirExpression::BinaryOp {
+                    left,
+                    op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                    ..
+                } => {
                     cur = left.as_ref();
                 }
                 HirExpression::Variable { name, .. } => return name == acc_name,
@@ -3007,8 +3009,11 @@ impl HirBuilder {
         loop {
             match cur {
                 HirExpression::BinaryOp {
-                    left, op, right, ..
-                } if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat) => {
+                    left,
+                    op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                    right,
+                    ..
+                } => {
                     Self::analyze_expr_for_accumulator(right, acc_name, out);
                     if out.disqualified {
                         return;
@@ -3189,16 +3194,15 @@ impl HirBuilder {
                 // collecting `right`), so we reverse before emitting.
                 let mut fragments: Vec<HirExpression> = Vec::new();
                 let mut cur = value;
-                loop {
-                    match cur {
-                        HirExpression::BinaryOp {
-                            left, op, right, ..
-                        } if matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat) => {
-                            fragments.push(*right);
-                            cur = *left;
-                        }
-                        _ => break,
-                    }
+                while let HirExpression::BinaryOp {
+                    left,
+                    op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                    right,
+                    ..
+                } = cur
+                {
+                    fragments.push(*right);
+                    cur = *left;
                 }
                 fragments.reverse();
 
