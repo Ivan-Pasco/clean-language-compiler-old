@@ -345,9 +345,8 @@ pub fn gen_string_builder_finalize() -> Vec<Instruction<'static>> {
 ///
 /// Parameters:
 ///   - local 0: builder_ptr (i32) — pointer to the current builder region
-///   - local 1: init_mark   (i32) — HEAP_PTR snapshot taken right after
-///                                  `__string_builder_new` returned, before
-///                                  the loop began.
+///   - local 1: init_mark (i32) — HEAP_PTR snapshot taken right after
+///     `__string_builder_new` returned, before the loop began.
 ///
 /// Returns: void
 ///
@@ -378,9 +377,9 @@ pub fn gen_string_builder_finalize() -> Vec<Instruction<'static>> {
 ///
 /// Locals:
 ///   - local 0: builder_ptr (parameter)
-///   - local 1: init_mark   (parameter)
+///   - local 1: init_mark (parameter)
 ///   - local 2: builder_end (builder_ptr + 8 + capacity, the byte just
-///                           past the last reachable builder byte)
+///     past the last reachable builder byte)
 pub fn gen_string_builder_reclaim() -> Vec<Instruction<'static>> {
     vec![
         // builder_end = builder_ptr + 8 + load(builder_ptr + 0 /* capacity */)
