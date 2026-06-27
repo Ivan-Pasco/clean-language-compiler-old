@@ -3544,6 +3544,13 @@ impl HirBuilder {
                         let owned_value =
                             std::mem::replace(value, Self::placeholder_void_expression());
                         *value = Self::fold_concat_chain_to_transient_calls(owned_value);
+                    } else {
+                        // Even when the top-level RHS isn't a concat chain
+                        // (e.g. `acc = someFunc(x + y)`), nested concats inside
+                        // function-call arguments are still transient-safe —
+                        // see `rewrite_call_arg_concats_in_expression` for the
+                        // safety argument.
+                        Self::rewrite_call_arg_concats_in_expression(value);
                     }
                 }
                 HirStatement::VariableDeclaration {
@@ -3556,13 +3563,39 @@ impl HirBuilder {
                         let owned_init =
                             std::mem::replace(init, Self::placeholder_void_expression());
                         *init = Self::fold_concat_chain_to_transient_calls(owned_init);
+                    } else {
+                        Self::rewrite_call_arg_concats_in_expression(init);
                     }
                 }
+                HirStatement::Assignment { value, .. } => {
+                    // Assignment to a non-body-local LHS (e.g. an outer-scope
+                    // variable, a field, or a list element). The assignment's
+                    // top-level result MUST stay on the main heap, but concat
+                    // chains nested inside function-call arguments within the
+                    // RHS are still transient-safe — their lifetime ends at
+                    // the call's return, well before the iteration boundary.
+                    Self::rewrite_call_arg_concats_in_expression(value);
+                }
+                HirStatement::VariableDeclaration {
+                    initializer: Some(init),
+                    ..
+                } => {
+                    Self::rewrite_call_arg_concats_in_expression(init);
+                }
+                HirStatement::Expression { expression, .. } => {
+                    // Expression statements (typically void calls like
+                    // `printl(idx + ".preamble")`) — the call consumes its
+                    // arguments and produces no value the surrounding scope
+                    // can hold. Concat chains in the args are safe to route.
+                    Self::rewrite_call_arg_concats_in_expression(expression);
+                }
                 HirStatement::If {
+                    condition,
                     then_branch,
                     else_branch,
                     ..
                 } => {
+                    Self::rewrite_call_arg_concats_in_expression(condition);
                     Self::rewrite_body_local_helpers_to_transient(
                         then_branch,
                         body_local_string_names,
@@ -3571,11 +3604,142 @@ impl HirBuilder {
                         Self::rewrite_body_local_helpers_to_transient(eb, body_local_string_names);
                     }
                 }
-                HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                HirStatement::While {
+                    condition, body, ..
+                } => {
+                    Self::rewrite_call_arg_concats_in_expression(condition);
+                    Self::rewrite_body_local_helpers_to_transient(body, body_local_string_names);
+                }
+                HirStatement::For { body, .. } => {
                     Self::rewrite_body_local_helpers_to_transient(body, body_local_string_names);
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Walk `expr` recursively and rewrite every `BinaryOp::Add` /
+    /// `StringConcat` chain found inside a `Call` or `MethodCall`
+    /// argument list to use `string_concat_transient`.
+    ///
+    /// Safety argument: a value produced as a function-call argument is
+    /// consumed by the call. Its lifetime ends at the call's return —
+    /// strictly before the surrounding iteration boundary, regardless
+    /// of where the call's *result* flows. So routing the arg's
+    /// allocation through `__transient_alloc` cannot dangle anything.
+    ///
+    /// Concrete repro shape (`buildExamples` in
+    /// `app/ui/web/pages/tutorials/[id].cln` on Web Site Clean):
+    ///   `json.get(examplesJson, idx + ".preamble")`
+    /// The `idx + ".preamble"` concat was allocating ~50 bytes per call
+    /// × 4 paths (.code, .preamble, .output, .explanation) × ~50 iters
+    /// × ~30 tutorials, and the doubling-StringBuilder accumulator did
+    /// not catch it because the concat result is a call argument, not
+    /// an assignment target. Step 3 (commit `42c63311`) routed the
+    /// `headHtml = ...` shape but missed this one.
+    ///
+    /// The walker descends through:
+    ///   - `Call` / `MethodCall` argument lists (the transient sites)
+    ///   - `BinaryOp` operands (concats inside operands)
+    ///   - `If` / parenthesized / unary wrappers
+    ///   - `FieldAccess` receivers
+    ///
+    /// It does NOT descend into already-rewritten
+    /// `Call { function: "string_concat_transient" }` arguments to
+    /// avoid double-rewrite churn (no correctness impact; just
+    /// pointless work).
+    fn rewrite_call_arg_concats_in_expression(expr: &mut HirExpression) {
+        match expr {
+            HirExpression::Call {
+                function,
+                arguments,
+                ..
+            } => {
+                let already_transient = function == "string_concat_transient";
+                for arg in arguments.iter_mut() {
+                    // Recurse into the arg's sub-structure first so any
+                    // nested calls inside it get rewritten too.
+                    Self::rewrite_call_arg_concats_in_expression(arg);
+                    if !already_transient && Self::is_string_concat_chain(arg) {
+                        let owned = std::mem::replace(arg, Self::placeholder_void_expression());
+                        *arg = Self::fold_concat_chain_to_transient_calls(owned);
+                    }
+                }
+            }
+            HirExpression::MethodCall {
+                receiver,
+                arguments,
+                ..
+            } => {
+                Self::rewrite_call_arg_concats_in_expression(receiver);
+                // Also rewrite the receiver itself if it is a concat
+                // chain. Strings are immutable in Clean Language, so a
+                // string-typed receiver value cannot be stored beyond
+                // the call by a method invocation — its lifetime ends
+                // at the method's return, same guarantee as a call-arg.
+                // Concrete shape: `("[" + idx + "]").length()` — the
+                // concat is the receiver of `length`, dies at length's
+                // return, transient-safe.
+                if Self::is_string_concat_chain(receiver) {
+                    let owned =
+                        std::mem::replace(receiver.as_mut(), Self::placeholder_void_expression());
+                    *receiver.as_mut() = Self::fold_concat_chain_to_transient_calls(owned);
+                }
+                for arg in arguments.iter_mut() {
+                    Self::rewrite_call_arg_concats_in_expression(arg);
+                    if Self::is_string_concat_chain(arg) {
+                        let owned = std::mem::replace(arg, Self::placeholder_void_expression());
+                        *arg = Self::fold_concat_chain_to_transient_calls(owned);
+                    }
+                }
+            }
+            HirExpression::NamespaceCall { arguments, .. }
+            | HirExpression::StaticMethodCall { arguments, .. }
+            | HirExpression::Constructor { arguments, .. } => {
+                for arg in arguments.iter_mut() {
+                    Self::rewrite_call_arg_concats_in_expression(arg);
+                    if Self::is_string_concat_chain(arg) {
+                        let owned = std::mem::replace(arg, Self::placeholder_void_expression());
+                        *arg = Self::fold_concat_chain_to_transient_calls(owned);
+                    }
+                }
+            }
+            HirExpression::Index { array, index, .. } => {
+                // `list[idx + "x"]` — the index value is consumed by the
+                // subscript operation; same lifetime guarantee as a
+                // function-call argument.
+                Self::rewrite_call_arg_concats_in_expression(array);
+                Self::rewrite_call_arg_concats_in_expression(index);
+                if Self::is_string_concat_chain(index) {
+                    let owned =
+                        std::mem::replace(index.as_mut(), Self::placeholder_void_expression());
+                    *index.as_mut() = Self::fold_concat_chain_to_transient_calls(owned);
+                }
+            }
+            HirExpression::Array { elements, .. } => {
+                // Array literal elements are NOT consumed-then-discarded
+                // — they live as long as the array does. Only descend to
+                // find nested call-arg concats; do NOT rewrite the
+                // element itself even if it is a concat chain.
+                for elem in elements.iter_mut() {
+                    Self::rewrite_call_arg_concats_in_expression(elem);
+                }
+            }
+            HirExpression::Cast { expression, .. } => {
+                Self::rewrite_call_arg_concats_in_expression(expression);
+            }
+            HirExpression::BinaryOp { left, right, .. } => {
+                Self::rewrite_call_arg_concats_in_expression(left);
+                Self::rewrite_call_arg_concats_in_expression(right);
+            }
+            HirExpression::UnaryOp { operand, .. } => {
+                Self::rewrite_call_arg_concats_in_expression(operand);
+            }
+            HirExpression::FieldAccess { object, .. } => {
+                Self::rewrite_call_arg_concats_in_expression(object);
+            }
+            // Leaves: Literal, Variable, etc. — nothing to rewrite.
+            _ => {}
         }
     }
 

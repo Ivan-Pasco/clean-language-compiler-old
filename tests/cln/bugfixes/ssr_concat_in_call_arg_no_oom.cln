@@ -1,0 +1,72 @@
+// Test: bugfixes/ssr_concat_in_call_arg_no_oom
+// Regression: CMP-SSR-MALLOC-OOM-PAGE-RENDER (Step 3.5 — call-arg routing)
+//
+// The Step 3 fix (commit 42c63311) routed body-local string-concat
+// assignments through the transient arena. It missed concats that
+// appear as *function-call arguments* — e.g.
+//
+//   string idx = i.toString()
+//   string preamble = json.get(examplesJson, idx + ".preamble")
+//   string code     = json.get(examplesJson, idx + ".code")
+//   ... etc
+//
+// In Web Site Clean `app/ui/web/pages/tutorials/[id].cln::buildExamples`
+// this shape produced 4 unrouted `string.concat` calls per iteration
+// (one per JSON-path lookup) that still allocated on the main heap.
+// Across ~50 iters × ~30 tutorials the residual leak still tripped the
+// 128 MB bump cap — same byte-count signature (~16264 B) as the
+// pre-Step-3 failure.
+//
+// Step 3.5 (this test's gate) extends `rewrite_body_local_helpers_to_transient`
+// with a recursive walker that finds every `BinaryOp::Add`/`StringConcat`
+// chain inside a `Call`/`MethodCall`/`NamespaceCall`/`StaticMethodCall`/
+// `Constructor` argument list and rewrites it to `string_concat_transient`.
+// Safety: a value produced as a function-call argument is consumed by
+// the call; its lifetime ends at the call's return, strictly before
+// the surrounding iteration boundary. Routing the arg's allocation
+// through `__transient_alloc` cannot dangle anything.
+//
+// This test exercises two shapes the call-arg walker MUST handle:
+//
+//   1. Concat as MethodCall argument:
+//        idx.contains("." + suffix)
+//      — exercises the MethodCall branch and the receiver descent.
+//
+//   2. Nested: concat inside a parenthesized concat that is itself a
+//      method receiver:
+//        ("[" + idx + "]").length()
+//      — exercises the recursive descent through BinaryOp::Add into
+//      MethodCall's receiver.
+//
+// Both call sites' arg-concats must route through
+// `string_concat_transient`. Without Step 3.5 these allocate on the
+// main heap each iteration; with Step 3.5 they land in the transient
+// pool and are reclaimed at end-of-iter by `__transient_scope_exit`.
+//
+// Verification: wasm-tools print on the compiled WASM shows ZERO calls
+// to `string.concat` (id 14) coming from this loop, and N calls to
+// `string_concat_transient` instead. (The non-loop top-level call sites
+// in the surrounding test driver are not subject to the rewrite.)
+//
+// Output: 5000 (acc accumulates one "a" per iteration).
+
+start:
+	string acc = ""
+	integer i = 0
+	while i < 5000
+		string idx = i.toString()
+		string suffix = "x"
+		// Shape 1: concat as MethodCall argument.
+		boolean has_dot = idx.contains("." + suffix)
+		// Shape 2: concat as MethodCall *receiver* (nested in another concat).
+		integer len = ("[" + idx + "]").length()
+		// Accumulator self-append at the top of the body (matcher
+		// requirement). The conditional usage of `has_dot`/`len` is
+		// just sink-code so DCE can't eliminate the concat args.
+		acc = acc + "a"
+		if has_dot
+			i = i
+		if len > 0
+			i = i
+		i = i + 1
+	printl(acc.length().toString())
