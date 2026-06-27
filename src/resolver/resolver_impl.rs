@@ -3186,6 +3186,36 @@ impl NameResolver {
             Some(HirType::Integer),
             builtin_location.clone(),
         );
+        // Transient arena (see native_stdlib::transient_arena). Replaces
+        // the rolled-back `string_builder_reclaim` mechanism with a
+        // Cyclone-style nested region: outer-scope values stay on the
+        // main heap, per-iteration intermediates flow through a separate
+        // pool that gets reset at iteration boundaries. The HIR-level
+        // accumulator-loop rewrite emits a
+        //   __sb_N_tmark = transient_scope_enter()
+        //   <body>
+        //   transient_scope_exit(__sb_N_tmark)
+        // wrapper around every rewritten loop body. Routing intra-body
+        // string.concat results through transient_alloc lands in a
+        // follow-up commit.
+        self.register_builtin_fn(
+            "transient_scope_enter",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "transient_scope_exit",
+            vec![HirType::Integer],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "transient_alloc",
+            vec![HirType::Integer],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
 
         // Testing functions
         self.register_builtin_fn(

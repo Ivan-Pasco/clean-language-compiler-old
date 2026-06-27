@@ -1101,7 +1101,16 @@ impl MirCodeGenerator<'_> {
         //           parse landed the tree. On subsequent json.get calls we
         //           require __heap_ptr >= Global 3, otherwise some
         //           mem_scope_pop has reclaimed the tree and we must re-parse.
-        for _ in 0..3 {
+        //
+        // Globals 4-5: transient arena (see native_stdlib::transient_arena).
+        // Global 4 = TRANSIENT_BASE_GLOBAL (pool base ptr; 0 = uninit).
+        // Global 5 = TRANSIENT_PTR_GLOBAL  (bump pointer within the pool).
+        // Both start at 0; the pool is lazily __malloc-allocated on the
+        // first __transient_scope_enter call. The matching scope_exit
+        // restores TRANSIENT_PTR — the mechanism that replaces the
+        // rolled-back string_builder_reclaim (see ARCHITECTURE in
+        // transient_arena.rs).
+        for _ in 0..(crate::codegen::native_stdlib::RESERVED_GLOBAL_COUNT - 1) {
             global_section.global(
                 wasm_encoder::GlobalType {
                     val_type: wasm_encoder::ValType::I32,

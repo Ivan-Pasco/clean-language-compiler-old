@@ -1932,6 +1932,8 @@ impl MirCodeGenerator<'_> {
                         | Some("mem_scope_pop")
                         | Some("string_builder_reclaim")
                         | Some("__string_builder_reclaim")
+                        | Some("transient_scope_exit")
+                        | Some("__transient_scope_exit")
                         | Some("server.sleep")
                         | Some("_server_sleep")
                         | Some("_state_reset_all")

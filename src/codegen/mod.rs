@@ -138,12 +138,20 @@ impl CodeGenerator {
     fn new_with_config(include_runtime_imports: bool) -> Self {
         let type_manager = TypeManager::new();
 
-        // Create global section with heap pointer global at index 0
-        // HEAP_PTR_GLOBAL (index 0) is a mutable i32 initialized to HEAP_START.
-        // Globals 1-3 are the __json_get parse-result cache (src ptr, parsed
-        // ptr, heap floor) — see utilities.rs's MIR-path global emission and
-        // the json.get shim in src/stdlib/json_class.rs for the cache layout.
-        // Reserved here so the non-MIR codegen path has the same indices.
+        // Create global section with the compiler-owned reserved globals
+        // laid out at fixed indices:
+        //   global 0     = __heap_ptr (HEAP_PTR_GLOBAL)
+        //   globals 1-3  = __json_get parse-result cache (src ptr, parsed
+        //                  ptr, heap floor) — see utilities.rs's MIR-path
+        //                  emission and the json.get shim in
+        //                  src/stdlib/json_class.rs.
+        //   global 4     = transient arena pool base
+        //                  (TRANSIENT_BASE_GLOBAL) — 0 = uninitialized
+        //   global 5     = transient arena bump pointer
+        //                  (TRANSIENT_PTR_GLOBAL) — 0 = uninitialized
+        // User-level state globals start at RESERVED_GLOBAL_COUNT (6).
+        // The MIR codegen path mirrors this layout in
+        // `mir_codegen/utilities.rs`.
         let mut global_section = GlobalSection::new();
         global_section.global(
             GlobalType {
@@ -152,7 +160,7 @@ impl CodeGenerator {
             },
             &ConstExpr::i32_const(native_stdlib::HEAP_START as i32),
         );
-        for _ in 0..3 {
+        for _ in 0..(native_stdlib::RESERVED_GLOBAL_COUNT - 1) {
             global_section.global(
                 GlobalType {
                     val_type: ValType::I32,

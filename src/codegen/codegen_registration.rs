@@ -228,6 +228,58 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("heap_ptr_snapshot", snapshot_idx);
 
+        // NATIVE: transient arena (transient_scope_enter / _exit /
+        // transient_alloc) — second bump region for per-iteration
+        // intermediates inside accumulator-rewritten loops. Replaces the
+        // rolled-back `string_builder_reclaim` mechanism with a region
+        // discipline that cannot dangle live pointers: outer-scope
+        // values stay on the main heap, body-local intermediates flow
+        // through the transient pool, and the per-iter scope_exit
+        // resets only the transient pool. See
+        // `native_stdlib/transient_arena.rs` for the architectural
+        // motivation (Cyclone-style nested regions) and
+        // CMP-SSR-RECLAIM-FREES-LIVE-POINTER for the failure mode this
+        // pattern is designed to prevent. Registered here so they share
+        // `malloc_idx` with the rest of the native allocator family.
+        // The HIR rewriter starts emitting calls to these helpers in a
+        // follow-up commit; this commit only adds infrastructure.
+        let transient_enter_instructions =
+            native_stdlib::transient_arena::gen_transient_scope_enter(malloc_idx);
+        let transient_enter_idx = self.register_function_with_locals(
+            "__transient_scope_enter",
+            &[],
+            Some(WasmType::I32),
+            &[WasmType::I32], // local 0: pool_ptr (used during lazy init)
+            &transient_enter_instructions,
+        )?;
+        self.add_function_alias("transient_scope_enter", transient_enter_idx);
+
+        let transient_exit_instructions =
+            native_stdlib::transient_arena::gen_transient_scope_exit();
+        let transient_exit_idx = self.register_function(
+            "__transient_scope_exit",
+            &[WasmType::I32], // mark
+            None,             // void
+            &transient_exit_instructions,
+        )?;
+        self.add_function_alias("transient_scope_exit", transient_exit_idx);
+
+        let transient_alloc_instructions =
+            native_stdlib::transient_arena::gen_transient_alloc(malloc_idx);
+        let transient_alloc_idx = self.register_function_with_locals(
+            "__transient_alloc",
+            &[WasmType::I32], // size
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // local 1: base
+                WasmType::I32, // local 2: ptr (saved TRANSIENT_PTR)
+                WasmType::I32, // local 3: aligned_size
+                WasmType::I32, // local 4: new_ptr
+            ],
+            &transient_alloc_instructions,
+        )?;
+        self.add_function_alias("transient_alloc", transient_alloc_idx);
+
         // NATIVE: string_index_of - finds substring in string
         // Parameters: str_ptr (i32), search_ptr (i32)
         // Returns: index (i32) or -1 if not found

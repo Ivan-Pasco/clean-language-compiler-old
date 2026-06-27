@@ -18,6 +18,7 @@ pub mod memory;
 pub mod pairs_ops;
 pub mod string_builder;
 pub mod string_ops;
+pub mod transient_arena;
 pub mod type_conversions;
 
 use wasm_encoder::{Instruction, MemArg, ValType};
@@ -76,8 +77,27 @@ pub const LIST_DATA_OFFSET: u32 = 16; // Elements start after 16-byte header
 pub const LIST_ELEMENT_SIZE_I32: u32 = 4;
 pub const LIST_ELEMENT_SIZE_F64: u32 = 8;
 
-/// Global variable indices
+/// Global variable indices.
+///
+/// Layout (compiler-owned; user state globals start at `RESERVED_GLOBAL_COUNT`):
+/// - 0: `HEAP_PTR_GLOBAL` — main bump heap pointer
+/// - 1-3: `__json_get` parse-result cache (src ptr, parsed ptr, heap floor).
+///   See `mir_codegen/utilities.rs` and the json.get shim in
+///   `src/stdlib/json_class.rs`.
+/// - 4-5: transient arena (`TRANSIENT_BASE_GLOBAL`, `TRANSIENT_PTR_GLOBAL`).
+///   See `transient_arena.rs`. The matching `__transient_scope_enter` /
+///   `__transient_scope_exit` pair saves and restores `TRANSIENT_PTR_GLOBAL`
+///   to release per-iteration intermediates without touching the main bump
+///   heap (and therefore without risking the "free a live pointer" failure
+///   mode that bit `CMP-SSR-RECLAIM-FREES-LIVE-POINTER`).
 pub const HEAP_PTR_GLOBAL: u32 = 0;
+pub const TRANSIENT_BASE_GLOBAL: u32 = 4;
+pub const TRANSIENT_PTR_GLOBAL: u32 = 5;
+
+/// Number of reserved compiler-owned globals (heap ptr + json cache +
+/// transient arena). User-level state globals are assigned indices
+/// starting at `RESERVED_GLOBAL_COUNT`.
+pub const RESERVED_GLOBAL_COUNT: u32 = 6;
 
 /// Generate instructions for reading string length
 pub fn gen_string_length() -> Vec<Instruction<'static>> {

@@ -2818,38 +2818,82 @@ impl HirBuilder {
         // body in place, replacing the self-append.
         let sb_name = format!("__sb_{}", self.string_builder_counter);
         let mark_name = format!("__sb_{}_mark", self.string_builder_counter);
+        let tmark_name = format!("__sb_{}_tmark", self.string_builder_counter);
         self.string_builder_counter += 1;
 
         Self::rewrite_self_append_in_block(&mut new_body, &acc_name, &sb_name);
 
         // Step 4a: the per-iter `string_builder_reclaim(__sb_N, __mark_N)`
-        // call is INTENTIONALLY NOT EMITTED in this revision.
+        // mechanism stays disabled.
         //
-        // The reclaim was added in 0.30.373 to free conditional-helper
-        // allocations stranded above the builder's tail, but its
-        // end-of-body placement corrupts any cross-iter live pointer
-        // that lives above the post-reclaim HEAP_PTR. Specifically,
-        // `head = json.get(...)` at the bottom of a `while head != ""`
-        // loop allocates a new `head` whose bytes get reclaimed by the
-        // end-of-body call, and the next iter's condition reads garbage.
-        // That regression surfaced as CMP-SSR-RECLAIM-FREES-LIVE-POINTER
-        // (fingerprint 7fc4f890aab9c1488...) within hours of 0.30.374
-        // shipping.
+        // The end-of-body reclaim added in 0.30.373 corrupts any
+        // cross-iter live pointer above the post-reclaim HEAP_PTR —
+        // surfaced as CMP-SSR-RECLAIM-FREES-LIVE-POINTER (7fc4f890aab9...)
+        // within hours of 0.30.374 shipping. The rollback in 0.30.375
+        // removed the emission. The reclaim helper stays registered
+        // (it's harmless if uncalled) so re-enabling is a single-line
+        // change once full body-escape tracking lands.
         //
-        // A correct placement needs full escape-tracking through the
-        // body — which post-chain statement reads an outer-scope live
-        // pointer above the reclaim's HEAP_PTR? — and is deferred. The
-        // chained-RHS rewrite still runs: it turns the accumulator
-        // from O(n²) into O(n) heap, resolving the original
-        // CMP-SSR-MALLOC-OOM-PAGE-RENDER. The conditional-helper leak
-        // remains, but it's bounded per render (a few KB on /tutorials)
-        // and the json.get parse-tree cache from 0.30.369 already
-        // handles the dominant heap-pressure path.
-        //
-        // The `string_builder_reclaim` and `heap_ptr_snapshot` helpers
-        // stay registered (they're harmless if uncalled) so re-enabling
-        // is a single-line change once escape-tracking lands.
+        // The replacement mechanism is a Cyclone-style nested region:
+        // outer-scope values stay on the main heap, per-iteration
+        // intermediates flow through a separate transient pool. Step
+        // 4a' below wraps the body in `__transient_scope_enter` /
+        // `__transient_scope_exit`. Routing intra-body string.concat
+        // results through `__transient_alloc` happens in a follow-up
+        // commit — this revision only sets up the scope so that
+        // routing can be enabled incrementally without re-introducing
+        // the dangling-pointer failure mode.
         let _ = &mark_name; // mark_name reserved for the future re-enable.
+
+        // Step 4a': wrap the body with transient-arena enter / exit.
+        //
+        //   __sb_N_tmark = __transient_scope_enter()
+        //   <body>
+        //   __transient_scope_exit(__sb_N_tmark)
+        //
+        // `__transient_scope_enter` returns the current transient bump
+        // pointer (the save mark). Lazy-init of the pool happens inside
+        // the helper on first call. `__transient_scope_exit` writes
+        // that mark back, releasing every allocation made via
+        // `__transient_alloc` during the iteration without touching the
+        // main heap. Because outer-scope assignments (the
+        // `head = json.get(...)` shape from CMP-SSR-RECLAIM-FREES-LIVE-
+        // POINTER) continue to use `__malloc`, they live on the main
+        // heap and are *not* in the region that gets reset — the
+        // failure mode that motivated the reclaim rollback cannot
+        // recur from this scope mechanism alone.
+        //
+        // Until Step 3 wires `string.concat` routing into the
+        // transient pool, this enter/exit pair is a no-op: the helper
+        // is registered, the scope is established, but no allocations
+        // currently route through it. Shipping the scope first lets
+        // us validate the bookkeeping in isolation before turning on
+        // the routing.
+        let tmark_init = HirExpression::Call {
+            function: "transient_scope_enter".to_string(),
+            arguments: vec![],
+            location: decl_loc.clone(),
+        };
+        let tmark_decl = HirStatement::VariableDeclaration {
+            name: tmark_name.clone(),
+            var_type: HirType::Integer,
+            initializer: Some(tmark_init),
+            is_mutable: false,
+            location: decl_loc.clone(),
+        };
+        let tmark_exit = HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: "transient_scope_exit".to_string(),
+                arguments: vec![HirExpression::Variable {
+                    name: tmark_name.clone(),
+                    location: decl_loc.clone(),
+                }],
+                location: decl_loc.clone(),
+            },
+            location: decl_loc.clone(),
+        };
+        new_body.statements.insert(0, tmark_decl);
+        new_body.statements.push(tmark_exit);
 
         // Stitch the (now-rewritten) body back into the loop statement.
         let new_loop = match loop_stmt {

@@ -1,5 +1,81 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🟡 IN PROGRESS: CMP-SSR-MALLOC-OOM-PAGE-RENDER (helper-leak path) — transient-arena scaffolding landed; routing pending
+
+**Status as of this commit:** Steps 1 and 2 of the Cyclone-style nested-region fix have shipped. Step 3 (the actual routing of body-local intermediates through the transient pool) is deferred pending a design decision for the MIR/codegen layer.
+
+### Why this approach
+
+The previous `string_builder_reclaim` mechanism (0.30.373/0.30.374) tried to "punch a hole" mid-region in the main bump heap by resetting `HEAP_PTR` to `max(init_mark, builder + 8 + capacity)`. That free'd whatever transient bytes lived above the builder's tail — and corrupted any cross-iteration live pointer (`head = json.get(...)`) that happened to sit in the same range. Surfaced as **CMP-SSR-RECLAIM-FREES-LIVE-POINTER** (#7fc4f890aab9) within hours of 0.30.374 and was rolled back in 0.30.375.
+
+Bumpalo's own docs are explicit: "if you save a checkpoint and allocate additional data, then reset to that checkpoint while live allocations exist above it, those allocations become dangling references. The system cannot prevent this because it lacks per-allocation tracking." Every authoritative source (Cyclone region-inference, bump-scope `scoped()`, frame-allocator practice) uses the same answer: **two physically separate regions, sorted by lifetime instead of time.** The outer region holds cross-iteration values; the inner region holds per-iteration transients. Resetting the inner region cannot dangle outer pointers because they were never in it.
+
+### What landed in this commit (Steps 1 + 2)
+
+1. **`src/codegen/native_stdlib/transient_arena.rs`** (new) — `__transient_scope_enter`, `__transient_scope_exit`, `__transient_alloc`. Lazily-allocated 64KB pool, separate `TRANSIENT_BASE_GLOBAL` (idx 4) + `TRANSIENT_PTR_GLOBAL` (idx 5). 5 unit tests lock in the bookkeeping invariants (lazy init, base==0 fallback to `__malloc`, 8-byte alignment, mark==0 no-op guard).
+2. **`src/codegen/native_stdlib/mod.rs`** — `RESERVED_GLOBAL_COUNT = 6` with documented layout.
+3. **`src/codegen/mod.rs` + `src/codegen/mir_codegen/utilities.rs`** — both global-section emitters now reserve 5 slots after `__heap_ptr`. **State-variable globals shift base from 4 → `RESERVED_GLOBAL_COUNT` (6)** in `mir_codegen/mod.rs`.
+4. **`src/codegen/codegen_registration.rs`** — registers the three helpers next to `__heap_ptr_snapshot`, sharing `malloc_idx`.
+5. **`src/resolver/resolver_impl.rs`** — declares `transient_scope_enter`/`_exit`/`_alloc` as builtin functions for the type checker.
+6. **`src/codegen/mir_codegen/instructions.rs`** — adds `transient_scope_exit` + `__transient_scope_exit` to `is_known_void_builtin`.
+7. **`src/hir/hir_builder.rs::try_match_accumulator_pair`** — wraps every accumulator-rewritten loop body with:
+   ```
+   __sb_N_tmark = __transient_scope_enter()
+   <body>
+   __transient_scope_exit(__sb_N_tmark)
+   ```
+   This is currently a **no-op at runtime** because nothing routes through `__transient_alloc` yet. But it establishes the scope, so Step 3 can flip routing on incrementally without re-introducing the dangling-pointer failure mode.
+
+### Verification
+
+- `cargo test --lib`: 448 pass (including 5 new `transient_arena` tests, 7 existing `string_builder` tests).
+- All 5 SSR regression tests still compile and run:
+  - `ssr_concat_chain_no_oom` — OK
+  - `ssr_concat_in_loop_no_oom` — OK
+  - `ssr_concat_in_loop_no_oom_nested_call` — OK
+  - `ssr_concat_conditional_helper_no_oom` — OK
+  - `ssr_reclaim_no_live_pointer_corruption` — OK (the regression test from the rollback commit)
+- `strings tests/output/bugfixes/ssr_concat_in_loop_no_oom.wasm | grep transient` confirms all three helpers are present in generated WASM.
+- Integration tests touching globals layout still pass: `test_memory_exports`, `test_host_registration_conformance`, `test_compiler_emitted_imports_conformance`, `test_dual_naming_imports`, `test_reg001_function_index_ordering`, `test_codegen_nested_control_flow`.
+
+### Step 3 — pending design decision
+
+The remaining work is routing body-local `string.concat` results through `__transient_alloc`. The canonical leak shape (from `ssr_concat_conditional_helper_no_oom.cln`):
+
+```clean
+string headHtml = ""
+if head != ""
+    headHtml = "<h2>" + head + "</h2>"   // ← this string.concat leaks
+```
+
+`headHtml` is body-local (declared inside the loop body). The `string.concat` result is consumed by the assignment, then either copied into the builder via `string_builder_append` or referenced again by another concat next iter. It dies inside the iteration. Should route through transient.
+
+The complication: `BinaryOp::Add` on strings lowers to a `Call { function: SYM_BUILTIN_STRING_CONCAT, ... }` at the **MIR** layer (`src/mir/mir_builder/expressions.rs:483`), not at HIR. The HIR rewriter cannot directly swap the function symbol. Three architectural options:
+
+1. **Flag on the MIR Call instruction** — `Call { allocator: Transient | Normal, ... }`. Codegen emits either `__string_concat` or `__string_concat_transient`. Most surgical; needs a MIR-level scope-tracker that knows we're inside an accumulator-rewritten loop body.
+2. **Separate MIR symbol** — `SYM_BUILTIN_STRING_CONCAT_TRANSIENT`. HIR rewriter walks the body and rewrites any `BinaryOp::Add` whose result is assigned to a body-local LHS into a Call expression using the transient symbol *before* MIR-lowering. Lossy if the rewrite path doesn't catch all expression nesting.
+3. **Codegen-time detection** — runtime allocator-mode global (`__alloc_mode`) that `__malloc` checks. Flipped TRANSIENT at top of body, NORMAL at bottom. **Rejected** because outer-scope assigns like `head = json.get(...)` would also route through transient and reintroduce the dangling-pointer failure.
+
+Option 1 is the right answer for production-grade work — it preserves the lexical scope information through to codegen and doesn't depend on whole-program escape analysis. Open work item before Step 3:
+
+- [ ] Add `MirOperation::Call { allocator: AllocatorKind, ... }` variant, defaulting to Normal.
+- [ ] Thread an `is_in_transient_scope: bool` flag through `MirBuilder` (set by `try_match_accumulator_pair`'s analogue at the MIR layer).
+- [ ] When building a `BinaryOp::Add` on strings *and* the LHS-assignment target is a body-local symbol, emit the Call with `allocator: Transient`.
+- [ ] Codegen lookup table: `Transient` → `__string_concat_transient` (new function, identical to `__string_concat` but uses `__transient_alloc`).
+- [ ] Restore `ssr_concat_conditional_helper_no_oom.cln` to a **5000-iter** repro (currently sized at iteration count that fits within the post-rollback bump cap).
+- [ ] Keep `ssr_reclaim_no_live_pointer_corruption.cln` as-is — proves the routing doesn't reintroduce the dangling-pointer regression.
+
+**Do not flip on Step 3 routing without all four bullet points landing together.** Partial routing (e.g. transient-allocated concat that gets stored into a still-`__malloc`-tracked builder) silently violates the region invariant and the OOB regression returns.
+
+### Sources informing the design
+
+- bump-scope (`scoped()` mechanism) — https://github.com/bluurryy/bump-scope
+- Bumpalo `Bump` (explicit warning against per-allocation reclaim) — https://docs.rs/bumpalo
+- Cyclone region-based memory management (Grossman & Morrisett) — https://www.cs.umd.edu/projects/cyclone/papers/cyclone-regions.pdf
+- Fast Escape Analysis for Region-Based Memory Management — https://www.sciencedirect.com/science/article/pii/S1571066105002616
+
+---
+
 ## ✅ FIXED (pending ship): CMP-SSR-MALLOC-OOM-PAGE-RENDER — root cause was `c = json.get(...)` assignment never unboxing Any→string + DCE breaking after first defining-instruction match
 
 **Fix landed locally 2026-06-26** (commit pending). Two surgical changes:
