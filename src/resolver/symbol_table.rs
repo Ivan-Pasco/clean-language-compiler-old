@@ -46,6 +46,19 @@ pub const SYM_BUILTIN_LIST_ADD_F64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE +
 pub const SYM_BUILTIN_INT_TO_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 9);
 pub const SYM_BUILTIN_NUMBER_TO_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 10);
 pub const SYM_BUILTIN_JSON_QUOTE_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 11);
+/// String concat that allocates the result through `__transient_alloc`
+/// instead of `__malloc`. Used by the MIR builder when a `+`/`StringConcat`
+/// result will be consumed inside an accumulator-rewritten loop body's
+/// transient scope (established by `__transient_scope_enter` /
+/// `__transient_scope_exit`). Codegen maps this symbol to
+/// `__string_concat_transient` (see `codegen_registration.rs`).
+///
+/// Callers MUST guarantee the result does not escape the surrounding
+/// transient scope. Lexically: only emitted when the destination is a
+/// body-local symbol whose lifetime ends inside the loop body. If the
+/// result escapes the scope (e.g. is stored in an outer-scope variable),
+/// it will dangle on the next `__transient_scope_exit`.
+pub const SYM_BUILTIN_STRING_CONCAT_TRANSIENT: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 12);
 
 /// Base for MIR-synthesized watch handler IDs (one per watch block target).
 pub const SYM_WATCH_HANDLER_BASE: usize = 0x4001_0000;

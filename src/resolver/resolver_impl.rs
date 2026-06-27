@@ -3216,6 +3216,19 @@ impl NameResolver {
             Some(HirType::Integer),
             builtin_location.clone(),
         );
+        // Transient variant of string.concat. Same shape (two string
+        // pointers in, one string pointer out), but the result is
+        // allocated through `__transient_alloc` instead of `__malloc`.
+        // Emitted by the HIR-level accumulator-loop rewrite when an
+        // assignment's LHS is provably body-local within a transient
+        // scope, so the concat result lives no longer than the
+        // surrounding iteration.
+        self.register_builtin_fn(
+            "string_concat_transient",
+            vec![HirType::String, HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
 
         // Testing functions
         self.register_builtin_fn(

@@ -2823,6 +2823,33 @@ impl HirBuilder {
 
         Self::rewrite_self_append_in_block(&mut new_body, &acc_name, &sb_name);
 
+        // Step 4a-pre: route body-local string-concat results through the
+        // transient arena. After `rewrite_self_append_in_block` has
+        // converted the accumulator's self-append into
+        // `string_builder_append` calls, the remaining `BinaryOp::Add`
+        // chains in the body are conditional helpers like
+        //   string headHtml = ""
+        //   if head != ""
+        //       headHtml = "<h2>" + head + "</h2>"
+        // The `headHtml` LHS is declared inside the body (we verified
+        // this via `collect_body_local_string_names`) so its concat
+        // result's lifetime is bounded by the iteration. Rewriting the
+        // chain to `string_concat_transient` calls lands the result in
+        // the transient pool, which is reset at end-of-iter by the
+        // `__transient_scope_exit` appended below.
+        //
+        // Names declared OUTSIDE the loop (the canonical
+        // `head = json.get(...)` shape that broke
+        // CMP-SSR-RECLAIM-FREES-LIVE-POINTER) are NOT in the body-local
+        // set and are NOT rewritten. Their concat results continue to
+        // allocate via `__malloc`, live on the main heap, and survive
+        // the per-iter transient reset. That's the Cyclone region
+        // invariant that makes this routing safe where end-of-body
+        // reclaim was not.
+        let mut body_local_string_names = std::collections::HashSet::new();
+        Self::collect_body_local_string_names(&new_body, &mut body_local_string_names);
+        Self::rewrite_body_local_helpers_to_transient(&mut new_body, &body_local_string_names);
+
         // Step 4a: the per-iter `string_builder_reclaim(__sb_N, __mark_N)`
         // mechanism stays disabled.
         //
@@ -3414,6 +3441,192 @@ impl HirBuilder {
                 });
             }
             other => out.push(other),
+        }
+    }
+
+    /// Collect every body-local string-typed local declared anywhere
+    /// inside `block` (descending into nested blocks). Used to determine
+    /// which named locals are safe transient-arena targets in
+    /// `rewrite_body_local_helpers_to_transient`.
+    ///
+    /// "Body-local" here means "declared inside the rewritten loop
+    /// body's HirBlock or one of its nested blocks." A declaration
+    /// captured by this walk will be torn down (the local goes out of
+    /// scope and any pointer it holds is unreachable) at the end of
+    /// each iteration, which is exactly when the matching
+    /// `__transient_scope_exit` resets the transient pool. So routing
+    /// the local's allocation through `__transient_alloc` is
+    /// lifetime-safe by construction.
+    ///
+    /// Names declared in the OUTER scope (above the rewritten loop) are
+    /// NOT captured — those continue to allocate via `__malloc` and
+    /// live on the main heap. That is the invariant that prevents
+    /// CMP-SSR-RECLAIM-FREES-LIVE-POINTER from reappearing: a
+    /// `head = json.get(...)` reassignment at the bottom of the body,
+    /// where `head` was declared OUTSIDE the loop, never ends up in
+    /// `body_local_string_names`, so its concat-shaped initializer (if
+    /// any) stays on the main heap.
+    fn collect_body_local_string_names(
+        block: &HirBlock,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for stmt in &block.statements {
+            match stmt {
+                HirStatement::VariableDeclaration {
+                    name,
+                    var_type: HirType::String,
+                    ..
+                } => {
+                    out.insert(name.clone());
+                }
+                HirStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::collect_body_local_string_names(then_branch, out);
+                    if let Some(eb) = else_branch {
+                        Self::collect_body_local_string_names(eb, out);
+                    }
+                }
+                HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                    Self::collect_body_local_string_names(body, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Walk `block` (descending into nested blocks). For every
+    /// `Assignment` whose LHS variable is in `body_local_string_names`
+    /// and whose RHS is a `BinaryOp::Add` / `StringConcat` chain,
+    /// rewrite the chain into a left-folded sequence of
+    /// `Call { function: "string_concat_transient", arguments: [acc, frag] }`
+    /// expressions. The result is allocated through `__transient_alloc`
+    /// (see `src/codegen/native_stdlib/transient_arena.rs`) and is
+    /// reclaimed at the end of the iteration by the
+    /// `__transient_scope_exit` call appended in Step 4a' of
+    /// `try_match_accumulator_pair`.
+    ///
+    /// Caller invariant: `block` MUST already be wrapped by a matching
+    /// `__transient_scope_enter` / `__transient_scope_exit` pair (that
+    /// is, this method is only safe to call from within
+    /// `try_match_accumulator_pair`, after `rewrite_self_append_in_block`
+    /// has run and before the enter/exit pair is inserted). Calling
+    /// from any other context produces transient allocations that
+    /// outlive their scope and dangle.
+    ///
+    /// The chain unfolding mirrors `rewrite_self_append_collect`'s
+    /// left-spine walk: `((a + b) + c) + d` becomes
+    /// `concat(concat(concat(a, b), c), d)` so that source-order is
+    /// preserved.
+    ///
+    /// Why this is safe even for nested HIR shapes (e.g. an
+    /// assignment inside an `if`): the recursive walk visits every
+    /// statement in the body, but `body_local_string_names` was
+    /// collected from the ENTIRE body before this walk began. A name
+    /// declared in one branch and assigned in another is still
+    /// body-local — its lifetime ends at the same iteration boundary
+    /// regardless of which branch the assignment occurred in. The
+    /// transient pool reset at end-of-iter applies uniformly.
+    fn rewrite_body_local_helpers_to_transient(
+        block: &mut HirBlock,
+        body_local_string_names: &std::collections::HashSet<String>,
+    ) {
+        for stmt in &mut block.statements {
+            match stmt {
+                HirStatement::Assignment {
+                    target: HirLValue::Variable { name, .. },
+                    value,
+                    ..
+                } if body_local_string_names.contains(name) => {
+                    if Self::is_string_concat_chain(value) {
+                        let owned_value =
+                            std::mem::replace(value, Self::placeholder_void_expression());
+                        *value = Self::fold_concat_chain_to_transient_calls(owned_value);
+                    }
+                }
+                HirStatement::VariableDeclaration {
+                    name,
+                    var_type: HirType::String,
+                    initializer: Some(init),
+                    ..
+                } if body_local_string_names.contains(name) => {
+                    if Self::is_string_concat_chain(init) {
+                        let owned_init =
+                            std::mem::replace(init, Self::placeholder_void_expression());
+                        *init = Self::fold_concat_chain_to_transient_calls(owned_init);
+                    }
+                }
+                HirStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::rewrite_body_local_helpers_to_transient(
+                        then_branch,
+                        body_local_string_names,
+                    );
+                    if let Some(eb) = else_branch {
+                        Self::rewrite_body_local_helpers_to_transient(eb, body_local_string_names);
+                    }
+                }
+                HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                    Self::rewrite_body_local_helpers_to_transient(body, body_local_string_names);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Is this expression a (possibly chained) `BinaryOp::Add` /
+    /// `StringConcat`? Used as the predicate for transient-routing the
+    /// RHS of a body-local string-typed assignment.
+    fn is_string_concat_chain(expr: &HirExpression) -> bool {
+        matches!(
+            expr,
+            HirExpression::BinaryOp {
+                op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                ..
+            }
+        )
+    }
+
+    /// Left-fold a `BinaryOp::Add` chain into a sequence of
+    /// `Call { function: "string_concat_transient" }` expressions.
+    ///
+    /// Input: `((a + b) + c) + d` (left-folded `BinaryOp::Add` shape)
+    /// Output: `concat(concat(concat(a, b), c), d)` (left-folded Calls)
+    ///
+    /// Non-chain inputs are returned unchanged.
+    fn fold_concat_chain_to_transient_calls(expr: HirExpression) -> HirExpression {
+        match expr {
+            HirExpression::BinaryOp {
+                left,
+                op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                right,
+                location,
+            } => {
+                let folded_left = Self::fold_concat_chain_to_transient_calls(*left);
+                let folded_right = *right;
+                HirExpression::Call {
+                    function: "string_concat_transient".to_string(),
+                    arguments: vec![folded_left, folded_right],
+                    location,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// A void-typed sentinel expression used to satisfy
+    /// `mem::replace`'s "need an owned T" requirement when rewriting
+    /// in-place. Never reaches the typechecker — the caller immediately
+    /// overwrites it with the rewrite output.
+    fn placeholder_void_expression() -> HirExpression {
+        HirExpression::Literal {
+            value: Value::String(String::new()),
+            location: SourceLocation::default(),
         }
     }
 

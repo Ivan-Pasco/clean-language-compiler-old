@@ -1198,11 +1198,17 @@ impl MirCodeGenerator<'_> {
                 // Mark that we've already emitted the print calls
                 call_already_emitted = true;
             }
-            Some("string.concat") | Some("string_concat") | Some("native_string_concat") => {
-                debug_mir!(": Matched string.concat");
-                // FIXED: native_string_concat expects 2 i32 arguments: (str_ptr1, str_ptr2) -> result_ptr
-                // Each pointer points to a string structure: [4-byte length][data bytes]
-                // DO NOT expand to (ptr, len) pairs - just pass the struct pointers
+            Some("string.concat")
+            | Some("string_concat")
+            | Some("native_string_concat")
+            | Some("string_concat_transient")
+            | Some("__string_concat_transient") => {
+                debug_mir!(": Matched string.concat (or transient variant)");
+                // Both __string_concat and __string_concat_transient have
+                // the same calling convention: (str_ptr1, str_ptr2) -> result_ptr.
+                // The only difference is where the result is allocated
+                // (__malloc vs __transient_alloc). DO NOT expand to (ptr, len)
+                // pairs — just pass the struct pointers.
                 for arg in arguments {
                     self.load_string_pointer_only(arg)?;
                 }

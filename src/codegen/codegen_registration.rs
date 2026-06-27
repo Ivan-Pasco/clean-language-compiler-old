@@ -280,6 +280,33 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("transient_alloc", transient_alloc_idx);
 
+        // NATIVE: string_concat_transient — identical to __string_concat
+        // but routes the result allocation through __transient_alloc
+        // instead of __malloc. Used by the MIR builder when a string
+        // concat's result is consumed inside an accumulator-rewritten
+        // loop body (the transient scope established by Step 2). The
+        // routing decision happens at MIR-build time based on the
+        // lexical scope of the destination value — see
+        // `src/mir/mir_builder/expressions.rs::is_string_concat` path.
+        //
+        // The body is exactly the same shape as __string_concat:
+        // gen_concat is allocator-agnostic, parameterized over the
+        // function index that performs the result allocation. Calling
+        // it with transient_alloc_idx produces a concat that lands its
+        // result in the transient pool. Caller responsibility: only
+        // use this variant when the result is provably body-local
+        // within a `transient_scope_enter` / `transient_scope_exit`
+        // pair, otherwise the result is dangling after the scope exit.
+        let concat_transient_instructions =
+            native_stdlib::string_ops::gen_concat(transient_alloc_idx);
+        let concat_transient_idx = self.register_function(
+            "__string_concat_transient",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &concat_transient_instructions,
+        )?;
+        self.add_function_alias("string_concat_transient", concat_transient_idx);
+
         // NATIVE: string_index_of - finds substring in string
         // Parameters: str_ptr (i32), search_ptr (i32)
         // Returns: index (i32) or -1 if not found

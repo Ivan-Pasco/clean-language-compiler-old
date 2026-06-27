@@ -17,7 +17,8 @@ use crate::resolver::symbol_table::{
     SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH,
     SYM_BUILTIN_LIST_PUSH_F64, SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64,
     SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_NUMBER_TO_STRING, SYM_BUILTIN_STRING_CONCAT,
-    SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE, SYM_WATCH_HANDLER_BASE,
+    SYM_BUILTIN_STRING_CONCAT_TRANSIENT, SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE,
+    SYM_WATCH_HANDLER_BASE,
 };
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
@@ -437,6 +438,16 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SYM_BUILTIN_STRING_CONCAT, "string.concat".to_string());
+        // Transient variant — same shape as string.concat, but its result
+        // is allocated through __transient_alloc instead of __malloc. The
+        // MIR builder emits this symbol when a concat's result will be
+        // consumed inside an accumulator-rewritten loop body's transient
+        // scope. See `src/codegen/codegen_registration.rs` for the
+        // matching `__string_concat_transient` native function.
+        mir_program.symbol_name_map.insert(
+            SYM_BUILTIN_STRING_CONCAT_TRANSIENT,
+            "string_concat_transient".to_string(),
+        );
         // pow_f64 and pow_i32 should map to the existing math.pow function
         mir_program
             .symbol_name_map
