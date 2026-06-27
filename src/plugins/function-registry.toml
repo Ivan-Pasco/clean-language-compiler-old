@@ -766,6 +766,17 @@ hosts       = ["all"]
 description = "Convert 32-bit integer to its decimal string representation"
 
 [[functions]]
+name        = "int64_to_string"
+layer       = 2
+category    = "string"
+module      = "env"
+params      = ["i64"]
+returns     = "ptr"
+aliases     = []
+hosts       = ["all"]
+description = "Convert 64-bit integer (integer:64) to its decimal string representation; distinct from int_to_string because the WASM param is i64 not i32 — used by the compiler when lowering integer:64 .toString() so the signed-64 range round-trips without narrowing"
+
+[[functions]]
 name        = "float_to_string"
 layer       = 2
 category    = "string"

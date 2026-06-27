@@ -2363,8 +2363,42 @@ impl HirBuilder {
                 Ok(acc.expect("non-empty parts already produced acc above"))
             }
 
-            _ => {
-                // For unsupported expressions, create a void literal
+            // SEM001: an `OrmQuery` reaching the HIR builder means no plugin claimed
+            // the `Model.<verb>:` pattern. The most common cause is a typo in the
+            // verb name (`User.fnd:` instead of `User.find:`) or a verb that no
+            // installed plugin handles. Surface this as a hard error instead of
+            // silently lowering to void — see bug SILENT-DROP.
+            Expression::OrmQuery {
+                model,
+                verb,
+                location,
+                ..
+            } => Err(CompilerError::semantic_error_with_code(
+                format!(
+                    "SEM001: unknown ORM verb `{}.{}:` — no installed plugin handles this expression block",
+                    model, verb
+                ),
+                Some(
+                    "Check the verb spelling (e.g. `find`, `first`, `insert`, `insert_id`, \
+                     `update`, `upsert`, `delete`, `count`, `exists`, `paginate`, `cursor`) \
+                     and ensure the plugin that owns this verb is listed under `plugins:`."
+                        .to_string(),
+                ),
+                Some(location.clone()),
+                "SEM001",
+            )),
+
+            // For unsupported expressions we lower to a void literal rather than
+            // erroring, because some upstream rewrites legitimately leave behind
+            // transient nodes that are pruned later (e.g. PropertyAssignment is
+            // consumed at the statement level for list.setFlags). Logged at trace
+            // so the silent path is observable when debugging but doesn't pollute
+            // normal compilation output.
+            other => {
+                tracing::trace!(
+                    expression = ?std::mem::discriminant(other),
+                    "HIR builder catch-all: lowering unrecognised expression to void"
+                );
                 Ok(HirExpression::Literal {
                     value: Value::Void,
                     location: SourceLocation::default(),

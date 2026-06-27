@@ -2660,133 +2660,57 @@ impl WasmPluginAdapter {
         // Strip trailing colon from block name (e.g., "server:" -> "server")
         let block_name = block.name.trim_end_matches(':');
 
-        // ORM verb direct dispatch: Model.verb blocks (e.g. "User.find") are handled by
-        // calling the plugin's specific export (expand_find, expand_first, etc.) directly
-        // rather than routing through expand_block.  The frame.data expand_block dispatcher
-        // uses an inverted string_compare convention incompatible with the host's current
-        // implementation; the verb-specific exports do not have this issue.
+        // Binding-header preservation for ORM-style typed expression blocks
+        // (`<type> <name> = Model.<verb>: ...`).
         //
-        // expand_find(model: string, body: string) -> string
-        //   model — the model class name (e.g. "User"), converted to snake_case inside the plugin
-        //   body  — the query sub-clauses (where:, order:, limit:, etc.)
-        //   returns the RHS query expression (e.g. _db_query("SELECT ...", "[]"))
+        // The expander encodes the variable binding as the first line of the block
+        // content (see plugins/expander.rs ~892). The plugin's expand_block expects
+        // just the body — the binding is the compiler's responsibility to reattach
+        // afterwards. Strip the header here, remember it, and the post-call
+        // reassembly below stitches the resulting expression back into a complete
+        // VariableDecl.
         //
-        // The block content carries the variable binding as a header line ("type name =")
-        // followed by the actual sub-clauses.  We strip the header, call the verb export,
-        // then reassemble the complete assignment statement for parsing.
-        if let Some(dot_pos) = block_name.rfind('.') {
-            let verb = &block_name[dot_pos + 1..];
-            let model_name = &block_name[..dot_pos];
-            if matches!(
-                verb,
-                "find"
-                    | "first"
-                    | "count"
-                    | "exists"
-                    | "insert"
-                    | "update"
-                    | "delete"
-                    | "paginate"
-                    | "cursor"
-            ) {
-                let direct_fn = format!("expand_{}", verb);
-                if let Ok(expand_verb) =
-                    instance.get_typed_func::<(i32, i32), i32>(&mut store, &direct_fn)
-                {
-                    // Split block content into header ("list<User> rows =") and body subclauses.
-                    //
-                    // Not all ORM verbs bind their result to a variable.  `insert:`, `update:`,
-                    // and `delete:` blocks typically have no binding — their content is entirely
-                    // field assignments (e.g. `name = value`).  `find:`, `first:`, and `count:`
-                    // blocks start with a binding header of the form `<type> <identifier> =`.
-                    //
-                    // We distinguish the two cases by checking how many whitespace-separated
-                    // tokens appear before the first `=` on the first line:
-                    //   • Two tokens (e.g. `list<User> rows =`) → binding header is present
-                    //   • One token  (e.g. `page_id =`)         → no binding, all content is body
-                    let content = &block.content;
-                    let has_binding_header = {
-                        let first_line = content.lines().next().unwrap_or("").trim();
-                        if let Some(eq_pos) = first_line.find('=') {
-                            let before_eq = first_line[..eq_pos].trim();
-                            // Count whitespace-separated tokens (type may contain '<' / '>'
-                            // so we split on ASCII whitespace only).
-                            let token_count = before_eq.split_whitespace().count();
-                            token_count >= 2
-                        } else {
-                            false
-                        }
-                    };
-
-                    let (header_line, sub_body) = if has_binding_header {
-                        if let Some(newline_pos) = content.find('\n') {
-                            (&content[..newline_pos], &content[newline_pos + 1..])
-                        } else {
-                            (content.as_str(), "")
-                        }
+        // The previous design had a hardcoded whitelist of "ORM verbs" that took a
+        // separate direct-dispatch path through verb-specific exports. That violated
+        // the architecture boundary (the compiler knew the plugin's verb list) and
+        // silently dropped the binding for any verb not in the list — see bug SEM007.
+        // Routing every Model.<verb>: block through the single generic expand_block
+        // call removes the whitelist while preserving the binding for all verbs,
+        // known or future.
+        //
+        // Detection heuristic: the first line is a binding header iff it contains an
+        // `=` and the text before `=` has ≥2 whitespace-separated tokens (the type
+        // and the identifier — `list<User> rows`). Field assignments inside e.g. an
+        // `insert:` body (`name = "Alice"`) have only one token before `=`, so they
+        // don't trip this detector.
+        let is_dotted_verb_block = block_name.contains('.');
+        let (binding_header, effective_content): (Option<String>, std::borrow::Cow<'_, str>) =
+            if is_dotted_verb_block {
+                let content = &block.content;
+                let has_binding_header = {
+                    let first_line = content.lines().next().unwrap_or("").trim();
+                    if let Some(eq_pos) = first_line.find('=') {
+                        let before_eq = first_line[..eq_pos].trim();
+                        before_eq.split_whitespace().count() >= 2
                     } else {
-                        // No binding header — treat the entire content as the body.
-                        ("", content.as_str())
-                    };
-
-                    let model_ptr = self.find_or_write_string(&mut store, &memory, model_name)?;
-                    let body_ptr = self.find_or_write_string(&mut store, &memory, sub_body)?;
-
-                    let result_ptr = expand_verb
-                        .call(&mut store, (model_ptr, body_ptr))
-                        .map_err(|e| {
-                            anyhow!(
-                                "{}",
-                                describe_plugin_trap(
-                                    &e,
-                                    &format!("ORM verb dispatch ({}.{})", model_name, verb)
-                                )
-                            )
-                        })?;
-
-                    if let Some(error) = store.data().last_error.clone() {
-                        return Err(anyhow!("Plugin error: {}", error));
+                        false
                     }
-
-                    let result_bytes = self.read_result(&store, &memory, result_ptr)?;
-                    let query_expr = std::str::from_utf8(&result_bytes)
-                        .map_err(|e| anyhow!("Invalid UTF-8 in plugin response: {}", e))?
-                        .trim();
-
-                    tracing::trace!(
-                        verb = verb,
-                        model = model_name,
-                        has_binding_header = has_binding_header,
-                        query_expr_len = query_expr.len(),
-                        "ORM verb direct dispatch result"
-                    );
-
-                    if query_expr.is_empty() {
-                        return Ok(Vec::new());
-                    }
-
-                    // Reassemble the statement.  When a binding header is present:
-                    //   list<User> rows = _db_query(...)
-                    // When there is no binding (insert/update/delete used as a statement):
-                    //   _db_exec(...)
-                    let full_stmt = if has_binding_header {
-                        format!("{} {}", header_line, query_expr)
-                    } else {
-                        query_expr.to_string()
-                    };
-                    let wrapper = format!("start:\n\t{}", full_stmt.trim().replace('\n', "\n\t"));
-                    let program = self.parse_plugin_code(&wrapper).map_err(|e| {
-                        anyhow!(
-                            "Failed to parse ORM verb plugin output '{}': {}",
-                            full_stmt.chars().take(120).collect::<String>(),
-                            e
+                };
+                if has_binding_header {
+                    if let Some(newline_pos) = content.find('\n') {
+                        (
+                            Some(content[..newline_pos].to_string()),
+                            std::borrow::Cow::Owned(content[newline_pos + 1..].to_string()),
                         )
-                    })?;
-                    let statements = program.start_function.map(|f| f.body).unwrap_or_default();
-                    return Ok(statements);
+                    } else {
+                        (Some(content.clone()), std::borrow::Cow::Borrowed(""))
+                    }
+                } else {
+                    (None, std::borrow::Cow::Borrowed(content.as_str()))
                 }
-            }
-        }
+            } else {
+                (None, std::borrow::Cow::Borrowed(block.content.as_str()))
+            };
 
         // Try to find an existing string pointer in the plugin's memory that matches
         // Clean Language uses pointer equality for string comparison, so we need
@@ -2794,7 +2718,7 @@ impl WasmPluginAdapter {
         let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name)?;
 
         // Extract inline key="value" pairs from the first line of content
-        let (extra_attrs, actual_body) = extract_inline_attrs(&block.content);
+        let (extra_attrs, actual_body) = extract_inline_attrs(&effective_content);
 
         // Format attributes as JSON object for plugin consumption
         // Plugins expect: {"tag":"site-header","client":"off"}
@@ -2860,6 +2784,37 @@ impl WasmPluginAdapter {
         if generated_code.trim().is_empty() {
             return Ok(Vec::new());
         }
+
+        // Reattach any binding header that was stripped on the way in.
+        //
+        // When the block was a typed expression of the form `<type> <name> = Model.verb: ...`,
+        // we stripped the `<type> <name> =` header from the body before calling the plugin
+        // so the plugin's expand_block doesn't need to know about the binding (see the
+        // strip site above). If the plugin's response is a bare expression (the common case),
+        // we prepend the header and let the parser produce the VariableDecl.
+        //
+        // If the plugin happened to emit a complete `<type> <name> = ...` statement itself
+        // (e.g. older frame.data versions before binding-header detection was hoisted into
+        // the compiler), we detect that and skip the prefix so we don't double up.
+        let generated_code: std::borrow::Cow<'_, str> = if let Some(header) = &binding_header {
+            let trimmed = generated_code.trim_start();
+            let already_bound = {
+                let first_line = trimmed.lines().next().unwrap_or("").trim();
+                if let Some(eq_pos) = first_line.find('=') {
+                    first_line[..eq_pos].trim().split_whitespace().count() >= 2
+                } else {
+                    false
+                }
+            };
+            if already_bound {
+                std::borrow::Cow::Borrowed(generated_code)
+            } else {
+                std::borrow::Cow::Owned(format!("{} {}", header, trimmed))
+            }
+        } else {
+            std::borrow::Cow::Borrowed(generated_code)
+        };
+        let generated_code: &str = &generated_code;
 
         // Plugin output may be:
         //   (a) A complete program with a start: block  →  extract start_function.body

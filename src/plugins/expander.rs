@@ -317,6 +317,19 @@ impl<'a> PluginExpander<'a> {
         // Expand top-level statements using full expansion (which captures start functions)
         program.statements = self.expand_statements_full(program.statements)?;
 
+        // Expand the user's start: block body. Without this, framework blocks
+        // appearing inside start: — e.g. `integer x = Model.find: ...` — are
+        // never dispatched to their plugin and reach HIR construction as raw
+        // OrmQuery nodes, where they would fail SEM001. Top-level FrameworkBlock
+        // statements go through expand_statements_full above, but VariableDecl
+        // + OrmQuery initializers and ORM expression statements only become
+        // visible to the plugin dispatch inside expand_statements (which is
+        // also what we use for function bodies).
+        if let Some(ref mut start_fn) = program.start_function {
+            let body = std::mem::take(&mut start_fn.body);
+            start_fn.body = self.expand_statements(body)?;
+        }
+
         // Expand statements in functions
         program.functions = self.expand_functions(program.functions)?;
 
@@ -566,6 +579,12 @@ impl<'a> PluginExpander<'a> {
         mut program: Program,
     ) -> Result<Program, PluginError> {
         program.statements = self.expand_statements_full(program.statements)?;
+        // See expand_program: start: body must also be walked so plugin
+        // dispatch reaches OrmQuery expressions / VariableDecls inside it.
+        if let Some(ref mut start_fn) = program.start_function {
+            let body = std::mem::take(&mut start_fn.body);
+            start_fn.body = self.expand_statements(body)?;
+        }
         program.functions = self.expand_functions(program.functions)?;
         program.classes = self.expand_classes(program.classes)?;
 

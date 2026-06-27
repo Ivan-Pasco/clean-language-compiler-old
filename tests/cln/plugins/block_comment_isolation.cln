@@ -1,0 +1,32 @@
+// Test: plugins/block_comment_isolation
+// Grammar: foundation/spec/grammar.ebnf — framework_block content extraction
+// Semantic: SYN001 regression — extract_block_content_raw must not capture
+//           lower-indented comments that follow the last content line of a
+//           block. The previous implementation sliced source bytes from the
+//           first content token to the next non-whitespace token, but
+//           skip_whitespace silently consumed Comment tokens between them,
+//           so adjacent comments leaked into the block body the plugin
+//           received.
+//
+// The comment line below the insert: block ends with `= 1` — if it leaks
+// into Session.insert: as a field assignment, the plugin produces invalid
+// SQL and compilation fails. With the fix, the comment is excluded and
+// compilation succeeds.
+//
+// Expected: compilation succeeds (runtime needs a server to actually insert).
+
+plugins:
+	frame.data
+
+data Session
+	id: integer pk auto
+	token: string
+
+functions:
+	void make_session()
+		Session.insert:
+			token = "sample"
+
+	// Adjacent comment with embedded equals: x = 1
+	void other_function()
+		print("hi")

@@ -1,0 +1,20 @@
+// Test: plugins/orm_insert_id_binding
+// Grammar: foundation/spec/plugins/frame-data.ebnf — typed insert_id expression
+// Semantic: SEM007 regression — `<type> <name> = Model.insert_id: ...` must
+//           preserve the LHS binding across plugin dispatch even when the verb
+//           is not in any hardcoded compiler whitelist. The fix replaces the
+//           old hardcoded ORM-verb dispatch list with a uniform generic
+//           expand_block path that strips and re-attaches the binding header.
+// Expected: compilation succeeds (runtime needs a server to actually insert).
+
+plugins:
+	frame.data
+
+data Widget
+	id: integer pk auto
+	name: string
+
+start:
+	integer new_id = Widget.insert_id:
+		name = "test"
+	print(new_id)

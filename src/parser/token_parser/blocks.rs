@@ -648,6 +648,27 @@ impl TokenParser {
         // Record byte position of first content token
         let content_start_byte = self.current().location.byte_start;
 
+        // Track the byte_start of the token immediately AFTER the last content-bearing
+        // token we consumed inside the block. Using the byte_start of whatever
+        // `self.current()` happens to point at when the loop exits would over-capture:
+        // `skip_whitespace` silently consumes Newline/Comment/BlockComment tokens, so
+        // when the loop breaks on a Dedent the byte cursor has already moved past any
+        // lower-indented comment lines between the block and the next sibling
+        // construct. Those comment bytes would then leak into the extracted body and
+        // get handed to the plugin as if they were block content. See bug SYN001.
+        let mut content_end_byte: Option<usize> = None;
+        // Use the byte_start of the next token as the exclusive end of the span we
+        // just consumed. This is only correct when the consumed token was genuine
+        // block content (not a Newline/Comment that skip_whitespace would have
+        // stripped) — call this only after bumping a known content / newline token.
+        fn update_end(parser: &TokenParser, end_byte: &mut Option<usize>) {
+            if let Some(next) = parser.tokens.get(parser.cursor) {
+                if let Some(start) = next.location.byte_start {
+                    *end_byte = Some(start);
+                }
+            }
+        }
+
         // Skip through all tokens in the block using the same Indent/Dedent boundary logic
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -677,7 +698,7 @@ impl TokenParser {
                 self.bump(); // Consume indent
             }
 
-            // Consume all tokens on the line
+            // Consume all tokens on the line, advancing the end marker as we go.
             while !self.is_at_end()
                 && !matches!(
                     self.current_kind(),
@@ -685,18 +706,20 @@ impl TokenParser {
                 )
             {
                 self.bump();
+                update_end(self, &mut content_end_byte);
             }
 
-            // Consume newline if present
+            // Consume the trailing newline (and capture it in the span — newlines
+            // between content lines are part of the block body).
             if matches!(self.current_kind(), TokenKind::Newline) {
                 self.bump();
+                update_end(self, &mut content_end_byte);
             }
         }
 
-        // Record byte position of the token after the block
-        let content_end_byte = self.current().location.byte_start;
-
-        // Extract raw text from source
+        // Extract raw text from source using the bounds of the last real content token,
+        // not the position of the token after skip_whitespace ran past trailing
+        // comments at a lower indent level.
         let raw_content = match (content_start_byte, content_end_byte) {
             (Some(start), Some(end)) if start < end && end <= self.source_content.len() => {
                 self.source_content[start..end].to_string()
