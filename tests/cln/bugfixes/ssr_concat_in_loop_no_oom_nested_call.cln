@@ -1,0 +1,61 @@
+// Test: bugfixes/ssr_concat_in_loop_no_oom_nested_call
+// Grammar: while_statement, function_declaration, return_statement,
+//          variable_declaration, assignment, binary_expression
+// Semantic: COM001 (tracking: CMP-SSR-MALLOC-OOM-PAGE-RENDER-CACHE-INEFFECTIVE,
+//                  CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER)
+//
+// Guards the variant where the conditional-helper pattern is HIDDEN
+// INSIDE a callee invoked from a hot loop. The /syntax page on Web Site
+// Clean reproduced the OOM via this shape:
+//
+//     while ... < N
+//         acc = acc + RenderSyntaxCategorySection.serve(...)
+//     end
+//
+// `RenderSyntaxCategorySection.serve()` internally accumulated three
+// conditional helpers and chained them. The outer `acc = acc + call(...)`
+// IS rewritten to a StringBuilder by the 0.30.368 matcher, but the
+// helper-allocation leak inside the callee still tripped the 128 MB cap
+// because each call invocation allocated O(few) transient strings.
+//
+// The fix appends `string_builder_reclaim(__sb_inner, __mark_inner)` to
+// the tail of the INNER accumulator-rewritten loop in renderRow, which
+// reclaims the helpers per inner iter. The outer reclaim runs once per
+// outer iter against the outer builder.
+//
+// Per inner: "[" + "<b>x</b>"(8) + "<i>y</i>"(8) + "]" = 18 chars × 5 inners = 90 per row.
+// 50 outer rows × 90 = 4500.
+//
+// Expected output:
+//   4500
+
+start:
+	string outerAcc = ""
+	integer outer = 0
+	while outer < 50
+		outerAcc = outerAcc + renderRow(outer)
+		outer = outer + 1
+	printl(outerAcc.length().toString())
+
+functions:
+	string renderRow(integer rowIndex)
+		// Inner accumulator with the exact conditional-helper shape from
+		// /syntax. Five inner items per row produce 35 bytes — 50 rows ×
+		// 35 = 1750. Without the inner-loop reclaim, this allocates ~70
+		// transient bytes per inner iter × 5 inners × 50 rows = ~17 KB
+		// of stranded helpers; small in this test but the same shape
+		// scales to MB+ on a real /tutorials render.
+		string acc = ""
+		integer i = 0
+		while i < 5
+			string label = "x"
+			string code = "y"
+			string labelHtml = ""
+			if label != ""
+				labelHtml = "<b>" + label + "</b>"
+			string codeHtml = ""
+			if code != ""
+				codeHtml = "<i>" + code + "</i>"
+			acc = acc + "[" + labelHtml + codeHtml + "]"
+			i = i + 1
+		return acc

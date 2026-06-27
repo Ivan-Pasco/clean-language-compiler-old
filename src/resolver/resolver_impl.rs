@@ -3163,6 +3163,29 @@ impl NameResolver {
             Some(HirType::String),
             builtin_location.clone(),
         );
+        // Per-iter heap reclaim for accumulator-rewritten loops. Takes
+        // the current builder pointer and the HEAP_PTR snapshot captured
+        // by `heap_ptr_snapshot` just after `string_builder_new` returned.
+        // Sets HEAP_PTR back to `max(snapshot, builder + 8 + capacity)`,
+        // reclaiming every transient allocation made above the builder's
+        // tail this iteration. Closes the conditional-helper leak path
+        // that left CMP-SSR-MALLOC-OOM-PAGE-RENDER reproducible after
+        // the 0.30.368 chained-RHS extension.
+        self.register_builtin_fn(
+            "string_builder_reclaim",
+            vec![HirType::String, HirType::Integer],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        // Capture the current HEAP_PTR — used as the `init_mark` argument
+        // to `string_builder_reclaim`. Distinct from `mem_scope_push` so
+        // the rewrite cannot be confused with a host-side reclaim frame.
+        self.register_builtin_fn(
+            "heap_ptr_snapshot",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
 
         // Testing functions
         self.register_builtin_fn(

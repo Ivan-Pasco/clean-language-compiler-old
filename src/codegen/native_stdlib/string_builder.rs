@@ -58,7 +58,7 @@
 
 use wasm_encoder::{BlockType, Instruction, MemArg};
 
-use super::{STRING_DATA_OFFSET, STRING_LENGTH_OFFSET};
+use super::{HEAP_PTR_GLOBAL, STRING_DATA_OFFSET, STRING_LENGTH_OFFSET};
 
 /// Builder header layout offsets (relative to the builder pointer).
 const BUILDER_CAPACITY_OFFSET: u64 = 0;
@@ -341,6 +341,89 @@ pub fn gen_string_builder_finalize() -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for `__string_builder_reclaim`.
+///
+/// Parameters:
+///   - local 0: builder_ptr (i32) — pointer to the current builder region
+///   - local 1: init_mark   (i32) — HEAP_PTR snapshot taken right after
+///                                  `__string_builder_new` returned, before
+///                                  the loop began.
+///
+/// Returns: void
+///
+/// Resolves CMP-SSR-MALLOC-OOM-PAGE-RENDER's per-iter conditional-helper
+/// leak. The accumulator-loop rewrite (in `src/hir/hir_builder.rs`) turns
+/// `acc = acc + e1 + ... + eN` inside a loop into a sequence of
+/// `__string_builder_append` calls. That handles the accumulator's own
+/// allocations. But the surrounding loop body often contains transient
+/// per-iter allocations — typically conditional helpers like
+/// `headHtml = "<h2>" + head + "</h2>"` — that allocate via `string.concat`
+/// and never get reclaimed. Across thousands of iterations these compound
+/// until the 128 MB bump cap is reached and `malloc` returns null.
+///
+/// The previous `body_is_iter_scope_safe`-driven `mem_scope_push` / `pop`
+/// pair is disabled for accumulator-rewritten loops because a blind pop
+/// would reclaim the (possibly relocated) builder region itself. This
+/// helper performs a SELECTIVE reclaim: it sets `HEAP_PTR` to
+/// `max(init_mark, builder_ptr + 8 + capacity)`. That preserves
+/// everything below the (possibly relocated) builder's tail — including
+/// the builder itself — while reclaiming every per-iter allocation made
+/// above the builder.
+///
+/// Geometric leak accounting: any old builder region that was orphaned
+/// by an intra-iter grow event is stranded below the current `builder_ptr`,
+/// so this reclaim does NOT reclaim it. That's intentional and matches
+/// the doubling-growth O(n) bound the accumulator rewrite already
+/// accepts.
+///
+/// Locals:
+///   - local 0: builder_ptr (parameter)
+///   - local 1: init_mark   (parameter)
+///   - local 2: builder_end (builder_ptr + 8 + capacity, the byte just
+///                           past the last reachable builder byte)
+pub fn gen_string_builder_reclaim() -> Vec<Instruction<'static>> {
+    vec![
+        // builder_end = builder_ptr + 8 + load(builder_ptr + 0 /* capacity */)
+        Instruction::LocalGet(0),
+        Instruction::I32Const(8),
+        Instruction::I32Add,
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: 0, // BUILDER_CAPACITY_OFFSET
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Add,
+        Instruction::LocalSet(2),
+        // HEAP_PTR = max(init_mark, builder_end)
+        // Compute via: if builder_end > init_mark then builder_end else init_mark
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32GtU,
+        Instruction::If(BlockType::Result(wasm_encoder::ValType::I32)),
+        Instruction::LocalGet(2),
+        Instruction::Else,
+        Instruction::LocalGet(1),
+        Instruction::End,
+        Instruction::GlobalSet(HEAP_PTR_GLOBAL),
+    ]
+}
+
+/// Generate instructions for `__heap_ptr_snapshot`.
+///
+/// Parameters: none
+/// Returns: i32 — current HEAP_PTR value.
+///
+/// Used by the accumulator-loop rewrite to capture the HEAP_PTR right
+/// after `__string_builder_new` returns. The snapshot becomes the
+/// `init_mark` argument to `__string_builder_reclaim` at the end of each
+/// loop iteration. Identical to `__scope_push` in body, but kept as a
+/// separate function so the rewrite never accidentally pairs with a
+/// host-side `__scope_pop` that would reclaim the entire frame.
+pub fn gen_heap_ptr_snapshot() -> Vec<Instruction<'static>> {
+    vec![Instruction::GlobalGet(HEAP_PTR_GLOBAL)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +536,74 @@ mod tests {
             max, 8,
             "string_builder_append uses locals 0..=8 — if you've added \
              more locals, update the registration site to match"
+        );
+    }
+
+    /// Regression guard for CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER. The reclaim
+    /// helper MUST set HEAP_PTR to `max(init_mark, builder + 8 + capacity)`.
+    /// Two failure modes the test catches:
+    ///   1. Setting HEAP_PTR to init_mark unconditionally — would corrupt
+    ///      the builder's relocated region.
+    ///   2. Setting HEAP_PTR to builder + 8 + capacity unconditionally —
+    ///      would leak the very first iteration's helpers (initial mark
+    ///      is below the freshly built builder's tail).
+    #[test]
+    fn test_string_builder_reclaim_writes_max_of_mark_and_builder_end() {
+        let instructions = gen_string_builder_reclaim();
+        // Must read the builder capacity (offset 0 from builder_ptr).
+        let reads_capacity = instructions.iter().any(|i| {
+            matches!(i, Instruction::I32Load(m)
+                if m.offset == 0)
+        });
+        assert!(
+            reads_capacity,
+            "reclaim must read the builder's capacity field"
+        );
+        // Must add 8 (header size) to builder_ptr to reach the end.
+        let adds_header = instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::I32Const(8)));
+        assert!(
+            adds_header,
+            "reclaim must add the 8-byte builder header to the capacity to \
+             compute the builder's end byte"
+        );
+        // Must compare via I32GtU (unsigned), select via If/Else.
+        let has_gtu = instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::I32GtU));
+        assert!(
+            has_gtu,
+            "reclaim must compare builder_end vs init_mark using unsigned \
+             greater-than (signed compare risks misordering pointers above 2 GB)"
+        );
+        // Must write the result to HEAP_PTR_GLOBAL.
+        let writes_heap_ptr = instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::GlobalSet(HEAP_PTR_GLOBAL)));
+        assert!(
+            writes_heap_ptr,
+            "reclaim must write the computed HEAP_PTR back via GlobalSet"
+        );
+    }
+
+    /// Regression guard for the heap_ptr_snapshot helper used to capture
+    /// the `init_mark` argument to `string_builder_reclaim`. Must be a
+    /// single `GlobalGet(HEAP_PTR_GLOBAL)` so it observes exactly the
+    /// builder-just-built save-point with no side effects.
+    #[test]
+    fn test_heap_ptr_snapshot_is_a_single_global_get() {
+        let instructions = gen_heap_ptr_snapshot();
+        assert_eq!(
+            instructions.len(),
+            1,
+            "heap_ptr_snapshot must be exactly one GlobalGet — any extra ops \
+             would shift the save-point relative to the builder's actual end"
+        );
+        assert!(
+            matches!(instructions[0], Instruction::GlobalGet(HEAP_PTR_GLOBAL)),
+            "heap_ptr_snapshot must read HEAP_PTR_GLOBAL — reading any other \
+             global would return the wrong save-point"
         );
     }
 }

@@ -1,0 +1,54 @@
+// Test: bugfixes/ssr_concat_conditional_helper_no_oom
+// Grammar: while_statement, if_statement, variable_declaration, assignment, binary_expression
+// Semantic: COM001 (tracking: CMP-SSR-MALLOC-OOM-PAGE-RENDER-CACHE-INEFFECTIVE,
+//                  CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER)
+//
+// Guards a per-iteration HTML-section build pattern in which the outer
+// accumulator (`acc = acc + ...`) is interleaved with three conditional
+// helper locals declared inside the loop body (`string headHtml = ""`,
+// then `if head != "" headHtml = "<h2>" + head + "</h2>"`).
+//
+// The combined shape OOM'd the bump allocator on real SSR pages
+// (Web Site Clean /syntax, /tutorials). The 0.30.368 chained-RHS
+// matcher rewrites the outer `acc = acc + e1 + e2 + ... + eN` into a
+// doubling-capacity StringBuilder, but the surrounding conditional
+// helpers (`headHtml = "<h2>" + head + "</h2>"` etc.) continued to
+// allocate via plain `string.concat` and stranded in the bump heap.
+// Across N iterations the leak grows as ~ 50 bytes × N and trips the
+// 128 MB bump cap on /tutorials at ~30 iterations.
+//
+// The fix (this commit) appends a `string_builder_reclaim(__sb, __mark)`
+// statement to the tail of every accumulator-rewritten loop body. The
+// reclaim sets HEAP_PTR to `max(init_mark, __sb + 8 + capacity)`,
+// releasing every transient per-iter allocation that landed above the
+// builder's tail (the conditional-helper strings) without disturbing
+// the builder itself.
+//
+// At 5000 iterations the final string is 53 bytes × 5000 = 265000
+// bytes. The three conditional helpers (~25 bytes each) would otherwise
+// strand ~375000 bytes per iter; over 5000 iters that's ~1.8 GB of
+// stranded helper-string allocations, well above the 128 MB cap. With
+// the reclaim, total resident is bounded by the builder's working set.
+//
+// Expected output:
+//   265000
+
+start:
+	string acc = ""
+	integer i = 0
+	while i < 5000
+		string head = "H"
+		string body = "B"
+		string foot = "F"
+		string headHtml = ""
+		if head != ""
+			headHtml = "<h2>" + head + "</h2>"
+		string bodyHtml = ""
+		if body != ""
+			bodyHtml = "<p>" + body + "</p>"
+		string footHtml = ""
+		if foot != ""
+			footHtml = "<small>" + foot + "</small>"
+		acc = acc + "<section>" + headHtml + bodyHtml + footHtml + "</section>"
+		i = i + 1
+	printl(acc.length().toString())

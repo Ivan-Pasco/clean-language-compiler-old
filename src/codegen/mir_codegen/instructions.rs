@@ -1930,6 +1930,8 @@ impl MirCodeGenerator<'_> {
                         | Some("mem_retain")
                         | Some("mem_scope_push")
                         | Some("mem_scope_pop")
+                        | Some("string_builder_reclaim")
+                        | Some("__string_builder_reclaim")
                         | Some("server.sleep")
                         | Some("_server_sleep")
                         | Some("_state_reset_all")

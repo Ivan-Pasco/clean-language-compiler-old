@@ -197,6 +197,37 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("string_builder_finalize", sb_finalize_idx);
 
+        // NATIVE: string_builder_reclaim — selective per-iter heap reclaim
+        // for accumulator-rewritten loops. Resets HEAP_PTR to
+        // `max(init_mark, builder_ptr + 8 + capacity)`, freeing every
+        // transient allocation made above the builder's tail this iter.
+        // Closes the per-iter conditional-helper leak path that left
+        // CMP-SSR-MALLOC-OOM-PAGE-RENDER reproducible after the 0.30.368
+        // chained-RHS matcher.
+        let sb_reclaim_instructions = native_stdlib::string_builder::gen_string_builder_reclaim();
+        let sb_reclaim_idx = self.register_function_with_locals(
+            "__string_builder_reclaim",
+            &[WasmType::I32, WasmType::I32], // builder_ptr, init_mark
+            None,                            // void
+            &[WasmType::I32],                // local 2: builder_end
+            &sb_reclaim_instructions,
+        )?;
+        self.add_function_alias("string_builder_reclaim", sb_reclaim_idx);
+
+        // NATIVE: heap_ptr_snapshot — capture the current HEAP_PTR value.
+        // Paired with `string_builder_reclaim` at the bottom of each
+        // accumulator-rewritten loop iteration. Distinct from
+        // `__scope_push` so the rewrite cannot be confused with a
+        // host-side reclaim frame.
+        let snapshot_instructions = native_stdlib::string_builder::gen_heap_ptr_snapshot();
+        let snapshot_idx = self.register_function(
+            "__heap_ptr_snapshot",
+            &[],
+            Some(WasmType::I32),
+            &snapshot_instructions,
+        )?;
+        self.add_function_alias("heap_ptr_snapshot", snapshot_idx);
+
         // NATIVE: string_index_of - finds substring in string
         // Parameters: str_ptr (i32), search_ptr (i32)
         // Returns: index (i32) or -1 if not found

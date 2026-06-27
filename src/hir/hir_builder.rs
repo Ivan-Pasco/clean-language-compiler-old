@@ -50,8 +50,15 @@ impl AccumulatorAnalysis {
 struct AccumulatorRewrite {
     /// Replaces the original `string acc = ""` decl with the builder init.
     decl_replacement: HirStatement,
+    /// Captures HEAP_PTR right after the builder is constructed. Inserted
+    /// between `decl_replacement` and the loop. Used as the `init_mark`
+    /// argument to the per-iter `string_builder_reclaim` call that
+    /// frees per-iter conditional-helper allocations without touching
+    /// the builder region itself.
+    mark_decl: HirStatement,
     /// Replaces the original `while`/`for` with the same loop whose body
-    /// has the self-append rewritten to `string_builder_append`.
+    /// has the self-append rewritten to `string_builder_append` and
+    /// whose tail emits `string_builder_reclaim(__sb, __mark)`.
     replacement_loop: HirStatement,
     /// Inserted immediately after the loop: rebinds `acc` to the
     /// finalized string so any downstream reader sees a normal string.
@@ -2698,17 +2705,20 @@ impl HirBuilder {
 
             // Splice the rewrite:
             //   - replace decl at i with decl_replacement,
-            //   - replace loop at loop_idx with replacement_loop,
-            //   - insert finalize_decl at loop_idx + 1.
-            // (Inserting at the higher index first keeps the lower index
-            // valid; here we mutate the higher index after the lower,
-            // which is also safe because we're not yet inserting.)
+            //   - insert mark_decl at i + 1 (captures HEAP_PTR right after
+            //     the builder is constructed; used as the init_mark for
+            //     the per-iter `string_builder_reclaim`),
+            //   - replace the (now-shifted) loop at loop_idx + 1 with
+            //     replacement_loop,
+            //   - insert finalize_decl at loop_idx + 2.
             stmts[i] = rewrite.decl_replacement;
-            stmts[loop_idx] = rewrite.replacement_loop;
-            stmts.insert(loop_idx + 1, rewrite.finalize_decl);
+            stmts.insert(i + 1, rewrite.mark_decl);
+            let shifted_loop_idx = loop_idx + 1;
+            stmts[shifted_loop_idx] = rewrite.replacement_loop;
+            stmts.insert(shifted_loop_idx + 1, rewrite.finalize_decl);
 
             // Resume scanning after the newly inserted finalize.
-            i = loop_idx + 2;
+            i = shifted_loop_idx + 2;
         }
     }
 
@@ -2801,9 +2811,36 @@ impl HirBuilder {
         // -- Step 4: commit. Allocate a fresh builder name and mutate the
         // body in place, replacing the self-append.
         let sb_name = format!("__sb_{}", self.string_builder_counter);
+        let mark_name = format!("__sb_{}_mark", self.string_builder_counter);
         self.string_builder_counter += 1;
 
         Self::rewrite_self_append_in_block(&mut new_body, &acc_name, &sb_name);
+
+        // Step 4a: append `string_builder_reclaim(__sb_N, __mark_N)` to
+        // the tail of the (now-rewritten) body. The reclaim call sets
+        // HEAP_PTR to `max(__mark_N, __sb_N + 8 + capacity(__sb_N))`,
+        // releasing every transient per-iter allocation that landed above
+        // the builder's tail (typically the conditional-helper strings
+        // like `headHtml = "<h2>" + head + "</h2>"`) without disturbing
+        // the builder itself. Closes the CMP-SSR-MALLOC-OOM-PAGE-RENDER
+        // leak path that survived the 0.30.368 chained-RHS matcher.
+        new_body.statements.push(HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: "string_builder_reclaim".to_string(),
+                arguments: vec![
+                    HirExpression::Variable {
+                        name: sb_name.clone(),
+                        location: decl_loc.clone(),
+                    },
+                    HirExpression::Variable {
+                        name: mark_name.clone(),
+                        location: decl_loc.clone(),
+                    },
+                ],
+                location: decl_loc.clone(),
+            },
+            location: decl_loc.clone(),
+        });
 
         // Stitch the (now-rewritten) body back into the loop statement.
         let new_loop = match loop_stmt {
@@ -2840,7 +2877,9 @@ impl HirBuilder {
         // pair. Without that suppression, scope_pop reclaims the heap
         // region the builder lives in and the next iter's appends
         // overwrite it. The String shape is purely a marker; the WASM
-        // representation (i32 ptr) is unchanged.
+        // representation (i32 ptr) is unchanged. Per-iter reclamation
+        // is handled selectively by the explicit `string_builder_reclaim`
+        // call appended to the body above.
         let decl_replacement = HirStatement::VariableDeclaration {
             name: sb_name.clone(),
             var_type: HirType::String,
@@ -2850,6 +2889,26 @@ impl HirBuilder {
                 location: decl_loc.clone(),
             }),
             is_mutable: true,
+            location: decl_loc.clone(),
+        };
+
+        // Step 4b': capture HEAP_PTR right after the builder is built.
+        // This becomes the `init_mark` argument to every per-iter
+        // `string_builder_reclaim` call. Captured ONCE before the loop —
+        // not per iter — so reclaim always restores HEAP_PTR to the same
+        // baseline (the position just above the freshly built builder).
+        // Subsequent grow events relocate the builder ABOVE HEAP_PTR, so
+        // `builder + 8 + capacity` is the only term that ever needs to
+        // win the max(); the snapshot is just the floor.
+        let mark_decl = HirStatement::VariableDeclaration {
+            name: mark_name.clone(),
+            var_type: HirType::Integer,
+            initializer: Some(HirExpression::Call {
+                function: "heap_ptr_snapshot".to_string(),
+                arguments: vec![],
+                location: decl_loc.clone(),
+            }),
+            is_mutable: false,
             location: decl_loc.clone(),
         };
 
@@ -2877,6 +2936,7 @@ impl HirBuilder {
         // replacement loop in a side channel.
         Some(AccumulatorRewrite {
             decl_replacement,
+            mark_decl,
             finalize_decl,
             replacement_loop: new_loop,
         })
