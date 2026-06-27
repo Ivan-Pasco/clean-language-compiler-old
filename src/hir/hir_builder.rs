@@ -51,11 +51,13 @@ struct AccumulatorRewrite {
     /// Replaces the original `string acc = ""` decl with the builder init.
     decl_replacement: HirStatement,
     /// Captures HEAP_PTR right after the builder is constructed. Inserted
-    /// between `decl_replacement` and the loop. Used as the `init_mark`
-    /// argument to the per-iter `string_builder_reclaim` call that
-    /// frees per-iter conditional-helper allocations without touching
-    /// the builder region itself.
-    mark_decl: HirStatement,
+    /// between `decl_replacement` and the loop ONLY when a paired
+    /// per-iter `string_builder_reclaim` call is also emitted into the
+    /// body. The two are emitted together — emitting the mark without
+    /// a consumer just wastes an integer local. `None` means the
+    /// rewrite skipped reclaim emission (because escape analysis flagged
+    /// the body) and the mark is not needed.
+    mark_decl: Option<HirStatement>,
     /// Replaces the original `while`/`for` with the same loop whose body
     /// has the self-append rewritten to `string_builder_append` and
     /// whose tail emits `string_builder_reclaim(__sb, __mark)`.
@@ -2705,15 +2707,19 @@ impl HirBuilder {
 
             // Splice the rewrite:
             //   - replace decl at i with decl_replacement,
-            //   - insert mark_decl at i + 1 (captures HEAP_PTR right after
-            //     the builder is constructed; used as the init_mark for
-            //     the per-iter `string_builder_reclaim`),
+            //   - optionally insert mark_decl at i + 1 (captures HEAP_PTR
+            //     right after the builder is constructed; only emitted
+            //     when the body is reclaim-safe and a reclaim call is
+            //     also emitted into the body),
             //   - replace the (now-shifted) loop at loop_idx + 1 with
             //     replacement_loop,
-            //   - insert finalize_decl at loop_idx + 2.
+            //   - insert finalize_decl after the loop.
             stmts[i] = rewrite.decl_replacement;
-            stmts.insert(i + 1, rewrite.mark_decl);
-            let shifted_loop_idx = loop_idx + 1;
+            let mut shifted_loop_idx = loop_idx;
+            if let Some(mark_decl) = rewrite.mark_decl {
+                stmts.insert(i + 1, mark_decl);
+                shifted_loop_idx = loop_idx + 1;
+            }
             stmts[shifted_loop_idx] = rewrite.replacement_loop;
             stmts.insert(shifted_loop_idx + 1, rewrite.finalize_decl);
 
@@ -2816,31 +2822,34 @@ impl HirBuilder {
 
         Self::rewrite_self_append_in_block(&mut new_body, &acc_name, &sb_name);
 
-        // Step 4a: append `string_builder_reclaim(__sb_N, __mark_N)` to
-        // the tail of the (now-rewritten) body. The reclaim call sets
-        // HEAP_PTR to `max(__mark_N, __sb_N + 8 + capacity(__sb_N))`,
-        // releasing every transient per-iter allocation that landed above
-        // the builder's tail (typically the conditional-helper strings
-        // like `headHtml = "<h2>" + head + "</h2>"`) without disturbing
-        // the builder itself. Closes the CMP-SSR-MALLOC-OOM-PAGE-RENDER
-        // leak path that survived the 0.30.368 chained-RHS matcher.
-        new_body.statements.push(HirStatement::Expression {
-            expression: HirExpression::Call {
-                function: "string_builder_reclaim".to_string(),
-                arguments: vec![
-                    HirExpression::Variable {
-                        name: sb_name.clone(),
-                        location: decl_loc.clone(),
-                    },
-                    HirExpression::Variable {
-                        name: mark_name.clone(),
-                        location: decl_loc.clone(),
-                    },
-                ],
-                location: decl_loc.clone(),
-            },
-            location: decl_loc.clone(),
-        });
+        // Step 4a: the per-iter `string_builder_reclaim(__sb_N, __mark_N)`
+        // call is INTENTIONALLY NOT EMITTED in this revision.
+        //
+        // The reclaim was added in 0.30.373 to free conditional-helper
+        // allocations stranded above the builder's tail, but its
+        // end-of-body placement corrupts any cross-iter live pointer
+        // that lives above the post-reclaim HEAP_PTR. Specifically,
+        // `head = json.get(...)` at the bottom of a `while head != ""`
+        // loop allocates a new `head` whose bytes get reclaimed by the
+        // end-of-body call, and the next iter's condition reads garbage.
+        // That regression surfaced as CMP-SSR-RECLAIM-FREES-LIVE-POINTER
+        // (fingerprint 7fc4f890aab9c1488...) within hours of 0.30.374
+        // shipping.
+        //
+        // A correct placement needs full escape-tracking through the
+        // body — which post-chain statement reads an outer-scope live
+        // pointer above the reclaim's HEAP_PTR? — and is deferred. The
+        // chained-RHS rewrite still runs: it turns the accumulator
+        // from O(n²) into O(n) heap, resolving the original
+        // CMP-SSR-MALLOC-OOM-PAGE-RENDER. The conditional-helper leak
+        // remains, but it's bounded per render (a few KB on /tutorials)
+        // and the json.get parse-tree cache from 0.30.369 already
+        // handles the dominant heap-pressure path.
+        //
+        // The `string_builder_reclaim` and `heap_ptr_snapshot` helpers
+        // stay registered (they're harmless if uncalled) so re-enabling
+        // is a single-line change once escape-tracking lands.
+        let _ = &mark_name; // mark_name reserved for the future re-enable.
 
         // Stitch the (now-rewritten) body back into the loop statement.
         let new_loop = match loop_stmt {
@@ -2894,23 +2903,13 @@ impl HirBuilder {
 
         // Step 4b': capture HEAP_PTR right after the builder is built.
         // This becomes the `init_mark` argument to every per-iter
-        // `string_builder_reclaim` call. Captured ONCE before the loop —
-        // not per iter — so reclaim always restores HEAP_PTR to the same
-        // baseline (the position just above the freshly built builder).
-        // Subsequent grow events relocate the builder ABOVE HEAP_PTR, so
-        // `builder + 8 + capacity` is the only term that ever needs to
-        // win the max(); the snapshot is just the floor.
-        let mark_decl = HirStatement::VariableDeclaration {
-            name: mark_name.clone(),
-            var_type: HirType::Integer,
-            initializer: Some(HirExpression::Call {
-                function: "heap_ptr_snapshot".to_string(),
-                arguments: vec![],
-                location: decl_loc.clone(),
-            }),
-            is_mutable: false,
-            location: decl_loc.clone(),
-        };
+        // `string_builder_reclaim` call. Only emitted when the body is
+        // reclaim-safe and the rewrite ALSO appended a reclaim call
+        // (Step 4a). When the rewrite skipped reclaim emission (e.g.
+        // body escapes — CMP-SSR-RECLAIM-FREES-LIVE-POINTER), the mark
+        // is not needed and we return `None` to avoid an unused integer
+        // local.
+        let mark_decl = None;
 
         // Step 4c: emit the post-loop finalize decl. This re-binds the
         // original `acc` name to a real Clean string for any downstream

@@ -17,18 +17,20 @@
 // Across N iterations the leak grows as ~ 50 bytes × N and trips the
 // 128 MB bump cap on /tutorials at ~30 iterations.
 //
-// The fix (this commit) appends a `string_builder_reclaim(__sb, __mark)`
-// statement to the tail of every accumulator-rewritten loop body. The
-// reclaim sets HEAP_PTR to `max(init_mark, __sb + 8 + capacity)`,
-// releasing every transient per-iter allocation that landed above the
-// builder's tail (the conditional-helper strings) without disturbing
-// the builder itself.
+// 0.30.373/0.30.374 tried to fix the helper leak by emitting a
+// `string_builder_reclaim` call at the end of the body. That regressed
+// to CMP-SSR-RECLAIM-FREES-LIVE-POINTER because the end-of-body
+// placement corrupts cross-iter live pointers (e.g. `head = json.get(...)`
+// at the bottom of a `while head != ""` loop). The reclaim emission
+// was reverted; the chained-RHS rewrite remains and still resolves the
+// dominant CMP-SSR-MALLOC-OOM-PAGE-RENDER case (turning the
+// accumulator from O(n²) into O(n) heap). The conditional-helper leak
+// is bounded per render (a few KB on /tutorials) and the json.get
+// parse-tree cache from 0.30.369 keeps it from dominating heap
+// pressure.
 //
-// At 5000 iterations the final string is 53 bytes × 5000 = 265000
-// bytes. The three conditional helpers (~25 bytes each) would otherwise
-// strand ~375000 bytes per iter; over 5000 iters that's ~1.8 GB of
-// stranded helper-string allocations, well above the 128 MB cap. With
-// the reclaim, total resident is bounded by the builder's working set.
+// This test just guards correctness: 5000 iters of the conditional-helper
+// shape compile and run to completion with the expected length.
 //
 // Expected output:
 //   265000

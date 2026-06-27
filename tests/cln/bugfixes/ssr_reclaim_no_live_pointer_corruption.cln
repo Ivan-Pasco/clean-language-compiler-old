@@ -1,0 +1,42 @@
+// Test: bugfixes/ssr_reclaim_no_live_pointer_corruption
+// Grammar: while_statement, variable_declaration, assignment, binary_expression
+// Semantic: tracking CMP-SSR-RECLAIM-FREES-LIVE-POINTER
+//
+// Guards the cross-iter live-pointer corruption that the 0.30.373/0.30.374
+// `string_builder_reclaim` placement introduced. Shape:
+//
+//     string head = json.get(j, "0")       // initial head allocation
+//     while head != ""
+//         acc = acc + "[" + head + "]"     // chained-RHS rewrite fires
+//         i = i + 1
+//         head = json.get(j, i.toString()) // outer-scope head reassign
+//     return acc
+//
+// The 0.30.374 emission appended `string_builder_reclaim(__sb, mark)` at
+// the end of the body. Reclaim sets HEAP_PTR back to the post-builder
+// baseline, but the newly-allocated `head` (from `head = json.get(...)`)
+// lives ABOVE that baseline. Next iter's condition reads `head` — bytes
+// already overwritten by some intervening allocation. Symptom on the
+// dashboard was `String read out of bounds: ptr=239468,
+// len=1668183366 (= 0x636F643E = ASCII '>doc')`.
+//
+// Fix: roll back the reclaim emission. The chained-RHS rewrite still
+// runs (turns O(n²) accumulator into O(n)); the conditional-helper
+// leak is bounded per render and json.get's parse-tree cache (0.30.369)
+// keeps it from dominating.
+//
+// Expected output:
+//   9
+//   [a][b][c]
+
+start:
+	string itemsJson = "[\"a\",\"b\",\"c\"]"
+	string acc = ""
+	integer i = 0
+	string head = json.get(itemsJson, "0")
+	while head != ""
+		acc = acc + "[" + head + "]"
+		i = i + 1
+		head = json.get(itemsJson, i.toString())
+	printl(acc.length().toString())
+	printl(acc)
