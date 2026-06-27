@@ -2801,7 +2801,7 @@ impl WasmPluginAdapter {
             let already_bound = {
                 let first_line = trimmed.lines().next().unwrap_or("").trim();
                 if let Some(eq_pos) = first_line.find('=') {
-                    first_line[..eq_pos].trim().split_whitespace().count() >= 2
+                    first_line[..eq_pos].split_whitespace().count() >= 2
                 } else {
                     false
                 }
