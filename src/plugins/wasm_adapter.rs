@@ -2796,16 +2796,18 @@ impl WasmPluginAdapter {
         // If the plugin happened to emit a complete `<type> <name> = ...` statement itself
         // (e.g. older frame.data versions before binding-header detection was hoisted into
         // the compiler), we detect that and skip the prefix so we don't double up.
+        //
+        // The "already bound" detector compares the start of the plugin's output to the
+        // exact binding header text we stripped on the way in. A naive `first_line.find('=')`
+        // is unsafe here: plugin outputs routinely contain `=` inside lowered SQL string
+        // literals (e.g. `_db_query("... WHERE x = 5 ...", ...)` produced by
+        // `Model.find: where: x == 5`), which would false-positive every typed find/select
+        // with a `where:` clause — the user's binding would silently disappear and every
+        // later read of the variable would surface as `SEM007: Undefined variable`.
+        // Reported as #6a754781d652 against compiler 0.30.370/0.30.371.
         let generated_code: std::borrow::Cow<'_, str> = if let Some(header) = &binding_header {
             let trimmed = generated_code.trim_start();
-            let already_bound = {
-                let first_line = trimmed.lines().next().unwrap_or("").trim();
-                if let Some(eq_pos) = first_line.find('=') {
-                    first_line[..eq_pos].split_whitespace().count() >= 2
-                } else {
-                    false
-                }
-            };
+            let already_bound = starts_with_binding_header(trimmed, header);
             if already_bound {
                 std::borrow::Cow::Borrowed(generated_code)
             } else {
@@ -4294,9 +4296,128 @@ fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
     }
 }
 
+/// True when `generated_code` already starts with the binding header we stripped
+/// before dispatch — i.e. the plugin chose to re-emit the `<type> <name> =`
+/// prefix itself (older frame.data behavior).  In that case the compiler must
+/// NOT prepend the header again or the result would be `<type> <name> = <type> <name> = ...`.
+///
+/// The comparison is whitespace-tolerant: both sides are reduced to a
+/// space-separated token sequence and the plugin output is accepted when its
+/// first tokens match the binding header's tokens in order, followed by `=`.
+///
+/// This replaces an earlier `first_line.find('=')` heuristic that misfired
+/// whenever the plugin output's first line happened to contain `=` inside a
+/// string literal — a routine occurrence in `_db_query("... WHERE x = 5 ...", ...)`
+/// expressions emitted by `Model.find: where: x == 5`.  When the heuristic
+/// flagged false-positive "already bound", the compiler skipped re-prepending
+/// the user's `<type> <name> =`, the variable was never declared, and every
+/// later read of it surfaced as SEM007 with no source location.  Reported as
+/// #6a754781d652 against 0.30.370/0.30.371.
+fn starts_with_binding_header(generated_code: &str, binding_header: &str) -> bool {
+    let header_tokens: Vec<&str> = binding_header
+        .trim()
+        .trim_end_matches('=')
+        .split_whitespace()
+        .collect();
+    if header_tokens.is_empty() {
+        return false;
+    }
+
+    let first_line = generated_code.lines().next().unwrap_or("").trim_start();
+    let mut cursor = first_line;
+    for tok in &header_tokens {
+        cursor = cursor.trim_start();
+        if let Some(rest) = cursor.strip_prefix(tok) {
+            // Token must be followed by whitespace or `=` — otherwise we matched
+            // a longer identifier (`string_pool` would otherwise consume `string`).
+            match rest.chars().next() {
+                Some(c) if c.is_whitespace() || c == '=' => cursor = rest,
+                None => cursor = rest,
+                _ => return false,
+            }
+        } else {
+            return false;
+        }
+    }
+    let after_header = cursor.trim_start();
+    after_header.starts_with('=') && !after_header.starts_with("==")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression for #6a754781d652 — SEM007 in 0.30.370/0.30.371.
+    ///
+    /// The compiler's "already bound" detection in `call_expand` previously
+    /// used `first_line.find('=')` to decide whether the plugin had already
+    /// emitted its own `<type> <name> = ...` prefix.  Plugin outputs for
+    /// `Model.find: where: x == 5` lower to single-expression form like
+    /// `json.get(json.get(_db_query("... WHERE x = 5", "[]"), "data"), "rows")`.
+    /// The naive heuristic spotted the `=` inside the SQL string literal,
+    /// concluded the plugin had bound the variable, and skipped re-prepending
+    /// `string result = `.  The user's `result` was never declared and
+    /// downstream reads surfaced as SEM007 with no source location.
+    ///
+    /// The fix compares against the actual `binding_header` token sequence.
+    #[test]
+    fn test_starts_with_binding_header_recognises_genuine_binding() {
+        // Older plugins re-emit the header verbatim; treat as already bound.
+        assert!(starts_with_binding_header(
+            "string result = json.get(_db_query(\"SELECT *\", \"[]\"), \"data\")",
+            "string result =",
+        ));
+        // Whitespace tolerance.
+        assert!(starts_with_binding_header(
+            "string  result   =   json.get(...)",
+            "string result =",
+        ));
+    }
+
+    #[test]
+    fn test_starts_with_binding_header_ignores_eq_inside_string_literal() {
+        // The bug repro: the `=` lives inside the SQL string literal, not at
+        // the start of a binding.  Must NOT be treated as already-bound.
+        let plugin_output = "json.get(json.get(_db_query(\"SELECT * FROM languages \
+                             WHERE \" + \"is_active = true\" + \" ORDER BY name ASC\", \
+                             \"[]\"), \"data\"), \"rows\")";
+        assert!(!starts_with_binding_header(
+            plugin_output,
+            "string result ="
+        ));
+    }
+
+    #[test]
+    fn test_starts_with_binding_header_rejects_unrelated_internal_binding() {
+        // Old tenant-aware path emits its own helper-local declarations like
+        // `string __tf_sql = "..."` — that binds a DIFFERENT variable, not the
+        // user's `result`.  Must NOT be treated as already-bound.
+        assert!(!starts_with_binding_header(
+            "string __tf_sql = \"SELECT *\"\nstring __tf_tenant = tenant_getId()",
+            "string result =",
+        ));
+    }
+
+    #[test]
+    fn test_starts_with_binding_header_rejects_longer_prefix() {
+        // `string_pool` must not match the `string` token: the lexer would
+        // tokenise as a single identifier, so a textual match would be wrong.
+        assert!(!starts_with_binding_header(
+            "string_pool = something",
+            "string result =",
+        ));
+    }
+
+    #[test]
+    fn test_starts_with_binding_header_rejects_equality_compare() {
+        // `string result == ...` is a comparison, not a binding (and would be
+        // syntactically invalid at the statement level anyway — but the
+        // detector should still reject it cleanly).
+        assert!(!starts_with_binding_header(
+            "string result == foo",
+            "string result =",
+        ));
+    }
 
     #[test]
     fn test_plugin_state_allocation() {

@@ -1,0 +1,33 @@
+// Test: plugins/orm_find_with_where_binding
+// Grammar: foundation/spec/plugins/frame-data.ebnf — typed find expression with where
+// Semantic: SEM007 regression — `<type> <name> = Model.find:` with a `where:`
+//           condition (which the plugin lowers to inline SQL containing
+//           `column = value`) must preserve the LHS binding across plugin
+//           dispatch. The compiler's reattach-binding-header check used a
+//           naive `first_line.find('=')` that hit the `=` inside the
+//           lowered SQL string literal, mistakenly concluded the plugin
+//           had already emitted its own binding, and skipped re-prepending
+//           the user's `<type> <name> =`. The user's `result` local was
+//           never declared, and every later read of it failed with
+//           SEM007: Undefined variable 'result'.
+// Reported by: error #6a754781d652 (open against compiler)
+// Regression first surfaced on: cln 0.30.370 (commit a6a63953)
+// Expected: compilation succeeds (runtime needs a server to actually query).
+
+plugins:
+	frame.data
+
+data Language
+	id: integer pk auto
+	name: string
+	is_default: boolean
+	is_active: boolean
+
+start:
+	string result = Language.find:
+		where:
+			is_active == true
+		order:
+			is_default desc
+			name asc
+	print(result)
