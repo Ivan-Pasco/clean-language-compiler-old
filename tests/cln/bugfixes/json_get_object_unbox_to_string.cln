@@ -1,0 +1,90 @@
+// Test: bugfixes/json_get_object_unbox_to_string
+// Regression: CODEGEN-UNBOX-ANY-TO-STRING-OBJECT-ARRAY-PRODUCES-GARBAGE
+//             (root cause of SSR empty-content surfaced by 0.30.379 OOM fix)
+//
+// Before the fix: `string s = json.get(arrayOfObjects, "0")` unboxed the
+// boxed-Any result via `UnboxAnyToI32`, which reads offset 4 of the
+// any-struct as a raw i32. For a String-tagged Any that's the inner string
+// pointer ✓, but for an Object/Array-tagged Any (the case here) that's the
+// inner OBJECT or ARRAY header pointer — NOT a length-prefixed Clean
+// string. Subsequent reads of `s.length`, `s[0]`, etc. interpret the
+// header bytes as length+data, producing empty or garbage strings.
+//
+// In production: the SSR pages /syntax and /tutorials use
+//   string catJ = json.get(categoriesJson, "0")
+//   while catJ != ""
+//       Section sec = Section(catJ)         ← catJ stored as field
+//       acc = acc + sec.serve()              ← serve uses json.get(catJ, ...)
+//       i = i + 1
+//       catJ = json.get(categoriesJson, i.toString())
+// Before 0.30.379 this never executed because the page OOM'd before
+// hitting the inner methods. After 0.30.379 the OOM was fixed and the
+// empty-content surfaced.
+//
+// Fix: in `emit_unbox_any`, when target_type is String, route through
+// `AnyToString` instead of `UnboxAnyToI32`. The AnyToString codegen
+// dispatches on the tag and now handles Array (tag 5) / Object (tag 6) /
+// Null (ptr==0) explicitly:
+//   - Null      → fresh empty length-prefixed string
+//   - Integer   → int_to_string
+//   - Boolean   → bool_to_string
+//   - Number    → float_to_string
+//   - String    → inner pointer as-is
+//   - Array     → json.dataToText (JSON-encoded text)
+//   - Object    → json.dataToText (JSON-encoded text)
+//
+// The Null → empty-string rule is load-bearing for the
+// `while catJ != ""` termination pattern: previously a fall-through
+// `int_to_string(0)` produced "0" and a `json.dataToText(null)` would
+// produce "null". Neither equals "" so the loop never exits.
+//
+// This test exercises three shapes:
+//   1. Direct array-of-objects index access:
+//      `json.get('[{"x":1}]', "0")` should produce `'{"x":1}'`
+//   2. Out-of-bounds index returns empty string (loop termination):
+//      `json.get('[{"x":1}]', "5")` should produce `""`
+//   3. The full SSR-style outer-loop pattern with class methods:
+//      iterate array of objects, call instance methods that re-read
+//      json fields, build HTML — should produce populated content.
+
+start:
+	// Shape 1: direct index returns JSON text of the object
+	string data = "[{\"title\":\"Basics\"}]"
+	string s = json.get(data, "0")
+	printl(s)
+	printl(s.length().toString())
+
+	// Shape 2: out-of-bounds returns empty
+	string oob = json.get(data, "5")
+	if oob == ""
+		printl("oob-empty")
+	else
+		printl("oob=" + oob)
+
+	// Shape 3: outer-loop SSR pattern
+	string data2 = "[{\"title\":\"A\"},{\"title\":\"B\"},{\"title\":\"C\"}]"
+	string r = build(data2)
+	printl(r)
+	printl(r.length().toString())
+
+class Demo
+	string sectionJson
+	constructor(string s)
+		sectionJson = s
+	functions:
+		public:
+			string serve()
+				string name = json.get(sectionJson, "title")
+				return "<h2>" + name + "</h2>"
+
+functions:
+	string build(string catJson)
+		string acc = ""
+		integer i = 0
+		string catJ = json.get(catJson, "0")
+		while catJ != ""
+			Demo d = Demo(catJ)
+			acc = acc + d.serve()
+			i = i + 1
+			catJ = json.get(catJson, i.toString())
+		return acc

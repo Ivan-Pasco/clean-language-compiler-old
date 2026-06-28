@@ -150,7 +150,21 @@ impl MirBuilder {
             ConcreteType::Number => MirOperation::UnboxAnyToF64 {
                 value: MirOperand::Value(value_id),
             },
-            // For Integer, Boolean, String, and most other types, use i32 unboxing
+            // For String targets, dispatch on the actual type tag so an Any
+            // containing an Integer/Boolean/Number gets `int_to_string` /
+            // `bool_to_string` / `float_to_string`, an Any containing a
+            // String returns the inner pointer as-is, and an Any containing
+            // an Object/Array gets re-encoded as JSON text via
+            // `json.dataToText`. Without the dispatch a plain
+            // `UnboxAnyToI32` reads offset 4 of the any-struct and treats
+            // those bytes as a string pointer — fine for String-tagged Any
+            // but produces garbage for every other tag (the root cause of
+            // `json.get(arrayOfObjects, "0")` returning an empty/garbage
+            // string in production SSR).
+            ConcreteType::String => MirOperation::AnyToString {
+                value: MirOperand::Value(value_id),
+            },
+            // For Integer, Boolean, and most other types, use i32 unboxing
             _ => MirOperation::UnboxAnyToI32 {
                 value: MirOperand::Value(value_id),
             },

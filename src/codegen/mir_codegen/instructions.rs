@@ -2872,14 +2872,102 @@ impl MirCodeGenerator<'_> {
                     }
                     self.current_instructions.push(Instruction::Else);
                     {
-                        // Default case: treat as integer
+                        // Default case: Null (ptr==0), Array (tag 5),
+                        // Object (tag 6), or any other tag.
+                        //
+                        // Null → empty length-prefixed string. The
+                        // common shape `while catJ != "": catJ =
+                        // json.get(arr, i.toString())` depends on
+                        // out-of-bounds / missing-key lookups yielding
+                        // `""` to terminate the walk. Returning the
+                        // literal text "null" (what json.dataToText
+                        // would emit) breaks termination.
+                        //
+                        // Array / Object → call `json.dataToText` to
+                        // produce the canonical JSON text. The legacy
+                        // emission (`int_to_string(ptr+4)`) treated the
+                        // inner pointer as an integer, producing
+                        // nonsensical decimal output or — far worse —
+                        // garbage when a downstream consumer read those
+                        // bytes as a length-prefixed Clean string. That
+                        // is the SSR empty-content root cause surfaced
+                        // by 0.30.379's CMP-SSR-MALLOC-OOM-PAGE-RENDER
+                        // fix: `string catJ = json.get(catJson, "0")`
+                        // on an array of objects unboxed to the inner
+                        // object header pointer, and the next read of
+                        // catJ.length / catJ[0] returned header bytes,
+                        // not the JSON text.
                         self.current_instructions
                             .push(Instruction::LocalGet(ptr_local));
-                        self.emit_unbox_to_i32()?;
+                        self.current_instructions.push(Instruction::I32Eqz);
                         self.current_instructions
-                            .push(Instruction::Call(int_to_string_idx));
-                        self.current_instructions
-                            .push(Instruction::LocalSet(result_local));
+                            .push(Instruction::If(BlockType::Empty));
+                        {
+                            // Null: allocate a fresh 4-byte empty
+                            // length-prefixed string (length=0 at
+                            // offset 0, no data bytes).
+                            if let Some(&malloc_idx) =
+                                self.wasm_generator.function_map.get("malloc")
+                            {
+                                let empty_local = self.next_local_index;
+                                self.next_local_index += 1;
+                                self.temp_local_types.insert(empty_local, ValType::I32);
+                                self.current_instructions.push(Instruction::I32Const(4));
+                                self.current_instructions
+                                    .push(Instruction::Call(malloc_idx));
+                                self.current_instructions
+                                    .push(Instruction::LocalTee(empty_local));
+                                self.current_instructions.push(Instruction::I32Const(0));
+                                self.current_instructions.push(Instruction::I32Store(
+                                    wasm_encoder::MemArg {
+                                        offset: 0,
+                                        align: 2,
+                                        memory_index: 0,
+                                    },
+                                ));
+                                self.current_instructions
+                                    .push(Instruction::LocalGet(empty_local));
+                                self.current_instructions
+                                    .push(Instruction::LocalSet(result_local));
+                            } else {
+                                // No malloc available (shouldn't happen
+                                // in practice — malloc is always
+                                // registered). Last-resort: a null
+                                // pointer. Downstream string ops will
+                                // trap, which is fine because this
+                                // branch is unreachable.
+                                self.current_instructions.push(Instruction::I32Const(0));
+                                self.current_instructions
+                                    .push(Instruction::LocalSet(result_local));
+                            }
+                        }
+                        self.current_instructions.push(Instruction::Else);
+                        {
+                            // Non-null Array/Object/other: stringify via
+                            // json.dataToText (registered as a stdlib
+                            // export; see `src/stdlib/json_class.rs`).
+                            if let Some(&data_to_text_idx) =
+                                self.wasm_generator.function_map.get("json.dataToText")
+                            {
+                                self.current_instructions
+                                    .push(Instruction::LocalGet(ptr_local));
+                                self.current_instructions
+                                    .push(Instruction::Call(data_to_text_idx));
+                                self.current_instructions
+                                    .push(Instruction::LocalSet(result_local));
+                            } else {
+                                // Fallback (no json.dataToText
+                                // available — stripped build).
+                                self.current_instructions
+                                    .push(Instruction::LocalGet(ptr_local));
+                                self.emit_unbox_to_i32()?;
+                                self.current_instructions
+                                    .push(Instruction::Call(int_to_string_idx));
+                                self.current_instructions
+                                    .push(Instruction::LocalSet(result_local));
+                            }
+                        }
+                        self.current_instructions.push(Instruction::End); // End null check
                     }
                     self.current_instructions.push(Instruction::End); // End String if
                 }

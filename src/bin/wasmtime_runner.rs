@@ -1510,7 +1510,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(func) = start_func {
         println!("🎯 Executing start function...");
         println!("--- Output ---");
-        func.call(&mut store, &[], &mut [])?;
+        // Provide a result buffer sized to the function's declared result
+        // count. The `start:` block produces a `(result i32)` whenever its
+        // last statement is an expression that yields a value (e.g.
+        // `d.show()` returning `any` lowers to i32). Calling with an empty
+        // results slice trips wasmtime's "expected N results, got 0"
+        // check. Discard whatever value comes back.
+        let ty = func.ty(&store);
+        let mut results: Vec<wasmtime::Val> = ty
+            .results()
+            .map(|t| match t {
+                wasmtime::ValType::I32 => wasmtime::Val::I32(0),
+                wasmtime::ValType::I64 => wasmtime::Val::I64(0),
+                wasmtime::ValType::F32 => wasmtime::Val::F32(0),
+                wasmtime::ValType::F64 => wasmtime::Val::F64(0),
+                _ => wasmtime::Val::I32(0),
+            })
+            .collect();
+        func.call(&mut store, &[], &mut results)?;
         println!("--- End Output ---");
         println!("✅ Execution completed successfully!");
     } else {

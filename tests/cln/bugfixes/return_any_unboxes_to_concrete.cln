@@ -1,0 +1,40 @@
+// Test: bugfixes/return_any_unboxes_to_concrete
+// Regression: CODEGEN-RETURN-ANY-NOT-UNBOXED-TO-CONCRETE-RETURN-TYPE
+//
+// Before the fix: a function declared to return a concrete type (e.g. `string`)
+// that returned the result of a Call producing `any` (e.g. `json.get`) emitted
+// the raw boxed-Any wrapper pointer at the WASM return instruction. The caller
+// treated those bytes as a length-prefixed Clean string, reading the type-tag
+// word at offset 0 as the string length and the inner-pointer word at offset 4
+// as the first 4 bytes of string content — producing nonsensical output like
+// "H  " for a "Basics" result.
+//
+// The bug existed in 0.30.372 → 0.30.379. It was masked in production by the
+// CMP-SSR-MALLOC-OOM-PAGE-RENDER OOM (page handlers errored before reaching
+// the empty-data code path). When the OOM was fixed in 0.30.379 the empty
+// strings surfaced as empty SSR output.
+//
+// Fix: in `TastStatement::Return` MIR lowering, mirror the existing
+// `needs_unboxing` check from the `VariableDeclaration` path. When the
+// function's declared return type is concrete (string/integer/number/boolean)
+// and the expression evaluates to Any, emit `UnboxAnyToConcrete` before the
+// return, dispatching on the function's declared return type.
+//
+// Expected output:
+//   Basics
+//   6
+
+start:
+	Demo d = Demo("{\"title\":\"Basics\"}")
+	string r = d.slug()
+	printl(r)
+	printl(r.length().toString())
+
+class Demo
+	string sectionJson
+	constructor(string s)
+		sectionJson = s
+	functions:
+		public:
+			string slug()
+				return json.get(sectionJson, "title")

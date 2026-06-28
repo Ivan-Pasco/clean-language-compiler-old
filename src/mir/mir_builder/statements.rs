@@ -673,6 +673,67 @@ impl MirBuilder {
                             self.emit_box_any(context, value_id, &expr.expr_type, &expr.location);
                     }
 
+                    // Opposite case: function returns a concrete type but the
+                    // expression evaluates to `any` (typically a json.get,
+                    // pairs.get, or similar call that returns a boxed Any).
+                    // Without unboxing here, `return json.get(...)` from a
+                    // `string`-returning method returns the raw boxed-Any
+                    // wrapper pointer to the caller. The caller treats those
+                    // bytes as a length-prefixed Clean string, reading the
+                    // type-tag word (e.g. 4 for String) as the string length
+                    // and the inner-pointer word as the first 4 bytes of
+                    // string content — producing nonsensical garbage like
+                    // "H  " for a "Basics" result.
+                    //
+                    // Mirrors the `needs_unboxing` check in the
+                    // VariableDeclaration branch above. Surfaced as a
+                    // production SSR-empty-content failure when
+                    // 0.30.379's StringBuilder rewrite stopped masking it
+                    // behind the prior CMP-SSR-MALLOC-OOM-PAGE-RENDER.
+                    let return_type_is_concrete = !matches!(
+                        context.function.return_type,
+                        MirType::Any | MirType::Void | MirType::Ptr(_)
+                    ) || matches!(
+                        context.function.return_type,
+                        MirType::Ptr(ref inner)
+                            if matches!(**inner, MirType::I8 | MirType::U8)
+                    );
+                    let expr_is_any = matches!(expr.expr_type, ConcreteType::Any)
+                        || context
+                            .function
+                            .locals
+                            .get(&value_id)
+                            .map(|local| matches!(local.local_type, MirType::Any))
+                            .unwrap_or(false);
+                    if return_type_is_concrete
+                        && expr_is_any
+                        && !matches!(expr.expr_type, ConcreteType::Null)
+                    {
+                        trace!(
+                            function_name = %context.function.name,
+                            return_type = ?context.function.return_type,
+                            expr_type = ?expr.expr_type,
+                            "Unboxing any return value to function's concrete return type"
+                        );
+                        // Map function's MirType return back to ConcreteType
+                        // for emit_unbox_any (which dispatches on ConcreteType).
+                        let target_concrete = match &context.function.return_type {
+                            MirType::Ptr(inner) if matches!(**inner, MirType::I8 | MirType::U8) => {
+                                ConcreteType::String
+                            }
+                            MirType::I32 => ConcreteType::Integer,
+                            MirType::F64 => ConcreteType::Number,
+                            MirType::Bool => ConcreteType::Boolean,
+                            _ => ConcreteType::String,
+                        };
+                        value_id = self.emit_unbox_any(
+                            context,
+                            value_id,
+                            &target_concrete,
+                            &expr.location,
+                        );
+                    }
+
                     Some(MirOperand::Value(value_id))
                 } else {
                     trace!("Void return (no value)");
