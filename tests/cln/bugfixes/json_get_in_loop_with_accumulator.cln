@@ -1,0 +1,31 @@
+// Test: bugfixes/json_get_in_loop_with_accumulator
+// Regression: combines three independently-tested failure shapes —
+//   1) json.get(j, path) repeated calls (parse-cache path, 8d523b13)
+//   2) Any unbox-on-return into string (b3cc02e7)
+//   3) String-accumulator rewrite under a loop (87f5aa18)
+// None of the existing 23 stdlib/json/ tests exercise all three together,
+// which is the exact shape that produced CMP-SSR-MALLOC-OOM-PAGE-RENDER
+// in production.
+//
+// The loop walks each element of a 6-item JSON array, reads two fields per
+// element via json.get, concatenates them into an accumulator, and prints
+// once at the end. The expected output is fixed; if any of the three
+// regressions returns the test will either trap, OOM, or print the wrong
+// trailing value.
+//
+// Expected output:
+//   a0:b0|a1:b1|a2:b2|a3:b3|a4:b4|a5:b5
+
+start:
+	string j = "[{\"a\":\"a0\",\"b\":\"b0\"},{\"a\":\"a1\",\"b\":\"b1\"},{\"a\":\"a2\",\"b\":\"b2\"},{\"a\":\"a3\",\"b\":\"b3\"},{\"a\":\"a4\",\"b\":\"b4\"},{\"a\":\"a5\",\"b\":\"b5\"}]"
+	string acc = ""
+	integer i = 0
+	while i < 6
+		string idx = i.toString()
+		string av = json.get(j, idx + ".a")
+		string bv = json.get(j, idx + ".b")
+		if i > 0
+			acc = acc + "|"
+		acc = acc + av + ":" + bv
+		i = i + 1
+	print(acc) +

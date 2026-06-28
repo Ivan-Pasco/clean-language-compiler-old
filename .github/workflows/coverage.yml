@@ -1,0 +1,114 @@
+name: Coverage
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Cinstrument-coverage"
+  LLVM_PROFILE_FILE: "coverage-%p-%m.profraw"
+
+jobs:
+  coverage:
+    name: Line + Region Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (with llvm-tools)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install grcov
+        run: cargo install grcov --version 0.8.* --locked
+
+      - name: Build (instrumented)
+        run: cargo build --verbose
+
+      - name: Run library + integration tests (instrumented)
+        env:
+          CLEAN_PLUGIN_REGISTRY_VALIDATION: all
+        run: cargo test --verbose
+
+      - name: Generate lcov report
+        run: |
+          mkdir -p coverage
+          grcov . \
+            --binary-path ./target/debug/ \
+            --source-dir . \
+            --output-types lcov \
+            --branch \
+            --ignore-not-existing \
+            --ignore "target/*" \
+            --ignore "tests/*" \
+            --ignore "src/main.rs" \
+            --ignore "src/bin/*" \
+            --output-path coverage/lcov.info
+
+      - name: Generate HTML report
+        run: |
+          grcov . \
+            --binary-path ./target/debug/ \
+            --source-dir . \
+            --output-types html \
+            --branch \
+            --ignore-not-existing \
+            --ignore "target/*" \
+            --ignore "tests/*" \
+            --ignore "src/main.rs" \
+            --ignore "src/bin/*" \
+            --output-path coverage/html
+
+      - name: Summarise coverage
+        id: summary
+        run: |
+          # Pull totals out of lcov for the job log + threshold gate.
+          lines_found=$(grep -E '^LF:' coverage/lcov.info | awk -F: '{s+=$2} END {print s}')
+          lines_hit=$(grep -E '^LH:' coverage/lcov.info | awk -F: '{s+=$2} END {print s}')
+          if [ "$lines_found" -gt 0 ]; then
+            pct=$(awk -v h="$lines_hit" -v f="$lines_found" 'BEGIN {printf "%.2f", (h/f)*100}')
+          else
+            pct="0.00"
+          fi
+          echo "Line coverage: ${pct}% (${lines_hit}/${lines_found})"
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+          echo "lines_hit=$lines_hit" >> "$GITHUB_OUTPUT"
+          echo "lines_found=$lines_found" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce baseline threshold
+        env:
+          # Baseline only — raise this as real coverage grows. The gate exists
+          # so a PR that dramatically tanks coverage gets caught even before
+          # we have a "real" target number to defend.
+          COVERAGE_MIN: "40"
+        run: |
+          pct="${{ steps.summary.outputs.pct }}"
+          awk -v p="$pct" -v m="$COVERAGE_MIN" 'BEGIN { if (p+0 < m+0) { printf "coverage %.2f%% below baseline %s%%\n", p, m; exit 1 } }'
+
+      - name: Upload lcov artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          retention-days: 14
+
+      - name: Upload HTML artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: coverage/html
+          retention-days: 14

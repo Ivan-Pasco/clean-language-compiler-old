@@ -1,0 +1,28 @@
+// Test: bugfixes/json_round_trip_nested
+// Regression: json.textToData → json.dataToText round-trip on nested
+// structures must preserve every key and value. Guards the Any
+// unbox-on-return path (b3cc02e7, NSR002-adjacent) and the dotpath
+// traversal (800ce654) at the same time. The existing
+// json_pretty_stringify_test.cln only round-trips a flat object; this
+// adds a depth-2 array-of-objects shape which is what production SSR
+// actually hands json.* in apps.
+//
+// Expected output:
+//   alpha:1
+//   beta:2
+//   gamma:3
+
+start:
+	string source = "[{\"name\":\"alpha\",\"v\":\"1\"},{\"name\":\"beta\",\"v\":\"2\"},{\"name\":\"gamma\",\"v\":\"3\"}]"
+	any parsed = json.textToData(source)
+	string back = json.dataToText(parsed)
+	// Re-extract from the round-tripped form. If unbox-on-return or dotpath
+	// regress, one of the json.get calls below produces "" and the print
+	// drops the value half of the pair.
+	integer i = 0
+	while i < 3
+		string idx = i.toString()
+		string n = json.get(back, idx + ".name")
+		string v = json.get(back, idx + ".v")
+		print(n + ":" + v) +
+		i = i + 1

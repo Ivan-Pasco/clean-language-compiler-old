@@ -1,0 +1,128 @@
+name: .cln corpus
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compile-and-run:
+    name: Compile + execute tests/cln/
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-corpus-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build cln + wasmtime_runner
+        run: |
+          cargo build --release --bin cln
+          cargo build --release --bin wasmtime_runner
+
+      - name: Compile every .cln file (except future/)
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p tests/output_ci
+          mapfile -t files < <(find tests/cln -type f -name '*.cln' ! -path '*/future/*' | sort)
+          echo "Found ${#files[@]} .cln files"
+
+          fail_count=0
+          fail_list=()
+          for f in "${files[@]}"; do
+            rel="${f#tests/cln/}"
+            out="tests/output_ci/${rel%.cln}.wasm"
+            mkdir -p "$(dirname "$out")"
+            if ! timeout 30 ./target/release/cln compile "$f" --output "$out" >/tmp/compile.log 2>&1; then
+              fail_count=$((fail_count + 1))
+              fail_list+=("$f")
+              echo "::warning file=$f::compile failed"
+              tail -n 20 /tmp/compile.log | sed 's/^/    /'
+            fi
+          done
+
+          echo ""
+          echo "Compile summary: ${#files[@]} total, $fail_count failed"
+          if [ "$fail_count" -gt 0 ]; then
+            echo ""
+            echo "Failed files:"
+            printf '  - %s\n' "${fail_list[@]}"
+          fi
+
+          # Compare against the historical baseline of accepted failures
+          # rather than gate on absolute zero — the corpus contains
+          # negative-case tests in tests/cln/fail/ that are *expected*
+          # to fail to compile. The number below is the high-water mark
+          # the gate accepts; reduce it as the project drives toward
+          # 100% compilation.
+          BASELINE_MAX_FAILURES=120
+          if [ "$fail_count" -gt "$BASELINE_MAX_FAILURES" ]; then
+            echo "::error::compile failures ($fail_count) exceed baseline ($BASELINE_MAX_FAILURES)"
+            exit 1
+          fi
+
+      - name: Execute compiled WASM (subset that should run)
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Only execute the subset that is supposed to run end-to-end:
+          # exclude fail/, future/, library/, and host-extension/ which
+          # have no entry point or intentionally trap.
+          mapfile -t wasm_files < <(
+            find tests/output_ci -type f -name '*.wasm' \
+              ! -path '*/fail/*' \
+              ! -path '*/future/*' \
+              ! -path '*/library/*' \
+              ! -path '*/host-extension/*' \
+              | sort
+          )
+          echo "Running ${#wasm_files[@]} WASM modules"
+
+          run_fail=0
+          run_fail_list=()
+          for w in "${wasm_files[@]}"; do
+            if ! timeout 15 ./target/release/wasmtime_runner "$w" >/dev/null 2>&1; then
+              run_fail=$((run_fail + 1))
+              run_fail_list+=("$w")
+            fi
+          done
+
+          echo ""
+          echo "Execution summary: ${#wasm_files[@]} total, $run_fail failed"
+          if [ "$run_fail" -gt 0 ]; then
+            echo "Failed executions (first 30):"
+            printf '  - %s\n' "${run_fail_list[@]:0:30}"
+          fi
+
+          # Same gating model as compilation — baseline the current state
+          # and ratchet down. Set this conservatively; the goal is to
+          # detect regressions, not to flip green on day one.
+          BASELINE_MAX_RUN_FAILURES=80
+          if [ "$run_fail" -gt "$BASELINE_MAX_RUN_FAILURES" ]; then
+            echo "::error::execution failures ($run_fail) exceed baseline ($BASELINE_MAX_RUN_FAILURES)"
+            exit 1
+          fi
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cln-corpus-failures
+          path: /tmp/compile.log
+          retention-days: 7
