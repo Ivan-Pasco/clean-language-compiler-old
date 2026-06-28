@@ -963,40 +963,33 @@ impl MirCodeGenerator<'_> {
                             continuation = Some(*false_block);
                         } else {
                             // Real else clause: locate the merge block both branches jump to.
+                            //
+                            // We use `find_eventual_continuation` uniformly (not the
+                            // direct Jump target) so a branch whose immediate Jump
+                            // lands on a non-empty intermediate merge gets chased to
+                            // the OUTER merge. Picking the immediate Jump target
+                            // would lock continuation to the intermediate merge,
+                            // and when the two branches' intermediate merges differ
+                            // (each containing post-inner-if statements that then
+                            // Jump to the same outer merge), the outer merge would
+                            // never be emitted — silently dropping every statement
+                            // that follows the outer if/else
+                            // (CMP-HTML-BLOCK-INTERPOLATION-DROPS-VARIABLE-OPERANDS
+                            // residual path, fp e96188e7e08a).
 
                             if !true_has_return {
-                                if let Some(true_blk) = function.blocks.get(true_block) {
-                                    match &true_blk.terminator {
-                                        MirTerminator::Jump { target } => {
-                                            continuation = Some(*target);
-                                        }
-                                        MirTerminator::Branch { .. } => {
-                                            // Nested control flow - find eventual continuation
-                                            continuation = self
-                                                .find_eventual_continuation(function, *true_block);
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                                continuation =
+                                    self.find_eventual_continuation(function, *true_block);
                             }
 
                             if !false_has_return {
-                                if let Some(false_blk) = function.blocks.get(false_block) {
-                                    let false_cont = match &false_blk.terminator {
-                                        MirTerminator::Jump { target } => Some(*target),
-                                        MirTerminator::Branch { .. } => {
-                                            // Nested control flow - find eventual continuation
-                                            self.find_eventual_continuation(function, *false_block)
-                                        }
-                                        _ => None,
-                                    };
-
-                                    if let Some(fc) = false_cont {
-                                        if continuation.is_none() {
-                                            continuation = Some(fc);
-                                        }
-                                        // Both branches should lead to same continuation
+                                let false_cont =
+                                    self.find_eventual_continuation(function, *false_block);
+                                if let Some(fc) = false_cont {
+                                    if continuation.is_none() {
+                                        continuation = Some(fc);
                                     }
+                                    // Both branches should lead to same continuation
                                 }
                             }
                         }
