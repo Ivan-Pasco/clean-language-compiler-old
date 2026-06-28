@@ -1,0 +1,27 @@
+// Test: plugins/large_output_round_trip
+// Regression coverage for COMPILER-PLUGIN-OUTPUT-NULL-BYTE-CORRUPTION-AT-PAGE-BOUNDARY
+// (fingerprint 835d361c9515). Reporter observed that plugin output crossing
+// the ~64 KiB WASM page boundary surfaced as null bytes when the tokenizer
+// read it back, but the diagnosis (u16/i16 narrowing in read_string_from_caller)
+// did not match the audited host code on 0.30.388 — all four core string-passing
+// helpers (read_clean_string, read_raw_string, read_lp_from_data, read_result)
+// use u32/usize with bounds checks. This plugin gives us a clean direct repro:
+// a plugin that deterministically emits a >150 KB output, accumulated across
+// page boundaries via repeated string concatenation. The Rust-side test
+// (tests/test_plugin_large_output.rs) reads the result bytes back and asserts
+// byte-for-byte equality with the expected pattern. Any null-byte corruption
+// at a page boundary causes that assertion to fail.
+
+functions:
+	string expand_block(string name, string attrs, string body)
+		// A 64-byte chunk. Repeating ~3000 times produces ~192 KB of
+		// output — three full 64 KiB pages of plugin linear memory.
+		// Each chunk is pure ASCII so any null byte in the output is
+		// proof of corruption rather than legitimate content.
+		string chunk = "0123456789abcdefABCDEF0123456789abcdefABCDEF0123456789abcdefABCD"
+		string result = ""
+		integer i = 0
+		while i < 3500
+			result = result + chunk
+			i = i + 1
+		return result

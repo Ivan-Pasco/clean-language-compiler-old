@@ -1,0 +1,17 @@
+# Test plugin manifest — emits a deterministic >150 KB output buffer to
+# exercise the host-side LP-string read path across multiple WASM linear-memory
+# pages. Guards COMPILER-PLUGIN-OUTPUT-NULL-BYTE-CORRUPTION-AT-PAGE-BOUNDARY
+# (835d361c9515).
+
+[plugin]
+name = "test.large_output_round_trip"
+version = "0.0.1"
+description = "Returns a deterministic ~150 KB output from expand_block"
+author = "clean-language-tests"
+
+[handles]
+blocks = ["large_output_round_trip"]
+expressions = []
+
+[exports]
+expand = "expand_block"
