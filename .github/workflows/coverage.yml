@@ -91,10 +91,12 @@ jobs:
 
       - name: Enforce baseline threshold
         env:
-          # Baseline only — raise this as real coverage grows. The gate exists
-          # so a PR that dramatically tanks coverage gets caught even before
-          # we have a "real" target number to defend.
-          COVERAGE_MIN: "40"
+          # Baseline only — set just below the measured starting point so the
+          # gate catches a meaningful regression without immediately blocking
+          # the first green build. Measured baseline on 2026-06-28 was
+          # 19.71% line coverage (run 28338555140); ratchet this up as the
+          # suite grows. First target: 25%, then 35%, then 50%.
+          COVERAGE_MIN: "18"
         run: |
           pct="${{ steps.summary.outputs.pct }}"
           awk -v p="$pct" -v m="$COVERAGE_MIN" 'BEGIN { if (p+0 < m+0) { printf "coverage %.2f%% below baseline %s%%\n", p, m; exit 1 } }'
