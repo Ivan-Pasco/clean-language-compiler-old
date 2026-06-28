@@ -1,0 +1,30 @@
+[package]
+name = "clean-language-compiler-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.clean-language-compiler]
+path = ".."
+
+# The workspace at the root excludes this crate (see root Cargo.toml). Each
+# fuzz target gets its own [[bin]] entry below — cargo-fuzz picks them up via
+# `cargo fuzz run <target>`.
+
+[[bin]]
+name = "parser_random_input"
+path = "fuzz_targets/parser_random_input.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "json_textToData"
+path = "fuzz_targets/json_textToData.rs"
+test = false
+doc = false

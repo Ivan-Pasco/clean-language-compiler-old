@@ -1,0 +1,20 @@
+// Test: bugfixes/json_get_with_rfc8259_escapes
+// Regression: values containing escape sequences (\", \\, \n, \t) must
+// survive json.get extraction. json_encode_rfc8259_escapes.cln covers
+// the ENCODE direction; this covers the DECODE direction, which has
+// regressed independently (14b0a640 UTF-8 round-trip).
+//
+// Expected output:
+//   he said "hi"
+//   path\to\file
+//   line1
+//   line2
+
+start:
+	string j = "{\"q\":\"he said \\\"hi\\\"\",\"p\":\"path\\\\to\\\\file\",\"m\":\"line1\\nline2\"}"
+	string q = json.get(j, "q")
+	string p = json.get(j, "p")
+	string m = json.get(j, "m")
+	print(q) +
+	print(p) +
+	print(m) +

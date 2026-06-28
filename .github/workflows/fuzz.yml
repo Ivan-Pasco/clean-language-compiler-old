@@ -1,0 +1,61 @@
+name: Fuzz (nightly)
+
+on:
+  schedule:
+    # 03:17 UTC daily — odd minute to avoid the on-the-hour stampede.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: 'Seconds to fuzz per target'
+        default: '300'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parser_random_input, json_textToData]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target/
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('**/Cargo.lock', 'fuzz/Cargo.toml') }}
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run target
+        working-directory: fuzz
+        env:
+          DURATION: ${{ github.event.inputs.duration_seconds || '300' }}
+        run: |
+          # `-max_total_time` is libfuzzer's own time budget. We exit cleanly
+          # (status 0) when the budget elapses without finding a crash.
+          cargo fuzz run "${{ matrix.target }}" -- -max_total_time="$DURATION" -timeout=10
+
+      - name: Upload crash artefacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}/
+            fuzz/corpus/${{ matrix.target }}/
+          retention-days: 30
