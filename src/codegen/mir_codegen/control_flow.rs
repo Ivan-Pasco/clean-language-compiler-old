@@ -233,6 +233,53 @@ impl MirCodeGenerator<'_> {
         let mut continuations = std::collections::HashSet::new();
         self.collect_jump_targets(function, block_id, &mut visited, &mut continuations);
 
+        // Reduce intermediate merges out of the candidate set.
+        //
+        // When a branch's then- or else-arm contains its OWN inner if/else followed
+        // by more statements, the inner if's merge block is non-empty (it carries the
+        // post-inner statements) AND ends in a Jump to the outer merge. Both blocks
+        // end up in `continuations`, making the set size > 1 and causing the function
+        // to return None — the caller then never emits the outer merge, and every
+        // statement after the outer if disappears from the WASM body
+        // (CMP-HTML-BLOCK-INTERPOLATION-DROPS-VARIABLE-OPERANDS, fp e96188e7e08a).
+        //
+        // Fix: chase each candidate's Jump chain. If candidate `t` can reach
+        // another candidate `u` (u != t), then `t` is an intermediate merge that
+        // must be dropped. Iterate to fixed point so chains of arbitrary depth
+        // collapse cleanly. Bounded by the function's block count, so terminates.
+        loop {
+            let mut changed = false;
+            let snapshot: Vec<_> = continuations.iter().copied().collect();
+            for t in snapshot {
+                // Walk the Jump chain from t until we hit a non-Jump terminator,
+                // a block already visited, or a block that is itself a candidate.
+                let mut cur = match function.blocks.get(&t).map(|b| &b.terminator) {
+                    Some(MirTerminator::Jump { target }) => *target,
+                    _ => continue,
+                };
+                let mut seen = std::collections::HashSet::new();
+                seen.insert(t);
+                loop {
+                    if !seen.insert(cur) {
+                        break;
+                    }
+                    if continuations.contains(&cur) && cur != t {
+                        // t reaches a downstream candidate — drop t.
+                        continuations.remove(&t);
+                        changed = true;
+                        break;
+                    }
+                    match function.blocks.get(&cur).map(|b| &b.terminator) {
+                        Some(MirTerminator::Jump { target }) => cur = *target,
+                        _ => break,
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
         // If all non-returning paths lead to the same block, that's our continuation
         if continuations.len() == 1 {
             continuations.into_iter().next()

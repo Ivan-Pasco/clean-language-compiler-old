@@ -1,0 +1,60 @@
+// Test: bugfixes/codegen_nested_if_continuation_dropped
+// Regression: CMP-HTML-BLOCK-INTERPOLATION-DROPS-VARIABLE-OPERANDS
+//
+// When a while-body if/else has nested if/else (or single-arm if) in
+// BOTH branches followed by post-inner statements, the MIR codegen's
+// `find_eventual_continuation` returned None because both the inner
+// merge blocks AND the outer merge block ended up in the targets set
+// (size > 1). The caller never emitted the outer merge, dropping
+// every statement after the outer if/else from the generated WASM.
+//
+// Repro shape:
+//   while cond
+//       string piece = ""
+//       if cond2
+//           if cond3       ← nested inner if
+//               piece = "X"
+//           remaining = ""  ← post-inner stmt — makes inner merge non-empty
+//       else
+//           if cond4       ← nested inner if
+//               piece = "Y"
+//           remaining = ""
+//       printl("MARKER")    ← OUTER MERGE — silently dropped before fix
+//       if piece != ""
+//           result = piece
+//
+// Symptom: `result` stays empty even when the else branch sets `piece`,
+// because the outer merge (containing the print + outer if) never
+// executes. Fix: chase Jump chains in `find_eventual_continuation` so
+// intermediate non-empty merges that themselves Jump to a downstream
+// candidate get collapsed out of the candidate set.
+//
+// Verification: build("<X>Y</X>") must print "MARKER piece=YA" and
+// "RESULT=YA". Before the fix it prints "MARKER piece=" / "RESULT=".
+
+start:
+	string r = build("<X>Y</X>")
+	printl("R=" + r)
+
+functions:
+	string build(string html)
+		string result = ""
+		string remaining = html
+		while remaining.length() > 0
+			integer tag_start = remaining.indexOf("<")
+			string piece = ""
+			if tag_start == -1
+				if true
+					piece = "X"
+				remaining = ""
+			else
+				if true
+					piece = "Y"
+				remaining = ""
+			printl("MARKER piece=" + piece)
+			if piece != ""
+				if result == ""
+					result = piece
+				else
+					result = result + " + " + piece
+		return result
