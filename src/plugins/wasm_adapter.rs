@@ -469,6 +469,14 @@ impl WasmPluginAdapter {
                 // Allocate and write result (length-prefixed)
                 let state = caller.data_mut();
                 let ptr = state.allocate(total_size);
+                if ptr == 0 && state.oom_during_call.is_none() {
+                    state.oom_during_call = Some(format!(
+                        "string.concat: bridge bump allocator exhausted (>= {} MiB \
+                         consumed) requesting {} bytes",
+                        i32::MAX as usize / (1024 * 1024),
+                        total_size,
+                    ));
+                }
 
                 let memory = caller
                     .get_export("memory")
@@ -481,6 +489,16 @@ impl WasmPluginAdapter {
                 if required_size > current_size {
                     let pages_needed = (required_size - current_size).div_ceil(65536);
                     if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        let current_mb = current_size / (1024 * 1024);
+                        let state = caller.data_mut();
+                        if state.oom_during_call.is_none() {
+                            state.oom_during_call = Some(format!(
+                                "string.concat: memory.grow failed at {} MiB current \
+                                 (plugin host-cap 1 GiB), requested {} byte result \
+                                 ({} additional pages)",
+                                current_mb, result_len, pages_needed,
+                            ));
+                        }
                         return 0; // Allocation failed
                     }
                 }
@@ -1758,6 +1776,14 @@ impl WasmPluginAdapter {
 
                 let state = caller.data_mut();
                 let ptr = state.allocate(size);
+                if ptr == 0 && state.oom_during_call.is_none() {
+                    state.oom_during_call = Some(format!(
+                        "mem_alloc: bridge bump allocator exhausted (>= {} MiB \
+                         consumed) requesting {} bytes",
+                        i32::MAX as usize / (1024 * 1024),
+                        size,
+                    ));
+                }
 
                 let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                     Some(m) => m,
@@ -1769,6 +1795,16 @@ impl WasmPluginAdapter {
                 if required_size > current_size {
                     let pages_needed = (required_size - current_size).div_ceil(65536);
                     if memory.grow(&mut caller, pages_needed as u64).is_err() {
+                        let current_mb = current_size / (1024 * 1024);
+                        let state = caller.data_mut();
+                        if state.oom_during_call.is_none() {
+                            state.oom_during_call = Some(format!(
+                                "mem_alloc: memory.grow failed at {} MiB current \
+                                 (plugin host-cap 1 GiB), requested {} more bytes \
+                                 ({} additional pages)",
+                                current_mb, size, pages_needed,
+                            ));
+                        }
                         return 0;
                     }
                 }
@@ -2757,9 +2793,14 @@ impl WasmPluginAdapter {
         let result_ptr = expand
             .call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))
             .map_err(|e| {
+                let oom = store.data().oom_during_call.clone();
                 anyhow!(
                     "{}",
-                    describe_plugin_trap(&e, &format!("expand_full block `{}`", block_name))
+                    describe_plugin_trap_with_oom(
+                        &e,
+                        &format!("expand_full block `{}`", block_name),
+                        oom.as_deref(),
+                    )
                 )
             })?;
 
@@ -2951,9 +2992,14 @@ impl WasmPluginAdapter {
         let result_ptr = expand
             .call(&mut store, (block_name_ptr, attributes_ptr, body_ptr))
             .map_err(|e| {
+                let oom = store.data().oom_during_call.clone();
                 anyhow!(
                     "{}",
-                    describe_plugin_trap(&e, &format!("expand block `{}`", block_name))
+                    describe_plugin_trap_with_oom(
+                        &e,
+                        &format!("expand block `{}`", block_name),
+                        oom.as_deref(),
+                    )
                 )
             })?;
 
@@ -3928,6 +3974,20 @@ struct PluginState {
     /// stable address instead of bump-allocating a fresh 4-byte zero block
     /// on every call. See `compiler-build-state-bridge-runtime-trap.md`.
     cached_empty_lp_ptr: Option<i32>,
+    /// First memory-allocation failure observed during the current plugin
+    /// call, with site-of-failure context. Bridge functions that allocate
+    /// (mem_alloc, string.concat, etc.) set this when `memory.grow` is
+    /// refused by the host (typically because the Plugin tier 1GB cap was
+    /// reached) and then return 0 to the WASM caller — the plugin treats
+    /// 0 as a valid pointer, propagates it through subsequent string ops,
+    /// and ultimately hits an out-of-bounds memory access on a read of
+    /// what looks like a length-prefix at address 0. Without this field,
+    /// the surfaced error is the bare wasmtime trap message ("wasm trap:
+    /// out of bounds memory access") with no indication that the
+    /// underlying cause was OOM. The expand-block call site checks this
+    /// after the trap is reported and prepends the structured diagnostic.
+    /// See COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE (fp b80c2f907c71).
+    oom_during_call: Option<String>,
 }
 
 impl PluginState {
@@ -3940,6 +4000,7 @@ impl PluginState {
             alloc_offset: 524288,
             last_error: None,
             cached_empty_lp_ptr: None,
+            oom_during_call: None,
         }
     }
 
@@ -4025,6 +4086,43 @@ fn describe_plugin_trap(err: &anyhow::Error, context: &str) -> String {
     } else {
         base
     }
+}
+
+/// Like `describe_plugin_trap`, but additionally surfaces the host-bridge
+/// OOM context (if any) captured during the call. When `memory.grow` is
+/// refused mid-expand, host bridges (`mem_alloc`, `string.concat`) record
+/// the site of failure in `PluginState::oom_during_call` and then return 0
+/// to the plugin. The plugin treats 0 as a valid pointer, propagates it
+/// through subsequent string ops, and ultimately traps on an
+/// out-of-bounds memory access reading what looks like a length-prefix at
+/// or near address 0. The raw trap message (`wasm trap: out of bounds
+/// memory access`) gives no hint that OOM was the underlying cause — so
+/// when oom context exists, prepend a structured note pointing at the
+/// real root cause and offer concrete remediation steps.
+fn describe_plugin_trap_with_oom(
+    err: &anyhow::Error,
+    context: &str,
+    oom_context: Option<&str>,
+) -> String {
+    let base = describe_plugin_trap(err, context);
+    let Some(oom) = oom_context else {
+        return base;
+    };
+    format!(
+        "{}\n\n\
+        note: host bridge ran out of memory during this call. site: {}\n\
+              the plugin tier caps WASM linear memory at 1 GiB. the bridge\n\
+              recorded this OOM and returned 0 to the plugin; the plugin\n\
+              then propagated the 0 pointer through string ops until a\n\
+              downstream read tried to interpret it as a length-prefix,\n\
+              producing the wasm out-of-bounds trap above.\n\n\
+              to compile larger inputs, either reduce the workload (split\n\
+              the source file, simplify expansions) or rebuild the plugin\n\
+              with the freeing allocator path so intermediate strings are\n\
+              reclaimable mid-call. see COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE\n\
+              for the durable fix design (per-expand-block arena).",
+        base, oom,
+    )
 }
 
 fn write_lp_string(caller: &mut Caller<'_, PluginState>, _memory: &Memory, s: &str) -> Option<i32> {
