@@ -1,0 +1,79 @@
+// Test: bugfixes/codegen_outer_merge_inlined_in_nested
+// Regression: CMP-HTML-BLOCK-INTERPOLATION-DROPS-VARIABLE-OPERANDS
+//             (final codegen path — plugin html_block_to_code shape)
+//
+// When an outer if/else has a nested if/else inside one of its branches,
+// followed by post-statements at the outer scope (not inside the nested
+// branches), the nested branch's continuation handling could inline the
+// OUTER merge block inside its OWN body. The outer caller then sees
+// `generated.contains(&cont)`, skips the inline, and the post-statements
+// only execute when the nested branch is taken — they're dropped from
+// the path that goes through the outer-then branch.
+//
+// Exact shape from plugin html_block_to_code (frame.ui):
+//   while remaining.length() > 0
+//       integer tag_start = remaining.indexOf("<")
+//       string piece = ""
+//       if tag_start == -1
+//           string text = remaining.trim()
+//           if text.length() > 0
+//               piece = process_text(text)
+//           remaining = ""
+//       else if tag_start > 0
+//           ...
+//       else
+//           ...nested if/else...
+//       if piece != ""          ← OUTER MERGE — must execute regardless of branch
+//           if result == ""
+//               result = piece
+//           else
+//               result = result + " + " + piece
+//
+// Symptom: when tag_start == -1 (first branch), piece gets set by
+// process_text but `if piece != ""` never executes — result stays "".
+// Fix: track outer if/else merge blocks in `outer_if_continuations`
+// stack and refuse to inline a continuation that matches an outer scope's
+// merge.
+//
+// Verification: build("hello") (no "<") triggers the tag_start == -1
+// branch. Without the fix, output is "R=" (empty). With the fix, output
+// is "R=[hello]" — proof the outer `if piece != ""` block executes after
+// the tag_start == -1 arm.
+
+start:
+	string r = build("hello")
+	printl("R=" + r)
+
+functions:
+	string process_text(string s)
+		return "[" + s + "]"
+
+	string build(string html)
+		string result = ""
+		string remaining = html
+		while remaining.length() > 0
+			integer tag_start = remaining.indexOf("<")
+			string piece = ""
+			if tag_start == -1
+				string text = remaining.trim()
+				if text.length() > 0
+					piece = process_text(text)
+				remaining = ""
+			else if tag_start > 0
+				string text = remaining.substring(0, tag_start)
+				if text.trim().length() > 0
+					piece = process_text(text)
+				remaining = remaining.substring(tag_start, remaining.length())
+			else
+				integer tag_end = remaining.indexOf(">")
+				if tag_end == -1
+					remaining = ""
+				else
+					piece = "TAG"
+					remaining = remaining.substring(tag_end + 1, remaining.length())
+			if piece != ""
+				if result == ""
+					result = piece
+				else
+					result = result + " + " + piece
+		return result

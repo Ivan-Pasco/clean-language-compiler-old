@@ -213,6 +213,20 @@ pub struct MirCodeGenerator<'a> {
     /// Current block nesting depth (for calculating `br` depths).
     pub(super) current_block_depth: u32,
 
+    /// Stack of outer-if continuation blocks that nested `generate_branch_block`
+    /// calls must NOT inline. When `generate_structured_blocks` processes an
+    /// if/else, it pushes the if/else's own merge block here before recursing
+    /// into either branch, and pops it after. The nested-Branch continuation
+    /// finder consults this list and skips the inline when a candidate matches
+    /// an outer scope's merge — that block belongs to the OUTER scope and must
+    /// be emitted there, not inside this branch. Without this guard, a nested
+    /// if/else inside an outer if's else clause would inline the outer merge
+    /// inside itself; the outer caller then sees `generated.contains(&cont)`,
+    /// skips emission, and every statement after the outer if/else disappears
+    /// from the WASM body (CMP-HTML-BLOCK-INTERPOLATION-DROPS-VARIABLE-OPERANDS
+    /// residual codegen path).
+    pub(super) outer_if_continuations: Vec<BasicBlockId>,
+
     /// Mapping from state variable `SymbolId` to WASM global index.
     ///
     /// Global index 0 is reserved for the heap pointer; state variables start at index 1.
@@ -313,6 +327,7 @@ impl MirCodeGenerator<'_> {
             pending_host_mismatched_stubs: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
+            outer_if_continuations: Vec::new(),
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
             target: crate::CompilationTarget::Server,
@@ -354,6 +369,7 @@ impl MirCodeGenerator<'_> {
             pending_host_mismatched_stubs: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
+            outer_if_continuations: Vec::new(),
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
             target: crate::CompilationTarget::Standalone,
@@ -395,6 +411,7 @@ impl MirCodeGenerator<'_> {
             pending_host_mismatched_stubs: Vec::new(),
             loop_context_stack: Vec::new(),
             current_block_depth: 0,
+            outer_if_continuations: Vec::new(),
             state_global_indices: HashMap::new(),
             state_globals: Vec::new(),
             target,
