@@ -1,0 +1,80 @@
+name: JSON property tests
+
+# Heavy: each proptest case compiles a generated .cln program and executes it
+# under wasmtime. We trigger this targeted-plus-nightly:
+#
+#   - on PRs that touch the JSON implementation, the MIR/codegen layers that
+#     historically broke it, or the JSON test files themselves — fast feedback
+#     for the author who likely introduced the bug.
+#   - nightly safety net for codegen changes elsewhere that interact with
+#     JSON in ways the path filter can't predict (e.g. Any unbox-on-return).
+#   - workflow_dispatch for manual investigation.
+#
+# Default cargo test skips this suite via the CLEAN_RUN_JSON_PROPERTY_TESTS
+# env gate; this workflow sets it to 1 to opt in.
+
+on:
+  pull_request:
+    paths:
+      - 'src/stdlib/json_class.rs'
+      - 'src/stdlib/json/**'
+      - 'src/codegen/**'
+      - 'src/mir/**'
+      - 'src/hir/**'
+      - 'tests/test_json_property.rs'
+      - 'tests/cln/stdlib/json/**'
+      - 'tests/cln/bugfixes/json_*.cln'
+      - '.github/workflows/json-property.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/stdlib/json_class.rs'
+      - 'src/stdlib/json/**'
+      - 'src/codegen/**'
+      - 'src/mir/**'
+      - 'src/hir/**'
+      - 'tests/test_json_property.rs'
+      - 'tests/cln/stdlib/json/**'
+      - 'tests/cln/bugfixes/json_*.cln'
+      - '.github/workflows/json-property.yml'
+  schedule:
+    # 04:17 UTC daily — 1h after the fuzz nightly so they don't share a runner pool.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  json-property:
+    name: proptest json.*
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-json-prop-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build wasmtime_runner
+        # The proptest harness invokes wasmtime_runner as a subprocess against
+        # each generated WASM module — it must be on disk before the tests
+        # run, otherwise every case panics with "wasmtime_runner not built".
+        run: cargo build --release --bin wasmtime_runner
+
+      - name: Run JSON property tests
+        env:
+          CLEAN_RUN_JSON_PROPERTY_TESTS: "1"
+          # Keep PR feedback snappy by capping shrinking iterations. Nightly
+          # can afford the default if a regression appears.
+          PROPTEST_MAX_SHRINK_ITERS: "8"
+        run: cargo test --release --test test_json_property -- --nocapture
