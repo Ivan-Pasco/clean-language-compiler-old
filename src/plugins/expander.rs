@@ -937,6 +937,74 @@ impl<'a> PluginExpander<'a> {
                     }
                 }
 
+                // Return statement whose value is an ORM query block expression.
+                //
+                // `return Model.<verb>:` for expression-returning verbs (count, exists,
+                // first, find, findOrFail, insert_id, paginate, cursor). The expander
+                // dispatches the block to its plugin and re-wraps the resulting bare
+                // expression as `Return { value: Some(expr) }`. Without this arm the
+                // OrmQuery survives to HIR and trips SEM001 even though the verb is
+                // registered (typed-binding form works because the VariableDecl arm
+                // above handles it).
+                Statement::Return {
+                    value:
+                        Some(crate::ast::Expression::OrmQuery {
+                            ref model,
+                            ref verb,
+                            ref content,
+                            ref location,
+                        }),
+                    location: ref return_location,
+                } => {
+                    let block_name = format!("{}.{}", model, verb);
+                    // No binding header — plugin emits the bare expression.
+                    let block = FrameworkBlock {
+                        name: block_name.clone(),
+                        content: content.clone(),
+                        attributes: Vec::new(),
+                        location: Some(location.clone()),
+                    };
+
+                    if self.registry.handles_as_expression(&block_name) {
+                        let expanded = self.registry.expand(&block)?;
+                        self.blocks_expanded += 1;
+                        self.statements_generated += expanded.len();
+
+                        tracing::trace!(
+                            block_name = %block_name,
+                            expanded_count = expanded.len(),
+                            "Expanded return-form ORM query expression"
+                        );
+
+                        // Expression-returning verbs produce a single bare expression
+                        // (e.g. `__Model_count(...)`) which parses as one
+                        // `Statement::Expression`. Re-wrap that as a Return; recursively
+                        // expand first in case the expansion contains nested blocks.
+                        let mut expanded = self.expand_statements(expanded)?;
+                        if expanded.len() == 1 {
+                            if let Statement::Expression { expr, .. } = expanded.remove(0) {
+                                result.push(Statement::Return {
+                                    value: Some(expr),
+                                    location: return_location.clone(),
+                                });
+                                continue;
+                            }
+                        }
+                        // Plugin returned a non-expression or multi-statement shape —
+                        // not legal as the operand of `return`. Emit the statements
+                        // followed by a bare `return` so codegen still terminates the
+                        // function. A type error will surface for non-void functions.
+                        result.extend(expanded);
+                        result.push(Statement::Return {
+                            value: None,
+                            location: return_location.clone(),
+                        });
+                    } else {
+                        // No plugin claims this verb — leave intact so HIR emits SEM001.
+                        result.push(stmt);
+                    }
+                }
+
                 // Expression statement whose expression is a standalone ORM query block.
                 //
                 // `User.find:\n\twhere: ...` — used as a statement (result discarded).
