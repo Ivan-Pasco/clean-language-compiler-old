@@ -18,8 +18,16 @@ jobs:
     strategy:
       matrix:
         include:
+          # Build linux artifact on ubuntu-22.04 (glibc 2.35) rather than
+          # ubuntu-latest (= ubuntu-24.04 with glibc 2.39). Binaries linked
+          # against glibc 2.39 fail to load on any host with an older glibc —
+          # including the GitHub-hosted ubuntu-22.04 runners that downstream
+          # CIs (clean-framework Phase 1) use — surfacing as
+          # "Binary failed to execute: exit code -1" from the cleen-install
+          # validator (RUNTIME-LINUX-EXEC, fp 5c1153782d23). Building on the
+          # older glibc preserves forward compatibility with every newer host.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             name: cln-linux-x86_64
             archive: tar.gz
           # Temporarily disabled ARM64 Linux due to cross-compilation issues
