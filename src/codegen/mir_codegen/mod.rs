@@ -742,6 +742,31 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
+            // Host bridge imports for the dual-accumulator arena scope rewrite
+            // (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE, fp b80c2f907c71).
+            // MUST be registered before any local functions (register_memory_operations
+            // and later) to keep WASM function indices consistent with binary layout.
+            // Reachability-gated: only added when the HIR rewrite actually emitted
+            // _arena_scope_push/_pop calls into the MIR (i.e., the source had a
+            // dual-accumulator loop).  This avoids shifting function indices for
+            // programs that don't use the dual-accumulator rewrite.
+            if self
+                .wasm_generator
+                .has_reachable_prefix("_arena_scope_push")
+                || self.wasm_generator.has_reachable_prefix("_arena_scope_pop")
+            {
+                debug_mir!(
+                    "DEBUG MIR: Registering arena scope push/pop bridge imports (dual-acc rewrite)"
+                );
+                self.wasm_generator
+                    .register_arena_scope_imports()
+                    .map_err(|e| vec![e])?;
+            } else {
+                debug_mir!(
+                    "DEBUG MIR: Skipping arena scope imports (no dual-acc loop rewrite triggered)"
+                );
+            }
+
             // Math operations pull in 16 transcendental imports plus
             // wrapper functions. Skip entirely if the module never
             // references `math.*` / `math_*` (Import Minimality Rule).

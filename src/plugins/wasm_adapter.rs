@@ -1841,6 +1841,59 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>| {},
         )?;
 
+        // env._arena_scope_push — push a save mark onto the host arena stack.
+        //
+        // Returns the new depth (always >= 1) as an opaque handle. The plugin
+        // must pass this handle to the paired `_arena_scope_pop` call.
+        //
+        // Called by HIR-rewritten loops to bracket per-iteration scratch
+        // allocations. Every allocation made between a push and the
+        // corresponding pop is reclaimed in O(1) by pop.
+        linker.func_wrap(
+            "env",
+            "_arena_scope_push",
+            |mut caller: Caller<'_, PluginState>| -> i32 {
+                let state = caller.data_mut();
+                // Push current alloc_offset onto the mark stack.
+                let _mark = state.arena_mark();
+                // Return the new depth as the opaque handle (>= 1).
+                state.arena_marks.len() as i32
+            },
+        )?;
+
+        // env._arena_scope_pop — pop the host arena stack to `handle`, reclaiming
+        // all allocations made after the corresponding push.
+        //
+        // `handle` is the value returned by the matching `_arena_scope_push`.
+        // Passing `handle == 0` is a no-op (defensive: allows generated code
+        // to tolerate early-return paths that never executed the push).
+        linker.func_wrap(
+            "env",
+            "_arena_scope_pop",
+            |mut caller: Caller<'_, PluginState>, handle: i32| {
+                if handle <= 0 {
+                    return;
+                }
+                let target_depth = (handle as usize).saturating_sub(1);
+                let state = caller.data_mut();
+                // Pop marks until we reach the depth at the time of the push.
+                // In the happy path exactly one mark is popped. The loop
+                // handles mis-matched push/pop gracefully (e.g. plugin trap
+                // mid-scope) by truncating.
+                while state.arena_marks.len() > target_depth {
+                    if let Some(saved_offset) = state.arena_marks.pop() {
+                        // Use arena_reset only when the saved offset is a valid
+                        // reset point (above stable zone, not above current top).
+                        if saved_offset >= state.stable_zone_end
+                            && saved_offset <= state.alloc_offset
+                        {
+                            state.arena_reset(ArenaMark(saved_offset));
+                        }
+                    }
+                }
+            },
+        )?;
+
         Ok(())
     }
 
@@ -2915,6 +2968,13 @@ impl WasmPluginAdapter {
         // Extract statements from the start function (if present)
         let statements = program.start_function.map(|f| f.body).unwrap_or_default();
 
+        // Telemetry: log host arena peak for this expand-block invocation.
+        tracing::debug!(
+            peak_bytes = store.data().peak_alloc_offset,
+            block = block.name.trim_end_matches(':'),
+            "plugin arena peak bytes for call_expand"
+        );
+
         Ok(statements)
     }
 
@@ -3168,6 +3228,13 @@ impl WasmPluginAdapter {
         let program = self
             .parse_plugin_code(&wrapper)
             .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))?;
+
+        // Telemetry: log host arena peak for this expand-block invocation.
+        tracing::debug!(
+            peak_bytes = store.data().peak_alloc_offset,
+            block = block.name.trim_end_matches(':'),
+            "plugin arena peak bytes for call_expand_full"
+        );
 
         Ok(PluginExpansion {
             statements: Vec::new(),
@@ -3459,6 +3526,14 @@ impl WasmPluginAdapter {
         if let Some(start_fn) = parsed.start_function {
             statements.extend(start_fn.body);
         }
+
+        // Telemetry: log host arena peak for this lifecycle slot invocation.
+        tracing::debug!(
+            peak_bytes = store.data().peak_alloc_offset,
+            slot = slot_name,
+            "plugin arena peak bytes for call_lifecycle_slot_v2"
+        );
+
         Ok(PluginExpansion {
             statements,
             start_function: None,
@@ -3962,10 +4037,35 @@ impl FrameworkPlugin for WasmPluginAdapter {
     }
 }
 
+/// An opaque mark into the host bridge arena's transient zone.
+///
+/// Returned by `PluginState::arena_mark` and consumed by
+/// `PluginState::arena_reset`. Marked `#[must_use]` so callers that
+/// take a mark and forget to reset get a compiler warning.
+#[must_use]
+#[derive(Debug, Clone, Copy)]
+struct ArenaMark(usize);
+
 /// State held by the WASM store
 struct PluginState {
-    /// Simple bump allocator offset
+    /// Current bump-allocator top. All active allocations live in
+    /// `[stable_zone_end, alloc_offset)`. The stable zone
+    /// `[524288, stable_zone_end)` holds pointers that must survive
+    /// an `arena_reset` (e.g. `cached_empty_lp_ptr`).
     alloc_offset: usize,
+    /// Floor below which `arena_reset` will never rewind. Starts at
+    /// 524288 (the initial `alloc_offset`) and is advanced by each
+    /// `allocate_stable` call. All pointers in `[524288, stable_zone_end)`
+    /// are long-lived and are never reclaimed within a store lifetime.
+    stable_zone_end: usize,
+    /// Peak `alloc_offset` observed during this store's lifetime.
+    /// Updated by `allocate` on every successful bump. Logged at the
+    /// end of each expand-block call for arena-pressure telemetry.
+    peak_alloc_offset: usize,
+    /// Stack of save marks for nested `_arena_scope_push` / `_arena_scope_pop`
+    /// calls. Each entry is the `alloc_offset` at the time of the push.
+    /// `arena_reset` pops the top entry and rewinds `alloc_offset` to it.
+    arena_marks: Vec<usize>,
     /// Last error reported by plugin
     last_error: Option<String>,
     /// Pointer to a pre-allocated empty LP-string in plugin memory.
@@ -3973,6 +4073,7 @@ struct PluginState {
     /// `_build_state_get` bridge so repeated empty returns reuse the same
     /// stable address instead of bump-allocating a fresh 4-byte zero block
     /// on every call. See `compiler-build-state-bridge-runtime-trap.md`.
+    /// Lives in the stable zone — always below `stable_zone_end`.
     cached_empty_lp_ptr: Option<i32>,
     /// First memory-allocation failure observed during the current plugin
     /// call, with site-of-failure context. Bridge functions that allocate
@@ -3994,10 +4095,13 @@ impl PluginState {
     fn new() -> Self {
         Self {
             // Start allocations at 512KB to avoid collision with WASM data section
-            // and the module's internal heap which can grow from lower addresses
-            // The WASM module's static data starts at 4KB and heap follows data section
-            // For large plugins with many string operations, 512KB should be safe
+            // and the module's internal heap which can grow from lower addresses.
+            // The WASM module's static data starts at 4KB and heap follows the data
+            // section. For large plugins with many string operations, 512KB is safe.
             alloc_offset: 524288,
+            stable_zone_end: 524288,
+            peak_alloc_offset: 524288,
+            arena_marks: Vec::new(),
             last_error: None,
             cached_empty_lp_ptr: None,
             oom_during_call: None,
@@ -4041,7 +4145,140 @@ impl PluginState {
         }
         let ptr = self.alloc_offset;
         self.alloc_offset = new_top;
+        // Track high-water mark for telemetry (see peak_alloc_offset field).
+        if new_top > self.peak_alloc_offset {
+            self.peak_alloc_offset = new_top;
+        }
         ptr
+    }
+
+    /// Bump-allocate `size` bytes from the **stable** zone.
+    ///
+    /// Stable allocations are excluded from `arena_reset` — they survive
+    /// for the entire lifetime of the store. Today the only caller is the
+    /// `cached_empty_lp_ptr` initialization in `write_clean_string`.
+    ///
+    /// # Panics (debug builds only)
+    ///
+    /// Panics if called while any arena scope is open (`arena_marks` is
+    /// non-empty), because advancing `stable_zone_end` while a scope is
+    /// active would corrupt the reset invariant.
+    fn allocate_stable(&mut self, size: usize) -> usize {
+        debug_assert!(
+            self.arena_marks.is_empty(),
+            "allocate_stable called while arena scope is open (arena_marks.len={})",
+            self.arena_marks.len()
+        );
+        let ptr = self.allocate(size);
+        if ptr != 0 {
+            // Advance the stable zone to cover this new allocation so
+            // future `arena_reset` calls can never rewind past it.
+            self.stable_zone_end = self.alloc_offset;
+        }
+        ptr
+    }
+
+    /// Save the current transient-zone top.
+    ///
+    /// Returns an `ArenaMark` that can be passed to `arena_reset` to
+    /// reclaim every allocation made after this point. Push the mark
+    /// onto the internal stack so nested scopes compose correctly.
+    fn arena_mark(&mut self) -> ArenaMark {
+        let mark = ArenaMark(self.alloc_offset);
+        self.arena_marks.push(self.alloc_offset);
+        mark
+    }
+
+    /// Reset the transient zone to `mark`, reclaiming all allocations
+    /// made since the corresponding `arena_mark` call.
+    ///
+    /// This function only rewinds `alloc_offset`; it does NOT pop from
+    /// `arena_marks`. Stack management is the caller's responsibility.
+    /// The `_arena_scope_pop` bridge calls this after popping the mark
+    /// from the stack.
+    ///
+    /// # Panics (debug builds only)
+    ///
+    /// - If `mark` is below `stable_zone_end` (would reclaim stable data).
+    /// - If `mark` is above the current `alloc_offset` (invalid mark —
+    ///   was the store mutated concurrently?).
+    fn arena_reset(&mut self, mark: ArenaMark) {
+        debug_assert!(
+            mark.0 >= self.stable_zone_end,
+            "arena_reset: mark {} is below stable_zone_end {} — would reclaim stable data",
+            mark.0,
+            self.stable_zone_end
+        );
+        debug_assert!(
+            mark.0 <= self.alloc_offset,
+            "arena_reset: mark {} is above current alloc_offset {} — invalid mark",
+            mark.0,
+            self.alloc_offset
+        );
+        self.alloc_offset = mark.0;
+    }
+}
+
+#[cfg(test)]
+mod arena_tests {
+    use super::PluginState;
+
+    #[test]
+    fn mark_and_reset_reuses_offset() {
+        let mut state = PluginState::new();
+        let mark = state.arena_mark();
+        let ptr1 = state.allocate(1024);
+        assert_ne!(ptr1, 0, "first allocation must succeed");
+        state.arena_reset(mark);
+        let ptr2 = state.allocate(1024);
+        assert_eq!(
+            ptr1, ptr2,
+            "allocation after reset must reuse the same offset"
+        );
+    }
+
+    #[test]
+    fn nested_mark_reset_reuses_inner_offset() {
+        let mut state = PluginState::new();
+        let outer_mark = state.arena_mark();
+        let _outer_alloc = state.allocate(512);
+        let inner_mark = state.arena_mark();
+        let inner_ptr = state.allocate(256);
+        assert_ne!(inner_ptr, 0);
+        // arena_reset rewinds the offset but does NOT pop the stack;
+        // the caller is responsible for stack cleanup (as the bridge does).
+        state.arena_reset(inner_mark);
+        // Pop the inner mark from the stack manually (mirrors bridge behavior).
+        state.arena_marks.pop();
+        let reuse_ptr = state.allocate(256);
+        assert_eq!(
+            inner_ptr, reuse_ptr,
+            "inner reset must reclaim only the inner allocation"
+        );
+        // Outer reset recovers everything after the outer mark.
+        let outer_ptr_before_outer_reset = state.alloc_offset;
+        state.arena_reset(outer_mark);
+        state.arena_marks.pop();
+        assert!(
+            state.alloc_offset < outer_ptr_before_outer_reset,
+            "outer reset must rewind past inner allocations"
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn allocate_stable_while_scope_open_panics() {
+        use std::panic;
+        let result = panic::catch_unwind(|| {
+            let mut state = PluginState::new();
+            let _mark = state.arena_mark();
+            // This must panic in debug builds.
+            state.allocate_stable(8);
+        });
+        assert!(
+            result.is_err(),
+            "allocate_stable while a scope is open must panic in debug builds"
+        );
     }
 }
 
@@ -4123,15 +4360,6 @@ fn describe_plugin_trap_with_oom(
               for the durable fix design (per-expand-block arena).",
         base, oom,
     )
-}
-
-fn write_lp_string(caller: &mut Caller<'_, PluginState>, _memory: &Memory, s: &str) -> Option<i32> {
-    let ptr = write_clean_string(caller, s.as_bytes());
-    if ptr == 0 {
-        None
-    } else {
-        Some(ptr)
-    }
 }
 
 /// Bounds-checked read of a Clean LP-string from a borrowed memory slice.
@@ -4223,10 +4451,14 @@ fn register_build_state_bridges(
                     return cached;
                 }
             }
-            let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
-                return 0;
+            // Non-empty strings use the normal transient allocator.
+            // Empty strings are written via the stable allocator so that
+            // `cached_empty_lp_ptr` is never reclaimed by an `arena_reset`.
+            let ptr = if value.is_empty() {
+                write_clean_string_stable(&mut caller, b"")
+            } else {
+                write_clean_string(&mut caller, value.as_bytes())
             };
-            let ptr = write_lp_string(&mut caller, &memory, &value).unwrap_or(0);
             if value.is_empty() && ptr != 0 {
                 caller.data_mut().cached_empty_lp_ptr = Some(ptr);
             }
@@ -4280,6 +4512,47 @@ fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<S
     std::str::from_utf8(&data[data_start..data_end])
         .ok()
         .map(|s| s.to_string())
+}
+
+/// Write a byte slice as a Clean length-prefixed string into WASM memory,
+/// allocating from the **stable** zone so the pointer survives any future
+/// `arena_reset`. Only used for long-lived pointers that must outlive any
+/// transient scope (today: `cached_empty_lp_ptr`).
+///
+/// Returns the pointer on success or 0 on failure.
+fn write_clean_string_stable(caller: &mut Caller<'_, PluginState>, data: &[u8]) -> i32 {
+    let data_len = data.len();
+    let total_size = 4 + data_len;
+
+    // Allocate from the stable zone.
+    let ptr = caller.data_mut().allocate_stable(total_size);
+    if ptr == 0 {
+        return 0;
+    }
+
+    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+        Some(m) => m,
+        None => return 0,
+    };
+
+    let current_size = memory.data_size(&mut *caller);
+    let required_size = ptr + total_size;
+    if required_size > current_size {
+        let pages_needed = (required_size - current_size).div_ceil(65536);
+        if memory.grow(&mut *caller, pages_needed as u64).is_err() {
+            return 0;
+        }
+    }
+
+    let len_bytes = (data_len as u32).to_le_bytes();
+    if memory.write(&mut *caller, ptr, &len_bytes).is_err() {
+        return 0;
+    }
+    if memory.write(&mut *caller, ptr + 4, data).is_err() {
+        return 0;
+    }
+
+    ptr as i32
 }
 
 /// Helper to write a byte slice as a Clean length-prefixed string into WASM memory.

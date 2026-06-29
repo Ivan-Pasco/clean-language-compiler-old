@@ -1,0 +1,75 @@
+// Test: bugfixes/expand_endpoints_oom_branched
+// Regression: COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE (fingerprint b80c2f907c71)
+//
+// Grammar: grammar.ebnf `while_statement`, `if_statement`, `string_concat_expr`
+// Semantic: SEM-MEM-001 (host arena bump allocator monotonic growth)
+//
+// Models the branch-nested dual-accumulator pattern from the real
+// `expand_endpoints` function.  Two string accumulators (`result` and
+// `route_calls`) are declared before a while loop; inside the loop each
+// iteration dispatches on `method` and appends to BOTH accumulators
+// inside one of three branches: "GET", "POST", or else.
+//
+// Without the fix, every iteration's self-appends allocate fresh LP-strings
+// in the host bump arena and strand the previous results — O(N²) host-arena
+// growth.  With the fix, the HIR branch-nested dual-accumulator rewrite wraps
+// each branch arm that contains self-appends with its own `_arena_scope_push /
+// _arena_scope_pop`, reclaiming per-branch intermediate strings in O(1).
+//
+// Loop runs 20 iterations (methods cycle: GET × 7, POST × 7, other × 6).
+// Each GET branch appends 3 lines to result and 1 to route_calls.
+// Each POST branch appends 4 lines to result and 1 to route_calls.
+// Each else branch appends 2 lines to result and 1 to route_calls.
+//
+// Expected lengths (pre-calculated):
+//   result:
+//     GET  iterations (7):  each appends ~(50+idx) chars × 3 lines ≈ varies
+//     POST iterations (7):  each appends ~(50+idx) chars × 4 lines ≈ varies
+//     else iterations (6):  each appends ~(40+idx) chars × 2 lines ≈ varies
+//   We verify the final lengths are non-zero and both > 0 (correctness)
+//   plus print them so CI can diff-lock on exact values.
+//
+// Expected output:
+//   1794
+//   1077
+
+start:
+	string result = "// generated routes:\n"
+	string route_calls = ""
+	integer idx = 0
+
+	while idx < 20
+		integer method_code = idx - ((idx / 3) * 3)
+
+		if method_code == 0
+			string handler_name = "handle_GET_" + idx.toString()
+			string path = "/api/get/" + idx.toString()
+
+			result = result + "\tstring " + handler_name + "(string req)\n"
+			result = result + "\t\treturn jsonResponse(req)\n"
+			result = result + "\t// GET handler " + idx.toString() + " end\n"
+
+			route_calls = route_calls + "\t_http_route(\"GET\", \"" + path + "\", \"" + handler_name + "\")\n"
+		else if method_code == 1
+			string handler_name = "handle_POST_" + idx.toString()
+			string path = "/api/post/" + idx.toString()
+
+			result = result + "\tstring " + handler_name + "(string body)\n"
+			result = result + "\t\tstring parsed = json.parse(body)\n"
+			result = result + "\t\treturn jsonResponse(parsed)\n"
+			result = result + "\t// POST handler " + idx.toString() + " end\n"
+
+			route_calls = route_calls + "\t_http_route(\"POST\", \"" + path + "\", \"" + handler_name + "\")\n"
+		else
+			string handler_name = "handle_other_" + idx.toString()
+			string path = "/api/other/" + idx.toString()
+
+			result = result + "\t// unrecognised method for " + idx.toString() + "\n"
+			result = result + "\t// path: " + path + "\n"
+
+			route_calls = route_calls + "\t_http_route(\"OTHER\", \"" + path + "\", \"" + handler_name + "\")\n"
+
+		idx = idx + 1
+
+	printl(result.length())
+	printl(route_calls.length())

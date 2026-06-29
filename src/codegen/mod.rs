@@ -219,7 +219,10 @@ impl CodeGenerator {
     pub fn new_for_testing() -> Result<Self, CompilerError> {
         let mut codegen = Self::new();
 
-        // Register imports needed for testing
+        // Register imports needed for testing.
+        // ALL import-only registrations must come before register_memory_operations
+        // (which creates defined/native WASM functions).  WASM requires imports to
+        // precede local functions in the function index space.
         codegen.register_print_imports()?;
         codegen.register_console_imports()?;
         codegen.register_file_imports()?;
@@ -227,6 +230,8 @@ impl CodeGenerator {
         codegen.register_type_conversion_imports()?;
         codegen.register_method_style_imports()?;
         // Register native memory operations (includes native int_to_string, bool_to_string, etc.)
+        // Note: arena_scope_imports are reachability-gated and only registered in the
+        // full generate pipeline when the dual-accumulator rewrite has fired.
         codegen.register_memory_operations()?;
 
         Ok(codegen)

@@ -1346,6 +1346,27 @@ impl super::CodeGenerator {
 
     /// Register simplified print function imports following WebAssembly best practices
     /// Only registers essential print functions to avoid duplication issues
+    /// Register host bridge imports for the dual-accumulator arena scope rewrite.
+    ///
+    /// These are PURE IMPORTS — no local (defined) functions are added.  MUST be
+    /// called before any `register_*_operations` / `register_*_wrappers` functions
+    /// that create defined functions, so that WASM function indices remain consistent
+    /// with the binary layout (imports precede defined functions in the index space).
+    ///
+    /// The host implementation lives in
+    /// `src/plugins/wasm_adapter.rs::register_memory_runtime_functions`.
+    ///
+    /// - `_arena_scope_push() -> i32` — pushes `alloc_offset` onto `PluginState::arena_marks`,
+    ///   returns the new stack depth as an opaque handle.
+    /// - `_arena_scope_pop(handle: i32) -> void` — pops `arena_marks` back to `handle - 1`
+    ///   depth, resetting `alloc_offset` to the saved value.  Reclaims all LP-string
+    ///   allocations made after the matching push in O(1).
+    pub(crate) fn register_arena_scope_imports(&mut self) -> Result<(), CompilerError> {
+        self.register_import_function("env", "_arena_scope_push", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "_arena_scope_pop", &[WasmType::I32], None)?;
+        Ok(())
+    }
+
     pub(crate) fn register_print_imports(&mut self) -> Result<(), CompilerError> {
         // print(ptr: i32, len: i32) -> void - matches runtime expectation
         let print_type = self.add_function_type(&[WasmType::I32, WasmType::I32], None)?;

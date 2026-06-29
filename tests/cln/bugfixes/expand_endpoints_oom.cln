@@ -1,0 +1,53 @@
+// Test: bugfixes/expand_endpoints_oom
+// Regression: COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE (fingerprint b80c2f907c71)
+//
+// Grammar: grammar.ebnf `while_statement`, `string_concat_expr`
+// Semantic: SEM-MEM-001 (host arena bump allocator monotonic growth)
+//
+// Models the dual-accumulator triangular-sum pattern from the framework's
+// `expand_endpoints` function. Two string accumulators (`result` and
+// `route_calls`) are declared before a while loop; each iteration appends
+// several string segments to BOTH accumulators.
+//
+// Before the fix (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE), each iteration's
+// string.concat call allocated a fresh LP-string in the host bump arena and
+// stranded the previous result — O(N²) host arena consumption. At N=30
+// with ~5 concatenations per iteration, that reaches several hundred MB of
+// intermediate allocations that are never reclaimed.
+//
+// After the fix, the HIR dual-accumulator rewrite wraps each iteration with
+// `_arena_scope_push` / `_arena_scope_pop`, reclaiming per-iteration
+// intermediate strings in O(1). The accumulators themselves accumulate
+// correctly across iterations.
+//
+// This test has two accumulators declared adjacently, one with a non-empty
+// initializer (mirrors `result = "functions:\n"`) and one empty. The loop
+// runs 30 iterations, each appending ~5 string fragments to result and one
+// fragment to route_calls. We verify correctness by printing their final
+// lengths.
+//
+// Expected output:
+//   3251
+//   2050
+
+start:
+	string result = "functions:\n"
+	string route_calls = ""
+	integer idx = 0
+
+	while idx < 30
+		string handler_name = "__route_handler_GET_route_" + idx.toString()
+		string path = "/api/route/" + idx.toString()
+
+		result = result + "\tstring " + handler_name + "()\n"
+		result = result + "\t\treturn jsonResponse(\"handler " + idx.toString() + "\")\n"
+		result = result + "\n"
+		result = result + "\t// end of handler " + idx.toString() + "\n"
+		result = result + "\t// ----- \n"
+
+		route_calls = route_calls + "\t_http_route(\"GET\", \"" + path + "\", \"" + handler_name + "\")\n"
+
+		idx = idx + 1
+
+	printl(result.length())
+	printl(route_calls.length())

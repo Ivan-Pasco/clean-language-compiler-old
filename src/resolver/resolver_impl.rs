@@ -3230,6 +3230,28 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
+        // Host bridge arena scope push/pop — used by the HIR dual-accumulator
+        // rewrite (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE, fp b80c2f907c71).
+        // _arena_scope_push() -> integer : saves the current host arena alloc_offset
+        //   and returns a depth handle for the matching pop.
+        // _arena_scope_pop(handle: integer) -> void : rewinds the host arena to the
+        //   state before the matching push, reclaiming all LP-string intermediates
+        //   made in between in O(1).
+        // These are host bridge imports (env module), not native WASM stdlib.
+        // The host implementation lives in src/plugins/wasm_adapter.rs.
+        self.register_builtin_fn(
+            "_arena_scope_push",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "_arena_scope_pop",
+            vec![HirType::Integer],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+
         // Testing functions
         self.register_builtin_fn(
             "mustBeTrue",

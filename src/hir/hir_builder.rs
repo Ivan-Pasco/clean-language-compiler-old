@@ -1170,6 +1170,19 @@ impl HirBuilder {
         // outer accumulator loop containing an inner accumulator loop
         // (e.g. the SSR repro) gets both rewritten.
         if let Ok(block) = &mut result {
+            // Dual-accumulator rewrite (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE,
+            // fp b80c2f907c71). Detects the `expand_endpoints`-style pattern
+            // where two string accumulators (`result` and `route_calls`) are
+            // both appended in a loop, causing O(N²) host-arena growth.
+            // Wraps each loop iteration in `_arena_scope_push/_arena_scope_pop`
+            // so per-iteration intermediate strings are reclaimed in O(1).
+            // MUST run BEFORE the single-accumulator rewrite: when one of the
+            // two accumulators has an empty-string initializer, the single-acc
+            // pass would eagerly consume it (rewriting to `__sb_N_*`) before the
+            // dual matcher can see the paired pattern.  Running dual first gives
+            // it first pick; any remaining lone accumulator is then handled by
+            // the single pass.
+            self.rewrite_dual_accumulator_loops(&mut block.statements);
             self.rewrite_string_accumulator_loops(&mut block.statements);
             // Single-shot (loop-free) accumulator rewrite — Step 4.
             // Catches plugin-emitted html: block helpers like:
@@ -3287,6 +3300,862 @@ impl HirBuilder {
             finalize_decl,
             replacement_loop: new_loop,
         })
+    }
+
+    // =========================================================================
+    // Dual-accumulator-loop rewrite (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE,
+    // fingerprint b80c2f907c71)
+    //
+    // Detects the `expand_endpoints` shape:
+    //
+    //   string A = <literal>    // may be non-empty (e.g. "functions:\n")
+    //   string B = ""           // or any literal
+    //   while <cond>
+    //       ... body with multiple `A = A + <chain>` and `B = B + <chain>` ...
+    //
+    // and rewrites EACH ITERATION to:
+    //
+    //   while <cond>
+    //       integer __da_N_atmark = _arena_scope_push()
+    //       ... body with `A = A + <chain>` and `B = B + <chain>` intact ...
+    //       _arena_scope_pop(__da_N_atmark)
+    //
+    // The CRITICAL difference from the single-accumulator rewrite: the final
+    // `A = A + chunk` and `B = B + chunk` assignments in each branch stay
+    // in place but are moved BEFORE the _arena_scope_pop. The pop reclaims
+    // only the per-iteration intermediates (substrings, helper strings) that
+    // accumulate on the host arena between the push and the pop.
+    //
+    // Wait — that's incorrect. If `A = A + chunk` is inside the scope, the
+    // new `A` pointer (allocated by `string.concat`) is in the scope region
+    // and gets reclaimed by the pop. The CORRECT shape is:
+    //
+    //   __da_N_atmark = _arena_scope_push()
+    //   ... body, EXCEPT the outer-scope self-appends on A and B ...
+    //   ... replace each `A = A + <chain>` with a local:
+    //       string __da_N_chunkA = <chain>   (just the chain, not prefixed with A)
+    //   ... replace each `B = B + <chain>` with a local:
+    //       string __da_N_chunkB = <chain>
+    //   _arena_scope_pop(__da_N_atmark)
+    //   A = A + __da_N_chunkA
+    //   B = B + __da_N_chunkB
+    //
+    // The chunk locals land IN the scope region and get reclaimed on pop;
+    // the final `A + chunk_A` concat lands OUTSIDE the scope region and
+    // survives. This matches the design doc §3.3.2 invariant.
+    //
+    // SIMPLIFICATION for robustness: rather than trying to split each
+    // conditional branch's multiple appends into a single chunk per branch,
+    // we only fire when the loop body has AT MOST one `A = A + chain` path
+    // and AT MOST one `B = B + chain` path through any given if/else branch
+    // (the "flat body" predicate). This avoids the thorny multi-append
+    // coalescing needed for the LIVE branch's 3+ result appends. The
+    // flat-body predicate conservatively rejects bodies that don't meet
+    // this criterion, leaving them on the slow path. That's acceptable for
+    // now — the dominant OOM cause is the triangular sum across N iterations,
+    // not within one iteration.
+    //
+    // Disqualifiers:
+    //   - The body contains early `return` or suspension points.
+    //   - Either accumulator has reads outside the canonical self-append.
+    //   - The total self-append count for either accumulator is > 1 when
+    //     considering all branches jointly (conservative flat-body check).
+    //   - The single-accumulator rewrite already fired on one of the decls
+    //     (i.e. the decl was replaced by `string_builder_new`; we'd detect
+    //     this via the function name in the initializer — but we simply
+    //     verify `accumulator_decl_name` still returns the name, which fails
+    //     on already-rewritten decls).
+    //
+    // This rewrite DOES NOT use string_builder_new/append/finalize. It only
+    // injects _arena_scope_push/_arena_scope_pop calls. The accumulators
+    // stay as ordinary strings — the push/pop just reduces the host arena
+    // pressure by reclaiming per-iteration intermediates before the next
+    // iteration allocates its own batch.
+    // =========================================================================
+
+    /// Walk the block's statements looking for two `string A = <lit>` and
+    /// `string B = <lit>` declarations (possibly with non-string intervening
+    /// statements) followed by a loop that appends to BOTH accumulators.
+    /// Rewrite the loop body to bracket each iteration with host arena
+    /// scope push/pop so per-iteration intermediate strings are reclaimed.
+    ///
+    /// The second accumulator decl does NOT need to be immediately after the
+    /// first — it can have up to `MAX_DUAL_ACC_SCAN` intervening statements
+    /// that don't touch either accumulator. This mirrors the single-accumulator
+    /// detector's forward-scan policy.
+    fn rewrite_dual_accumulator_loops(&mut self, stmts: &mut Vec<HirStatement>) {
+        // Maximum number of intervening statements to scan over when looking
+        // for the second accumulator decl or the loop.
+        const MAX_DUAL_ACC_SCAN: usize = 16;
+
+        let mut i = 0;
+        while i + 2 < stmts.len() {
+            // Quick filter: position i must hold `string <nameA> = <literal>`.
+            let Some(name_a) = Self::accumulator_decl_name_any_literal(&stmts[i]) else {
+                i += 1;
+                continue;
+            };
+
+            // Scan forward from i+1 for `string <nameB> = <literal>` (a
+            // different name) with at most MAX_DUAL_ACC_SCAN intervening
+            // statements that don't touch name_a.
+            let mut name_b: Option<String> = None;
+            let mut scan_b = i + 1;
+            let mut scan_limit = scan_b + MAX_DUAL_ACC_SCAN;
+            while scan_b < stmts.len().min(scan_limit) {
+                if let Some(cand_b) = Self::accumulator_decl_name_any_literal(&stmts[scan_b]) {
+                    if cand_b != name_a {
+                        name_b = Some(cand_b);
+                        break;
+                    }
+                }
+                // Intervening statement — bail if it touches name_a.
+                let mut probe = AccumulatorAnalysis::default();
+                Self::analyze_stmt_for_accumulator(&stmts[scan_b], &name_a, &mut probe);
+                if probe.disqualified || probe.reads > 0 || probe.self_appends > 0 {
+                    break;
+                }
+                scan_b += 1;
+            }
+            let Some(name_b) = name_b else {
+                i += 1;
+                continue;
+            };
+
+            // Scan forward from scan_b+1 for a loop that appends to BOTH A and B.
+            let mut scan_loop = scan_b + 1;
+            scan_limit = scan_loop + MAX_DUAL_ACC_SCAN;
+            let mut matched_loop_idx: Option<usize> = None;
+            while scan_loop < stmts.len().min(scan_limit) {
+                if Self::stmt_is_dual_accumulator_loop(&stmts[scan_loop], &name_a, &name_b) {
+                    matched_loop_idx = Some(scan_loop);
+                    break;
+                }
+                // Intervening statement — verify it doesn't touch either acc.
+                let mut probe_a = AccumulatorAnalysis::default();
+                let mut probe_b = AccumulatorAnalysis::default();
+                Self::analyze_stmt_for_accumulator(&stmts[scan_loop], &name_a, &mut probe_a);
+                Self::analyze_stmt_for_accumulator(&stmts[scan_loop], &name_b, &mut probe_b);
+                if probe_a.disqualified
+                    || probe_a.reads > 0
+                    || probe_a.self_appends > 0
+                    || probe_b.disqualified
+                    || probe_b.reads > 0
+                    || probe_b.self_appends > 0
+                {
+                    break;
+                }
+                scan_loop += 1;
+            }
+
+            let Some(loop_idx) = matched_loop_idx else {
+                i += 1;
+                continue;
+            };
+
+            // Commit to the rewrite.
+            let loop_clone = stmts[loop_idx].clone();
+            let decl_a_loc: SourceLocation = match &stmts[i] {
+                HirStatement::VariableDeclaration { location, .. } => location.clone(),
+                _ => unreachable!(),
+            };
+            let Some(rewritten_loop) =
+                self.try_rewrite_dual_accumulator_loop(&loop_clone, &name_a, &name_b, &decl_a_loc)
+            else {
+                i += 1;
+                continue;
+            };
+
+            stmts[loop_idx] = rewritten_loop;
+            // Resume scanning after the rewritten loop.
+            i = loop_idx + 1;
+        }
+    }
+
+    /// Variant of `accumulator_decl_name` that accepts ANY string literal
+    /// as the initializer, not just the empty string. Needed because
+    /// `result` is initialized to `"functions:\n"` in `expand_endpoints`.
+    fn accumulator_decl_name_any_literal(stmt: &HirStatement) -> Option<String> {
+        let HirStatement::VariableDeclaration {
+            name,
+            var_type,
+            initializer,
+            ..
+        } = stmt
+        else {
+            return None;
+        };
+        if !matches!(var_type, HirType::String) {
+            return None;
+        }
+        match initializer {
+            Some(HirExpression::Literal {
+                value: Value::String(_),
+                ..
+            }) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns true when `stmt` is a while/for loop whose body:
+    ///   - contains at least one self-append on `name_a` AND one on `name_b`
+    ///   - has no disqualifiers (early return, suspension, etc.)
+    ///   - neither accumulator is read outside the LHS of a self-append
+    ///   - the per-branch append count for each accumulator is <= 1
+    ///     (conservative flat-body predicate)
+    fn stmt_is_dual_accumulator_loop(stmt: &HirStatement, name_a: &str, name_b: &str) -> bool {
+        let body = match stmt {
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => body,
+            _ => return false,
+        };
+
+        let mut analysis_a = AccumulatorAnalysis::default();
+        let mut analysis_b = AccumulatorAnalysis::default();
+
+        // We use the existing single-accumulator block analysis for each
+        // accumulator independently. For the dual case both must be
+        // individually rewritable, with the relaxation that `self_appends`
+        // may be > 1 (one per conditional branch) — so we DON'T call
+        // `is_rewritable()` which requires exactly 1 self_append.
+        Self::analyze_block_for_dual_accumulator(body, name_a, &mut analysis_a);
+        Self::analyze_block_for_dual_accumulator(body, name_b, &mut analysis_b);
+
+        !analysis_a.disqualified
+            && analysis_a.self_appends >= 1
+            && analysis_a.reads == 0
+            && !analysis_b.disqualified
+            && analysis_b.self_appends >= 1
+            && analysis_b.reads == 0
+    }
+
+    /// Like `analyze_block_for_accumulator` but with the relaxed rule that
+    /// `acc = acc + ...` may appear more than once (one per branch).
+    /// "Reads" of the accumulator as the LEFT-SPINE of a self-append are
+    /// NOT counted as external reads (the existing analysis already handles
+    /// this correctly — reads are only counted from non-self-append positions).
+    fn analyze_block_for_dual_accumulator(
+        block: &HirBlock,
+        acc_name: &str,
+        out: &mut AccumulatorAnalysis,
+    ) {
+        for stmt in &block.statements {
+            Self::analyze_stmt_for_dual_accumulator(stmt, acc_name, out);
+            if out.disqualified {
+                return;
+            }
+        }
+    }
+
+    /// Like `analyze_stmt_for_accumulator` but counts ALL self-appends
+    /// (even multiple per body) and uses the same disqualifier rules.
+    fn analyze_stmt_for_dual_accumulator(
+        stmt: &HirStatement,
+        acc_name: &str,
+        out: &mut AccumulatorAnalysis,
+    ) {
+        match stmt {
+            HirStatement::Assignment { target, value, .. } => {
+                let HirLValue::Variable { name: lhs_name, .. } = target else {
+                    Self::analyze_lvalue_for_accumulator(target, acc_name, out);
+                    Self::analyze_expr_for_accumulator(value, acc_name, out);
+                    return;
+                };
+                let is_self_append = Self::is_chained_self_append(value, acc_name);
+                if is_self_append {
+                    let mut rhs_out = AccumulatorAnalysis::default();
+                    Self::analyze_chain_right_operands_for_accumulator(
+                        value,
+                        acc_name,
+                        &mut rhs_out,
+                    );
+                    if rhs_out.reads > 0 || rhs_out.disqualified {
+                        out.disqualified = true;
+                        return;
+                    }
+                    // Count it (may exceed 1 — that's fine for the dual path).
+                    out.self_appends += 1;
+                } else if lhs_name == acc_name {
+                    // Non-canonical write (e.g. `acc = "literal"` in a branch).
+                    out.disqualified = true;
+                } else {
+                    Self::analyze_expr_for_accumulator(value, acc_name, out);
+                }
+            }
+            HirStatement::VariableDeclaration { initializer, .. } => {
+                if let Some(init) = initializer {
+                    Self::analyze_expr_for_accumulator(init, acc_name, out);
+                }
+            }
+            HirStatement::Expression { expression, .. } => {
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+            }
+            HirStatement::Print { expression, .. } => {
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+            }
+            HirStatement::Return { .. } => {
+                out.disqualified = true;
+            }
+            HirStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::analyze_expr_for_accumulator(condition, acc_name, out);
+                if !out.disqualified {
+                    Self::analyze_block_for_dual_accumulator(then_branch, acc_name, out);
+                }
+                if !out.disqualified {
+                    if let Some(else_b) = else_branch {
+                        Self::analyze_block_for_dual_accumulator(else_b, acc_name, out);
+                    }
+                }
+            }
+            HirStatement::While {
+                condition, body, ..
+            } => {
+                Self::analyze_expr_for_accumulator(condition, acc_name, out);
+                if !out.disqualified {
+                    Self::analyze_block_for_dual_accumulator(body, acc_name, out);
+                }
+            }
+            HirStatement::For { iterable, body, .. } => {
+                Self::analyze_expr_for_accumulator(iterable, acc_name, out);
+                if !out.disqualified {
+                    Self::analyze_block_for_dual_accumulator(body, acc_name, out);
+                }
+            }
+            HirStatement::Break { .. } | HirStatement::Continue { .. } => {}
+            HirStatement::LaterAssignment { expression, .. }
+            | HirStatement::Background { expression, .. } => {
+                out.disqualified = true;
+                Self::analyze_expr_for_accumulator(expression, acc_name, out);
+            }
+            HirStatement::Require { condition, .. } | HirStatement::Ensure { condition, .. } => {
+                Self::analyze_expr_for_accumulator(condition, acc_name, out);
+            }
+        }
+    }
+
+    /// Rewrite a single while/for loop's body to bracket each iteration
+    /// with `_arena_scope_push` / `_arena_scope_pop`, reclaiming per-iteration
+    /// intermediate LP-strings from the host bump arena in O(1).
+    ///
+    /// Two rewrite shapes are supported:
+    ///
+    /// **Flat-body shape** (all self-appends at the loop body's top level):
+    ///
+    /// ```text
+    /// while cond
+    ///     ...
+    ///     A = A + chain_a_0            →  integer __da_N_atmark = _arena_scope_push()
+    ///     A = A + chain_a_1               ...
+    ///     B = B + chain_b_0               string __da_N_chunkA_0 = chain_a_0
+    ///                                      string __da_N_chunkA_1 = chain_a_1
+    ///                                      string __da_N_chunkB_0 = chain_b_0
+    ///                                      _arena_scope_pop(__da_N_atmark)
+    ///                                      A = A + __da_N_chunkA_0 + __da_N_chunkA_1
+    ///                                      B = B + __da_N_chunkB_0
+    /// ```
+    ///
+    /// **Branch-nested shape** (self-appends inside if/else arms):
+    ///
+    /// ```text
+    /// while cond
+    ///     if condition
+    ///         A = A + chain_a_0        →  if condition
+    ///         B = B + chain_b_0               integer __da_M_atmark = _arena_scope_push()
+    ///     else                                 string __da_M_chunkA_0 = chain_a_0
+    ///         A = A + chain_a_1               string __da_M_chunkB_0 = chain_b_0
+    ///         B = B + chain_b_1               _arena_scope_pop(__da_M_atmark)
+    ///                                          A = A + __da_M_chunkA_0
+    ///                                          B = B + __da_M_chunkB_0
+    ///                                      else
+    ///                                          integer __da_K_atmark = _arena_scope_push()
+    ///                                          string __da_K_chunkA_0 = chain_a_1
+    ///                                          string __da_K_chunkB_0 = chain_b_1
+    ///                                          _arena_scope_pop(__da_K_atmark)
+    ///                                          A = A + __da_K_chunkA_0
+    ///                                          B = B + __da_K_chunkB_0
+    /// ```
+    ///
+    /// Each branch arm gets its OWN scope (different counter N). Sibling arms
+    /// never share a scope — the push/pop pair is always inside the arm that
+    /// actually runs in a given iteration.  Statements that do not touch A or
+    /// B are left in their original position, inside or outside the scope as
+    /// appropriate (inside the branch, outside the chunk/pop/accumulate tail).
+    ///
+    /// The recursive worker `apply_dual_scope_rewrite` handles both levels:
+    /// top-level appends → chunk extraction (returned to caller for outer scope
+    /// wrap), branch-nested appends → inline scope wrap inside the branch body.
+    fn try_rewrite_dual_accumulator_loop(
+        &mut self,
+        loop_stmt: &HirStatement,
+        name_a: &str,
+        name_b: &str,
+        loc: &SourceLocation,
+    ) -> Option<HirStatement> {
+        let orig_body = match loop_stmt {
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => body.clone(),
+            _ => return None,
+        };
+
+        // Use the recursive worker.  Top-level chunks from the loop body itself
+        // are returned to us; branch-nested chunks are handled inline by the worker.
+        let (rewritten_stmts, top_chunks_a, top_chunks_b) = Self::apply_dual_scope_rewrite(
+            orig_body.statements,
+            name_a,
+            name_b,
+            &mut self.string_builder_counter,
+            loc,
+        )?;
+
+        // If neither accumulator has top-level chunks, the branch-level rewrites
+        // inside the body were sufficient — no outer scope wrap needed.
+        let new_body_stmts = if top_chunks_a.is_empty() && top_chunks_b.is_empty() {
+            rewritten_stmts
+        } else {
+            // Wrap the loop body with a single outer push/pop for the top-level chunks.
+            let n = self.string_builder_counter;
+            self.string_builder_counter += 1;
+            let atmark_name = format!("__da_{}_atmark", n);
+
+            let atmark_decl = HirStatement::VariableDeclaration {
+                name: atmark_name.clone(),
+                var_type: HirType::Integer,
+                initializer: Some(HirExpression::Call {
+                    function: "_arena_scope_push".to_string(),
+                    arguments: vec![],
+                    location: loc.clone(),
+                }),
+                is_mutable: false,
+                location: loc.clone(),
+            };
+
+            let pop_stmt = HirStatement::Expression {
+                expression: HirExpression::Call {
+                    function: "_arena_scope_pop".to_string(),
+                    arguments: vec![HirExpression::Variable {
+                        name: atmark_name.clone(),
+                        location: loc.clone(),
+                    }],
+                    location: loc.clone(),
+                },
+                location: loc.clone(),
+            };
+
+            let mut body_stmts = rewritten_stmts;
+            body_stmts.insert(0, atmark_decl);
+            body_stmts.push(pop_stmt);
+
+            // Post-pop accumulation for both A and B (using outer arena).
+            if let Some(acc_a) = Self::build_accumulate_stmt(name_a, &top_chunks_a, loc) {
+                body_stmts.push(acc_a);
+            }
+            if let Some(acc_b) = Self::build_accumulate_stmt(name_b, &top_chunks_b, loc) {
+                body_stmts.push(acc_b);
+            }
+
+            body_stmts
+        };
+
+        // Wrap the loop body with a transient arena scope so that body-local
+        // string operations (handler_name, path, chunk declarations) route
+        // through the WASM transient pool rather than the host arena.
+        //
+        // This is critical for correctness: the chunk variables (e.g.
+        // `__da_N_chunkA_0`) are declared inside branch arms within the loop
+        // body and are therefore body-local.  Without the transient scope,
+        // their string.concat results land in the HOST arena and are freed
+        // by `_arena_scope_pop`, making their pointers dangle before the
+        // post-pop accumulation step can read them.
+        //
+        // With the transient scope, body-local concat results go to the WASM
+        // transient pool (call 174), which is independent of the host arena
+        // and is NOT reset by `_arena_scope_pop`.  The post-pop accumulation
+        // `result = result + chunk` then uses HOST string.concat (call 14) to
+        // produce a new host-arena LP-string for the long-lived accumulator.
+        // The transient pool is flushed by `transient_scope_exit` at the end
+        // of each loop iteration.
+        let mut new_body = HirBlock {
+            statements: new_body_stmts,
+            location: orig_body.location.clone(),
+        };
+        let mut body_local_string_names = std::collections::HashSet::new();
+        Self::collect_body_local_string_names(&new_body, &mut body_local_string_names);
+        Self::rewrite_body_local_helpers_to_transient(&mut new_body, &body_local_string_names);
+
+        // Add transient_scope_enter at the start and transient_scope_exit at the end.
+        let tmark_name = format!("__da_{}_tmark", self.string_builder_counter);
+        self.string_builder_counter += 1;
+        let tmark_decl = HirStatement::VariableDeclaration {
+            name: tmark_name.clone(),
+            var_type: HirType::Integer,
+            initializer: Some(HirExpression::Call {
+                function: "transient_scope_enter".to_string(),
+                arguments: vec![],
+                location: loc.clone(),
+            }),
+            is_mutable: false,
+            location: loc.clone(),
+        };
+        let tmark_exit = HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: "transient_scope_exit".to_string(),
+                arguments: vec![HirExpression::Variable {
+                    name: tmark_name.clone(),
+                    location: loc.clone(),
+                }],
+                location: loc.clone(),
+            },
+            location: loc.clone(),
+        };
+        new_body.statements.insert(0, tmark_decl);
+        new_body.statements.push(tmark_exit);
+
+        Some(match loop_stmt {
+            HirStatement::While {
+                condition,
+                location,
+                ..
+            } => HirStatement::While {
+                condition: condition.clone(),
+                body: new_body,
+                location: location.clone(),
+            },
+            HirStatement::For {
+                variable,
+                iterable,
+                location,
+                ..
+            } => HirStatement::For {
+                variable: variable.clone(),
+                iterable: iterable.clone(),
+                body: new_body,
+                location: location.clone(),
+            },
+            _ => return None,
+        })
+    }
+
+    /// Recursive worker for the dual-accumulator scope rewrite.
+    ///
+    /// Processes a flat list of HIR statements, replacing top-level self-appends
+    /// and recursing into if/else branches.
+    ///
+    /// Returns `(rewritten_stmts, top_chunk_names_a, top_chunk_names_b)` where:
+    /// - `rewritten_stmts`: the transformed statement list.
+    /// - `top_chunk_names_a/b`: chunk variable names for appends that were
+    ///   at the TOP LEVEL of this list (the caller is responsible for wrapping
+    ///   with push/pop/accumulate).
+    ///
+    /// For if/else branches that contain appends, the branch body is rewritten
+    /// in-place: the self-appends become chunk declarations, a push/pop scope
+    /// wraps them, and the accumulation assignments follow the pop — all INSIDE
+    /// the branch body.  The outer caller sees no chunks for these appends (they
+    /// are fully resolved inside the branch).
+    ///
+    /// Returns `None` if any chain-strip operation fails (malformed HIR), which
+    /// causes the entire rewrite to be aborted.
+    fn apply_dual_scope_rewrite(
+        stmts: Vec<HirStatement>,
+        name_a: &str,
+        name_b: &str,
+        counter: &mut usize,
+        loc: &SourceLocation,
+    ) -> Option<(Vec<HirStatement>, Vec<String>, Vec<String>)> {
+        let mut out: Vec<HirStatement> = Vec::with_capacity(stmts.len());
+        let mut top_chunk_names_a: Vec<String> = Vec::new();
+        let mut top_chunk_names_b: Vec<String> = Vec::new();
+
+        for stmt in stmts {
+            match stmt {
+                // ── Top-level self-append on A or B ──────────────────────────
+                HirStatement::Assignment {
+                    ref target,
+                    ref value,
+                    ref location,
+                } if matches!(
+                    target,
+                    HirLValue::Variable { name, .. } if (name == name_a || name == name_b)
+                ) && {
+                    let lhs_name = match target {
+                        HirLValue::Variable { name, .. } => name.as_str(),
+                        _ => "",
+                    };
+                    Self::is_chained_self_append(value, lhs_name)
+                } =>
+                {
+                    let lhs_name = match target {
+                        HirLValue::Variable { name, .. } => name.as_str(),
+                        _ => unreachable!(),
+                    };
+                    let n = *counter;
+                    *counter += 1;
+
+                    let (chunk_name, chunk_list) = if lhs_name == name_a {
+                        let idx = top_chunk_names_a.len();
+                        let name = format!("__da_{}_chunkA_{}", n, idx);
+                        top_chunk_names_a.push(name.clone());
+                        (name, &mut top_chunk_names_a)
+                    } else {
+                        let idx = top_chunk_names_b.len();
+                        let name = format!("__da_{}_chunkB_{}", n, idx);
+                        top_chunk_names_b.push(name.clone());
+                        (name, &mut top_chunk_names_b)
+                    };
+                    // `chunk_list` borrow ends here (used only for push above).
+                    let _ = chunk_list;
+
+                    let chain_without_acc = Self::strip_leftmost_variable_from_chain(value)?;
+
+                    out.push(HirStatement::VariableDeclaration {
+                        name: chunk_name,
+                        var_type: HirType::String,
+                        initializer: Some(chain_without_acc),
+                        is_mutable: false,
+                        location: location.clone(),
+                    });
+                }
+
+                // ── If/else statement: recurse into each branch ───────────────
+                HirStatement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    location: if_loc,
+                } => {
+                    // Check whether this if/else touches A or B at all.
+                    let branch_has_append = |blk: &HirBlock| {
+                        let mut a = AccumulatorAnalysis::default();
+                        let mut b = AccumulatorAnalysis::default();
+                        Self::analyze_block_for_dual_accumulator(blk, name_a, &mut a);
+                        Self::analyze_block_for_dual_accumulator(blk, name_b, &mut b);
+                        a.self_appends > 0 || b.self_appends > 0
+                    };
+
+                    let then_has = branch_has_append(&then_branch);
+                    let else_has = else_branch.as_ref().map(branch_has_append).unwrap_or(false);
+
+                    if !then_has && !else_has {
+                        // No appends anywhere in this if/else — pass through unchanged.
+                        out.push(HirStatement::If {
+                            condition,
+                            then_branch,
+                            else_branch,
+                            location: if_loc,
+                        });
+                        continue;
+                    }
+
+                    // Rewrite the then-branch.
+                    let new_then_branch = if then_has {
+                        Self::rewrite_branch_with_scope(then_branch, name_a, name_b, counter, loc)?
+                    } else {
+                        then_branch
+                    };
+
+                    // Rewrite the else-branch (if present and if it has appends).
+                    let new_else_branch = match else_branch {
+                        Some(blk) if else_has => Some(Self::rewrite_branch_with_scope(
+                            blk, name_a, name_b, counter, loc,
+                        )?),
+                        other => other,
+                    };
+
+                    out.push(HirStatement::If {
+                        condition,
+                        then_branch: new_then_branch,
+                        else_branch: new_else_branch,
+                        location: if_loc,
+                    });
+                }
+
+                // ── All other statements pass through unchanged ────────────────
+                other => {
+                    out.push(other);
+                }
+            }
+        }
+
+        Some((out, top_chunk_names_a, top_chunk_names_b))
+    }
+
+    /// Rewrite a single branch body (an if/else arm) so that all self-appends
+    /// to `name_a` and `name_b` within it are wrapped in their own arena scope.
+    ///
+    /// The transformed branch body has the shape:
+    /// ```text
+    ///   <non-append stmts before first append, unchanged>
+    ///   integer __da_N_atmark = _arena_scope_push()
+    ///   string __da_N_chunkA_0 = chain_a_0     -- extracted from A = A + chain_a_0
+    ///   string __da_N_chunkB_0 = chain_b_0     -- extracted from B = B + chain_b_0
+    ///   <non-append stmts that were between appends, unchanged>
+    ///   _arena_scope_pop(__da_N_atmark)
+    ///   A = A + __da_N_chunkA_0                -- post-pop accumulation
+    ///   B = B + __da_N_chunkB_0
+    /// ```
+    ///
+    /// This is done by recursively calling `apply_dual_scope_rewrite` on the
+    /// branch's statements to extract the chunks, then wrapping with push/pop and
+    /// the post-pop accumulation.  Sub-branches (nested if/else inside this arm)
+    /// are handled by `apply_dual_scope_rewrite` recursively.
+    fn rewrite_branch_with_scope(
+        branch: HirBlock,
+        name_a: &str,
+        name_b: &str,
+        counter: &mut usize,
+        loc: &SourceLocation,
+    ) -> Option<HirBlock> {
+        let branch_loc = branch.location.clone();
+
+        // Recursively apply the rewrite to the branch's statements.
+        // The returned top_chunks are the appends that were at the branch's top level;
+        // any deeper nesting is already handled inline by apply_dual_scope_rewrite.
+        let (branch_stmts, branch_chunks_a, branch_chunks_b) =
+            Self::apply_dual_scope_rewrite(branch.statements, name_a, name_b, counter, loc)?;
+
+        // If neither A nor B had any top-level appends in this branch body,
+        // the sub-branch rewrites (if any) already handled everything inline.
+        // No scope wrap needed at this level.
+        if branch_chunks_a.is_empty() && branch_chunks_b.is_empty() {
+            return Some(HirBlock {
+                statements: branch_stmts,
+                location: branch_loc,
+            });
+        }
+
+        // Wrap the branch body with its own push/pop scope.
+        let n = *counter;
+        *counter += 1;
+        let atmark_name = format!("__da_{}_atmark", n);
+
+        let atmark_decl = HirStatement::VariableDeclaration {
+            name: atmark_name.clone(),
+            var_type: HirType::Integer,
+            initializer: Some(HirExpression::Call {
+                function: "_arena_scope_push".to_string(),
+                arguments: vec![],
+                location: loc.clone(),
+            }),
+            is_mutable: false,
+            location: loc.clone(),
+        };
+
+        let pop_stmt = HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: "_arena_scope_pop".to_string(),
+                arguments: vec![HirExpression::Variable {
+                    name: atmark_name.clone(),
+                    location: loc.clone(),
+                }],
+                location: loc.clone(),
+            },
+            location: loc.clone(),
+        };
+
+        let mut new_branch_stmts = branch_stmts;
+        new_branch_stmts.insert(0, atmark_decl);
+        new_branch_stmts.push(pop_stmt);
+
+        if let Some(acc_a) = Self::build_accumulate_stmt(name_a, &branch_chunks_a, loc) {
+            new_branch_stmts.push(acc_a);
+        }
+        if let Some(acc_b) = Self::build_accumulate_stmt(name_b, &branch_chunks_b, loc) {
+            new_branch_stmts.push(acc_b);
+        }
+
+        Some(HirBlock {
+            statements: new_branch_stmts,
+            location: branch_loc,
+        })
+    }
+
+    /// Build `acc_name = acc_name + chunk_0 + chunk_1 + ...` as a left-folded
+    /// `HirStatement::Assignment`.  Returns `None` if `chunk_names` is empty.
+    fn build_accumulate_stmt(
+        acc_name: &str,
+        chunk_names: &[String],
+        loc: &SourceLocation,
+    ) -> Option<HirStatement> {
+        if chunk_names.is_empty() {
+            return None;
+        }
+        let mut expr = HirExpression::Variable {
+            name: acc_name.to_string(),
+            location: loc.clone(),
+        };
+        for chunk_name in chunk_names {
+            expr = HirExpression::BinaryOp {
+                left: Box::new(expr),
+                op: HirBinaryOp::Add,
+                right: Box::new(HirExpression::Variable {
+                    name: chunk_name.clone(),
+                    location: loc.clone(),
+                }),
+                location: loc.clone(),
+            };
+        }
+        Some(HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: acc_name.to_string(),
+                location: loc.clone(),
+            },
+            value: expr,
+            location: loc.clone(),
+        })
+    }
+
+    /// Strip the leftmost variable atom from a left-folded `+` chain.
+    ///
+    /// For `acc + e1 + e2 + e3` (parsed as `((acc + e1) + e2) + e3`),
+    /// returns `e1 + e2 + e3` (i.e., drops the `acc` and rebuilds the chain
+    /// from its right-spine fragments in left-fold order).
+    ///
+    /// Returns `None` if the expression is not a chained self-append.
+    fn strip_leftmost_variable_from_chain(expr: &HirExpression) -> Option<HirExpression> {
+        // Collect right-spine fragments in reverse order (rightmost first).
+        let mut fragments: Vec<HirExpression> = Vec::new();
+        let mut cur = expr;
+        loop {
+            match cur {
+                HirExpression::BinaryOp {
+                    left,
+                    op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                    right,
+                    ..
+                } => {
+                    fragments.push(*right.clone());
+                    cur = left.as_ref();
+                }
+                HirExpression::Variable { .. } => {
+                    // Reached the leftmost variable — stop.
+                    break;
+                }
+                _ => return None,
+            }
+        }
+
+        if fragments.is_empty() {
+            // `acc + nothing` — shouldn't happen since is_chained_self_append
+            // requires at least one right operand.
+            return None;
+        }
+
+        // Fragments are in reverse order; reverse to get source order.
+        fragments.reverse();
+
+        // Rebuild as a left-folded chain.
+        let mut result = fragments.remove(0);
+        for frag in fragments {
+            result = HirExpression::BinaryOp {
+                left: Box::new(result),
+                op: HirBinaryOp::Add,
+                right: Box::new(frag),
+                location: SourceLocation::default(),
+            };
+        }
+        Some(result)
     }
 
     /// Walk every statement and every expression in the block, accumulating

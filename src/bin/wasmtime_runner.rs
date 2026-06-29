@@ -999,6 +999,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    // Host bridge arena scope push/pop — used by the HIR dual-accumulator rewrite
+    // (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE).  The runner uses the same
+    // NEXT_ALLOCATION_OFFSET / SCOPE_MARKS infrastructure as mem_scope_push/pop.
+    //
+    // _arena_scope_push() -> i32 : saves current alloc offset, returns depth handle.
+    // _arena_scope_pop(handle: i32) -> void : rewinds to the saved offset at `handle`,
+    //   reclaiming all allocations made since the matching push.
+    linker.func_wrap(
+        "env",
+        "_arena_scope_push",
+        |mut caller: Caller<'_, ()>| -> i32 {
+            let host_offset = *NEXT_ALLOCATION_OFFSET.lock().unwrap();
+            let wasm_heap =
+                if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                    heap_global.get(&mut caller).i32().unwrap_or(0) as usize
+                } else {
+                    host_offset
+                };
+            let mark = host_offset.max(wasm_heap);
+            let mut marks = SCOPE_MARKS.lock().unwrap();
+            marks.push(mark);
+            marks.len() as i32
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "_arena_scope_pop",
+        |mut caller: Caller<'_, ()>, handle: i32| {
+            if handle <= 0 {
+                return;
+            }
+            let target_depth = (handle as usize).saturating_sub(1);
+            // Pop marks until we reach target_depth, saving the earliest
+            // saved offset (the one we will reset to).
+            let reset_to = {
+                let mut marks = SCOPE_MARKS.lock().unwrap();
+                let mut earliest: Option<usize> = None;
+                while marks.len() > target_depth {
+                    if let Some(mark) = marks.pop() {
+                        earliest = Some(mark);
+                    }
+                }
+                earliest
+            };
+            if let Some(mark) = reset_to {
+                *NEXT_ALLOCATION_OFFSET.lock().unwrap() = mark;
+                if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                    heap_global
+                        .set(&mut caller, wasmtime::Val::I32(mark as i32))
+                        .ok();
+                }
+            }
+        },
+    )?;
+
     // Add method-style function stubs
     linker.func_wrap(
         "env",
