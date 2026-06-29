@@ -1,0 +1,9 @@
+[plugin]
+name = "test.abi_stamp"
+version = "1.0.0"
+
+[compatibility]
+abi_version = "1.0.0"
+
+[handles]
+blocks = ["abi_stamp"]

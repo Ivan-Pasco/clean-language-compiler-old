@@ -1329,6 +1329,21 @@ impl MirCodeGenerator<'_> {
             module.section(&custom);
         }
 
+        // 10. clean.abi_version custom section — Plugin Contracts v2 Phase B.
+        // Emitted only for plugin builds (when abi_version was supplied via
+        // `set_abi_version`). Payload is the raw UTF-8 version string
+        // ("1.0.0"), with no length prefix or JSON wrapping — the loader
+        // (Phase B cycle 2) reads it directly as &str. Section name uses
+        // dotted form `clean.abi_version` per
+        // foundation/spec/plugins/contracts/runtime-abi.md §4.
+        if let Some(ref ver) = self.abi_version {
+            let custom = wasm_encoder::CustomSection {
+                name: std::borrow::Cow::Borrowed("clean.abi_version"),
+                data: std::borrow::Cow::Borrowed(ver.as_bytes()),
+            };
+            module.section(&custom);
+        }
+
         Ok(module.finish())
     }
 

@@ -1418,6 +1418,20 @@ async fn handle_compile(
         clean_language_compiler::set_target_host_class_override(None);
     }
     clean_language_compiler::set_strict_hosts_override(strict_hosts);
+
+    // Plugin Contracts v2 Phase B — when building a plugin, resolve the
+    // Clean Runtime ABI version from the sibling plugin.toml's
+    // [compatibility].abi_version (default 1.0.0) and stash it for the
+    // codegen stage to stamp into the WASM as a `clean.abi_version` custom
+    // section. Cleared for every other target so user-code builds carry no
+    // stamp per foundation/spec/plugins/contracts/runtime-abi.md §4
+    // ("user code doesn't get the stamp — it's plugin-specific").
+    if target.to_lowercase() == "plugin" {
+        let abi = clean_language_compiler::resolve_plugin_abi_version_for_path(Path::new(&input));
+        clean_language_compiler::set_plugin_abi_version_override(Some(abi));
+    } else {
+        clean_language_compiler::set_plugin_abi_version_override(None);
+    }
     if !output_config.quiet {
         let opt_desc = match opt_level {
             0 => "none (fastest compilation)",

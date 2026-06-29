@@ -296,6 +296,11 @@ pub struct MirCodeGenerator<'a> {
     /// so server-only bridge imports (`_db_query`, `_http_listen`, etc.) are never
     /// emitted into the browser module. See CLIENT_MODULE_LEAK.
     pub(super) client_mode: bool,
+
+    /// Clean Runtime ABI version to stamp into the WASM as a `clean.abi_version`
+    /// custom section. Only populated for plugin builds; when `None`, no stamp
+    /// is emitted. See `foundation/spec/plugins/contracts/runtime-abi.md` §4.
+    pub(super) abi_version: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +347,7 @@ impl MirCodeGenerator<'_> {
             host_class: None,
             strict_hosts: false,
             client_mode: false,
+            abi_version: None,
         }
     }
 
@@ -384,6 +390,7 @@ impl MirCodeGenerator<'_> {
             host_class: None,
             strict_hosts: false,
             client_mode: false,
+            abi_version: None,
         }
     }
 
@@ -426,7 +433,18 @@ impl MirCodeGenerator<'_> {
             host_class: None,
             strict_hosts: false,
             client_mode: false,
+            abi_version: None,
         }
+    }
+
+    /// Set the Clean Runtime ABI version to stamp into a plugin WASM as a
+    /// `clean.abi_version` custom section. Pass `None` to suppress the stamp
+    /// (default for non-plugin builds). See
+    /// `foundation/spec/plugins/contracts/runtime-abi.md` §4 for the contract.
+    /// Phase B emits the stamp only — the loader does not yet refuse mismatched
+    /// versions (that lands in Phase B cycle 2).
+    pub fn set_abi_version(&mut self, abi_version: Option<String>) {
+        self.abi_version = abi_version;
     }
 
     /// Set the compilation target.

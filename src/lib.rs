@@ -347,6 +347,28 @@ pub fn init_logging(level: &str) {
 thread_local! {
     static TARGET_HOST_CLASS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static STRICT_HOSTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Plugin Contracts v2 Phase B — when set, `compile_multi_file_with_memory_tier`
+    /// stamps the produced WASM with this Clean Runtime ABI version as a
+    /// `clean.abi_version` custom section. Set by `handle_compile` when the CLI
+    /// receives `--target=plugin`; cleared otherwise so user-code builds carry
+    /// no stamp. See foundation/spec/plugins/contracts/runtime-abi.md §4.
+    static PLUGIN_ABI_VERSION: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Plugin Contracts v2 Phase B — set the Clean Runtime ABI version to stamp
+/// into the next plugin WASM produced on this thread. Pass `None` to clear
+/// (subsequent compiles emit no stamp). The CLI populates this from the
+/// sibling `plugin.toml`'s `[compatibility].abi_version` when `--target=plugin`
+/// is set. See `foundation/spec/plugins/contracts/runtime-abi.md` §4.
+pub fn set_plugin_abi_version_override(abi_version: Option<String>) {
+    PLUGIN_ABI_VERSION.with(|cell| {
+        *cell.borrow_mut() = abi_version;
+    });
+}
+
+/// Read the active plugin ABI version override for the current thread, if any.
+pub fn plugin_abi_version_override() -> Option<String> {
+    PLUGIN_ABI_VERSION.with(|cell| cell.borrow().clone())
 }
 
 /// Set the bridge-host-class override for the current thread.
@@ -1513,6 +1535,16 @@ pub fn compile_with_target(
         mir_codegen.set_bridge_functions(source_bridges);
     }
 
+    // Plugin Contracts v2 Phase B — stamp the Clean Runtime ABI version into
+    // the WASM as a `clean.abi_version` custom section, sourced from the
+    // sibling `plugin.toml`'s `[compatibility].abi_version` (default 1.0.0).
+    // Only plugin builds are stamped; user-code builds get no stamp.
+    // See foundation/spec/plugins/contracts/runtime-abi.md §4.
+    if matches!(target, CompilationTarget::Plugin) {
+        let abi = resolve_plugin_abi_version(std::path::Path::new(file_path));
+        mir_codegen.set_abi_version(Some(abi));
+    }
+
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 
     crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
@@ -1799,6 +1831,55 @@ pub fn discover_plugin_manifests<P: AsRef<std::path::Path>>(
 /// above its entry but no `src/` segment between them, nothing
 /// happens — the function bails out silently. The framework's pattern
 /// is the only one this fires on.
+/// Plugin Contracts v2 Phase B — resolve the Clean Runtime ABI version to
+/// stamp into a plugin WASM build. Reads `[compatibility].abi_version` from
+/// the sibling `plugin.toml` (searched at the same locations as
+/// `extend_with_source_plugin_bridges`), falling back to
+/// `DEFAULT_RUNTIME_ABI_VERSION` when the manifest is absent, unparseable, or
+/// omits the field. Returns the string the codegen will write verbatim into
+/// the `clean.abi_version` custom section.
+/// See `foundation/spec/plugins/contracts/runtime-abi.md` §4–§5.
+pub fn resolve_plugin_abi_version_for_path(entry_path: &std::path::Path) -> String {
+    resolve_plugin_abi_version(entry_path)
+}
+
+fn resolve_plugin_abi_version(entry_path: &std::path::Path) -> String {
+    use plugins::plugin_abi::DEFAULT_RUNTIME_ABI_VERSION;
+
+    let parent = match entry_path.parent() {
+        Some(p) => p,
+        None => return DEFAULT_RUNTIME_ABI_VERSION.to_string(),
+    };
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    candidates.push(parent.join("plugin.toml"));
+    if parent.file_name().and_then(|n| n.to_str()) == Some("src") {
+        if let Some(grand) = parent.parent() {
+            candidates.push(grand.join("plugin.toml"));
+        }
+    }
+
+    let manifest_path = match candidates.into_iter().find(|p| p.is_file()) {
+        Some(p) => p,
+        None => return DEFAULT_RUNTIME_ABI_VERSION.to_string(),
+    };
+
+    let source = match std::fs::read_to_string(&manifest_path) {
+        Ok(s) => s,
+        Err(_) => return DEFAULT_RUNTIME_ABI_VERSION.to_string(),
+    };
+
+    let manifest: plugins::plugin_abi::PluginManifest = match toml::from_str(&source) {
+        Ok(m) => m,
+        Err(_) => return DEFAULT_RUNTIME_ABI_VERSION.to_string(),
+    };
+
+    manifest
+        .compatibility
+        .abi_version
+        .unwrap_or_else(|| DEFAULT_RUNTIME_ABI_VERSION.to_string())
+}
+
 fn extend_with_source_plugin_bridges(
     entry_path: &std::path::Path,
     bridge_functions: &mut Vec<plugins::BridgeFunction>,
@@ -2855,6 +2936,15 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     mir_codegen.set_strict_hosts(strict);
     mir_codegen.set_client_mode(client_mode);
 
+    // Plugin Contracts v2 Phase B — when the CLI signalled a plugin build,
+    // stamp the resolved Clean Runtime ABI version (per sibling plugin.toml,
+    // or DEFAULT_RUNTIME_ABI_VERSION) into the WASM. The loader will check
+    // this in Phase B cycle 2; for now it's a passive tag.
+    // See foundation/spec/plugins/contracts/runtime-abi.md §4.
+    if let Some(abi) = plugin_abi_version_override() {
+        mir_codegen.set_abi_version(Some(abi));
+    }
+
     let codegen_result = mir_codegen.generate(mir_result.program)?;
 
     // Validate the generated WASM before handing it off. If codegen ever
@@ -3231,6 +3321,11 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
     mir_codegen.set_strict_hosts(strict);
+    // Plugin Contracts v2 Phase B — release path must also stamp ABI version
+    // when the CLI signalled a plugin build.
+    if let Some(abi) = plugin_abi_version_override() {
+        mir_codegen.set_abi_version(Some(abi));
+    }
     let codegen_result = mir_codegen.generate(mir_result.program)?;
     crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
         .map_err(|e| vec![e])?;
