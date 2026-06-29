@@ -1,25 +1,16 @@
 //! Plugin Contracts v2 Phase B cycle 3 — `[[artifacts]]` manifest declaration.
 //!
-//! Phase B in this repo ships the v2 manifest READ path and the partial
-//! emission path: `[[artifacts]]` entries parse into `PluginArtifact`,
-//! `evaluate_required_when` consults them, and `from_module =
-//! "client_only_build"` triggers a nested compile that lands a real
-//! frontend.wasm in the build manifest. The other artifact sources
-//! (`from_module = "manifest"`, `static_path = ...`, and the WASM-export
-//! callback used by `static_asset` purposes like compiled CSS) currently
-//! return `UnsupportedSource` and are SKIPPED — the entries never reach
-//! `build-manifest.json`. See `src/plugin_artifacts.rs::emit_artifact_bytes`
-//! (Phase B comments cite "Phase C follow-up commit") and the spec at
-//! `foundation/spec/plugins/contracts/artifacts.md` §3.
-//!
-//! Consequence for cycle 3: the only assertion we can make end-to-end about
-//! a plugin declaring `manifest` + `static_asset` artifacts is at the
-//! manifest-PARSE level. The "artifacts land in build-manifest.json"
-//! assertion is gated until Phase C lands the remaining emitters; that
-//! gap is tracked via report_error.
+//! Phase C closed the gap: the artifact emitters for `purpose = "manifest"`
+//! and `purpose = "static_asset"` now produce real files, so a plugin
+//! declaring those purposes lands its entries in `build-manifest.json`
+//! alongside `client_hydration` artifacts. See
+//! `src/plugin_artifacts.rs::emit_artifact_bytes` and the spec at
+//! `foundation/spec/plugins/contracts/artifacts.md` §3-§6.
 
+use clean_language_compiler::plugin_artifacts::{orchestrate, EmitContext};
 use clean_language_compiler::plugins::plugin_abi::{ArtifactSource, PluginManifest};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cln/plugins/artifacts_v2")
@@ -103,22 +94,62 @@ fn build_manifest_schema_is_emitted_for_user_code_compiles() {
     );
 }
 
-// Spec-vs-impl gap: `manifest` and `static_asset` artifact emitters return
-// UnsupportedSource in Phase B (src/plugin_artifacts.rs:189-211), so a
-// plugin declaring those purposes ends up with EMPTY artifact list in
-// build-manifest.json — the entries are silently skipped with a tracing
-// warning. The assertion below would document the intended end-state
-// (entries surface in the manifest) but cannot pass until Phase C lands
-// the remaining emitters. Re-enable when the report below is closed.
-//
-// Tracked as compiler bug — see report_error MCP call from cycle 3.
+/// Phase C: load the fixture plugin.toml, run the artifact orchestrator
+/// directly, and assert both declared artifacts reach the EmittedArtifact
+/// list with the correct purpose, path, and bytes — which is exactly what
+/// main.rs serializes into build-manifest.json.
 #[test]
-#[ignore = "Phase C: artifact emitters for `manifest` + `static_asset` purposes return UnsupportedSource (src/plugin_artifacts.rs:189-211)"]
 fn declared_artifacts_appear_in_build_manifest_json() {
-    // When Phase C lands the manifest + callback emitters, drive a real
-    // compile against `tests/cln/plugins/artifacts_v2/` and assert the
-    // two declared entries reach build-manifest.json with their declared
-    // purposes. The infrastructure (orchestrate_artifacts + manifest
-    // emission) already exists — only the emit_artifact_bytes branches
-    // need filling in.
+    let m = load_manifest();
+    let mut manifests = HashMap::new();
+    manifests.insert("test.artifacts_v2".to_string(), m);
+
+    // build_state mimics what `test.artifacts_v2`'s expand_block would push
+    // during compilation. The emitters look up scoped keys
+    // `<plugin>.<artifact_name>`.
+    let mut state = std::collections::BTreeMap::new();
+    state.insert(
+        "test.artifacts_v2.components.json".to_string(),
+        r#"{"button":"button_render"}"#.to_string(),
+    );
+    state.insert(
+        "test.artifacts_v2.theme.css".to_string(),
+        ":root { --primary: #4a90e2; }".to_string(),
+    );
+
+    let output_dir = PathBuf::from("/tmp/dist-artifacts-v2-test");
+    let ctx = EmitContext {
+        entry_path: Path::new("/tmp/whatever.cln"),
+        output_dir: &output_dir,
+        opt_level: 2,
+        in_nested_build: false,
+        build_state: state,
+        plugin_dirs: Default::default(),
+    };
+
+    let (emitted, warnings) = orchestrate(&manifests, &ctx).expect("orchestrate ok");
+    assert!(warnings.is_empty(), "no warnings expected: {:?}", warnings);
+    assert_eq!(emitted.len(), 2, "both declared artifacts must be emitted");
+
+    let manifest_art = emitted
+        .iter()
+        .find(|a| a.name == "components.json")
+        .expect("manifest artifact missing from emitted list");
+    assert_eq!(manifest_art.purpose, "manifest");
+    assert_eq!(manifest_art.path_relative, "components.json");
+    assert_eq!(manifest_art.source_plugin, "test.artifacts_v2");
+    // Per artifacts.md §4.3 the manifest is JSON — round-trip to prove it.
+    let parsed: serde_json::Value = serde_json::from_slice(&manifest_art.bytes)
+        .expect("manifest artifact bytes must be valid JSON");
+    assert_eq!(parsed["button"], "button_render");
+
+    let css_art = emitted
+        .iter()
+        .find(|a| a.name == "theme.css")
+        .expect("static_asset artifact missing from emitted list");
+    assert_eq!(css_art.purpose, "static_asset");
+    assert_eq!(css_art.path_relative, "theme.css");
+    assert_eq!(css_art.content_type, "text/css");
+    assert!(css_art.public);
+    assert_eq!(css_art.bytes, b":root { --primary: #4a90e2; }");
 }

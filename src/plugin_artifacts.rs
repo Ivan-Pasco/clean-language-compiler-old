@@ -9,11 +9,15 @@
 //!
 //! Phase C coverage:
 //! - Predicates: `"always"`, `"never"`, `"has_client_init"`,
-//!   `"has_lifecycle.<slot>"`, `"has_artifact.<name>"`.
-//! - Sources: `from_module = "client_only_build"` (the BUILD_FRONTEND closure).
-//!   Other sources surface a clear "not supported in this phase" warning and
-//!   are skipped. Callback emission and `manifest` auto-generation land in
-//!   follow-up commits.
+//!   `"has_lifecycle.<slot>"`, `"has_artifact.<name>"`, `"has_build_state.<key>"`.
+//! - Sources:
+//!   - `from_module = "client_only_build"` — nested client build (BUILD_FRONTEND).
+//!   - `from_module = "manifest"` — JSON aggregated from build_state under the
+//!     scoped key `<source_plugin>.<artifact_name>` (or `manifest.<name>`).
+//!   - `static_path = "<file>"` — file copy from the plugin's installed dir.
+//!   - `emit = "<callback>"` (callback source) — bytes read from build_state
+//!     under `<source_plugin>.<artifact_name>` (plugin populates during expand).
+//!   - `from_module = "server_only_build"` still returns UnsupportedSource.
 //! - Cycle detection: refuses `from_module = "client_only_build"` when the
 //!   active build is itself a client build.
 
@@ -152,15 +156,39 @@ pub struct EmitContext<'a> {
     /// `BTreeMap::new()` when the state is unavailable — the predicate
     /// safely degrades to false. (ARTIFACT_PREDICATE_NO_BUILD_STATE)
     pub build_state: std::collections::BTreeMap<String, String>,
+    /// Resolved on-disk directory for each loaded plugin, keyed by plugin
+    /// name. Used to resolve `static_path` relative file references per
+    /// `artifacts.md` §2/§6. Empty when the build is running outside the
+    /// installed-plugin tree (unit tests, embedded use) — static_path
+    /// emission then falls back to a warning with an empty file.
+    pub plugin_dirs: std::collections::HashMap<String, PathBuf>,
 }
 
 /// Produce bytes for a single artifact according to its declared source.
 ///
-/// Phase C: only `from_module = "client_only_build"` is implemented. All
-/// other sources return `UnsupportedSource` so the caller can log and skip.
-/// Phase D closes the gap.
+/// `source_plugin` is the name of the plugin whose manifest declares this
+/// artifact — used to scope `build_state` lookups and resolve `static_path`
+/// against `ctx.plugin_dirs`.
+///
+/// Phase C coverage:
+/// - `from_module = "client_only_build"` → nested client build.
+/// - `from_module = "manifest"` (purpose: `manifest`) → JSON aggregated from
+///   `build_state` entries the plugin populated during `expand_block`
+///   (see artifacts.md §4.3, §6). Lookup key:
+///   `<source_plugin>.<artifact_name>` first, then `manifest.<artifact_name>`.
+///   When neither is present, emit `{}` with a warning so a declared-but-
+///   unpopulated manifest is a plugin-author signal, not a build failure.
+/// - `static_path` (no `emit` field) → file copy from the plugin's installed
+///   directory (resolved through `ctx.plugin_dirs`).
+/// - `emit = "<callback>"` (`ArtifactSource::Callback`) used for
+///   `static_asset` purposes → read pre-computed bytes from `build_state`
+///   under `<source_plugin>.<artifact_name>` (plugins push content there
+///   from `expand_block`). Empty file + warning on miss.
+///
+/// Other sources still return `UnsupportedSource`.
 pub fn emit_artifact_bytes(
     artifact: &PluginArtifact,
+    source_plugin: &str,
     ctx: &EmitContext,
 ) -> Result<Vec<u8>, ArtifactError> {
     match &artifact.emit {
@@ -191,24 +219,145 @@ pub fn emit_artifact_bytes(
                 reason: "from_module = \"server_only_build\" lands in a Phase C follow-up commit"
                     .to_string(),
             }),
-            "manifest" => Err(ArtifactError::UnsupportedSource {
-                artifact: artifact.name.clone(),
-                reason: "from_module = \"manifest\" lands in a Phase C follow-up commit"
-                    .to_string(),
-            }),
+            "manifest" => Ok(emit_manifest_bytes(artifact, source_plugin, ctx)),
             other => Err(ArtifactError::UnsupportedSource {
                 artifact: artifact.name.clone(),
                 reason: format!("unknown from_module value: {:?}", other),
             }),
         },
-        Some(ArtifactSource::Callback(_)) => Err(ArtifactError::UnsupportedSource {
-            artifact: artifact.name.clone(),
-            reason: "emit callback (WASM export) lands in a Phase C follow-up commit".to_string(),
-        }),
-        None => Err(ArtifactError::UnsupportedSource {
-            artifact: artifact.name.clone(),
-            reason: "static_path source lands in a Phase C follow-up commit".to_string(),
-        }),
+        Some(ArtifactSource::Callback(_)) => Ok(emit_static_asset_from_build_state(
+            artifact,
+            source_plugin,
+            ctx,
+        )),
+        None => {
+            // No `emit` field — spec §2 requires either `emit` or `static_path`.
+            if let Some(static_path) = artifact.static_path.as_deref() {
+                Ok(emit_static_asset_from_path(
+                    artifact,
+                    source_plugin,
+                    static_path,
+                    ctx,
+                ))
+            } else {
+                Err(ArtifactError::UnsupportedSource {
+                    artifact: artifact.name.clone(),
+                    reason: "artifact declares neither `emit` nor `static_path` (artifacts.md §2)"
+                        .to_string(),
+                })
+            }
+        }
+    }
+}
+
+/// Emit a `purpose = "manifest"` artifact by serializing build_state.
+///
+/// Lookup order:
+/// 1. `<source_plugin>.<artifact_name>` — plugin-scoped, recommended.
+/// 2. `manifest.<artifact_name>` — legacy/shared bucket.
+///
+/// If a value is present, it is written verbatim (plugins are responsible
+/// for producing valid JSON). If absent, emit `{}` + warning so a misspelt
+/// build_state key surfaces during build but doesn't fail the build.
+/// (ARTIFACT_MANIFEST_EMPTY_SOURCE)
+fn emit_manifest_bytes(
+    artifact: &PluginArtifact,
+    source_plugin: &str,
+    ctx: &EmitContext,
+) -> Vec<u8> {
+    let scoped = format!("{}.{}", source_plugin, artifact.name);
+    let fallback = format!("manifest.{}", artifact.name);
+    if let Some(v) = ctx.build_state.get(&scoped) {
+        return v.as_bytes().to_vec();
+    }
+    if let Some(v) = ctx.build_state.get(&fallback) {
+        return v.as_bytes().to_vec();
+    }
+    tracing::warn!(
+        target: "plugin_contracts_v2",
+        artifact = %artifact.name,
+        plugin = %source_plugin,
+        scoped_key = %scoped,
+        fallback_key = %fallback,
+        "ARTIFACT_MANIFEST_EMPTY_SOURCE: manifest-purpose artifact `{}` declared by `{}` has no build_state entry under `{}` or `{}` — writing empty JSON object",
+        artifact.name,
+        source_plugin,
+        scoped,
+        fallback,
+    );
+    b"{}".to_vec()
+}
+
+/// Emit a `purpose = "static_asset"` artifact whose `emit = "<callback>"`
+/// declaration points at a plugin-pushed `build_state` entry (the callback
+/// name is conventional — the bytes themselves live in
+/// `<source_plugin>.<artifact_name>` per `[[artifacts]]` orchestration).
+///
+/// On miss: empty bytes + warning.
+/// (ARTIFACT_STATIC_ASSET_EMPTY_SOURCE)
+fn emit_static_asset_from_build_state(
+    artifact: &PluginArtifact,
+    source_plugin: &str,
+    ctx: &EmitContext,
+) -> Vec<u8> {
+    let key = format!("{}.{}", source_plugin, artifact.name);
+    if let Some(v) = ctx.build_state.get(&key) {
+        return v.as_bytes().to_vec();
+    }
+    tracing::warn!(
+        target: "plugin_contracts_v2",
+        artifact = %artifact.name,
+        plugin = %source_plugin,
+        key = %key,
+        "ARTIFACT_STATIC_ASSET_EMPTY_SOURCE: static_asset artifact `{}` declared by `{}` has no build_state entry under `{}` — writing empty file",
+        artifact.name,
+        source_plugin,
+        key,
+    );
+    Vec::new()
+}
+
+/// Emit a `static_path` artifact by copying a file shipped inside the
+/// plugin's installed directory (resolved via `ctx.plugin_dirs`).
+///
+/// On missing plugin dir or missing source file: empty bytes + warning.
+/// (ARTIFACT_STATIC_PATH_MISSING_SOURCE)
+fn emit_static_asset_from_path(
+    artifact: &PluginArtifact,
+    source_plugin: &str,
+    static_path: &str,
+    ctx: &EmitContext,
+) -> Vec<u8> {
+    let Some(dir) = ctx.plugin_dirs.get(source_plugin) else {
+        tracing::warn!(
+            target: "plugin_contracts_v2",
+            artifact = %artifact.name,
+            plugin = %source_plugin,
+            static_path = %static_path,
+            "ARTIFACT_STATIC_PATH_MISSING_SOURCE: plugin directory for `{}` not registered in EmitContext.plugin_dirs — cannot resolve static_path `{}` for artifact `{}` (writing empty file)",
+            source_plugin,
+            static_path,
+            artifact.name,
+        );
+        return Vec::new();
+    };
+    let resolved = dir.join(static_path);
+    match std::fs::read(&resolved) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(
+                target: "plugin_contracts_v2",
+                artifact = %artifact.name,
+                plugin = %source_plugin,
+                resolved = %resolved.display(),
+                error = %e,
+                "ARTIFACT_STATIC_PATH_MISSING_SOURCE: static_path source `{}` for artifact `{}` could not be read ({}) — writing empty file",
+                resolved.display(),
+                artifact.name,
+                e,
+            );
+            Vec::new()
+        }
     }
 }
 
@@ -237,7 +386,7 @@ pub fn orchestrate(
             ) {
                 continue;
             }
-            match emit_artifact_bytes(artifact, ctx) {
+            match emit_artifact_bytes(artifact, plugin_name, ctx) {
                 Ok(bytes) => {
                     let resolved_path =
                         resolve_output_relative(&artifact.output_relative, ctx.output_dir);
@@ -362,7 +511,9 @@ mod tests {
             name: "frontend.wasm".to_string(),
             purpose: "client_hydration".to_string(),
             emit: Some(ArtifactSource::Module {
-                from_module: "manifest".to_string(), // unsupported in Phase C
+                // server_only_build still returns UnsupportedSource — Phase C
+                // landed manifest + static_asset emitters but not this one.
+                from_module: "server_only_build".to_string(),
             }),
             static_path: None,
             output_relative: "{output_dir}/frontend.wasm".to_string(),
@@ -402,12 +553,13 @@ mod tests {
             opt_level: 2,
             in_nested_build: false,
             build_state: Default::default(),
+            plugin_dirs: Default::default(),
         };
         let (emitted, warnings) =
             orchestrate(&manifests, &ctx).expect("orchestrate should not hard-error");
         assert!(
             emitted.is_empty(),
-            "manifest source unsupported in Phase C — no artifact bytes expected"
+            "server_only_build source still unsupported — no artifact bytes expected"
         );
         assert!(
             warnings.iter().any(|w| w.contains("frontend.wasm")),
@@ -450,6 +602,7 @@ mod tests {
             opt_level: 2,
             in_nested_build: false,
             build_state: Default::default(),
+            plugin_dirs: Default::default(),
         };
         let (emitted, warnings) = orchestrate(&manifests, &ctx).expect("orchestrate ok");
         assert!(emitted.is_empty(), "no artifacts when predicate false");
@@ -653,13 +806,87 @@ mod tests {
             opt_level: 2,
             in_nested_build: true,
             build_state: Default::default(),
+            plugin_dirs: Default::default(),
         };
-        let err = emit_artifact_bytes(&artifact, &ctx).expect_err("must reject");
+        let err = emit_artifact_bytes(&artifact, "test.plugin", &ctx).expect_err("must reject");
         matches!(err, ArtifactError::BuildCycle { .. });
     }
 
     #[test]
     fn test_emit_unsupported_source_returns_clear_error() {
+        // server_only_build is still unsupported in Phase C.
+        let artifact = PluginArtifact {
+            name: "backend.wasm".to_string(),
+            purpose: "client_hydration".to_string(),
+            emit: Some(ArtifactSource::Module {
+                from_module: "server_only_build".to_string(),
+            }),
+            static_path: None,
+            output_relative: "{output_dir}/backend.wasm".to_string(),
+            required_when: "always".to_string(),
+            public: false,
+            cache: "build_input_hash".to_string(),
+            content_type: None,
+        };
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/whatever.cln"),
+            output_dir: Path::new("/tmp/dist"),
+            opt_level: 2,
+            in_nested_build: false,
+            build_state: Default::default(),
+            plugin_dirs: Default::default(),
+        };
+        let err = emit_artifact_bytes(&artifact, "test.plugin", &ctx).expect_err("must error");
+        let msg = format!("{}", err);
+        assert!(msg.contains("PLUGIN-ARTIFACT-UNSUPPORTED"));
+        assert!(msg.contains("backend.wasm"));
+        assert!(msg.contains("server_only_build"));
+    }
+
+    /// Phase C: `purpose = "manifest"` reads `build_state` for the
+    /// canonical scoped key and writes those bytes verbatim.
+    #[test]
+    fn test_emit_manifest_purpose_reads_build_state() {
+        let artifact = PluginArtifact {
+            name: "components.json".to_string(),
+            purpose: "manifest".to_string(),
+            emit: Some(ArtifactSource::Module {
+                from_module: "manifest".to_string(),
+            }),
+            static_path: None,
+            output_relative: "{output_dir}/components.json".to_string(),
+            required_when: "always".to_string(),
+            public: false,
+            cache: "build_input_hash".to_string(),
+            content_type: None,
+        };
+        let mut state = std::collections::BTreeMap::new();
+        state.insert(
+            "frame.ui.components.json".to_string(),
+            r#"{"button":"button_render"}"#.to_string(),
+        );
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/x.cln"),
+            output_dir: Path::new("/tmp/dist"),
+            opt_level: 2,
+            in_nested_build: false,
+            build_state: state,
+            plugin_dirs: Default::default(),
+        };
+        let bytes = emit_artifact_bytes(&artifact, "frame.ui", &ctx).expect("manifest emits");
+        let s = String::from_utf8(bytes).unwrap();
+        assert_eq!(s, r#"{"button":"button_render"}"#);
+        // Round-trip as JSON to prove the emitter writes valid bytes.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&s).expect("emitter output must be valid JSON");
+        assert_eq!(parsed["button"], "button_render");
+    }
+
+    /// Phase C: when no build_state entry matches, the manifest emitter
+    /// produces `{}` and a warning, NOT a hard error. Surfaces the
+    /// ARTIFACT_MANIFEST_EMPTY_SOURCE diagnostic shape for log searches.
+    #[test]
+    fn test_emit_manifest_purpose_missing_source_writes_empty_object() {
         let artifact = PluginArtifact {
             name: "components.json".to_string(),
             purpose: "manifest".to_string(),
@@ -674,16 +901,166 @@ mod tests {
             content_type: None,
         };
         let ctx = EmitContext {
-            entry_path: Path::new("/tmp/whatever.cln"),
+            entry_path: Path::new("/tmp/x.cln"),
             output_dir: Path::new("/tmp/dist"),
             opt_level: 2,
             in_nested_build: false,
             build_state: Default::default(),
+            plugin_dirs: Default::default(),
         };
-        let err = emit_artifact_bytes(&artifact, &ctx).expect_err("must error");
-        let msg = format!("{}", err);
-        assert!(msg.contains("PLUGIN-ARTIFACT-UNSUPPORTED"));
-        assert!(msg.contains("components.json"));
-        assert!(msg.contains("manifest"));
+        let bytes = emit_artifact_bytes(&artifact, "frame.ui", &ctx).expect("not a hard error");
+        assert_eq!(bytes, b"{}");
+    }
+
+    /// Phase C: `purpose = "static_asset"` with `emit = "<callback>"` reads
+    /// the plugin-pushed value out of `build_state` under
+    /// `<plugin>.<artifact_name>` and writes it as the file bytes.
+    #[test]
+    fn test_emit_static_asset_from_build_state() {
+        let artifact = PluginArtifact {
+            name: "theme.css".to_string(),
+            purpose: "static_asset".to_string(),
+            emit: Some(ArtifactSource::Callback("emit_theme_css".to_string())),
+            static_path: None,
+            output_relative: "{output_dir}/theme.css".to_string(),
+            required_when: "always".to_string(),
+            public: true,
+            cache: "build_input_hash".to_string(),
+            content_type: Some("text/css".to_string()),
+        };
+        let mut state = std::collections::BTreeMap::new();
+        state.insert(
+            "frame.ui.theme.css".to_string(),
+            ":root { --color-primary: #4a90e2; }".to_string(),
+        );
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/x.cln"),
+            output_dir: Path::new("/tmp/dist"),
+            opt_level: 2,
+            in_nested_build: false,
+            build_state: state,
+            plugin_dirs: Default::default(),
+        };
+        let bytes = emit_artifact_bytes(&artifact, "frame.ui", &ctx).expect("static asset emits");
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            ":root { --color-primary: #4a90e2; }"
+        );
+    }
+
+    /// Phase C: `purpose = "static_asset"` with `static_path = "<file>"`
+    /// copies the file from the plugin's installed directory.
+    #[test]
+    fn test_emit_static_asset_from_static_path_copies_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plugin_dir = tmp.path().join("plugin");
+        std::fs::create_dir_all(plugin_dir.join("assets")).unwrap();
+        std::fs::write(plugin_dir.join("assets/theme.css"), b"body{margin:0}").unwrap();
+
+        let artifact = PluginArtifact {
+            name: "theme.css".to_string(),
+            purpose: "static_asset".to_string(),
+            emit: None,
+            static_path: Some("assets/theme.css".to_string()),
+            output_relative: "{output_dir}/theme.css".to_string(),
+            required_when: "always".to_string(),
+            public: true,
+            cache: "build_input_hash".to_string(),
+            content_type: Some("text/css".to_string()),
+        };
+        let mut plugin_dirs = HashMap::new();
+        plugin_dirs.insert("frame.ui".to_string(), plugin_dir);
+
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/x.cln"),
+            output_dir: Path::new("/tmp/dist"),
+            opt_level: 2,
+            in_nested_build: false,
+            build_state: Default::default(),
+            plugin_dirs,
+        };
+        let bytes = emit_artifact_bytes(&artifact, "frame.ui", &ctx).expect("file copy emits");
+        assert_eq!(bytes, b"body{margin:0}");
+    }
+
+    /// Phase C: orchestrate-end-to-end. A plugin declaring BOTH a manifest
+    /// and a static_asset artifact reaches the EmittedArtifact list with the
+    /// correct `path_relative` (relative to output_dir, per artifacts.md §5).
+    /// This is the assertion the previously-ignored
+    /// `declared_artifacts_appear_in_build_manifest_json` test was waiting
+    /// on — verified at the orchestrate boundary because the main.rs
+    /// build-manifest serialization is a thin pass-through from the
+    /// EmittedArtifact list.
+    #[test]
+    fn test_orchestrate_emits_manifest_and_static_asset_with_relative_paths() {
+        let mut declarer = manifest_with_lifecycle("test.artifacts_v2", PluginLifecycle::default());
+        declarer.artifacts.push(PluginArtifact {
+            name: "components.json".to_string(),
+            purpose: "manifest".to_string(),
+            emit: Some(ArtifactSource::Module {
+                from_module: "manifest".to_string(),
+            }),
+            static_path: None,
+            output_relative: "{output_dir}/components.json".to_string(),
+            required_when: "always".to_string(),
+            public: false,
+            cache: "build_input_hash".to_string(),
+            content_type: None,
+        });
+        declarer.artifacts.push(PluginArtifact {
+            name: "theme.css".to_string(),
+            purpose: "static_asset".to_string(),
+            emit: Some(ArtifactSource::Callback("emit_theme_css".to_string())),
+            static_path: None,
+            output_relative: "{output_dir}/theme.css".to_string(),
+            required_when: "always".to_string(),
+            public: true,
+            cache: "build_input_hash".to_string(),
+            content_type: Some("text/css".to_string()),
+        });
+
+        let mut manifests = HashMap::new();
+        manifests.insert("test.artifacts_v2".to_string(), declarer);
+
+        let mut state = std::collections::BTreeMap::new();
+        state.insert(
+            "test.artifacts_v2.components.json".to_string(),
+            r#"{"x":1}"#.to_string(),
+        );
+        state.insert(
+            "test.artifacts_v2.theme.css".to_string(),
+            "body{}".to_string(),
+        );
+
+        let output_dir = PathBuf::from("/tmp/dist-test-orchestrate");
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/x.cln"),
+            output_dir: &output_dir,
+            opt_level: 2,
+            in_nested_build: false,
+            build_state: state,
+            plugin_dirs: Default::default(),
+        };
+
+        let (emitted, warnings) = orchestrate(&manifests, &ctx).expect("orchestrate ok");
+        assert!(warnings.is_empty(), "no warnings expected: {:?}", warnings);
+        assert_eq!(emitted.len(), 2, "both artifacts must be emitted");
+
+        let m = emitted
+            .iter()
+            .find(|a| a.name == "components.json")
+            .unwrap();
+        assert_eq!(m.purpose, "manifest");
+        // path_relative must be relative to output_dir (artifacts.md §5),
+        // i.e. just the file name — not the absolute resolved path.
+        assert_eq!(m.path_relative, "components.json");
+        assert_eq!(m.bytes, b"{\"x\":1}");
+
+        let s = emitted.iter().find(|a| a.name == "theme.css").unwrap();
+        assert_eq!(s.purpose, "static_asset");
+        assert_eq!(s.path_relative, "theme.css");
+        assert!(s.public);
+        assert_eq!(s.content_type, "text/css");
+        assert_eq!(s.bytes, b"body{}");
     }
 }

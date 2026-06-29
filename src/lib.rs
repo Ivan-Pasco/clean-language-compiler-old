@@ -1801,6 +1801,37 @@ pub fn discover_plugin_manifests<P: AsRef<std::path::Path>>(
     registry.loaded_manifests().clone()
 }
 
+/// Plugin Contracts v2 — discover the on-disk installed directory for each
+/// loaded plugin keyed by plugin name. Pairs with `discover_plugin_manifests`
+/// for static-path artifact resolution per `artifacts.md` §2/§6.
+///
+/// Returns an empty map on any error (no plugins, loader failure, etc.) so
+/// callers can degrade gracefully — a missing entry surfaces as a per-artifact
+/// warning rather than a hard build failure.
+pub fn discover_plugin_dirs<P: AsRef<std::path::Path>>(
+    entry_path: P,
+) -> std::collections::HashMap<String, std::path::PathBuf> {
+    let entry_source = match std::fs::read_to_string(entry_path.as_ref()) {
+        Ok(src) => src,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
+    if plugin_names.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    let loader = match plugins::WasmPluginLoader::new() {
+        Ok(l) => l,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let mut out = std::collections::HashMap::new();
+    for name in &plugin_names {
+        if let Ok(dir) = loader.plugin_dir(name) {
+            out.insert(name.clone(), dir);
+        }
+    }
+    out
+}
+
 /// Extend the resolver's bridge-function set with declarations from the
 /// source plugin manifest when one is being built.
 ///

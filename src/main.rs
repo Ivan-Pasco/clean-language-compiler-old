@@ -1138,6 +1138,7 @@ fn orchestrate_artifacts(
             opt_level,
             in_nested_build: false,
             build_state: build_state.clone(),
+            plugin_dirs: clean_language_compiler::discover_plugin_dirs(input),
         };
 
         match clean_language_compiler::plugin_artifacts::orchestrate(&loaded_manifests, &ctx) {

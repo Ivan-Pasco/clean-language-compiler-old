@@ -287,6 +287,14 @@ impl WasmPluginLoader {
             .map_err(|e| anyhow!("Failed to build plugin registry: {}", e))
     }
 
+    /// Resolve the on-disk directory for a loaded plugin. Public companion of
+    /// `find_plugin_dir`, used by `discover_plugin_dirs` so artifact
+    /// orchestration can resolve `static_path` references per
+    /// `artifacts.md` §2/§6.
+    pub fn plugin_dir(&self, name: &str) -> Result<PathBuf> {
+        self.find_plugin_dir(name)
+    }
+
     /// Find the plugin directory, respecting .active-version pin if present
     fn find_plugin_dir(&self, name: &str) -> Result<PathBuf> {
         let plugin_base = self.plugins_dir.join(name);

@@ -1508,3 +1508,93 @@ All audit-derived items are now either fixed, filed as cross-component prompts,
 or documented as intentional drift with the developer's explicit decision.
 
 The audit is closed.
+
+---
+
+## COM001 follow-up — stale stack-mismatch from pre-Phase-C session (2026-06-29)
+
+**Status:** TRACKED. Dev-queue entries deferred from Phase C `--skip-dev-queue` landing.
+
+Two dev-queue entries fingerprint `ba21b72c94101332` and `f05aa5dc4856c97c` were
+captured during the Phase C artifact-emitter landing pre-flight:
+
+- Both: COM001 — `generated WebAssembly is invalid: type mismatch: values
+  remaining on stack at end of block; section=code, function=func[233]`.
+- Offsets: `0x4bbb` (19387) and `0x4ba7` (19367). Adjacent — same function,
+  same instruction class, one byte apart in the emitted code section.
+- Compiler that captured them: **0.30.400** (we are now on 0.30.401+).
+- Source field: `main.cln` (no path), occurrences=1 each.
+- First/last seen: identical instant 2026-06-29T19:42:10Z — single session.
+- Dev reason: `dev build: /Users/earcandy/.../clean-language-compiler/target/debug/cln`.
+
+### Investigation
+
+Could not reproduce post-landing. The path-less `main.cln` source field offers
+no usable repro, and the dev-build that produced the traps was the 0.30.400
+debug binary which has been superseded. The byte pattern near the offset
+(`20 01 28 02 00 10 e8 01 0b 07 00 20 00 ac 10 0f`) is consistent with an
+integer-to-string conversion call followed by a stale `i32` left on the stack
+before block end — `0x10 0xe8 0x01` is `call func 232`, `0x0b` is `end`, then
+the next block starts with `0x07 0x00` (a `try` body?) and `0x20 0x00`
+(`local.get 0`) before another `call`. The two adjacent offsets suggest the
+same codegen path emitted two slightly-different functions back-to-back.
+
+Hypothesis: the trap was hit by an in-session test compile of a fixture that
+exercised an integer-to-string conversion (`toString`/`int_to_string` host
+import) inside a control-flow block — likely from cross-compiles of frame.*
+plugin sources during the C3-C5 + C7 work. The bug is plausibly the same
+class as the historic "stack balance in type conversions" fragility called
+out in [KNOWLEDGE.md](./KNOWLEDGE.md).
+
+### Action
+
+- Leave the dev-queue entries **in place** so a fresh reproduction (which will
+  carry a real source path) can attach to the same fingerprint and increment
+  the occurrence count. A stale single-occurrence entry that never recurs is
+  cheap; a cleared entry that resurfaces under a different fingerprint is
+  expensive to triage.
+- Add to the post-plan cleanup batch: a sweep of integer-to-string codegen
+  paths in `src/codegen/mod.rs` and `src/codegen/mir_codegen/instructions.rs`
+  for stack-balance invariants under nested control flow.
+- If the entries persist across the next two compiler releases without a new
+  occurrence, mark them stale and clear.
+
+---
+
+## SEM007 follow-up — frame.data test_expand.cln calls plugin-only function (2026-06-29)
+
+**Status:** CROSS-COMPONENT. NOT a compiler bug. Tracked here so the dev-queue
+sweep can re-attribute it.
+
+Dev-queue entry `2426d9b5f7f0cd4d` records SEM007 (`Function 'expand_block'
+not found`) at
+`/Users/earcandy/Documents/Dev/Clean Language/clean-framework/plugins/frame.data/tests/test_expand.cln`.
+Occurrences: 2 — first 2026-06-29T22:06:36Z, last 2026-06-29T22:06:53Z.
+
+### Investigation
+
+The file exists, predates this session (mtime 2026-06-26), and calls
+`expand_block(...)` as a top-level function. `expand_block` is a plugin export
+(WASM function the plugin manifest declares via `[handles].blocks`), not a
+global Clean Language function. The compiler **correctly** rejects the
+reference — there is no global symbol of that name to resolve against. The
+dev-queue auto-capture fires because the cwd matches `clean-framework/`, but
+the bug is in the test file's setup, not the compiler.
+
+Re-tested on 0.30.401 just before this commit: still reproduces. The compiler
+behaviour is correct; the test file needs to either (a) import the plugin and
+call through it, or (b) move into the plugin's source tree as a unit test
+that targets the plugin's internal `expand_block`. This is an issue for
+frame.data, not the compiler.
+
+### Action
+
+- Component re-attribution: this is frame.data, not compiler. The dev-queue
+  recorder's "source inside component tree" heuristic mis-assigned it because
+  the source path is inside `clean-framework/`, but the `clean-framework/`
+  workflow owns it.
+- Filed via `report_error` against `component = "frame.data"` from the
+  framework agent's next session — recorded here for traceability.
+- Leave the entry in the dev-queue with a note in the post-plan cleanup batch
+  to re-tag it when component-tagging is supported in the recorder.
+
