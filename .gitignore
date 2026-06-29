@@ -4,6 +4,10 @@ language-server/target/
 **/*.rs.bk
 Cargo.lock
 
+# Proptest regression cache (local, not for VCS)
+**/proptest-regressions
+*.proptest-regressions
+
 # IDE files
 .vscode/
 .idea/

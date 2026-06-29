@@ -85,6 +85,34 @@ fn run_wasm(wasm_path: &PathBuf) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
+/// Pull the actual program stdout from the wasmtime_runner wrapped output.
+///
+/// `wasmtime_runner` decorates the program's output with banner lines:
+/// ```text
+/// 🚀 Loading WebAssembly file: …
+/// 📦 File size: … bytes
+/// ✅ WebAssembly module loaded successfully
+/// 📋 Exported functions: […]
+/// 🎯 Executing start function...
+/// --- Output ---
+/// <program stdout here>--- End Output ---
+/// ✅ Execution completed successfully!
+/// ```
+/// Asserting against the full output catches the wrapper banners and breaks
+/// trivially. Extract the substring between the `--- Output ---\n` opener
+/// and `--- End Output ---` closer; if either marker is missing, fall back
+/// to the raw output so the assertion's failure message stays informative.
+fn extract_program_output(raw: &str) -> String {
+    let Some(start) = raw.find("--- Output ---\n") else {
+        return raw.to_string();
+    };
+    let body_start = start + "--- Output ---\n".len();
+    let Some(end_rel) = raw[body_start..].find("--- End Output ---") else {
+        return raw[body_start..].to_string();
+    };
+    raw[body_start..body_start + end_rel].to_string()
+}
+
 /// Escape an arbitrary string for safe embedding inside a Clean Language double-quoted
 /// string literal. Mirrors the minimum subset of RFC 8259 the generated JSON literals
 /// need.
@@ -164,10 +192,16 @@ r#"start:
 
         let label = format!("idempotent_{}", values.len());
         let wasm = compile_source_to_wasm(&source, &label);
-        let out = run_wasm(&wasm);
+        let raw = run_wasm(&wasm);
+        let out = extract_program_output(&raw);
 
+        // Cannot use `trim_end()` here — the strategy generates strings that
+        // may end in whitespace, and trimming the program output before the
+        // ends_with check would falsely reject them. The print() + form
+        // appends one trailing '\n' that we strip explicitly.
+        let trimmed = out.strip_suffix('\n').unwrap_or(&out);
         prop_assert!(
-            out.trim_end().ends_with(&expected),
+            trimmed.ends_with(&expected),
             "json.get must be idempotent: expected trailing {expected:?}, got {out:?}"
         );
     }
@@ -200,10 +234,14 @@ r#"start:
 
         let label = format!("index_{}", values.len());
         let wasm = compile_source_to_wasm(&source, &label);
-        let out = run_wasm(&wasm);
+        let raw = run_wasm(&wasm);
+        let out = extract_program_output(&raw);
 
+        // Same trailing-whitespace concern as prop_json_get_is_idempotent —
+        // strip only the single trailing newline emitted by `print(…) +`.
+        let trimmed = out.strip_suffix('\n').unwrap_or(&out);
         prop_assert!(
-            out.trim_end().ends_with(&expected),
+            trimmed.ends_with(&expected),
             "json.get index {last_index} must select that element: expected {expected:?}, got {out:?}"
         );
     }
@@ -235,7 +273,8 @@ r#"start:
 
         let label = format!("roundtrip_{}_{}", key.len(), value.len());
         let wasm = compile_source_to_wasm(&source, &label);
-        let out = run_wasm(&wasm);
+        let raw = run_wasm(&wasm);
+        let out = extract_program_output(&raw);
 
         prop_assert!(
             out.contains(&key) && out.contains(&value),
