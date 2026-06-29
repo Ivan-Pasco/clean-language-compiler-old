@@ -90,7 +90,7 @@ fn locate_abi_section(bytes: &[u8]) -> Option<(usize, usize)> {
 /// Patch the `clean.abi_version` payload in-place. `new_payload` MUST have
 /// the same byte length as the existing payload so the section's size ULEB
 /// stays valid without re-encoding.
-fn patch_abi_payload_same_length(bytes: &mut Vec<u8>, new_payload: &[u8]) {
+fn patch_abi_payload_same_length(bytes: &mut [u8], new_payload: &[u8]) {
     let payload_range = Parser::new(0)
         .parse_all(bytes)
         .flatten()
