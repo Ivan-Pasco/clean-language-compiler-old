@@ -1856,8 +1856,19 @@ impl WasmPluginAdapter {
                 let state = caller.data_mut();
                 // Push current alloc_offset onto the mark stack.
                 let _mark = state.arena_mark();
-                // Return the new depth as the opaque handle (>= 1).
-                state.arena_marks.len() as i32
+                let depth = state.arena_marks.len() as i32;
+                // Trace-level: high-volume in hot loops, gated by trace filter.
+                // The framework session needs this to confirm the bridges
+                // actually fire inside the loop (vs. just being emitted as
+                // WASM imports that never get called).
+                tracing::trace!(
+                    target: "compiler::plugins::arena",
+                    event = "scope_push",
+                    handle = depth,
+                    alloc_offset_at_push = state.alloc_offset,
+                    "arena scope push",
+                );
+                depth
             },
         )?;
 
@@ -1876,6 +1887,8 @@ impl WasmPluginAdapter {
                 }
                 let target_depth = (handle as usize).saturating_sub(1);
                 let state = caller.data_mut();
+                let alloc_offset_before = state.alloc_offset;
+                let depth_before = state.arena_marks.len();
                 // Pop marks until we reach the depth at the time of the push.
                 // In the happy path exactly one mark is popped. The loop
                 // handles mis-matched push/pop gracefully (e.g. plugin trap
@@ -1891,6 +1904,19 @@ impl WasmPluginAdapter {
                         }
                     }
                 }
+                // Trace-level: emit reclaim trajectory so Bug A's diagnosis
+                // can see whether mark/reset actually shrinks the arena.
+                tracing::trace!(
+                    target: "compiler::plugins::arena",
+                    event = "scope_pop",
+                    handle = handle,
+                    alloc_offset_before = alloc_offset_before,
+                    alloc_offset_after = state.alloc_offset,
+                    bytes_reclaimed = alloc_offset_before.saturating_sub(state.alloc_offset),
+                    depth_before = depth_before,
+                    depth_after = state.arena_marks.len(),
+                    "arena scope pop",
+                );
             },
         )?;
 
@@ -2717,6 +2743,16 @@ impl WasmPluginAdapter {
     /// To match string literals in the plugin, we must find and reuse the
     /// existing string pointers from the plugin's data section.
     fn call_expand(&self, block: &FrameworkBlock) -> Result<Vec<Statement>> {
+        // Entry-level telemetry: emit BEFORE doing any work so the framework
+        // session can observe the trajectory even if the call traps later.
+        tracing::debug!(
+            target: "compiler::plugins::arena",
+            block = block.name.trim_end_matches(':'),
+            entry = "call_expand",
+            plugin = %self.name,
+            "plugin arena: expand-block entry",
+        );
+
         let mut store = self.create_store();
         let linker = self.get_linker()?;
 
@@ -2984,6 +3020,14 @@ impl WasmPluginAdapter {
     ///
     /// This version preserves the start function if the plugin generates one
     fn call_expand_full(&self, block: &FrameworkBlock) -> Result<PluginExpansion> {
+        tracing::debug!(
+            target: "compiler::plugins::arena",
+            block = block.name.trim_end_matches(':'),
+            entry = "call_expand_full",
+            plugin = %self.name,
+            "plugin arena: expand-block entry",
+        );
+
         let mut store = self.create_store();
         let linker = self.get_linker()?;
 
@@ -3383,6 +3427,15 @@ impl WasmPluginAdapter {
         export_name: &str,
         context: &crate::plugins::BuildContext,
     ) -> Result<PluginExpansion> {
+        tracing::debug!(
+            target: "compiler::plugins::arena",
+            slot = slot_name,
+            export = export_name,
+            entry = "call_lifecycle_slot_v2",
+            plugin = %self.name,
+            "plugin arena: lifecycle-slot entry",
+        );
+
         let mut store = self.create_store();
         let linker = self.get_linker()?;
 
@@ -4095,6 +4148,49 @@ struct PluginState {
     /// after the trap is reported and prepends the structured diagnostic.
     /// See COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE (fp b80c2f907c71).
     oom_during_call: Option<String>,
+}
+
+/// Emit arena telemetry on every store drop — including trap/error paths.
+///
+/// The success-path telemetry sites at `call_expand` / `call_expand_full` /
+/// `call_lifecycle_slot_v2` only fire after `Ok(_)` returns. If the WASM
+/// call traps (e.g. host bridge OOM at memory.grow, OOB on the page-boundary
+/// corruption, scope_pop with a stale handle), the `?` operator propagates
+/// the error and those sites are skipped. The framework session observed
+/// this directly at 0.30.396: a 24,511-line `RUST_LOG=debug` log of an N=24
+/// expand_endpoints trap with zero matches for `arena|alloc_offset|peak`.
+///
+/// `Drop` fires unconditionally — even on panic unwind. So this is where
+/// we anchor the always-emit arena trajectory record. Success-path sites
+/// keep their extra context (block name, structured exit reason) but the
+/// Drop record is the lower bound on observability.
+///
+/// Safety: `tracing::debug!` is safe in `Drop` — it does not allocate on
+/// the failure path (the macro is a pre-formatted span emission), and on
+/// the success path any allocation failure is swallowed by `tracing` itself.
+impl Drop for PluginState {
+    fn drop(&mut self) {
+        // Skip the trivial no-allocation case — a PluginState that never
+        // saw a bridge call is just initial state. Keeps logs clean for
+        // test harnesses that instantiate state but never run anything.
+        if self.peak_alloc_offset == 524288 && self.arena_marks.is_empty() {
+            return;
+        }
+        let oom_marker = self
+            .oom_during_call
+            .as_deref()
+            .map(|s| s.chars().take(120).collect::<String>())
+            .unwrap_or_default();
+        tracing::debug!(
+            target: "compiler::plugins::arena",
+            peak_bytes = self.peak_alloc_offset,
+            stable_zone_end = self.stable_zone_end,
+            final_alloc_offset = self.alloc_offset,
+            arena_marks_depth = self.arena_marks.len(),
+            oom_during_call = %oom_marker,
+            "plugin arena: store drop (covers both success and trap paths)",
+        );
+    }
 }
 
 impl PluginState {
