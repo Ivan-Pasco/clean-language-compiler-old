@@ -1,0 +1,11 @@
+// Calling the server-only bridge `_db_query` from a build whose host class
+// is "browser" must produce a BRIDGE-HOST-MISMATCH diagnostic. Same file
+// compiled with host class "server" must produce none. See
+// foundation/spec/plugins/contracts/bridge-host-classes.md §6.
+
+external:
+	string _db_query(string sql, string params)
+
+start:
+	string result = _db_query("SELECT 1", "{}")
+	printl(result)

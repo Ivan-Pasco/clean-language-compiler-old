@@ -1,0 +1,3 @@
+functions:
+	string expand_block(string name, string attrs, string body)
+		return body

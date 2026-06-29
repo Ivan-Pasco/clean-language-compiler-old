@@ -1,0 +1,9 @@
+functions:
+	string expand_block(string name, string attrs, string body)
+		return body
+
+	string emit_helpers(string context_json)
+		return "{\"statements\": \"\"}"
+
+	string emit_program_init(string context_json)
+		return "{\"statements\": \"\"}"

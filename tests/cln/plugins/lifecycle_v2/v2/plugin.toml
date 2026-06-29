@@ -1,0 +1,19 @@
+[plugin]
+name = "test.lifecycle_v2"
+version = "1.0.0"
+description = "v2 plugin (declares [lifecycle]) — pairs with the v1 variant for Phase B equivalence tests. See foundation/spec/plugins/contracts/lifecycle.md §2."
+
+[compatibility]
+abi_version = "1.0.0"
+
+[handles]
+blocks = ["lifecycle_v2_block"]
+
+[lifecycle]
+# Phase B opts the plugin into the v2 dispatch path. The slot exports
+# themselves (module_helpers, program_init) are declared here but the
+# compiler-side slot caller lands in Phase C — Phase B only proves the
+# manifest fields parse and `opts_into_v2()` flips correctly.
+module_helpers = "emit_helpers"
+module_helpers_are_roots = true
+program_init = "emit_program_init"

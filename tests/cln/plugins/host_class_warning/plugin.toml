@@ -1,0 +1,12 @@
+[plugin]
+name = "test.host_class_warning"
+version = "1.0.0"
+description = "Plugin declaring a server-only bridge — used to verify the codegen-side BRIDGE-HOST-MISMATCH check fires when the active build targets the browser. See foundation/spec/plugins/contracts/bridge-host-classes.md §6."
+
+[handles]
+blocks = ["host_class_warning_block"]
+
+[bridge]
+functions = [
+  { name = "_db_query", params = ["string", "string"], returns = "string", expand_strings = true, hosts = ["server"], description = "Server-only query bridge used to provoke BRIDGE-HOST-MISMATCH in browser builds." },
+]

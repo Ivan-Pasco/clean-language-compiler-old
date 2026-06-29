@@ -1,0 +1,7 @@
+[plugin]
+name = "test.lifecycle_v1"
+version = "1.0.0"
+description = "v1 plugin (no [lifecycle]) — pairs with the v2 variant for Phase B equivalence tests."
+
+[handles]
+blocks = ["lifecycle_v1_block"]

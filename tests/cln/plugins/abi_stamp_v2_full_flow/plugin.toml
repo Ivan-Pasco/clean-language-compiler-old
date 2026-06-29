@@ -1,0 +1,10 @@
+[plugin]
+name = "test.abi_stamp_v2_full_flow"
+version = "1.0.0"
+description = "End-to-end Phase B regression guard — cycle 1 emitter stamp + cycle 2 loader acceptance must agree."
+
+[compatibility]
+abi_version = "1.0.0"
+
+[handles]
+blocks = ["abi_stamp_v2_full_flow_block"]

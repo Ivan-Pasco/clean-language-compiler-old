@@ -1,0 +1,27 @@
+[plugin]
+name = "test.artifacts_v2"
+version = "1.0.0"
+description = "Phase B [[artifacts]] manifest declaration — see foundation/spec/plugins/contracts/artifacts.md §2."
+
+[compatibility]
+abi_version = "1.0.0"
+
+[handles]
+blocks = ["artifacts_v2_block"]
+
+[[artifacts]]
+name = "components.json"
+purpose = "manifest"
+emit = { from_module = "manifest" }
+output_relative = "{output_dir}/components.json"
+required_when = "always"
+public = false
+
+[[artifacts]]
+name = "theme.css"
+purpose = "static_asset"
+emit = "emit_theme_css"
+output_relative = "{output_dir}/theme.css"
+required_when = "always"
+public = true
+content_type = "text/css"
