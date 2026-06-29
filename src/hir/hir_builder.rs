@@ -3383,7 +3383,7 @@ impl HirBuilder {
     /// first — it can have up to `MAX_DUAL_ACC_SCAN` intervening statements
     /// that don't touch either accumulator. This mirrors the single-accumulator
     /// detector's forward-scan policy.
-    fn rewrite_dual_accumulator_loops(&mut self, stmts: &mut Vec<HirStatement>) {
+    fn rewrite_dual_accumulator_loops(&mut self, stmts: &mut [HirStatement]) {
         // Maximum number of intervening statements to scan over when looking
         // for the second accumulator decl or the loop.
         const MAX_DUAL_ACC_SCAN: usize = 16;
