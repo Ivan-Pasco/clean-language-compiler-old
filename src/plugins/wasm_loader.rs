@@ -645,9 +645,34 @@ mod tests {
         use std::sync::mpsc;
         use wasmtime::{Module, Store, TypedFunc};
 
-        // Build the same engine the production loader uses (epoch
-        // interruption enabled + ticker running).
-        let engine = build_engine().expect("build engine");
+        // Build an isolated engine with epoch interruption enabled.
+        // We do NOT call `build_engine()` here because that function routes
+        // through `EPOCH_TICKER_STARTED`, a process-wide `Once` guard that
+        // starts the ticker against whichever engine is created first.
+        // Under parallel test execution another test may create its own
+        // engine first, leaving this test's engine without a ticker and
+        // causing the 10-second `recv_timeout` to fire.
+        //
+        // Instead we build the engine directly and spawn a test-local
+        // ticker thread that increments THIS engine's epoch — fully isolated
+        // from the production ticker singleton.
+        let mut cfg = wasmtime::Config::new();
+        cfg.epoch_interruption(true);
+        let engine = wasmtime::Engine::new(&cfg).expect("build epoch engine");
+
+        // Spawn a dedicated ticker for this test's engine. The thread is a
+        // daemon (it exits when the test process ends) and ticks every
+        // EPOCH_TICK_MS ms, matching the production cadence.
+        {
+            let ticker_engine = engine.clone();
+            std::thread::Builder::new()
+                .name("epoch-deadline-trap-test-ticker".into())
+                .spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(EPOCH_TICK_MS));
+                    ticker_engine.increment_epoch();
+                })
+                .expect("spawn test ticker");
+        }
 
         // Hand-rolled WAT: a function `spin` with `(loop br 0)`.
         let wat = r#"
