@@ -105,7 +105,7 @@ pub use plugin_abi::{
 };
 pub use registry::{PluginError, PluginRegistrations, PluginRegistry, PluginRegistryBuilder};
 pub use wasm_adapter::WasmPluginAdapter;
-pub use wasm_loader::WasmPluginLoader;
+pub use wasm_loader::{AbiStampOutcome, WasmPluginLoader};
 
 use crate::ast::{SourceLocation, Statement};
 

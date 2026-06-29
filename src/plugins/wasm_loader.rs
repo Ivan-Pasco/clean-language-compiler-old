@@ -14,6 +14,20 @@ use crate::plugins::PluginRegistry;
 use super::plugin_abi::PluginManifest;
 use super::wasm_adapter::WasmPluginAdapter;
 
+/// Plugin Contracts v2 Phase B cycle 2 — outcome of inspecting a plugin.wasm's
+/// `clean.abi_version` custom section. See
+/// `foundation/spec/plugins/contracts/runtime-abi.md` §5.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AbiStampOutcome {
+    /// Stamp present and in `SUPPORTED_RUNTIME_ABI_VERSIONS` — load as normal.
+    Supported(String),
+    /// Stamp present but unsupported — loader refuses with PLUGIN-ABI-MISMATCH.
+    Unsupported(String),
+    /// Stamp absent — loader proceeds with a warning, defaulting to
+    /// `DEFAULT_RUNTIME_ABI_VERSION`. Phase D will promote this to an error.
+    Absent,
+}
+
 /// Default per-plugin-call timeout in seconds. Plugin entrypoints
 /// (`process_html`, `assemble`, lifecycle hooks, block expansion) that run
 /// longer than this trap with a `wasm trap: interrupt` and a WASM
@@ -184,6 +198,16 @@ impl WasmPluginLoader {
 
             // Warn if this plugin was compiled with a compiler known to have codegen bugs.
             self.check_plugin_build_compatibility(plugin_name, &manifest, &plugin_dir);
+
+            // Plugin Contracts v2 Phase B cycle 2 — read the `clean.abi_version`
+            // WASM custom section emitted by cycle 1 and refuse plugins whose
+            // stamp is not in `SUPPORTED_RUNTIME_ABI_VERSIONS`. Absent stamp
+            // produces a warning (Phase B contract — Phase D promotes this to
+            // an error). See foundation/spec/plugins/contracts/runtime-abi.md §5.
+            let wasm_for_abi = plugin_dir.join("plugin.wasm");
+            if wasm_for_abi.exists() {
+                self.check_plugin_abi_version(plugin_name, &wasm_for_abi)?;
+            }
 
             // Bridge-only plugins (handles.blocks is empty and no plugin.wasm exists) provide
             // only bridge function declarations and keywords — no WASM module is needed.
@@ -446,6 +470,95 @@ impl WasmPluginLoader {
                     );
                     eprintln!("{}", rebuild_hint);
                 }
+            }
+        }
+    }
+
+    /// Plugin Contracts v2 Phase B cycle 2 — outcome of a `clean.abi_version`
+    /// custom-section check on a plugin.wasm. Used by `check_plugin_abi_version`
+    /// to keep the side-effecting warning print and the return value cohesive,
+    /// and to give tests a structured surface they can assert on.
+    /// Stamped versions live in [`super::plugin_abi::SUPPORTED_RUNTIME_ABI_VERSIONS`].
+    /// See `foundation/spec/plugins/contracts/runtime-abi.md` §4–§5.
+    /// Stamp present and in supported set → `Supported(version)`.
+    /// Stamp present but not supported → `Unsupported(version)`.
+    /// Stamp absent → `Absent` (load proceeds with a warning).
+    /// Public for use by the cycle 2 integration tests.
+    pub fn classify_abi_stamp(wasm_bytes: &[u8]) -> AbiStampOutcome {
+        use super::plugin_abi::SUPPORTED_RUNTIME_ABI_VERSIONS;
+        use wasmparser::{Parser, Payload};
+
+        for payload in Parser::new(0).parse_all(wasm_bytes).flatten() {
+            if let Payload::CustomSection(reader) = payload {
+                if reader.name() == "clean.abi_version" {
+                    let ver = match std::str::from_utf8(reader.data()) {
+                        Ok(s) => s.to_string(),
+                        Err(_) => return AbiStampOutcome::Absent,
+                    };
+                    return if SUPPORTED_RUNTIME_ABI_VERSIONS.iter().any(|s| *s == ver) {
+                        AbiStampOutcome::Supported(ver)
+                    } else {
+                        AbiStampOutcome::Unsupported(ver)
+                    };
+                }
+            }
+        }
+        AbiStampOutcome::Absent
+    }
+
+    /// Format the user-facing PLUGIN-ABI-MISMATCH error message. Public so
+    /// tests can assert the exact text without re-deriving it.
+    pub fn format_abi_mismatch_error(plugin_name: &str, wasm_path: &Path, found: &str) -> String {
+        use super::plugin_abi::SUPPORTED_RUNTIME_ABI_VERSIONS;
+        format!(
+            "error[PLUGIN-ABI-MISMATCH]: plugin '{}' at {} was compiled with \
+             Clean Runtime ABI {}, but this compiler only supports {:?}.\n  \
+             resolution: reinstall a compatible plugin build via \
+             `cleen frame install` or upgrade the compiler.\n  \
+             spec: foundation/spec/plugins/contracts/runtime-abi.md",
+            plugin_name,
+            wasm_path.display(),
+            found,
+            SUPPORTED_RUNTIME_ABI_VERSIONS,
+        )
+    }
+
+    /// Format the warning text emitted when a plugin has no `clean.abi_version`
+    /// stamp. Public so tests can assert the exact text.
+    pub fn format_abi_absent_warning(plugin_name: &str, wasm_path: &Path) -> String {
+        use super::plugin_abi::DEFAULT_RUNTIME_ABI_VERSION;
+        format!(
+            "warning: plugin '{}' at {} has no clean.abi_version stamp; \
+             assuming {} — rebuild against current compiler to make this explicit",
+            plugin_name,
+            wasm_path.display(),
+            DEFAULT_RUNTIME_ABI_VERSION,
+        )
+    }
+
+    /// Apply the three-case decision on a single plugin: error on unsupported
+    /// stamp, warn on absent, succeed on supported. The error string and
+    /// warning string come from `format_abi_mismatch_error` /
+    /// `format_abi_absent_warning` so test assertions and runtime output stay
+    /// in sync. See `runtime-abi.md` §5.
+    fn check_plugin_abi_version(&self, plugin_name: &str, wasm_path: &Path) -> Result<()> {
+        let bytes = match std::fs::read(wasm_path) {
+            Ok(b) => b,
+            Err(_) => return Ok(()),
+        };
+
+        match Self::classify_abi_stamp(&bytes) {
+            AbiStampOutcome::Supported(_) => Ok(()),
+            AbiStampOutcome::Unsupported(ver) => Err(anyhow!(
+                "{}",
+                Self::format_abi_mismatch_error(plugin_name, wasm_path, &ver)
+            )),
+            AbiStampOutcome::Absent => {
+                eprintln!(
+                    "{}",
+                    Self::format_abi_absent_warning(plugin_name, wasm_path)
+                );
+                Ok(())
             }
         }
     }
