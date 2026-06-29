@@ -1,0 +1,32 @@
+// Test: bugfixes/dual_accumulator_with_separator
+// Regression: dual-accumulator rewrite mangles separator appends guarded by
+//             a length check on the accumulator itself.
+//
+// Grammar: grammar.ebnf `while_statement`, `if_statement`, `string_concat_expr`
+// Semantic: SEM-MEM-001 (host arena dual-accumulator rewrite)
+//
+// Models the frame.data upsert SQL-generation shape: two string accumulators
+// whose per-iteration self-append is GUARDED by `if acc.length() > 0` for a
+// leading separator.  The dual-accumulator rewrite must NOT fire on this shape
+// because the guard reads the accumulator as a MethodCall receiver, which
+// means the loop uses the accumulator for more than a simple linear append.
+// When the rewrite fires on this shape, the separator (`", "`) is dropped and
+// the output collapses to `col0col1col2` instead of `col0, col1, col2`.
+//
+// Expected output:
+//   col0, col1, col2
+//   name0, name1, name2
+
+start:
+	string update_set = ""
+	string insert_cols = ""
+	integer i = 0
+	while i < 3
+		if update_set.length() > 0
+			update_set = update_set + ", "
+			insert_cols = insert_cols + ", "
+		update_set = update_set + "col" + i.toString()
+		insert_cols = insert_cols + "name" + i.toString()
+		i = i + 1
+	printl(update_set)
+	printl(insert_cols)

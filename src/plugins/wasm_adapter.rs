@@ -2970,9 +2970,11 @@ impl WasmPluginAdapter {
 
         // Telemetry: log host arena peak for this expand-block invocation.
         tracing::debug!(
+            target: "compiler::plugins::arena",
             peak_bytes = store.data().peak_alloc_offset,
+            final_mark_depth = store.data().arena_marks.len(),
             block = block.name.trim_end_matches(':'),
-            "plugin arena peak bytes for call_expand"
+            "plugin arena: expand-block exit",
         );
 
         Ok(statements)
@@ -3231,9 +3233,11 @@ impl WasmPluginAdapter {
 
         // Telemetry: log host arena peak for this expand-block invocation.
         tracing::debug!(
+            target: "compiler::plugins::arena",
             peak_bytes = store.data().peak_alloc_offset,
+            final_mark_depth = store.data().arena_marks.len(),
             block = block.name.trim_end_matches(':'),
-            "plugin arena peak bytes for call_expand_full"
+            "plugin arena: expand-block exit",
         );
 
         Ok(PluginExpansion {
@@ -3529,9 +3533,11 @@ impl WasmPluginAdapter {
 
         // Telemetry: log host arena peak for this lifecycle slot invocation.
         tracing::debug!(
+            target: "compiler::plugins::arena",
             peak_bytes = store.data().peak_alloc_offset,
+            final_mark_depth = store.data().arena_marks.len(),
             slot = slot_name,
-            "plugin arena peak bytes for call_lifecycle_slot_v2"
+            "plugin arena: expand-block exit",
         );
 
         Ok(PluginExpansion {

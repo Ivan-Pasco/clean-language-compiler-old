@@ -3501,8 +3501,9 @@ impl HirBuilder {
     ///   - contains at least one self-append on `name_a` AND one on `name_b`
     ///   - has no disqualifiers (early return, suspension, etc.)
     ///   - neither accumulator is read outside the LHS of a self-append
-    ///   - the per-branch append count for each accumulator is <= 1
-    ///     (conservative flat-body predicate)
+    ///   - no THIRD string variable has self-appends in the loop body
+    ///     (a third accumulator would have its intermediate strings freed by
+    ///     the arena scope pairs inserted for A and B, corrupting its value)
     fn stmt_is_dual_accumulator_loop(stmt: &HirStatement, name_a: &str, name_b: &str) -> bool {
         let body = match stmt {
             HirStatement::While { body, .. } | HirStatement::For { body, .. } => body,
@@ -3520,12 +3521,119 @@ impl HirBuilder {
         Self::analyze_block_for_dual_accumulator(body, name_a, &mut analysis_a);
         Self::analyze_block_for_dual_accumulator(body, name_b, &mut analysis_b);
 
-        !analysis_a.disqualified
-            && analysis_a.self_appends >= 1
-            && analysis_a.reads == 0
-            && !analysis_b.disqualified
-            && analysis_b.self_appends >= 1
-            && analysis_b.reads == 0
+        if analysis_a.disqualified
+            || analysis_a.self_appends < 1
+            || analysis_a.reads != 0
+            || analysis_b.disqualified
+            || analysis_b.self_appends < 1
+            || analysis_b.reads != 0
+        {
+            return false;
+        }
+
+        // Reject the rewrite if any THIRD variable also has self-appends in
+        // the loop body. The arena scope pairs inserted for A and B would free
+        // intermediate host-arena strings belonging to the third accumulator,
+        // corrupting its value. This is the root cause of the frame.data upsert
+        // SQL-generation bug (fingerprint 541bb3dd20f9): three accumulators
+        // (update_set, insert_cols, insert_vals) in the same while loop, where
+        // only insert_cols + insert_vals qualified as the A/B pair but the
+        // arena scoping clobbered update_set's intermediate strings.
+        !Self::loop_body_has_self_appends_on_other_variable(body, name_a, name_b)
+    }
+
+    /// Returns true if any variable OTHER than `name_a` or `name_b` has at
+    /// least one self-append (`x = x + ...`) anywhere in `block` (including
+    /// inside if/else branches and nested loops).
+    fn loop_body_has_self_appends_on_other_variable(
+        block: &HirBlock,
+        name_a: &str,
+        name_b: &str,
+    ) -> bool {
+        for stmt in &block.statements {
+            if Self::stmt_has_self_append_on_other(stmt, name_a, name_b) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn stmt_has_self_append_on_other(stmt: &HirStatement, name_a: &str, name_b: &str) -> bool {
+        match stmt {
+            HirStatement::Assignment { target, value, .. } => {
+                if let HirLValue::Variable { name, .. } = target {
+                    if name != name_a
+                        && name != name_b
+                        && Self::is_chained_self_append(value, name)
+                        && Self::chain_right_spine_has_string_content(value)
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if Self::loop_body_has_self_appends_on_other_variable(then_branch, name_a, name_b) {
+                    return true;
+                }
+                if let Some(eb) = else_branch {
+                    return Self::loop_body_has_self_appends_on_other_variable(eb, name_a, name_b);
+                }
+                false
+            }
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                Self::loop_body_has_self_appends_on_other_variable(body, name_a, name_b)
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns true when the right-spine fragments of a self-append chain
+    /// contain at least one string literal or one `MethodCall` / `NamespaceCall`
+    /// (which indicates a string-typed return value such as `.toString()`).
+    ///
+    /// This distinguishes string accumulator appends (`s = s + ", "`) from
+    /// integer-counter increments (`idx = idx + 1`), which only contain
+    /// integer literals in their right-spine. Without this check,
+    /// `loop_body_has_self_appends_on_other_variable` would incorrectly
+    /// reject any loop that increments an integer counter alongside the two
+    /// string accumulators.
+    fn chain_right_spine_has_string_content(expr: &HirExpression) -> bool {
+        let mut cur = expr;
+        loop {
+            match cur {
+                HirExpression::BinaryOp {
+                    left,
+                    op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                    right,
+                    ..
+                } => {
+                    if Self::expr_is_string_content(right) {
+                        return true;
+                    }
+                    cur = left.as_ref();
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Returns true when `expr` is evidence of a string value: a string literal,
+    /// a MethodCall, or a NamespaceCall (both typically return strings in
+    /// concatenation chains — e.g. `idx.toString()`, `string.concat(...)`).
+    fn expr_is_string_content(expr: &HirExpression) -> bool {
+        matches!(
+            expr,
+            HirExpression::Literal {
+                value: Value::String(_),
+                ..
+            } | HirExpression::MethodCall { .. }
+                | HirExpression::NamespaceCall { .. }
+        )
     }
 
     /// Like `analyze_block_for_accumulator` but with the relaxed rule that
