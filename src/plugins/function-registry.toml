@@ -2732,6 +2732,17 @@ hosts       = ["browser", "server"]
 description = "Render an HTML template with {{ key }} substitution; first arg is the full relative path from project root (e.g. app/ui/pages/index.html); second arg is JSON data; caller is responsible for path construction; missing keys produce empty string; returns rendered HTML as length-prefixed string"
 
 [[functions]]
+name        = "_ui_inject_head_css"
+layer       = 3
+category    = "ui"
+module      = "env"
+params      = ["string"]
+returns     = "i32"
+aliases     = []
+hosts       = ["browser", "server"]
+description = "Inject CSS string into the page <head> as a <style> element (browser: live DOM insertion; server: accumulate into response <head>)"
+
+[[functions]]
 name        = "_ui_inject_head_link"
 layer       = 3
 category    = "ui"
