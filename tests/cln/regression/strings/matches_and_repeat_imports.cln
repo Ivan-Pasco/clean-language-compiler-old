@@ -1,0 +1,33 @@
+// Test: regression/strings/matches_and_repeat_imports
+// Bug refs: SYN001 596cb36d76c2 / 9e095425a76c, RUN002 8af02721e336
+// (first seen 0.30.125-0.30.128). Symptom: compiler emitted WASM imports
+// for env::string_matches and env::string_repeat, but hosts did not
+// register them, causing module instantiation to fail with
+// "unknown import: env::string_matches".
+// This test calls both in the same module so that any future drift between
+// compiler-emitted imports and host bridge registration is caught by a
+// compile + run cycle, not just by a host-side smoke test.
+//
+// Expected output:
+//   reps=abababab
+//   email=true
+//   nomatch=false
+//   ok
+
+start:
+	string r = "ab".repeat(4)
+	print("reps=" + r)
+
+	boolean isEmail = "user@example.com".matches("email")
+	if isEmail
+		print("email=true")
+	else
+		print("email=false")
+
+	boolean bad = "not-an-email".matches("email")
+	if bad
+		print("nomatch=true")
+	else
+		print("nomatch=false")
+
+	print("ok")

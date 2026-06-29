@@ -1,0 +1,31 @@
+// Test: regression/strings/concat_with_int_and_number_toString
+// Bug refs: SEM001 fe100c39bb23 / 2c855b5d3bfa ("Cannot unify types: string
+// and integer"), BRIDGE_TYPE_MISMATCH a4e56fa0f5ea (i64 vs i32 for
+// int-to-string bridge). First seen 0.30.120-0.30.182.
+// Symptom: string `+` with an integer/number operand was rejected by the
+// type checker on some paths, and on others the codegen emitted the wrong
+// bridge signature (i32 instead of i64) for int_to_string, producing a
+// WASM validation failure or wrong text at runtime.
+// This test forces explicit toString() conversions in `+` chains across
+// integer, number, and boolean operands.
+//
+// Expected output:
+//   n=42
+//   pi=3.14
+//   flag=true
+//   combo=count=3 ratio=0.5 done=true
+
+start:
+	integer n = 42
+	number pi = 3.14
+	boolean flag = true
+
+	print("n=" + n.toString())
+	print("pi=" + pi.toString())
+	print("flag=" + flag.toString())
+
+	integer count = 3
+	number ratio = 0.5
+	boolean done = true
+	string combo = "count=" + count.toString() + " ratio=" + ratio.toString() + " done=" + done.toString()
+	print("combo=" + combo)

@@ -1,0 +1,28 @@
+// Test: regression/strings/concat_via_indirect_call
+// Bug refs: GEN003 b3b6de82afcc, 7f1f02696c1e (first seen 0.30.212 / 0.30.220)
+// Symptom: BFS reachability in codegen missed `string.concat` when `+` was
+// only reached through indirect calls (entry -> user fn -> `a + b`), because
+// MIR lowers `+` to BinaryOp instead of an explicit Call edge.
+// This test specifically exercises a 2-level indirect call chain so a future
+// BFS-pruning regression cannot mask the missing string.concat helper.
+//
+// Expected output:
+//   hello world
+//   ab-cd-ef
+
+start:
+	print(outer("hello", "world"))
+	print(joinThree("ab", "cd", "ef"))
+
+functions:
+	string outer(string a, string b)
+		return inner(a, b)
+
+	string inner(string a, string b)
+		return a + " " + b
+
+	string joinThree(string a, string b, string c)
+		return joinTail(a, joinTail(b, c))
+
+	string joinTail(string a, string b)
+		return a + "-" + b

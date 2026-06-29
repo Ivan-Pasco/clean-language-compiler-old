@@ -1,0 +1,34 @@
+// Test: regression/strings/substring_in_nested_if_else_break
+// Bug refs: FRAME-DATA-2-1-4 908a9fc55653 (regression at 0.30.334, commit efc89cd1
+// "emit trailing stmt after nested if/else; preserve else: break").
+// Symptom: nested if/else branches that call string.substring and fall through
+// to a trailing statement traps at runtime. Existing substring tests use flat
+// straight-line code and do not cover the if/else+break shape that broke
+// frame.data's parse_field_line.
+//
+// Expected output:
+//   key=name
+//   key=age
+//   skip:
+//   end
+
+start:
+	parseLine("name: string")
+	parseLine("age: integer")
+	parseLine("")
+	print("end")
+
+functions:
+	void parseLine(string line)
+		integer n = line.length()
+		if n == 0
+			print("skip:")
+			return
+		else
+			integer colon = line.indexOf(":")
+			if colon < 0
+				print("skip:")
+				return
+			else
+				string key = line.substring(0, colon)
+				print("key=" + key)

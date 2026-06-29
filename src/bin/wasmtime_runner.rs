@@ -653,17 +653,201 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    linker.func_wrap("env", "string_to_int", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "string_to_float", |_: i32| -> f64 { 0.0 })?;
-    linker.func_wrap("env", "string_matches", |_: i32, _: i32, _: i32| -> i32 {
-        0
-    })?;
-    linker.func_wrap("env", "string_repeat", |_: i32, _: i32, _: i32| -> i32 {
-        0
-    })?;
-    linker.func_wrap("env", "string.repeat", |_: i32, _: i32, _: i32| -> i32 {
-        0
-    })?;
+    // env.string_to_int(str_ptr) -> i32. Parses the length-prefixed string at
+    // str_ptr as a base-10 integer; returns 0 on parse failure or bad pointer.
+    // Mirrors src/plugins/wasm_adapter.rs::string_to_int.
+    linker.func_wrap(
+        "env",
+        "string_to_int",
+        |mut caller: Caller<'_, ()>, str_ptr: i32| -> i32 {
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                return 0;
+            };
+            let data = memory.data(&caller);
+            let ptr = str_ptr as usize;
+            if ptr + 4 > data.len() {
+                return 0;
+            }
+            let len = u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                as usize;
+            if ptr + 4 + len > data.len() {
+                return 0;
+            }
+            std::str::from_utf8(&data[ptr + 4..ptr + 4 + len])
+                .ok()
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(0)
+        },
+    )?;
+
+    // env.string_to_float(str_ptr) -> f64. Parses the length-prefixed string at
+    // str_ptr as f64; returns 0.0 on parse failure or bad pointer.
+    // Mirrors src/plugins/wasm_adapter.rs::string_to_float.
+    linker.func_wrap(
+        "env",
+        "string_to_float",
+        |mut caller: Caller<'_, ()>, str_ptr: i32| -> f64 {
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                return 0.0;
+            };
+            let data = memory.data(&caller);
+            let ptr = str_ptr as usize;
+            if ptr + 4 > data.len() {
+                return 0.0;
+            }
+            let len = u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                as usize;
+            if ptr + 4 + len > data.len() {
+                return 0.0;
+            }
+            std::str::from_utf8(&data[ptr + 4..ptr + 4 + len])
+                .ok()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0)
+        },
+    )?;
+
+    // env.string_matches(str_ptr, str_len, pattern_id) -> i32 (boolean 0/1)
+    // pattern_id is a compile-time constant: email=0 url=1 uuid=2 phone=3
+    //   date=4 integer=5 number=6 alphanumeric=7
+    // Mirrors src/plugins/wasm_adapter.rs::string_matches so the runner
+    // matches the plugin sandbox behavior.
+    linker.func_wrap(
+        "env",
+        "string_matches",
+        |mut caller: Caller<'_, ()>, str_ptr: i32, _str_len: i32, pattern_id: i32| -> i32 {
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                return 0;
+            };
+            let data = memory.data(&caller);
+            let ptr = str_ptr as usize;
+            if ptr + 4 > data.len() {
+                return 0;
+            }
+            let len = u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                as usize;
+            if ptr + 4 + len > data.len() {
+                return 0;
+            }
+            let s = String::from_utf8_lossy(&data[ptr + 4..ptr + 4 + len]).to_string();
+            let matched = match pattern_id {
+                0 => {
+                    let p: Vec<&str> = s.splitn(2, '@').collect();
+                    p.len() == 2 && !p[0].is_empty() && p[1].contains('.')
+                }
+                1 => s.starts_with("http://") || s.starts_with("https://"),
+                2 => {
+                    let b = s.as_bytes();
+                    b.len() == 36
+                        && b[8] == b'-'
+                        && b[13] == b'-'
+                        && b[18] == b'-'
+                        && b[23] == b'-'
+                        && b.iter().enumerate().all(|(i, &c)| {
+                            if i == 8 || i == 13 || i == 18 || i == 23 {
+                                c == b'-'
+                            } else {
+                                c.is_ascii_hexdigit()
+                            }
+                        })
+                }
+                3 => {
+                    let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+                    d.len() >= 7 && d.len() <= 15
+                }
+                4 => {
+                    let p: Vec<&str> = s.splitn(3, '-').collect();
+                    p.len() == 3
+                        && p[0].len() == 4
+                        && p[1].len() == 2
+                        && p[2].len() == 2
+                        && p.iter().all(|x| x.chars().all(|c| c.is_ascii_digit()))
+                }
+                5 => !s.is_empty() && s.parse::<i64>().is_ok(),
+                6 => !s.is_empty() && s.parse::<f64>().is_ok(),
+                7 => !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()),
+                _ => false,
+            };
+            if matched {
+                1
+            } else {
+                0
+            }
+        },
+    )?;
+
+    // env.string_repeat(str_ptr, str_len, count) -> i32 pointer to new string.
+    // Reads the length-prefixed input string, repeats it, and writes the
+    // result back through allocate_string_in_memory so __heap_ptr stays in sync.
+    linker.func_wrap(
+        "env",
+        "string_repeat",
+        |mut caller: Caller<'_, ()>, str_ptr: i32, _str_len: i32, count: i32| -> i32 {
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                return 0;
+            };
+            let result = {
+                let data = memory.data(&caller);
+                let ptr = str_ptr as usize;
+                if ptr + 4 > data.len() {
+                    return 0;
+                }
+                let len =
+                    u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                        as usize;
+                if ptr + 4 + len > data.len() {
+                    return 0;
+                }
+                let s = match std::str::from_utf8(&data[ptr + 4..ptr + 4 + len]) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => return 0,
+                };
+                let repeat_count = count.max(0) as usize;
+                s.repeat(repeat_count)
+            };
+            allocate_string_in_memory(&memory, &mut caller, &result)
+        },
+    )?;
+    // Dotted-name alias kept for any module that still imports `string.repeat`.
+    linker.func_wrap(
+        "env",
+        "string.repeat",
+        |mut caller: Caller<'_, ()>, str_ptr: i32, _str_len: i32, count: i32| -> i32 {
+            let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
+                mem
+            } else {
+                return 0;
+            };
+            let result = {
+                let data = memory.data(&caller);
+                let ptr = str_ptr as usize;
+                if ptr + 4 > data.len() {
+                    return 0;
+                }
+                let len =
+                    u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
+                        as usize;
+                if ptr + 4 + len > data.len() {
+                    return 0;
+                }
+                let s = match std::str::from_utf8(&data[ptr + 4..ptr + 4 + len]) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => return 0,
+                };
+                let repeat_count = count.max(0) as usize;
+                s.repeat(repeat_count)
+            };
+            allocate_string_in_memory(&memory, &mut caller, &result)
+        },
+    )?;
 
     // Endpoint test bridge stubs (no live server in runner — always return 0)
     linker.func_wrap(

@@ -1577,6 +1577,29 @@ hosts       = ["all"]
 description = "Pop the current memory scope and free all allocations within it (no-op currently)"
 
 [[functions]]
+name        = "_arena_scope_push"
+layer       = 2
+category    = "memory"
+module      = "env"
+params      = []
+returns     = "i32"
+aliases     = ["arena.scope_push"]
+hosts       = ["all"]
+description = "Snapshot the host bump-arena offset onto a per-store mark stack and return the new stack depth as an opaque handle (>= 1). Emitted by the compiler's dual-accumulator HIR rewrite (cln >= 0.30.391) to bracket per-iteration scratch allocations. The paired `_arena_scope_pop` must be passed this handle."
+
+[[functions]]
+name        = "_arena_scope_pop"
+layer       = 2
+category    = "memory"
+module      = "env"
+params      = ["i32"]
+param_names = ["handle"]
+returns     = "void"
+aliases     = ["arena.scope_pop"]
+hosts       = ["all"]
+description = "Rewind the host bump-arena offset to the mark saved by the matching `_arena_scope_push`, reclaiming all allocations made in the scope. `handle <= 0` is a no-op (defensive against early-return paths)."
+
+[[functions]]
 name        = "_state_reset_all"
 layer       = 2
 category    = "state"
@@ -2707,17 +2730,6 @@ returns     = "ptr"
 aliases     = []
 hosts       = ["browser", "server"]
 description = "Render an HTML template with {{ key }} substitution; first arg is the full relative path from project root (e.g. app/ui/pages/index.html); second arg is JSON data; caller is responsible for path construction; missing keys produce empty string; returns rendered HTML as length-prefixed string"
-
-[[functions]]
-name        = "_ui_inject_head_css"
-layer       = 3
-category    = "ui"
-module      = "env"
-params      = ["string"]
-returns     = "i32"
-aliases     = []
-hosts       = ["browser", "server"]
-description = "Accumulate a CSS string for injection into the response <head>; returns 1 on success"
 
 [[functions]]
 name        = "_ui_inject_head_link"

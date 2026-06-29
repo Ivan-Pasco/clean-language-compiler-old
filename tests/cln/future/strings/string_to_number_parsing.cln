@@ -1,0 +1,37 @@
+// Test: regression/strings/string_to_number_parsing
+// Bug refs: runner-stub regression — `env.string_to_float` was stubbed to
+// always return 0.0 in src/bin/wasmtime_runner.rs, so `string.toNumber()`
+// produced 0 at runtime even though compilation succeeded and the existing
+// stdlib/string tests only printed "ok" markers (never the parsed value).
+// Pattern: smoke-test-only coverage hides host-bridge stubs returning the
+// default value. This test asserts actual parsed output.
+//
+// Expected output:
+//   pi=3.14
+//   neg=-2.5
+//   int=42
+//   intStr=42
+//   zero=0
+//   bad=0
+
+start:
+	number pi = "3.14".toNumber()
+	print("pi=" + pi.toString())
+
+	number neg = "-2.5".toNumber()
+	print("neg=" + neg.toString())
+
+	integer i = "42".toInteger()
+	print("int=" + i.toString())
+
+	// string_to_int via underscore import path
+	string ns = "42"
+	integer i2 = ns.toInteger()
+	print("intStr=" + i2.toString())
+
+	number z = "0".toNumber()
+	print("zero=" + z.toString())
+
+	// Invalid parse must safely return 0 (not trap, not garbage)
+	number bad = "not a number".toNumber()
+	print("bad=" + bad.toString())

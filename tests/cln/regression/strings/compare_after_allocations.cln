@@ -1,0 +1,43 @@
+// Test: regression/strings/compare_after_allocations
+// Bug refs: COMPILER-PLUGIN-STRING-COMPARE-PANIC-OUT-OF-BOUNDS e4a5886bd58d
+// (first seen 0.30.326). Symptom: env.string_compare received garbage
+// ptr/len pairs after the WASM module had performed several intermediate
+// allocations, indicating uninitialized-read bugs in the bump allocator
+// state surrounding string compare sites.
+// This test exercises string equality on freshly-produced substrings and
+// on strings produced by concatenation/repetition, so the operands are
+// not literal-table pointers but newly-allocated heap strings.
+//
+// Expected output:
+//   eq1=true
+//   eq2=false
+//   eq3=true
+//   eq4=true
+
+start:
+	string a = "hello world".substring(0, 5)
+	string b = "hello"
+	string c = "ab".repeat(3)
+	string d = "ababab"
+	string e = "x" + "y" + "z"
+	string f = "xyz"
+
+	if a == b
+		print("eq1=true")
+	else
+		print("eq1=false")
+
+	if a == "world"
+		print("eq2=true")
+	else
+		print("eq2=false")
+
+	if c == d
+		print("eq3=true")
+	else
+		print("eq3=false")
+
+	if e == f
+		print("eq4=true")
+	else
+		print("eq4=false")
