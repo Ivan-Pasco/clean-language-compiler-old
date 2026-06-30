@@ -587,7 +587,7 @@ impl WasmPluginLoader {
         let Some(declared) = manifest.compatibility.expansion_version.as_deref() else {
             return Ok(());
         };
-        if SUPPORTED_EXPANSION_VERSIONS.iter().any(|v| *v == declared) {
+        if SUPPORTED_EXPANSION_VERSIONS.contains(&declared) {
             return Ok(());
         }
         Err(anyhow!(
