@@ -488,6 +488,7 @@ mod tests {
             build: Default::default(),
             lifecycle,
             artifacts: Vec::new(),
+            blocks: Default::default(),
         }
     }
 

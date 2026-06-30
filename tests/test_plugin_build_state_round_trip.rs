@@ -85,6 +85,7 @@ fn synthetic_manifest(name: &str) -> PluginManifest {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        blocks: Default::default(),
     }
 }
 

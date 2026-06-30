@@ -269,6 +269,7 @@ fn drifted_manifest(plugin_name: &str) -> PluginManifest {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        blocks: Default::default(),
     }
 }
 

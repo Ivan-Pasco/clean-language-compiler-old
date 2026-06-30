@@ -1806,6 +1806,7 @@ mod tests {
             build: Default::default(),
             lifecycle: Default::default(),
             artifacts: Vec::new(),
+            blocks: Default::default(),
         };
 
         let registry = PluginRegistryBuilder::new()
@@ -1889,6 +1890,7 @@ mod tests {
             build: Default::default(),
             lifecycle: Default::default(),
             artifacts: Vec::new(),
+            blocks: Default::default(),
         };
 
         let registry = PluginRegistryBuilder::new()
@@ -1955,6 +1957,7 @@ mod tests {
                 build: Default::default(),
                 lifecycle: Default::default(),
                 artifacts: Vec::new(),
+                blocks: Default::default(),
             }
         }
     }

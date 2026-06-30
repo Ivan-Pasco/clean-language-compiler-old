@@ -3,6 +3,7 @@
 //! Defines the interface between the compiler and WASM plugins
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Plugin manifest (plugin.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +14,14 @@ pub struct PluginManifest {
     pub handles: PluginHandles,
     #[serde(default)]
     pub exports: PluginExports,
+    /// Per-block dispatch configuration introduced by Plugin Contracts v3
+    /// (typed AST emission). Optional; when absent, every block dispatches
+    /// through `[exports].expand` using the v1 string-emission ABI, which
+    /// preserves backwards compatibility for every plugin that predates v3.
+    ///
+    /// See foundation/spec/plugins/contracts/typed-emission.md §2.1.
+    #[serde(default)]
+    pub blocks: HashMap<String, PluginBlockConfig>,
     /// Bridge functions that the plugin expects the runtime to provide
     #[serde(default)]
     pub bridge: PluginBridge,
@@ -43,6 +52,63 @@ pub struct PluginManifest {
     /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/artifacts.md.
     #[serde(default)]
     pub artifacts: Vec<PluginArtifact>,
+}
+
+/// Result of resolving the expand dispatch for a single block.
+/// See foundation/spec/plugins/contracts/typed-emission.md §2.1 and §6.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockDispatch {
+    /// WASM export name the compiler should call.
+    pub export: String,
+    /// Expansion ABI version (1 for v1 string emission, 3 for typed emission).
+    pub version: u32,
+}
+
+impl PluginManifest {
+    /// Highest expansion-ABI version this compiler implementation supports.
+    /// Bump together with shipping a higher-version code path in `wasm_adapter`.
+    pub const HIGHEST_SUPPORTED_EXPANSION_VERSION: u32 = 3;
+
+    /// Returns true when the plugin opts into Plugin Contracts v3
+    /// typed AST emission at the plugin level. Per-block opt-outs are
+    /// still possible via `[blocks].<name>.version = 1`.
+    pub fn opts_into_typed_emission(&self) -> bool {
+        self.compatibility
+            .expansion_version
+            .as_deref()
+            .map(|v| v == "3.0.0")
+            .unwrap_or(false)
+    }
+
+    /// Resolve which WASM export to call and which ABI version to use for
+    /// a given block name. The block name should be passed without its
+    /// trailing colon (e.g. `"endpoints"`, not `"endpoints:"`).
+    ///
+    /// Resolution rules (typed-emission.md §6):
+    ///   1. If `[blocks].<name>` is present, its `expand`/`version` win;
+    ///      missing fields are filled from the plugin-level defaults.
+    ///   2. If absent, use `[exports].expand` with version = 3 when the
+    ///      plugin opts into typed emission at the plugin level, else 1.
+    pub fn resolve_block_dispatch(&self, block_name: &str) -> BlockDispatch {
+        let plugin_default_version = if self.opts_into_typed_emission() {
+            3
+        } else {
+            1
+        };
+        match self.blocks.get(block_name) {
+            Some(cfg) => BlockDispatch {
+                export: cfg
+                    .expand
+                    .clone()
+                    .unwrap_or_else(|| self.exports.expand.clone()),
+                version: cfg.version.unwrap_or(plugin_default_version),
+            },
+            None => BlockDispatch {
+                export: self.exports.expand.clone(),
+                version: plugin_default_version,
+            },
+        }
+    }
 }
 
 /// Stamped by `cln compile` into plugin.toml after a successful plugin build.
@@ -98,6 +164,18 @@ pub struct PluginCompatibility {
     /// backwards compatibility.
     #[serde(default)]
     pub abi_version: Option<String>,
+    /// Highest expansion ABI version the plugin is built against.
+    /// Plugin Contracts v3 — see foundation/spec/plugins/contracts/typed-emission.md §2.1.
+    ///
+    /// Absent or `"1.0.0"`: plugin uses v1 string emission for every block;
+    /// the compiler re-parses the returned source. `"3.0.0"`: plugin opts
+    /// into typed AST emission; per-block `version` in `[blocks]` selects
+    /// which ABI a specific expand entry point uses.
+    ///
+    /// The compiler refuses to load a plugin whose declared `expansion_version`
+    /// is higher than what the compiler supports (PLUGIN006).
+    #[serde(default)]
+    pub expansion_version: Option<String>,
 }
 
 impl Default for PluginCompatibility {
@@ -105,6 +183,35 @@ impl Default for PluginCompatibility {
         Self {
             min_compiler_version: default_min_compiler(),
             abi_version: None,
+            expansion_version: None,
+        }
+    }
+}
+
+/// Per-block dispatch configuration (Plugin Contracts v3).
+///
+/// Allows a single plugin to mix v1 (string emission) and v3 (typed emission)
+/// expand entry points on a block-by-block basis. See
+/// foundation/spec/plugins/contracts/typed-emission.md §2.1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginBlockConfig {
+    /// WASM export name to call for this block's expansion.
+    /// When omitted, the compiler falls back to `[exports].expand`.
+    #[serde(default)]
+    pub expand: Option<String>,
+    /// Expansion ABI version for this specific block.
+    /// When omitted, defaults to 3 if `[compatibility].expansion_version`
+    /// is `"3.0.0"`, otherwise 1. Set explicitly to `1` on a v3 plugin to
+    /// opt a specific block out of typed emission during gradual migration.
+    #[serde(default)]
+    pub version: Option<u32>,
+}
+
+impl Default for PluginBlockConfig {
+    fn default() -> Self {
+        Self {
+            expand: None,
+            version: None,
         }
     }
 }
@@ -1835,5 +1942,139 @@ mod tests {
             ..PluginLifecycle::default()
         };
         assert!(!only_roots_flag.opts_into_v2());
+    }
+
+    // ------------------------------------------------------------------
+    // Plugin Contracts v3 — typed-emission dispatch
+    // See foundation/spec/plugins/contracts/typed-emission.md §2.1, §6.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_v3_manifest_absent_defaults_to_v1_for_all_blocks() {
+        let toml_str = r#"
+            [plugin]
+            name = "legacy.plugin"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["legacy"]
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert!(manifest.compatibility.expansion_version.is_none());
+        assert!(!manifest.opts_into_typed_emission());
+        assert!(manifest.blocks.is_empty());
+
+        let dispatch = manifest.resolve_block_dispatch("legacy");
+        assert_eq!(dispatch.export, "expand");
+        assert_eq!(dispatch.version, 1);
+    }
+
+    #[test]
+    fn test_v3_plugin_level_optin_defaults_blocks_to_v3() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.server"
+            version = "3.0.0"
+
+            [compatibility]
+            expansion_version = "3.0.0"
+
+            [handles]
+            blocks = ["endpoints"]
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(
+            manifest.compatibility.expansion_version.as_deref(),
+            Some("3.0.0")
+        );
+        assert!(manifest.opts_into_typed_emission());
+
+        // Block has no entry in [blocks] table -> defaults from plugin level (3).
+        let dispatch = manifest.resolve_block_dispatch("endpoints");
+        assert_eq!(dispatch.export, "expand");
+        assert_eq!(dispatch.version, 3);
+    }
+
+    #[test]
+    fn test_v3_per_block_table_overrides_export_and_version() {
+        let toml_str = r#"
+            [plugin]
+            name = "frame.server"
+            version = "3.0.0"
+
+            [compatibility]
+            expansion_version = "3.0.0"
+
+            [handles]
+            blocks = ["endpoints", "data"]
+
+            [blocks]
+            endpoints = { expand = "expand_endpoints_typed", version = 3 }
+            data      = { expand = "expand_data_v1_string",  version = 1 }
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert!(manifest.opts_into_typed_emission());
+        assert_eq!(manifest.blocks.len(), 2);
+
+        let endpoints = manifest.resolve_block_dispatch("endpoints");
+        assert_eq!(endpoints.export, "expand_endpoints_typed");
+        assert_eq!(endpoints.version, 3);
+
+        // Per-block opt-out: plugin is v3 but `data` stays on v1 string emission.
+        let data = manifest.resolve_block_dispatch("data");
+        assert_eq!(data.export, "expand_data_v1_string");
+        assert_eq!(data.version, 1);
+    }
+
+    #[test]
+    fn test_v3_block_with_only_version_field_inherits_export() {
+        // A v3 plugin can declare a per-block version-only override without
+        // restating the export name.
+        let toml_str = r#"
+            [plugin]
+            name = "p"
+            version = "1.0.0"
+
+            [compatibility]
+            expansion_version = "3.0.0"
+
+            [handles]
+            blocks = ["a"]
+
+            [blocks]
+            a = { version = 1 }
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        let dispatch = manifest.resolve_block_dispatch("a");
+        assert_eq!(dispatch.export, "expand"); // inherited from [exports].expand
+        assert_eq!(dispatch.version, 1);
+    }
+
+    #[test]
+    fn test_v3_v1_plugin_with_blocks_entry_still_uses_v1() {
+        // A v1 plugin (no expansion_version) that happens to declare a
+        // [blocks] entry for an alternate export name still defaults the
+        // version to 1 because the plugin has not opted into v3.
+        let toml_str = r#"
+            [plugin]
+            name = "p"
+            version = "1.0.0"
+
+            [handles]
+            blocks = ["a"]
+
+            [blocks]
+            a = { expand = "expand_a_custom" }
+        "#;
+        let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
+
+        assert!(!manifest.opts_into_typed_emission());
+        let dispatch = manifest.resolve_block_dispatch("a");
+        assert_eq!(dispatch.export, "expand_a_custom");
+        assert_eq!(dispatch.version, 1);
     }
 }

@@ -2869,7 +2869,26 @@ impl WasmPluginAdapter {
 
         let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
-        let expand_fn_name = &self.manifest.exports.expand;
+        // Plugin Contracts v3 — per-block dispatch selection.
+        // See foundation/spec/plugins/contracts/typed-emission.md §2.1, §6.
+        let dispatch = self.manifest.resolve_block_dispatch(block_name);
+        if dispatch.version >= 3 {
+            // Sub-cycle 1 lands the manifest fields and dispatch selection
+            // only. The actual typed emission entry point (`expand_block_typed`)
+            // and the AST-construction bridge surface land in sub-cycle 2.
+            // Until then, refuse to expand v3 blocks rather than silently
+            // falling back to v1 — silent fallback would mask migration bugs.
+            return Err(anyhow!(
+                "plugin `{}` block `{}` declares expansion version {} but the \
+                 compiler's typed-emission code path is not yet implemented \
+                 (sub-cycle 2). Set this block's `version = 1` in plugin.toml \
+                 to keep using v1 string emission until typed emission ships.",
+                self.name,
+                block_name,
+                dispatch.version,
+            ));
+        }
+        let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
             .get_typed_func(&mut store, expand_fn_name)
             .map_err(|e| {
@@ -3085,7 +3104,24 @@ impl WasmPluginAdapter {
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
         let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
-        let expand_fn_name = &self.manifest.exports.expand;
+        // Plugin Contracts v3 — per-block dispatch selection.
+        // See foundation/spec/plugins/contracts/typed-emission.md §2.1, §6.
+        // Mirrors the check in call_expand above; kept inline rather than
+        // factored out because the surrounding store/instance plumbing
+        // differs subtly between the two call paths.
+        let dispatch = self.manifest.resolve_block_dispatch(block_name);
+        if dispatch.version >= 3 {
+            return Err(anyhow!(
+                "plugin `{}` block `{}` declares expansion version {} but the \
+                 compiler's typed-emission code path is not yet implemented \
+                 (sub-cycle 2). Set this block's `version = 1` in plugin.toml \
+                 to keep using v1 string emission until typed emission ships.",
+                self.name,
+                block_name,
+                dispatch.version,
+            ));
+        }
+        let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
             .get_typed_func(&mut store, expand_fn_name)
             .map_err(|e| {

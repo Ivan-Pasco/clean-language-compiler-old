@@ -429,6 +429,7 @@ mod tests {
             bridge: Default::default(),
             lifecycle: Default::default(),
             artifacts: Vec::new(),
+            blocks: Default::default(),
             language: PluginLanguage {
                 blocks: vec!["testblock".to_string()],
                 keywords: vec![
