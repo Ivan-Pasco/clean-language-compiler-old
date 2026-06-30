@@ -1,5 +1,17 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🔍 POST-PLAN CLEANUP: Dev-queue investigations (2026-06-29)
+
+### SEM007 (fingerprint 2426d9b5f7f0cd4d) — `Function 'expand_block' not found`
+- **Source**: `clean-framework/plugins/frame.data/tests/test_expand.cln` (mtime 2026-06-26)
+- **Occurrences**: 3 (last 2026-06-29 23:08:46Z, compiler 0.30.401)
+- **Ownership**: frame.data (cross-component) — file lives under another component's tree per `Dev reason: source inside component tree`
+- **Status**: NOT a compiler bug. The `.cln` test file references `expand_block` which is a frame.data plugin DSL helper. Investigation should determine if (a) test file is stale from C4 testing and frame.data needs to clean it up, or (b) the v2 plugin migration removed `expand_block` and this test wasn't updated. Either way, fix lives in frame.data, not the compiler.
+- **Action**: Report to frame.data owners; do not clear from dev queue (still reproducible).
+
+### COM001 (ba21b72c / f05aa5dc) — Not found in current dev queue
+- The prefixes referenced in the prompt do not exist in the current dev-queue state. Either already cleared in a prior session or the prefixes were misremembered. No action needed; if the stack-mismatch trap recurs it will re-fingerprint.
+
 ## ✅ FIXED (pending ship): CMP-SSR-MALLOC-OOM-PAGE-RENDER (helper-leak path) — transient arena + body-local routing
 
 **Status as of this commit:** All three steps of the Cyclone-style nested-region fix have shipped. The per-iter conditional-helper leak (`headHtml = "<h2>" + head + "</h2>"`) is now routed through a separate transient pool that resets at every iteration boundary. The main heap continues to hold cross-iteration live values, so the rolled-back dangling-pointer regression cannot recur.
