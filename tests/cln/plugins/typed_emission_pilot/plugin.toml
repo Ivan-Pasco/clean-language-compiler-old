@@ -1,0 +1,19 @@
+[plugin]
+name = "typed_emission_pilot"
+version = "0.1.0"
+description = "Typed-emission v3 pilot plugin for sub-cycle 2 integration testing"
+
+[compatibility]
+min_compiler_version = "0.30.405"
+expansion_version = "3.0.0"
+
+[handles]
+blocks = ["pilot"]
+
+[blocks]
+pilot = { expand = "expand_block_typed", version = 3 }
+
+[exports]
+# expand is the fallback for blocks not listed in [blocks].
+# For the pilot all blocks route through the [blocks] override above.
+expand = "expand_block_typed"

@@ -40,7 +40,10 @@
       "Bash(wasm-tools --version)",
       "Bash(ls -la \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln\")",
       "Bash(\"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln\" --version)",
-      "Bash('/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln' compile main.cln --output /tmp/cs-2.12.23.wasm)"
+      "Bash('/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler/target/release/cln' compile main.cln --output /tmp/cs-2.12.23.wasm)",
+      "Bash(cp \"/Users/earcandy/Desktop/Screenshot 2026-06-30 at 12.14.40 AM \\(2\\).png\" /tmp/shot1.png)",
+      "Bash(cp \"/Users/earcandy/Desktop/Screenshot 2026-06-30 at 12.16.12 AM \\(2\\).png\" /tmp/shot2.png)",
+      "Bash(cp \"/Users/earcandy/Desktop/Screenshot 2026-06-30 at 12.16.12 AM 1.png\" /tmp/shot3.png)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

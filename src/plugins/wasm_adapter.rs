@@ -2943,6 +2943,45 @@ impl WasmPluginAdapter {
             "plugin arena: expand-block entry",
         );
 
+        // ── Plugin Contracts v3 early-exit ────────────────────────────────────
+        // Resolve dispatch BEFORE creating the v1 store/linker so that a v3
+        // plugin is never instantiated with the wrong linker.
+        {
+            let block_name_pre = block.name.trim_end_matches(':');
+            let dispatch_pre = self.manifest.resolve_block_dispatch(block_name_pre);
+            if dispatch_pre.version >= 3 {
+                let (extra_attrs, actual_body) = extract_inline_attrs(&block.content);
+                let mut pairs: Vec<String> = block
+                    .attributes
+                    .iter()
+                    .map(|attr| {
+                        if let Some(ref val) = attr.value {
+                            let escaped = val.replace('\\', "\\\\").replace('"', "\\\"");
+                            format!("\"{}\":\"{}\"", attr.name, escaped)
+                        } else {
+                            format!("\"{}\":true", attr.name)
+                        }
+                    })
+                    .collect();
+                pairs.extend(extra_attrs);
+                let attributes_str = if pairs.is_empty() {
+                    String::new()
+                } else {
+                    format!("{{{}}}", pairs.join(","))
+                };
+                let expansion = self.call_expand_typed(
+                    block,
+                    &dispatch_pre.export,
+                    block_name_pre,
+                    &attributes_str,
+                    &actual_body,
+                )?;
+                // call_expand returns Vec<Statement> — v3 inline statements only.
+                return Ok(expansion.statements);
+            }
+        }
+        // ── v1 path continues below ───────────────────────────────────────────
+
         let mut store = self.create_store();
         let linker = self.get_linker()?;
 
@@ -3059,27 +3098,9 @@ impl WasmPluginAdapter {
 
         let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
-        // Plugin Contracts v3 — per-block dispatch selection.
-        // See foundation/spec/plugins/contracts/typed-emission.md §2.1, §6.
+        // v1 string-emission path — dispatch.version is guaranteed < 3 here
+        // because the v3 early-exit at the top of this function already returned.
         let dispatch = self.manifest.resolve_block_dispatch(block_name);
-        if dispatch.version >= 3 {
-            // v3 typed-emission path — use call_expand_typed which manages its
-            // own store, linker, and arena. The already-created v1 store and
-            // instance are simply discarded.
-            let expansion = self.call_expand_typed(
-                block,
-                &dispatch.export,
-                block_name,
-                &attributes_str,
-                &actual_body,
-            )?;
-            // call_expand (v1 path) returns Vec<Statement>. For v3 plugins the
-            // emitted statements come from expansion.statements; the remaining
-            // fields (functions, classes, etc.) are dropped on this path because
-            // call_expand's callers only use the returned Vec<Statement>. Callers
-            // that need the full expansion must use call_expand_full.
-            return Ok(expansion.statements);
-        }
         let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
             .get_typed_func(&mut store, expand_fn_name)
@@ -3239,6 +3260,42 @@ impl WasmPluginAdapter {
             "plugin arena: expand-block entry",
         );
 
+        // ── Plugin Contracts v3 early-exit ────────────────────────────────────
+        // Resolve dispatch BEFORE creating the v1 store/linker so that a v3
+        // plugin (which imports typed-emission bridges the v1 linker does not
+        // provide) is never instantiated with the wrong linker.
+        let block_name = block.name.trim_end_matches(':');
+        let dispatch_pre = self.manifest.resolve_block_dispatch(block_name);
+        if dispatch_pre.version >= 3 {
+            let (extra_attrs, actual_body) = extract_inline_attrs(&block.content);
+            let mut pairs: Vec<String> = block
+                .attributes
+                .iter()
+                .map(|attr| {
+                    if let Some(ref val) = attr.value {
+                        let escaped = val.replace('\\', "\\\\").replace('"', "\\\"");
+                        format!("\"{}\":\"{}\"", attr.name, escaped)
+                    } else {
+                        format!("\"{}\":true", attr.name)
+                    }
+                })
+                .collect();
+            pairs.extend(extra_attrs);
+            let attributes_str = if pairs.is_empty() {
+                String::new()
+            } else {
+                format!("{{{}}}", pairs.join(","))
+            };
+            return self.call_expand_typed(
+                block,
+                &dispatch_pre.export,
+                block_name,
+                &attributes_str,
+                &actual_body,
+            );
+        }
+        // ── v1 path continues below ───────────────────────────────────────────
+
         let mut store = self.create_store();
         let linker = self.get_linker()?;
 
@@ -3296,20 +3353,9 @@ impl WasmPluginAdapter {
         let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
         let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
 
-        // Plugin Contracts v3 — per-block dispatch selection.
-        // See foundation/spec/plugins/contracts/typed-emission.md §2.1, §6.
+        // v1 string-emission path — dispatch.version is guaranteed < 3 here
+        // because the v3 early-exit above has already returned for v3 blocks.
         let dispatch = self.manifest.resolve_block_dispatch(block_name);
-        if dispatch.version >= 3 {
-            // v3 typed-emission path — call_expand_typed manages its own store,
-            // linker, and arena. The v1 store already created is discarded.
-            return self.call_expand_typed(
-                block,
-                &dispatch.export,
-                block_name,
-                &attributes_str,
-                &actual_body,
-            );
-        }
         let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
             .get_typed_func(&mut store, expand_fn_name)
