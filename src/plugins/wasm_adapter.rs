@@ -377,6 +377,147 @@ impl WasmPluginAdapter {
         Ok(expansion)
     }
 
+    /// Plugin Contracts v3 sub-cycle 3 — typed-emission variant of a lifecycle
+    /// slot call. Used by `invoke_lifecycle_slot` when the plugin opts into
+    /// typed emission at the manifest level (`expansion_version = "3.0.0"`).
+    ///
+    /// Signature mirrors `call_expand_typed`: a per-call `EmitArena` is
+    /// installed, a fresh `ctx_handle` is allocated, the plugin's typed slot
+    /// export is invoked as `(ctx, build_context_lp) -> i32`, diagnostics are
+    /// routed, and the accumulated `PluginExpansion` is returned.
+    ///
+    /// Per typed-emission.md §7: every v1 lifecycle slot has a typed-emission
+    /// counterpart with the same call site but a different ABI shape.
+    fn call_lifecycle_slot_typed(
+        &self,
+        slot_name: &str,
+        export_name: &str,
+        context: &crate::plugins::BuildContext,
+    ) -> Result<PluginExpansion> {
+        let ctx = self.next_ctx_handle();
+        let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
+        let mut store = self.create_store_with_arena(arena);
+
+        let linker = self.build_typed_emission_linker()?;
+        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
+            anyhow!(
+                "typed-emission: failed to instantiate plugin `{}` for slot `{}`: {}",
+                self.name,
+                slot_name,
+                e
+            )
+        })?;
+
+        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
+            anyhow!(
+                "typed-emission: plugin `{}` does not export memory",
+                self.name
+            )
+        })?;
+
+        // Heap pointer fix — same convention as call_expand_typed.
+        let globals: Vec<_> = instance
+            .exports(&mut store)
+            .filter_map(|e| e.into_global())
+            .collect();
+        for global in globals {
+            if let wasmtime::Val::I32(val) = global.get(&mut store) {
+                if val == 1024 {
+                    let _ = global.set(&mut store, wasmtime::Val::I32(8192));
+                    break;
+                }
+            }
+        }
+
+        let context_json = serde_json::to_string(context).map_err(|e| {
+            anyhow!(
+                "typed-emission: failed to serialize build context for slot `{}`: {}",
+                slot_name,
+                e
+            )
+        })?;
+        let context_ptr = self.find_or_write_string(&mut store, &memory, &context_json)?;
+
+        // The typed lifecycle slot signature is `(ctx, build_context_lp) -> i32`.
+        let slot: TypedFunc<(i32, i32), i32> = instance
+            .get_typed_func(&mut store, export_name)
+            .map_err(|e| {
+                anyhow!(
+                    "typed-emission: plugin `{}` does not export typed lifecycle slot \
+                     `{}` (export `{}`): {}",
+                    self.name,
+                    slot_name,
+                    export_name,
+                    e
+                )
+            })?;
+
+        let plugin_return = slot.call(&mut store, (ctx, context_ptr)).map_err(|e| {
+            let oom = store.data().oom_during_call.clone();
+            anyhow!(
+                "PLUGIN009: plugin `{}` trapped during typed lifecycle slot `{}`: {}{}",
+                self.name,
+                slot_name,
+                e,
+                oom.as_deref()
+                    .map(|s| format!(" [OOM: {}]", s))
+                    .unwrap_or_default(),
+            )
+        })?;
+
+        let arena = store
+            .data_mut()
+            .emit_arena
+            .take()
+            .expect("typed-emission: arena must be present after slot call");
+
+        let (expansion, diagnostics, saw_error) = arena.finish();
+
+        for diag in &diagnostics {
+            if diag.severity >= 2 {
+                tracing::error!(
+                    target: "compiler::plugins::typed_emission",
+                    plugin = %self.name,
+                    slot = slot_name,
+                    code = %diag.code,
+                    message = %diag.message,
+                    "plugin typed-emission error (lifecycle slot)"
+                );
+            } else {
+                tracing::warn!(
+                    target: "compiler::plugins::typed_emission",
+                    plugin = %self.name,
+                    slot = slot_name,
+                    code = %diag.code,
+                    message = %diag.message,
+                    "plugin typed-emission warning (lifecycle slot)"
+                );
+            }
+        }
+
+        if plugin_return != 0 || saw_error {
+            let error_summary = diagnostics
+                .iter()
+                .filter(|d| d.severity >= 2)
+                .map(|d| format!("[{}] {}", d.code, d.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(anyhow!(
+                "plugin `{}` failed typed lifecycle slot `{}` (return={}, errors: {})",
+                self.name,
+                slot_name,
+                plugin_return,
+                if error_summary.is_empty() {
+                    "(none)"
+                } else {
+                    &error_summary
+                }
+            ));
+        }
+
+        Ok(expansion)
+    }
+
     /// Set up the linker with host functions
     /// Provides the full Clean Language runtime environment
     fn setup_linker(&self) -> Result<Linker<PluginState>> {
@@ -4178,6 +4319,24 @@ impl FrameworkPlugin for WasmPluginAdapter {
         let Some(export_name) = export_name else {
             return Ok(PluginExpansion::default());
         };
+        // Plugin Contracts v3 sub-cycle 3 — when the plugin opts into typed
+        // emission at the manifest level, dispatch lifecycle slots through the
+        // typed-emission path. Per typed-emission.md §7 the v3 export ships
+        // with a different ABI shape (`(ctx, build_context_lp) -> i32` + arena
+        // bridge calls) so the dispatch decision is per-plugin, not per-slot.
+        if self.manifest.opts_into_typed_emission() {
+            return self
+                .call_lifecycle_slot_typed(slot_name, export_name, context)
+                .map_err(|e| PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: format!("__lifecycle_{}_typed", slot_name),
+                    message: format!(
+                        "typed lifecycle slot `{}` invocation failed: {}",
+                        slot_name, e
+                    ),
+                    location: None,
+                });
+        }
         // Call the slot via the dedicated v2 protocol — single string param
         // carrying the JSON build context per contracts/lifecycle.md §2.1.
         self.call_lifecycle_slot_v2(slot_name, export_name, context)

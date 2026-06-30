@@ -871,6 +871,12 @@ pub const SUPPORTED_RUNTIME_ABI_VERSIONS: &[&str] = &["1.0.0"];
 /// Clean Runtime ABI version emitted by `cln compile` when building a plugin.
 pub const DEFAULT_RUNTIME_ABI_VERSION: &str = "1.0.0";
 
+/// Expansion ABI versions this compiler accepts in a plugin's
+/// `[compatibility].expansion_version` field. A plugin declaring a version
+/// outside this set is refused at load time with PLUGIN006.
+/// See `foundation/spec/plugins/contracts/typed-emission.md` §6.
+pub const SUPPORTED_EXPANSION_VERSIONS: &[&str] = &["1.0.0", "3.0.0"];
+
 /// Plugin Contracts v2 — shared per-build state.
 /// See `foundation/spec/plugins/contracts/lifecycle.md` §2.5.
 ///

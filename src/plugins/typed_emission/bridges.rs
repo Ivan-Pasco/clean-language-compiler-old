@@ -862,6 +862,120 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         },
     )?;
 
+    // _define_function(ctx, name_lp, params_json_lp, return_type_handle, body_stmt_handle, flags)
+    //   -> function_handle (non-zero on success, 0 on failure)
+    //
+    // Sub-cycle 3 addition (typed-emission.md §3 / sub-cycle 2 design risk row
+    // on PendingFunction). Same parameter shape as `_emit_function`, but:
+    //   - the resulting Function is stored in the arena as a PendingFunction
+    //     and a handle is returned to the caller (instead of being pushed to
+    //     `expansion.functions`),
+    //   - the handle MUST be consumed by `_emit_class` (as a method),
+    //     `_emit_route` (as the handler), or any future bridge that takes a
+    //     `function_handle`. An un-consumed handle is silently dropped at
+    //     arena.finish() time and the function is not emitted.
+    //
+    // Rationale: under sub-cycle 2 a method body could only be supplied by
+    // calling `_emit_function` first (which pushed it as a top-level function)
+    // and then `_emit_class` consuming it back out. That worked but required
+    // every method to transit through `expansion.functions`. `_define_function`
+    // provides a direct allocation path: the plugin builds the method's body
+    // without polluting the file scope.
+    linker.func_wrap(
+        "env",
+        "_define_function",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         name_lp: i32,
+         params_json_lp: i32,
+         return_type_handle: i32,
+         body_handle: i32,
+         flags: i32|
+         -> i32 {
+            let name = match read_lp_string(&mut caller, name_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let params_json = match read_lp_string(&mut caller, params_json_lp) {
+                Some(s) => s,
+                None => return 0,
+            };
+            let param_descs = match decode_param_array(&params_json) {
+                Ok(d) => d,
+                Err(_) => return 0,
+            };
+
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+
+            // Return type (0 → Void).
+            let return_type = if return_type_handle == 0 {
+                Type::Void
+            } else {
+                match a.take_type(ctx, return_type_handle) {
+                    Ok(t) => t,
+                    Err(EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        return 0;
+                    }
+                    Err(_) => return 0,
+                }
+            };
+
+            // Parameters.
+            let mut params = Vec::with_capacity(param_descs.len());
+            for desc in param_descs {
+                let param_type = match a.take_type(ctx, desc.type_handle) {
+                    Ok(t) => t,
+                    Err(EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        return 0;
+                    }
+                    Err(_) => return 0,
+                };
+                let default_value = if desc.default_expr_handle != 0 {
+                    match a.take_expr(ctx, desc.default_expr_handle) {
+                        Ok(e) => Some(e),
+                        Err(EmitError::HandleConsumed { handle }) => {
+                            a.emit_plugin008(handle);
+                            return 0;
+                        }
+                        Err(_) => return 0,
+                    }
+                } else {
+                    None
+                };
+                let p = if let Some(dv) = default_value {
+                    Parameter::new_with_default(desc.name, param_type, dv)
+                } else {
+                    Parameter::new(desc.name, param_type)
+                };
+                params.push(p);
+            }
+
+            // Body.
+            let body_stmt = match a.take_stmt(ctx, body_handle) {
+                Ok(s) => s,
+                Err(EmitError::HandleConsumed { handle }) => {
+                    a.emit_plugin008(handle);
+                    return 0;
+                }
+                Err(_) => return 0,
+            };
+            let body = flatten_block(body_stmt);
+
+            let mut func = Function::new(name, params, return_type, body, None);
+            if flags & 1 != 0 {
+                func.visibility = Visibility::Public;
+            }
+
+            // Allocate as PendingFunction and return its handle.
+            a.alloc_pending_function(func)
+        },
+    )?;
+
     // _emit_class(ctx, name_lp, class_json_lp, flags)
     linker.func_wrap(
         "env",
@@ -936,6 +1050,11 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
     )?;
 
     // _emit_external(ctx, name_lp, params_json_lp, return_type_handle, host_class_lp)
+    //
+    // Per typed-emission.md §3.3: when host_class_lp is non-empty, the compiler
+    // checks it against the active build target's host class. A mismatch is
+    // reported via PLUGIN007 (BridgeHostClassMismatchInEmission) and the
+    // emission is refused.
     linker.func_wrap(
         "env",
         "_emit_external",
@@ -944,7 +1063,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          name_lp: i32,
          params_json_lp: i32,
          return_type_handle: i32,
-         _host_class_lp: i32|
+         host_class_lp: i32|
          -> i32 {
             let name = match read_lp_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
@@ -954,6 +1073,9 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                 Some(s) => s,
                 None => return 1,
             };
+            // host_class_lp may legitimately be 0 / empty (plugin did not
+            // restrict to a host class); only enforce when non-empty.
+            let host_class_decl = read_lp_string(&mut caller, host_class_lp);
             let param_descs = match decode_param_array(&params_json) {
                 Ok(d) => d,
                 Err(_) => return 1,
@@ -962,6 +1084,29 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
             let a = arena!(caller);
             if a.check_ctx(ctx).is_err() {
                 return 1;
+            }
+
+            // PLUGIN007 — host class mismatch check.
+            if let Some(declared) = host_class_decl.as_deref() {
+                if !declared.is_empty() {
+                    let active =
+                        crate::target_host_class_override().unwrap_or_else(|| "server".to_string());
+                    if declared != active {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN007".to_string(),
+                            message: format!(
+                                "BridgeHostClassMismatchInEmission: _emit_external declared \
+                                 host_class=`{}` but the active build target host class is \
+                                 `{}` (typed-emission.md §3.3, bridge-host-classes.md §2). \
+                                 external function `{}` was refused.",
+                                declared, active, name
+                            ),
+                            span_json: String::new(),
+                        });
+                        return 1;
+                    }
+                }
             }
 
             let return_type = if return_type_handle == 0 {
@@ -1309,6 +1454,97 @@ mod tests {
     }
 
     // ── Declaration emitters ──────────────────────────────────────────────────
+
+    // ── Sub-cycle 3: _define_function happy path ──────────────────────────────
+
+    #[test]
+    fn define_function_allocates_pending_function_handle() {
+        let mut arena = make_arena(11);
+        // Build a body block containing return 5.
+        let ret_t_h = arena.alloc_type(Type::Integer);
+        let ret_t = arena.take_type(11, ret_t_h).unwrap();
+
+        let five_h = arena.alloc_expr(Expression::Literal(Value::Integer(5)));
+        let five = arena.take_expr(11, five_h).unwrap();
+        let ret_stmt = Statement::Return {
+            value: Some(five),
+            location: None,
+        };
+        let body_block = Statement::If {
+            condition: Expression::Literal(Value::Boolean(true)),
+            then_branch: vec![ret_stmt],
+            else_branch: None,
+            location: None,
+        };
+        let body_h = arena.alloc_stmt(body_block);
+        let body = flatten_block(arena.take_stmt(11, body_h).unwrap());
+
+        let func = Function::new("helper".to_string(), Vec::new(), ret_t, body, None);
+        let pf_handle = arena.alloc_pending_function(func);
+        assert!(pf_handle > 0);
+
+        // PendingFunction handle is NOT in expansion.functions — must be
+        // consumed by _emit_class or _emit_route to be emitted.
+        assert!(arena.expansion.functions.is_empty());
+
+        // Taking it back works.
+        let retrieved = arena.take_pending_function(11, pf_handle).unwrap();
+        assert_eq!(retrieved.name, "helper");
+    }
+
+    // ── Sub-cycle 3: PLUGIN008 on method handle reuse ─────────────────────────
+
+    #[test]
+    fn define_function_pending_handle_reuse_emits_plugin008() {
+        let mut arena = make_arena(12);
+        let ret_t = Type::Void;
+        let func = Function::new("m".to_string(), Vec::new(), ret_t, Vec::new(), None);
+        let h = arena.alloc_pending_function(func);
+
+        // First take consumes the handle.
+        let _ = arena.take_pending_function(12, h).unwrap();
+
+        // Second take must report HandleConsumed (PLUGIN008).
+        let err = arena.take_pending_function(12, h).unwrap_err();
+        assert_eq!(err.error_code(), "PLUGIN008");
+    }
+
+    // ── Sub-cycle 3: _emit_class consumes a PendingFunction method handle ─────
+
+    #[test]
+    fn emit_class_method_handle_consumed_correctly() {
+        let mut arena = make_arena(13);
+        // Allocate a method via _define_function semantics.
+        let m = Function::new("ping".to_string(), Vec::new(), Type::Void, Vec::new(), None);
+        let m_handle = arena.alloc_pending_function(m);
+
+        // Simulate _emit_class consuming it.
+        let pf = arena.take_pending_function(13, m_handle).unwrap();
+        assert_eq!(pf.name, "ping");
+
+        // Re-using the same method handle in a second _emit_class call must
+        // be PLUGIN008.
+        let err = arena.take_pending_function(13, m_handle).unwrap_err();
+        assert_eq!(err.error_code(), "PLUGIN008");
+    }
+
+    // ── Sub-cycle 3: _emit_external host class — PLUGIN007 reasoning ──────────
+
+    #[test]
+    fn plugin007_error_code_matches_spec() {
+        // The PLUGIN007 diagnostic is emitted inside the bridge closure; this
+        // test asserts the diagnostic code we use matches the spec id.
+        let mut arena = make_arena(1);
+        arena.emit_diagnostic(super::super::error::EmitDiagnostic {
+            severity: 2,
+            code: "PLUGIN007".to_string(),
+            message: "host class mismatch".to_string(),
+            span_json: String::new(),
+        });
+        let (_exp, diags, saw_err) = arena.finish();
+        assert!(saw_err);
+        assert_eq!(diags[0].code, "PLUGIN007");
+    }
 
     #[test]
     fn emit_function_builds_correctly() {

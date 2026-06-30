@@ -19,10 +19,9 @@ pub(super) enum EmitNode {
     Expr(Expression),
     /// A fully-built type.
     Type(Type),
-    /// A pending function that may be emitted at file scope (`_emit_function`)
-    /// or consumed into a class as a method (`_emit_class`). The distinction
-    /// is deferred until the declaration emitter runs. Reserved for sub-cycle 3.
-    #[allow(dead_code)]
+    /// A pending function that may be consumed by `_emit_class` (as a method)
+    /// or `_emit_route` (as a handler). Allocated by `_define_function`;
+    /// un-consumed PendingFunctions are silently dropped at arena finish.
     PendingFunction(Function),
 }
 
@@ -331,7 +330,6 @@ impl EmitArena {
     }
 
     /// Allocate a pre-built `Function` node for use with `_define_function` (sub-cycle 3).
-    #[allow(dead_code)]
     pub fn alloc_pending_function(&mut self, f: Function) -> i32 {
         self.insert(EmitNode::PendingFunction(f))
     }

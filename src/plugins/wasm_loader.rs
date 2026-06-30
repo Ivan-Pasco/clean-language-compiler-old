@@ -199,6 +199,11 @@ impl WasmPluginLoader {
             // Warn if this plugin was compiled with a compiler known to have codegen bugs.
             self.check_plugin_build_compatibility(plugin_name, &manifest, &plugin_dir);
 
+            // Plugin Contracts v3 sub-cycle 3 — refuse plugins whose declared
+            // expansion_version is not in SUPPORTED_EXPANSION_VERSIONS (PLUGIN006).
+            // See foundation/spec/plugins/contracts/typed-emission.md §6.
+            self.check_plugin_expansion_version(plugin_name, &manifest, &plugin_dir)?;
+
             // Plugin Contracts v2 Phase B cycle 2 — read the `clean.abi_version`
             // WASM custom section emitted by cycle 1 and refuse plugins whose
             // stamp is not in `SUPPORTED_RUNTIME_ABI_VERSIONS`. Absent stamp
@@ -542,6 +547,53 @@ impl WasmPluginLoader {
             wasm_path.display(),
             DEFAULT_RUNTIME_ABI_VERSION,
         )
+    }
+
+    /// Plugin Contracts v3 sub-cycle 3 — refuse plugins declaring an
+    /// `expansion_version` outside `SUPPORTED_EXPANSION_VERSIONS` with the
+    /// PLUGIN006 (UnsupportedExpansionVersion) error from typed-emission.md §6.
+    ///
+    /// Absent or default ("1.0.0") expansion_version always loads. Only an
+    /// explicitly declared, unsupported value is refused.
+    pub fn format_expansion_version_mismatch_error(
+        plugin_name: &str,
+        plugin_path: &Path,
+        found: &str,
+    ) -> String {
+        use super::plugin_abi::SUPPORTED_EXPANSION_VERSIONS;
+        format!(
+            "error[PLUGIN006]: plugin '{}' at {} declares expansion_version = \
+             \"{}\", but this compiler only supports {:?} \
+             (UnsupportedExpansionVersion).\n  \
+             resolution: upgrade the compiler or downgrade the plugin to a \
+             supported expansion ABI.\n  \
+             spec: foundation/spec/plugins/contracts/typed-emission.md §6",
+            plugin_name,
+            plugin_path.display(),
+            found,
+            SUPPORTED_EXPANSION_VERSIONS,
+        )
+    }
+
+    /// Refuse plugins whose declared `expansion_version` is not in
+    /// `SUPPORTED_EXPANSION_VERSIONS`. See typed-emission.md §6.
+    fn check_plugin_expansion_version(
+        &self,
+        plugin_name: &str,
+        manifest: &PluginManifest,
+        plugin_dir: &Path,
+    ) -> Result<()> {
+        use super::plugin_abi::SUPPORTED_EXPANSION_VERSIONS;
+        let Some(declared) = manifest.compatibility.expansion_version.as_deref() else {
+            return Ok(());
+        };
+        if SUPPORTED_EXPANSION_VERSIONS.iter().any(|v| *v == declared) {
+            return Ok(());
+        }
+        Err(anyhow!(
+            "{}",
+            Self::format_expansion_version_mismatch_error(plugin_name, plugin_dir, declared)
+        ))
     }
 
     /// Apply the three-case decision on a single plugin: error on unsupported
