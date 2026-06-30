@@ -193,7 +193,7 @@ impl Default for PluginCompatibility {
 /// Allows a single plugin to mix v1 (string emission) and v3 (typed emission)
 /// expand entry points on a block-by-block basis. See
 /// foundation/spec/plugins/contracts/typed-emission.md §2.1.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginBlockConfig {
     /// WASM export name to call for this block's expansion.
     /// When omitted, the compiler falls back to `[exports].expand`.
@@ -205,15 +205,6 @@ pub struct PluginBlockConfig {
     /// opt a specific block out of typed emission during gradual migration.
     #[serde(default)]
     pub version: Option<u32>,
-}
-
-impl Default for PluginBlockConfig {
-    fn default() -> Self {
-        Self {
-            expand: None,
-            version: None,
-        }
-    }
 }
 
 fn default_min_compiler() -> String {
