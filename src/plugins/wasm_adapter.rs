@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::de::DeserializeOwned;
+use std::sync::atomic::{AtomicI32, Ordering};
 use wasmtime::{Caller, Engine, Linker, Memory, Module, Store, TypedFunc};
 
 use crate::ast::{FrameworkBlock, Statement};
@@ -44,6 +45,12 @@ pub struct WasmPluginAdapter {
     /// every plugin loaded with the same `BuildState` shares the same store.
     /// See `foundation/spec/plugins/contracts/lifecycle.md` §2.5.
     build_state: crate::plugins::BuildState,
+    /// Monotonically-increasing counter for typed-emission ctx handles.
+    /// Each `call_expand_typed` call allocates a fresh ctx by fetching-and-
+    /// incrementing this counter. Because ctx values are never recycled, a
+    /// plugin cannot accidentally re-use a handle from a prior call even if
+    /// it stored the old ctx in its `_build_state_set` keystore.
+    next_ctx_counter: AtomicI32,
 }
 
 impl WasmPluginAdapter {
@@ -121,6 +128,7 @@ impl WasmPluginAdapter {
             description_cache,
             cached_linker: None,
             build_state: crate::plugins::new_build_state(),
+            next_ctx_counter: AtomicI32::new(1),
         };
 
         // Pre-build the linker once — this sets up ~50+ host function stubs
@@ -185,6 +193,188 @@ impl WasmPluginAdapter {
         self.cached_linker
             .as_ref()
             .ok_or_else(|| anyhow!("Linker not initialized"))
+    }
+
+    /// Build a fresh typed-emission linker for a single v3 expansion call.
+    ///
+    /// Unlike the v1 linker (which is cached because it has no per-call state),
+    /// the typed-emission linker is built once per `call_expand_typed` call
+    /// because the bridge closures access `store.data_mut().emit_arena` — a
+    /// per-call arena installed just before instantiation. If we tried to cache
+    /// the linker across calls the closures would capture a stale arena reference.
+    ///
+    /// The overhead is acceptable: the typed-emission bridge surface is ~30
+    /// functions compared to the v1 linker's ~120, and the arena fill rate
+    /// per block expansion is at most a few hundred nodes.
+    fn build_typed_emission_linker(&self) -> Result<Linker<PluginState>> {
+        let mut linker = Linker::new(&self.engine);
+        crate::plugins::typed_emission::register_typed_emission_bridges(&mut linker)?;
+        Ok(linker)
+    }
+
+    /// Allocate the next monotonic ctx_handle for typed-emission.
+    fn next_ctx_handle(&self) -> i32 {
+        self.next_ctx_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Create a store with a typed-emission arena pre-installed.
+    fn create_store_with_arena(
+        &self,
+        arena: crate::plugins::typed_emission::EmitArena,
+    ) -> Store<PluginState> {
+        let mut state = PluginState::new();
+        state.emit_arena = Some(arena);
+        let mut store = Store::new(&self.engine, state);
+        let timeout = super::wasm_loader::plugin_timeout_secs();
+        if timeout > 0 {
+            let ticks = (timeout * 1000) / super::wasm_loader::EPOCH_TICK_MS;
+            store.set_epoch_deadline(ticks.max(1));
+            store.epoch_deadline_trap();
+        }
+        store
+    }
+
+    /// Plugin Contracts v3 typed expansion. Called when
+    /// `dispatch.version >= 3` in `call_expand` or `call_expand_full`.
+    ///
+    /// Allocates an `EmitArena`, installs it into the store, instantiates the
+    /// plugin with the typed-emission linker, calls `expand_block_typed`, drains
+    /// the arena, routes diagnostics, and returns the accumulated `PluginExpansion`.
+    fn call_expand_typed(
+        &self,
+        block: &FrameworkBlock,
+        export_name: &str,
+        block_name_str: &str,
+        attributes_str: &str,
+        body_str: &str,
+    ) -> Result<PluginExpansion> {
+        let ctx = self.next_ctx_handle();
+        let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
+        let mut store = self.create_store_with_arena(arena);
+
+        let linker = self.build_typed_emission_linker()?;
+        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
+            anyhow!(
+                "typed-emission: failed to instantiate plugin `{}`: {}",
+                self.name,
+                e
+            )
+        })?;
+
+        // Obtain and fix the heap pointer (same as v1 path).
+        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
+            anyhow!(
+                "typed-emission: plugin `{}` does not export memory",
+                self.name
+            )
+        })?;
+
+        let globals: Vec<_> = instance
+            .exports(&mut store)
+            .filter_map(|e| e.into_global())
+            .collect();
+        for global in globals {
+            if let wasmtime::Val::I32(val) = global.get(&mut store) {
+                if val == 1024 {
+                    let _ = global.set(&mut store, wasmtime::Val::I32(8192));
+                    break;
+                }
+            }
+        }
+
+        // Write LP-strings into plugin WASM memory.
+        let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name_str)?;
+        let attributes_ptr = self.find_or_write_string(&mut store, &memory, attributes_str)?;
+        let body_ptr = self.find_or_write_string(&mut store, &memory, body_str)?;
+
+        // Call the plugin's `expand_block_typed(ctx, block_name_lp, attrs_lp, body_lp) -> i32`.
+        let expand: TypedFunc<(i32, i32, i32, i32), i32> = instance
+            .get_typed_func(&mut store, export_name)
+            .map_err(|e| {
+                anyhow!(
+                    "typed-emission: plugin `{}` does not export `{}`: {}",
+                    self.name,
+                    export_name,
+                    e
+                )
+            })?;
+
+        let plugin_return = expand
+            .call(&mut store, (ctx, block_name_ptr, attributes_ptr, body_ptr))
+            .map_err(|e| {
+                let oom = store.data().oom_during_call.clone();
+                anyhow!(
+                    "PLUGIN009: plugin `{}` trapped during typed emission of block `{}`: {}{}",
+                    self.name,
+                    block.name.trim_end_matches(':'),
+                    e,
+                    oom.as_deref()
+                        .map(|s| format!(" [OOM: {}]", s))
+                        .unwrap_or_default(),
+                )
+            })?;
+
+        // Drain the arena.
+        let arena = store.data_mut().emit_arena.take().expect(
+            "typed-emission: arena was taken during expansion — cross-call arena reuse detected",
+        );
+
+        let (expansion, diagnostics, saw_error) = arena.finish();
+
+        // Route diagnostics to the compiler diagnostic channel.
+        for diag in &diagnostics {
+            if diag.severity >= 2 {
+                tracing::error!(
+                    target: "compiler::plugins::typed_emission",
+                    plugin = %self.name,
+                    block = block.name.trim_end_matches(':'),
+                    code = %diag.code,
+                    message = %diag.message,
+                    "plugin typed-emission error"
+                );
+            } else {
+                tracing::warn!(
+                    target: "compiler::plugins::typed_emission",
+                    plugin = %self.name,
+                    block = block.name.trim_end_matches(':'),
+                    code = %diag.code,
+                    message = %diag.message,
+                    "plugin typed-emission warning"
+                );
+            }
+        }
+
+        if plugin_return != 0 || saw_error {
+            let error_summary = diagnostics
+                .iter()
+                .filter(|d| d.severity >= 2)
+                .map(|d| format!("[{}] {}", d.code, d.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(anyhow!(
+                "plugin `{}` failed typed emission of block `{}` (return={}, errors: {})",
+                self.name,
+                block.name.trim_end_matches(':'),
+                plugin_return,
+                if error_summary.is_empty() {
+                    "(none)"
+                } else {
+                    &error_summary
+                }
+            ));
+        }
+
+        tracing::debug!(
+            target: "compiler::plugins::arena",
+            plugin = %self.name,
+            block = block.name.trim_end_matches(':'),
+            functions = expansion.functions.len(),
+            classes = expansion.classes.len(),
+            externals = expansion.externals.len(),
+            "typed-emission: expansion complete"
+        );
+
+        Ok(expansion)
     }
 
     /// Set up the linker with host functions
@@ -2873,20 +3063,22 @@ impl WasmPluginAdapter {
         // See foundation/spec/plugins/contracts/typed-emission.md §2.1, §6.
         let dispatch = self.manifest.resolve_block_dispatch(block_name);
         if dispatch.version >= 3 {
-            // Sub-cycle 1 lands the manifest fields and dispatch selection
-            // only. The actual typed emission entry point (`expand_block_typed`)
-            // and the AST-construction bridge surface land in sub-cycle 2.
-            // Until then, refuse to expand v3 blocks rather than silently
-            // falling back to v1 — silent fallback would mask migration bugs.
-            return Err(anyhow!(
-                "plugin `{}` block `{}` declares expansion version {} but the \
-                 compiler's typed-emission code path is not yet implemented \
-                 (sub-cycle 2). Set this block's `version = 1` in plugin.toml \
-                 to keep using v1 string emission until typed emission ships.",
-                self.name,
+            // v3 typed-emission path — use call_expand_typed which manages its
+            // own store, linker, and arena. The already-created v1 store and
+            // instance are simply discarded.
+            let expansion = self.call_expand_typed(
+                block,
+                &dispatch.export,
                 block_name,
-                dispatch.version,
-            ));
+                &attributes_str,
+                &actual_body,
+            )?;
+            // call_expand (v1 path) returns Vec<Statement>. For v3 plugins the
+            // emitted statements come from expansion.statements; the remaining
+            // fields (functions, classes, etc.) are dropped on this path because
+            // call_expand's callers only use the returned Vec<Statement>. Callers
+            // that need the full expansion must use call_expand_full.
+            return Ok(expansion.statements);
         }
         let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
@@ -3106,20 +3298,17 @@ impl WasmPluginAdapter {
 
         // Plugin Contracts v3 — per-block dispatch selection.
         // See foundation/spec/plugins/contracts/typed-emission.md §2.1, §6.
-        // Mirrors the check in call_expand above; kept inline rather than
-        // factored out because the surrounding store/instance plumbing
-        // differs subtly between the two call paths.
         let dispatch = self.manifest.resolve_block_dispatch(block_name);
         if dispatch.version >= 3 {
-            return Err(anyhow!(
-                "plugin `{}` block `{}` declares expansion version {} but the \
-                 compiler's typed-emission code path is not yet implemented \
-                 (sub-cycle 2). Set this block's `version = 1` in plugin.toml \
-                 to keep using v1 string emission until typed emission ships.",
-                self.name,
+            // v3 typed-emission path — call_expand_typed manages its own store,
+            // linker, and arena. The v1 store already created is discarded.
+            return self.call_expand_typed(
+                block,
+                &dispatch.export,
                 block_name,
-                dispatch.version,
-            ));
+                &attributes_str,
+                &actual_body,
+            );
         }
         let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
@@ -4142,7 +4331,7 @@ impl FrameworkPlugin for WasmPluginAdapter {
 struct ArenaMark(usize);
 
 /// State held by the WASM store
-struct PluginState {
+pub(crate) struct PluginState {
     /// Current bump-allocator top. All active allocations live in
     /// `[stable_zone_end, alloc_offset)`. The stable zone
     /// `[524288, stable_zone_end)` holds pointers that must survive
@@ -4184,6 +4373,10 @@ struct PluginState {
     /// after the trap is reported and prepends the structured diagnostic.
     /// See COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE (fp b80c2f907c71).
     oom_during_call: Option<String>,
+    /// Plugin Contracts v3 typed-emission arena. Installed by
+    /// `call_expand_typed` before instantiation and taken after the expand
+    /// call returns. The `Option<>` is `None` on all v1 call paths.
+    pub(crate) emit_arena: Option<crate::plugins::typed_emission::EmitArena>,
 }
 
 /// Emit arena telemetry on every store drop — including trap/error paths.
@@ -4243,6 +4436,7 @@ impl PluginState {
             last_error: None,
             cached_empty_lp_ptr: None,
             oom_during_call: None,
+            emit_arena: None,
         }
     }
 
