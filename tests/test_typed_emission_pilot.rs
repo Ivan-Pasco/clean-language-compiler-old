@@ -4,13 +4,12 @@
 //! PluginExpansion with a function named "two" returning IntegerLiteral(2).
 //!
 //! Test inventory:
-//!   1. pilot_wat_loads_into_wasm_module          — WAT compiles to valid WASM
-//!   2. pilot_call_expand_typed_emits_function     — call_expand_typed produces
-//!                                                   correct PluginExpansion
-//!   3. plugin008_double_handle_use_fails          — PLUGIN008 enforcement
-//!   4. emit_error_severity2_fails_expansion       — _emit_error severity=2 aborts
-//!   5. cross_call_handle_isolation                — handles invalid in next call
-//!   6. v3_dispatch_routes_via_call_expand_typed   — call_expand routes v3 blocks
+//!   1. pilot_wat_loads_into_wasm_module       — WAT compiles to valid WASM
+//!   2. pilot_call_expand_typed_emits_function — call_expand_typed produces correct PluginExpansion
+//!   3. plugin008_double_handle_use_fails      — PLUGIN008 enforcement
+//!   4. emit_error_severity2_fails_expansion   — _emit_error severity=2 aborts
+//!   5. cross_call_handle_isolation            — handles invalid in next call
+//!   6. v3_dispatch_routes_via_call_expand_typed — call_expand routes v3 blocks
 
 use clean_language_compiler::ast::{
     Expression, FrameworkBlock, SourceLocation, Statement, Type, Value,

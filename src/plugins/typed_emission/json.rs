@@ -64,7 +64,9 @@ pub struct FieldDesc {
 }
 
 /// One method descriptor inside `class_json_lp`.
+// `name` is part of the class emission contract; used in sub-cycle 3 `_emit_class`.
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct MethodDesc {
     pub name: String,
     pub function_handle: i32,

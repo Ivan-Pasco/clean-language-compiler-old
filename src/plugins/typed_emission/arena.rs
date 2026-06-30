@@ -21,7 +21,8 @@ pub(super) enum EmitNode {
     Type(Type),
     /// A pending function that may be emitted at file scope (`_emit_function`)
     /// or consumed into a class as a method (`_emit_class`). The distinction
-    /// is deferred until the declaration emitter runs.
+    /// is deferred until the declaration emitter runs. Reserved for sub-cycle 3.
+    #[allow(dead_code)]
     PendingFunction(Function),
 }
 
@@ -148,6 +149,8 @@ impl EmitArena {
     ///
     /// `consume = true` marks the handle as consumed; subsequent calls with
     /// the same handle return `Err(HandleConsumed)` — PLUGIN008.
+    /// Reserved for sub-cycle 3 bridge extensions; not yet called in sub-cycle 2.
+    #[allow(dead_code)]
     fn take_node(&mut self, ctx: i32, handle: i32, consume: bool) -> Result<&EmitNode, EmitError> {
         self.check_ctx(ctx)?;
 
@@ -284,6 +287,8 @@ impl EmitArena {
     }
 
     /// Take a `Type` or return `None` (i.e. `Type::Void`) when handle == 0.
+    /// Used in tests and reserved for nullable type slots in sub-cycle 3 bridges.
+    #[allow(dead_code)]
     pub fn take_type_opt(&mut self, ctx: i32, handle: i32) -> Result<Option<Type>, EmitError> {
         if handle == 0 {
             self.check_ctx(ctx)?;
@@ -325,6 +330,8 @@ impl EmitArena {
         self.insert(EmitNode::Type(t))
     }
 
+    /// Allocate a pre-built `Function` node for use with `_define_function` (sub-cycle 3).
+    #[allow(dead_code)]
     pub fn alloc_pending_function(&mut self, f: Function) -> i32 {
         self.insert(EmitNode::PendingFunction(f))
     }
@@ -403,6 +410,7 @@ mod tests {
         Expression::Literal(Value::Boolean(true))
     }
 
+    #[allow(dead_code)]
     fn dummy_type() -> Type {
         Type::Integer
     }
