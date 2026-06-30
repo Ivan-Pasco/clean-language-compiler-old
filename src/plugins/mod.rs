@@ -107,6 +107,9 @@ pub use plugin_abi::{
 pub use registry::{PluginError, PluginRegistrations, PluginRegistry, PluginRegistryBuilder};
 pub use wasm_adapter::WasmPluginAdapter;
 pub use wasm_loader::{AbiStampOutcome, WasmPluginLoader};
+// Typed-emission op-code lookup tables (public surface for integration tests and tooling).
+// These mirror `foundation/spec/plugins/contracts/typed-emission-ops.toml §3.9–3.10`.
+pub use typed_emission::ops::{binop_from_code, unop_from_code, BINOP_MAX_CODE, UNOP_MAX_CODE};
 
 use crate::ast::{SourceLocation, Statement};
 

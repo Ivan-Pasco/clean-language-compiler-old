@@ -194,6 +194,14 @@ enum Commands {
         /// See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
         #[arg(long)]
         strict_hosts: bool,
+
+        /// Refuse plugins that omit [compatibility].emission_ops_hash (default: warn only).
+        /// When set, every loaded plugin must declare the hash of the typed-emission-ops.toml
+        /// table it was compiled against, enabling exact op-code table validation.
+        /// Plugins without the hash were built before typed-op bridges were supported.
+        /// See foundation/spec/plugins/contracts/typed-emission.md §3.10.
+        #[arg(long)]
+        strict_emission_ops: bool,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -488,6 +496,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             plugins,
             release,
             strict_hosts,
+            strict_emission_ops,
         } => {
             handle_compile(
                 input,
@@ -500,6 +509,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 plugins,
                 release,
                 strict_hosts,
+                strict_emission_ops,
                 &output_config,
             )
             .await?
@@ -694,6 +704,7 @@ async fn handle_serve(
         true,                 // plugins enabled
         false,                // release mode: off for serve
         false,                // strict_hosts off for serve
+        false,                // strict_emission_ops off for serve
         output_config,
     )
     .await;
@@ -1405,6 +1416,7 @@ async fn handle_compile(
     plugins: bool,
     release: bool,
     strict_hosts: bool,
+    strict_emission_ops: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Plugin Contracts v2 — thread `--target` and `--strict-hosts` into the
@@ -1419,6 +1431,8 @@ async fn handle_compile(
         clean_language_compiler::set_target_host_class_override(None);
     }
     clean_language_compiler::set_strict_hosts_override(strict_hosts);
+    // Plugin Contracts v3 Layer D step 2 — thread --strict-emission-ops.
+    clean_language_compiler::set_strict_emission_ops_override(strict_emission_ops);
 
     // Plugin Contracts v2 Phase B — when building a plugin, resolve the
     // Clean Runtime ABI version from the sibling plugin.toml's

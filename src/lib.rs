@@ -347,6 +347,11 @@ pub fn init_logging(level: &str) {
 thread_local! {
     static TARGET_HOST_CLASS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static STRICT_HOSTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Plugin Contracts v3 Layer D step 2 — when true, a plugin that omits
+    /// `[compatibility].emission_ops_hash` is refused instead of warned.
+    /// Set by `--strict-emission-ops` CLI flag.
+    /// See foundation/spec/plugins/contracts/typed-emission.md §3.10.
+    static STRICT_EMISSION_OPS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Plugin Contracts v2 Phase B — when set, `compile_multi_file_with_memory_tier`
     /// stamps the produced WASM with this Clean Runtime ABI version as a
     /// `clean.abi_version` custom section. Set by `handle_compile` when the CLI
@@ -404,6 +409,23 @@ pub fn set_strict_hosts_override(strict: bool) {
 /// Read the active `--strict-hosts` override for the current thread.
 pub fn strict_hosts_override() -> bool {
     STRICT_HOSTS.with(|cell| cell.get())
+}
+
+/// Set the `--strict-emission-ops` flag for the current thread.
+///
+/// When true, a plugin that omits `[compatibility].emission_ops_hash` is refused
+/// with PLUGIN006 instead of loading with a warning. Absent hash means the plugin
+/// was compiled without typed-op bridge support; the flag enforces that all loaded
+/// plugins are up-to-date.
+///
+/// See foundation/spec/plugins/contracts/typed-emission.md §3.10.
+pub fn set_strict_emission_ops_override(strict: bool) {
+    STRICT_EMISSION_OPS.with(|cell| cell.set(strict));
+}
+
+/// Read the active `--strict-emission-ops` override for the current thread.
+pub fn strict_emission_ops_override() -> bool {
+    STRICT_EMISSION_OPS.with(|cell| cell.get())
 }
 
 /// Translate a CLI `--target` value into the bridge host class it implies.

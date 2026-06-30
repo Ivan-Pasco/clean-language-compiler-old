@@ -42,7 +42,10 @@ mod mapping {
             "*" => BinaryOperator::Multiply,
             "/" => BinaryOperator::Divide,
             "%" => BinaryOperator::Modulo,
-            "**" => BinaryOperator::Power,
+            // "^" is the grammar.ebnf §3.2 power_op. The legacy "**" form is
+            // also accepted here for backward compatibility with any plugin that
+            // used it before the TOML table was co-published, but "^" is canonical.
+            "^" | "**" => BinaryOperator::Power,
             "==" => BinaryOperator::Equal,
             "!=" => BinaryOperator::NotEqual,
             "<" => BinaryOperator::Less,

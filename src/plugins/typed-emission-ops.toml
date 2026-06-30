@@ -1,0 +1,28 @@
+# Clean Language typed-emission op-code registry
+# Co-published with foundation/spec/plugins/contracts/typed-emission.md §3.10
+# Numbering is STABLE FOREVER. Adding a new op gets the next available
+# integer. Never reuse a slot. Never renumber.
+#
+# Source of truth for supported operators: foundation/spec/grammar.ebnf §3.2
+
+[binop]
+0  = "+"        # additive_op
+1  = "-"        # additive_op
+2  = "*"        # multiplicative_op
+3  = "/"        # multiplicative_op
+4  = "%"        # multiplicative_op
+5  = "=="       # comparison_op
+6  = "!="       # comparison_op
+7  = "<"        # comparison_op
+8  = ">"        # comparison_op
+9  = "<="       # comparison_op
+10 = ">="       # comparison_op
+11 = "and"      # logical_op
+12 = "or"       # logical_op
+13 = "default"  # default_op
+14 = "^"        # power_op (right-associative)
+15 = "is"       # comparison_op (type test)
+
+[unop]
+0 = "-"         # unary_op (negate)
+1 = "not"       # unary_op (logical not)

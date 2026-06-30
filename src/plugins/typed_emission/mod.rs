@@ -8,10 +8,12 @@
 ///   - `bridges`  — ~30 bridge functions registered onto the typed-emission linker
 ///   - `error`    — `EmitDiagnostic` and `EmitError` types
 ///   - `json`     — JSON helpers for parameter/statement/class payloads
+///   - `ops`      — stable integer op-code tables (typed-emission-ops.toml mirror)
 pub(crate) mod arena;
 pub(crate) mod bridges;
 pub(crate) mod error;
 pub(crate) mod json;
+pub mod ops;
 
 /// Re-export the public types used by `wasm_adapter.rs`.
 pub(crate) use arena::EmitArena;

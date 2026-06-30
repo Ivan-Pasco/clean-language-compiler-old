@@ -433,6 +433,84 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
+    // _expr_binop_op(ctx, op_code, lhs_handle, rhs_handle) -> handle
+    //
+    // Numeric-code sibling to `_expr_binop` (LP-string variant above).
+    // Uses the stable integer op-code table from typed-emission-ops.toml §3.10.
+    // Invalid op_code → diagnostic PLUGIN_INVALID_BINOP_CODE + return 0.
+    linker.func_wrap(
+        "env",
+        "_expr_binop_op",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         op_code: i32,
+         lhs_handle: i32,
+         rhs_handle: i32|
+         -> i32 {
+            let op = match super::ops::binop_from_code(op_code) {
+                Some(o) => o,
+                None => {
+                    let a = arena!(caller);
+                    if a.check_ctx(ctx).is_err() {
+                        return 0;
+                    }
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN_INVALID_BINOP_CODE".to_string(),
+                        message: format!(
+                            "invalid binary op code {} (valid range 0..={}; \
+                             see foundation/spec/plugins/contracts/typed-emission-ops.toml [binop])",
+                            op_code,
+                            super::ops::BINOP_MAX_CODE,
+                        ),
+                        span_json: String::new(),
+                    });
+                    return 0;
+                }
+            };
+            let a = arena!(caller);
+            let lhs = take_or_return!(a, a.take_expr(ctx, lhs_handle));
+            let rhs = take_or_return!(a, a.take_expr(ctx, rhs_handle));
+            a.alloc_expr(Expression::Binary(Box::new(lhs), op, Box::new(rhs)))
+        },
+    )?;
+
+    // _expr_unop_op(ctx, op_code, operand_handle) -> handle
+    //
+    // Numeric-code sibling to `_expr_unop` (LP-string variant above).
+    // Uses the stable integer op-code table from typed-emission-ops.toml §3.10.
+    // Invalid op_code → diagnostic PLUGIN_INVALID_UNOP_CODE + return 0.
+    linker.func_wrap(
+        "env",
+        "_expr_unop_op",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, op_code: i32, operand_handle: i32| -> i32 {
+            let op = match super::ops::unop_from_code(op_code) {
+                Some(o) => o,
+                None => {
+                    let a = arena!(caller);
+                    if a.check_ctx(ctx).is_err() {
+                        return 0;
+                    }
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN_INVALID_UNOP_CODE".to_string(),
+                        message: format!(
+                            "invalid unary op code {} (valid range 0..={}; \
+                             see foundation/spec/plugins/contracts/typed-emission-ops.toml [unop])",
+                            op_code,
+                            super::ops::UNOP_MAX_CODE,
+                        ),
+                        span_json: String::new(),
+                    });
+                    return 0;
+                }
+            };
+            let a = arena!(caller);
+            let operand = take_or_return!(a, a.take_expr(ctx, operand_handle));
+            a.alloc_expr(Expression::Unary(op, Box::new(operand)))
+        },
+    )?;
+
     // _expr_index(ctx, receiver_handle, index_handle) -> handle
     linker.func_wrap(
         "env",

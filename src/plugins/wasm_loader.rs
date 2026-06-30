@@ -204,6 +204,10 @@ impl WasmPluginLoader {
             // See foundation/spec/plugins/contracts/typed-emission.md §6.
             self.check_plugin_expansion_version(plugin_name, &manifest, &plugin_dir)?;
 
+            // Plugin Contracts v3 Layer D step 2 — three-case emission_ops_hash check.
+            // See foundation/spec/plugins/contracts/typed-emission.md §3.10.
+            self.check_plugin_emission_ops_hash(plugin_name, &manifest, &plugin_dir)?;
+
             // Plugin Contracts v2 Phase B cycle 2 — read the `clean.abi_version`
             // WASM custom section emitted by cycle 1 and refuse plugins whose
             // stamp is not in `SUPPORTED_RUNTIME_ABI_VERSIONS`. Absent stamp
@@ -619,6 +623,103 @@ impl WasmPluginLoader {
                     Self::format_abi_absent_warning(plugin_name, wasm_path)
                 );
                 Ok(())
+            }
+        }
+    }
+
+    // ── Emission-ops hash three-case loader ─────────────────────────────────
+
+    /// Format the PLUGIN006 error when a plugin's `emission_ops_hash` does not
+    /// match the compiler's `EMISSION_OPS_HASH` constant.
+    pub fn format_emission_ops_hash_mismatch_error(
+        plugin_name: &str,
+        plugin_path: &Path,
+        found: &str,
+        expected: &str,
+    ) -> String {
+        format!(
+            "error[PLUGIN006]: plugin '{}' at {} was built against typed-emission-ops.toml \
+             hash {found}, but this compiler expects {expected}; the op-code table has \
+             changed (EmissionOpsHashMismatch).\n  \
+             resolution: reinstall the plugin via `cleen frame install` to rebuild against \
+             the current op-code table.\n  \
+             spec: foundation/spec/plugins/contracts/typed-emission.md §3.10",
+            plugin_name,
+            plugin_path.display(),
+        )
+    }
+
+    /// Format the warning emitted when a plugin omits `emission_ops_hash`
+    /// (it predates the typed-op bridges and will not be able to use them).
+    pub fn format_emission_ops_hash_absent_warning(
+        plugin_name: &str,
+        plugin_path: &Path,
+    ) -> String {
+        format!(
+            "warning[PLUGIN-OPS-ABSENT]: plugin '{}' at {} does not declare \
+             [compatibility].emission_ops_hash; it was built without typed-op bridge \
+             support and cannot use _expr_binop_op / _expr_unop_op.\n  \
+             rebuild against the current compiler to make this explicit, or ignore this \
+             warning if the plugin does not use typed-op bridges.\n  \
+             spec: foundation/spec/plugins/contracts/typed-emission.md §3.10",
+            plugin_name,
+            plugin_path.display(),
+        )
+    }
+
+    /// Three-case emission_ops_hash check (typed-emission.md §3.10 / Layer D step 2):
+    ///
+    ///   - Match   → Ok(())  (silent).
+    ///   - Mismatch → Err(PLUGIN006 with reinstall guidance).
+    ///   - Absent  → warn + Ok(()) normally; Err(PLUGIN006) when strict flag is on.
+    fn check_plugin_emission_ops_hash(
+        &self,
+        plugin_name: &str,
+        manifest: &super::plugin_abi::PluginManifest,
+        plugin_dir: &Path,
+    ) -> Result<()> {
+        use super::plugin_abi::EMISSION_OPS_HASH;
+
+        let declared = manifest.compatibility.emission_ops_hash.as_deref();
+
+        match declared {
+            None => {
+                // Absent case: warn, but only when the compiler has a real hash.
+                // If EMISSION_OPS_HASH is the all-zeros sentinel (spec TOML absent
+                // at build time) we have nothing useful to validate against — skip.
+                if EMISSION_OPS_HASH != "0".repeat(64).as_str() {
+                    if crate::strict_emission_ops_override() {
+                        return Err(anyhow!(
+                            "{}",
+                            Self::format_emission_ops_hash_mismatch_error(
+                                plugin_name,
+                                plugin_dir,
+                                "<absent>",
+                                EMISSION_OPS_HASH,
+                            )
+                        ));
+                    }
+                    eprintln!(
+                        "{}",
+                        Self::format_emission_ops_hash_absent_warning(plugin_name, plugin_dir)
+                    );
+                }
+                Ok(())
+            }
+            Some(found) => {
+                if found == EMISSION_OPS_HASH {
+                    Ok(())
+                } else {
+                    Err(anyhow!(
+                        "{}",
+                        Self::format_emission_ops_hash_mismatch_error(
+                            plugin_name,
+                            plugin_dir,
+                            found,
+                            EMISSION_OPS_HASH,
+                        )
+                    ))
+                }
             }
         }
     }
