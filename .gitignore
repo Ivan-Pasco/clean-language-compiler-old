@@ -27,6 +27,9 @@ Thumbs.db
 # WASM artifacts (keep source, ignore compiled)
 *.wasm
 *.wat
+# Exception: test fixture WAT sources are source-controlled
+!tests/cln/**/pilot.wat
+!tests/cln/**/*.fixture.wat
 
 # Debug files
 debug_*
