@@ -9,6 +9,10 @@
 use anyhow::Result;
 use wasmtime::{Caller, Linker};
 
+use super::batch_schema::{
+    self, class_to_ast, function_to_ast, parse_batch_spec, parse_class_spec, stmt_to_ast,
+    BatchSchemaError, BATCH_FUNCTION_LIMIT,
+};
 use super::error::{EmitDiagnostic, EmitError};
 use super::json::{
     decode_class_desc, decode_handle_array, decode_object_fields, decode_param_array,
@@ -150,6 +154,7 @@ pub fn register_typed_emission_bridges(linker: &mut Linker<PluginState>) -> Resu
     register_expr_constructors(linker)?;
     register_stmt_constructors(linker)?;
     register_declaration_emitters(linker)?;
+    register_batch_emitters(linker)?;
     register_error_bridge(linker)?;
     Ok(())
 }
@@ -1480,6 +1485,254 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
             0
         },
     )?;
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §4.4  Batch emitters (Amendment 3 §3.12 / §3.13 — Landing C2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a span JSON payload with `source="batch_spec"` (Amendment 3 §5).
+/// `end` may equal `start` when only a position, not a range, is known.
+fn build_batch_span_json(start: usize, end: usize) -> String {
+    format!(
+        "{{\"start\":{},\"end\":{},\"source\":\"batch_spec\"}}",
+        start, end
+    )
+}
+
+/// Emit a PLUGIN013 diagnostic for a `BatchSchemaError`.
+fn emit_plugin013(arena: &mut super::arena::EmitArena, err: &BatchSchemaError, spec_len: usize) {
+    let (start, end) = match err.byte_offset() {
+        Some(off) => (off, off),
+        None => (0, spec_len),
+    };
+    arena.emit_diagnostic(EmitDiagnostic {
+        severity: 2,
+        code: "PLUGIN013".to_string(),
+        message: format!("InvalidBatchSpec: {}", err.message()),
+        span_json: build_batch_span_json(start, end),
+    });
+}
+
+fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
+    // _emit_helpers_batch(ctx, spec_lp, flags) -> err
+    //   flags: bit 0 = BFS root per function, bit 1 = private
+    //
+    // Amendment 3 §3.12. See typed-emission.md for JSON schema. This bridge
+    // does NOT allocate handles — it converts the batch JSON directly to AST
+    // Functions and pushes them into expansion.functions.
+    linker.func_wrap(
+        "env",
+        "_emit_helpers_batch",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, spec_lp: i32, flags: i32| -> i32 {
+            let spec = match read_lp_string(&mut caller, spec_lp) {
+                Some(s) => s,
+                None => return 1,
+            };
+            let spec_len = spec.len();
+
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 1;
+            }
+
+            // 1. Parse JSON.
+            let batch = match parse_batch_spec(&spec) {
+                Ok(b) => b,
+                Err(e) => {
+                    emit_plugin013(a, &e, spec_len);
+                    return 1;
+                }
+            };
+
+            // 2. Batch limit (§3.12).
+            if batch.functions.len() > BATCH_FUNCTION_LIMIT {
+                let e = BatchSchemaError::BatchLimit {
+                    count: batch.functions.len(),
+                    limit: BATCH_FUNCTION_LIMIT,
+                };
+                emit_plugin013(a, &e, spec_len);
+                return 1;
+            }
+
+            // 3. Flag bits per Amendment 3 §3.12.
+            //    bit 0 = BFS root per function (currently a no-op in AST; the
+            //           compiler's BFS layer picks up all emitted functions
+            //           uniformly. Reserved for a future queue-priority hook,
+            //           matching what `_emit_function`'s bit-1 does today.)
+            //    bit 1 = private → Visibility::Private (which is the AST
+            //           default). Public visibility is the opposite of §3.12's
+            //           bit 1 — an unset bit 1 means the plugin wants the
+            //           batch exported (matching `_emit_function`'s bit 0).
+            let private = (flags & 2) != 0;
+            let exported = !private;
+
+            // 4. Convert each function.
+            for (idx, f) in batch.functions.into_iter().enumerate() {
+                let func = match function_to_ast(f, exported) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        // Prefix the message with the batch index so plugin
+                        // authors know which entry failed even without span info.
+                        let wrapped = BatchSchemaError::Json {
+                            message: format!("function[{}]: {}", idx, e.message()),
+                            byte_offset: None,
+                        };
+                        emit_plugin013(a, &wrapped, spec_len);
+                        return 1;
+                    }
+                };
+                a.expansion.functions.push(func);
+            }
+
+            0 // success
+        },
+    )?;
+
+    // _emit_class_full(ctx, class_spec_lp, flags) -> err
+    //   flags: bit 0 = exported (Visibility::Public for methods)
+    //
+    // Amendment 3 §3.13. Supports two method-body forms:
+    //   - inline "body": statement array
+    //   - "body_handle": N — resolves against an EmitArena stmt handle
+    //     previously allocated by `_emit_stmt_from_source` (Landing B).
+    //     This preserves the pass-through composition with §3.11.
+    linker.func_wrap(
+        "env",
+        "_emit_class_full",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, spec_lp: i32, flags: i32| -> i32 {
+            let spec = match read_lp_string(&mut caller, spec_lp) {
+                Some(s) => s,
+                None => return 1,
+            };
+            let spec_len = spec.len();
+
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 1;
+            }
+
+            // 1. Parse JSON.
+            let class_spec = match parse_class_spec(&spec) {
+                Ok(c) => c,
+                Err(e) => {
+                    emit_plugin013(a, &e, spec_len);
+                    return 1;
+                }
+            };
+
+            // 2. Resolve method bodies (inline OR body_handle) BEFORE the class
+            //    conversion. We take the methods vec out by ownership so the
+            //    BatchStatement values move into stmt_to_ast without needing
+            //    Clone. The class-header data (name/parent/fields) stays.
+            let mut class_spec = class_spec;
+            let methods_taken: Vec<super::batch_schema::BatchMethod> =
+                std::mem::take(&mut class_spec.methods);
+
+            let mut method_bodies: Vec<Vec<crate::ast::Statement>> =
+                Vec::with_capacity(methods_taken.len());
+            // Keep method headers (name/params/return_type) parallel to bodies.
+            let mut method_headers: Vec<super::batch_schema::BatchMethod> =
+                Vec::with_capacity(methods_taken.len());
+
+            for (mi, mut m) in methods_taken.into_iter().enumerate() {
+                let body_source = m.body.take();
+                let body_handle = m.body_handle;
+                let name = m.name.clone();
+                let body = match (body_source, body_handle) {
+                    (Some(stmts), None) => {
+                        let mut collected = Vec::with_capacity(stmts.len());
+                        for s in stmts {
+                            match stmt_to_ast(s) {
+                                Ok(ast) => collected.push(ast),
+                                Err(e) => {
+                                    let wrapped = BatchSchemaError::Json {
+                                        message: format!(
+                                            "method[{}] `{}`: {}",
+                                            mi,
+                                            name,
+                                            e.message()
+                                        ),
+                                        byte_offset: None,
+                                    };
+                                    emit_plugin013(a, &wrapped, spec_len);
+                                    return 1;
+                                }
+                            }
+                        }
+                        collected
+                    }
+                    (None, Some(handle)) => {
+                        // Consume the stmt handle from the arena. This is the
+                        // §3.13 composition with §3.11.
+                        match a.take_stmt(ctx, handle) {
+                            Ok(stmt) => flatten_block(stmt),
+                            Err(EmitError::HandleConsumed { handle }) => {
+                                a.emit_plugin008(handle);
+                                return 1;
+                            }
+                            Err(e) => {
+                                let wrapped = BatchSchemaError::UnresolvedBodyHandle {
+                                    handle,
+                                    reason: format!("{:?}", e),
+                                };
+                                emit_plugin013(a, &wrapped, spec_len);
+                                return 1;
+                            }
+                        }
+                    }
+                    (Some(_), Some(_)) => {
+                        let wrapped = BatchSchemaError::Json {
+                            message: format!(
+                                "method[{}] `{}`: both `body` and `body_handle` are set; exactly one required",
+                                mi, name
+                            ),
+                            byte_offset: None,
+                        };
+                        emit_plugin013(a, &wrapped, spec_len);
+                        return 1;
+                    }
+                    (None, None) => {
+                        let wrapped = BatchSchemaError::Json {
+                            message: format!(
+                                "method[{}] `{}`: neither `body` nor `body_handle` is set",
+                                mi, name
+                            ),
+                            byte_offset: None,
+                        };
+                        emit_plugin013(a, &wrapped, spec_len);
+                        return 1;
+                    }
+                };
+                method_bodies.push(body);
+                method_headers.push(m);
+            }
+
+            // Restore method headers so class_to_ast can consume them
+            // alongside `method_bodies` (same order, same length).
+            class_spec.methods = method_headers;
+
+            let exported = (flags & 1) != 0;
+
+            // 3. Build the AST class.
+            let class = match class_to_ast(class_spec, method_bodies, exported) {
+                Ok(c) => c,
+                Err(e) => {
+                    emit_plugin013(a, &e, spec_len);
+                    return 1;
+                }
+            };
+
+            a.expansion.classes.push(class);
+            0
+        },
+    )?;
+
+    // Silence unused-import warning for the crate-internal batch_schema
+    // module when this bridge is compiled but tests are not.
+    let _ = batch_schema::BATCH_FUNCTION_LIMIT;
 
     Ok(())
 }
