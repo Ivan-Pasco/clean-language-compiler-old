@@ -49,6 +49,31 @@ fn read_lp_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<Stri
         .map(|s| s.to_string())
 }
 
+/// Build a span JSON payload for use in `EmitDiagnostic.span_json` when the
+/// diagnostic originates from `_emit_stmt_from_source`. The `"source"` field
+/// is `"block_body"` per typed-emission.md §3.11 + §5.
+fn build_span_json(start: usize, end: usize) -> String {
+    format!(
+        "{{\"start\":{},\"end\":{},\"source\":\"block_body\"}}",
+        start, end
+    )
+}
+
+/// Truncate a source string for inclusion in a diagnostic message. Long
+/// fragments get an ellipsis appended.
+fn truncate_for_diagnostic(source: &str, max_bytes: usize) -> String {
+    if source.len() <= max_bytes {
+        source.replace('\n', "\\n")
+    } else {
+        // Find a char boundary at or before `max_bytes`.
+        let mut cut = max_bytes;
+        while cut > 0 && !source.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}…", source[..cut].replace('\n', "\\n"))
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Arena access helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -741,6 +766,82 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
                 location: None,
             };
             a.alloc_stmt(stmt)
+        },
+    )?;
+
+    // _emit_stmt_from_source(ctx, source_lp, origin_offset) -> stmt_handle
+    //
+    // v3 bridge added by typed-emission.md Amendment 2 (2026-07-01) resolving
+    // §12 OQ3 in favor of the pass-through path. See §3.11.
+    //
+    // Parses a user-authored Clean-source fragment (extracted verbatim from the
+    // DSL body the plugin received in `body_lp`) into a Statement AST node.
+    // The `origin_offset` parameter is the byte offset of the fragment within
+    // the plugin's `body_lp`, used to translate parser diagnostic spans back
+    // into the DSL body's coordinate space (OQ7 option a).
+    //
+    // Failure paths per §3.11:
+    //   - syntax error → 0 + diagnostic via _emit_error path with translated span
+    //   - valid expression but not statement → 0 + PLUGIN012 diagnostic
+    linker.func_wrap(
+        "env",
+        "_emit_stmt_from_source",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         source_lp: i32,
+         origin_offset: i32|
+         -> i32 {
+            let source = match read_lp_string(&mut caller, source_lp) {
+                Some(s) => s,
+                None => return 0,
+            };
+            let origin = origin_offset.max(0) as usize;
+
+            use crate::parser::grammar::{CleanParser, SingleStatementParse};
+            let result = CleanParser::parse_single_statement(&source);
+
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+
+            match result {
+                SingleStatementParse::Statement(stmt) => a.alloc_stmt(stmt),
+                SingleStatementParse::ExpressionNotStatement => {
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN012".to_string(),
+                        message: format!(
+                            "ExpressionInStatementContext: the source fragment passed to \
+                             _emit_stmt_from_source parses as an expression but is not a \
+                             valid statement (typed-emission.md §3.11). Fragment: `{}`",
+                            truncate_for_diagnostic(&source, 80)
+                        ),
+                        span_json: build_span_json(origin, origin + source.len()),
+                    });
+                    0
+                }
+                SingleStatementParse::ParseError {
+                    message,
+                    byte_offset,
+                } => {
+                    let start = origin + byte_offset;
+                    // Clamp the end to the fragment boundary.
+                    let end = origin + source.len();
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "SYN001".to_string(),
+                        message: format!(
+                            "syntax error in user-authored fragment passed to \
+                             _emit_stmt_from_source: {} (fragment: `{}`)",
+                            message,
+                            truncate_for_diagnostic(&source, 80)
+                        ),
+                        span_json: build_span_json(start, end),
+                    });
+                    0
+                }
+            }
         },
     )?;
 
@@ -1622,6 +1723,123 @@ mod tests {
         let (_exp, diags, saw_err) = arena.finish();
         assert!(saw_err);
         assert_eq!(diags[0].code, "PLUGIN007");
+    }
+
+    // ── §3.11: _emit_stmt_from_source ─────────────────────────────────────────
+
+    use crate::parser::grammar::{CleanParser, SingleStatementParse};
+
+    #[test]
+    fn parse_single_statement_happy_path_call() {
+        // A call fragment must parse as a Statement (not ExpressionNotStatement,
+        // not ParseError). We don't over-constrain the inner shape here because
+        // `print(...)` may be parsed via `print_parenthesized_stmt` or via the
+        // generic function-call expression path depending on grammar routing.
+        let src = "print(\"hi\")";
+        match CleanParser::parse_single_statement(src) {
+            SingleStatementParse::Statement(_) => {}
+            other => panic!("expected Statement, got {:?}", type_name(&other)),
+        }
+    }
+
+    #[test]
+    fn parse_single_statement_return_stmt() {
+        let src = "return 42";
+        match CleanParser::parse_single_statement(src) {
+            SingleStatementParse::Statement(Statement::Return { .. }) => {}
+            other => panic!("expected return statement, got {:?}", type_name(&other)),
+        }
+    }
+
+    #[test]
+    fn parse_single_statement_expression_not_statement() {
+        // `1 + 1` is a valid expression but not a valid bare statement.
+        let src = "1 + 1";
+        match CleanParser::parse_single_statement(src) {
+            SingleStatementParse::ExpressionNotStatement => {}
+            other => panic!(
+                "expected ExpressionNotStatement, got {:?}",
+                type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn parse_single_statement_syntax_error() {
+        let src = "return + +";
+        match CleanParser::parse_single_statement(src) {
+            SingleStatementParse::ParseError { .. } => {}
+            other => panic!("expected ParseError, got {:?}", type_name(&other)),
+        }
+    }
+
+    #[test]
+    fn parse_single_statement_multiple_stmts_wraps_in_block() {
+        let src = "x = 1\nprint(x)";
+        match CleanParser::parse_single_statement(src) {
+            SingleStatementParse::Statement(Statement::If {
+                then_branch,
+                condition: Expression::Literal(Value::Boolean(true)),
+                ..
+            }) => assert_eq!(then_branch.len(), 2),
+            other => panic!(
+                "expected wrapped block statement, got {:?}",
+                type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn emit_stmt_from_source_arena_alloc_and_single_consumption() {
+        // Simulate the bridge body directly: parse then alloc_stmt into arena.
+        let mut arena = make_arena(42);
+        let result = CleanParser::parse_single_statement("print(\"hello\")");
+        let stmt = match result {
+            SingleStatementParse::Statement(s) => s,
+            _ => panic!("expected happy path"),
+        };
+        let h = arena.alloc_stmt(stmt);
+        assert!(h > 0);
+        // First consumption succeeds.
+        let _ = arena.take_stmt(42, h).expect("first take");
+        // Second consumption triggers PLUGIN008.
+        let err = arena.take_stmt(42, h).unwrap_err();
+        assert_eq!(err.error_code(), "PLUGIN008");
+    }
+
+    #[test]
+    fn plugin012_error_code_matches_spec() {
+        // The PLUGIN012 diagnostic is emitted inside the bridge closure; this
+        // asserts the diagnostic code we use matches the reserved spec id.
+        let mut arena = make_arena(1);
+        arena.emit_diagnostic(super::super::error::EmitDiagnostic {
+            severity: 2,
+            code: "PLUGIN012".to_string(),
+            message: "expression in statement context".to_string(),
+            span_json: super::build_span_json(200, 210),
+        });
+        let (_exp, diags, saw_err) = arena.finish();
+        assert!(saw_err);
+        assert_eq!(diags[0].code, "PLUGIN012");
+        assert!(diags[0].span_json.contains("\"start\":200"));
+        assert!(diags[0].span_json.contains("\"source\":\"block_body\""));
+    }
+
+    #[test]
+    fn origin_offset_translation_shifts_span() {
+        // Emulate the bridge's span-building logic: origin=200 with a fragment
+        // of length 30 → span 200..230.
+        let json = super::build_span_json(200, 230);
+        assert!(json.contains("\"start\":200"));
+        assert!(json.contains("\"end\":230"));
+    }
+
+    fn type_name(v: &SingleStatementParse) -> &'static str {
+        match v {
+            SingleStatementParse::Statement(_) => "Statement",
+            SingleStatementParse::ExpressionNotStatement => "ExpressionNotStatement",
+            SingleStatementParse::ParseError { .. } => "ParseError",
+        }
     }
 
     #[test]
