@@ -208,6 +208,17 @@ impl WasmPluginAdapter {
     /// per block expansion is at most a few hundred nodes.
     fn build_typed_emission_linker(&self) -> Result<Linker<PluginState>> {
         let mut linker = Linker::new(&self.engine);
+        // Register the full stdlib first so any Clean Language code inside a v3
+        // plugin body (string.concat, env::print, float_to_string, math ops, etc.)
+        // resolves at instantiation time. Without this, wasmtime rejects the module
+        // with "unknown import" for every stdlib function the plugin references.
+        //
+        // Bug: f4b7d6977f05 (TYPED-EMISSION-LINKER-INCOMPLETE) — this call was
+        // missing, causing frame.locale (and any other v3 plugin that calls stdlib
+        // from its expand_block_typed body) to fail instantiation.
+        self.register_plugin_stdlib_functions(&mut linker)?;
+        // Then overlay the 30 typed-emission bridge functions on top of the stdlib.
+        // These are the v3-specific handles: _emit_function, _stmt_block, _stmt_return, etc.
         crate::plugins::typed_emission::register_typed_emission_bridges(&mut linker)?;
         Ok(linker)
     }
@@ -518,22 +529,75 @@ impl WasmPluginAdapter {
         Ok(expansion)
     }
 
-    /// Set up the linker with host functions
-    /// Provides the full Clean Language runtime environment
+    /// Register all stdlib host functions that any plugin (v1 or v3) may import.
+    ///
+    /// Classification of every register_* call:
+    ///
+    /// - `register_env_core_functions`            SHARED — print, string.concat, float_to_string,
+    ///                                            string.split, type conversions; any non-trivial
+    ///                                            plugin calls these from Clean source.
+    /// - `register_string_dot_functions`          SHARED — string.slice, string.substring,
+    ///                                            string.indexOf, string.replace, etc.
+    /// - `register_string_underscore_functions`   SHARED — string_compare, string_replaceAll,
+    ///                                            string_length, _str_eq; used by generated code.
+    /// - `register_list_functions`                SHARED — list.push_f64 and list operations;
+    ///                                            plugins that build or traverse lists need these.
+    /// - `register_memory_runtime_functions`      SHARED — allocator / memory growth primitives;
+    ///                                            required by the WASM module's own alloc helpers.
+    /// - `register_http_client_functions`         SHARED — http_get/post/put/patch/delete; a
+    ///                                            plugin that issues outbound HTTP calls needs these.
+    /// - `register_http_server_functions`         SHARED (stubs) — _http_route/_http_listen;
+    ///                                            stubs that return 0, safe to include, prevent
+    ///                                            "unknown import" panics if a plugin links them.
+    /// - `register_request_context_functions`     SHARED (stubs) — _req_param/_req_query/etc.;
+    ///                                            same rationale as http_server: stub-only, safe.
+    /// - `register_file_functions`                SHARED — file I/O stubs; included so plugins
+    ///                                            that optionally call file ops still instantiate.
+    /// - `register_math_functions`                SHARED — Math.sin/cos/sqrt/pow/random/etc.;
+    ///                                            used by numeric plugins from Clean source.
+    /// - `register_http_auth_stubs`               SHARED (stubs) — _req_cookie/_http_redirect/
+    ///                                            session stubs; returns 0, never v1-specific logic.
+    /// - `register_build_state_bridges`           SHARED — _build_state_set/_build_state_get;
+    ///                                            v2 contract bridges valid in v3 as well (§2.5).
+    ///
+    /// Nothing in this list is v1-expansion-protocol-specific (no parse_plugin_code, no v1
+    /// scope push/pop injected code). Every entry is either a real I/O function or a zero-stub
+    /// that prevents "missing import" wasmtime rejections.
+    fn register_plugin_stdlib_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+        // Core I/O and conversions (print, float_to_string, string.concat, etc.)
+        self.register_env_core_functions(linker)?;
+        // string.* dot-namespace functions (slice, substring, indexOf, replace, …)
+        self.register_string_dot_functions(linker)?;
+        // string_* underscore-namespace functions (string_compare, _str_eq, …)
+        self.register_string_underscore_functions(linker)?;
+        // list.* functions (push_f64, …)
+        self.register_list_functions(linker)?;
+        // Memory / allocator runtime helpers
+        self.register_memory_runtime_functions(linker)?;
+        // Outbound HTTP client (http_get/post/…)
+        self.register_http_client_functions(linker)?;
+        // HTTP server stubs (_http_route, _http_listen — zero returns)
+        self.register_http_server_functions(linker)?;
+        // Request context stubs (_req_param, _req_query, … — zero/empty returns)
+        self.register_request_context_functions(linker)?;
+        // File I/O stubs
+        self.register_file_functions(linker)?;
+        // Math namespace (Math.sin, Math.cos, Math.sqrt, Math.random, …)
+        self.register_math_functions(linker)?;
+        // Auth / session / redirect stubs (_req_cookie, _http_redirect, _session_*, …)
+        self.register_http_auth_stubs(linker)?;
+        // Build-state bridges (_build_state_set, _build_state_get — Plugin Contracts v2+)
+        self.register_build_state_bridges(linker)?;
+        Ok(())
+    }
+
+    /// Set up the v1 linker with host functions.
+    /// Provides the full Clean Language runtime environment for v1 plugins.
+    /// Delegates to `register_plugin_stdlib_functions` so the stdlib surface is
+    /// always in sync with the v3 linker.
     fn setup_linker(&self) -> Result<Linker<PluginState>> {
         let mut linker = Linker::new(&self.engine);
-        self.register_env_core_functions(&mut linker)?;
-        self.register_string_dot_functions(&mut linker)?;
-        self.register_string_underscore_functions(&mut linker)?;
-        self.register_list_functions(&mut linker)?;
-        self.register_memory_runtime_functions(&mut linker)?;
-        self.register_http_client_functions(&mut linker)?;
-        self.register_http_server_functions(&mut linker)?;
-        self.register_request_context_functions(&mut linker)?;
-        self.register_file_functions(&mut linker)?;
-        self.register_math_functions(&mut linker)?;
-        self.register_http_auth_stubs(&mut linker)?;
-        self.register_build_state_bridges(&mut linker)?;
+        self.register_plugin_stdlib_functions(&mut linker)?;
         Ok(linker)
     }
 
