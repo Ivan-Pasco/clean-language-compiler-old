@@ -531,38 +531,25 @@ impl WasmPluginAdapter {
 
     /// Register all stdlib host functions that any plugin (v1 or v3) may import.
     ///
-    /// Classification of every register_* call:
+    /// All `register_*` calls here are classified SHARED — none contain
+    /// v1-expansion-protocol-specific logic (no `parse_plugin_code`, no v1 scope push/pop).
+    /// Every entry is either a real I/O function or a zero-stub that prevents
+    /// "missing import" wasmtime rejections.
     ///
-    /// - `register_env_core_functions`            SHARED — print, string.concat, float_to_string,
-    ///                                            string.split, type conversions; any non-trivial
-    ///                                            plugin calls these from Clean source.
-    /// - `register_string_dot_functions`          SHARED — string.slice, string.substring,
-    ///                                            string.indexOf, string.replace, etc.
-    /// - `register_string_underscore_functions`   SHARED — string_compare, string_replaceAll,
-    ///                                            string_length, _str_eq; used by generated code.
-    /// - `register_list_functions`                SHARED — list.push_f64 and list operations;
-    ///                                            plugins that build or traverse lists need these.
-    /// - `register_memory_runtime_functions`      SHARED — allocator / memory growth primitives;
-    ///                                            required by the WASM module's own alloc helpers.
-    /// - `register_http_client_functions`         SHARED — http_get/post/put/patch/delete; a
-    ///                                            plugin that issues outbound HTTP calls needs these.
-    /// - `register_http_server_functions`         SHARED (stubs) — _http_route/_http_listen;
-    ///                                            stubs that return 0, safe to include, prevent
-    ///                                            "unknown import" panics if a plugin links them.
-    /// - `register_request_context_functions`     SHARED (stubs) — _req_param/_req_query/etc.;
-    ///                                            same rationale as http_server: stub-only, safe.
-    /// - `register_file_functions`                SHARED — file I/O stubs; included so plugins
-    ///                                            that optionally call file ops still instantiate.
-    /// - `register_math_functions`                SHARED — Math.sin/cos/sqrt/pow/random/etc.;
-    ///                                            used by numeric plugins from Clean source.
-    /// - `register_http_auth_stubs`               SHARED (stubs) — _req_cookie/_http_redirect/
-    ///                                            session stubs; returns 0, never v1-specific logic.
-    /// - `register_build_state_bridges`           SHARED — _build_state_set/_build_state_get;
-    ///                                            v2 contract bridges valid in v3 as well (§2.5).
+    /// Classification:
     ///
-    /// Nothing in this list is v1-expansion-protocol-specific (no parse_plugin_code, no v1
-    /// scope push/pop injected code). Every entry is either a real I/O function or a zero-stub
-    /// that prevents "missing import" wasmtime rejections.
+    /// - `register_env_core_functions` SHARED: print, string.concat, float_to_string, type conversions
+    /// - `register_string_dot_functions` SHARED: string.slice, string.substring, string.indexOf, etc.
+    /// - `register_string_underscore_functions` SHARED: string_compare, string_replaceAll, _str_eq
+    /// - `register_list_functions` SHARED: list.push_f64 and list operations
+    /// - `register_memory_runtime_functions` SHARED: allocator / memory growth primitives
+    /// - `register_http_client_functions` SHARED: http_get/post/put/patch/delete
+    /// - `register_http_server_functions` SHARED (stubs): _http_route/_http_listen, return 0
+    /// - `register_request_context_functions` SHARED (stubs): _req_param/_req_query, return 0
+    /// - `register_file_functions` SHARED: file I/O stubs for optional file-calling plugins
+    /// - `register_math_functions` SHARED: Math.sin/cos/sqrt/pow/random/etc.
+    /// - `register_http_auth_stubs` SHARED (stubs): _req_cookie/_http_redirect/_session_*, return 0
+    /// - `register_build_state_bridges` SHARED: _build_state_set/_build_state_get (Plugin Contracts v2+)
     fn register_plugin_stdlib_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
         // Core I/O and conversions (print, float_to_string, string.concat, etc.)
         self.register_env_core_functions(linker)?;

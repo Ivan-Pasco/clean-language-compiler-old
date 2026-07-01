@@ -13,14 +13,11 @@
 //! before `register_typed_emission_bridges`, so v3 plugins get the full stdlib surface.
 //!
 //! Test inventory:
-//!   1. v3_linker_provides_string_concat_import    — instantiation succeeds when plugin
-//!                                                   imports env::string.concat (stdlib)
-//!   2. v3_linker_provides_print_import            — instantiation succeeds when plugin
-//!                                                   imports env::print (stdlib)
-//!   3. v3_plugin_calls_stdlib_and_v3_bridge       — expand_full succeeds when plugin
-//!                                                   calls both string.concat AND _emit_error
-//!   4. v3_plugin_stdlib_result_is_correct         — function emitted via v3 bridges while
-//!                                                   using string.concat has the right body
+//!
+//! 1. `v3_linker_provides_string_concat_import` — instantiation succeeds when plugin imports `env::string.concat`
+//! 2. `v3_linker_provides_print_import` — instantiation succeeds when plugin imports `env::print`
+//! 3. `v3_plugin_calls_stdlib_and_v3_bridge` — expand_full succeeds calling both `string.concat` and `_emit_error`
+//! 4. `v3_plugin_stdlib_result_is_correct` — function emitted via v3 bridges with stdlib call has correct body
 
 use clean_language_compiler::ast::{Expression, FrameworkBlock, SourceLocation, Statement, Value};
 use clean_language_compiler::plugins::{
