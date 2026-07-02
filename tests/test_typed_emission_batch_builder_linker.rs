@@ -12,8 +12,7 @@
 //! Test inventory:
 //!   1. `batch_stringlit_underscore_alias_resolves`      — imports `_batch_stringLit`, gets valid handle
 //!   2. `batch_spec_roundtrip_via_underscore_aliases`    — `_batch_arrayNew` + `_batch_arrayPush`
-//!                                                          + `_batch_func` + `_batch_spec` +
-//!                                                          `_emit_helpers_batch` → expansion.functions
+//!      + `_batch_func` + `_batch_spec` + `_emit_helpers_batch` → expansion.functions
 //!   3. `emit_stmt_from_source_linker_hygiene`           — `_emit_stmt_from_source` is resolvable
 //!   4. `emit_class_full_linker_hygiene`                 — `_emit_class_full` is resolvable
 
