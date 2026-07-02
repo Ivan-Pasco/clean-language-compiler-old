@@ -98,12 +98,25 @@ macro_rules! arena {
 
 /// Handle any EmitError from a take operation: PLUGIN008 emits diagnostic,
 /// all others just return 0. The macro evaluates to the error-exit path.
+///
+/// Amendment 5 / Landing C4: on ANY error the sticky-error flag is tripped
+/// via `arena.trip(...)`. Subsequent bridge calls short-circuit via `check_ctx`,
+/// so plugins can drop per-call `if h == 0 return plugin_error(...)` scaffolding
+/// and check once at the end via `_ctx_had_error(ctx)`.
+///
+/// `StickyErrorActive` is silent — it means "we already tripped, don't emit
+/// a second diagnostic." `HandleConsumed` remains routed through PLUGIN008.
 macro_rules! take_or_return {
     ($arena:expr, $result:expr) => {
         match $result {
             Ok(v) => v,
+            Err(EmitError::StickyErrorActive) => {
+                // Already tripped — silent short-circuit.
+                return 0;
+            }
             Err(EmitError::HandleConsumed { handle }) => {
                 $arena.emit_plugin008(handle);
+                $arena.trip("take", format!("consumed handle {}", handle));
                 return 0;
             }
             Err(e) => {
@@ -113,6 +126,7 @@ macro_rules! take_or_return {
                     message: format!("typed-emission bridge error: {:?}", e),
                     span_json: String::new(),
                 });
+                $arena.trip("take", format!("{:?}", e));
                 return 0;
             }
         }
@@ -124,8 +138,12 @@ macro_rules! take_opt_or_return {
     ($arena:expr, $result:expr) => {
         match $result {
             Ok(v) => v,
+            Err(EmitError::StickyErrorActive) => {
+                return 0;
+            }
             Err(EmitError::HandleConsumed { handle }) => {
                 $arena.emit_plugin008(handle);
+                $arena.trip("take", format!("consumed handle {}", handle));
                 return 0;
             }
             Err(e) => {
@@ -135,6 +153,7 @@ macro_rules! take_opt_or_return {
                     message: format!("typed-emission bridge error: {:?}", e),
                     span_json: String::new(),
                 });
+                $arena.trip("take", format!("{:?}", e));
                 return 0;
             }
         }
@@ -167,6 +186,7 @@ pub fn register_typed_emission_bridges(linker: &mut Linker<PluginState>) -> Resu
     register_batch_emitters(linker)?;
     super::batch_builders::register_batch_builder_bridges(linker)?;
     register_error_bridge(linker)?;
+    register_ctx_error_bridges(linker)?;
     Ok(())
 }
 
@@ -1867,6 +1887,83 @@ fn register_error_bridge(linker: &mut Linker<PluginState>) -> Result<()> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// §3.15  Sticky-error context bridges (Amendment 5 / Landing C4)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// These bridges let plugins collapse per-bridge `if h == 0 return plugin_error(...)`
+// scaffolding into a single check at the end of a helper. The arena tracks a
+// per-ctx sticky-error flag; once tripped by any bridge failure, every subsequent
+// bridge short-circuits (returns 0) via `check_ctx`. Plugins query the flag with
+// `_ctx_had_error(ctx)` and, if desired, set a plugin-authored code + message
+// for the auto-emitted first-failure diagnostic via `_ctx_set_error_context`.
+//
+// Contract details live in typed-emission.md §3.15.
+
+fn register_ctx_error_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
+    // _ctx_had_error(ctx) -> integer  (1 if sticky-error set, else 0)
+    //
+    // Deliberately does NOT check ctx: a mismatched ctx also indicates an
+    // error condition, and plugins should treat any non-zero return as
+    // "bail out of this helper." So we return 1 for wrong-ctx too.
+    linker.func_wrap(
+        "env",
+        "_ctx_had_error",
+        |mut caller: Caller<'_, PluginState>, ctx: i32| -> i32 {
+            let a = arena!(caller);
+            if ctx != a.ctx_handle() {
+                return 1;
+            }
+            a.had_error()
+        },
+    )?;
+
+    // _ctx_set_error_context(ctx, code_lp, message_lp) -> 0
+    //
+    // Stores a (code, message) pair used when the NEXT bridge failure trips
+    // the sticky flag. Empty code + empty message clears the context.
+    // Silently ignored if sticky is already set (context only affects the
+    // first trip, and we may already have used the previous context).
+    linker.func_wrap(
+        "env",
+        "_ctx_set_error_context",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, code_lp: i32, message_lp: i32| -> i32 {
+            let code = read_lp_string(&mut caller, code_lp).unwrap_or_default();
+            let message = read_lp_string(&mut caller, message_lp).unwrap_or_default();
+            let a = arena!(caller);
+            if ctx != a.ctx_handle() {
+                return 0;
+            }
+            if a.is_sticky() {
+                return 0;
+            }
+            a.set_error_context(code, message);
+            0
+        },
+    )?;
+
+    // _ctx_clear_error(ctx) -> 0
+    //
+    // Resets the sticky flag AND the error context. After this call, the
+    // arena is back in "ready" state and subsequent bridges will proceed
+    // normally. Used by helper functions that want to attempt a recovery
+    // path after a failed sub-emission — uncommon in practice.
+    linker.func_wrap(
+        "env",
+        "_ctx_clear_error",
+        |mut caller: Caller<'_, PluginState>, ctx: i32| -> i32 {
+            let a = arena!(caller);
+            if ctx != a.ctx_handle() {
+                return 0;
+            }
+            a.clear_error();
+            0
+        },
+    )?;
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Unit tests for bridges (invoke helpers directly, no WASM round-trip)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2212,5 +2309,39 @@ mod tests {
             } => {}
             other => panic!("unexpected body: {:?}", other),
         }
+    }
+
+    // ── Sticky-error propagation across arena ops (Amendment 5 / Landing C4) ──
+
+    #[test]
+    fn sticky_take_fails_when_nullhandle_and_short_circuits_next_op() {
+        let mut arena = make_arena(1);
+        // Simulate the first failure: plugin passed handle 0 to a bridge
+        // that used take_stmt (non-nullable). take_stmt with 0 returns
+        // NullHandle. The take_or_return! macro would emit + trip.
+        let err = arena.take_stmt(1, 0).unwrap_err();
+        assert_eq!(err, EmitError::NullHandle);
+
+        // Manually simulate what the macro does — trip after take failure.
+        arena.trip("_stmt_call", "null handle");
+        assert!(arena.is_sticky());
+
+        // Subsequent alloc-based bridges also short-circuit via check_ctx.
+        // Simulate the entry gate that every bridge runs.
+        let ctx_ok = arena.check_ctx(1);
+        assert_eq!(ctx_ok, Err(EmitError::StickyErrorActive));
+    }
+
+    #[test]
+    fn sticky_clear_allows_recovery() {
+        let mut arena = make_arena(1);
+        arena.trip("_x", "fail");
+        assert!(arena.is_sticky());
+        arena.clear_error();
+        // After clear, a normal alloc proceeds.
+        let h = arena.alloc_type(Type::Integer);
+        assert!(h > 0);
+        let t = arena.take_type(1, h).unwrap();
+        assert_eq!(t, Type::Integer);
     }
 }

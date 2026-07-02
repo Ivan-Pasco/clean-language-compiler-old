@@ -27,6 +27,17 @@ use crate::plugins::PluginExpansion;
 /// Batch handles returned from builder bridges always have this bit set.
 pub const BATCH_TAG: i32 = 0x0100_0000;
 
+/// Record of the first bridge that tripped the sticky-error flag.
+/// The bridge name and a short reason are captured for the auto-emitted
+/// PLUGIN014 diagnostic (typed-emission.md §3.15, Amendment 5).
+#[derive(Debug, Clone)]
+pub struct StickyError {
+    #[allow(dead_code)]
+    pub bridge: &'static str,
+    #[allow(dead_code)]
+    pub reason: String,
+}
+
 /// All node kinds that can be allocated in the arena.
 pub(super) enum EmitNode {
     /// A fully-built statement.
@@ -244,6 +255,23 @@ pub struct EmitArena {
     /// expansion is treated as failed even if the WASM function returns 0.
     pub saw_error_severity: bool,
 
+    // ── Sticky-error context (Amendment 5 §3.15, Landing C4) ───────────────
+    /// Records the first bridge that failed since the last `_ctx_clear_error`.
+    /// Once set, every subsequent bridge call short-circuits (returns 0 or 1)
+    /// without doing work — this is the "sticky" part.
+    ///
+    /// Plugins query this via `_ctx_had_error(ctx) -> integer` (§3.15.2) and
+    /// clear it via `_ctx_clear_error(ctx)` (§3.15.4). Plugins MAY set a
+    /// custom error code + message via `_ctx_set_error_context(ctx, code, message)`
+    /// before making a group of bridge calls, so the auto-emitted diagnostic
+    /// on first failure carries a plugin-authored code (§3.15.3).
+    sticky_error: Option<StickyError>,
+
+    /// Optional plugin-supplied error context. When present, the first bridge
+    /// failure that trips sticky_error auto-emits a diagnostic with this
+    /// (code, message) instead of the internal PLUGIN014 default.
+    sticky_context: Option<(String, String)>,
+
     // ── Batch builder arena (Amendment 4 §3.14) ────────────────────────────
     /// 1-indexed storage for batch builder nodes. Index 0 unused (sentinel).
     /// Separate from `nodes` so AST node kinds and batch node kinds never mix.
@@ -264,9 +292,85 @@ impl EmitArena {
             diagnostics: Vec::new(),
             expansion: PluginExpansion::default(),
             saw_error_severity: false,
+            sticky_error: None,
+            sticky_context: None,
             batch_nodes: vec![None], // index 0 = sentinel
             batch_consumed: vec![false],
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Sticky-error context (Amendment 5 / Landing C4)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// Return true if the sticky-error flag is set. Bridges do not call this
+    /// directly — the sticky gate is folded into `check_ctx`. Exposed for
+    /// `_ctx_had_error` (§3.15) and for unit tests.
+    pub fn is_sticky(&self) -> bool {
+        self.sticky_error.is_some()
+    }
+
+    /// Set the sticky flag if not already set, and auto-emit the PLUGIN014
+    /// diagnostic on first trip. Subsequent calls are no-ops. Always returns 0
+    /// so bridges can `return arena.trip(...)` in one line.
+    ///
+    /// If the plugin has set an error context via `_ctx_set_error_context`,
+    /// that (code, message) is used for the auto-emitted diagnostic; otherwise
+    /// the default PLUGIN014 message names the failing bridge.
+    pub fn trip(&mut self, bridge: &'static str, reason: impl Into<String>) -> i32 {
+        if self.sticky_error.is_some() {
+            return 0;
+        }
+        let reason = reason.into();
+        self.sticky_error = Some(StickyError {
+            bridge,
+            reason: reason.clone(),
+        });
+        let (code, message) = match self.sticky_context.clone() {
+            Some((c, m)) => (c, format!("{} (first failure: {} — {})", m, bridge, reason)),
+            None => (
+                "PLUGIN014".to_string(),
+                format!(
+                    "sticky-error tripped by {}: {} (typed-emission.md §3.15)",
+                    bridge, reason
+                ),
+            ),
+        };
+        self.emit_diagnostic(EmitDiagnostic {
+            severity: 2,
+            code,
+            message,
+            span_json: String::new(),
+        });
+        0
+    }
+
+    /// Public plugin-side query: 1 if sticky is set, else 0.
+    pub fn had_error(&self) -> i32 {
+        if self.sticky_error.is_some() {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Public plugin-side setter for the error context used on first sticky trip.
+    /// Empty code + empty message clears the context (equivalent to never having
+    /// called it). Does NOT clear an already-set sticky flag.
+    pub fn set_error_context(&mut self, code: String, message: String) {
+        if code.is_empty() && message.is_empty() {
+            self.sticky_context = None;
+        } else {
+            self.sticky_context = Some((code, message));
+        }
+    }
+
+    /// Public plugin-side reset. Clears the sticky flag AND the context.
+    /// Intended for helper functions that want to recover from a nested
+    /// failure and continue emission — rarely needed in practice.
+    pub fn clear_error(&mut self) {
+        self.sticky_error = None;
+        self.sticky_context = None;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -291,11 +395,18 @@ impl EmitArena {
     }
 
     /// Validate that `ctx` matches this arena's ctx_handle.
+    /// Amendment 5 / Landing C4: also refuses when the sticky-error flag is
+    /// set. Because every existing bridge already calls `check_ctx` and
+    /// short-circuits to `return 0` on error, this single-point change
+    /// gates all ~57 typed-emission bridges on the sticky flag with no
+    /// per-bridge edits.
     pub fn check_ctx(&self, ctx: i32) -> Result<(), EmitError> {
-        if ctx == self.ctx_handle {
-            Ok(())
-        } else {
+        if ctx != self.ctx_handle {
             Err(EmitError::WrongCtx)
+        } else if self.sticky_error.is_some() {
+            Err(EmitError::StickyErrorActive)
+        } else {
+            Ok(())
         }
     }
 
@@ -1085,5 +1196,85 @@ mod tests {
         assert!(expansion.functions.is_empty());
         assert!(diags.is_empty());
         assert!(!saw_err);
+    }
+
+    // ── Sticky-error tests (Amendment 5 / Landing C4) ─────────────────────────
+
+    #[test]
+    fn sticky_not_set_by_default() {
+        let arena = EmitArena::new(1);
+        assert!(!arena.is_sticky());
+        assert_eq!(arena.had_error(), 0);
+    }
+
+    #[test]
+    fn trip_sets_sticky_and_emits_plugin014_by_default() {
+        let mut arena = EmitArena::new(1);
+        let rv = arena.trip("_test_bridge", "handle out of range");
+        assert_eq!(rv, 0);
+        assert!(arena.is_sticky());
+        assert_eq!(arena.had_error(), 1);
+        assert!(arena.saw_error_severity);
+        // Diagnostic should carry PLUGIN014.
+        assert_eq!(arena.diagnostics.len(), 1);
+        assert_eq!(arena.diagnostics[0].code, "PLUGIN014");
+        assert!(arena.diagnostics[0].message.contains("_test_bridge"));
+    }
+
+    #[test]
+    fn trip_uses_plugin_error_context_when_set() {
+        let mut arena = EmitArena::new(1);
+        arena.set_error_context("FRAME-AUTH-E001".to_string(), "helper failed".to_string());
+        arena.trip("_batch_stringLit", "malformed lp");
+        assert_eq!(arena.diagnostics[0].code, "FRAME-AUTH-E001");
+        assert!(arena.diagnostics[0].message.starts_with("helper failed"));
+        assert!(arena.diagnostics[0].message.contains("_batch_stringLit"));
+    }
+
+    #[test]
+    fn trip_is_idempotent_only_first_emits() {
+        let mut arena = EmitArena::new(1);
+        arena.trip("_a", "reason1");
+        arena.trip("_b", "reason2");
+        arena.trip("_c", "reason3");
+        assert_eq!(
+            arena.diagnostics.len(),
+            1,
+            "only the first trip should emit a diagnostic"
+        );
+        assert!(arena.diagnostics[0].message.contains("_a"));
+    }
+
+    #[test]
+    fn check_ctx_rejects_when_sticky() {
+        let mut arena = EmitArena::new(7);
+        // Correct ctx before sticky: OK.
+        assert!(arena.check_ctx(7).is_ok());
+        arena.trip("_setup", "seed");
+        // Correct ctx after sticky: refused with StickyErrorActive.
+        assert_eq!(arena.check_ctx(7), Err(EmitError::StickyErrorActive));
+    }
+
+    #[test]
+    fn clear_error_resets_sticky_and_context() {
+        let mut arena = EmitArena::new(1);
+        arena.set_error_context("CODE".to_string(), "msg".to_string());
+        arena.trip("_a", "x");
+        assert!(arena.is_sticky());
+        arena.clear_error();
+        assert!(!arena.is_sticky());
+        // Context also cleared: next trip emits default PLUGIN014.
+        arena.trip("_b", "y");
+        assert_eq!(arena.diagnostics.len(), 2);
+        assert_eq!(arena.diagnostics[1].code, "PLUGIN014");
+    }
+
+    #[test]
+    fn set_error_context_empty_clears() {
+        let mut arena = EmitArena::new(1);
+        arena.set_error_context("CODE".to_string(), "msg".to_string());
+        arena.set_error_context(String::new(), String::new());
+        arena.trip("_a", "x");
+        assert_eq!(arena.diagnostics[0].code, "PLUGIN014");
     }
 }

@@ -29,6 +29,12 @@ pub enum EmitError {
     HandleConsumed { handle: i32 },
     /// Handle refers to a node of the wrong variant (e.g. Expr used where Stmt expected).
     WrongNodeKind { handle: i32, expected: &'static str },
+    /// The arena's sticky-error flag is set. All bridges short-circuit until
+    /// the plugin clears it via `_ctx_clear_error(ctx)`. Not an error the
+    /// plugin needs to distinguish — bridges just `return 0` — but exposed
+    /// as a distinct variant so debug builds / tests can tell it apart from
+    /// a genuine ctx mismatch (Amendment 5 / Landing C4).
+    StickyErrorActive,
 }
 
 impl EmitError {
@@ -40,6 +46,7 @@ impl EmitError {
             EmitError::OutOfRange { .. } => "PLUGIN_OUT_OF_RANGE",
             EmitError::HandleConsumed { .. } => "PLUGIN008",
             EmitError::WrongNodeKind { .. } => "PLUGIN_WRONG_NODE_KIND",
+            EmitError::StickyErrorActive => "PLUGIN014",
         }
     }
 }
