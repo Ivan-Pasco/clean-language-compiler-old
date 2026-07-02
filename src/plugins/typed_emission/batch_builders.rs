@@ -5,10 +5,16 @@
 /// values using typed handles instead of JSON strings, eliminating the
 /// JSON-in-Clean pattern (bug #4790d26673d1 / #52fea4ceb01e).
 ///
-/// All bridges are registered under the `"env"` module with their dotted name
-/// (e.g. `"batch.stringLit"`). Underscore aliases are NOT registered here —
-/// the typed-emission linker's dual-naming shim (if needed) handles them at
-/// linker construction time.
+/// Dual-name registration (bug #e8ad1944445f fix):
+/// Every builder is registered under BOTH its dotted name (e.g. `"batch.stringLit"`,
+/// for internal registry consistency) AND its underscore alias (e.g. `"_batch_stringLit"`,
+/// for use in Clean Language `external:` declarations, which reject dots in import names).
+/// The underscore aliases are registered via `linker.alias` after all dotted functions
+/// are set up, mirroring the Piece A pattern used by `register_plugin_stdlib_functions`.
+///
+/// `_batch_field` and `_batch_classField` are distinct aliases that avoid the
+/// naming collision between `batch.field` (field access expression) and
+/// `batch.classField` (class member declaration) noted in Amendment 4.
 ///
 /// Handle namespace: batch builder handles have BATCH_TAG (bit 24) set.
 /// The widened `_emit_helpers_batch` / `_emit_class_full` in bridges.rs
@@ -122,11 +128,72 @@ macro_rules! handle_push_err {
 
 /// Register all batch-spec builder bridges onto `linker`.
 /// Called from `register_typed_emission_bridges` in bridges.rs.
+///
+/// All 27 dotted names are registered first, then underscore aliases are
+/// added via `linker.alias` (bug #e8ad1944445f — plugins need `_batch_*` names
+/// because Clean Language's `external:` declarations reject dots in import names).
 pub fn register_batch_builder_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
     register_array_helpers(linker)?;
     register_expr_builders(linker)?;
     register_stmt_builders(linker)?;
     register_func_class_builders(linker)?;
+    register_underscore_aliases(linker)?;
+    Ok(())
+}
+
+/// Register `_batch_<name>` underscore aliases for all 27 builder bridges.
+///
+/// Each alias points to the already-registered `batch.<name>` function via
+/// `linker.alias` — zero code duplication, identical runtime semantics.
+/// The underscore form is what Clean Language plugins declare in `external:`:
+///
+/// ```clean
+/// external: integer _batch_stringLit(integer ctx, string value)
+/// ```
+///
+/// Note: `_batch_field` aliases `batch.field` (field access expression);
+/// `_batch_classField` aliases `batch.classField` (class member declaration).
+/// These are two distinct bridges per the Amendment 4 collision note.
+fn register_underscore_aliases(linker: &mut Linker<PluginState>) -> Result<()> {
+    // The complete list of 27 builders: dotted name → underscore alias.
+    let aliases: &[(&str, &str)] = &[
+        // Array helpers (2)
+        ("batch.arrayNew", "_batch_arrayNew"),
+        ("batch.arrayPush", "_batch_arrayPush"),
+        // Expression builders (12)
+        ("batch.stringLit", "_batch_stringLit"),
+        ("batch.intLit", "_batch_intLit"),
+        ("batch.numberLit", "_batch_numberLit"),
+        ("batch.boolLit", "_batch_boolLit"),
+        ("batch.ident", "_batch_ident"),
+        ("batch.field", "_batch_field"),
+        ("batch.call", "_batch_call"),
+        ("batch.binop", "_batch_binop"),
+        ("batch.unop", "_batch_unop"),
+        ("batch.index", "_batch_index"),
+        ("batch.arrayLit", "_batch_arrayLit"),
+        ("batch.objectLit", "_batch_objectLit"),
+        // Statement builders (7)
+        ("batch.stmtCall", "_batch_stmtCall"),
+        ("batch.stmtAssign", "_batch_stmtAssign"),
+        ("batch.stmtIf", "_batch_stmtIf"),
+        ("batch.stmtWhile", "_batch_stmtWhile"),
+        ("batch.stmtFor", "_batch_stmtFor"),
+        ("batch.stmtReturn", "_batch_stmtReturn"),
+        ("batch.stmtBlock", "_batch_stmtBlock"),
+        // Function/class/terminal builders (7)
+        ("batch.func", "_batch_func"),
+        ("batch.classField", "_batch_classField"),
+        ("batch.method", "_batch_method"),
+        ("batch.class", "_batch_class"),
+        ("batch.param", "_batch_param"),
+        ("batch.objectField", "_batch_objectField"),
+        ("batch.spec", "_batch_spec"),
+    ];
+
+    for (dotted, underscore) in aliases {
+        linker.alias("env", dotted, "env", underscore)?;
+    }
     Ok(())
 }
 
