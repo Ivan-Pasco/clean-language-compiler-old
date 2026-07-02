@@ -129,6 +129,7 @@ pub enum BatchArrayPushError {
 }
 
 impl BatchArrayPushError {
+    #[allow(dead_code)]
     pub fn plugin_code(&self) -> &'static str {
         match self {
             BatchArrayPushError::ArrayConsumed { .. } => "PLUGIN008",
@@ -545,7 +546,8 @@ impl EmitArena {
     }
 
     /// Peek at the `BatchArrayKind` of an array handle without consuming it.
-    /// Used by `batch.arrayPush` to enforce homogeneity.
+    /// Used by `batch.arrayPush` to enforce homogeneity and by unit tests.
+    #[allow(dead_code)]
     pub fn peek_batch_array_kind(&self, handle: i32) -> Option<BatchArrayKind> {
         if !Self::is_batch_handle(handle) {
             return None;
@@ -695,6 +697,7 @@ impl EmitArena {
     }
 
     /// Take a `BatchNode` and assert it is a `Function`. Returns the inner `BatchFunction`.
+    #[allow(dead_code)]
     pub fn take_batch_function(&mut self, handle: i32) -> Result<BatchFunction, EmitError> {
         let node = self.take_batch_node(handle)?;
         match node {
@@ -707,6 +710,7 @@ impl EmitArena {
     }
 
     /// Take a `BatchNode` and assert it is a `Method`. Returns the inner `BatchMethod`.
+    #[allow(dead_code)]
     pub fn take_batch_method(&mut self, handle: i32) -> Result<BatchMethod, EmitError> {
         let node = self.take_batch_node(handle)?;
         match node {

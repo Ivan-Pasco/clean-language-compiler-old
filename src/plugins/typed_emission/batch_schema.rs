@@ -290,9 +290,8 @@ fn line_col_to_offset(source: &str, line: usize, col: usize) -> Option<usize> {
     for ch in source.chars() {
         if current_line == line {
             // col is 1-indexed characters within the line.
-            let mut c = 1usize;
             let mut byte_within = 0usize;
-            for lc in source[off..].chars() {
+            for (c, lc) in (1usize..).zip(source[off..].chars()) {
                 if c == col {
                     return Some(off + byte_within);
                 }
@@ -300,7 +299,6 @@ fn line_col_to_offset(source: &str, line: usize, col: usize) -> Option<usize> {
                     break;
                 }
                 byte_within += lc.len_utf8();
-                c += 1;
             }
             return Some(off + byte_within);
         }
@@ -541,7 +539,7 @@ pub fn class_to_ast(
         class.fields.push(Field::new(field.name, ty));
     }
 
-    for (m, body) in spec.methods.into_iter().zip(method_bodies.into_iter()) {
+    for (m, body) in spec.methods.into_iter().zip(method_bodies) {
         let mut params = Vec::with_capacity(m.params.len());
         for p in m.params {
             params.push(Parameter::new(p.name, resolve_type(&p.ty)?));
