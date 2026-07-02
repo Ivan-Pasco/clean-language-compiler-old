@@ -9,9 +9,10 @@
 use anyhow::Result;
 use wasmtime::{Caller, Linker};
 
+use super::arena::BATCH_TAG;
 use super::batch_schema::{
     self, class_to_ast, function_to_ast, parse_batch_spec, parse_class_spec, stmt_to_ast,
-    BatchSchemaError, BATCH_FUNCTION_LIMIT,
+    BatchSchemaError, ClassSpec, BATCH_FUNCTION_LIMIT,
 };
 use super::error::{EmitDiagnostic, EmitError};
 use super::json::{
@@ -147,14 +148,24 @@ macro_rules! take_opt_or_return {
 /// Register all typed-emission bridge functions onto `linker`.
 ///
 /// The linker returned by `WasmPlugin::get_typed_emission_linker()` calls
-/// this function. All 30 functions are registered in the "env" module to
+/// this function. All ~57 functions are registered in the "env" module to
 /// match the plugin WAT import declarations.
+///
+/// Registration order:
+///  1. Type constructors (§3.10)
+///  2. Expression constructors (§3.9)
+///  3. Statement constructors (§3.8)
+///  4. Declaration emitters (§3.1–§3.7, §3.11)
+///  5. Batch emitters (§3.12–§3.13, widened for Amendment 4)
+///  6. Batch-spec builder bridges (§3.14 Amendment 4)
+///  7. Error bridge (§5)
 pub fn register_typed_emission_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
     register_type_constructors(linker)?;
     register_expr_constructors(linker)?;
     register_stmt_constructors(linker)?;
     register_declaration_emitters(linker)?;
     register_batch_emitters(linker)?;
+    super::batch_builders::register_batch_builder_bridges(linker)?;
     register_error_bridge(linker)?;
     Ok(())
 }
@@ -1517,70 +1528,96 @@ fn emit_plugin013(arena: &mut super::arena::EmitArena, err: &BatchSchemaError, s
 }
 
 fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
-    // _emit_helpers_batch(ctx, spec_lp, flags) -> err
+    // _emit_helpers_batch(ctx, spec_handle_or_lp, flags) -> err
     //   flags: bit 0 = BFS root per function, bit 1 = private
     //
-    // Amendment 3 §3.12. See typed-emission.md for JSON schema. This bridge
-    // does NOT allocate handles — it converts the batch JSON directly to AST
-    // Functions and pushes them into expansion.functions.
+    // Amendment 3 §3.12, widened by Amendment 4 §3.14 to accept either:
+    //   - an LP-string pointer to JSON (Amendment 3 path — unchanged)
+    //   - a batch_spec_handle built via batch.spec() (Amendment 4 path)
+    //
+    // Disambiguation: if `(spec_handle_or_lp & BATCH_TAG) != 0`, it is a batch
+    // handle. Otherwise it is an LP pointer. See arena.rs doc for rationale.
     linker.func_wrap(
         "env",
         "_emit_helpers_batch",
-        |mut caller: Caller<'_, PluginState>, ctx: i32, spec_lp: i32, flags: i32| -> i32 {
-            let spec = match read_lp_string(&mut caller, spec_lp) {
-                Some(s) => s,
-                None => return 1,
-            };
-            let spec_len = spec.len();
-
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         spec_handle_or_lp: i32,
+         flags: i32|
+         -> i32 {
             let a = arena!(caller);
             if a.check_ctx(ctx).is_err() {
                 return 1;
             }
 
-            // 1. Parse JSON.
-            let batch = match parse_batch_spec(&spec) {
-                Ok(b) => b,
-                Err(e) => {
-                    emit_plugin013(a, &e, spec_len);
-                    return 1;
+            // ── Resolve the spec from either path ────────────────────────────
+            let batch = if (spec_handle_or_lp & BATCH_TAG) != 0 {
+                // Amendment 4 handle path.
+                let spec = match a.take_batch_spec(spec_handle_or_lp) {
+                    Ok(s) => s,
+                    Err(super::error::EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        return 1;
+                    }
+                    Err(e) => {
+                        a.emit_diagnostic(super::error::EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN013".to_string(),
+                            message: format!(
+                                "InvalidBatchSpec: _emit_helpers_batch handle error: {:?}",
+                                e
+                            ),
+                            span_json: r#"{"start":0,"end":0,"source":"plugin"}"#.to_string(),
+                        });
+                        return 1;
+                    }
+                };
+                spec
+            } else {
+                // Amendment 3 LP-string JSON path. The borrow of `a` ends at the
+                // closing brace of the `if` arm above; Rust releases it here so
+                // we can borrow `caller` to read WASM memory.
+                let json = match read_lp_string(&mut caller, spec_handle_or_lp) {
+                    Some(s) => s,
+                    None => return 1,
+                };
+                let spec_len = json.len();
+                let a = arena!(caller);
+                match parse_batch_spec(&json) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        emit_plugin013(a, &e, spec_len);
+                        return 1;
+                    }
                 }
             };
 
-            // 2. Batch limit (§3.12).
+            // ── Batch limit (§3.12, both paths) ──────────────────────────────
+            let a = arena!(caller);
             if batch.functions.len() > BATCH_FUNCTION_LIMIT {
                 let e = BatchSchemaError::BatchLimit {
                     count: batch.functions.len(),
                     limit: BATCH_FUNCTION_LIMIT,
                 };
-                emit_plugin013(a, &e, spec_len);
+                // spec_len is unknown for the handle path; use 0.
+                emit_plugin013(a, &e, 0);
                 return 1;
             }
 
-            // 3. Flag bits per Amendment 3 §3.12.
-            //    bit 0 = BFS root per function (currently a no-op in AST; the
-            //           compiler's BFS layer picks up all emitted functions
-            //           uniformly. Reserved for a future queue-priority hook,
-            //           matching what `_emit_function`'s bit-1 does today.)
-            //    bit 1 = private → Visibility::Private (which is the AST
-            //           default). Public visibility is the opposite of §3.12's
-            //           bit 1 — an unset bit 1 means the plugin wants the
-            //           batch exported (matching `_emit_function`'s bit 0).
+            // ── Flag bits per Amendment 3 §3.12 ──────────────────────────────
             let private = (flags & 2) != 0;
             let exported = !private;
 
-            // 4. Convert each function.
+            // ── Convert each function ─────────────────────────────────────────
             for (idx, f) in batch.functions.into_iter().enumerate() {
                 let func = match function_to_ast(f, exported) {
                     Ok(f) => f,
                     Err(e) => {
-                        // Prefix the message with the batch index so plugin
-                        // authors know which entry failed even without span info.
                         let wrapped = BatchSchemaError::Json {
                             message: format!("function[{}]: {}", idx, e.message()),
                             byte_offset: None,
                         };
-                        emit_plugin013(a, &wrapped, spec_len);
+                        emit_plugin013(a, &wrapped, 0);
                         return 1;
                     }
                 };
@@ -1591,37 +1628,80 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
-    // _emit_class_full(ctx, class_spec_lp, flags) -> err
+    // _emit_class_full(ctx, class_handle_or_lp, flags) -> err
     //   flags: bit 0 = exported (Visibility::Public for methods)
     //
-    // Amendment 3 §3.13. Supports two method-body forms:
-    //   - inline "body": statement array
-    //   - "body_handle": N — resolves against an EmitArena stmt handle
-    //     previously allocated by `_emit_stmt_from_source` (Landing B).
-    //     This preserves the pass-through composition with §3.11.
+    // Amendment 3 §3.13, widened by Amendment 4 §3.14 to accept either:
+    //   - an LP-string pointer to JSON (Amendment 3 path — unchanged)
+    //   - a batch_spec_handle built via batch.class() (Amendment 4 path)
+    //
+    // Disambiguation: same BATCH_TAG bit-check as _emit_helpers_batch.
     linker.func_wrap(
         "env",
         "_emit_class_full",
-        |mut caller: Caller<'_, PluginState>, ctx: i32, spec_lp: i32, flags: i32| -> i32 {
-            let spec = match read_lp_string(&mut caller, spec_lp) {
-                Some(s) => s,
-                None => return 1,
-            };
-            let spec_len = spec.len();
-
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         class_handle_or_lp: i32,
+         flags: i32|
+         -> i32 {
             let a = arena!(caller);
             if a.check_ctx(ctx).is_err() {
                 return 1;
             }
 
-            // 1. Parse JSON.
-            let class_spec = match parse_class_spec(&spec) {
-                Ok(c) => c,
-                Err(e) => {
-                    emit_plugin013(a, &e, spec_len);
-                    return 1;
+            // ── Resolve class spec from either path ───────────────────────────
+            let class_spec: ClassSpec = if (class_handle_or_lp & BATCH_TAG) != 0 {
+                // Amendment 4 handle path.
+                let builder_class = match a.take_batch_class_spec(class_handle_or_lp) {
+                    Ok(c) => c,
+                    Err(super::error::EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        return 1;
+                    }
+                    Err(e) => {
+                        a.emit_diagnostic(super::error::EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN013".to_string(),
+                            message: format!(
+                                "InvalidBatchSpec: _emit_class_full handle error: {:?}",
+                                e
+                            ),
+                            span_json: r#"{"start":0,"end":0,"source":"plugin"}"#.to_string(),
+                        });
+                        return 1;
+                    }
+                };
+                // Convert BatchBuilderClass to ClassSpec (same field layout).
+                ClassSpec {
+                    name: builder_class.name,
+                    parent: builder_class.parent,
+                    fields: builder_class.fields,
+                    methods: builder_class.methods,
+                }
+            } else {
+                // Amendment 3 LP-string JSON path. Borrow of `a` ends above.
+                let json = match read_lp_string(&mut caller, class_handle_or_lp) {
+                    Some(s) => s,
+                    None => return 1,
+                };
+                let spec_len = json.len();
+                let a = arena!(caller);
+                match parse_class_spec(&json) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        emit_plugin013(a, &e, spec_len);
+                        return 1;
+                    }
                 }
             };
+
+            let a = arena!(caller);
+            // spec_len is 0 for the handle path (no JSON to point into);
+            // emit_plugin013 uses this for the span end byte in batch_spec spans.
+            // For the JSON path, spec_len was set inside the else-branch above and
+            // is no longer in scope — use 0 uniformly here since the class-spec
+            // body-resolution errors below are not JSON-position errors.
+            let spec_len: usize = 0;
 
             // 2. Resolve method bodies (inline OR body_handle) BEFORE the class
             //    conversion. We take the methods vec out by ownership so the
