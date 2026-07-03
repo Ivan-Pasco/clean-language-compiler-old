@@ -2381,11 +2381,8 @@ mod tests {
             SingleExpressionParse::Expression(other) => {
                 // Some grammar paths may route `x.y` through a variable or
                 // property-chain-call shape; assert it's not a literal.
-                match other {
-                    Expression::Literal(_) => {
-                        panic!("field access degenerated to literal")
-                    }
-                    _ => {}
+                if let Expression::Literal(_) = other {
+                    panic!("field access degenerated to literal")
                 }
             }
             other => panic!("expected Expression, got {}", expr_type_name(&other)),
@@ -2424,11 +2421,8 @@ mod tests {
             SingleExpressionParse::Expression(other) => {
                 // Accept any non-atom expression shape — the actual AST enum
                 // used for binops may vary across grammar revisions.
-                match other {
-                    Expression::Literal(_) | Expression::Variable(_) => {
-                        panic!("binop degenerated to atom: {:?}", other)
-                    }
-                    _ => {}
+                if matches!(other, Expression::Literal(_) | Expression::Variable(_)) {
+                    panic!("binop degenerated to atom: {:?}", other)
                 }
             }
             other => panic!(
