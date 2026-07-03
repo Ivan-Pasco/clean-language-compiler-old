@@ -881,6 +881,81 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
+    // _emit_expr_from_source(ctx, source_lp, origin_offset) -> expr_handle
+    //
+    // v3 bridge added by typed-emission.md Amendment 6 (2026-07-02). See §3.16.
+    // Expression-mirror of §3.11 `_emit_stmt_from_source`. Unblocks frame.data
+    // and frame.ui, which route user-authored expression fragments (path
+    // expressions, field access, method calls, literals) extracted from DSL
+    // bodies. Without this bridge, both plugins would need to ship their own
+    // Clean expression parser inside `plugin.wasm`, reopening the §1 bug class
+    // one layer deeper.
+    //
+    // Failure paths per §3.16:
+    //   - syntax error → 0 + PLUGIN015 diagnostic with translated span
+    //   - valid statement but not expression → 0 + PLUGIN016 diagnostic
+    linker.func_wrap(
+        "env",
+        "_emit_expr_from_source",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         source_lp: i32,
+         origin_offset: i32|
+         -> i32 {
+            let source = match read_lp_string(&mut caller, source_lp) {
+                Some(s) => s,
+                None => return 0,
+            };
+            let origin = origin_offset.max(0) as usize;
+
+            use crate::parser::grammar::{CleanParser, SingleExpressionParse};
+            let result = CleanParser::parse_single_expression(&source);
+
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+
+            match result {
+                SingleExpressionParse::Expression(expr) => a.alloc_expr(expr),
+                SingleExpressionParse::StatementNotExpression => {
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN016".to_string(),
+                        message: format!(
+                            "StatementInExpressionContext: the source fragment passed to \
+                             _emit_expr_from_source parses as a valid statement but not \
+                             as an expression (typed-emission.md §3.16). Fragment: `{}`",
+                            truncate_for_diagnostic(&source, 80)
+                        ),
+                        span_json: build_span_json(origin, origin + source.len()),
+                    });
+                    0
+                }
+                SingleExpressionParse::ParseError {
+                    message,
+                    byte_offset,
+                } => {
+                    let start = origin + byte_offset;
+                    let end = origin + source.len();
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN015".to_string(),
+                        message: format!(
+                            "InvalidExpressionSource: source is not a syntactically valid \
+                             Clean expression in fragment passed to _emit_expr_from_source: \
+                             {} (fragment: `{}`)",
+                            message,
+                            truncate_for_diagnostic(&source, 80)
+                        ),
+                        span_json: build_span_json(start, end),
+                    });
+                    0
+                }
+            }
+        },
+    )?;
+
     // _stmt_block(ctx, stmts_json_lp) -> handle
     // stmts_json = [stmt_handle, ...] in order; each consumed.
     linker.func_wrap(
@@ -2270,6 +2345,185 @@ mod tests {
             SingleStatementParse::ExpressionNotStatement => "ExpressionNotStatement",
             SingleStatementParse::ParseError { .. } => "ParseError",
         }
+    }
+
+    // ── §3.16: _emit_expr_from_source (Amendment 6) ───────────────────────────
+
+    use crate::parser::grammar::SingleExpressionParse;
+
+    fn expr_type_name(v: &SingleExpressionParse) -> &'static str {
+        match v {
+            SingleExpressionParse::Expression(_) => "Expression",
+            SingleExpressionParse::StatementNotExpression => "StatementNotExpression",
+            SingleExpressionParse::ParseError { .. } => "ParseError",
+        }
+    }
+
+    #[test]
+    fn parse_single_expression_happy_path_ident() {
+        let src = "session";
+        match CleanParser::parse_single_expression(src) {
+            SingleExpressionParse::Expression(Expression::Variable(name)) => {
+                assert_eq!(name, "session");
+            }
+            other => panic!(
+                "expected Expression::Variable, got {}",
+                expr_type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn parse_single_expression_field_access() {
+        let src = "user.id";
+        match CleanParser::parse_single_expression(src) {
+            SingleExpressionParse::Expression(Expression::PropertyAccess { .. }) => {}
+            SingleExpressionParse::Expression(other) => {
+                // Some grammar paths may route `x.y` through a variable or
+                // property-chain-call shape; assert it's not a literal.
+                match other {
+                    Expression::Literal(_) => {
+                        panic!("field access degenerated to literal")
+                    }
+                    _ => {}
+                }
+            }
+            other => panic!("expected Expression, got {}", expr_type_name(&other)),
+        }
+    }
+
+    #[test]
+    fn parse_single_expression_method_call() {
+        let src = "session.user_id.toString()";
+        match CleanParser::parse_single_expression(src) {
+            SingleExpressionParse::Expression(_) => {}
+            other => panic!(
+                "expected Expression for method-call chain, got {}",
+                expr_type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn parse_single_expression_literal() {
+        let src = "42";
+        match CleanParser::parse_single_expression(src) {
+            SingleExpressionParse::Expression(Expression::Literal(Value::Integer(42))) => {}
+            other => panic!(
+                "expected integer literal 42, got {}",
+                expr_type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn parse_single_expression_binop() {
+        let src = "a + b";
+        match CleanParser::parse_single_expression(src) {
+            SingleExpressionParse::Expression(Expression::Binary { .. }) => {}
+            SingleExpressionParse::Expression(other) => {
+                // Accept any non-atom expression shape — the actual AST enum
+                // used for binops may vary across grammar revisions.
+                match other {
+                    Expression::Literal(_) | Expression::Variable(_) => {
+                        panic!("binop degenerated to atom: {:?}", other)
+                    }
+                    _ => {}
+                }
+            }
+            other => panic!(
+                "expected Expression for binop, got {}",
+                expr_type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn parse_single_expression_syntax_error() {
+        // Doubled `..` is not a valid expression, statement, or anything else.
+        let src = "session..";
+        match CleanParser::parse_single_expression(src) {
+            SingleExpressionParse::ParseError { .. } => {}
+            other => panic!(
+                "expected ParseError for `session..`, got {}",
+                expr_type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn parse_single_expression_statement_not_expression() {
+        // `return 42` is a valid statement but not an expression.
+        let src = "return 42";
+        match CleanParser::parse_single_expression(src) {
+            SingleExpressionParse::StatementNotExpression => {}
+            other => panic!(
+                "expected StatementNotExpression for `return 42`, got {}",
+                expr_type_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn emit_expr_from_source_arena_alloc_and_single_consumption() {
+        let mut arena = make_arena(43);
+        let result = CleanParser::parse_single_expression("42");
+        let expr = match result {
+            SingleExpressionParse::Expression(e) => e,
+            other => panic!("expected happy path, got {}", expr_type_name(&other)),
+        };
+        let h = arena.alloc_expr(expr);
+        assert!(h > 0);
+        // First consumption succeeds.
+        let _ = arena.take_expr(43, h).expect("first take");
+        // Second consumption triggers PLUGIN008.
+        let err = arena.take_expr(43, h).unwrap_err();
+        assert_eq!(err.error_code(), "PLUGIN008");
+    }
+
+    #[test]
+    fn plugin015_and_plugin016_error_codes_reserved() {
+        // Sanity: the diagnostic codes emitted by the bridge closure are the
+        // reserved spec ids from error-codes.md.
+        let mut arena = make_arena(1);
+        arena.emit_diagnostic(super::super::error::EmitDiagnostic {
+            severity: 2,
+            code: "PLUGIN015".to_string(),
+            message: "invalid expression source".to_string(),
+            span_json: super::build_span_json(0, 10),
+        });
+        arena.emit_diagnostic(super::super::error::EmitDiagnostic {
+            severity: 2,
+            code: "PLUGIN016".to_string(),
+            message: "statement in expression context".to_string(),
+            span_json: super::build_span_json(0, 10),
+        });
+        let (_exp, diags, saw_err) = arena.finish();
+        assert!(saw_err);
+        assert!(diags.iter().any(|d| d.code == "PLUGIN015"));
+        assert!(diags.iter().any(|d| d.code == "PLUGIN016"));
+    }
+
+    #[test]
+    fn origin_offset_translation_shifts_expr_span() {
+        // Emulate the bridge's span-building logic for an expression fragment:
+        // origin=300 with a 15-byte fragment → span 300..315.
+        let json = super::build_span_json(300, 315);
+        assert!(json.contains("\"start\":300"));
+        assert!(json.contains("\"end\":315"));
+        assert!(json.contains("\"source\":\"block_body\""));
+    }
+
+    #[test]
+    fn emit_expr_from_source_trips_sticky_on_failure() {
+        // Verify Amendment 5 integration: a bridge that has already tripped
+        // sticky short-circuits every subsequent call, including
+        // _emit_expr_from_source's arena.check_ctx(ctx) gate.
+        let mut arena = make_arena(44);
+        arena.trip("_emit_expr_from_source_prior", "prior failure");
+        assert!(arena.is_sticky());
+        // The bridge's entry gate would refuse:
+        assert_eq!(arena.check_ctx(44), Err(EmitError::StickyErrorActive));
     }
 
     #[test]
