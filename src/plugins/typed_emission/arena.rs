@@ -119,6 +119,19 @@ pub struct BatchArray {
     pub items: Vec<i32>,
 }
 
+/// Error returned by `EmitArena::batch_stmt_seq_from_handles` (Amendment 7).
+///
+/// Callers (currently only the `batch.stmtSeq` bridge) translate each variant
+/// into PLUGIN008 (Consumed) or PLUGIN013 (all others) diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StmtSeqError {
+    InvalidHandle { handle: i32 },
+    OutOfRange { handle: i32 },
+    Consumed { handle: i32 },
+    KindMismatch { handle: i32, actual: BatchArrayKind },
+    NonPushable { handle: i32 },
+}
+
 /// Error returned by `EmitArena::batch_array_push`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BatchArrayPushError {
@@ -654,6 +667,64 @@ impl EmitArena {
         self.batch_nodes[idx]
             .take()
             .ok_or(EmitError::OutOfRange { handle })
+    }
+
+    /// Core logic for Amendment 7 `batch.stmtSeq`: validate a list of
+    /// `batch_stmt_handle` values, consume each, and return a fresh
+    /// Stmt-kind `BatchArray` allocated into the arena. Returns the tagged
+    /// batch array handle on success, or `Err(StmtSeqError)` describing why
+    /// the input was invalid. The bridge wrapper is responsible for
+    /// translating errors into PLUGIN008/PLUGIN013 diagnostics and calling
+    /// `trip` for sticky-error integration.
+    ///
+    /// This is the sole mutating path; no partial mutation occurs on error
+    /// (all handles are validated before any is consumed).
+    pub fn batch_stmt_seq_from_handles(&mut self, handles: &[i32]) -> Result<i32, StmtSeqError> {
+        for &h in handles {
+            if h == 0 || !Self::is_batch_handle(h) {
+                return Err(StmtSeqError::InvalidHandle { handle: h });
+            }
+            let idx = (h & !BATCH_TAG) as usize;
+            if idx == 0 || idx >= self.batch_nodes.len() {
+                return Err(StmtSeqError::OutOfRange { handle: h });
+            }
+            if self.batch_consumed[idx] {
+                return Err(StmtSeqError::Consumed { handle: h });
+            }
+            match self.peek_batch_node_kind(idx) {
+                Some(BatchArrayKind::Stmt) => {}
+                Some(actual) => return Err(StmtSeqError::KindMismatch { handle: h, actual }),
+                None => return Err(StmtSeqError::NonPushable { handle: h }),
+            }
+        }
+
+        let mut items: Vec<i32> = Vec::with_capacity(handles.len());
+        for &h in handles {
+            let idx = (h & !BATCH_TAG) as usize;
+            self.batch_consumed[idx] = true;
+            items.push(idx as i32);
+        }
+        Ok(self.alloc_batch(BatchNode::Array(BatchArray {
+            kind: BatchArrayKind::Stmt,
+            items,
+        })))
+    }
+
+    /// Peek at the kind of the batch node at raw index `idx` without consuming
+    /// it, mapped to the corresponding `BatchArrayKind` variant. Returns
+    /// `None` for non-pushable kinds (Array, Spec, ClassSpec) or empty slots.
+    /// Callers MUST validate `idx` is in-range and not consumed before calling.
+    pub fn peek_batch_node_kind(&self, idx: usize) -> Option<BatchArrayKind> {
+        match &self.batch_nodes[idx] {
+            Some(BatchNode::Expr(_)) => Some(BatchArrayKind::Expr),
+            Some(BatchNode::Stmt(_)) => Some(BatchArrayKind::Stmt),
+            Some(BatchNode::Function(_)) => Some(BatchArrayKind::Function),
+            Some(BatchNode::Method(_)) => Some(BatchArrayKind::Method),
+            Some(BatchNode::Field(_)) => Some(BatchArrayKind::Field),
+            Some(BatchNode::Param(_)) => Some(BatchArrayKind::Param),
+            Some(BatchNode::ObjectField(_)) => Some(BatchArrayKind::ObjectField),
+            _ => None,
+        }
     }
 
     /// Peek at the `BatchArrayKind` of an array handle without consuming it.

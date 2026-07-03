@@ -22,12 +22,15 @@
 use anyhow::Result;
 use wasmtime::{Caller, Linker};
 
-use super::arena::{BatchArray, BatchArrayKind, BatchArrayPushError, BatchBuilderClass, BatchNode};
+use super::arena::{
+    BatchArray, BatchArrayKind, BatchArrayPushError, BatchBuilderClass, BatchNode, StmtSeqError,
+};
 use super::batch_schema::{
     BatchExpr, BatchField, BatchFunction, BatchMethod, BatchObjectField, BatchParam, BatchSpec,
     BatchStatement,
 };
 use super::error::{EmitDiagnostic, EmitError};
+use super::json::decode_handle_array;
 use crate::plugins::wasm_adapter::PluginState;
 
 // ─── Arena access macro (mirrors bridges.rs) ─────────────────────────────────
@@ -157,9 +160,10 @@ pub fn register_batch_builder_bridges(linker: &mut Linker<PluginState>) -> Resul
 fn register_underscore_aliases(linker: &mut Linker<PluginState>) -> Result<()> {
     // The complete list of 27 builders: dotted name → underscore alias.
     let aliases: &[(&str, &str)] = &[
-        // Array helpers (2)
+        // Array helpers (3 — includes Amendment 7 batch.stmtSeq)
         ("batch.arrayNew", "_batch_arrayNew"),
         ("batch.arrayPush", "_batch_arrayPush"),
+        ("batch.stmtSeq", "_batch_stmtSeq"),
         // Expression builders (12)
         ("batch.stringLit", "_batch_stringLit"),
         ("batch.intLit", "_batch_intLit"),
@@ -233,6 +237,94 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
             }
             handle_push_err!(a, a.batch_array_push(array_handle, item_handle));
             0
+        },
+    )?;
+
+    // batch.stmtSeq(ctx, stmts_lp) -> batch_array_handle (Amendment 7, §3.14.5)
+    //
+    // Variadic-array shortening ergonomic. Collapses `batch.arrayNew` + N ×
+    // `batch.arrayPush` into a single call taking an LP-JSON array of
+    // `batch_stmt_handle` values, e.g. `[123, 456, 789]`. All listed handles
+    // MUST be unconsumed Stmt-kind batch handles; each is consumed by the
+    // resulting array (same semantics as batch.arrayPush).
+    //
+    // Returns 0 on failure with a PLUGIN013 diagnostic and trips sticky-error
+    // per Amendment 5 §3.15. Result array kind is fixed to Stmt.
+    linker.func_wrap(
+        "env",
+        "batch.stmtSeq",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, stmts_lp: i32| -> i32 {
+            // 1. Read LP-string.
+            let json = match read_lp_string(&mut caller, stmts_lp) {
+                Some(s) => s,
+                None => {
+                    let a = arena!(caller);
+                    return a.trip("batch.stmtSeq", "invalid stmts_lp pointer");
+                }
+            };
+
+            // 2. Parse the JSON handle array.
+            let handles = match decode_handle_array(&json) {
+                Ok(h) => h,
+                Err(e) => {
+                    let a = arena!(caller);
+                    emit_batch_plugin013(
+                        a,
+                        format!("batch.stmtSeq: malformed JSON handle array: {}", e),
+                    );
+                    return a.trip("batch.stmtSeq", "malformed JSON handle array");
+                }
+            };
+
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+
+            match a.batch_stmt_seq_from_handles(&handles) {
+                Ok(h) => h,
+                Err(StmtSeqError::Consumed { handle }) => {
+                    emit_batch_plugin008(a, handle);
+                    a.trip("batch.stmtSeq", "consumed handle in stmts array")
+                }
+                Err(StmtSeqError::InvalidHandle { handle }) => {
+                    emit_batch_plugin013(
+                        a,
+                        format!(
+                            "batch.stmtSeq: handle {} is not a valid batch handle",
+                            handle
+                        ),
+                    );
+                    a.trip("batch.stmtSeq", "invalid handle in stmts array")
+                }
+                Err(StmtSeqError::OutOfRange { handle }) => {
+                    emit_batch_plugin013(
+                        a,
+                        format!("batch.stmtSeq: handle {} out of range", handle),
+                    );
+                    a.trip("batch.stmtSeq", "handle out of range")
+                }
+                Err(StmtSeqError::KindMismatch { handle, actual }) => {
+                    emit_batch_plugin013(
+                        a,
+                        format!(
+                            "batch.stmtSeq: handle {} kind mismatch — expected Stmt, got {:?}",
+                            handle, actual
+                        ),
+                    );
+                    a.trip("batch.stmtSeq", "kind mismatch in stmts array")
+                }
+                Err(StmtSeqError::NonPushable { handle }) => {
+                    emit_batch_plugin013(
+                        a,
+                        format!(
+                            "batch.stmtSeq: handle {} refers to a non-pushable node kind",
+                            handle
+                        ),
+                    );
+                    a.trip("batch.stmtSeq", "non-pushable node in stmts array")
+                }
+            }
         },
     )?;
 
@@ -1272,5 +1364,128 @@ mod tests {
             err,
             crate::plugins::typed_emission::error::EmitError::HandleConsumed { .. }
         ));
+    }
+
+    // ── 11. Amendment 7: batch.stmtSeq (arena-level) ─────────────────────────
+
+    use super::super::arena::StmtSeqError;
+
+    fn alloc_stmt_handle(a: &mut EmitArena) -> i32 {
+        a.alloc_batch(BatchNode::Stmt(BatchStatement::Return { expr: None }))
+    }
+
+    #[test]
+    fn stmt_seq_from_empty_list_produces_empty_stmt_array() {
+        let mut a = fresh_arena();
+        let h = a
+            .batch_stmt_seq_from_handles(&[])
+            .expect("empty stmts array is legal");
+        assert!(EmitArena::is_batch_handle(h));
+        let (items, kind) = a.take_batch_array(h).unwrap();
+        assert!(items.is_empty());
+        assert_eq!(kind, BatchArrayKind::Stmt);
+    }
+
+    #[test]
+    fn stmt_seq_from_valid_stmt_handles_produces_stmt_array_of_expected_length() {
+        let mut a = fresh_arena();
+        let s1 = alloc_stmt_handle(&mut a);
+        let s2 = alloc_stmt_handle(&mut a);
+        let s3 = alloc_stmt_handle(&mut a);
+        let arr = a.batch_stmt_seq_from_handles(&[s1, s2, s3]).unwrap();
+        let (items, kind) = a.take_batch_array(arr).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(kind, BatchArrayKind::Stmt);
+    }
+
+    #[test]
+    fn stmt_seq_consumes_each_pushed_handle() {
+        let mut a = fresh_arena();
+        let s1 = alloc_stmt_handle(&mut a);
+        let s2 = alloc_stmt_handle(&mut a);
+        let _arr = a.batch_stmt_seq_from_handles(&[s1, s2]).unwrap();
+        // Both stmt handles are now consumed by the array — further take fails.
+        let err = a.take_batch_stmt(s1).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::plugins::typed_emission::error::EmitError::HandleConsumed { .. }
+        ));
+    }
+
+    #[test]
+    fn stmt_seq_rejects_expr_handle_with_kind_mismatch() {
+        let mut a = fresh_arena();
+        let stmt_h = alloc_stmt_handle(&mut a);
+        let expr_h = a.alloc_batch(BatchNode::Expr(BatchExpr::BoolLit { value: true }));
+        let err = a
+            .batch_stmt_seq_from_handles(&[stmt_h, expr_h])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            StmtSeqError::KindMismatch {
+                actual: BatchArrayKind::Expr,
+                ..
+            }
+        ));
+        // Pre-validation MUST NOT have consumed the stmt handle.
+        a.take_batch_stmt(stmt_h)
+            .expect("stmt_h must not have been consumed on failed stmtSeq");
+    }
+
+    #[test]
+    fn stmt_seq_rejects_consumed_handle() {
+        let mut a = fresh_arena();
+        let s1 = alloc_stmt_handle(&mut a);
+        let _ = a.take_batch_stmt(s1).unwrap();
+        let err = a.batch_stmt_seq_from_handles(&[s1]).unwrap_err();
+        assert!(matches!(err, StmtSeqError::Consumed { handle } if handle == s1));
+    }
+
+    #[test]
+    fn stmt_seq_rejects_zero_handle() {
+        let mut a = fresh_arena();
+        let err = a.batch_stmt_seq_from_handles(&[0]).unwrap_err();
+        assert!(matches!(err, StmtSeqError::InvalidHandle { handle: 0 }));
+    }
+
+    #[test]
+    fn stmt_seq_rejects_untagged_ast_handle() {
+        let mut a = fresh_arena();
+        let ast_handle = a.alloc_stmt(crate::ast::Statement::Return {
+            value: None,
+            location: None,
+        });
+        // AST handles lack BATCH_TAG.
+        let err = a.batch_stmt_seq_from_handles(&[ast_handle]).unwrap_err();
+        assert!(matches!(err, StmtSeqError::InvalidHandle { .. }));
+    }
+
+    #[test]
+    fn stmt_seq_result_folds_into_batch_stmt_block() {
+        let mut a = fresh_arena();
+        let s1 = alloc_stmt_handle(&mut a);
+        let s2 = alloc_stmt_handle(&mut a);
+        let seq_arr = a.batch_stmt_seq_from_handles(&[s1, s2]).unwrap();
+        // The array MUST be foldable into a batch.stmtBlock via take_batch_array.
+        let (items, kind) = a.take_batch_array(seq_arr).unwrap();
+        assert_eq!(kind, BatchArrayKind::Stmt);
+        let stmts = a.drain_batch_stmts(items).unwrap();
+        let block = BatchNode::Stmt(BatchStatement::Block { stmts });
+        let block_h = a.alloc_batch(block);
+        let block_stmt = a.take_batch_stmt(block_h).unwrap();
+        match block_stmt {
+            BatchStatement::Block { stmts } => assert_eq!(stmts.len(), 2),
+            other => panic!("expected Block, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stmt_seq_rejects_out_of_range_handle() {
+        use super::super::arena::BATCH_TAG;
+        let mut a = fresh_arena();
+        // A handle whose raw index is far past anything allocated.
+        let bogus = BATCH_TAG | 0x0000_0FFF;
+        let err = a.batch_stmt_seq_from_handles(&[bogus]).unwrap_err();
+        assert!(matches!(err, StmtSeqError::OutOfRange { .. }));
     }
 }
