@@ -23,7 +23,8 @@ use anyhow::Result;
 use wasmtime::{Caller, Linker};
 
 use super::arena::{
-    BatchArray, BatchArrayKind, BatchArrayPushError, BatchBuilderClass, BatchNode, StmtSeqError,
+    ArrayFromHandlesError, BatchArray, BatchArrayKind, BatchArrayPushError, BatchBuilderClass,
+    BatchNode, StmtSeqError,
 };
 use super::batch_schema::{
     BatchExpr, BatchField, BatchFunction, BatchMethod, BatchObjectField, BatchParam, BatchSpec,
@@ -160,10 +161,11 @@ pub fn register_batch_builder_bridges(linker: &mut Linker<PluginState>) -> Resul
 fn register_underscore_aliases(linker: &mut Linker<PluginState>) -> Result<()> {
     // The complete list of 27 builders: dotted name → underscore alias.
     let aliases: &[(&str, &str)] = &[
-        // Array helpers (3 — includes Amendment 7 batch.stmtSeq)
+        // Array helpers (4 — includes Amendment 7 batch.stmtSeq and Amendment 8 batch.args)
         ("batch.arrayNew", "_batch_arrayNew"),
         ("batch.arrayPush", "_batch_arrayPush"),
         ("batch.stmtSeq", "_batch_stmtSeq"),
+        ("batch.args", "_batch_args"),
         // Expression builders (12)
         ("batch.stringLit", "_batch_stringLit"),
         ("batch.intLit", "_batch_intLit"),
@@ -323,6 +325,90 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
                         ),
                     );
                     a.trip("batch.stmtSeq", "non-pushable node in stmts array")
+                }
+            }
+        },
+    )?;
+
+    // batch.args(ctx, exprs_lp) -> batch_array_handle (Amendment 8, §3.14.6)
+    //
+    // Variadic argument-list shortening ergonomic. Structurally identical to
+    // Amendment 7 `batch.stmtSeq` but for expression handles instead of
+    // statement handles. Collapses `batch.arrayNew` + N × `batch.arrayPush`
+    // into a single call taking an LP-JSON array of `batch_expr_handle`
+    // values, e.g. `[123, 456, 789]`. All listed handles MUST be unconsumed
+    // Expr-kind batch handles; each is consumed by the resulting array
+    // (same semantics as batch.arrayPush).
+    //
+    // Returns 0 on failure with a PLUGIN013 diagnostic and trips sticky-error
+    // per Amendment 5 §3.15. Result array kind is fixed to Expr.
+    linker.func_wrap(
+        "env",
+        "batch.args",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, exprs_lp: i32| -> i32 {
+            // 1. Read LP-string.
+            let json = match read_lp_string(&mut caller, exprs_lp) {
+                Some(s) => s,
+                None => {
+                    let a = arena!(caller);
+                    return a.trip("batch.args", "invalid exprs_lp pointer");
+                }
+            };
+
+            // 2. Parse the JSON handle array.
+            let handles = match decode_handle_array(&json) {
+                Ok(h) => h,
+                Err(e) => {
+                    let a = arena!(caller);
+                    emit_batch_plugin013(
+                        a,
+                        format!("batch.args: malformed JSON handle array: {}", e),
+                    );
+                    return a.trip("batch.args", "malformed JSON handle array");
+                }
+            };
+
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+
+            match a.batch_array_from_handles(BatchArrayKind::Expr, &handles) {
+                Ok(h) => h,
+                Err(ArrayFromHandlesError::Consumed { handle }) => {
+                    emit_batch_plugin008(a, handle);
+                    a.trip("batch.args", "consumed handle in exprs array")
+                }
+                Err(ArrayFromHandlesError::InvalidHandle { handle }) => {
+                    emit_batch_plugin013(
+                        a,
+                        format!("batch.args: handle {} is not a valid batch handle", handle),
+                    );
+                    a.trip("batch.args", "invalid handle in exprs array")
+                }
+                Err(ArrayFromHandlesError::OutOfRange { handle }) => {
+                    emit_batch_plugin013(a, format!("batch.args: handle {} out of range", handle));
+                    a.trip("batch.args", "handle out of range")
+                }
+                Err(ArrayFromHandlesError::KindMismatch { handle, actual }) => {
+                    emit_batch_plugin013(
+                        a,
+                        format!(
+                            "batch.args: handle {} kind mismatch — expected Expr, got {:?}",
+                            handle, actual
+                        ),
+                    );
+                    a.trip("batch.args", "kind mismatch in exprs array")
+                }
+                Err(ArrayFromHandlesError::NonPushable { handle }) => {
+                    emit_batch_plugin013(
+                        a,
+                        format!(
+                            "batch.args: handle {} refers to a non-pushable node kind",
+                            handle
+                        ),
+                    );
+                    a.trip("batch.args", "non-pushable node in exprs array")
                 }
             }
         },
@@ -1368,7 +1454,7 @@ mod tests {
 
     // ── 11. Amendment 7: batch.stmtSeq (arena-level) ─────────────────────────
 
-    use super::super::arena::StmtSeqError;
+    use super::super::arena::{ArrayFromHandlesError, StmtSeqError};
 
     fn alloc_stmt_handle(a: &mut EmitArena) -> i32 {
         a.alloc_batch(BatchNode::Stmt(BatchStatement::Return { expr: None }))
@@ -1487,5 +1573,164 @@ mod tests {
         let bogus = BATCH_TAG | 0x0000_0FFF;
         let err = a.batch_stmt_seq_from_handles(&[bogus]).unwrap_err();
         assert!(matches!(err, StmtSeqError::OutOfRange { .. }));
+    }
+
+    // ── 12. Amendment 8: batch.args (arena-level) ────────────────────────────
+
+    fn alloc_expr_handle(a: &mut EmitArena) -> i32 {
+        a.alloc_batch(BatchNode::Expr(BatchExpr::BoolLit { value: true }))
+    }
+
+    #[test]
+    fn args_from_empty_list_produces_empty_expr_array() {
+        let mut a = fresh_arena();
+        let h = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[])
+            .expect("empty exprs array is legal");
+        assert!(EmitArena::is_batch_handle(h));
+        let (items, kind) = a.take_batch_array(h).unwrap();
+        assert!(items.is_empty());
+        assert_eq!(kind, BatchArrayKind::Expr);
+    }
+
+    #[test]
+    fn args_from_valid_expr_handles_produces_expr_array_of_expected_length() {
+        let mut a = fresh_arena();
+        let e1 = alloc_expr_handle(&mut a);
+        let e2 = alloc_expr_handle(&mut a);
+        let e3 = alloc_expr_handle(&mut a);
+        let arr = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[e1, e2, e3])
+            .unwrap();
+        let (items, kind) = a.take_batch_array(arr).unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(kind, BatchArrayKind::Expr);
+    }
+
+    #[test]
+    fn args_consumes_each_pushed_handle() {
+        let mut a = fresh_arena();
+        let e1 = alloc_expr_handle(&mut a);
+        let e2 = alloc_expr_handle(&mut a);
+        let _arr = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[e1, e2])
+            .unwrap();
+        // Both expr handles are now consumed by the array — further take fails.
+        let err = a.take_batch_expr(e1).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::plugins::typed_emission::error::EmitError::HandleConsumed { .. }
+        ));
+    }
+
+    #[test]
+    fn args_rejects_stmt_handle_with_kind_mismatch() {
+        let mut a = fresh_arena();
+        let expr_h = alloc_expr_handle(&mut a);
+        let stmt_h = alloc_stmt_handle(&mut a);
+        let err = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[expr_h, stmt_h])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ArrayFromHandlesError::KindMismatch {
+                actual: BatchArrayKind::Stmt,
+                ..
+            }
+        ));
+        // Pre-validation MUST NOT have consumed the expr handle.
+        a.take_batch_expr(expr_h)
+            .expect("expr_h must not have been consumed on failed batch.args");
+    }
+
+    #[test]
+    fn args_rejects_consumed_handle() {
+        let mut a = fresh_arena();
+        let e1 = alloc_expr_handle(&mut a);
+        let _ = a.take_batch_expr(e1).unwrap();
+        let err = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[e1])
+            .unwrap_err();
+        assert!(matches!(err, ArrayFromHandlesError::Consumed { handle } if handle == e1));
+    }
+
+    #[test]
+    fn args_rejects_zero_handle() {
+        let mut a = fresh_arena();
+        let err = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[0])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ArrayFromHandlesError::InvalidHandle { handle: 0 }
+        ));
+    }
+
+    #[test]
+    fn args_rejects_out_of_range_handle() {
+        use super::super::arena::BATCH_TAG;
+        let mut a = fresh_arena();
+        let bogus = BATCH_TAG | 0x0000_0FFF;
+        let err = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[bogus])
+            .unwrap_err();
+        assert!(matches!(err, ArrayFromHandlesError::OutOfRange { .. }));
+    }
+
+    #[test]
+    fn args_result_folds_into_batch_call() {
+        // End-to-end: build args array, drain into a Call expression,
+        // verify the resulting expression has the expected argument count.
+        let mut a = fresh_arena();
+        let arg1 = a.alloc_batch(BatchNode::Expr(BatchExpr::IntLit { value: 10 }));
+        let arg2 = a.alloc_batch(BatchNode::Expr(BatchExpr::IntLit { value: 20 }));
+        let arg3 = a.alloc_batch(BatchNode::Expr(BatchExpr::IntLit { value: 30 }));
+        let args_arr = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[arg1, arg2, arg3])
+            .unwrap();
+        let (items, kind) = a.take_batch_array(args_arr).unwrap();
+        assert_eq!(kind, BatchArrayKind::Expr);
+        let args = a.drain_batch_exprs(items).unwrap();
+        assert_eq!(args.len(), 3);
+        let call_node = BatchNode::Expr(BatchExpr::Call {
+            callee: "some_fn".to_string(),
+            args,
+        });
+        let call_h = a.alloc_batch(call_node);
+        let call_expr = a.take_batch_expr(call_h).unwrap();
+        match call_expr {
+            BatchExpr::Call { callee, args } => {
+                assert_eq!(callee, "some_fn");
+                assert_eq!(args.len(), 3);
+            }
+            other => panic!("expected Call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn args_result_folds_into_batch_stmt_call() {
+        // End-to-end: build args array, drain into a StmtCall statement.
+        let mut a = fresh_arena();
+        let arg1 = a.alloc_batch(BatchNode::Expr(BatchExpr::IntLit { value: 1 }));
+        let arg2 = a.alloc_batch(BatchNode::Expr(BatchExpr::IntLit { value: 2 }));
+        let args_arr = a
+            .batch_array_from_handles(BatchArrayKind::Expr, &[arg1, arg2])
+            .unwrap();
+        let (items, kind) = a.take_batch_array(args_arr).unwrap();
+        assert_eq!(kind, BatchArrayKind::Expr);
+        let args = a.drain_batch_exprs(items).unwrap();
+        let stmt_call = BatchNode::Stmt(BatchStatement::Call {
+            callee: "_canvas_op".to_string(),
+            args,
+        });
+        let stmt_h = a.alloc_batch(stmt_call);
+        let stmt = a.take_batch_stmt(stmt_h).unwrap();
+        match stmt {
+            BatchStatement::Call { callee, args } => {
+                assert_eq!(callee, "_canvas_op");
+                assert_eq!(args.len(), 2);
+            }
+            other => panic!("expected Call, got {:?}", other),
+        }
     }
 }

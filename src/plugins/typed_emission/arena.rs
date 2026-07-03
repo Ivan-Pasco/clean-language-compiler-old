@@ -119,18 +119,24 @@ pub struct BatchArray {
     pub items: Vec<i32>,
 }
 
-/// Error returned by `EmitArena::batch_stmt_seq_from_handles` (Amendment 7).
+/// Error returned by `EmitArena::batch_array_from_handles` (Amendments 7 & 8).
 ///
-/// Callers (currently only the `batch.stmtSeq` bridge) translate each variant
+/// Callers (`batch.stmtSeq` bridge, `batch.args` bridge) translate each variant
 /// into PLUGIN008 (Consumed) or PLUGIN013 (all others) diagnostics.
+///
+/// The `StmtSeqError` alias preserves the Amendment 7 naming.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StmtSeqError {
+pub enum ArrayFromHandlesError {
     InvalidHandle { handle: i32 },
     OutOfRange { handle: i32 },
     Consumed { handle: i32 },
     KindMismatch { handle: i32, actual: BatchArrayKind },
     NonPushable { handle: i32 },
 }
+
+/// Amendment 7 alias — retained for compatibility with the Amendment 7 bridge
+/// and test suite. New callers should use `ArrayFromHandlesError` directly.
+pub type StmtSeqError = ArrayFromHandlesError;
 
 /// Error returned by `EmitArena::batch_array_push`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -669,32 +675,39 @@ impl EmitArena {
             .ok_or(EmitError::OutOfRange { handle })
     }
 
-    /// Core logic for Amendment 7 `batch.stmtSeq`: validate a list of
-    /// `batch_stmt_handle` values, consume each, and return a fresh
-    /// Stmt-kind `BatchArray` allocated into the arena. Returns the tagged
-    /// batch array handle on success, or `Err(StmtSeqError)` describing why
-    /// the input was invalid. The bridge wrapper is responsible for
-    /// translating errors into PLUGIN008/PLUGIN013 diagnostics and calling
-    /// `trip` for sticky-error integration.
+    /// Core logic for Amendments 7 (`batch.stmtSeq`) and 8 (`batch.args`):
+    /// validate a list of batch handles all of `target_kind`, consume each,
+    /// and return a fresh `target_kind`-kind `BatchArray` allocated into the
+    /// arena. Returns the tagged batch array handle on success, or
+    /// `Err(ArrayFromHandlesError)` describing why the input was invalid.
+    /// The bridge wrapper is responsible for translating errors into
+    /// PLUGIN008/PLUGIN013 diagnostics and calling `trip` for sticky-error
+    /// integration.
     ///
     /// This is the sole mutating path; no partial mutation occurs on error
     /// (all handles are validated before any is consumed).
-    pub fn batch_stmt_seq_from_handles(&mut self, handles: &[i32]) -> Result<i32, StmtSeqError> {
+    pub fn batch_array_from_handles(
+        &mut self,
+        target_kind: BatchArrayKind,
+        handles: &[i32],
+    ) -> Result<i32, ArrayFromHandlesError> {
         for &h in handles {
             if h == 0 || !Self::is_batch_handle(h) {
-                return Err(StmtSeqError::InvalidHandle { handle: h });
+                return Err(ArrayFromHandlesError::InvalidHandle { handle: h });
             }
             let idx = (h & !BATCH_TAG) as usize;
             if idx == 0 || idx >= self.batch_nodes.len() {
-                return Err(StmtSeqError::OutOfRange { handle: h });
+                return Err(ArrayFromHandlesError::OutOfRange { handle: h });
             }
             if self.batch_consumed[idx] {
-                return Err(StmtSeqError::Consumed { handle: h });
+                return Err(ArrayFromHandlesError::Consumed { handle: h });
             }
             match self.peek_batch_node_kind(idx) {
-                Some(BatchArrayKind::Stmt) => {}
-                Some(actual) => return Err(StmtSeqError::KindMismatch { handle: h, actual }),
-                None => return Err(StmtSeqError::NonPushable { handle: h }),
+                Some(actual) if actual == target_kind => {}
+                Some(actual) => {
+                    return Err(ArrayFromHandlesError::KindMismatch { handle: h, actual })
+                }
+                None => return Err(ArrayFromHandlesError::NonPushable { handle: h }),
             }
         }
 
@@ -705,9 +718,16 @@ impl EmitArena {
             items.push(idx as i32);
         }
         Ok(self.alloc_batch(BatchNode::Array(BatchArray {
-            kind: BatchArrayKind::Stmt,
+            kind: target_kind,
             items,
         })))
+    }
+
+    /// Amendment 7 shortcut — thin wrapper delegating to
+    /// `batch_array_from_handles(Stmt, handles)`. Retained for the Amendment 7
+    /// bridge and its test suite.
+    pub fn batch_stmt_seq_from_handles(&mut self, handles: &[i32]) -> Result<i32, StmtSeqError> {
+        self.batch_array_from_handles(BatchArrayKind::Stmt, handles)
     }
 
     /// Peek at the kind of the batch node at raw index `idx` without consuming
