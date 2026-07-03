@@ -99,7 +99,7 @@ pub struct BatchFunction {
     pub body: Vec<BatchStatement>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct BatchParam {
     pub name: String,
     #[serde(rename = "type")]
@@ -119,9 +119,435 @@ pub struct ClassSpec {
     pub fields: Vec<BatchField>,
     #[serde(default)]
     pub methods: Vec<BatchMethod>,
+    /// Table name for `{table_name}` substitution in Amendment 10 templates.
+    /// Optional; unused unless a `from_spec` method references it.
+    #[serde(default)]
+    pub table_name: Option<String>,
+    /// Amendment 10 §3.18: raw method entries prior to `from_spec` expansion.
+    /// Populated by [`parse_class_spec_with_entries`]. When present, this
+    /// supersedes `methods` — the bridge expands `from_spec` entries against
+    /// `fields` / `name` / `table_name` and rebuilds `methods` before class
+    /// conversion.
+    #[serde(skip)]
+    pub method_entries: Option<Vec<BatchMethodEntry>>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Amendment 10 §3.18: a method entry inside `ClassSpec.methods` is either an
+/// inline method (existing Amendment 3 shape — no `kind` field, or explicit
+/// `kind: "inline"`) or a `from_spec` template expanded compiler-side against
+/// the class's fields with a whitelisted placeholder substitution vocabulary.
+#[derive(Debug)]
+pub enum BatchMethodEntry {
+    /// Existing shape (Amendment 3 §3.13). Recognised when `kind` is absent or
+    /// explicitly `"inline"`. Body handling is unchanged.
+    Inline(BatchMethod),
+    /// Amendment 10 shape: a template expanded by the compiler.
+    FromSpec { template: FromSpecTemplate },
+}
+
+// Custom deserializer: distinguish `from_spec` by the presence of `kind:"from_spec"`;
+// everything else falls back to the inline shape (Amendment 3 backward compat).
+impl<'de> Deserialize<'de> for BatchMethodEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let kind = value.get("kind").and_then(|v| v.as_str());
+        match kind {
+            Some("from_spec") => {
+                #[derive(Deserialize)]
+                struct FromSpecEntry {
+                    template: FromSpecTemplate,
+                }
+                let entry: FromSpecEntry =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(BatchMethodEntry::FromSpec {
+                    template: entry.template,
+                })
+            }
+            _ => {
+                // Absent kind, or kind:"inline" — treat as Amendment 3 shape.
+                let m: BatchMethod =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(BatchMethodEntry::Inline(m))
+            }
+        }
+    }
+}
+
+/// Amendment 10 §3.18 template. Iterated `iterate_over` times (0/1/N depending
+/// on mode) with per-iteration placeholder substitution over `name_template`,
+/// parameter names/types, `return_type`, and string fields inside `body`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct FromSpecTemplate {
+    pub name_template: String,
+    #[serde(default)]
+    pub params: Vec<BatchParam>,
+    pub return_type: String,
+    pub body: Vec<BatchStatement>,
+    pub iterate_over: FromSpecIterationMode,
+    #[serde(default)]
+    pub filter: Option<FromSpecFilter>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FromSpecIterationMode {
+    /// Emit exactly one method. Any `{field_*}` placeholder in the template is
+    /// an error (PLUGIN013 "unknown placeholder in iterate_over=none context").
+    None,
+    /// Emit one method per field on the class (post-filter). Placeholders
+    /// `{field_name}`, `{field_type}`, `{field_name.capitalize}` bind per-field.
+    Fields,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FromSpecFilter {
+    /// Simple string equality on the field type. Only fields whose `type`
+    /// matches will be emitted. Future amendments may add other filter kinds.
+    #[serde(default)]
+    pub r#type: Option<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Amendment 10 §3.18 — placeholder substitution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Substitution context for a single template instantiation. Values come from
+/// the class spec's own fields — never from user-authored source.
+pub struct SubstitutionContext<'a> {
+    pub model_name: &'a str,
+    pub table_name: Option<&'a str>,
+    /// Per-field bindings; None when `iterate_over = none`.
+    pub field: Option<FieldBinding<'a>>,
+}
+
+#[derive(Clone, Copy)]
+pub struct FieldBinding<'a> {
+    pub name: &'a str,
+    pub ty: &'a str,
+}
+
+/// Substitute `{...}` placeholders in `input` against `ctx`. Unknown
+/// placeholders return an error (PLUGIN013).
+pub fn substitute_placeholders(input: &str, ctx: &SubstitutionContext) -> Result<String, String> {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'{' {
+            // Find matching '}'.
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end] != b'}' {
+                end += 1;
+            }
+            if end >= bytes.len() {
+                return Err(format!(
+                    "unterminated placeholder starting at byte {} in `{}`",
+                    i, input
+                ));
+            }
+            let key = &input[start..end];
+            let value = resolve_placeholder(key, ctx)?;
+            out.push_str(&value);
+            i = end + 1;
+        } else {
+            out.push(c as char);
+            i += 1;
+        }
+    }
+    Ok(out)
+}
+
+fn resolve_placeholder(key: &str, ctx: &SubstitutionContext) -> Result<String, String> {
+    match key {
+        "model_name" => Ok(ctx.model_name.to_string()),
+        "model_name.lowercase" => Ok(ctx.model_name.to_ascii_lowercase()),
+        "table_name" => ctx
+            .table_name
+            .map(|s| s.to_string())
+            .ok_or_else(|| "table_name not set on class spec".to_string()),
+        "field_name" => ctx.field.map(|f| f.name.to_string()).ok_or_else(|| {
+            "unknown placeholder `{field_name}` in iterate_over=none context".to_string()
+        }),
+        "field_type" => ctx.field.map(|f| f.ty.to_string()).ok_or_else(|| {
+            "unknown placeholder `{field_type}` in iterate_over=none context".to_string()
+        }),
+        "field_name.capitalize" => ctx.field.map(|f| capitalize_ascii(f.name)).ok_or_else(|| {
+            "unknown placeholder `{field_name.capitalize}` in iterate_over=none context".to_string()
+        }),
+        other => Err(format!("unknown placeholder `{{{}}}`", other)),
+    }
+}
+
+fn capitalize_ascii(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => {
+            let mut out = String::with_capacity(s.len());
+            out.push(c.to_ascii_uppercase());
+            out.extend(chars);
+            out
+        }
+        None => String::new(),
+    }
+}
+
+/// Recursively substitute placeholders inside a statement's string fields.
+pub fn substitute_stmt(
+    s: &BatchStatement,
+    ctx: &SubstitutionContext,
+) -> Result<BatchStatement, String> {
+    Ok(match s {
+        BatchStatement::Call { callee, args } => BatchStatement::Call {
+            callee: substitute_placeholders(callee, ctx)?,
+            args: args
+                .iter()
+                .map(|a| substitute_expr(a, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        BatchStatement::Assign { target, expr } => BatchStatement::Assign {
+            target: substitute_placeholders(target, ctx)?,
+            expr: substitute_expr(expr, ctx)?,
+        },
+        BatchStatement::If { cond, then, else_ } => BatchStatement::If {
+            cond: substitute_expr(cond, ctx)?,
+            then: then
+                .iter()
+                .map(|s| substitute_stmt(s, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+            else_: match else_ {
+                Some(es) => Some(
+                    es.iter()
+                        .map(|s| substitute_stmt(s, ctx))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+                None => None,
+            },
+        },
+        BatchStatement::While { cond, body } => BatchStatement::While {
+            cond: substitute_expr(cond, ctx)?,
+            body: body
+                .iter()
+                .map(|s| substitute_stmt(s, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        BatchStatement::For {
+            iter_var,
+            iterable,
+            body,
+        } => BatchStatement::For {
+            iter_var: substitute_placeholders(iter_var, ctx)?,
+            iterable: substitute_expr(iterable, ctx)?,
+            body: body
+                .iter()
+                .map(|s| substitute_stmt(s, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        BatchStatement::Return { expr } => BatchStatement::Return {
+            expr: match expr {
+                Some(e) => Some(substitute_expr(e, ctx)?),
+                None => None,
+            },
+        },
+        BatchStatement::Block { stmts } => BatchStatement::Block {
+            stmts: stmts
+                .iter()
+                .map(|s| substitute_stmt(s, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+    })
+}
+
+/// Recursively substitute placeholders inside an expression's string fields.
+pub fn substitute_expr(e: &BatchExpr, ctx: &SubstitutionContext) -> Result<BatchExpr, String> {
+    Ok(match e {
+        BatchExpr::StringLit { value } => BatchExpr::StringLit {
+            value: substitute_placeholders(value, ctx)?,
+        },
+        BatchExpr::IntLit { value } => BatchExpr::IntLit { value: *value },
+        BatchExpr::NumberLit { value } => BatchExpr::NumberLit { value: *value },
+        BatchExpr::BoolLit { value } => BatchExpr::BoolLit { value: *value },
+        BatchExpr::Ident { name } => BatchExpr::Ident {
+            name: substitute_placeholders(name, ctx)?,
+        },
+        BatchExpr::Field { receiver, name } => BatchExpr::Field {
+            receiver: Box::new(substitute_expr(receiver, ctx)?),
+            name: substitute_placeholders(name, ctx)?,
+        },
+        BatchExpr::Call { callee, args } => BatchExpr::Call {
+            callee: substitute_placeholders(callee, ctx)?,
+            args: args
+                .iter()
+                .map(|a| substitute_expr(a, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        BatchExpr::BinOp { op, lhs, rhs } => BatchExpr::BinOp {
+            op: op.clone(),
+            lhs: Box::new(substitute_expr(lhs, ctx)?),
+            rhs: Box::new(substitute_expr(rhs, ctx)?),
+        },
+        BatchExpr::UnOp { op, operand } => BatchExpr::UnOp {
+            op: op.clone(),
+            operand: Box::new(substitute_expr(operand, ctx)?),
+        },
+        BatchExpr::Index { receiver, index } => BatchExpr::Index {
+            receiver: Box::new(substitute_expr(receiver, ctx)?),
+            index: Box::new(substitute_expr(index, ctx)?),
+        },
+        BatchExpr::ArrayLit { elems } => BatchExpr::ArrayLit {
+            elems: elems
+                .iter()
+                .map(|e| substitute_expr(e, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        BatchExpr::ObjectLit { fields } => BatchExpr::ObjectLit {
+            fields: fields
+                .iter()
+                .map(|f| {
+                    Ok::<_, String>(BatchObjectField {
+                        key: substitute_placeholders(&f.key, ctx)?,
+                        value: substitute_expr(&f.value, ctx)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+    })
+}
+
+/// Validate that `name` is a valid Clean identifier per the parser's rules
+/// (ASCII letter or `_` first, then letters/digits/`_`). Used to check that a
+/// substituted `name_template` result is a legal method name.
+pub fn is_valid_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    for c in chars {
+        if !(c.is_ascii_alphanumeric() || c == '_') {
+            return false;
+        }
+    }
+    !name.is_empty()
+}
+
+/// Expand a single `FromSpecTemplate` against `class_fields` under
+/// `SubstitutionContext`. Returns the concrete method list to append to the
+/// class spec's `methods` array.
+pub fn expand_from_spec(
+    template: &FromSpecTemplate,
+    class_name: &str,
+    table_name: Option<&str>,
+    class_fields: &[BatchField],
+) -> Result<Vec<BatchMethod>, String> {
+    let mut out = Vec::new();
+
+    // Determine iteration set.
+    let iterations: Vec<Option<FieldBinding<'_>>> = match template.iterate_over {
+        FromSpecIterationMode::None => vec![None],
+        FromSpecIterationMode::Fields => {
+            let filtered: Vec<&BatchField> = class_fields
+                .iter()
+                .filter(|f| match &template.filter {
+                    Some(FromSpecFilter { r#type: Some(t) }) => &f.ty == t,
+                    _ => true,
+                })
+                .collect();
+            filtered
+                .into_iter()
+                .map(|f| {
+                    Some(FieldBinding {
+                        name: &f.name,
+                        ty: &f.ty,
+                    })
+                })
+                .collect()
+        }
+    };
+
+    for field in iterations {
+        let ctx = SubstitutionContext {
+            model_name: class_name,
+            table_name,
+            field,
+        };
+
+        let name = substitute_placeholders(&template.name_template, &ctx)?;
+        if !is_valid_identifier(&name) {
+            return Err(format!(
+                "substituted name_template `{}` is not a valid Clean identifier",
+                name
+            ));
+        }
+
+        let mut params = Vec::with_capacity(template.params.len());
+        for p in &template.params {
+            let pname = substitute_placeholders(&p.name, &ctx)?;
+            if !is_valid_identifier(&pname) {
+                return Err(format!(
+                    "substituted param name `{}` is not a valid Clean identifier",
+                    pname
+                ));
+            }
+            let pty = substitute_placeholders(&p.ty, &ctx)?;
+            params.push(BatchParam {
+                name: pname,
+                ty: pty,
+            });
+        }
+
+        let return_type = substitute_placeholders(&template.return_type, &ctx)?;
+        // Type validation is deferred to `resolve_type` inside `class_to_ast`.
+
+        let mut body = Vec::with_capacity(template.body.len());
+        for s in &template.body {
+            body.push(substitute_stmt(s, &ctx)?);
+        }
+
+        out.push(BatchMethod {
+            name,
+            params,
+            return_type,
+            body: Some(body),
+            body_handle: None,
+        });
+    }
+
+    Ok(out)
+}
+
+/// Amendment 10 §3.18: parse a class spec preserving `from_spec` method
+/// entries. Populates `method_entries` with the raw union; leaves `methods`
+/// empty. The bridge expands `method_entries` in a second pass.
+pub fn parse_class_spec_with_entries(json: &str) -> Result<ClassSpec, BatchSchemaError> {
+    #[derive(Deserialize)]
+    struct Raw {
+        name: String,
+        #[serde(default)]
+        parent: Option<String>,
+        #[serde(default)]
+        fields: Vec<BatchField>,
+        #[serde(default)]
+        methods: Vec<BatchMethodEntry>,
+        #[serde(default)]
+        table_name: Option<String>,
+    }
+    let raw: Raw = serde_json::from_str(json).map_err(|e| json_err(&e, json))?;
+    Ok(ClassSpec {
+        name: raw.name,
+        parent: raw.parent,
+        fields: raw.fields,
+        methods: Vec::new(),
+        table_name: raw.table_name,
+        method_entries: Some(raw.methods),
+    })
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct BatchField {
     pub name: String,
     #[serde(rename = "type")]
@@ -148,7 +574,7 @@ pub struct BatchMethod {
 // Statement schema
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BatchStatement {
     Call {
@@ -188,7 +614,7 @@ pub enum BatchStatement {
 // Expression schema
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BatchExpr {
     StringLit {
@@ -238,7 +664,7 @@ pub enum BatchExpr {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct BatchObjectField {
     pub key: String,
     pub value: BatchExpr,
@@ -668,5 +1094,366 @@ mod tests {
         let spec = parse_class_spec(json).unwrap();
         assert_eq!(spec.methods[0].body.as_ref().unwrap().len(), 1);
         assert!(spec.methods[0].body_handle.is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Amendment 10 §3.18 — `_emit_class_methods_from_spec`
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn getter_template_json() -> &'static str {
+        r#"{
+            "name": "User",
+            "table_name": "users",
+            "fields": [
+                {"name":"id","type":"integer"},
+                {"name":"email","type":"string"}
+            ],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"get{field_name.capitalize}",
+                    "params":[],
+                    "return_type":"{field_type}",
+                    "body":[{"kind":"return","expr":{"kind":"field",
+                        "receiver":{"kind":"ident","name":"this"},
+                        "name":"{field_name}"}}],
+                    "iterate_over":"fields"
+                }}
+            ]
+        }"#
+    }
+
+    fn expand_entries(spec: &mut ClassSpec) -> Result<(), String> {
+        let entries = spec.method_entries.take().unwrap_or_default();
+        let mut out = Vec::new();
+        for e in entries {
+            match e {
+                BatchMethodEntry::Inline(m) => out.push(m),
+                BatchMethodEntry::FromSpec { template } => {
+                    let mut ms = expand_from_spec(
+                        &template,
+                        &spec.name,
+                        spec.table_name.as_deref(),
+                        &spec.fields,
+                    )?;
+                    out.append(&mut ms);
+                }
+            }
+        }
+        spec.methods = out;
+        Ok(())
+    }
+
+    #[test]
+    fn class_methods_from_spec_iterate_none_emits_one_method() {
+        let json = r#"{
+            "name": "U",
+            "fields": [{"name":"a","type":"integer"}],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"noop",
+                    "params":[],
+                    "return_type":"void",
+                    "body":[{"kind":"return"}],
+                    "iterate_over":"none"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        assert_eq!(spec.methods.len(), 1);
+        assert_eq!(spec.methods[0].name, "noop");
+    }
+
+    #[test]
+    fn class_methods_from_spec_iterate_fields_emits_n_methods() {
+        let mut spec = parse_class_spec_with_entries(getter_template_json()).unwrap();
+        expand_entries(&mut spec).unwrap();
+        assert_eq!(spec.methods.len(), 2);
+    }
+
+    #[test]
+    fn class_methods_from_spec_iterate_fields_empty_emits_zero_methods() {
+        let json = r#"{
+            "name": "U",
+            "fields": [],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"get{field_name.capitalize}",
+                    "params":[],
+                    "return_type":"{field_type}",
+                    "body":[{"kind":"return"}],
+                    "iterate_over":"fields"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        assert_eq!(spec.methods.len(), 0);
+    }
+
+    #[test]
+    fn class_methods_from_spec_substitutes_field_name_in_method_name() {
+        let mut spec = parse_class_spec_with_entries(getter_template_json()).unwrap();
+        expand_entries(&mut spec).unwrap();
+        let names: Vec<_> = spec.methods.iter().map(|m| m.name.clone()).collect();
+        assert_eq!(names, vec!["getId", "getEmail"]);
+    }
+
+    #[test]
+    fn class_methods_from_spec_substitutes_field_type_in_return_type() {
+        let mut spec = parse_class_spec_with_entries(getter_template_json()).unwrap();
+        expand_entries(&mut spec).unwrap();
+        assert_eq!(spec.methods[0].return_type, "integer");
+        assert_eq!(spec.methods[1].return_type, "string");
+    }
+
+    #[test]
+    fn class_methods_from_spec_substitutes_model_name_in_body() {
+        let json = r#"{
+            "name": "Widget",
+            "fields": [],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"describe",
+                    "params":[],
+                    "return_type":"string",
+                    "body":[{"kind":"return",
+                        "expr":{"kind":"string_lit","value":"model={model_name}"}}],
+                    "iterate_over":"none"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        let body = spec.methods[0].body.as_ref().unwrap();
+        let ret = &body[0];
+        match ret {
+            BatchStatement::Return {
+                expr: Some(BatchExpr::StringLit { value }),
+            } => {
+                assert_eq!(value, "model=Widget");
+            }
+            _ => panic!("expected return with string_lit"),
+        }
+    }
+
+    #[test]
+    fn class_methods_from_spec_substitutes_table_name_in_string_literal() {
+        let json = r#"{
+            "name": "User",
+            "table_name": "users_v2",
+            "fields": [],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"table",
+                    "params":[],
+                    "return_type":"string",
+                    "body":[{"kind":"return",
+                        "expr":{"kind":"string_lit","value":"SELECT * FROM {table_name}"}}],
+                    "iterate_over":"none"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        let body = spec.methods[0].body.as_ref().unwrap();
+        match &body[0] {
+            BatchStatement::Return {
+                expr: Some(BatchExpr::StringLit { value }),
+            } => {
+                assert_eq!(value, "SELECT * FROM users_v2");
+            }
+            _ => panic!("expected return with substituted string_lit"),
+        }
+    }
+
+    #[test]
+    fn class_methods_from_spec_missing_table_name_returns_error() {
+        let json = r#"{
+            "name": "User",
+            "fields": [],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"t",
+                    "params":[],
+                    "return_type":"string",
+                    "body":[{"kind":"return",
+                        "expr":{"kind":"string_lit","value":"{table_name}"}}],
+                    "iterate_over":"none"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        let err = expand_entries(&mut spec).unwrap_err();
+        assert!(err.contains("table_name"), "got: {}", err);
+    }
+
+    #[test]
+    fn class_methods_from_spec_unknown_placeholder_returns_error() {
+        let json = r#"{
+            "name": "U",
+            "fields": [{"name":"a","type":"integer"}],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"m",
+                    "params":[],
+                    "return_type":"void",
+                    "body":[{"kind":"call","callee":"log",
+                        "args":[{"kind":"string_lit","value":"{arbitrary}"}]}],
+                    "iterate_over":"fields"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        let err = expand_entries(&mut spec).unwrap_err();
+        assert!(err.contains("unknown placeholder"), "got: {}", err);
+    }
+
+    #[test]
+    fn class_methods_from_spec_invalid_identifier_after_substitution_returns_error() {
+        // name_template that yields an invalid identifier (starts with a digit).
+        // We use a literal invalid name — no substitution needed to demonstrate.
+        let json = r#"{
+            "name": "U",
+            "fields": [],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"1bad",
+                    "params":[],
+                    "return_type":"void",
+                    "body":[{"kind":"return"}],
+                    "iterate_over":"none"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        let err = expand_entries(&mut spec).unwrap_err();
+        assert!(err.contains("not a valid Clean identifier"), "got: {}", err);
+    }
+
+    #[test]
+    fn class_methods_from_spec_filter_by_type_matches_only_matching_fields() {
+        let json = r#"{
+            "name": "U",
+            "fields": [
+                {"name":"id","type":"integer"},
+                {"name":"email","type":"string"},
+                {"name":"score","type":"integer"}
+            ],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"get{field_name.capitalize}",
+                    "params":[],
+                    "return_type":"integer",
+                    "body":[{"kind":"return","expr":{"kind":"int_lit","value":0}}],
+                    "iterate_over":"fields",
+                    "filter":{"type":"integer"}
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        let names: Vec<_> = spec.methods.iter().map(|m| m.name.clone()).collect();
+        assert_eq!(names, vec!["getId", "getScore"]);
+    }
+
+    #[test]
+    fn class_methods_from_spec_backcompat_inline_without_kind_field() {
+        // Amendment 3 shape (no `kind`) must still parse as Inline.
+        let json = r#"{
+            "name": "U",
+            "fields": [],
+            "methods": [
+                {"name":"hello","params":[],"return_type":"void",
+                 "body":[{"kind":"return"}]}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        assert_eq!(spec.methods.len(), 1);
+        assert_eq!(spec.methods[0].name, "hello");
+    }
+
+    #[test]
+    fn class_methods_from_spec_composes_with_inline_methods() {
+        let json = r#"{
+            "name": "U",
+            "fields": [{"name":"id","type":"integer"}],
+            "methods": [
+                {"kind":"inline",
+                 "name":"first",
+                 "params":[],
+                 "return_type":"void",
+                 "body":[{"kind":"return"}]},
+                {"kind":"from_spec","template":{
+                    "name_template":"get{field_name.capitalize}",
+                    "params":[],
+                    "return_type":"{field_type}",
+                    "body":[{"kind":"return"}],
+                    "iterate_over":"fields"
+                }},
+                {"kind":"inline",
+                 "name":"last",
+                 "params":[],
+                 "return_type":"void",
+                 "body":[{"kind":"return"}]}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        let names: Vec<_> = spec.methods.iter().map(|m| m.name.clone()).collect();
+        assert_eq!(names, vec!["first", "getId", "last"]);
+    }
+
+    #[test]
+    fn class_methods_from_spec_iterate_none_rejects_field_placeholder() {
+        let json = r#"{
+            "name": "U",
+            "fields": [{"name":"x","type":"integer"}],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"get{field_name}",
+                    "params":[],
+                    "return_type":"void",
+                    "body":[{"kind":"return"}],
+                    "iterate_over":"none"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        let err = expand_entries(&mut spec).unwrap_err();
+        assert!(
+            err.contains("field_name") && err.contains("iterate_over=none"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn class_methods_from_spec_substitutes_model_name_lowercase() {
+        let json = r#"{
+            "name": "Widget",
+            "fields": [],
+            "methods": [
+                {"kind":"from_spec","template":{
+                    "name_template":"table_of",
+                    "params":[],
+                    "return_type":"string",
+                    "body":[{"kind":"return",
+                        "expr":{"kind":"string_lit","value":"{model_name.lowercase}s"}}],
+                    "iterate_over":"none"
+                }}
+            ]
+        }"#;
+        let mut spec = parse_class_spec_with_entries(json).unwrap();
+        expand_entries(&mut spec).unwrap();
+        match &spec.methods[0].body.as_ref().unwrap()[0] {
+            BatchStatement::Return {
+                expr: Some(BatchExpr::StringLit { value }),
+            } => {
+                assert_eq!(value, "widgets");
+            }
+            _ => panic!(),
+        }
     }
 }

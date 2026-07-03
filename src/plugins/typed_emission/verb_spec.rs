@@ -10,7 +10,7 @@
 ///   - `literal`     — plugin-authored string constant (allowed in sql_parts only)
 ///   - `ident`       — reference to a Clean variable in scope at the call site
 ///   - `from_source` — verbatim user-authored fragment parsed via §3.16's
-///                     parser with `origin_offset` translation of diagnostic spans
+///     parser with `origin_offset` translation of diagnostic spans
 ///
 /// Only the top-level `kind = "db_query"` is currently accepted; other verb
 /// shapes are reserved for future amendments.

@@ -11,8 +11,9 @@ use wasmtime::{Caller, Linker};
 
 use super::arena::BATCH_TAG;
 use super::batch_schema::{
-    self, class_to_ast, function_to_ast, parse_batch_spec, parse_class_spec, stmt_to_ast,
-    BatchSchemaError, ClassSpec, BATCH_FUNCTION_LIMIT,
+    self, class_to_ast, expand_from_spec, function_to_ast, parse_batch_spec,
+    parse_class_spec_with_entries, stmt_to_ast, BatchMethodEntry, BatchSchemaError, ClassSpec,
+    BATCH_FUNCTION_LIMIT,
 };
 use super::error::{EmitDiagnostic, EmitError};
 use super::json::{
@@ -1982,21 +1983,25 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                     }
                 };
                 // Convert BatchBuilderClass to ClassSpec (same field layout).
+                // Builder path pre-dates Amendment 10; no from_spec entries.
                 ClassSpec {
                     name: builder_class.name,
                     parent: builder_class.parent,
                     fields: builder_class.fields,
                     methods: builder_class.methods,
+                    table_name: None,
+                    method_entries: None,
                 }
             } else {
-                // Amendment 3 LP-string JSON path. Borrow of `a` ends above.
+                // Amendment 3 LP-string JSON path, extended by Amendment 10.
+                // Borrow of `a` ends above.
                 let json = match read_lp_string(&mut caller, class_handle_or_lp) {
                     Some(s) => s,
                     None => return 1,
                 };
                 let spec_len = json.len();
                 let a = arena!(caller);
-                match parse_class_spec(&json) {
+                match parse_class_spec_with_entries(&json) {
                     Ok(c) => c,
                     Err(e) => {
                         emit_plugin013(a, &e, spec_len);
@@ -2013,11 +2018,44 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
             // body-resolution errors below are not JSON-position errors.
             let spec_len: usize = 0;
 
-            // 2. Resolve method bodies (inline OR body_handle) BEFORE the class
-            //    conversion. We take the methods vec out by ownership so the
-            //    BatchStatement values move into stmt_to_ast without needing
-            //    Clone. The class-header data (name/parent/fields) stays.
+            // Amendment 10 §3.18: expand `method_entries` (from parse_class_spec_with_entries)
+            // into concrete `BatchMethod`s. Inline entries pass through unchanged;
+            // FromSpec entries are expanded against class fields + table_name.
             let mut class_spec = class_spec;
+            if let Some(entries) = class_spec.method_entries.take() {
+                let class_name = class_spec.name.clone();
+                let table_name = class_spec.table_name.clone();
+                let fields_snapshot = class_spec.fields.clone();
+                let mut expanded_methods = Vec::new();
+                for (ei, entry) in entries.into_iter().enumerate() {
+                    match entry {
+                        BatchMethodEntry::Inline(m) => expanded_methods.push(m),
+                        BatchMethodEntry::FromSpec { template } => {
+                            match expand_from_spec(
+                                &template,
+                                &class_name,
+                                table_name.as_deref(),
+                                &fields_snapshot,
+                            ) {
+                                Ok(mut ms) => expanded_methods.append(&mut ms),
+                                Err(msg) => {
+                                    let wrapped = BatchSchemaError::Json {
+                                        message: format!(
+                                            "method_entries[{}] from_spec: {}",
+                                            ei, msg
+                                        ),
+                                        byte_offset: None,
+                                    };
+                                    emit_plugin013(a, &wrapped, spec_len);
+                                    return 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                class_spec.methods = expanded_methods;
+            }
+
             let methods_taken: Vec<super::batch_schema::BatchMethod> =
                 std::mem::take(&mut class_spec.methods);
 
