@@ -137,6 +137,36 @@ fn main() {
     }
     println!("cargo:rerun-if-changed={}", vendored_registry.display());
 
+    // ── 1b. Runtime-ABI schema vendor ────────────────────────────────────────
+    // Copies foundation/platform-architecture/runtime-abi/v1.toml into
+    // src/plugins/runtime-abi-v1.toml so `include_str!` in
+    // src/plugins/runtime_abi_schema.rs always picks up edits during local
+    // development. In CI (without the foundation sibling) the last vendored
+    // copy is used. The runtime CI parity gate rejects drift between them.
+    let foundation_abi = manifest_dir
+        .parent()
+        .map(|p| p.join("foundation/platform-architecture/runtime-abi/v1.toml"));
+    let vendored_abi = manifest_dir.join("src/plugins/runtime-abi-v1.toml");
+
+    if let Some(src) = foundation_abi {
+        if src.is_file() {
+            let bytes = std::fs::read(&src).unwrap_or_else(|e| {
+                panic!("read foundation runtime-abi at {}: {e}", src.display())
+            });
+            let existing = std::fs::read(&vendored_abi).unwrap_or_default();
+            if existing != bytes {
+                std::fs::write(&vendored_abi, &bytes).unwrap_or_else(|e| {
+                    panic!(
+                        "write vendored runtime-abi at {}: {e}",
+                        vendored_abi.display()
+                    )
+                });
+            }
+            println!("cargo:rerun-if-changed={}", src.display());
+        }
+    }
+    println!("cargo:rerun-if-changed={}", vendored_abi.display());
+
     // ── 2. Typed-emission op-code hash ───────────────────────────────────────
     //
     // Primary source: foundation/spec/plugins/contracts/typed-emission-ops.toml
