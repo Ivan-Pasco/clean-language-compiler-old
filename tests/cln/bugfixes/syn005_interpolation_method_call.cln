@@ -1,0 +1,23 @@
+// Test: bugfixes/syn005_interpolation_method_call
+// Grammar: string_interpolation, method_call_expression
+// Semantic: SYN005 (tracking: 122291bc1945) — method call expressions inside
+//           string-interpolation braces `{ ... }` must be parsed and evaluated,
+//           not emitted as literal text.
+// Fixed in: compiler 0.31.0 (commit ef547064 — interpolation method-calls +
+//           base(arg) propagation + spec coverage).
+//
+// Before the fix, the interpolation parser bailed out when it hit `.identifier(`
+// inside the braces and fell back to treating the whole `{...}` as literal text.
+// A single-integer method call is the minimum case that exercises the postfix
+// chain path inside interpolation.
+//
+// Expected output:
+//   value: 1
+//   pi: 3.14
+
+start:
+	string a = "value: {1.toString()}"
+	print(a)
+	number n = 3.14
+	string b = "pi: {n.toString()}"
+	print(b)

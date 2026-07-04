@@ -1,0 +1,44 @@
+name: regression pins
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  regression-pins:
+    name: Verify tests/cln/bugfixes/ output matches Expected output headers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-regressions-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build cln + wasmtime_runner
+        run: |
+          cargo build --release --bin cln
+          cargo build --release --bin wasmtime_runner
+
+      - name: Run regression pins
+        run: python3 scripts/check_regressions.py

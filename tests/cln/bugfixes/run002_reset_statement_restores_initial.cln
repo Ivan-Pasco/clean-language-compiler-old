@@ -1,0 +1,27 @@
+// Test: bugfixes/run002_reset_statement_restores_initial
+// Grammar: reset_statement
+// Semantic: RUN002 (tracking: e56cf82a3d4e) — `reset <name>` and `reset state`
+//           must restore the captured initializer value from the state: block,
+//           not leave the mutated slot in place.
+// Fixed in: compiler 0.31.0 (commit a177e5d9 — lower `reset <name>` to inline
+//           assignment against captured state initializer).
+//
+// Before the fix, both `reset counter` and `reset state` were no-ops at runtime:
+// the codegen emitted no call to the host bridge, so the mutated slot stayed
+// mutated. This test pins the fix so the regression cannot recur silently.
+//
+// Expected output:
+//   before: 100
+//   after-single: 0
+//   after-all: 0
+
+start:
+	counter = 100
+	print("before: " + counter.toString())
+	reset counter
+	print("after-single: " + counter.toString())
+	reset state
+	print("after-all: " + counter.toString())
+
+state:
+	integer counter = 0
