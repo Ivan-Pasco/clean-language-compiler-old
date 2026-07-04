@@ -1,0 +1,1510 @@
+# =============================================================================
+# Clean Runtime ABI — v1.0.0 (frozen)
+# =============================================================================
+#
+# Purpose
+# -------
+# Catalog every WASM host bridge function the compiler registers via
+# `src/plugins/wasm_adapter.rs::setup_linker` for the plugin sandbox.
+# This is the machine-readable companion to
+# `foundation/spec/plugins/contracts/runtime-abi.md` (§7 illustrates the shape;
+# §10 gives a skeleton example; §11 identifies this file's location).
+#
+# Consumed by
+# -----------
+# Phase D S5 of the v3 typed emission migration will replace the ~11
+# hand-maintained `register_*` helpers in `wasm_adapter.rs` with a
+# schema-driven loop that reads this file and registers each `[[bridge]]`
+# entry programmatically. The refactor is atomic: every bridge listed below
+# must be enumerated with the correct WASM signature or plugin instantiation
+# will fail with "unknown import" (the frame.locale-pilot failure mode that
+# motivated the v3 plan).
+#
+# Authority
+# ---------
+# BEFORE Phase D S5 lands: `wasm_adapter.rs::setup_linker` is authoritative.
+# This file is a derived enumeration; keep it in sync when adding bridges.
+# AFTER Phase D S5 lands: this file is authoritative. `wasm_adapter.rs`
+# becomes a schema-driven loop that reads these entries. Any new v1 bridge
+# MUST be added here first; the compiler will then register it automatically.
+#
+# Update discipline
+# -----------------
+# - Increment `version` per §6 of runtime-abi.md (patch for typos, minor for
+#   additive imports, major for signature changes or removals).
+# - New entries: use `semantics = "stub"` if the closure returns a constant
+#   with no meaningful work, `semantics = "wired"` if it calls into a real
+#   Rust helper or manipulates plugin state / memory.
+# - `host_class` matches `bridge-host-classes.md` §2 vocabulary:
+#     "all"     — every host implements it
+#     "server"  — server hosts (clean-server, clean-node-server) only
+#     "browser" — browser hosts only
+#     "native"  — CLI / embedded runtimes only
+#   Multiple values allowed: host_class = ["server", "native"].
+#   For sandbox stubs (this file), most entries use "all" — the sandbox is
+#   host-class-agnostic; real hosts implement selectively per their manifest.
+# - `source` is a soft reference back to `wasm_adapter.rs` at the time of
+#   authoring. It documents intent for readers; the schema-driven loop does
+#   NOT parse it. Line numbers may drift.
+#
+# Non-goals
+# ---------
+# - This file does NOT catalog plugin-declared bridges (those live in each
+#   plugin's `plugin.toml [[bridge.functions]]`).
+# - This file does NOT catalog the deployed host bridge (that's
+#   `HOST_BRIDGE.md` — a distinct surface, see runtime-abi.md §2).
+# - Legacy `expand_preambles` / `_start` no-op / `events:` detection are NOT
+#   bridges and are not represented here (they are compiler-side rewrites
+#   scheduled for Phase D S4 deletion).
+#
+# Enumeration audit
+# -----------------
+# Source-of-truth grep at authoring time:
+#     $ grep -c 'func_wrap(' src/plugins/wasm_adapter.rs
+#     150
+# Every `func_wrap` site in that file corresponds to exactly one `[[bridge]]`
+# entry below. Total below MUST equal that grep count for the S5 refactor to
+# be safe. Verify before shipping S5:
+#     bridges_in_toml == func_wrap_sites_in_wasm_adapter
+# If the two disagree, S5 will fail plugin instantiation with "unknown import".
+#
+# =============================================================================
+
+version = "1.0.0"
+status  = "frozen"
+
+# =============================================================================
+# Group: env_core
+# Source: src/plugins/wasm_adapter.rs::register_env_core_functions (line 601)
+# Purpose: core I/O, type conversions, initial string ops
+# =============================================================================
+
+[[bridge]]
+name       = "print"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = ""
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:603"
+
+[[bridge]]
+name       = "printl"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = ""
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:619"
+
+[[bridge]]
+name       = "print_integer"
+module     = "env"
+params     = ["i64"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:635"
+
+[[bridge]]
+name       = "print_float"
+module     = "env"
+params     = ["f64"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:642"
+
+[[bridge]]
+name       = "print_boolean"
+module     = "env"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:649"
+
+[[bridge]]
+name       = "input"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:656"
+
+[[bridge]]
+name       = "input_integer"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:667"
+
+[[bridge]]
+name       = "input_float"
+module     = "env"
+params     = ["i32"]
+returns    = "f64"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:674"
+
+[[bridge]]
+name       = "input_yesno"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:681"
+
+[[bridge]]
+name       = "input_range"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:688"
+
+[[bridge]]
+name       = "int_to_string"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:700"
+notes      = "Sandbox stub uses i32 param; spec MEMORY_MODEL.md and function-registry.toml canonical signature is i64. Drift flagged for S5 review."
+
+[[bridge]]
+name       = "float_to_string"
+module     = "env"
+params     = ["f64"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:724"
+
+[[bridge]]
+name       = "bool_to_string"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:746"
+
+[[bridge]]
+name       = "string_to_int"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:768"
+notes      = "Sandbox stub returns i32; spec canonical returns i64. Drift flagged for S5 review."
+
+[[bridge]]
+name       = "string_to_float"
+module     = "env"
+params     = ["i32"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:781"
+
+[[bridge]]
+name       = "string.concat"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:796"
+
+[[bridge]]
+name       = "string.split"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:913"
+
+[[bridge]]
+name       = "string_trim"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1004"
+
+[[bridge]]
+name       = "string_trim_start"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1019"
+
+[[bridge]]
+name       = "string_trim_end"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1033"
+
+# =============================================================================
+# Group: string_dot
+# Source: src/plugins/wasm_adapter.rs::register_string_dot_functions (line 1053)
+# Purpose: string.* dot-namespace operations (canonical Clean string API)
+# =============================================================================
+
+[[bridge]]
+name       = "string.trim"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1060"
+
+[[bridge]]
+name       = "string.trimStart"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1074"
+
+[[bridge]]
+name       = "string.trimEnd"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1088"
+
+[[bridge]]
+name       = "string_compare"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1111"
+
+[[bridge]]
+name       = "string_replace"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1132"
+
+[[bridge]]
+name       = "string_repeat"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1198"
+
+[[bridge]]
+name       = "string_matches"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1257"
+
+[[bridge]]
+name       = "_test_http_request"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:1327"
+notes      = "Test-only bridge with 10 i32 args, no Caller — dead-code candidate for S5 review."
+
+[[bridge]]
+name       = "_test_response_status"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:1342"
+
+[[bridge]]
+name       = "_test_response_body"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:1347"
+
+[[bridge]]
+name       = "string_from_char_code"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1355"
+
+[[bridge]]
+name       = "string.substring"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1386"
+
+[[bridge]]
+name       = "string.length"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1452"
+
+[[bridge]]
+name       = "string.indexOf"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1474"
+
+[[bridge]]
+name       = "string.lastIndexOf"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1502"
+
+[[bridge]]
+name       = "string.charAt"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1530"
+
+[[bridge]]
+name       = "string.charCodeAt"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1569"
+
+[[bridge]]
+name       = "string.startsWith"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1591"
+
+[[bridge]]
+name       = "string.endsWith"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1620"
+
+[[bridge]]
+name       = "string.includes"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1649"
+
+[[bridge]]
+name       = "string.toUpperCase"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1678"
+
+[[bridge]]
+name       = "string.toLowerCase"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1708"
+
+[[bridge]]
+name       = "string.replaceFirst"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1738"
+
+[[bridge]]
+name       = "string.repeat"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1788"
+
+[[bridge]]
+name       = "string.reverse"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1819"
+
+# =============================================================================
+# Group: string_underscore
+# Source: src/plugins/wasm_adapter.rs::register_string_underscore_functions (line 1855)
+# Purpose: string_* underscore-namespace aliases (duplicate surface of string.*)
+# Note: This group exists for legacy plugin compatibility; S5 may fold these
+# into the string_dot group via alias entries. Do not delete individually.
+# =============================================================================
+
+[[bridge]]
+name       = "string_substring"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1857"
+
+[[bridge]]
+name       = "string_length"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1903"
+
+[[bridge]]
+name       = "string_indexOf"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1925"
+
+[[bridge]]
+name       = "string_charAt"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1953"
+
+[[bridge]]
+name       = "string_charCodeAt"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:1992"
+
+[[bridge]]
+name       = "string_toUpperCase"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2014"
+
+[[bridge]]
+name       = "string_toLowerCase"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2044"
+
+# =============================================================================
+# Group: list
+# Source: src/plugins/wasm_adapter.rs::register_list_functions (line 2079)
+# Purpose: list.* runtime operations (currently only push_f64)
+# =============================================================================
+
+[[bridge]]
+name       = "list.push_f64"
+module     = "env"
+params     = ["i32", "f64"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2083"
+
+# =============================================================================
+# Group: memory_runtime
+# Source: src/plugins/wasm_adapter.rs::register_memory_runtime_functions (line 2135)
+# Purpose: allocator + arena-scope bridges
+# Note: 5 entries use `module = "memory_runtime"` (mem_alloc + 4 scope ops),
+# the 2 arena scope entries use `module = "env"`.
+# =============================================================================
+
+[[bridge]]
+name       = "mem_alloc"
+module     = "memory_runtime"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2150"
+
+[[bridge]]
+name       = "mem_retain"
+module     = "memory_runtime"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2199"
+
+[[bridge]]
+name       = "mem_release"
+module     = "memory_runtime"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2206"
+
+[[bridge]]
+name       = "mem_scope_push"
+module     = "memory_runtime"
+params     = []
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2213"
+
+[[bridge]]
+name       = "mem_scope_pop"
+module     = "memory_runtime"
+params     = []
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2220"
+
+[[bridge]]
+name       = "_arena_scope_push"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2234"
+
+[[bridge]]
+name       = "_arena_scope_pop"
+module     = "env"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2263"
+
+# =============================================================================
+# Group: http_client
+# Source: src/plugins/wasm_adapter.rs::register_http_client_functions (line 2311)
+# Purpose: outbound HTTP client — all sandbox stubs (real impls live in host)
+# =============================================================================
+
+[[bridge]]
+name       = "http_get"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2313"
+
+[[bridge]]
+name       = "http_post"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2324"
+
+[[bridge]]
+name       = "http_put"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2339"
+
+[[bridge]]
+name       = "http_patch"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2354"
+
+[[bridge]]
+name       = "http_delete"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2369"
+
+[[bridge]]
+name       = "http_head"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2379"
+
+[[bridge]]
+name       = "http_options"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2389"
+
+[[bridge]]
+name       = "http_get_with_headers"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2399"
+
+[[bridge]]
+name       = "http_post_with_headers"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2414"
+
+[[bridge]]
+name       = "http_post_json"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2431"
+
+[[bridge]]
+name       = "http_put_json"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2446"
+
+[[bridge]]
+name       = "http_patch_json"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2461"
+
+[[bridge]]
+name       = "http_post_form"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2476"
+
+[[bridge]]
+name       = "http_set_user_agent"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2491"
+
+[[bridge]]
+name       = "http_set_timeout"
+module     = "env"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2498"
+
+[[bridge]]
+name       = "http_set_max_redirects"
+module     = "env"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2505"
+
+[[bridge]]
+name       = "http_enable_cookies"
+module     = "env"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2512"
+
+[[bridge]]
+name       = "http_get_response_code"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2519"
+
+[[bridge]]
+name       = "http_get_response_headers"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2526"
+
+[[bridge]]
+name       = "http_encode_url"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2533"
+
+[[bridge]]
+name       = "http_decode_url"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2543"
+
+[[bridge]]
+name       = "http_build_query"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2550"
+
+# =============================================================================
+# Group: http_server
+# Source: src/plugins/wasm_adapter.rs::register_http_server_functions (line 2566)
+# Purpose: HTTP server sandbox stubs — real impls only on server host class
+# =============================================================================
+
+[[bridge]]
+name       = "_http_route"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2568"
+
+[[bridge]]
+name       = "_http_listen"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2583"
+
+# =============================================================================
+# Group: request_context
+# Source: src/plugins/wasm_adapter.rs::register_request_context_functions (line 2597)
+# Purpose: HTTP request context sandbox stubs — real impls only on server host
+# =============================================================================
+
+[[bridge]]
+name       = "_req_param"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2599"
+
+[[bridge]]
+name       = "_req_query"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2610"
+
+[[bridge]]
+name       = "_req_body"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2620"
+
+[[bridge]]
+name       = "_req_header"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2630"
+
+[[bridge]]
+name       = "_req_method"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2640"
+
+[[bridge]]
+name       = "_req_path"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2650"
+
+# =============================================================================
+# Group: file
+# Source: src/plugins/wasm_adapter.rs::register_file_functions (line 2665)
+# Purpose: filesystem I/O sandbox stubs — real impls on server/native
+# =============================================================================
+
+[[bridge]]
+name       = "file_write"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = ["server", "native"]
+semantics  = "stub"
+source     = "wasm_adapter.rs:2667"
+
+[[bridge]]
+name       = "file_read"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = ["server", "native"]
+semantics  = "stub"
+source     = "wasm_adapter.rs:2681"
+
+[[bridge]]
+name       = "file_exists"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = ["server", "native"]
+semantics  = "stub"
+source     = "wasm_adapter.rs:2696"
+
+[[bridge]]
+name       = "file_delete"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = ["server", "native"]
+semantics  = "stub"
+source     = "wasm_adapter.rs:2705"
+
+[[bridge]]
+name       = "file_append"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = ["server", "native"]
+semantics  = "stub"
+source     = "wasm_adapter.rs:2714"
+
+# =============================================================================
+# Group: math
+# Source: src/plugins/wasm_adapter.rs::register_math_functions (line 2734)
+# Purpose: Math.* namespace — all f64 real Rust intrinsics on every host
+# =============================================================================
+
+[[bridge]]
+name       = "math_pow"
+module     = "env"
+params     = ["f64", "f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2736"
+
+[[bridge]]
+name       = "math_sin"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2743"
+
+[[bridge]]
+name       = "math_cos"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2750"
+
+[[bridge]]
+name       = "math_tan"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2757"
+
+[[bridge]]
+name       = "math_asin"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2764"
+
+[[bridge]]
+name       = "math_acos"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2771"
+
+[[bridge]]
+name       = "math_atan"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2778"
+
+[[bridge]]
+name       = "math_atan2"
+module     = "env"
+params     = ["f64", "f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2785"
+
+[[bridge]]
+name       = "math_sinh"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2792"
+
+[[bridge]]
+name       = "math_cosh"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2799"
+
+[[bridge]]
+name       = "math_tanh"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2806"
+
+[[bridge]]
+name       = "math_ln"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2813"
+
+[[bridge]]
+name       = "math_log10"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2820"
+
+[[bridge]]
+name       = "math_log2"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2827"
+
+[[bridge]]
+name       = "math_exp"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2834"
+
+[[bridge]]
+name       = "math_exp2"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2841"
+
+[[bridge]]
+name       = "math_floor"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2848"
+
+[[bridge]]
+name       = "math_ceil"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2855"
+
+[[bridge]]
+name       = "math_round"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2862"
+
+[[bridge]]
+name       = "math_abs"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2869"
+
+[[bridge]]
+name       = "math_sqrt"
+module     = "env"
+params     = ["f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2876"
+
+[[bridge]]
+name       = "math_min"
+module     = "env"
+params     = ["f64", "f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2883"
+
+[[bridge]]
+name       = "math_max"
+module     = "env"
+params     = ["f64", "f64"]
+returns    = "f64"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:2890"
+
+# =============================================================================
+# Group: http_auth_stubs
+# Source: src/plugins/wasm_adapter.rs::register_http_auth_stubs (line 2903)
+# Purpose: auth / session / response / cookie / json / state-reset stubs.
+# Real impls live on the server host class; sandbox provides zero returns
+# so plugin instantiation does not fail during compile-time expansion.
+# =============================================================================
+
+[[bridge]]
+name       = "_req_cookie"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2905"
+
+[[bridge]]
+name       = "_req_form"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2912"
+
+[[bridge]]
+name       = "_req_ip"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2915"
+
+[[bridge]]
+name       = "_req_headers"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2916"
+
+[[bridge]]
+name       = "_http_route_protected"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2921"
+
+[[bridge]]
+name       = "_http_respond"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2934"
+
+[[bridge]]
+name       = "_http_redirect"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2939"
+
+[[bridge]]
+name       = "_http_set_header"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2944"
+
+[[bridge]]
+name       = "_session_store"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2952"
+
+[[bridge]]
+name       = "_session_create"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2960"
+
+[[bridge]]
+name       = "_session_get"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2968"
+
+[[bridge]]
+name       = "_session_delete"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2972"
+
+[[bridge]]
+name       = "_session_destroy"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2978"
+
+[[bridge]]
+name       = "_session_set_cookie"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2984"
+
+[[bridge]]
+name       = "_http_set_cookie"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2990"
+
+[[bridge]]
+name       = "_server_sleep"
+module     = "env"
+params     = ["i64"]
+returns    = ""
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2998"
+
+[[bridge]]
+name       = "_state_reset_all"
+module     = "env"
+params     = []
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3004"
+
+[[bridge]]
+name       = "_state_reset_named"
+module     = "env"
+params     = ["i32"]
+returns    = ""
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3006"
+
+[[bridge]]
+name       = "_res_set_header"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3014"
+
+[[bridge]]
+name       = "_res_redirect"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3020"
+
+[[bridge]]
+name       = "_res_status"
+module     = "env"
+params     = ["i32"]
+returns    = ""
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3026"
+
+[[bridge]]
+name       = "_auth_get_session"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3033"
+
+[[bridge]]
+name       = "_auth_require_auth"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3038"
+
+[[bridge]]
+name       = "_auth_require_role"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3044"
+
+[[bridge]]
+name       = "_auth_can"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3050"
+
+[[bridge]]
+name       = "_auth_has_any_role"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3056"
+
+[[bridge]]
+name       = "error"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3064"
+
+[[bridge]]
+name       = "console_error"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3070"
+
+[[bridge]]
+name       = "_json_encode"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3077"
+
+[[bridge]]
+name       = "_json_decode"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:3084"
+
+# =============================================================================
+# Group: build_state
+# Source: src/plugins/wasm_adapter.rs::register_build_state_bridges (free fn line 4989)
+# Purpose: Plugin Contracts v2 build-state bridges (lifecycle.md §2.5)
+# =============================================================================
+
+[[bridge]]
+name       = "_build_state_set"
+module     = "env"
+params     = ["i32", "i32", "i32", "i32"]
+returns    = ""
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:4997"
+
+[[bridge]]
+name       = "_build_state_get"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "wasm_adapter.rs:5025"
+
+# =============================================================================
+# End of v1.0.0 catalog. Total entries: 150 (must match
+# `grep -c 'func_wrap(' src/plugins/wasm_adapter.rs`).
+# =============================================================================

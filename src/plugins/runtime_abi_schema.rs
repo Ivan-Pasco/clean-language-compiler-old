@@ -1,9 +1,16 @@
 //! Runtime ABI v1 schema — parity-verified against `wasm_adapter.rs::setup_linker`.
 //!
-//! This module embeds `foundation/platform-architecture/runtime-abi/v1.toml`
-//! at build time (via `include_str!`) and exposes the parsed bridge catalog
-//! as the canonical enumeration of the host bridges the compiler registers
-//! for the plugin sandbox.
+//! This module embeds `runtime-abi-v1.toml` at build time (via `include_str!`)
+//! and exposes the parsed bridge catalog as the canonical enumeration of the
+//! host bridges the compiler registers for the plugin sandbox.
+//!
+//! The TOML file is a *copy* of
+//! `foundation/platform-architecture/runtime-abi/v1.toml` bundled inside the
+//! compiler crate so CI (which checks out only the compiler repo, not the
+//! foundation subtree) can build. The foundation-side TOML is the authoritative
+//! spec artifact; the copy in this directory must stay in sync — a mismatch is
+//! caught by the parity gate below and by the manual audit protocol documented
+//! in the TOML header.
 //!
 //! # Authority (post Phase D S5)
 //!
@@ -25,9 +32,10 @@
 
 use serde::Deserialize;
 
-/// Embedded catalog. See `foundation/platform-architecture/runtime-abi/v1.toml`.
-const V1_TOML_SRC: &str =
-    include_str!("../../../foundation/platform-architecture/runtime-abi/v1.toml");
+/// Embedded catalog. Copy of
+/// `foundation/platform-architecture/runtime-abi/v1.toml`; foundation-side
+/// TOML is authoritative. Keep the two in sync when adding bridges.
+const V1_TOML_SRC: &str = include_str!("runtime-abi-v1.toml");
 
 #[derive(Debug, Deserialize)]
 struct RuntimeAbiV1 {
