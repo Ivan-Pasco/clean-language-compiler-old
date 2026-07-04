@@ -852,7 +852,22 @@ impl<'a> PluginExpander<'a> {
                     };
 
                     if self.registry.handles_as_expression(&block_name) {
-                        let expanded = self.registry.expand(&block)?;
+                        // Use expand_full so start_function.body statements
+                        // emitted by v3 typed plugins (frame.data et al.) via
+                        // `_emit_statement_into_start` land at the ORM block's
+                        // splice point. Without this, per-verb expanders that
+                        // emit an assignment statement (`n = __Model_count(...)`)
+                        // silently discard those statements — see post-plan
+                        // follow-up 2026-07-04 §8.
+                        let expansion = self.registry.expand_full(&block)?;
+                        let mut expanded = expansion.statements;
+                        if let Some(sf) = expansion.start_function {
+                            expanded.extend(sf.body);
+                        }
+                        self.pending_functions.extend(expansion.functions);
+                        self.pending_classes.extend(expansion.classes);
+                        self.pending_externals.extend(expansion.externals);
+                        merge_state_block(&mut self.pending_state, expansion.state);
                         self.blocks_expanded += 1;
                         self.statements_generated += expanded.len();
 
@@ -901,7 +916,17 @@ impl<'a> PluginExpander<'a> {
                     };
 
                     if self.registry.handles_as_expression(&block_name) {
-                        let expanded = self.registry.expand(&block)?;
+                        // expand_full so start_function.body statements land at
+                        // the splice point (see VariableDecl+OrmQuery arm above).
+                        let expansion = self.registry.expand_full(&block)?;
+                        let mut expanded = expansion.statements;
+                        if let Some(sf) = expansion.start_function {
+                            expanded.extend(sf.body);
+                        }
+                        self.pending_functions.extend(expansion.functions);
+                        self.pending_classes.extend(expansion.classes);
+                        self.pending_externals.extend(expansion.externals);
+                        merge_state_block(&mut self.pending_state, expansion.state);
                         self.blocks_expanded += 1;
                         self.statements_generated += expanded.len();
 
@@ -962,7 +987,17 @@ impl<'a> PluginExpander<'a> {
                     };
 
                     if self.registry.handles_as_expression(&block_name) {
-                        let expanded = self.registry.expand(&block)?;
+                        // expand_full so start_function.body statements land at
+                        // the splice point (see VariableDecl+OrmQuery arm above).
+                        let expansion = self.registry.expand_full(&block)?;
+                        let mut expanded = expansion.statements;
+                        if let Some(sf) = expansion.start_function {
+                            expanded.extend(sf.body);
+                        }
+                        self.pending_functions.extend(expansion.functions);
+                        self.pending_classes.extend(expansion.classes);
+                        self.pending_externals.extend(expansion.externals);
+                        merge_state_block(&mut self.pending_state, expansion.state);
                         self.blocks_expanded += 1;
                         self.statements_generated += expanded.len();
 
