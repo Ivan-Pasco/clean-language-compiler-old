@@ -83,6 +83,7 @@ pub mod language_registry;
 pub mod plugin_abi;
 mod registry;
 pub mod registry_loader;
+mod runtime_abi_schema;
 pub mod typed_emission;
 pub(crate) mod wasm_adapter;
 mod wasm_loader;

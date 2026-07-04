@@ -75,46 +75,16 @@ impl WasmPluginAdapter {
             .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
             .collect();
 
-        // Build expression patterns from the manifest, then augment by scanning the WASM
-        // module exports for `expand_{verb}` functions.  This ensures that ORM verbs
-        // with a direct dispatch export (e.g. `expand_exists`) are registered as handled
-        // expression patterns even when the plugin's plugin.toml `[handles] expressions`
-        // list is missing the corresponding `*.{verb}:` entry.
-        //
-        // The authoritative set of ORM-verb export names that the compiler's direct-dispatch
-        // path in `call_expand` / `call_expand_full` knows how to call:
-        let orm_dispatch_verbs = [
-            "find", "first", "count", "exists", "insert", "update", "delete", "paginate", "cursor",
-        ];
-        let mut expression_patterns_cache: Vec<String> = manifest.handles.expressions.clone();
-        {
-            // Collect export names from the WASM module.
-            let export_names: Vec<String> = module
-                .exports()
-                .filter(|e| matches!(e.ty(), wasmtime::ExternType::Func(_)))
-                .map(|e| e.name().to_string())
-                .collect();
-            for verb in &orm_dispatch_verbs {
-                let export_name = format!("expand_{}", verb);
-                if export_names.iter().any(|n| n == &export_name) {
-                    // Build the glob pattern this verb should be registered under.
-                    let pattern = format!("*.{}:", verb);
-                    // Add it only if not already present (exact or equivalent match).
-                    let already_present = expression_patterns_cache
-                        .iter()
-                        .any(|p| p.trim_end_matches(':') == format!("*.{}", verb));
-                    if !already_present {
-                        tracing::debug!(
-                            plugin = %name,
-                            verb = verb,
-                            pattern = %pattern,
-                            "Auto-registering ORM verb pattern from plugin export"
-                        );
-                        expression_patterns_cache.push(pattern);
-                    }
-                }
-            }
-        }
+        // Expression patterns come exclusively from the plugin's
+        // `[handles] expressions` manifest declaration. The previous fallback
+        // (a hardcoded `orm_dispatch_verbs` list scanned against the WASM
+        // module exports for `expand_{verb}` functions) was removed in
+        // Phase D S5 alongside the schema-driven bridge parity gate — all
+        // shipped plugins (frame.data 3.0.1 and later) declare their full
+        // `[handles].expressions` set in `plugin.toml`. A missing entry is
+        // now a plugin manifest bug, not something the compiler silently
+        // patches over.
+        let expression_patterns_cache: Vec<String> = manifest.handles.expressions.clone();
 
         let mut adapter = Self {
             name,
@@ -582,9 +552,37 @@ impl WasmPluginAdapter {
     /// Provides the full Clean Language runtime environment for v1 plugins.
     /// Delegates to `register_plugin_stdlib_functions` so the stdlib surface is
     /// always in sync with the v3 linker.
+    ///
+    /// After registration, verifies the linker's `(module, name)` surface
+    /// matches `foundation/platform-architecture/runtime-abi/v1.toml` — the
+    /// canonical catalog authored in Phase D S2. Any drift (missing or extra
+    /// bridge) fails plugin adapter construction with a diagnostic pointing
+    /// at the offending name(s).
     fn setup_linker(&self) -> Result<Linker<PluginState>> {
         let mut linker = Linker::new(&self.engine);
         self.register_plugin_stdlib_functions(&mut linker)?;
+
+        // Parity gate: verify the registered bridge surface matches
+        // runtime-abi/v1.toml. Uses an ephemeral store solely for
+        // `Linker::iter` (wasmtime 10 requires it) — the store is dropped
+        // immediately after.
+        let mut ephemeral = Store::new(&self.engine, PluginState::new());
+        let registered: Vec<(String, String)> = linker
+            .iter(&mut ephemeral)
+            .map(|(module, name, _)| (module.to_string(), name.to_string()))
+            .collect();
+        drop(ephemeral);
+
+        if let Err(msg) =
+            super::runtime_abi_schema::verify_registrations_against_schema(&registered)
+        {
+            return Err(anyhow!(
+                "Runtime ABI v1 parity failure: {}. See \
+                 foundation/platform-architecture/runtime-abi/v1.toml.",
+                msg
+            ));
+        }
+
         Ok(linker)
     }
 
