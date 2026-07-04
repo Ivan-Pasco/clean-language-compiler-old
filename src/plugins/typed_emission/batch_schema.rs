@@ -123,7 +123,7 @@ pub struct ClassSpec {
     /// Optional; unused unless a `from_spec` method references it.
     #[serde(default)]
     pub table_name: Option<String>,
-    /// Amendment 10 §3.18: raw method entries prior to `from_spec` expansion.
+    /// Amendment 10 §3.17: raw method entries prior to `from_spec` expansion.
     /// Populated by [`parse_class_spec_with_entries`]. When present, this
     /// supersedes `methods` — the bridge expands `from_spec` entries against
     /// `fields` / `name` / `table_name` and rebuilds `methods` before class
@@ -132,7 +132,7 @@ pub struct ClassSpec {
     pub method_entries: Option<Vec<BatchMethodEntry>>,
 }
 
-/// Amendment 10 §3.18: a method entry inside `ClassSpec.methods` is either an
+/// Amendment 10 §3.17: a method entry inside `ClassSpec.methods` is either an
 /// inline method (existing Amendment 3 shape — no `kind` field, or explicit
 /// `kind: "inline"`) or a `from_spec` template expanded compiler-side against
 /// the class's fields with a whitelisted placeholder substitution vocabulary.
@@ -176,7 +176,7 @@ impl<'de> Deserialize<'de> for BatchMethodEntry {
     }
 }
 
-/// Amendment 10 §3.18 template. Iterated `iterate_over` times (0/1/N depending
+/// Amendment 10 §3.17 template. Iterated `iterate_over` times (0/1/N depending
 /// on mode) with per-iteration placeholder substitution over `name_template`,
 /// parameter names/types, `return_type`, and string fields inside `body`.
 #[derive(Debug, Deserialize, Clone)]
@@ -211,7 +211,7 @@ pub struct FromSpecFilter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Amendment 10 §3.18 — placeholder substitution
+// Amendment 10 §3.17 — placeholder substitution
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Substitution context for a single template instantiation. Values come from
@@ -520,7 +520,7 @@ pub fn expand_from_spec(
     Ok(out)
 }
 
-/// Amendment 10 §3.18: parse a class spec preserving `from_spec` method
+/// Amendment 10 §3.17: parse a class spec preserving `from_spec` method
 /// entries. Populates `method_entries` with the raw union; leaves `methods`
 /// empty. The bridge expands `method_entries` in a second pass.
 pub fn parse_class_spec_with_entries(json: &str) -> Result<ClassSpec, BatchSchemaError> {
@@ -1097,7 +1097,7 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Amendment 10 §3.18 — `_emit_class_methods_from_spec`
+    // Amendment 10 §3.17 — `_emit_class_methods_from_spec`
     // ─────────────────────────────────────────────────────────────────────
 
     fn getter_template_json() -> &'static str {

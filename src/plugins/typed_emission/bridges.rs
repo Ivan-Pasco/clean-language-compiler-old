@@ -1803,7 +1803,7 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
             // body-resolution errors below are not JSON-position errors.
             let spec_len: usize = 0;
 
-            // Amendment 10 §3.18: expand `method_entries` (from parse_class_spec_with_entries)
+            // Amendment 10 §3.17: expand `method_entries` (from parse_class_spec_with_entries)
             // into concrete `BatchMethod`s. Inline entries pass through unchanged;
             // FromSpec entries are expanded against class fields + table_name.
             let mut class_spec = class_spec;
