@@ -208,6 +208,19 @@ impl WasmPluginLoader {
             // See foundation/spec/plugins/contracts/typed-emission.md §3.10.
             self.check_plugin_emission_ops_hash(plugin_name, &manifest, &plugin_dir)?;
 
+            // Plugin Contracts v2 Phase D — refuse plugins whose plugin.toml
+            // has no `[lifecycle]` section (PLUGIN010 LegacyV1PluginRejected).
+            // Bridge-only plugins (no plugin.wasm) are exempt: they contribute
+            // only aliases and keywords and never enter the expansion pipeline.
+            // See foundation/spec/plugins/contracts/lifecycle.md §6.
+            let wasm_for_lifecycle = plugin_dir.join("plugin.wasm");
+            if wasm_for_lifecycle.exists() && !manifest.lifecycle.has_lifecycle_declaration() {
+                return Err(anyhow!(
+                    "{}",
+                    Self::format_missing_lifecycle_error(plugin_name, &plugin_dir)
+                ));
+            }
+
             // Plugin Contracts v2 Phase B cycle 2 — read the `clean.abi_version`
             // WASM custom section emitted by cycle 1 and refuse plugins whose
             // stamp is not in `SUPPORTED_RUNTIME_ABI_VERSIONS`. Absent stamp
@@ -667,11 +680,28 @@ impl WasmPluginLoader {
         )
     }
 
+    /// Format the PLUGIN010 error when a plugin.wasm-bearing manifest has no
+    /// `[lifecycle]` section (Phase D refuses v1 plugins).
+    pub fn format_missing_lifecycle_error(plugin_name: &str, plugin_dir: &Path) -> String {
+        format!(
+            "error[PLUGIN010]: plugin '{}' at {} has no [lifecycle] section in \
+             plugin.toml; the v1.0.0 __preamble path has been removed and every \
+             plugin must declare at least one lifecycle slot (or \
+             module_helpers_are_roots = true) per contracts/lifecycle.md §6.\n  \
+             resolution: rebuild the plugin against the current contract, or install \
+             a newer plugin version.\n  \
+             spec: foundation/spec/plugins/contracts/lifecycle.md §6",
+            plugin_name,
+            plugin_dir.display(),
+        )
+    }
+
     /// Three-case emission_ops_hash check (typed-emission.md §3.10 / Layer D step 2):
     ///
     ///   - Match   → Ok(())  (silent).
     ///   - Mismatch → Err(PLUGIN006 with reinstall guidance).
-    ///   - Absent  → warn + Ok(()) normally; Err(PLUGIN006) when strict flag is on.
+    ///   - Absent  → Err(PLUGIN006). Phase D flips absence from warning to error;
+    ///     all shipped v3 plugins declare the stamp.
     fn check_plugin_emission_ops_hash(
         &self,
         plugin_name: &str,
@@ -684,27 +714,21 @@ impl WasmPluginLoader {
 
         match declared {
             None => {
-                // Absent case: warn, but only when the compiler has a real hash.
-                // If EMISSION_OPS_HASH is the all-zeros sentinel (spec TOML absent
-                // at build time) we have nothing useful to validate against — skip.
-                if EMISSION_OPS_HASH != "0".repeat(64).as_str() {
-                    if crate::strict_emission_ops_override() {
-                        return Err(anyhow!(
-                            "{}",
-                            Self::format_emission_ops_hash_mismatch_error(
-                                plugin_name,
-                                plugin_dir,
-                                "<absent>",
-                                EMISSION_OPS_HASH,
-                            )
-                        ));
-                    }
-                    eprintln!(
-                        "{}",
-                        Self::format_emission_ops_hash_absent_warning(plugin_name, plugin_dir)
-                    );
+                // Absent case: refuse the plugin. Skip only when the compiler
+                // has the all-zeros sentinel (spec TOML absent at build time),
+                // which means we have nothing useful to validate against.
+                if EMISSION_OPS_HASH == "0".repeat(64).as_str() {
+                    return Ok(());
                 }
-                Ok(())
+                Err(anyhow!(
+                    "{}",
+                    Self::format_emission_ops_hash_mismatch_error(
+                        plugin_name,
+                        plugin_dir,
+                        "<absent>",
+                        EMISSION_OPS_HASH,
+                    )
+                ))
             }
             Some(found) => {
                 if found == EMISSION_OPS_HASH {

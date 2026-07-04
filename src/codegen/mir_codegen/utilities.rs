@@ -1543,14 +1543,12 @@ impl MirCodeGenerator<'_> {
                 // exists in MIR — so they must be BFS roots, otherwise their
                 // bridge imports (`_ui_*` helpers etc.) get tree-shaken.
                 //
-                // Plugin preamble helpers (frame.server's `redirect`, `json`,
-                // `resDownload`, …) deliberately do NOT carry this marker even
-                // when `module_helpers_are_roots = true` (see
-                // `registry.rs::expand_preambles`). The BFS already seeds
-                // `__route_handler_*` / `__page_handler_*` shims as roots and
-                // finds preamble helpers naturally through them — auto-rooting
-                // every preamble helper used to leak its bridge imports
-                // unconditionally (GEN003 fingerprint `a2375b1158b2`).
+                // Plugin v2 module_helpers helpers deliberately do NOT carry
+                // this marker even when `module_helpers_are_roots = true`.
+                // The BFS already seeds `__route_handler_*` / `__page_handler_*`
+                // shims as roots and finds module_helpers naturally through
+                // them — auto-rooting every helper used to leak its bridge
+                // imports unconditionally (GEN003 fingerprint `a2375b1158b2`).
                 let is_v2_module_helper_root =
                     f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
                 if is_exported_by_attr

@@ -1061,11 +1061,8 @@ async fn handle_build(
     )> = Vec::new();
 
     // Plugin Contracts v2 — declarative artifact orchestration.
-    // If any loaded plugin declares `[[artifacts]]` entries in its plugin.toml,
-    // those entries drive the artifact pass. The legacy `events:` source-content
-    // detection is only used as the fallback path for projects whose plugins
-    // have not yet migrated. See contracts/artifacts.md §7 and
-    // contracts/migration.md §4.
+    // Loaded plugins that declare `[[artifacts]]` entries in their plugin.toml
+    // drive the artifact pass. See contracts/artifacts.md §7.
     extra_artifacts.extend(orchestrate_artifacts(
         &input,
         &output_file,
@@ -1088,10 +1085,9 @@ async fn handle_build(
 
 /// Plugin Contracts v2 — orchestrate `[[artifacts]]` emission for the build.
 ///
-/// Discovers loaded plugins, asks each whether it declares `[[artifacts]]`,
-/// and either runs the declarative orchestrator (predicate-driven, per
-/// `contracts/artifacts.md` §7) or falls back to the legacy `events:`
-/// source-content detection for v1.0.0 plugins.
+/// Discovers loaded plugins and runs the declarative artifact orchestrator
+/// (predicate-driven, per `contracts/artifacts.md` §7) for plugins that
+/// declare `[[artifacts]]`.
 ///
 /// Called from BOTH `handle_build` and `handle_compile`. Prior to this
 /// extraction the orchestrator ran only in `handle_build`, so `cln compile`
@@ -1197,62 +1193,6 @@ fn orchestrate_artifacts(
                 ))));
             }
         }
-    } else if project_uses_client_hydration(input) {
-        // Legacy fallback: BUILD_FRONTEND source-content detection.
-        // Removed in Phase D once all framework plugins have migrated.
-        let frontend_path = frontend_output_path(output_file);
-        if !quiet {
-            println!(
-                "Client hydration detected — building {}",
-                frontend_path.display()
-            );
-        }
-        let lib_paths_clone: Vec<PathBuf> = Path::new(input)
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| vec![p.to_path_buf()])
-            .unwrap_or_default();
-
-        match clean_language_compiler::compile_multi_file_client_mode(
-            input,
-            lib_paths_clone,
-            opt_level,
-        ) {
-            Ok(frontend_bytes) => {
-                let bytes_len = frontend_bytes.len();
-                fs::write(&frontend_path, &frontend_bytes)?;
-                let frontend_name = frontend_path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("frontend.wasm")
-                    .to_string();
-                extra_artifacts.push((
-                    frontend_name.clone(),
-                    frontend_name,
-                    "client_hydration",
-                    true,
-                    "application/wasm",
-                    frontend_bytes,
-                    None,
-                ));
-                if !quiet {
-                    println!(
-                        "Client build successful! Generated {} ({} bytes)",
-                        frontend_path.display(),
-                        bytes_len
-                    );
-                }
-            }
-            Err(errors) => {
-                eprintln!(
-                    "Client build skipped: failed to compile {}",
-                    frontend_path.display()
-                );
-                for error in &errors {
-                    eprintln!("   {}", error);
-                }
-            }
-        }
     }
 
     Ok(extra_artifacts)
@@ -1345,64 +1285,6 @@ fn write_build_manifest(
             eprintln!("warning: failed to write build manifest: {}", e);
         }
     }
-}
-
-/// Returns the path where `frontend.wasm` should be written, as a sibling of
-/// the server output file.
-fn frontend_output_path(server_output: &str) -> PathBuf {
-    let server_path = Path::new(server_output);
-    match server_path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join("frontend.wasm"),
-        _ => PathBuf::from("frontend.wasm"),
-    }
-}
-
-/// Returns `true` if the project rooted at `entry_file` declares at least one
-/// `events:` block — the signal that a `frontend.wasm` is required for
-/// browser hydration (frame-ui-semantics.md §UI-B009).
-fn project_uses_client_hydration(entry_file: &str) -> bool {
-    let entry_path = Path::new(entry_file);
-    let scan_root = entry_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    scan_for_events_block(&scan_root, 0)
-}
-
-fn scan_for_events_block(dir: &Path, depth: u32) -> bool {
-    if depth > 6 {
-        return false;
-    }
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return false,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            if matches!(name, "target" | "node_modules" | ".git" | "dist" | "build") {
-                continue;
-            }
-            if scan_for_events_block(&path, depth + 1) {
-                return true;
-            }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("cln") {
-            if let Ok(source) = fs::read_to_string(&path) {
-                for line in source.lines() {
-                    if line.trim_start().starts_with("events:") {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
 }
 
 async fn handle_compile(

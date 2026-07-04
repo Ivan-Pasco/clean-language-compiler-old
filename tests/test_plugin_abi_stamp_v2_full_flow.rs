@@ -90,9 +90,13 @@ fn full_flow_cycle1_emits_then_cycle2_accepts() {
     let plugins_root = TempDir::new().unwrap();
     let plugin_dir = plugins_root.path().join("abi.full_flow").join("1.0.0");
     std::fs::create_dir_all(&plugin_dir).unwrap();
-    let toml = "[plugin]\nname = \"abi.full_flow\"\nversion = \"1.0.0\"\n\n\
-                [compatibility]\nabi_version = \"1.0.0\"\n\n\
-                [handles]\nblocks = [\"abi_full_flow_block\"]\n";
+    let toml = format!(
+        "[plugin]\nname = \"abi.full_flow\"\nversion = \"1.0.0\"\n\n\
+         [compatibility]\nabi_version = \"1.0.0\"\nemission_ops_hash = \"{}\"\n\n\
+         [handles]\nblocks = [\"abi_full_flow_block\"]\n\n\
+         [lifecycle]\nmodule_helpers_are_roots = true\n",
+        clean_language_compiler::plugins::plugin_abi::EMISSION_OPS_HASH
+    );
     std::fs::write(plugin_dir.join("plugin.toml"), toml).unwrap();
     std::fs::write(plugin_dir.join("plugin.wasm"), &wasm).unwrap();
 

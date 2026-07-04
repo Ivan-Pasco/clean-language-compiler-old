@@ -459,56 +459,6 @@ impl PluginRegistry {
         &self.registered_plugins
     }
 
-    /// Emit preamble code from every registered plugin.
-    ///
-    /// Each unique WASM plugin is called with `expand_block("__preamble", "", "")`.
-    /// Plugins that do not handle `"__preamble"` return empty output — this is safe.
-    /// Results are returned in registration order; the caller is responsible for
-    /// deduplicating functions before merging into the AST.
-    ///
-    /// **Preamble helpers are NOT auto-rooted.** Preamble output carries the
-    /// default `PLUGIN_OUTPUT_MARKER`, which means the BFS reachability scan
-    /// in `mir_codegen::collect_all_called_names_from_mir` will only mark
-    /// them reachable when a statically-visible call site exists — either in
-    /// user code (`user calls redirect("/foo")`) or in a generated route
-    /// handler shim (`__route_handler_*`, already a BFS root via the
-    /// `is_server_handler` seed). Unreachable preamble helpers are DCE'd
-    /// along with their bridge imports.
-    ///
-    /// This deliberately diverges from a literal reading of
-    /// `contracts/lifecycle.md §3.1` ("Treat module_helpers output as BFS
-    /// roots if `module_helpers_are_roots = true`"). Auto-rooting ALL
-    /// preamble helpers caused unused bridge imports (`_res_download`,
-    /// `_email_send`, `_email_last_error`) to leak unconditionally into
-    /// every frame.server WASM (GEN003 fingerprint
-    /// `a2375b1158b2`). With the BFS already seeding `__route_handler_*`
-    /// shims as roots — the exact case the v2 root flag was meant to handle
-    /// — preamble helpers reachable from generated route code are still
-    /// found; only the genuinely unreachable ones are tree-shaken.
-    ///
-    /// Event-handler shims (called from JS, not Clean MIR) continue to use
-    /// the v2 root marker directly via `expander.rs::synthesize_event_handler_shims` —
-    /// that path is independent of this function.
-    pub fn expand_preambles(&self) -> Vec<super::PluginExpansion> {
-        let mut seen = std::collections::HashSet::new();
-        let mut results = Vec::new();
-        for plugin in self.handlers.values() {
-            let plugin_name = plugin.name();
-            if seen.insert(plugin_name.to_string()) {
-                let preamble_block = crate::plugins::FrameworkBlock {
-                    name: "__preamble".to_string(),
-                    content: String::new(),
-                    attributes: Vec::new(),
-                    location: None,
-                };
-                if let Ok(expansion) = plugin.expand_full(&preamble_block) {
-                    results.push(expansion);
-                }
-            }
-        }
-        results
-    }
-
     /// Get list of handled block types
     pub fn handled_block_types(&self) -> Vec<&str> {
         self.handlers.keys().map(|s| s.as_str()).collect()

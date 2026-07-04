@@ -547,7 +547,7 @@ impl MirCodeGenerator<'_> {
 
         let start_time = std::time::Instant::now();
         let mut stats = MirCodegenStats::default();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
 
         // Set up WASM generator with runtime imports
         if self.wasm_generator.include_runtime_imports {
@@ -561,21 +561,12 @@ impl MirCodeGenerator<'_> {
             // For each reachable bridge function, check that its declared
             // `hosts` includes the active build's host class. See
             // foundation/spec/plugins/contracts/bridge-host-classes.md §6.
+            // Phase D: PLUGIN007 is unconditionally an error (was previously
+            // a warning promoted with --strict-hosts). All shipped v3 plugins
+            // declare `hosts` correctly, so any mismatch surfaces a bug.
             let host_diagnostics = self.check_bridge_host_classes(&reachable);
             if !host_diagnostics.is_empty() {
-                if self.strict_hosts {
-                    // Strict mode: any mismatch fails the build.
-                    return Err(host_diagnostics);
-                }
-                // Phase C default: collect as warnings.
-                for diag in &host_diagnostics {
-                    tracing::warn!(
-                        target: "plugin_contracts_v2",
-                        diagnostic = %diag,
-                        "bridge host-class mismatch (warning; pass --strict-hosts to promote to error)"
-                    );
-                }
-                warnings.extend(host_diagnostics);
+                return Err(host_diagnostics);
             }
 
             self.wasm_generator.set_reachable_imports(reachable);

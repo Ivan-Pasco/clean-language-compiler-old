@@ -35,8 +35,8 @@ fn build_stamped_plugin(dest_dir: &Path, plugin_name: &str) -> Vec<u8> {
     std::fs::write(
         dest_dir.join("plugin.toml"),
         format!(
-            "[plugin]\nname = \"{}\"\nversion = \"1.0.0\"\n\n[compatibility]\nabi_version = \"1.0.0\"\n\n[handles]\nblocks = [\"{}\"]\n",
-            plugin_name, plugin_name
+            "[plugin]\nname = \"{}\"\nversion = \"1.0.0\"\n\n[compatibility]\nabi_version = \"1.0.0\"\nemission_ops_hash = \"{}\"\n\n[handles]\nblocks = [\"{}\"]\n\n[lifecycle]\nmodule_helpers_are_roots = true\n",
+            plugin_name, clean_language_compiler::plugins::plugin_abi::EMISSION_OPS_HASH, plugin_name
         ),
     )
     .unwrap();
@@ -129,8 +129,8 @@ fn install_plugin(plugins_root: &Path, plugin_name: &str, wasm_bytes: &[u8]) -> 
     let plugin_dir = plugins_root.join(plugin_name).join("1.0.0");
     std::fs::create_dir_all(&plugin_dir).unwrap();
     let toml = format!(
-        "[plugin]\nname = \"{}\"\nversion = \"1.0.0\"\n\n[handles]\nblocks = [\"{}\"]\n",
-        plugin_name, plugin_name
+        "[plugin]\nname = \"{}\"\nversion = \"1.0.0\"\n\n[compatibility]\nemission_ops_hash = \"{}\"\n\n[handles]\nblocks = [\"{}\"]\n\n[lifecycle]\nmodule_helpers_are_roots = true\n",
+        plugin_name, clean_language_compiler::plugins::plugin_abi::EMISSION_OPS_HASH, plugin_name
     );
     std::fs::write(plugin_dir.join("plugin.toml"), toml).unwrap();
     std::fs::write(plugin_dir.join("plugin.wasm"), wasm_bytes).unwrap();

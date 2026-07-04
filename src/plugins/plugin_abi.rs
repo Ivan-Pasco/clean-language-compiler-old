@@ -45,7 +45,6 @@ pub struct PluginManifest {
     pub build: PluginBuildMeta,
     /// Plugin lifecycle slot declarations.
     /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/lifecycle.md.
-    /// Absent when the plugin opts into v1.0.0 (uses `__preamble` magic block).
     #[serde(default)]
     pub lifecycle: PluginLifecycle,
     /// Side-channel artifacts the plugin declares it produces.
@@ -1061,6 +1060,14 @@ impl PluginLifecycle {
             || self.server_init.is_some()
             || self.per_request.is_some()
             || self.artifact_emitters.is_some()
+    }
+
+    /// Returns true if the plugin.toml declared a `[lifecycle]` section
+    /// with at least one field set (any slot, or `module_helpers_are_roots`).
+    /// Phase D refuses plugins whose plugin.toml has no `[lifecycle]` section
+    /// via PLUGIN010 (LegacyV1PluginRejected).
+    pub fn has_lifecycle_declaration(&self) -> bool {
+        self.opts_into_v2() || self.module_helpers_are_roots
     }
 }
 

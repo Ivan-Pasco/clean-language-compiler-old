@@ -585,28 +585,18 @@ fn emission_ops_hash_absent_produces_warning_text() {
     );
 }
 
-// ─── Test 7: --strict-emission-ops flag four cases ────────────────────────────
+// ─── Test 7: emission_ops_hash three cases (Phase D — absent is always an error) ──
 //
 // Cases:
-//   a) on  + absent  → refuse (PLUGIN006)
-//   b) off + absent  → warn + load (Ok)
-//   c) on  + match   → load silently (Ok)
-//   d) on  + mismatch→ PLUGIN006
+//   a) absent   → PLUGIN006 (regardless of --strict-emission-ops flag)
+//   b) match    → load silently (Ok)
+//   c) mismatch → PLUGIN006
 
 #[test]
-fn strict_emission_ops_on_absent_refuses() {
-    clean_language_compiler::set_strict_emission_ops_override(true);
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            clean_language_compiler::set_strict_emission_ops_override(false);
-        }
-    }
-    let _g = Reset;
-
-    // The absent-case format function is normally only called when warning;
-    // in strict mode the loader uses format_emission_ops_hash_mismatch_error
-    // with "<absent>" as the found value. Verify the error message.
+fn emission_ops_hash_absent_is_always_plugin006() {
+    // Phase D (0.30.425): absent stamp is unconditionally refused via PLUGIN006.
+    // The loader routes absent → format_emission_ops_hash_mismatch_error with
+    // "<absent>" as the found value.
     let msg = WasmPluginLoader::format_emission_ops_hash_mismatch_error(
         "frame.locale",
         Path::new("/tmp/frame.locale"),
@@ -615,32 +605,12 @@ fn strict_emission_ops_on_absent_refuses() {
     );
     assert!(
         msg.contains("PLUGIN006"),
-        "strict+absent must produce PLUGIN006; got: {}",
+        "absent must produce PLUGIN006; got: {}",
         msg
     );
     assert!(
         msg.contains("cleen frame install"),
-        "strict+absent must include reinstall guidance"
-    );
-}
-
-#[test]
-fn strict_emission_ops_off_absent_is_warn_not_error() {
-    clean_language_compiler::set_strict_emission_ops_override(false);
-    // Verify the warn message does NOT contain "error[PLUGIN006]"
-    let msg = WasmPluginLoader::format_emission_ops_hash_absent_warning(
-        "frame.locale",
-        Path::new("/tmp/frame.locale"),
-    );
-    assert!(
-        !msg.contains("error[PLUGIN006]"),
-        "non-strict absent must be a warning, not PLUGIN006 error; got: {}",
-        msg
-    );
-    assert!(
-        msg.contains("warning"),
-        "non-strict absent must produce a warning message; got: {}",
-        msg
+        "absent must include reinstall guidance"
     );
 }
 
