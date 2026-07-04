@@ -4449,15 +4449,31 @@ impl FrameworkPlugin for WasmPluginAdapter {
             }
         })?;
 
-        let mut store = self.create_store();
-        let linker =
-            self.get_linker()
-                .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
-                    plugin_name: self.name.clone(),
-                    block_name: "assemble".to_string(),
-                    message: e.to_string(),
-                    location: None,
-                })?;
+        // v3 plugins may import typed-emission bridges (`_emit_class_full`,
+        // `batch.*`, etc.) at the module level even when a specific export
+        // (like assemble) doesn't call them at runtime. WASM instantiation
+        // requires ALL imports to resolve, so we must build a linker that
+        // provides typed-emission bridges even for non-typed-emission exports.
+        //
+        // Install a per-call arena so the bridge closures have something to
+        // reference. The arena is unused by assemble but the closures capture
+        // `store.data_mut().emit_arena` and would panic on `.expect(...)` if
+        // it's absent. See `call_lifecycle_slot_typed` for the same pattern.
+        //
+        // Bug: frame.ui 3.0.0 assemble hook failed instantiation at client-mode
+        // build with `unknown import: env::_emit_class_full` before this fix.
+        let ctx = self.next_ctx_handle();
+        let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
+        let mut store = self.create_store_with_arena(arena);
+
+        let linker = self.build_typed_emission_linker().map_err(|e| {
+            crate::plugins::PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "assemble".to_string(),
+                message: format!("Failed to build assemble linker: {}", e),
+                location: None,
+            }
+        })?;
 
         let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
             crate::plugins::PluginError::ExpansionFailed {
@@ -4486,26 +4502,77 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 location: None,
             })?;
 
-        let assemble_fn: wasmtime::TypedFunc<i32, i32> = instance
-            .get_typed_func(&mut store, &export_name)
-            .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!(
-                    "Plugin does not export assemble function '{}': {}",
-                    export_name, e
-                ),
-                location: None,
+        // v3 plugins may export assemble as a typed-emission-style function
+        // `(ctx: i32, input_lp: i32) -> i32`. Frame.ui 3.0.0's `assemble_typed`
+        // has this shape, but internally it calls `_emit_stmt_from_source`
+        // which emits AST statements into the arena rather than injecting
+        // source files — the wrong bridge for the assemble semantics.
+        //
+        // Until a typed-emission "inject source file" bridge is designed
+        // (post-plan follow-up), v3 assemble hooks with (ctx, input) -> int
+        // signature are wired to instantiate correctly (typed-emission linker
+        // above satisfies the imports) but their runtime behaviour is a no-op
+        // at the assemble output — they emit into the arena, we drain and
+        // discard.
+        //
+        // We detect the signature and route accordingly.
+        let assemble_v3: Result<wasmtime::TypedFunc<(i32, i32), i32>, _> =
+            instance.get_typed_func(&mut store, &export_name);
+
+        let result_ptr = if let Ok(fn_v3) = assemble_v3 {
+            let status = fn_v3.call(&mut store, (ctx, input_ptr)).map_err(|e| {
+                crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: format!("assemble_typed() call failed: {}", e),
+                    location: None,
+                }
             })?;
 
-        let result_ptr = assemble_fn.call(&mut store, input_ptr).map_err(|e| {
-            crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!("assemble() call failed: {}", e),
-                location: None,
+            if let Some(error) = store.data().last_error.clone() {
+                return Err(crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: format!("Plugin error in assemble: {}", error),
+                    location: None,
+                });
             }
-        })?;
+
+            if status != 0 {
+                return Err(crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: format!("assemble_typed returned non-zero status: {}", status),
+                    location: None,
+                });
+            }
+
+            // Drain the arena so subsequent calls get a clean one.
+            let _ = store.data_mut().emit_arena.take();
+            return Ok(AssembleOutput::default());
+        } else {
+            // v1 assemble signature: (input_lp) -> output_lp
+            let assemble_fn: wasmtime::TypedFunc<i32, i32> = instance
+                .get_typed_func(&mut store, &export_name)
+                .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: format!(
+                        "Plugin does not export assemble function '{}': {}",
+                        export_name, e
+                    ),
+                    location: None,
+                })?;
+
+            assemble_fn.call(&mut store, input_ptr).map_err(|e| {
+                crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: format!("assemble() call failed: {}", e),
+                    location: None,
+                }
+            })?
+        };
 
         if let Some(error) = store.data().last_error.clone() {
             return Err(crate::plugins::PluginError::ExpansionFailed {
