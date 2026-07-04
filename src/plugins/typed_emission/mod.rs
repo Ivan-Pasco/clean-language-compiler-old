@@ -18,7 +18,6 @@ pub(crate) mod bridges;
 pub(crate) mod error;
 pub(crate) mod json;
 pub mod ops;
-pub(crate) mod verb_spec;
 
 /// Re-export the public types used by `wasm_adapter.rs`.
 pub(crate) use arena::EmitArena;
