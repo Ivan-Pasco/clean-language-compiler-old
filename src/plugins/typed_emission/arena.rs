@@ -649,6 +649,21 @@ impl EmitArena {
         (handle & !BATCH_TAG) as usize
     }
 
+    /// Peek at the batch node behind `handle` without consuming it. Returns
+    /// `None` for null / non-batch / out-of-range / already-consumed handles.
+    /// Used by `_emit_class_full` to disambiguate a `batch.stringLit`-wrapped
+    /// class-spec JSON from a `batch.class`-built handle before dispatching.
+    pub fn peek_batch_node(&self, handle: i32) -> Option<&BatchNode> {
+        if handle <= 0 || !Self::is_batch_handle(handle) {
+            return None;
+        }
+        let idx = Self::batch_index(handle);
+        if idx == 0 || idx >= self.batch_nodes.len() || self.batch_consumed[idx] {
+            return None;
+        }
+        self.batch_nodes[idx].as_ref()
+    }
+
     /// Take a `BatchNode` out of the batch arena (consuming it).
     ///
     /// `handle` must be a tagged batch handle (BATCH_TAG set). Returns

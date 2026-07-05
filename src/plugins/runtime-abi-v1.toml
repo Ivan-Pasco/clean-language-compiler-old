@@ -177,7 +177,7 @@ returns    = "i32"
 host_class = "all"
 semantics  = "wired"
 source     = "wasm_adapter.rs:700"
-notes      = "Sandbox stub uses i32 param; spec MEMORY_MODEL.md and function-registry.toml canonical signature is i64. Drift flagged for S5 review."
+notes      = "Sandbox uses i32 param, matching function-registry.toml (the machine-checkable source of truth). A separate int64_to_string bridge handles i64 conversion for integer:64.toString(). HOST_BRIDGE.md prose previously showed i64 here in error; corrected 2026-07-04."
 
 [[bridge]]
 name       = "float_to_string"
@@ -205,7 +205,7 @@ returns    = "i32"
 host_class = "all"
 semantics  = "wired"
 source     = "wasm_adapter.rs:768"
-notes      = "Sandbox stub returns i32; spec canonical returns i64. Drift flagged for S5 review."
+notes      = "Sandbox uses (ptr: i32) -> i32, matching function-registry.toml (the machine-checkable source of truth). HOST_BRIDGE.md prose previously showed (ptr, len) -> i64 in error; corrected 2026-07-04."
 
 [[bridge]]
 name       = "string_to_float"

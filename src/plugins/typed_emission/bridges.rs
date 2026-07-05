@@ -1747,35 +1747,82 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
 
             // ── Resolve class spec from either path ───────────────────────────
             let class_spec: ClassSpec = if (class_handle_or_lp & BATCH_TAG) != 0 {
-                // Amendment 4 handle path.
-                let builder_class = match a.take_batch_class_spec(class_handle_or_lp) {
-                    Ok(c) => c,
-                    Err(super::error::EmitError::HandleConsumed { handle }) => {
-                        a.emit_plugin008(handle);
-                        return 1;
-                    }
-                    Err(e) => {
-                        a.emit_diagnostic(super::error::EmitDiagnostic {
-                            severity: 2,
-                            code: "PLUGIN013".to_string(),
-                            message: format!(
-                                "InvalidBatchSpec: _emit_class_full handle error: {:?}",
-                                e
-                            ),
-                            span_json: r#"{"start":0,"end":0,"source":"plugin"}"#.to_string(),
-                        });
-                        return 1;
-                    }
+                // Amendment 4 handle path — the batch node may be a
+                // `BatchExpr::StringLit` wrapper carrying the class-spec JSON
+                // (plugins that assemble the spec at runtime have no other way
+                // to lift a Clean `string` into an i32-typed bridge argument).
+                // Peek at the node kind: if it's a StringLit, consume it and
+                // route through the JSON parse path; otherwise fall back to
+                // the batch.class() builder path.
+                let is_string_lit = {
+                    use super::arena::BatchNode;
+                    use super::batch_schema::BatchExpr;
+                    matches!(
+                        a.peek_batch_node(class_handle_or_lp),
+                        Some(BatchNode::Expr(BatchExpr::StringLit { .. }))
+                    )
                 };
-                // Convert BatchBuilderClass to ClassSpec (same field layout).
-                // Builder path pre-dates Amendment 10; no from_spec entries.
-                ClassSpec {
-                    name: builder_class.name,
-                    parent: builder_class.parent,
-                    fields: builder_class.fields,
-                    methods: builder_class.methods,
-                    table_name: None,
-                    method_entries: None,
+                if is_string_lit {
+                    let json = match a.take_batch_expr(class_handle_or_lp) {
+                        Ok(super::batch_schema::BatchExpr::StringLit { value }) => value,
+                        Ok(_) => unreachable!("peek guaranteed StringLit"),
+                        Err(super::error::EmitError::HandleConsumed { handle }) => {
+                            a.emit_plugin008(handle);
+                            return 1;
+                        }
+                        Err(e) => {
+                            a.emit_diagnostic(super::error::EmitDiagnostic {
+                                severity: 2,
+                                code: "PLUGIN013".to_string(),
+                                message: format!(
+                                    "InvalidBatchSpec: _emit_class_full handle error: {:?}",
+                                    e
+                                ),
+                                span_json: r#"{"start":0,"end":0,"source":"plugin"}"#
+                                    .to_string(),
+                            });
+                            return 1;
+                        }
+                    };
+                    let spec_len = json.len();
+                    match parse_class_spec_with_entries(&json) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            emit_plugin013(a, &e, spec_len);
+                            return 1;
+                        }
+                    }
+                } else {
+                    let builder_class = match a.take_batch_class_spec(class_handle_or_lp) {
+                        Ok(c) => c,
+                        Err(super::error::EmitError::HandleConsumed { handle }) => {
+                            a.emit_plugin008(handle);
+                            return 1;
+                        }
+                        Err(e) => {
+                            a.emit_diagnostic(super::error::EmitDiagnostic {
+                                severity: 2,
+                                code: "PLUGIN013".to_string(),
+                                message: format!(
+                                    "InvalidBatchSpec: _emit_class_full handle error: {:?}",
+                                    e
+                                ),
+                                span_json: r#"{"start":0,"end":0,"source":"plugin"}"#
+                                    .to_string(),
+                            });
+                            return 1;
+                        }
+                    };
+                    // Convert BatchBuilderClass to ClassSpec (same field layout).
+                    // Builder path pre-dates Amendment 10; no from_spec entries.
+                    ClassSpec {
+                        name: builder_class.name,
+                        parent: builder_class.parent,
+                        fields: builder_class.fields,
+                        methods: builder_class.methods,
+                        table_name: None,
+                        method_entries: None,
+                    }
                 }
             } else {
                 // Amendment 3 LP-string JSON path, extended by Amendment 10.
