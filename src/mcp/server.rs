@@ -799,7 +799,7 @@ fn handle_initialize(id: serde_json::Value, params: Option<&serde_json::Value>) 
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- **JAVASCRIPT IS NEVER ACCEPTABLE** in Clean Language projects. No `<script>` tags, no `.js` files, no inline DOM API calls. This applies even when you are unsure if a plugin covers the interaction. Decision protocol: (1) call `list_plugins` and search for the `_ui_*` bridge function you need; (2) wire it through a `component:` block with exported handler functions; (3) if no bridge function exists for the interaction, call `report_error` with component `frame.ui` and stop — do NOT write JavaScript. Key equivalences: `addEventListener` → `_ui_on_event`, `classList.toggle` → `_ui_toggle_class`, `querySelector` → `_ui_query_selector`, `innerHTML` → `_ui_set_inner_html`. \"I don't know how to express this in Clean\" is a signal to call `list_plugins` harder, then `report_error` if truly absent.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## REPORT_ERROR — CRITICAL RULES\n- **SYNTHESIZE BEFORE REPORTING.** Before calling `report_error`, write a minimal reproduction and root-cause analysis. Do not file a bare error code with a plan to add details later — the team cannot fix a bug without a repro.\n- `minimal_repro`: write the smallest possible `start:` block (or function) that triggers the same compiler failure. Write it from scratch — do NOT copy from the user's file.\n- `ai_analysis`: explain which pipeline stage fails and why. This contains no user code and is always sent.\n- `suggested_fix`: if you can identify the file and line, include it (e.g. `src/codegen/mod.rs line 847: condition is inverted`).\n- The `component` field MUST identify WHERE the bug lives (the component containing the buggy code), NOT the name of the task you were running (e.g. never use 'validation', 'testing', 'docs'). Invalid component names are rejected with an error.\n- Valid components: compiler, server, node-server, framework, extension, manager, website, canvas, ui, mcp, unknown. If unsure, use 'unknown'.\n- Use `discovered_during` (optional) to record the context in which you found the bug (e.g. 'solving E0042', 'doc_coverage run') — this does not affect routing.\n- Before calling `report_error` during doc/spec validation or example checking: verify the error also reproduces when compiling the file normally with the correct plugin loaded. If the error disappears in that context, it is a false positive from missing plugin context — do NOT report it.\n- Errors discovered while solving another bug are independent reports. Report them under their correct component. Do NOT attach them to the original bug.\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
+        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- **JAVASCRIPT IS NEVER ACCEPTABLE** in Clean Language projects. No `<script>` tags, no `.js` files, no inline DOM API calls. This applies even when you are unsure if a plugin covers the interaction. Decision protocol: (1) call `list_plugins` and search for the `_ui_*` bridge function you need; (2) wire it through a `component:` block with exported handler functions; (3) if no bridge function exists for the interaction, call `report_error` with component `frame.ui` and stop — do NOT write JavaScript. Key equivalences: `addEventListener` → `_ui_on_event`, `classList.toggle` → `_ui_toggle_class`, `querySelector` → `_ui_query_selector`, `innerHTML` → `_ui_set_inner_html`. \"I don't know how to express this in Clean\" is a signal to call `list_plugins` harder, then `report_error` if truly absent.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## REPORT_ERROR — CRITICAL RULES\n- **SYNTHESIZE BEFORE REPORTING.** Before calling `report_error`, write a minimal reproduction and root-cause analysis. Do not file a bare error code with a plan to add details later — the team cannot fix a bug without a repro.\n- `minimal_repro` (REQUIRED): write the smallest possible `start:` block (or function) that triggers the same compiler failure. Write it from scratch — do NOT copy from the user's file. Reports without `minimal_repro` are rejected — the field is mandatory so structural closure verification stays possible during dashboard hygiene passes.\n- `ai_analysis`: explain which pipeline stage fails and why. This contains no user code and is always sent.\n- `suggested_fix`: if you can identify the file and line, include it (e.g. `src/codegen/mod.rs line 847: condition is inverted`).\n- The `component` field MUST identify WHERE the bug lives (the component containing the buggy code), NOT the name of the task you were running (e.g. never use 'validation', 'testing', 'docs'). Invalid component names are rejected with an error.\n- Valid components: compiler, server, node-server, framework, extension, manager, website, canvas, ui, mcp, unknown. If unsure, use 'unknown'.\n- Use `discovered_during` (optional) to record the context in which you found the bug (e.g. 'solving E0042', 'doc_coverage run') — this does not affect routing.\n- Before calling `report_error` during doc/spec validation or example checking: verify the error also reproduces when compiling the file normally with the correct plugin loaded. If the error disappears in that context, it is a false positive from missing plugin context — do NOT report it.\n- Errors discovered while solving another bug are independent reports. Report them under their correct component. Do NOT attach them to the original bug.\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
     });
     JsonRpcResponse::success(id, result)
 }
@@ -1110,7 +1110,7 @@ fn get_available_tools() -> Vec<Tool> {
                     },
                     "minimal_repro": {
                         "type": "string",
-                        "description": "SYNTHESIZE THIS BEFORE CALLING. Minimal Clean Language code that reproduces the error — written by the AI, not copied from the user. Start from scratch: the smallest start: block that triggers the same compiler failure. Omit this only if you genuinely cannot isolate the trigger."
+                        "description": "REQUIRED: minimal reproduction case as a compilable Clean Language code fragment or complete .cln file that surfaces the bug. Must be AI-synthesized from scratch — write the smallest possible start: block (or function) that triggers the same compiler failure. Do NOT copy from the user's file. Reports without minimal_repro cannot be structurally verified for closure and will be rejected."
                     },
                     "expected_behavior": {
                         "type": "string",
@@ -1168,6 +1168,7 @@ fn get_available_tools() -> Vec<Tool> {
                     "error_message".to_string(),
                     "component".to_string(),
                     "severity".to_string(),
+                    "minimal_repro".to_string(),
                 ],
             },
         },
@@ -4249,6 +4250,21 @@ fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpc
         }
     };
 
+    // minimal_repro is required. A report without it cannot be structurally
+    // verified for closure (dashboard hygiene retry could not proceed against
+    // 8/8 candidate fingerprints on 2026-07-04 because historical entries had
+    // empty minimal_repro). Enforce presence and non-empty content here.
+    match args.get("minimal_repro").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => {}
+        _ => {
+            return JsonRpcResponse::error(
+                id,
+                error_codes::INVALID_PARAMS,
+                "Missing or empty 'minimal_repro' parameter. Synthesize a minimal Clean Language reproduction (smallest start: block that triggers the same failure) and include it as `minimal_repro`. Reports without a repro cannot be verified for closure and are rejected.".to_string(),
+            )
+        }
+    };
+
     // Extract optional fields
     let consent_level = args
         .get("consent_level")
@@ -6909,5 +6925,84 @@ mod fingerprint_display_tests {
     fn display_matches_dashboard_then_full() {
         let fp = "1cad410a12ce72c3b6d8d1f6f34a5c84ea20cd0be140ea6c615f5231fcc561bb";
         assert_eq!(fp_display(fp), format!("#1cad410a12ce  (full: {})", fp));
+    }
+}
+
+#[cfg(test)]
+mod report_error_schema_tests {
+    use super::{get_available_tools, tool_report_error, Tool};
+    use serde_json::json;
+
+    fn report_error_tool() -> Tool {
+        get_available_tools()
+            .into_iter()
+            .find(|t| t.name == "report_error")
+            .expect("report_error tool must be present")
+    }
+
+    #[test]
+    fn schema_requires_minimal_repro() {
+        let tool = report_error_tool();
+        assert!(
+            tool.input_schema
+                .required
+                .iter()
+                .any(|f| f == "minimal_repro"),
+            "minimal_repro must be listed in the required[] array so schema validators reject reports that omit it"
+        );
+    }
+
+    #[test]
+    fn schema_still_requires_baseline_fields() {
+        let tool = report_error_tool();
+        for field in ["error_code", "error_message", "component", "severity"] {
+            assert!(
+                tool.input_schema.required.iter().any(|f| f == field),
+                "{} must remain in required[]",
+                field
+            );
+        }
+    }
+
+    fn extract_error_message(resp: &super::JsonRpcResponse) -> String {
+        let v = serde_json::to_value(resp).expect("serialize response");
+        v.get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .map(String::from)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn handler_rejects_missing_minimal_repro() {
+        let args = json!({
+            "error_code": "SYN001",
+            "error_message": "unexpected token",
+            "component": "compiler",
+            "severity": "bug"
+        });
+        let resp = tool_report_error(json!(1), &args);
+        let msg = extract_error_message(&resp);
+        assert!(
+            msg.contains("minimal_repro"),
+            "handler must reject missing minimal_repro; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn handler_rejects_empty_minimal_repro() {
+        let args = json!({
+            "error_code": "SYN001",
+            "error_message": "unexpected token",
+            "component": "compiler",
+            "severity": "bug",
+            "minimal_repro": "   "
+        });
+        let resp = tool_report_error(json!(1), &args);
+        let msg = extract_error_message(&resp);
+        assert!(
+            msg.contains("minimal_repro"),
+            "handler must reject whitespace-only minimal_repro; got: {msg}"
+        );
     }
 }
