@@ -1,0 +1,41 @@
+// Test: bugfixes/codegen_this_method_call_receiver_push
+// Grammar: method_call inside a class method where the receiver is `this`
+//   (grammar.ebnf §5 method_call, plus the `This` node produced by the
+//   resolver for the `this` keyword).
+// Regression: dashboard fp 4376cf13-518a-4e71-877e-2f98c4dfa710.
+//   Reported against compiler 0.31.6. Any class method whose body contained
+//   `this.<siblingMethod>()` produced WASM that called the sibling method
+//   with an empty stack — "type mismatch: expected i32 but nothing on stack".
+//   Root cause: the Pest grammar's `namespace_function_call` rule
+//   (identifier "." identifier "(" ... ")") wins over `method_call` in the
+//   ordered choice, so `this.foo()` parsed as NamespaceCall { namespace:
+//   "this", function: "foo" }. The resolver's namespace-call path then
+//   fell through to the generic "unknown namespace" branch and emitted
+//   Call { function: "this.foo" } — a plain function call with the
+//   receiver dropped. When lowered to WASM the sibling method was called
+//   with zero arguments even though its signature declares (param i32) for
+//   the implicit `this`, producing the stack-imbalance validator error.
+//
+//   Fix: at resolver_impl.rs:resolve_namespace_call_expression, detect
+//   `namespace == "this"` inside a class context and rewrite to a proper
+//   MethodCall { receiver: This, method: function } so the MIR builder's
+//   MethodCall arm pushes the receiver.
+//
+// Fixed in: compiler 0.31.7
+// Expected output:
+// hello
+// hello
+
+start:
+	Widget w = Widget()
+	printl(w.render())
+	printl(w.renderSSR())
+
+class Widget
+	integer x
+	functions:
+		public:
+			string render()
+				return "hello"
+			string renderSSR()
+				return this.render()

@@ -2479,6 +2479,39 @@ impl NameResolver {
         arguments: &[HirExpression],
         location: &SourceLocation,
     ) -> Result<ResolvedHirExpression, ()> {
+        // `this.<method>()` inside a class method is a sibling-method call.
+        // The Pest grammar's `namespace_function_call` rule matches
+        // `identifier "." identifier "(" ... ")"` and wins over `method_call`
+        // in the ordered choice at grammar.pest, so `this.foo()` arrives here
+        // as NamespaceCall { namespace: "this", function: "foo" }. Rewrite it
+        // to a proper MethodCall with `this` as the receiver so the MIR builder
+        // pushes the receiver arg. Without this, the call is lowered as a plain
+        // Call to a non-existent function named "this.foo" and the receiver is
+        // dropped — producing WASM that calls the method with an empty stack.
+        if namespace == "this" {
+            if let Some(current_class_id) = self.current_class {
+                let mut resolved_arguments = Vec::new();
+                for arg in arguments {
+                    resolved_arguments.push(self.resolve_expression(arg)?);
+                }
+                let method_symbol_id = self
+                    .symbol_table
+                    .lookup_class_member(current_class_id, function);
+                return Ok(ResolvedHirExpression::MethodCall {
+                    receiver: Box::new(ResolvedHirExpression::This {
+                        class_symbol_id: current_class_id,
+                        location: location.clone(),
+                    }),
+                    method: function.to_string(),
+                    method_symbol_id,
+                    arguments: resolved_arguments,
+                    location: location.clone(),
+                });
+            }
+            // `this.foo()` outside a class is a semantic error; fall through
+            // and let downstream reporting flag it.
+        }
+
         // NOTE: Handle field access chains like test.flag.toString()
         // The namespace "test.flag" needs to be converted to a field access expression
         // BUT only if the first part is a variable, not a namespace
