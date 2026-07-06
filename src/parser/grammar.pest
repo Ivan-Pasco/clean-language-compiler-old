@@ -51,7 +51,15 @@ EMPTY_LINE_TRIVIA = _{ INDENT* ~ NEWLINE }
 TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
-keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "none" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while" | "state" | "watch" | "computed" | "screen" | "guard" | "reset" | "require" | "rules" | "spec" | "intent" | "source" | "build") ~ !(ASCII_ALPHANUMERIC | "_") }
+// Hard reserved words — can never be used as identifiers.
+// Block-header keywords (state, watch, computed, screen, guard, reset, require,
+// rules, spec, intent, source, build) are intentionally excluded here — they are
+// SOFT keywords, legal as identifiers in non-block-header positions. This matches
+// the SpecificationParser (token_parser/) behaviour where expect_identifier() and
+// expect_name() accept these tokens as plain names. The block rules (state_block,
+// watch_block, screen_block, etc.) already match these words as literal strings
+// in contextual positions, so no ambiguity arises.
+keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "none" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
