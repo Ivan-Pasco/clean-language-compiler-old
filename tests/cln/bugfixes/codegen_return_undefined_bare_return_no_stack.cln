@@ -1,0 +1,56 @@
+// Test: bugfixes/codegen_return_undefined_bare_return_no_stack
+// Grammar: return_statement + if_statement + iterate_statement
+//   inside a non-void function body (grammar.ebnf §5/§6).
+// Regression: dashboard fp 1531f955d487.
+//   Reported against compiler 0.33.1. Any non-void function whose reachable
+//   tail contained an if-block whose body explicitly returns, followed by
+//   more statements that themselves reach a `return`, produced WASM with
+//   a bare `Return` at the end of the function body with nothing on the
+//   stack — "type mismatch: expected i32 but nothing on stack".
+//
+//   Root cause: `ensure_function_termination` in mir_builder/helpers.rs
+//   fills the tail block's terminator with
+//   `Return { value: Some(MirOperand::Constant(MirConstant::Undefined)) }`
+//   for non-void functions whose flow-analysis says the tail is
+//   reachable (defensive; the tail is often unreachable in practice
+//   because every branch inside already returns). The MIR codegen
+//   handled `Return { value: None }` and `Return { value: Some(non-
+//   Undefined) }` correctly, and the STRUCTURED-block terminator path
+//   correctly pushed a typed zero for `Some(Undefined)`. But the
+//   `generate_branch_block` path (blocks.rs) and the
+//   `generate_terminator` fallback (instructions.rs) skipped the
+//   push entirely for `Some(Undefined)`, then emitted a bare
+//   `Instruction::Return`. wasmparser rejects that because the
+//   function's declared result type requires an i32 on the stack.
+//
+//   Fix: introduce `push_zero_for_return_type` on MirCodeGenerator and
+//   call it from all three Return-terminator emission sites whenever
+//   `value` is `None` OR `Some(Undefined)`, so a typed zero is on the
+//   stack before every bare `Return`.
+//
+//   Surfaced by: clean-errors platform_health `widget_component_strip`
+//   which uses an early guard-if returning html, followed by SQL query
+//   + iterate loop + tail html: block. The plugin-expanded html: blocks
+//   compile to `if true { ... return __html }`, and the compiler's
+//   ensure_function_termination treats the post-tail-if block as
+//   reachable-with-undefined.
+//
+// Fixed in: compiler 0.33.2
+// Expected output:
+// zero-html
+// tail-xxxxx
+
+start:
+	printl(guarded(0))
+	printl(guarded(5))
+
+functions:
+	string guarded(integer n)
+		if n == 0
+			if true
+				return "zero-html"
+		string result = ""
+		iterate i in 0 to n - 1
+			result = result + "x"
+		if true
+			return "tail-" + result

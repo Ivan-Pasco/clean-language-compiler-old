@@ -1,28 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.30.392",
+  "compiler_version": "0.33.1",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1782711008,
+  "generated_at_epoch_seconds": 1783316643,
   "artifacts": [
     {
-      "name": "plugin_output_page_boundary.wasm",
-      "path_relative": "plugin_output_page_boundary.wasm",
+      "name": "codegen_return_undefined_bare_return_no_stack.wasm",
+      "path_relative": "codegen_return_undefined_bare_return_no_stack.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 19550,
-      "sha256": "dd9eb82c8acf2d2c23db2ef5f56eada98666d0722ac1f037986afaac7cb649e3",
-      "source_plugin": null
-    },
-    {
-      "name": "frontend.wasm",
-      "path_relative": "frontend.wasm",
-      "purpose": "client_hydration",
-      "public": true,
-      "content_type": "application/wasm",
-      "size_bytes": 19495,
-      "sha256": "ff903d5b56358d6b9f0e83c830a18f7e77fbba8b72bdb6f3c51eb45ed96777ea",
+      "size_bytes": 23917,
+      "sha256": "5e3e99665fe2c75b012e34063d931959be9413c367de16fb8b89a045619f04d6",
       "source_plugin": null
     }
   ],

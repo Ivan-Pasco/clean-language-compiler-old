@@ -10,6 +10,36 @@ use super::*;
 use wasm_encoder::{Function as WasmFunction, Instruction};
 
 impl MirCodeGenerator<'_> {
+    /// Push a zero constant of the given return type onto the instruction stream.
+    ///
+    /// Used to satisfy the WASM validator's stack-shape requirement when emitting
+    /// a bare `return` for a non-void function where no value has been produced
+    /// (implicit fall-through returns from `ensure_function_termination`, or
+    /// `Return { value: None }` in synthesized blocks). For void return types
+    /// this is a no-op.
+    pub(super) fn push_zero_for_return_type(&mut self, return_type: &Option<MirType>) {
+        match return_type {
+            Some(MirType::F64) => {
+                self.current_instructions.push(Instruction::F64Const(0.0));
+            }
+            Some(
+                MirType::I32
+                | MirType::I8
+                | MirType::I16
+                | MirType::U8
+                | MirType::U16
+                | MirType::U32
+                | MirType::Ptr(_),
+            ) => {
+                self.current_instructions.push(Instruction::I32Const(0));
+            }
+            Some(MirType::I64 | MirType::U64) => {
+                self.current_instructions.push(Instruction::I64Const(0));
+            }
+            _ => {}
+        }
+    }
+
     /// Generate WASM function from MIR function.
     pub(super) fn generate_function(
         &mut self,
@@ -368,17 +398,28 @@ impl MirCodeGenerator<'_> {
         );
         match &block.terminator {
             MirTerminator::Return { value } => {
+                // A Return terminator in a branch block must leave an i32/i64/f64
+                // on the stack matching the function's declared return type
+                // before the bare Return instruction. There are three cases:
+                //   1. value is Some(non-Undefined) → load it (with type coercion)
+                //   2. value is Some(Undefined) → push a typed zero (implicit
+                //      return from ensure_function_termination for a non-void
+                //      function whose reachable tail had no explicit return)
+                //   3. value is None → push a typed zero (defensive; should
+                //      only happen for void functions)
+                let func_return_type = self
+                    .current_function
+                    .as_ref()
+                    .map(|f| f.return_type.clone());
+                let mut pushed_value = false;
                 if let Some(return_value) = value {
                     if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
                         self.load_operand(return_value)?;
+                        pushed_value = true;
 
                         // Coerce return value to the function's declared return type (E007 fix).
                         // value_to_type covers both parameters and locals; get_operand_mir_type
                         // only covers locals, so we use value_to_type for Value operands.
-                        let func_return_type = self
-                            .current_function
-                            .as_ref()
-                            .map(|f| f.return_type.clone());
                         let value_type = match return_value {
                             MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
                             _ => self.get_operand_mir_type(return_value),
@@ -398,6 +439,9 @@ impl MirCodeGenerator<'_> {
                             _ => {}
                         }
                     }
+                }
+                if !pushed_value {
+                    self.push_zero_for_return_type(&func_return_type);
                 }
                 self.current_instructions.push(Instruction::Return);
             }
@@ -743,24 +787,24 @@ impl MirCodeGenerator<'_> {
             }
         }
 
-        // Handle terminator with structured control flow
+        // Handle terminator with structured control flow.
+        // See push_zero_for_return_type for the three-case invariant.
         match &block.terminator {
             MirTerminator::Return { value } => {
+                let func_return_type = self
+                    .current_function
+                    .as_ref()
+                    .map(|f| f.return_type.clone());
+                let mut pushed_value = false;
                 if let Some(return_value) = value {
                     if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
                         self.load_operand(return_value)?;
+                        pushed_value = true;
 
-                        // Coerce the return value to match the function's declared return type.
-                        // Without this, returning an integer (i32) from a number (f64) function
-                        // produces a WASM validation error E007 (expected f64, found i32).
-                        //
-                        // NOTE: get_operand_mir_type only searches func.locals, which does NOT
-                        // include parameters. Parameters are tracked in value_to_type instead.
-                        // Use value_to_type as the authoritative type lookup for this check.
-                        let func_return_type = self
-                            .current_function
-                            .as_ref()
-                            .map(|f| f.return_type.clone());
+                        // Coerce the return value to match the function's declared return type
+                        // (E007 fix). value_to_type covers both parameters and locals;
+                        // get_operand_mir_type only covers locals, so we use value_to_type
+                        // as the authoritative type lookup for Value operands.
                         let value_type = match return_value {
                             MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
                             _ => self.get_operand_mir_type(return_value),
@@ -779,38 +823,10 @@ impl MirCodeGenerator<'_> {
                             }
                             _ => {}
                         }
-                    } else {
-                        // return_value is MirConstant::Undefined — implicit return for a function
-                        // whose type was inferred as non-void (e.g. start: whose last statement
-                        // is a non-void call in statement position). The WASM function type may
-                        // expect a value on the stack, so push a zero constant of the correct
-                        // type to satisfy the WASM validator.
-                        let func_return_type = self
-                            .current_function
-                            .as_ref()
-                            .map(|f| f.return_type.clone());
-                        match func_return_type {
-                            Some(MirType::F64) => {
-                                self.current_instructions.push(Instruction::F64Const(0.0));
-                            }
-                            Some(
-                                MirType::I32
-                                | MirType::I8
-                                | MirType::I16
-                                | MirType::U8
-                                | MirType::U16
-                                | MirType::U32
-                                | MirType::Ptr(_),
-                            ) => {
-                                self.current_instructions.push(Instruction::I32Const(0));
-                            }
-                            Some(MirType::I64 | MirType::U64) => {
-                                self.current_instructions.push(Instruction::I64Const(0));
-                            }
-                            // Void and other non-returning types need nothing
-                            _ => {}
-                        }
                     }
+                }
+                if !pushed_value {
+                    self.push_zero_for_return_type(&func_return_type);
                 }
                 self.current_instructions.push(Instruction::Return);
             }

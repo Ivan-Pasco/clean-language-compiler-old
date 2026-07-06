@@ -996,24 +996,26 @@ impl MirCodeGenerator<'_> {
     ) -> Result<(), CompilerError> {
         match terminator {
             MirTerminator::Return { value } => {
+                // A Return terminator must leave a value on the stack matching the
+                // function's declared return type before the bare Return
+                // instruction (or nothing on the stack for void). Handle all three
+                // shapes uniformly via push_zero_for_return_type. See its docs.
+                let func_return_type = self
+                    .current_function
+                    .as_ref()
+                    .map(|f| f.return_type.clone());
+                let mut pushed_value = false;
                 if let Some(return_value) = value {
-                    // Don't load undefined values - they represent void returns
                     if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
                         // NOTE: Removed StringTuple expansion logic
                         // Since ConcreteType::String now maps to MirType::I32, strings are single i32 pointers
                         // No expansion needed - just load the operand directly
                         self.load_operand(return_value)?;
+                        pushed_value = true;
 
-                        // Coerce the return value type to match the function's declared return type.
-                        // This prevents WASM validation errors when an integer value (i32) is returned
-                        // from a function declared to return number (f64), or vice-versa.
-                        //
-                        // NOTE: value_to_type covers both parameters and locals.
+                        // Coerce the return value type to match the function's declared return type
+                        // (E007 fix). value_to_type covers both parameters and locals;
                         // get_operand_mir_type only covers func.locals, missing parameters.
-                        let func_return_type = self
-                            .current_function
-                            .as_ref()
-                            .map(|f| f.return_type.clone());
                         let value_type = match return_value {
                             MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
                             _ => self.get_operand_mir_type(return_value),
@@ -1037,6 +1039,9 @@ impl MirCodeGenerator<'_> {
                             _ => {}
                         }
                     }
+                }
+                if !pushed_value {
+                    self.push_zero_for_return_type(&func_return_type);
                 }
                 self.current_instructions.push(Instruction::Return);
             }
