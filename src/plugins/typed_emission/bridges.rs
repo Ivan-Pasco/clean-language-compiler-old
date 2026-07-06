@@ -1511,6 +1511,42 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         },
     )?;
 
+    // _emit_statement_inline(ctx, stmt_handle) — Amendment 11 / §3.5.1
+    // Sibling to _emit_statement_into_start: writes to expansion.statements
+    // (inline splice at block's caller position) instead of
+    // expansion.start_function.body (program-start).
+    linker.func_wrap(
+        "env",
+        "_emit_statement_inline",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, stmt_handle: i32| -> i32 {
+            let a = arena!(caller);
+            let stmt = match a.take_stmt(ctx, stmt_handle) {
+                Ok(s) => s,
+                Err(EmitError::StickyErrorActive) => return 1,
+                Err(EmitError::HandleConsumed { handle }) => {
+                    a.emit_plugin008(handle);
+                    a.trip(
+                        "_emit_statement_inline",
+                        format!("consumed handle {}", handle),
+                    );
+                    return 1;
+                }
+                Err(e) => {
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: e.error_code().to_string(),
+                        message: format!("_emit_statement_inline: {:?}", e),
+                        span_json: String::new(),
+                    });
+                    a.trip("_emit_statement_inline", format!("{:?}", e));
+                    return 1;
+                }
+            };
+            a.push_inline_stmt(stmt);
+            0
+        },
+    )?;
+
     // _emit_route(ctx, method_lp, path_lp, handler_function_handle, attrs_json_lp)
     // Sugar: consume handler, mark it public (exported), emit route stmt to start.
     linker.func_wrap(
@@ -2676,5 +2712,121 @@ mod tests {
         assert!(h > 0);
         let t = arena.take_type(1, h).unwrap();
         assert_eq!(t, Type::Integer);
+    }
+
+    // ── Amendment 11: _emit_statement_inline / push_inline_stmt ───────────────
+
+    fn simulate_emit_statement_inline(arena: &mut EmitArena, ctx: i32, stmt_handle: i32) -> i32 {
+        let stmt = match arena.take_stmt(ctx, stmt_handle) {
+            Ok(s) => s,
+            Err(EmitError::StickyErrorActive) => return 1,
+            Err(EmitError::HandleConsumed { handle }) => {
+                arena.emit_plugin008(handle);
+                arena.trip(
+                    "_emit_statement_inline",
+                    format!("consumed handle {}", handle),
+                );
+                return 1;
+            }
+            Err(e) => {
+                arena.emit_diagnostic(EmitDiagnostic {
+                    severity: 2,
+                    code: e.error_code().to_string(),
+                    message: format!("_emit_statement_inline: {:?}", e),
+                    span_json: String::new(),
+                });
+                arena.trip("_emit_statement_inline", format!("{:?}", e));
+                return 1;
+            }
+        };
+        arena.push_inline_stmt(stmt);
+        0
+    }
+
+    #[test]
+    fn emit_statement_inline_pushes_to_expansion_statements() {
+        let mut arena = make_arena(1);
+        let ret_stmt = Statement::Return {
+            value: Some(Expression::Literal(Value::Integer(7))),
+            location: None,
+        };
+        let h = arena.alloc_stmt(ret_stmt);
+
+        let rc = simulate_emit_statement_inline(&mut arena, 1, h);
+        assert_eq!(rc, 0);
+
+        let (expansion, diags, saw_err) = arena.finish();
+        assert!(!saw_err);
+        assert!(diags.is_empty());
+        // Inline splice destination.
+        assert_eq!(expansion.statements.len(), 1);
+        // Program-start destination MUST remain untouched.
+        assert!(expansion.start_function.is_none());
+        match &expansion.statements[0] {
+            Statement::Return {
+                value: Some(Expression::Literal(Value::Integer(7))),
+                ..
+            } => {}
+            other => panic!("unexpected stmt: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn emit_statement_inline_returns_error_on_consumed_handle() {
+        let mut arena = make_arena(1);
+        let h = arena.alloc_stmt(Statement::Return {
+            value: None,
+            location: None,
+        });
+        // First call consumes.
+        assert_eq!(simulate_emit_statement_inline(&mut arena, 1, h), 0);
+        // Clear the trip so we can test the double-consume path in isolation.
+        arena.clear_error();
+
+        // Second call must emit PLUGIN008 and return non-zero.
+        assert_eq!(simulate_emit_statement_inline(&mut arena, 1, h), 1);
+        assert!(arena.is_sticky());
+        let (_, diags, saw_err) = arena.finish();
+        assert!(saw_err);
+        assert!(diags.iter().any(|d| d.code == "PLUGIN008"));
+    }
+
+    #[test]
+    fn emit_statement_inline_returns_error_on_wrong_ctx() {
+        let mut arena = make_arena(1);
+        let h = arena.alloc_stmt(Statement::Return {
+            value: None,
+            location: None,
+        });
+        // Wrong ctx handle.
+        assert_eq!(simulate_emit_statement_inline(&mut arena, 999, h), 1);
+        assert!(arena.is_sticky());
+        let (expansion, diags, saw_err) = arena.finish();
+        assert!(saw_err);
+        assert!(expansion.statements.is_empty());
+        assert!(diags.iter().any(|d| d.code == "PLUGIN_WRONG_CTX"));
+    }
+
+    #[test]
+    fn emit_statement_inline_trips_sticky_on_failure() {
+        let mut arena = make_arena(1);
+        // Trigger a failure via wrong-ctx.
+        let h = arena.alloc_stmt(Statement::Return {
+            value: None,
+            location: None,
+        });
+        assert_eq!(simulate_emit_statement_inline(&mut arena, 42, h), 1);
+        assert!(arena.is_sticky());
+
+        // Any subsequent bridge activity must short-circuit — a valid stmt
+        // handle emit is now a no-op producing StickyErrorActive.
+        let h2 = arena.alloc_stmt(Statement::Return {
+            value: None,
+            location: None,
+        });
+        // While sticky, take_stmt returns StickyErrorActive → rc 1, no push.
+        assert_eq!(simulate_emit_statement_inline(&mut arena, 1, h2), 1);
+        let (expansion, _diags, _saw_err) = arena.finish();
+        assert!(expansion.statements.is_empty());
     }
 }

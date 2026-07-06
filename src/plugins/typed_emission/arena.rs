@@ -1165,6 +1165,17 @@ impl EmitArena {
         });
         sf.body.push(s);
     }
+
+    /// Push a statement into `expansion.statements`, the inline-replacement
+    /// vector consumed by the compiler's FrameworkBlock arm at expander.rs:585.
+    ///
+    /// Contrasts with `push_start_stmt` (§3.5 `_emit_statement_into_start`)
+    /// which writes to `expansion.start_function.body`. Use this bridge when
+    /// the statement should splice into the block's caller position, not the
+    /// program's start. See Amendment 11 / §3.5.1.
+    pub fn push_inline_stmt(&mut self, s: Statement) {
+        self.expansion.statements.push(s);
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
