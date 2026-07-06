@@ -380,9 +380,18 @@ pub fn parse_logical_expression(pair: Pair<Rule>) -> Result<Expression, Compiler
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
@@ -447,9 +456,18 @@ pub fn parse_comparison_expression(pair: Pair<Rule>) -> Result<Expression, Compi
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
@@ -571,9 +589,18 @@ pub fn parse_additive_expression(pair: Pair<Rule>) -> Result<Expression, Compile
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
@@ -631,9 +658,18 @@ pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, C
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
@@ -2824,9 +2860,18 @@ pub fn parse_multiline_logical_expression(pair: Pair<Rule>) -> Result<Expression
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
@@ -2886,9 +2931,18 @@ pub fn parse_multiline_comparison_expression(
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
@@ -2982,9 +3036,18 @@ pub fn parse_multiline_additive_expression(pair: Pair<Rule>) -> Result<Expressio
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
@@ -3037,9 +3100,18 @@ pub fn parse_multiline_multiplicative_expression(
     }
 
     let mut result = expr_stack.remove(0);
+    let op_count = op_stack.len();
     let mut i = 0;
 
-    while i < op_stack.len() && i < expr_stack.len() {
+    // BUG (fp 7793fbeec120): the old condition was
+    //   while i < op_stack.len() && i < expr_stack.len()
+    // which is wrong because `expr_stack.remove(0)` inside the loop shrinks
+    // `expr_stack.len()`. After the initial `remove(0)`, the invariant is
+    // `expr_stack.len() = op_stack.len() - i`, so the condition failed one
+    // iteration early — dropping the last operand of chains with 4+ operands
+    // (e.g. `a + b + c + d`). The fix iterates against the stable op_count
+    // captured before the loop.
+    while i < op_count && !expr_stack.is_empty() {
         let right = expr_stack.remove(0);
         result = Expression::Binary(Box::new(result), op_stack[i].clone(), Box::new(right));
         i += 1;
