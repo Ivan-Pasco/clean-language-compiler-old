@@ -274,7 +274,11 @@ pub fn report_compile_failure(
     // Attach reproduction context when consent allows.
     // error_only → no code; error_with_code (default) → location snippet + inferred expected.
     if config.consent_level.to_string() != "error_only" {
-        let snippet = source_content.and_then(|src| extract_location_snippet(first_error, src));
+        // Try location-based snippet first; fall back to file head so a repro is
+        // present even when the error carries no line info.
+        let snippet = source_content.and_then(|src| {
+            extract_location_snippet(first_error, src).or_else(|| extract_file_head_snippet(src))
+        });
         report.reproduction = Some(report::ReportReproduction {
             minimal_code: snippet,
             // Infer expected behavior from the error type — useful for triage even
@@ -283,6 +287,19 @@ pub fn report_compile_failure(
             actual_behavior: Some(first_error.to_string()),
             spec_reference: None,
         });
+    }
+
+    // Layer A guard: if no reproduction snippet is available, do not submit.
+    // A dashboard entry without a repro cannot be compile-verified by the
+    // hygiene pipeline and provides no actionable signal. The user still sees
+    // the compile error locally; only the useless upload is skipped.
+    if !report_has_minimal_repro(&report) {
+        tracing::debug!(
+            target: "compiler::telemetry",
+            error_code = %report.error.code,
+            "Skipping automatic error report — no reproducible snippet available"
+        );
+        return;
     }
 
     // Attach email: use stored email, or prompt if first bug report
@@ -460,6 +477,18 @@ pub fn flush_pending_telemetry(verbose: bool) {
                 },
             };
 
+            // Same guard as the primary path: retry reports without a repro
+            // are useless to the dashboard hygiene pipeline. Skip rather than
+            // resubmit an empty-minimal_code entry.
+            if !report_has_minimal_repro(&minimal) {
+                tracing::debug!(
+                    target: "compiler::telemetry",
+                    report_id = %tracked.report_id,
+                    "Skipping retry submission — tracked report has no reproducible snippet"
+                );
+                continue;
+            }
+
             let result = submit_report(&minimal);
             if let Some(fp) = result.fingerprint() {
                 store.update_fingerprint(&tracked.report_id, fp);
@@ -564,6 +593,35 @@ pub fn check_fix_notifications() {
         println!("Run `cln fixes` for full details.");
         println!();
     }
+}
+
+/// Return true iff the report carries a non-empty minimal_code snippet.
+/// Used as a submission guard so entries without a repro never reach the
+/// shared dashboard (Path C Session 2a', 2026-07-06).
+fn report_has_minimal_repro(report: &ErrorReport) -> bool {
+    report
+        .reproduction
+        .as_ref()
+        .and_then(|r| r.minimal_code.as_deref())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Fallback snippet: the first ~50 lines of the source. Used when the error
+/// carries no line info but we still have the file content, so a repro is
+/// present rather than nothing.
+fn extract_file_head_snippet(source: &str) -> Option<String> {
+    let lines: Vec<&str> = source.lines().take(50).collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let snippet: String = lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("{:>3} | {}", i + 1, l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(snippet)
 }
 
 /// Extract a few lines of context around the error location from the source.
@@ -900,6 +958,79 @@ mod tests {
         let info = extract_error_info(&err);
         assert_eq!(info.component, "framework");
         assert_eq!(info.subsystem.as_deref(), Some("plugin"));
+    }
+
+    fn make_report_with_repro(minimal_code: Option<String>) -> ErrorReport {
+        let mut report = ErrorReport::new(
+            "test-report-id".to_string(),
+            ReportError {
+                code: "COD000".to_string(),
+                category: "codegen".to_string(),
+                component: "compiler".to_string(),
+                subsystem: Some("codegen".to_string()),
+                severity: "bug".to_string(),
+                message: "test".to_string(),
+                file_context: None,
+                affected_component: None,
+                affected_version: None,
+            },
+            "cli_telemetry",
+            "error_with_code",
+        );
+        report.reproduction = Some(report::ReportReproduction {
+            minimal_code,
+            expected_behavior: None,
+            actual_behavior: None,
+            spec_reference: None,
+        });
+        report
+    }
+
+    #[test]
+    fn telemetry_skips_submission_when_repro_is_none() {
+        let mut report = make_report_with_repro(None);
+        report.reproduction = None;
+        assert!(!report_has_minimal_repro(&report));
+    }
+
+    #[test]
+    fn telemetry_skips_submission_when_repro_minimal_code_is_none() {
+        let report = make_report_with_repro(None);
+        assert!(!report_has_minimal_repro(&report));
+    }
+
+    #[test]
+    fn telemetry_skips_submission_when_repro_is_empty_string() {
+        let report = make_report_with_repro(Some(String::new()));
+        assert!(!report_has_minimal_repro(&report));
+    }
+
+    #[test]
+    fn telemetry_skips_submission_when_repro_is_whitespace() {
+        let report = make_report_with_repro(Some("   \n\t  ".to_string()));
+        assert!(!report_has_minimal_repro(&report));
+    }
+
+    #[test]
+    fn telemetry_submits_when_repro_is_populated() {
+        let report = make_report_with_repro(Some("start:\n    print(1)".to_string()));
+        assert!(report_has_minimal_repro(&report));
+    }
+
+    #[test]
+    fn file_head_snippet_returns_first_50_lines() {
+        let source: String = (1..=100).map(|i| format!("line {}\n", i)).collect();
+        let snippet = extract_file_head_snippet(&source).expect("should return a snippet");
+        // Should contain line 1 formatted with the leading gutter
+        assert!(snippet.contains("  1 | line 1"));
+        // Should contain line 50 but not line 51
+        assert!(snippet.contains("line 50"));
+        assert!(!snippet.contains("line 51"));
+    }
+
+    #[test]
+    fn file_head_snippet_returns_none_for_empty_source() {
+        assert!(extract_file_head_snippet("").is_none());
     }
 
     #[test]

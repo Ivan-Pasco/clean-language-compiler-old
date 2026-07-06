@@ -18,9 +18,18 @@ impl MirCodeGenerator<'_> {
     /// `Return { value: None }` in synthesized blocks). For void return types
     /// this is a no-op.
     pub(super) fn push_zero_for_return_type(&mut self, return_type: &Option<MirType>) {
+        // Mirror the authoritative MirType → WASM ValType mapping from
+        // utilities.rs `mir_type_to_val_type`. Any MirType that lowers to a
+        // WASM value type must have a matching zero constant here — otherwise
+        // a bare `return` for a non-void function leaves nothing on the stack
+        // and wasmparser rejects the module. Adding a variant to MirType
+        // without extending this match reintroduces the bug.
         match return_type {
             Some(MirType::F64) => {
                 self.current_instructions.push(Instruction::F64Const(0.0));
+            }
+            Some(MirType::F32) => {
+                self.current_instructions.push(Instruction::F32Const(0.0));
             }
             Some(
                 MirType::I32
@@ -29,13 +38,19 @@ impl MirCodeGenerator<'_> {
                 | MirType::U8
                 | MirType::U16
                 | MirType::U32
-                | MirType::Ptr(_),
+                | MirType::Bool
+                | MirType::Ptr(_)
+                | MirType::StringTuple
+                | MirType::Any,
             ) => {
                 self.current_instructions.push(Instruction::I32Const(0));
             }
             Some(MirType::I64 | MirType::U64) => {
                 self.current_instructions.push(Instruction::I64Const(0));
             }
+            // Void → nothing to push. Aggregate/opaque types (Array, Struct,
+            // Function) do not lower to a WASM ValType directly and should
+            // never appear as a function return type in valid MIR.
             _ => {}
         }
     }

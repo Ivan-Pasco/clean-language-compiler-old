@@ -1,0 +1,45 @@
+// Test: bugfixes/codegen_return_undefined_bool_return_no_stack
+// Grammar: return_statement + if_statement + iterate_statement
+//   inside a non-void function body (grammar.ebnf §5/§6).
+// Regression: dashboard fp 3e81879b5fd93b3b.
+//   Reported against compiler 0.33.1 and NOT closed by 0.33.2. The 0.33.2 fix
+//   (fp 1531f955d487) added push_zero_for_return_type at every bare
+//   Instruction::Return emission site, but the helper's match only covered
+//   I8/I16/I32/I64/U8/U16/U32/U64/F64/Ptr — it missed Bool, F32, StringTuple,
+//   and Any. Any non-void function returning `boolean` whose reachable tail
+//   was filled by ensure_function_termination with
+//   Return { value: Some(MirConstant::Undefined) } still emitted a bare
+//   Instruction::Return with nothing on the stack, and wasmparser rejected
+//   the module with "type mismatch: expected i32 but nothing on stack".
+//
+//   Surfaced by: clean-errors backend, which has boolean-returning helpers
+//   (e.g. is_valid_input, has_permission) using the same early-guard-if +
+//   loop + tail-if pattern that ensure_function_termination flags as
+//   reachable-tail-with-undefined.
+//
+//   Fix: extend push_zero_for_return_type to cover every MirType variant
+//   that mir_type_to_val_type lowers to a WASM ValType — Bool, F32, Any,
+//   and StringTuple in addition to the numeric/pointer variants already
+//   handled. The helper's coverage must mirror the ValType mapping
+//   exactly; adding a new MirType variant to that mapping without
+//   extending push_zero_for_return_type reintroduces this bug.
+//
+// Fixed in: compiler 0.33.3
+// Expected output:
+// false
+// true
+
+start:
+	printl(check(0))
+	printl(check(5))
+
+functions:
+	boolean check(integer n)
+		if n == 0
+			if true
+				return false
+		string result = ""
+		iterate i in 0 to n - 1
+			result = result + "x"
+		if true
+			return true

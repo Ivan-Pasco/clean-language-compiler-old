@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.33.1",
+  "compiler_version": "0.33.3",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1783316643,
+  "generated_at_epoch_seconds": 1783351584,
   "artifacts": [
     {
-      "name": "codegen_return_undefined_bare_return_no_stack.wasm",
-      "path_relative": "codegen_return_undefined_bare_return_no_stack.wasm",
+      "name": "codegen_return_undefined_bool_return_no_stack.wasm",
+      "path_relative": "codegen_return_undefined_bool_return_no_stack.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 23917,
-      "sha256": "5e3e99665fe2c75b012e34063d931959be9413c367de16fb8b89a045619f04d6",
+      "size_bytes": 19831,
+      "sha256": "008959319957842b1de6ce9600a5c0a01a2b16a02887c6a111629a47883e3e2c",
       "source_plugin": null
     }
   ],
