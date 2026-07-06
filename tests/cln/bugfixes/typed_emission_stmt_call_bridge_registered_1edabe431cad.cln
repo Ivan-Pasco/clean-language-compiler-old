@@ -1,0 +1,38 @@
+// Test: bugfixes/typed_emission_stmt_call_bridge_registered_1edabe431cad
+// Grammar: external block declaration + functions block (grammar.ebnf §external_block, §functions_block)
+// Regression: dashboard fp 1edabe431cad.
+//   Reported error code: TYPED-EMISSION-DUAL-SHIP-BLOCKED.
+//   A plugin that dual-shipped v1 and v3 expansion paths and declared
+//   `_stmt_call` in its `external:` block failed to load with
+//   "unknown import: env::_stmt_call". The typed-emission bridge for
+//   `_stmt_call` was not registered on the wasmtime linker even though
+//   plugins compiled against Amendment 3 (compiler 0.30.408+) started
+//   emitting imports for it.
+//
+//   Fix: `_stmt_call` bridge landed at
+//   src/plugins/typed_emission/bridges.rs:661-665 as part of Amendment 3
+//   in compiler 0.30.408. The bridge accepts (ctx, callee_lp, args_json_lp)
+//   and returns a statement handle.
+//
+//   Anchor: this repro is the sanitized minimal from the dashboard entry.
+//   It declares `_stmt_call` in an `external:` block and defines the two
+//   dual-ship entry points (`expand_block_typed` for v3, `expand` for v1).
+//   Under compiler 0.33.3+ this compiles cleanly — the presence of the
+//   bridge registration means the emitted WASM import can be satisfied
+//   at plugin load time.
+//
+// Fixed in: compiler 0.30.408
+// Expected output:
+// stmt-call-bridge-ok
+
+external:
+	integer _stmt_call(integer ctx, string callee, string args_json)
+
+start:
+	print("stmt-call-bridge-ok")
+
+functions:
+	integer expand_block_typed(integer ctx, string b, string a, string body)
+		return 0
+	string expand(string b, string a, string body)
+		return body

@@ -1,0 +1,42 @@
+// Test: bugfixes/frame_ui_html_single_quote_attributes_f967ad3debd1
+// Grammar: frame.ui `html:` block (foundation/spec/plugins/frame-ui.ebnf)
+// Regression: dashboard fp f967ad3debd1.
+//   Error code: SYN001 (raised inside emitted fragment).
+//   Reported against a pre-3.2.3 frame.ui: when an `html:` block used
+//   single-quoted HTML attributes (e.g. `class='row-label'`), the plugin
+//   emitted a Clean Language fragment that failed to re-parse with a
+//   syntax error. Root cause was in the frame.ui plugin's html: expander,
+//   not the compiler.
+//
+//   Fix: frame.ui 3.2.3 corrected html: attribute-value handling.
+//   The plugin now emits well-formed Clean Language fragments regardless
+//   of whether the source html: used single or double quotes.
+//
+//   Anchor: this repro exercises `class='row-label'` and
+//   `class='row-value'` inside `<tr><td>` cells. Under compiler 0.33.3+
+//   with frame.ui 3.2.3+, it compiles cleanly. A regression in either the
+//   plugin's html: expander OR the compiler's typed-emission path would
+//   re-surface the SYN001 fragment error.
+//
+//   Note: this file has no `// Fixed in: compiler` marker on purpose —
+//   its runtime output depends on frame.ui host imports that
+//   wasmtime_runner does not provide. The anchor value is that the file
+//   exists in-tree, is compiled by the framework-corpus workflow, and
+//   the commit that added it references fingerprint f967ad3debd1.
+
+package: MinimalRepro
+	version: "0.0.1"
+	target: server
+		plugins: [frame.ui]
+
+start:
+	string r = render_row("name", "world")
+	print(r)
+
+functions:
+	string render_row(string label, string value)
+		html:
+			<tr>
+				<td class='row-label'>{label}</td>
+				<td class='row-value'>{value}</td>
+			</tr>

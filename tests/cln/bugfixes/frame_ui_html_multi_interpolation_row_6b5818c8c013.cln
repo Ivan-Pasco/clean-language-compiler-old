@@ -1,0 +1,40 @@
+// Test: bugfixes/frame_ui_html_multi_interpolation_row_6b5818c8c013
+// Grammar: frame.ui `html:` block (foundation/spec/plugins/frame-ui.ebnf)
+// Regression: dashboard fp 6b5818c8c013.
+//   Error code: SYN001 (raised inside emitted fragment).
+//   Sibling of f967ad3debd1 and 2bd910ed867b — same root cause
+//   (frame.ui html: expander). This variant exercises many `{arg}`
+//   interpolations packed into one row (`<td>{a}</td><td>{b}</td>...`).
+//   Pre-3.2.3 frame.ui emitted a fragment that failed to re-parse.
+//
+//   Fix: frame.ui 3.2.3.
+//
+//   Anchor: six back-to-back `<td>{…}</td>` cells with a `class` attribute
+//   on the first cell. Under compiler 0.33.3+ with frame.ui 3.2.3+, this
+//   compiles cleanly. A regression in either the plugin's html: batching
+//   or the compiler's typed-emission of long interpolation chains would
+//   re-surface the SYN001 fragment error.
+//
+//   Note: no `// Fixed in: compiler` marker — runtime output needs
+//   frame.ui host imports that wasmtime_runner does not provide.
+
+package: MinimalRepro
+	version: "0.0.1"
+	target: server
+		plugins: [frame.ui]
+
+start:
+	string r = render_report_row("abc", "0.32.0", "linux", "x64", "bug", "2026-07-06")
+	print(r)
+
+functions:
+	string render_report_row(string short_id, string compiler_version, string os, string arch, string severity, string created_at)
+		html:
+			<tr>
+				<td class="report-id">{short_id}</td>
+				<td>{compiler_version}</td>
+				<td>{os}</td>
+				<td>{arch}</td>
+				<td>{severity}</td>
+				<td>{created_at}</td>
+			</tr>

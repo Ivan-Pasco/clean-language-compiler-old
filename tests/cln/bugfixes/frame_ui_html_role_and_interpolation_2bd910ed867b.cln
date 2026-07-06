@@ -1,0 +1,39 @@
+// Test: bugfixes/frame_ui_html_role_and_interpolation_2bd910ed867b
+// Grammar: frame.ui `html:` block (foundation/spec/plugins/frame-ui.ebnf)
+// Regression: dashboard fp 2bd910ed867b.
+//   Error code: SYN001 (raised inside emitted fragment).
+//   Sibling of f967ad3debd1 — same root cause (frame.ui html: attribute
+//   handling), different attribute mix. Reported against a pre-3.2.3
+//   frame.ui: an `html:` block combining `role='tablist'` (single-quoted)
+//   with a `{c_errors}` interpolation inside an attribute value produced
+//   a fragment that failed to re-parse.
+//
+//   Fix: frame.ui 3.2.3 corrected html: attribute-value handling —
+//   including interpolation inside attribute values.
+//
+//   Anchor: this repro combines `role='tablist'`, `aria-label="Sections"`,
+//   `class="{c_errors}"`, and `role='tab'` in one `<nav><a>` structure.
+//   Under compiler 0.33.3+ with frame.ui 3.2.3+, it compiles cleanly.
+//
+//   Note: no `// Fixed in: compiler` marker — runtime output needs
+//   frame.ui host imports that wasmtime_runner does not provide. Anchor
+//   value is in-tree existence + fingerprint reference in commit message.
+
+package: MinimalRepro
+	version: "0.0.1"
+	target: server
+		plugins: [frame.ui]
+
+start:
+	string s = build_tab_strip("errors")
+	print(s)
+
+functions:
+	string build_tab_strip(string active)
+		string c_errors = "tab"
+		if active == "errors"
+			c_errors = "tab active"
+		html:
+			<nav class="tab-strip" role="tablist" aria-label="Sections">
+				<a href="/errors" class="{c_errors}" role="tab">Errors</a>
+			</nav>
