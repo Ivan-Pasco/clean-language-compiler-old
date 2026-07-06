@@ -1596,13 +1596,17 @@ impl MirCodeGenerator<'_> {
                                 "DEBUG LOOKUP: function_map keys: {:?}",
                                 self.wasm_generator.function_map.keys().collect::<Vec<_>>()
                             );
+                            let help = build_did_you_mean_hint(
+                                &function_name,
+                                &self.wasm_generator.function_map,
+                            );
                             return Err(CompilerError::Codegen {
                                 context: Box::new(crate::error::ErrorContext::new(
                                     format!(
                                         "Function '{}' (SymbolId({})) not found in function map during code generation",
                                         function_name, symbol_id.0
                                     ),
-                                    None,
+                                    help,
                                     crate::error::ErrorType::Codegen,
                                     Some(instruction.location.clone()),
                                 )),
@@ -1694,10 +1698,11 @@ impl MirCodeGenerator<'_> {
                             "DEBUG NAMED FUNCTION: Available functions: {:?}",
                             self.wasm_generator.function_map.keys().collect::<Vec<_>>()
                         );
+                        let help = build_did_you_mean_hint(name, &self.wasm_generator.function_map);
                         return Err(CompilerError::Codegen {
                             context: Box::new(crate::error::ErrorContext::new(
                                 format!("Function '{}' not found in function map", name),
-                                None,
+                                help,
                                 crate::error::ErrorType::Codegen,
                                 Some(instruction.location.clone()),
                             )),
@@ -2988,5 +2993,53 @@ impl MirCodeGenerator<'_> {
 
         debug_mir!("any.toString() dispatch complete");
         Ok(())
+    }
+}
+
+/// Build a "did you mean X?" hint for a not-found function name.
+///
+/// Uses:
+/// - A curated list of common legacy misnames (parseInt, toInt, floatVal, …).
+/// - Falls back to a Levenshtein-distance search over the actual function_map
+///   keys so the hint always names something that really exists in this build.
+///
+/// Reported bugs this helps: b6d1b80449d8, 5cdbcb58ee83 (`string.toInt`),
+/// ceb568e0aaa7, 8653d059d75d (`parseInt`), 6e43af3832db (`s.replace` — already
+/// aliased in current builds but appears when a user is on an older cln).
+fn build_did_you_mean_hint(
+    target: &str,
+    function_map: &std::collections::HashMap<String, u32>,
+) -> Option<String> {
+    // Curated fast-path aliases (misname → canonical Clean name).
+    // Kept small and only for high-signal cases so the hint stays trustworthy.
+    let curated: &[(&str, &str)] = &[
+        ("parseInt", "string.toInteger"),
+        ("parseInteger", "string.toInteger"),
+        ("parseFloat", "string.toNumber"),
+        ("parseNumber", "string.toNumber"),
+        ("parseBoolean", "string.toBoolean"),
+        ("string.toInt", "string.toInteger"),
+        ("string.toFloat", "string.toNumber"),
+        ("string.parseInt", "string.toInteger"),
+        ("string.parseFloat", "string.toNumber"),
+        ("Integer.parse", "string.toInteger"),
+        ("Number.parse", "string.toNumber"),
+    ];
+    for (misname, canonical) in curated {
+        if *misname == target && function_map.contains_key(*canonical) {
+            return Some(format!(
+                "'{}' is not a Clean built-in — use `{}` instead. See foundation/spec/stdlib-reference.md.",
+                target, canonical
+            ));
+        }
+    }
+
+    // Fuzzy match: search function_map for near-neighbours of `target`.
+    let keys: Vec<&str> = function_map.keys().map(String::as_str).collect();
+    let suggestions = crate::error::ErrorUtils::suggest_similar_names(target, &keys, 3);
+    if suggestions.is_empty() {
+        None
+    } else {
+        Some(suggestions.join(" "))
     }
 }

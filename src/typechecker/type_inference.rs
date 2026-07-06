@@ -3751,7 +3751,11 @@ impl<'a> TypeInference<'a> {
                                                     "'{}' is private and cannot be accessed from outside '{}'",
                                                     method, owner
                                                 ),
-                                                None,
+                                                Some(format!(
+                                                    "Class methods are private by default (semantic-rules.md §Visibility). \
+                                                     To call `{method}` from outside `{owner}`, move its declaration under a \
+                                                     `public:` sub-section inside `{owner}`'s `functions:` block."
+                                                )),
                                                 crate::error::ErrorType::Validation,
                                                 Some(location.clone()),
                                             )
@@ -3901,13 +3905,24 @@ impl<'a> TypeInference<'a> {
                             .map(|cn| cn == owner)
                             .unwrap_or(false);
                         if !inside_owner {
-                            self.errors.push(CompilerError::validation_error(
-                                format!(
-                                    "'{}' is private and cannot be accessed from outside '{}'",
-                                    field, owner
+                            self.errors.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "'{}' is private and cannot be accessed from outside '{}'",
+                                            field, owner
+                                        ),
+                                        Some(format!(
+                                            "Class fields are private by default (semantic-rules.md §Visibility). \
+                                             To read or write `{field}` from outside `{owner}`, move its declaration \
+                                             under the `public:` sub-section of `{owner}`'s class body."
+                                        )),
+                                        crate::error::ErrorType::Validation,
+                                        Some(location.clone()),
+                                    )
+                                    .with_error_code("SEM005"),
                                 ),
-                                location.clone(),
-                            ));
+                            });
                         }
                     }
                 }
