@@ -1,0 +1,30 @@
+// Test: bugfixes/frame_ui_html_empty_body_no_span_cascade_20bf15897ae0
+// Grammar: frame.ui `html:` block with empty body (frame-ui.ebnf)
+// Regression: dashboard fp 20bf15897ae0.
+//   Error code: DIAG-MISLABEL-HTML-BLOCK-CASCADE
+//   Message: "SEM001 span cascades from empty plugin-expanded body to
+//            the enclosing function's return-type keyword"
+//   Reported against pre-0.33.4 builds — an empty `html:` block (or
+//   one that expanded to nothing) triggered a SEM001 whose source
+//   span was mis-mapped from the expanded (empty) body back to the
+//   enclosing function's return-type keyword. Users saw a confusing
+//   error pointing at `string` in `string render()` instead of at
+//   the empty html: block itself.
+//
+//   Anchor: verify that a `html:` block with no content compiles
+//   cleanly under 0.33.6+ with frame.ui 3.2.3+. The compiler must
+//   tolerate empty html: bodies without producing a mislabelled
+//   SEM001 span.
+
+package: MinimalRepro
+	version: "0.0.1"
+	target: server
+		plugins: [frame.ui]
+
+start:
+	string r = render()
+	print(r)
+
+functions:
+	string render()
+		html:

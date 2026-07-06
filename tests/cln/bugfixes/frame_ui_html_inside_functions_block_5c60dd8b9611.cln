@@ -1,0 +1,32 @@
+// Test: bugfixes/frame_ui_html_inside_functions_block_5c60dd8b9611
+// Grammar: frame.ui `html:` block inside a `functions:` body
+//          (foundation/spec/plugins/frame-ui.ebnf)
+// Regression: dashboard fp 5c60dd8b9611.
+//   Error code: PLUGIN-BRIDGE-MISSING-INLINE-STMT
+//   Message: "Cannot unify types: undefined and string (from frame.ui
+//            html: block inside a functions: body)"
+//   Reported against pre-0.33.4 builds — html: blocks inside
+//   `functions:` bodies failed to unify their emitted expression type
+//   against the surrounding function's return type. The sibling
+//   fingerprint (d01fd0a7...) was closed by typed-emission
+//   Amendment 11's `_emit_expr_from_source` bridge; 5c60dd was the
+//   twin fingerprint from the same regression cluster.
+//
+//   Anchor: exercise an `html:` block as the tail expression of a
+//   `string`-returning function. Under 0.33.6+ with frame.ui 3.2.3+
+//   this compiles cleanly; a regression in typed emission or the
+//   plugin's html: expander would resurface a unification error.
+
+package: MinimalRepro
+	version: "0.0.1"
+	target: server
+		plugins: [frame.ui]
+
+start:
+	string r = render()
+	print(r)
+
+functions:
+	string render()
+		html:
+			<div>hello</div>

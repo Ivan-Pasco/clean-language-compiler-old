@@ -1,0 +1,44 @@
+// Test: bugfixes/codegen_stack_underflow_class_method_409d484628cc
+// Regression: dashboard fp 409d484628cc.
+//   Error code: CODEGEN-STACK-UNDERFLOW-CLASS-METHOD
+//   Message: "generated WebAssembly is invalid: type mismatch:
+//            expected i32 but nothing on stack ... function=func[N]"
+//   Reported against pre-0.33.2 builds — class methods with certain
+//   control-flow shapes (void return with early conditional return,
+//   boolean/integer return without an else branch) emitted WASM
+//   whose stack was empty when the function epilogue expected a
+//   typed return value.
+//
+//   Fix: 49a3ffd0 + 94dee0cd extended the codegen's
+//   `push_zero_for_return_type` fallback so a bare `Return` reachable
+//   as a terminator with `Some(Undefined)` now emits a typed zero
+//   before falling through, covering Bool, F32, Any, and StringTuple
+//   in addition to the original I32/I64/F64 paths.
+//
+//   Anchor: two class-method shapes that previously validation-failed
+//   in the WASM validator. Both should now compile and run cleanly.
+
+start:
+	Box b = Box()
+	b.setValue()
+	print(b.getValue().toString())
+	print(b.getBool().toString())
+
+class Box
+	integer value
+
+	constructor()
+		value = 0
+
+	functions:
+		public:
+			void setValue()
+				value = 42
+
+			integer getValue()
+				return value
+
+			boolean getBool()
+				if value == 0
+					return true
+				return false

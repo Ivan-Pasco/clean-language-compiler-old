@@ -1884,12 +1884,15 @@ impl NameResolver {
             (function.to_string(), function_symbol_opt)
         };
 
-        // If still not found, emit error
+        // If still not found, emit error with a did-you-mean hint when we can
+        // suggest a canonical Clean name for a known misname (parseInt →
+        // string.toInteger, etc.) or a Levenshtein-near existing symbol.
+        // Mirrors the codegen-side hint in mir_codegen/instructions.rs so users
+        // hitting the resolver-side SEM007 get the same actionable suggestion.
         let function_symbol_id = function_symbol_opt.ok_or_else(|| {
-            self.error(
-                &format!("Function '{}' not found", function),
-                location.clone(),
-            );
+            let msg = format!("Function '{}' not found", function);
+            let hint = self.did_you_mean_function(&function);
+            self.error_with_help(&msg, hint, location.clone(), "SEM007");
         })?;
 
         let mut resolved_arguments = Vec::new();
@@ -3084,6 +3087,86 @@ impl NameResolver {
                 .with_error_code(code),
             ),
         });
+    }
+
+    /// Report an error carrying an optional `help:` hint and an explicit error code.
+    fn error_with_help(
+        &mut self,
+        message: &str,
+        help: Option<String>,
+        location: SourceLocation,
+        code: &str,
+    ) {
+        self.errors.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    message,
+                    None,
+                    crate::error::ErrorType::Validation,
+                    Some(location),
+                )
+                .with_error_code(code)
+                .with_help_option(help),
+            ),
+        });
+    }
+
+    /// Build a "did you mean?" hint for an unresolved function name.
+    ///
+    /// First tries a curated table of common legacy misnames (parseInt →
+    /// string.toInteger, etc.); falls back to a Levenshtein-near neighbour
+    /// search over the symbol table so the hint always names something that
+    /// exists in the current build. Mirrors `build_did_you_mean_hint` in
+    /// `src/codegen/mir_codegen/instructions.rs`.
+    ///
+    /// Reported bugs this helps: ceb568e0aaa7, 8653d059d75d (`parseInt`
+    /// at resolver stage), fd9d187c30a0 (function `t` not found).
+    fn did_you_mean_function(&self, target: &str) -> Option<String> {
+        let curated: &[(&str, &str)] = &[
+            ("parseInt", "string.toInteger"),
+            ("parseInteger", "string.toInteger"),
+            ("parseFloat", "string.toNumber"),
+            ("parseNumber", "string.toNumber"),
+            ("parseBoolean", "string.toBoolean"),
+            ("string.toInt", "string.toInteger"),
+            ("string.toFloat", "string.toNumber"),
+            ("string.parseInt", "string.toInteger"),
+            ("string.parseFloat", "string.toNumber"),
+            ("Integer.parse", "string.toInteger"),
+            ("Number.parse", "string.toNumber"),
+        ];
+        for (misname, canonical) in curated {
+            if *misname == target {
+                // Skip the symbol-table existence check: at resolver stage the
+                // canonical name (e.g. `string.toInteger`) may not yet be visible
+                // as a symbol — dotted namespace methods are resolved via
+                // MethodCall dispatch, not standalone Call lookup. The curated
+                // table is small and hand-audited, so returning it unconditionally
+                // is safe and matches the codegen-side behavior once dispatch has
+                // registered the dotted alias.
+                return Some(format!(
+                    "'{}' is not a Clean built-in — use `{}` instead. See foundation/spec/stdlib-reference.md.",
+                    target, canonical
+                ));
+            }
+        }
+
+        // Fuzzy match: collect symbol names from the table and rank by
+        // Levenshtein distance. Only suggest when we have at least one strong
+        // match — otherwise stay silent rather than pointing at unrelated code.
+        let names: Vec<String> = self
+            .symbol_table
+            .all_symbols()
+            .values()
+            .map(|s| s.name.clone())
+            .collect();
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let suggestions = crate::error::ErrorUtils::suggest_similar_names(target, &name_refs, 3);
+        if suggestions.is_empty() {
+            None
+        } else {
+            Some(suggestions.join(" "))
+        }
     }
 
     /// Register builtin functions in the symbol table to allow validation
