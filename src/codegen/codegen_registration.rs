@@ -521,6 +521,15 @@ impl super::CodeGenerator {
             self.add_function_alias("string.toInteger", sti_idx);
         }
 
+        // Route string.toNumber to the host-imported string_to_float parser.
+        // Without this alias, string.toNumber resolves to the generic value-decoding
+        // body from method_style.rs which reads the length prefix as an integer and
+        // converts THAT to f64 — so "3.14".toNumber() returns 4.0. Aliasing here mirrors
+        // the string.toInteger → __string_to_int wiring above.
+        if let Some(stf_idx) = self.get_function_index("string_to_float") {
+            self.add_function_alias("string.toNumber", stf_idx);
+        }
+
         // NATIVE: list_get_i32 - get element from i32 list
         // Parameters: list_ptr (i32), index (i32)
         // Returns: element (i32)
