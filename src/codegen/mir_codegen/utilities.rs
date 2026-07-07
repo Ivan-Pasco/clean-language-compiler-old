@@ -37,6 +37,39 @@ fn bridge_is_host_mismatched(host_class: Option<&str>, bridge_hosts: Option<&[St
     !hosts.iter().any(|h| h == "all" || h == host_class)
 }
 
+/// Param indices that must be widened `i32 → i64` (via `i64.extend_i32_s`)
+/// before the raw host call, because the host declares them as i64 while the
+/// Clean caller supplies `integer` (i32). Empty for bridges without any i64
+/// param.
+///
+/// Bridge-specific override rather than a general schema field: the plugin.toml
+/// `params` schema only understands `"integer"` and cannot spell width
+/// (bug b1babb1048f1 / COMPILER-REGISTRY-SNAPSHOT-STALE). If more bridges join
+/// this list, promote to a plugin.toml/registry field.
+///
+/// Verified against `clean-server/src/bridge.rs`:
+/// * `_auth_create_reset_token(i64 user_id, i64 ttl_seconds) -> i32`  (line 2141)
+/// * `_jwt_refresh_and_rotate(string,string,string, i64 new_ttl_seconds) -> ptr` (line 2233)
+/// * `_auth_consume_reset_token(string) -> i64` — return handled by `returns_i64_at_host`.
+fn i64_extend_param_indices_for(bridge_name: &str) -> Vec<usize> {
+    match bridge_name {
+        "_auth_create_reset_token" => vec![0, 1],
+        // `_jwt_refresh_and_rotate` params: three strings (each expanded to
+        // ptr+len by the string-expansion wrapper) plus i64 ttl. Positions
+        // refer to `param_types` (Clean-language positions), NOT raw WASM
+        // positions, so the ttl is at index 3 (after three strings).
+        "_jwt_refresh_and_rotate" => vec![3],
+        _ => Vec::new(),
+    }
+}
+
+/// True when the host declares an i64 return while the Clean caller expects
+/// `integer` (i32). Wrapper applies `i32.wrap_i64` post-call. Same rationale
+/// and precedent (`_time_now`) as `i64_extend_param_indices_for`.
+fn returns_i64_at_host(bridge_name: &str) -> bool {
+    matches!(bridge_name, "_auth_consume_reset_token")
+}
+
 impl MirCodeGenerator<'_> {
     // -------------------------------------------------------------------------
     // Type helpers
@@ -1498,16 +1531,6 @@ impl MirCodeGenerator<'_> {
             )
         }
 
-        // Helper: insert a function name AND expand language aliases to bridge names so
-        // that bridge imports whose names start with `_res_`, `_req_`, etc. are not
-        // incorrectly tree-shaken when only the alias appears in the MIR call graph.
-        let insert_name = |names: &mut HashSet<String>, name: &str| {
-            names.insert(name.to_string());
-            if let Some(bridge_name) = self.language_to_bridge_map.get(name) {
-                names.insert(bridge_name.clone());
-            }
-        };
-
         // Build a name→SymbolId reverse map so NamedFunction calls can be
         // resolved to their MIR body even when symbol_id is the shared
         // SymbolId(0) placeholder used for all stdlib namespace functions.
@@ -1517,6 +1540,35 @@ impl MirCodeGenerator<'_> {
                 .iter()
                 .map(|(sym, f)| (f.name.clone(), *sym))
                 .collect();
+
+        // Helper: insert a function name AND expand language aliases to bridge names so
+        // that bridge imports whose names start with `_res_`, `_req_`, etc. are not
+        // incorrectly tree-shaken when only the alias appears in the MIR call graph.
+        //
+        // Also expand plugin-emitted helper aliases: when a language name resolves
+        // via `language_to_helper_map` (e.g. `auth.jwt.sign` → `jwt_sign`) the
+        // helper function was appended to `program.functions` during framework
+        // block expansion. Insert its name so bridge imports called from the
+        // helper's body are not tree-shaken. The helper's SymbolId is added to
+        // the BFS worklist so its body is walked (bug c96f15c65a23 —
+        // FRAME-AUTH-JWT-HELPERS-UNREACHABLE follow-up).
+        let insert_name = |names: &mut HashSet<String>,
+                           worklist: &mut Vec<crate::resolver::SymbolId>,
+                           visited: &mut HashSet<crate::resolver::SymbolId>,
+                           name: &str| {
+            names.insert(name.to_string());
+            if let Some(bridge_name) = self.language_to_bridge_map.get(name) {
+                names.insert(bridge_name.clone());
+            }
+            if let Some(helper_name) = self.language_to_helper_map.get(name) {
+                names.insert(helper_name.clone());
+                if let Some(&helper_sym) = name_to_symbol.get(helper_name.as_str()) {
+                    if visited.insert(helper_sym) {
+                        worklist.push(helper_sym);
+                    }
+                }
+            }
+        };
 
         // Layer-3 (server-only) bridge names sourced from plugin manifests.
         // Replaces the previous hardcoded `_http_*`, `_req_*`, … prefix list
@@ -1654,7 +1706,7 @@ impl MirCodeGenerator<'_> {
                     match &instruction.operation {
                         MirOperation::Call { function, .. } => match function {
                             MirOperand::NamedFunction { name, symbol_id } => {
-                                insert_name(&mut names, name);
+                                insert_name(&mut names, &mut worklist, &mut visited, name);
                                 // symbol_id is SymbolId(0) for all stdlib/namespace
                                 // functions; resolve by name for user-defined callees.
                                 let callee = if symbol_id.0 != 0 {
@@ -1670,7 +1722,7 @@ impl MirCodeGenerator<'_> {
                             }
                             MirOperand::Function(callee_sym) => {
                                 if let Some(name) = mir_program.symbol_name_map.get(callee_sym) {
-                                    insert_name(&mut names, name);
+                                    insert_name(&mut names, &mut worklist, &mut visited, name);
                                 }
                                 if visited.insert(*callee_sym) {
                                     worklist.push(*callee_sym);
@@ -1694,7 +1746,7 @@ impl MirCodeGenerator<'_> {
                             source: MirOperand::Function(callee_sym),
                         } => {
                             if let Some(name) = mir_program.symbol_name_map.get(callee_sym) {
-                                insert_name(&mut names, name);
+                                insert_name(&mut names, &mut worklist, &mut visited, name);
                             }
                             if visited.insert(*callee_sym) {
                                 worklist.push(*callee_sym);
@@ -1765,7 +1817,7 @@ impl MirCodeGenerator<'_> {
                                         function: MirOperand::NamedFunction { name, symbol_id },
                                         ..
                                     } => {
-                                        insert_name(&mut names, name);
+                                        insert_name(&mut names, &mut worklist, &mut visited, name);
                                         let callee = if symbol_id.0 != 0 {
                                             Some(*symbol_id)
                                         } else {
@@ -1784,7 +1836,12 @@ impl MirCodeGenerator<'_> {
                                         if let Some(name) =
                                             mir_program.symbol_name_map.get(callee_sym)
                                         {
-                                            insert_name(&mut names, name);
+                                            insert_name(
+                                                &mut names,
+                                                &mut worklist,
+                                                &mut visited,
+                                                name,
+                                            );
                                         }
                                         if visited.insert(*callee_sym) {
                                             worklist.push(*callee_sym);
@@ -1796,7 +1853,12 @@ impl MirCodeGenerator<'_> {
                                         if let Some(name) =
                                             mir_program.symbol_name_map.get(callee_sym)
                                         {
-                                            insert_name(&mut names, name);
+                                            insert_name(
+                                                &mut names,
+                                                &mut worklist,
+                                                &mut visited,
+                                                name,
+                                            );
                                         }
                                         if visited.insert(*callee_sym) {
                                             worklist.push(*callee_sym);
@@ -1895,7 +1957,7 @@ impl MirCodeGenerator<'_> {
                             ..
                         } if sym.0 >= 1000 => {
                             if let Some(name) = mir_program.symbol_name_map.get(sym) {
-                                insert_name(&mut names, name);
+                                insert_name(&mut names, &mut worklist, &mut visited, name);
                             }
                         }
                         // NamedFunction calls to non-Layer3 functions in dead code.
@@ -1912,7 +1974,7 @@ impl MirCodeGenerator<'_> {
                             function: MirOperand::NamedFunction { name, .. },
                             ..
                         } if !server_only_bridge_names.contains(name) => {
-                            insert_name(&mut names, name);
+                            insert_name(&mut names, &mut worklist, &mut visited, name);
                         }
                         MirOperation::BinaryOp {
                             op: MirBinaryOp::Eq | MirBinaryOp::Ne,
@@ -2364,12 +2426,23 @@ impl MirCodeGenerator<'_> {
                 func.expand_strings && param_types.iter().any(|t| matches!(t, BuiltinType::String));
 
             if needs_wrapper {
-                // Build expanded signature for raw import (strings → ptr, len pairs)
+                // Bridges whose ABI declares specific integer params as i64 while
+                // Clean callers pass i32 `integer` values. Precedent: `_time_now`
+                // uses a return-side wrap; here we widen selected param slots
+                // pre-call (`i64.extend_i32_s`). See `i64_extend_param_indices_for`
+                // for the bridge-name → param-position map.
+                let extend_i32_to_i64_param_indices: Vec<usize> =
+                    i64_extend_param_indices_for(&func.name);
+
+                // Build expanded signature for raw import (strings → ptr, len pairs).
+                // Widen slots listed in `extend_i32_to_i64_param_indices` to i64.
                 let mut raw_wasm_params = Vec::new();
-                for param_type in &param_types {
+                for (idx, param_type) in param_types.iter().enumerate() {
                     if matches!(param_type, BuiltinType::String) {
                         raw_wasm_params.push(WasmType::I32); // ptr
                         raw_wasm_params.push(WasmType::I32); // len
+                    } else if extend_i32_to_i64_param_indices.contains(&idx) {
+                        raw_wasm_params.push(WasmType::I64);
                     } else {
                         raw_wasm_params.push(Self::builtin_type_to_wasm_type(param_type));
                     }
@@ -2428,6 +2501,7 @@ impl MirCodeGenerator<'_> {
                     raw_func_index,
                     param_types: param_types.clone(),
                     wrap_i64: false,
+                    extend_i32_to_i64_param_indices,
                 });
             } else if func.name == "_time_now" {
                 // _time_now is a special case: the host bridge contract specifies () -> i64
@@ -2463,9 +2537,80 @@ impl MirCodeGenerator<'_> {
                         raw_func_index: raw_index,
                         param_types: vec![],
                         wrap_i64: true,
+                        extend_i32_to_i64_param_indices: Vec::new(),
                     },
                 );
             } else {
+                // Bridges without string params but whose ABI needs i32↔i64 width
+                // adjustment (e.g. `_auth_create_reset_token(i64, i64) -> i32` and
+                // `_auth_consume_reset_token(i32, i32) -> i64`). Compute overrides
+                // separate from the plain direct-import path so we can either
+                // register a wrapper or fall through unchanged.
+                let extend_i32_to_i64_param_indices: Vec<usize> =
+                    i64_extend_param_indices_for(&func.name);
+                let needs_wrap_i64_return = returns_i64_at_host(&func.name);
+
+                if !extend_i32_to_i64_param_indices.is_empty() || needs_wrap_i64_return {
+                    // Register the raw import with adjusted widths, then defer a
+                    // wrapper that presents Clean-i32-facing params/return.
+                    let mut raw_wasm_params = Vec::new();
+                    for (idx, param_type) in param_types.iter().enumerate() {
+                        if extend_i32_to_i64_param_indices.contains(&idx) {
+                            raw_wasm_params.push(WasmType::I64);
+                        } else {
+                            raw_wasm_params.push(Self::builtin_type_to_wasm_type(param_type));
+                        }
+                    }
+
+                    let raw_wasm_return = if needs_wrap_i64_return {
+                        Some(WasmType::I64)
+                    } else {
+                        match &return_type {
+                            BuiltinType::Void => None,
+                            _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                        }
+                    };
+
+                    let raw_func_index = self.wasm_generator.register_import_function(
+                        module,
+                        &func.name,
+                        &raw_wasm_params,
+                        raw_wasm_return,
+                    )?;
+
+                    if raw_func_index == u32::MAX {
+                        continue;
+                    }
+
+                    let wrapper_params: Vec<WasmType> = param_types
+                        .iter()
+                        .map(Self::builtin_type_to_wasm_type)
+                        .collect();
+                    let wrapper_return = match &return_type {
+                        BuiltinType::Void => None,
+                        _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                    };
+
+                    tracing::debug!(
+                        name = %func.name,
+                        raw_index = raw_func_index,
+                        widen = ?extend_i32_to_i64_param_indices,
+                        wrap_return = needs_wrap_i64_return,
+                        "Registered auth-style bridge with i64 ABI; deferring wrapper"
+                    );
+
+                    self.pending_bridge_wrappers.push(PendingBridgeWrapper {
+                        name: func.name.clone(),
+                        params: wrapper_params,
+                        wasm_return: wrapper_return,
+                        raw_func_index,
+                        param_types: param_types.clone(),
+                        wrap_i64: needs_wrap_i64_return,
+                        extend_i32_to_i64_param_indices,
+                    });
+                    continue;
+                }
+
                 let wasm_params: Vec<WasmType> = param_types
                     .iter()
                     .map(Self::builtin_type_to_wasm_type)
@@ -2537,7 +2682,7 @@ impl MirCodeGenerator<'_> {
             let mut wrapper_instructions = Vec::new();
             let mut local_idx = 0u32;
 
-            for param_type in wrapper.param_types.iter() {
+            for (idx, param_type) in wrapper.param_types.iter().enumerate() {
                 if matches!(param_type, BuiltinType::String) {
                     // Expand Clean string (ptr → [len][content]) to (ptr+4, len)
                     wrapper_instructions.push(Instruction::LocalGet(local_idx));
@@ -2554,6 +2699,12 @@ impl MirCodeGenerator<'_> {
                     local_idx += 1;
                 } else {
                     wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    // Widen i32 → i64 for slots whose raw host signature declares
+                    // i64 while the Clean caller supplies i32. See
+                    // `i64_extend_param_indices_for` for the bridge-name map.
+                    if wrapper.extend_i32_to_i64_param_indices.contains(&idx) {
+                        wrapper_instructions.push(Instruction::I64ExtendI32S);
+                    }
                     local_idx += 1;
                 }
             }
