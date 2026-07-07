@@ -437,6 +437,26 @@ impl CodeGenerator {
         self.reachable_imports = Some(reachable);
     }
 
+    /// Add additional bridge names to the reachability set after the initial
+    /// BFS scan. Bug 99fd4557f821: the BFS excludes server-only bridges found
+    /// in preamble bodies, but the plain-walk in `collect_used_function_names_from_mir`
+    /// correctly identifies them as reachable via retained preamble helpers.
+    /// This function unions those late-discovered names into `reachable_imports`
+    /// so `emit_import` (and by extension `register_http_imports`) no longer
+    /// tree-shakes them.
+    ///
+    /// No-op when reachability has not been populated.
+    pub fn extend_reachable_imports<'a, I>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        if let Some(set) = self.reachable_imports.as_mut() {
+            for name in names {
+                set.insert(name.to_string());
+            }
+        }
+    }
+
     /// Returns true if any reachable call name starts with the given prefix.
     /// Used by stdlib class registration to decide whether to generate
     /// wrapper functions (e.g. skip HttpClass wrappers entirely when no

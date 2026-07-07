@@ -571,6 +571,31 @@ impl MirCodeGenerator<'_> {
 
             self.wasm_generator.set_reachable_imports(reachable);
 
+            // Bug 99fd4557f821 — Union the BFS reachable set with the plain-walk
+            // scan over used bridge functions BEFORE any import registration.
+            //
+            // The BFS-based reachability scan (collect_all_called_names_from_mir)
+            // and the flat-scan (line 1886+) together intentionally exclude
+            // server-only bridges found in dead code and in preamble bodies.
+            // But when a preamble helper (like frame.server's `jsonResponse`,
+            // location.file == "<plugin-output>") IS retained by DCE at codegen
+            // time, its bridge calls (e.g. `_http_respond`) must appear in
+            // reachable_imports — otherwise `emit_import` tree-shakes them and
+            // codegen fails with COD000 "Function '_http_respond' not found in
+            // function map" when compiling the retained helper's body.
+            //
+            // Fix: run collect_used_function_names_from_mir now, then extend
+            // reachable_imports with every bridge name it found. This runs the
+            // scan twice (once here, once at line 663 for register_plugin_bridge_imports),
+            // but the scan is a linear MIR walk and the cost is negligible.
+            if !self.bridge_functions.is_empty() {
+                self.collect_used_function_names_from_mir(&mir_program);
+                let extra_names: Vec<String> =
+                    self.used_bridge_function_names.iter().cloned().collect();
+                self.wasm_generator
+                    .extend_reachable_imports(extra_names.iter().map(String::as_str));
+            }
+
             self.wasm_generator
                 .register_print_imports()
                 .map_err(|e| vec![e])?;
