@@ -63,6 +63,21 @@ keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
+// Soft-keyword identifiers — the type-name keywords (`number`, `string`,
+// `boolean`, `list`, `matrix`, `pairs`, `void`, `any`) are also valid variable
+// / parameter / argument names in Clean Language. Type contexts (`variable_type`,
+// `type_`, `type_apply_block`) already try `core_type` / `list_type` etc.
+// before falling through to `identifier`, so admitting these words as bare
+// identifiers via a fallback rule cannot displace a real type match.
+// Fingerprint ff689b2222b3 (2026-07-06): the Pest `keyword` rule blocked
+// `_html_escape(number)` from parsing via `_emit_stmt_from_source`, breaking
+// html: block interpolation whose slot binding happened to be named after
+// a type. This rule mirrors what SpecificationParser (token_parser.rs)
+// already accepts. `integer` is not listed because the Pest grammar already
+// admits it as an identifier — `"in"` appears earlier in `keyword`'s
+// alternation and prevents `keyword` from matching `"integer"`.
+soft_keyword_identifier = @{ ("number" | "string" | "boolean" | "list" | "matrix" | "pairs" | "void" | "any") ~ !(ASCII_ALPHANUMERIC | "_") }
+
 // Extended numeric literals
 hex_integer = @{ "-"? ~ "0" ~ ("x" | "X") ~ ASCII_HEX_DIGIT+ }
 binary_integer = @{ "-"? ~ "0" ~ ("b" | "B") ~ ASCII_BIN_DIGIT+ }
@@ -278,7 +293,12 @@ method_name = { identifier | "greaterThan" | "lessThan" | "equal" | "greaterEqua
 method_call_segment = { "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
 
 // FIXED: Use atomic postfix repetition to avoid left recursion
-chained_method_call = { (function_call | property_access | identifier) ~ method_call_segment+ }
+// Fingerprint 0f628d47cad7 (2026-07-06): added constructor_call so `Foo().bar()`
+// method chains after a class constructor parse via the ErrorRecoveringParser
+// path (used by `_emit_stmt_from_source`, the v3 plugin bridge for parsing
+// user-authored fragments). constructor_call must come before function_call so
+// Pest matches the class_name (`Foo`) branch first for uppercase-starting names.
+chained_method_call = { (constructor_call | function_call | property_access | identifier) ~ method_call_segment+ }
 
 // Multiple chained method calls (2 or more method calls in sequence)
 multiple_method_call = { method_call_base ~ method_call_segment ~ method_call_segment+ }
@@ -324,8 +344,6 @@ primary = {
     parenthesized_method_call |
     // Parenthesized expressions - flexible indentation for multiline expressions
     "(" ~ parenthesized_expr ~ ")" |
-    // Complex patterns that might partially match - put after literals
-    constructor_call |
     // base_call must come AFTER base_identifier to allow "base" as variable name
     // It requires "base(", not just "base", so it's unambiguous
     base_call |
@@ -338,7 +356,14 @@ primary = {
     namespace_function_call |
     // Multiple method calls MUST come before single method calls for proper chaining
     multiple_method_call |
+    // chained_method_call must come BEFORE constructor_call so that
+    // `Foo().bar()` is treated as constructor + method chain rather than just
+    // `Foo()` — Pest commits to the first successful alternative and does not
+    // backtrack once constructor_call swallows `Foo()`. Same reasoning applies
+    // to function_call: `foo().bar()` must be a chained call, not `foo()` +
+    // orphan `.bar()`. Fingerprint 0f628d47cad7 (2026-07-06).
     chained_method_call |
+    constructor_call |
     method_call |
     function_call |
     static_method_call |
@@ -349,7 +374,12 @@ primary = {
     // "base" can be both a keyword (for base() calls) and a variable/parameter name
     // Check it explicitly before general identifier to allow it as a variable
     base_identifier |
-    identifier
+    identifier |
+    // Fingerprint ff689b2222b3 (2026-07-06): after `identifier` fails on a
+    // type-name keyword (e.g. `number`, `string`), accept it as a bare
+    // variable reference. Placed last so real identifiers and type-context
+    // rules (core_type, list_type, etc.) always win.
+    soft_keyword_identifier
 }
 
 // Special rule to allow "base" as a variable/parameter name

@@ -806,7 +806,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 location: convert_to_ast_location(&location),
             })
         }
-        Rule::identifier | Rule::base_identifier => {
+        Rule::identifier | Rule::base_identifier | Rule::soft_keyword_identifier => {
             let identifier = inner.as_str();
             Ok(Expression::Variable(identifier.to_string()))
         }
@@ -1119,7 +1119,7 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
         // BOOK: null-support - Parse null literal
         Rule::none_literal => Ok(Expression::Literal(Value::None)),
         Rule::string => parse_string(inner),
-        Rule::identifier | Rule::base_identifier => {
+        Rule::identifier | Rule::base_identifier | Rule::soft_keyword_identifier => {
             let identifier = inner.as_str();
             Ok(Expression::Variable(identifier.to_string()))
         }
@@ -1981,6 +1981,10 @@ pub fn parse_chained_method_call(pair: Pair<Rule>) -> Result<Expression, Compile
         match base_pair.as_rule() {
             Rule::static_method_call => parse_static_method_call(base_pair)?,
             Rule::function_call => parse_function_call(base_pair)?,
+            // Fingerprint 0f628d47cad7: `Foo().bar()` — the constructor_call
+            // arm of chained_method_call handed us a class instantiation whose
+            // result should feed the trailing method_call_segment+.
+            Rule::constructor_call => parse_constructor_call(base_pair)?,
             Rule::property_access => parse_property_access(base_pair)?,
             Rule::identifier | Rule::base_identifier => {
                 // Identifier base - treat as variable reference or namespace
@@ -1993,7 +1997,7 @@ pub fn parse_chained_method_call(pair: Pair<Rule>) -> Result<Expression, Compile
                 ),
                 None,
                 Some(
-                    "Expected static method call, function call, property access, or identifier"
+                    "Expected static method call, function call, constructor call, property access, or identifier"
                         .to_string(),
                 ),
             )),
