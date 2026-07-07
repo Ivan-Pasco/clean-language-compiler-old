@@ -842,12 +842,23 @@ pub struct PluginCompletionDef {
 }
 
 impl BridgeFunction {
-    /// Convert a string type from plugin.toml to BuiltinType
+    /// Convert a string type from plugin.toml to BuiltinType.
+    ///
+    /// Accepts the base spellings ("string", "integer", "number", "boolean",
+    /// "void", "handler", "ptr") AND the v2 tagged forms
+    /// ("integer:i64", "string:lp") — both collapse to the same BuiltinType
+    /// at the language level. Width information is preserved separately via
+    /// [`Self::param_raw_wasm_type`] / [`Self::return_raw_wasm_type`] so
+    /// codegen can select `i64` for imports while the Clean-facing signature
+    /// stays `integer` (i32).
     pub fn parse_type(type_str: &str) -> crate::builtins::registry::BuiltinType {
         use crate::builtins::registry::BuiltinType;
-        match type_str.to_lowercase().as_str() {
+        // Strip tagged suffix ("integer:i64" → "integer") so language-level
+        // typing is unaffected by the raw WASM width tag.
+        let base = type_str.split(':').next().unwrap_or(type_str);
+        match base.to_lowercase().as_str() {
             "string" => BuiltinType::String,
-            "integer" | "int" | "i32" => BuiltinType::Integer,
+            "integer" | "int" | "i32" | "i64" | "long" => BuiltinType::Integer,
             "number" | "float" | "f64" => BuiltinType::Number,
             "boolean" | "bool" => BuiltinType::Boolean,
             "void" | "" => BuiltinType::Void,
@@ -868,6 +879,30 @@ impl BridgeFunction {
     /// Get return type as BuiltinType
     pub fn get_return_type(&self) -> crate::builtins::registry::BuiltinType {
         Self::parse_type(&self.returns)
+    }
+
+    /// True when the given param's raw WASM ABI is i64.
+    ///
+    /// Recognized spellings: bare `"i64"` / `"long"`, or the v2 tagged form
+    /// `"integer:i64"`. All other spellings return false — the wrapper path
+    /// then falls through to `builtin_type_to_wasm_type` which maps
+    /// `integer → i32`.
+    pub fn param_is_i64(&self, idx: usize) -> bool {
+        self.params
+            .get(idx)
+            .map(|s| Self::type_str_is_i64(s))
+            .unwrap_or(false)
+    }
+
+    /// True when the return type's raw WASM ABI is i64. Same rules as
+    /// [`Self::param_is_i64`].
+    pub fn return_is_i64(&self) -> bool {
+        Self::type_str_is_i64(&self.returns)
+    }
+
+    fn type_str_is_i64(s: &str) -> bool {
+        let lower = s.to_lowercase();
+        lower == "i64" || lower == "long" || lower == "integer:i64" || lower == "int:i64"
     }
 }
 

@@ -37,37 +37,24 @@ fn bridge_is_host_mismatched(host_class: Option<&str>, bridge_hosts: Option<&[St
     !hosts.iter().any(|h| h == "all" || h == host_class)
 }
 
-/// Param indices that must be widened `i32 → i64` (via `i64.extend_i32_s`)
-/// before the raw host call, because the host declares them as i64 while the
-/// Clean caller supplies `integer` (i32). Empty for bridges without any i64
-/// param.
-///
-/// Bridge-specific override rather than a general schema field: the plugin.toml
-/// `params` schema only understands `"integer"` and cannot spell width
-/// (bug b1babb1048f1 / COMPILER-REGISTRY-SNAPSHOT-STALE). If more bridges join
-/// this list, promote to a plugin.toml/registry field.
-///
-/// Verified against `clean-server/src/bridge.rs`:
-/// * `_auth_create_reset_token(i64 user_id, i64 ttl_seconds) -> i32`  (line 2141)
-/// * `_jwt_refresh_and_rotate(string,string,string, i64 new_ttl_seconds) -> ptr` (line 2233)
-/// * `_auth_consume_reset_token(string) -> i64` — return handled by `returns_i64_at_host`.
-fn i64_extend_param_indices_for(bridge_name: &str) -> Vec<usize> {
-    match bridge_name {
-        "_auth_create_reset_token" => vec![0, 1],
-        // `_jwt_refresh_and_rotate` params: three strings (each expanded to
-        // ptr+len by the string-expansion wrapper) plus i64 ttl. Positions
-        // refer to `param_types` (Clean-language positions), NOT raw WASM
-        // positions, so the ttl is at index 3 (after three strings).
-        "_jwt_refresh_and_rotate" => vec![3],
-        _ => Vec::new(),
-    }
+/// Param indices whose raw WASM ABI is i64 while the Clean-facing signature
+/// stays i32. Reads the bridge's own declaration
+/// ([`crate::plugins::BridgeFunction::param_is_i64`]) so no plugin-name
+/// knowledge lives in the compiler codegen path — the abstraction boundary
+/// stays intact. Wrapper inserts `i64.extend_i32_s` on each returned index
+/// before the raw call.
+fn i64_extend_param_indices_for(func: &crate::plugins::BridgeFunction) -> Vec<usize> {
+    (0..func.params.len())
+        .filter(|&i| func.param_is_i64(i))
+        .collect()
 }
 
 /// True when the host declares an i64 return while the Clean caller expects
-/// `integer` (i32). Wrapper applies `i32.wrap_i64` post-call. Same rationale
-/// and precedent (`_time_now`) as `i64_extend_param_indices_for`.
-fn returns_i64_at_host(bridge_name: &str) -> bool {
-    matches!(bridge_name, "_auth_consume_reset_token")
+/// `integer` (i32). Reads
+/// [`crate::plugins::BridgeFunction::return_is_i64`]. Wrapper applies
+/// `i32.wrap_i64` post-call. Same precedent as `_time_now`.
+fn returns_i64_at_host(func: &crate::plugins::BridgeFunction) -> bool {
+    func.return_is_i64()
 }
 
 impl MirCodeGenerator<'_> {
@@ -2429,10 +2416,12 @@ impl MirCodeGenerator<'_> {
                 // Bridges whose ABI declares specific integer params as i64 while
                 // Clean callers pass i32 `integer` values. Precedent: `_time_now`
                 // uses a return-side wrap; here we widen selected param slots
-                // pre-call (`i64.extend_i32_s`). See `i64_extend_param_indices_for`
-                // for the bridge-name → param-position map.
+                // pre-call (`i64.extend_i32_s`). The widths come from the plugin's
+                // own declaration (`param_is_i64` on BridgeFunction), so this file
+                // stays free of plugin-name knowledge — see
+                // `no_new_plugin_bridge_knowledge_outside_abstraction_boundary`.
                 let extend_i32_to_i64_param_indices: Vec<usize> =
-                    i64_extend_param_indices_for(&func.name);
+                    i64_extend_param_indices_for(func);
 
                 // Build expanded signature for raw import (strings → ptr, len pairs).
                 // Widen slots listed in `extend_i32_to_i64_param_indices` to i64.
@@ -2547,8 +2536,8 @@ impl MirCodeGenerator<'_> {
                 // separate from the plain direct-import path so we can either
                 // register a wrapper or fall through unchanged.
                 let extend_i32_to_i64_param_indices: Vec<usize> =
-                    i64_extend_param_indices_for(&func.name);
-                let needs_wrap_i64_return = returns_i64_at_host(&func.name);
+                    i64_extend_param_indices_for(func);
+                let needs_wrap_i64_return = returns_i64_at_host(func);
 
                 if !extend_i32_to_i64_param_indices.is_empty() || needs_wrap_i64_return {
                     // Register the raw import with adjusted widths, then defer a
