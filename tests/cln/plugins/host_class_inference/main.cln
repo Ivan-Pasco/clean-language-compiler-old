@@ -1,0 +1,11 @@
+// Bug 270f8fc643db: `cln compile` with no --target defaulted to `server` and
+// failed with BRIDGE-HOST-MISMATCH when the only reachable bridge is
+// browser-restricted. With --target=auto (the new default) the compiler
+// infers host_class from the reachable bridge calls.
+
+external:
+	integer _ui_observe_visible(string selector, string css_class)
+
+start:
+	integer s = _ui_observe_visible(".animate-on-scroll", "animated")
+	printl("ok")

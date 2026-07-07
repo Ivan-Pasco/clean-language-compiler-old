@@ -434,7 +434,15 @@ pub fn strict_emission_ops_override() -> bool {
 pub fn target_to_host_class(target: &str) -> Option<&'static str> {
     match target.to_lowercase().as_str() {
         "browser" | "web" => Some("browser"),
-        "node" | "nodejs" | "server" | "wasi" | "native" | "auto" | "embedded" => Some("server"),
+        "node" | "nodejs" | "server" | "wasi" | "native" | "embedded" => Some("server"),
+        // "auto" — the compiler will infer host_class from the reachable
+        // bridge functions; if inference is ambiguous the compile path falls
+        // back to "server". Returning None here means the CLI leaves the
+        // thread-local override unset, so the inference step runs.
+        // Fixes BRIDGE-HOST-MISMATCH bug 270f8fc643db: standalone .cln files
+        // that only reach browser-only bridges (e.g. `ui.observeVisible`)
+        // no longer default to `server` and fail validation.
+        "auto" => None,
         _ => None,
     }
 }
@@ -2966,7 +2974,12 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     //   1. CLI-supplied override via `set_target_host_class_override` (thread-local),
     //      typically set by `handle_compile` from `--target browser|node|server`.
     //   2. client_mode flag — the nested `frontend.wasm` build forces "browser".
-    //   3. "server" default.
+    //   3. Bridge-call inference — if every reachable browser/server-restricted
+    //      bridge accepts `browser`, pick `browser`. Fixes 270f8fc643db so
+    //      standalone client entries (`cln compile app/client/main.cln`) that
+    //      only call `ui.*` no longer misdefault to `server` and fail with
+    //      BRIDGE-HOST-MISMATCH. See infer_host_class_from_mir.
+    //   4. "server" default.
     //
     // See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
     //
@@ -2976,6 +2989,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     let host_class = target_host_class_override().unwrap_or_else(|| {
         if client_mode {
             "browser".to_string()
+        } else if let Some(inferred) = mir_codegen.infer_host_class_from_mir(&mir_result.program) {
+            inferred
         } else {
             "server".to_string()
         }
@@ -3366,7 +3381,13 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     // browser-targeted WASM. Without this, the release path silently kept
     // bridge enforcement disabled and emitted server stubs for every
     // browser-only bridge function. See bridge-host-classes.md §6.
-    let host_class = target_host_class_override().unwrap_or_else(|| "server".to_string());
+    // Matches the debug path's fallback order (override → inference → server).
+    // Fixes 270f8fc643db for release builds too.
+    let host_class = target_host_class_override().unwrap_or_else(|| {
+        mir_codegen
+            .infer_host_class_from_mir(&mir_result.program)
+            .unwrap_or_else(|| "server".to_string())
+    });
     mir_codegen.set_host_class(Some(host_class));
     let strict = strict_hosts_override()
         || std::env::var("CLEAN_STRICT_HOSTS")

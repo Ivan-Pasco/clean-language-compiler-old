@@ -163,8 +163,12 @@ enum Commands {
         #[arg(short = 'l', long, default_value_t = 2)]
         opt_level: u8,
 
-        /// Target platform for bridge generation (browser, node, ios, android, server)
-        #[arg(short, long, default_value = "server")]
+        /// Target platform for bridge generation (auto, browser, node, ios, android, server).
+        /// `auto` (default) infers the host class from the reachable bridge functions:
+        /// if every reachable browser/server-restricted bridge accepts `browser`, that is chosen;
+        /// otherwise the build defaults to `server`.
+        /// Fixes 270f8fc643db (standalone client entries no longer misclassified as `server`).
+        #[arg(short, long, default_value = "auto")]
         target: String,
 
         /// Memory budget tier (embedded, minimal, standard, heavy, canvas)
@@ -1469,7 +1473,7 @@ async fn handle_compile(
         "node" | "nodejs" => Some(BridgeTarget::Node),
         "ios" | "macos" | "apple" => Some(BridgeTarget::iOS),
         "android" => Some(BridgeTarget::Android),
-        "server" | "wasi" | "native" | "plugin" => None, // No bridge files for these targets
+        "server" | "wasi" | "native" | "plugin" | "auto" => None, // No bridge files for these targets
         _ => {
             if !output_config.quiet {
                 println!(

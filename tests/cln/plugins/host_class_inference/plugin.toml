@@ -1,0 +1,12 @@
+[plugin]
+name = "test.host_class_inference"
+version = "1.0.0"
+description = "Plugin declaring only browser-restricted bridges — used to verify that `cln compile` with no explicit --target infers host_class=browser from the reachable bridge calls (bug 270f8fc643db, fixed 2026-07-06)."
+
+[handles]
+blocks = ["host_class_inference_block"]
+
+[bridge]
+functions = [
+  { name = "_ui_observe_visible", params = ["string", "string"], returns = "integer", expand_strings = true, hosts = ["browser"], description = "Browser-only IntersectionObserver bridge — added-class-on-visibility." },
+]

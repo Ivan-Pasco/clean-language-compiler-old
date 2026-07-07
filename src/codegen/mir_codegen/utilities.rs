@@ -1422,6 +1422,65 @@ impl MirCodeGenerator<'_> {
     /// MIR program, expanded with common import-name aliases so that
     /// language-level names (`http.get`) match WASM import field names
     /// (`http_get`).
+    /// Infer the bridge host class from the reachable bridge functions.
+    ///
+    /// Fixes 270f8fc643db: when the user did not pass an explicit `--target`,
+    /// the compiler used to default to `server`, which fails for client entry
+    /// files that only call browser-declared bridges (e.g. `ui.observeVisible`).
+    ///
+    /// Rule: if every reachable bridge with a `hosts` field accepts `browser`
+    /// (either via `"all"` or by naming `"browser"`), and at least one
+    /// reachable bridge is browser-restricted (does NOT accept `server`),
+    /// return `Some("browser")`. Otherwise return `None` so the caller can
+    /// fall back to the historical `server` default. Bridges without a
+    /// `hosts` field are treated as unconstrained (Phase C compatibility per
+    /// `foundation/spec/plugins/contracts/bridge-host-classes.md` §6.2).
+    pub(crate) fn infer_host_class_from_mir(&self, mir_program: &MirProgram) -> Option<String> {
+        let reachable = self.collect_all_called_names_from_mir(mir_program);
+
+        let mut any_browser_restricted = false;
+
+        for bridge in &self.bridge_functions {
+            let hosts = match bridge.hosts.as_deref() {
+                Some(h) => h,
+                None => continue,
+            };
+            // A bridge counts only if the MIR actually calls it (direct or via
+            // a language alias like `ui.observeVisible` → `_ui_observe_visible`).
+            let bridge_reachable = reachable.contains(&bridge.name)
+                || self
+                    .language_to_bridge_map
+                    .iter()
+                    .any(|(lang, bridge_name)| {
+                        bridge_name == &bridge.name && reachable.contains(lang)
+                    });
+            if !bridge_reachable {
+                continue;
+            }
+
+            let accepts_browser = hosts.iter().any(|h| h == "all" || h == "browser");
+            let accepts_server = hosts.iter().any(|h| h == "all" || h == "server");
+
+            if !accepts_browser {
+                // Some reachable bridge is server-only — inference cannot pick
+                // `browser` safely.
+                return None;
+            }
+            if !accepts_server {
+                // At least one bridge is browser-restricted, so `server` is
+                // wrong; inference has evidence to pick `browser`.
+                any_browser_restricted = true;
+            }
+            // else: bridge accepts both browser+server or is `"all"` — no signal.
+        }
+
+        if any_browser_restricted {
+            Some("browser".to_string())
+        } else {
+            None
+        }
+    }
+
     pub(super) fn collect_all_called_names_from_mir(
         &self,
         mir_program: &MirProgram,
