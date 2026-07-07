@@ -1493,18 +1493,83 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
     )?;
 
     // _emit_statement_into_start(ctx, stmt_handle)
+    //
+    // Accepts either a plain AST-statement arena handle OR a BATCH_TAG-marked
+    // batch-statement handle (Amendment 4 §3.14 disambiguation, same rule as
+    // `_emit_helpers_batch` and `_emit_class_full`). Plugins that assemble
+    // program-start statements via `batch.stmt*` builders (e.g. frame.auth's
+    // `emit_string_var` helper) had no way to feed those handles into this
+    // bridge previously — every call surfaced as an opaque OutOfRange.
+    //
+    // Diagnostic parity with `_emit_statement_inline` (§3.5.1): every EmitError
+    // variant emits a structured diagnostic so plugins get an actionable message
+    // instead of an opaque `return=1`.
     linker.func_wrap(
         "env",
         "_emit_statement_into_start",
         |mut caller: Caller<'_, PluginState>, ctx: i32, stmt_handle: i32| -> i32 {
             let a = arena!(caller);
-            let stmt = match a.take_stmt(ctx, stmt_handle) {
-                Ok(s) => s,
-                Err(EmitError::HandleConsumed { handle }) => {
-                    a.emit_plugin008(handle);
-                    return 1;
+            if a.check_ctx(ctx).is_err() {
+                return 1;
+            }
+            let stmt = if (stmt_handle & BATCH_TAG) != 0 {
+                let batch_stmt = match a.take_batch_stmt(stmt_handle) {
+                    Ok(s) => s,
+                    Err(EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        a.trip(
+                            "_emit_statement_into_start",
+                            format!("consumed batch handle {}", handle),
+                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: e.error_code().to_string(),
+                            message: format!("_emit_statement_into_start: {:?}", e),
+                            span_json: String::new(),
+                        });
+                        a.trip("_emit_statement_into_start", format!("{:?}", e));
+                        return 1;
+                    }
+                };
+                match super::batch_schema::stmt_to_ast(batch_stmt) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN013".to_string(),
+                            message: format!("_emit_statement_into_start: {}", e.message()),
+                            span_json: String::new(),
+                        });
+                        a.trip("_emit_statement_into_start", e.message().to_string());
+                        return 1;
+                    }
                 }
-                Err(_) => return 1,
+            } else {
+                match a.take_stmt(ctx, stmt_handle) {
+                    Ok(s) => s,
+                    Err(EmitError::StickyErrorActive) => return 1,
+                    Err(EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        a.trip(
+                            "_emit_statement_into_start",
+                            format!("consumed handle {}", handle),
+                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: e.error_code().to_string(),
+                            message: format!("_emit_statement_into_start: {:?}", e),
+                            span_json: String::new(),
+                        });
+                        a.trip("_emit_statement_into_start", format!("{:?}", e));
+                        return 1;
+                    }
+                }
             };
             a.push_start_stmt(stmt);
             0
@@ -1515,31 +1580,74 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
     // Sibling to _emit_statement_into_start: writes to expansion.statements
     // (inline splice at block's caller position) instead of
     // expansion.start_function.body (program-start).
+    //
+    // Accepts either a plain AST-statement arena handle OR a BATCH_TAG-marked
+    // batch-statement handle (Amendment 4 §3.14 disambiguation).
     linker.func_wrap(
         "env",
         "_emit_statement_inline",
         |mut caller: Caller<'_, PluginState>, ctx: i32, stmt_handle: i32| -> i32 {
             let a = arena!(caller);
-            let stmt = match a.take_stmt(ctx, stmt_handle) {
-                Ok(s) => s,
-                Err(EmitError::StickyErrorActive) => return 1,
-                Err(EmitError::HandleConsumed { handle }) => {
-                    a.emit_plugin008(handle);
-                    a.trip(
-                        "_emit_statement_inline",
-                        format!("consumed handle {}", handle),
-                    );
-                    return 1;
+            if a.check_ctx(ctx).is_err() {
+                return 1;
+            }
+            let stmt = if (stmt_handle & BATCH_TAG) != 0 {
+                let batch_stmt = match a.take_batch_stmt(stmt_handle) {
+                    Ok(s) => s,
+                    Err(EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        a.trip(
+                            "_emit_statement_inline",
+                            format!("consumed batch handle {}", handle),
+                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: e.error_code().to_string(),
+                            message: format!("_emit_statement_inline: {:?}", e),
+                            span_json: String::new(),
+                        });
+                        a.trip("_emit_statement_inline", format!("{:?}", e));
+                        return 1;
+                    }
+                };
+                match super::batch_schema::stmt_to_ast(batch_stmt) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN013".to_string(),
+                            message: format!("_emit_statement_inline: {}", e.message()),
+                            span_json: String::new(),
+                        });
+                        a.trip("_emit_statement_inline", e.message().to_string());
+                        return 1;
+                    }
                 }
-                Err(e) => {
-                    a.emit_diagnostic(EmitDiagnostic {
-                        severity: 2,
-                        code: e.error_code().to_string(),
-                        message: format!("_emit_statement_inline: {:?}", e),
-                        span_json: String::new(),
-                    });
-                    a.trip("_emit_statement_inline", format!("{:?}", e));
-                    return 1;
+            } else {
+                match a.take_stmt(ctx, stmt_handle) {
+                    Ok(s) => s,
+                    Err(EmitError::StickyErrorActive) => return 1,
+                    Err(EmitError::HandleConsumed { handle }) => {
+                        a.emit_plugin008(handle);
+                        a.trip(
+                            "_emit_statement_inline",
+                            format!("consumed handle {}", handle),
+                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: e.error_code().to_string(),
+                            message: format!("_emit_statement_inline: {:?}", e),
+                            span_json: String::new(),
+                        });
+                        a.trip("_emit_statement_inline", format!("{:?}", e));
+                        return 1;
+                    }
                 }
             };
             a.push_inline_stmt(stmt);
