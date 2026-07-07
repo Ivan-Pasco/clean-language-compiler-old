@@ -695,6 +695,67 @@ fn build_wat_from_bytes(
     )
 }
 
+// ─── Regression: _batch_stringLit → _emit_helpers_batch handle-path fallback ─
+//
+// Bug c5e048a6f456 (PLUGIN013 InvalidBatchSpec: _emit_class_full handle error:
+// WrongNodeKind { expected: "BatchClassSpec" }). The same shape also occurs for
+// _emit_helpers_batch when a plugin lifts a runtime-built JSON string via
+// _batch_stringLit and passes the resulting handle to a batch emitter. The
+// bridge dispatched on BATCH_TAG and tried to `take_batch_spec`, but the
+// handle actually pointed at a BatchExpr::StringLit — WrongNodeKind. Fix:
+// peek the batch node, and if it is a StringLit, take it, treat its `value`
+// as JSON, and route through the LP-string parse path.
+#[test]
+fn emit_helpers_batch_accepts_stringlit_handle() {
+    // Payload: a valid BatchSpec JSON string. The plugin lifts it via
+    // _batch_stringLit (producing a BatchExpr::StringLit batch handle with
+    // BATCH_TAG set), then passes the handle to _emit_helpers_batch. Before
+    // the fix this produced PLUGIN013 WrongNodeKind. After the fix the bridge
+    // parses the JSON and emits the function.
+    let json_spec: &[u8] = br#"{"functions":[{"name":"greetings","params":[],"return_type":"integer","body":[{"kind":"return","expr":{"kind":"int_lit","value":42}}]}]}"#;
+
+    let wat_src = build_wat_from_bytes(
+        &[
+            ("_batch_stringLit", "(param i32 i32) (result i32)"),
+            ("_emit_helpers_batch", "(param i32 i32 i32) (result i32)"),
+        ],
+        &[(0u32, json_spec)],
+        r#"
+    (local $lit_h i32)
+    ;; _batch_stringLit(ctx, LP(json)) -> BatchExpr::StringLit handle w/ BATCH_TAG
+    local.get $ctx
+    i32.const 0
+    call $_batch_stringLit
+    local.set $lit_h
+    ;; _emit_helpers_batch(ctx, lit_h, flags=0) — must peek StringLit and route
+    ;; through the JSON parse path instead of failing WrongNodeKind.
+    local.get $ctx
+    local.get $lit_h
+    i32.const 0
+    call $_emit_helpers_batch
+"#,
+    );
+
+    let adapter = build_adapter_from_wat(&wat_src, "emit_helpers_batch_stringlit_fallback");
+    let result = adapter.expand_full(&make_block());
+    assert!(
+        result.is_ok(),
+        "_emit_helpers_batch must accept a _batch_stringLit handle (regression c5e048a6f456); got: {}",
+        result.unwrap_err()
+    );
+
+    let expansion = result.unwrap();
+    assert_eq!(
+        expansion.functions.len(),
+        1,
+        "expansion must contain exactly one emitted function"
+    );
+    assert_eq!(
+        expansion.functions[0].name, "greetings",
+        "emitted function must be named 'greetings'"
+    );
+}
+
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 fn find_return_stmt(stmts: &[Statement]) -> Option<&Statement> {
