@@ -17,7 +17,7 @@
 //!
 //!   - no `--target`  → inference picks `browser`, compile succeeds.
 //!   - `--target=server` → explicit override wins, compile fails
-//!                          with BRIDGE-HOST-MISMATCH.
+//!     with BRIDGE-HOST-MISMATCH.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
