@@ -794,6 +794,20 @@ pub struct PluginFunctionDef {
     /// is treated as purely informational (LSP only, not callable).
     #[serde(default)]
     pub maps_to: Option<String>,
+    /// Name of a plugin-emitted helper function (added to the user module via
+    /// `_batch_func` + `_emit_helpers_batch`, or as an `expansion.functions`
+    /// contribution during framework-block expansion) that implements this
+    /// language function. Use for language APIs whose implementation is a
+    /// Clean-language wrapper the plugin generates at expansion time, rather
+    /// than a direct bridge call (e.g. `auth.jwt.sign` → the `jwt_sign`
+    /// helper the `auth:` block emits, which reads `__jwt_secret` / `__jwt_alg`
+    /// before delegating to `_jwt_sign`).
+    ///
+    /// Resolution precedence: `maps_to` > `maps_to_helper` > convention-derived
+    /// bridge alias. Entries with `maps_to_helper` are callable by both the
+    /// language name AND the helper name.
+    #[serde(default)]
+    pub maps_to_helper: Option<String>,
     /// Override the bridge function's parameter type list.
     /// When present, the registered external function uses these param types
     /// instead of the bridge function's declared params. Useful when the

@@ -912,6 +912,37 @@ impl PluginRegistry {
         map
     }
 
+    /// Build a mapping from language function names to plugin-emitted helper
+    /// function names for `[[language.functions]]` entries that declare
+    /// `maps_to_helper`.
+    ///
+    /// This resolves the "third path" for language APIs whose implementation is
+    /// a Clean-language wrapper the plugin generates during framework-block
+    /// expansion (via `_batch_func` + `_emit_helpers_batch`, or by pushing onto
+    /// `expansion.functions`), rather than a direct bridge call.
+    ///
+    /// Example: `auth.jwt.sign` → `jwt_sign` — the plugin emits `jwt_sign` as a
+    /// user-level function that reads `__jwt_secret` / `__jwt_alg` before
+    /// delegating to `_jwt_sign`; without this mapping the language name is
+    /// dropped as "LSP-only" and the call site fails with SEM007 in the
+    /// resolver / "not found in function map" in codegen.
+    pub fn language_to_helper_map(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        for manifest in self.manifests.values() {
+            for func in &manifest.language.functions {
+                if let Some(ref helper) = func.maps_to_helper {
+                    // Explicit `maps_to` always wins — don't shadow a real
+                    // bridge alias with a helper hop.
+                    if func.maps_to.is_some() {
+                        continue;
+                    }
+                    map.insert(func.name.clone(), helper.clone());
+                }
+            }
+        }
+        map
+    }
+
     /// Look up which plugin declared ownership of a given bridge function.
     ///
     /// Scans all manifests and returns the first plugin name whose `[bridge]`
@@ -1721,6 +1752,7 @@ mod tests {
                         signature: "db.query(sql, params) -> string".to_string(),
                         description: "Execute SELECT query".to_string(),
                         maps_to: None,
+                        maps_to_helper: None,
                         params: None,
                         returns: None,
                         param_defaults: vec![],
@@ -1731,6 +1763,7 @@ mod tests {
                         signature: "db.run(sql, params) -> integer".to_string(),
                         description: "Execute INSERT/UPDATE/DELETE".to_string(),
                         maps_to: Some("_db_execute".to_string()),
+                        maps_to_helper: None,
                         params: None,
                         returns: None,
                         param_defaults: vec![],
@@ -1741,6 +1774,7 @@ mod tests {
                         signature: "db.nonexistent() -> void".to_string(),
                         description: "No bridge counterpart".to_string(),
                         maps_to: None,
+                        maps_to_helper: None,
                         params: None,
                         returns: None,
                         param_defaults: vec![],
@@ -1860,6 +1894,123 @@ mod tests {
         // _json_encode also must not derive to json.dataToText or json.prettyDataToText
         assert!(!map.contains_key("json.dataToText"));
         assert!(!map.contains_key("json.prettyDataToText"));
+    }
+
+    /// FRAME-AUTH-JWT-HELPERS-UNREACHABLE regression: a `[[language.functions]]`
+    /// entry with `maps_to_helper` (and no `maps_to`) must appear in the
+    /// language-to-helper map so the resolver and codegen can route calls to the
+    /// plugin-emitted helper function.
+    #[test]
+    fn test_language_to_helper_map_registers_maps_to_helper_entries() {
+        use crate::plugins::plugin_abi::{
+            BridgeFunction, PluginBridge, PluginCompatibility, PluginExports, PluginFunctionDef,
+            PluginHandles, PluginInfo, PluginLanguage, PluginManifest,
+        };
+
+        let manifest = PluginManifest {
+            plugin: PluginInfo {
+                name: "frame.auth".to_string(),
+                version: "2.4.0".to_string(),
+                description: "Auth plugin".to_string(),
+                author: "Test".to_string(),
+            },
+            compatibility: PluginCompatibility::default(),
+            handles: PluginHandles {
+                blocks: vec!["auth".to_string()],
+                expressions: Vec::new(),
+            },
+            exports: PluginExports::default(),
+            bridge: PluginBridge {
+                functions: vec![BridgeFunction {
+                    name: "_jwt_sign".to_string(),
+                    params: vec![
+                        "string".to_string(),
+                        "string".to_string(),
+                        "string".to_string(),
+                    ],
+                    returns: "string".to_string(),
+                    module: "env".to_string(),
+                    description: None,
+                    expand_strings: true,
+                    ..Default::default()
+                }],
+            },
+            language: PluginLanguage {
+                blocks: vec!["auth".to_string()],
+                keywords: vec![],
+                types: vec![],
+                functions: vec![
+                    // auth.jwt.sign delegates to the plugin-emitted `jwt_sign`
+                    // helper (added to program.functions during auth: expansion).
+                    PluginFunctionDef {
+                        name: "auth.jwt.sign".to_string(),
+                        signature: "auth.jwt.sign(claims)".to_string(),
+                        description: "Sign JWT with configured secret".to_string(),
+                        maps_to: None,
+                        maps_to_helper: Some("jwt_sign".to_string()),
+                        params: None,
+                        returns: None,
+                        param_defaults: vec![],
+                    },
+                    // Explicit maps_to always wins over maps_to_helper.
+                    PluginFunctionDef {
+                        name: "jwt.sign".to_string(),
+                        signature: "jwt.sign(payload, secret, algo)".to_string(),
+                        description: "Raw JWT sign".to_string(),
+                        maps_to: Some("_jwt_sign".to_string()),
+                        maps_to_helper: Some("jwt_sign_should_be_ignored".to_string()),
+                        params: None,
+                        returns: None,
+                        param_defaults: vec![],
+                    },
+                    // Entries with neither maps_to nor maps_to_helper stay LSP-only.
+                    PluginFunctionDef {
+                        name: "auth.jwt.verify".to_string(),
+                        signature: "auth.jwt.verify(token)".to_string(),
+                        description: "Verify JWT".to_string(),
+                        maps_to: None,
+                        maps_to_helper: None,
+                        params: None,
+                        returns: None,
+                        param_defaults: vec![],
+                    },
+                ],
+                completions: vec![],
+                owns_paths: vec![],
+            },
+            ai: Default::default(),
+            paths: Default::default(),
+            enforcement: Default::default(),
+            memory: Default::default(),
+            build: Default::default(),
+            lifecycle: Default::default(),
+            artifacts: Vec::new(),
+            blocks: Default::default(),
+        };
+
+        let registry = PluginRegistryBuilder::new()
+            .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off)
+            .add_manifest("frame.auth".to_string(), manifest)
+            .build()
+            .expect("Failed to build registry");
+
+        let helper_map = registry.language_to_helper_map();
+        assert_eq!(
+            helper_map.get("auth.jwt.sign"),
+            Some(&"jwt_sign".to_string()),
+            "auth.jwt.sign must map to the plugin-emitted jwt_sign helper"
+        );
+        // Explicit maps_to takes precedence — the entry stays out of the helper map.
+        assert!(
+            !helper_map.contains_key("jwt.sign"),
+            "explicit maps_to must win over maps_to_helper"
+        );
+        // No mapping declared → not in helper map (stays LSP-only).
+        assert!(!helper_map.contains_key("auth.jwt.verify"));
+
+        // The bridge alias for jwt.sign still resolves through the ordinary path.
+        let bridge_map = registry.language_to_bridge_map();
+        assert_eq!(bridge_map.get("jwt.sign"), Some(&"_jwt_sign".to_string()));
     }
 
     /// Helpers shared across the v2 callback validation tests below.

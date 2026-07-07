@@ -454,6 +454,7 @@ mod tests {
                     signature: "Data.tx: block -> Result".to_string(),
                     description: "Execute in transaction".to_string(),
                     maps_to: None,
+                    maps_to_helper: None,
                     params: None,
                     returns: None,
                     param_defaults: vec![],

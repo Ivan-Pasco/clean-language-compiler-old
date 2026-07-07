@@ -246,6 +246,17 @@ pub struct MirCodeGenerator<'a> {
     /// Example: `"db.query"` → `"_db_query"`.
     pub(super) language_to_bridge_map: HashMap<String, String>,
 
+    /// Mapping from language API function names to plugin-emitted helper
+    /// function names (functions the plugin appended to `program.functions`
+    /// during framework-block expansion, callable by their raw name in Clean
+    /// code).
+    ///
+    /// Example: `"auth.jwt.sign"` → `"jwt_sign"`. Consulted at call-site
+    /// lookup after direct + convention-derived matches fail, giving the
+    /// language-facing dotted name a route to the helper's WASM index.
+    /// Closes FRAME-AUTH-JWT-HELPERS-UNREACHABLE.
+    pub(super) language_to_helper_map: HashMap<String, String>,
+
     /// Handler index tracking for plugin callback dispatch.
     ///
     /// Maps function name → handler index (0, 1, 2, …).
@@ -338,6 +349,7 @@ impl MirCodeGenerator<'_> {
             target: crate::CompilationTarget::Server,
             external_function_indices: HashMap::new(),
             language_to_bridge_map: HashMap::new(),
+            language_to_helper_map: HashMap::new(),
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
@@ -381,6 +393,7 @@ impl MirCodeGenerator<'_> {
             target: crate::CompilationTarget::Standalone,
             external_function_indices: HashMap::new(),
             language_to_bridge_map: HashMap::new(),
+            language_to_helper_map: HashMap::new(),
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
@@ -424,6 +437,7 @@ impl MirCodeGenerator<'_> {
             target,
             external_function_indices: HashMap::new(),
             language_to_bridge_map: HashMap::new(),
+            language_to_helper_map: HashMap::new(),
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
@@ -500,6 +514,18 @@ impl MirCodeGenerator<'_> {
     /// (e.g. `db.query(...)`, `req.param("id")`).
     pub fn set_language_to_bridge_map(&mut self, map: HashMap<String, String>) {
         self.language_to_bridge_map = map;
+    }
+
+    /// Set the language-name → plugin-emitted helper mapping used to resolve
+    /// dotted language names (e.g. `auth.jwt.sign`) to functions emitted by a
+    /// plugin during framework-block expansion (e.g. `jwt_sign`).
+    ///
+    /// Obtained from `PluginRegistry::language_to_helper_map()`. Consulted at
+    /// named-function call sites after `function_map`, dot/underscore
+    /// alternates, and `language_to_bridge_map` all miss. Closes
+    /// FRAME-AUTH-JWT-HELPERS-UNREACHABLE.
+    pub fn set_language_to_helper_map(&mut self, map: HashMap<String, String>) {
+        self.language_to_helper_map = map;
     }
 
     /// Return `true` when a language alias (e.g. `time.now`) is wired to a

@@ -36,6 +36,14 @@ pub struct NameResolver {
     pending_bridge_functions: Vec<crate::plugins::BridgeFunction>,
     /// Language-name aliases deferred alongside `pending_bridge_functions`.
     pending_language_aliases: std::collections::HashMap<String, String>,
+    /// Language-name → plugin-emitted helper function aliases deferred
+    /// alongside `pending_bridge_functions`. Populated from
+    /// `PluginRegistry::language_to_helper_map()`. The helper functions
+    /// themselves are registered as ordinary `hir.functions` symbols by
+    /// `register_top_level_symbols` — this map installs the language-facing
+    /// alias name (e.g. `auth.jwt.sign`) as a second symbol whose signature
+    /// mirrors the helper's, so calls to either name resolve.
+    pending_language_helper_aliases: std::collections::HashMap<String, String>,
     /// Optional language-function definitions (from plugin.toml `[language].functions`)
     /// used to override bridge return types and param lists for language aliases.
     pending_language_fn_defs:
@@ -60,6 +68,7 @@ impl NameResolver {
             expression_recursion_depth: 0,
             pending_bridge_functions: Vec::new(),
             pending_language_aliases: std::collections::HashMap::new(),
+            pending_language_helper_aliases: std::collections::HashMap::new(),
             pending_language_fn_defs: std::collections::HashMap::new(),
             language_fn_defaults: std::collections::HashMap::new(),
         }
@@ -86,6 +95,7 @@ impl NameResolver {
         // are never overwritten by hardcoded builtin entries.
         let pending_bridges = std::mem::take(&mut self.pending_bridge_functions);
         let pending_aliases = std::mem::take(&mut self.pending_language_aliases);
+        let pending_helper_aliases = std::mem::take(&mut self.pending_language_helper_aliases);
         self.register_plugin_bridge_functions(&pending_bridges);
         if !pending_aliases.is_empty() {
             let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
@@ -94,6 +104,9 @@ impl NameResolver {
                     .map(|bf| (bf.name.as_str(), bf))
                     .collect();
             self.register_language_function_aliases(&pending_aliases, &bridge_by_name);
+        }
+        if !pending_helper_aliases.is_empty() {
+            self.register_language_helper_aliases(&pending_helper_aliases);
         }
 
         // Second pass: Resolve all symbol references
@@ -4040,6 +4053,131 @@ impl NameResolver {
         }
     }
 
+    /// Register language-name aliases that map to plugin-emitted helper
+    /// functions (rather than raw bridge imports).
+    ///
+    /// The helper functions themselves are added to `program.functions` during
+    /// framework-block expansion (via `_batch_func` + `_emit_helpers_batch`, or
+    /// direct `expansion.functions` contributions) and registered as ordinary
+    /// symbols by `register_top_level_symbols`. This pass installs the
+    /// language-facing name (e.g. `auth.jwt.sign`) as a second symbol whose
+    /// parameter and return types are copied from the helper's declared
+    /// signature, so `auth.jwt.sign(claims)` and `jwt_sign(claims)` are both
+    /// callable.
+    ///
+    /// Also registers the leading dot-notation segment (`auth`) as a Namespace
+    /// symbol so name resolution can walk `auth . jwt . sign` without emitting
+    /// SEM001 on the receiver.
+    ///
+    /// Entries whose helper is not found in the symbol table are silently
+    /// dropped — they may reference a helper that only exists in a different
+    /// build variant (e.g. a client-only helper referenced by a server build).
+    fn register_language_helper_aliases(
+        &mut self,
+        language_to_helper: &std::collections::HashMap<String, String>,
+    ) {
+        let builtin_location = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<plugin-language-helper>".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+
+        let mut namespace_functions: std::collections::HashMap<String, Vec<SymbolId>> =
+            std::collections::HashMap::new();
+
+        for (lang_name, helper_name) in language_to_helper {
+            // Look up the helper function that was registered by
+            // `register_top_level_symbols` from `hir.functions`. If not
+            // present the helper wasn't emitted for this build; skip.
+            let helper_sym_id = match self.symbol_table.lookup_symbol(helper_name.as_str()) {
+                Some(sid) => sid,
+                None => {
+                    tracing::debug!(
+                        lang_name = %lang_name,
+                        helper_name = %helper_name,
+                        "Skipping language helper alias — helper not present in this build"
+                    );
+                    continue;
+                }
+            };
+
+            // Copy the helper's parameter types and return type onto the
+            // language alias so signatures line up at every call site.
+            let (parameters, return_type) = match self.symbol_table.get_symbol(helper_sym_id) {
+                Some(sym) => match &sym.kind {
+                    SymbolKind::Function {
+                        parameters,
+                        return_type,
+                    } => (parameters.clone(), return_type.clone()),
+                    _ => {
+                        tracing::debug!(
+                            lang_name = %lang_name,
+                            helper_name = %helper_name,
+                            "Skipping language helper alias — helper symbol is not a function"
+                        );
+                        continue;
+                    }
+                },
+                None => continue,
+            };
+
+            // If the language name already resolves to something (bridge alias,
+            // conflicting user function, etc.) don't overwrite it — the
+            // resolution precedence documented on
+            // `PluginFunctionDef::maps_to_helper` is helper < maps_to.
+            if self
+                .symbol_table
+                .lookup_symbol_in_scope(lang_name, ScopeId(0))
+                .is_some()
+            {
+                continue;
+            }
+
+            let alias_sym_id = self.symbol_table.create_symbol(
+                lang_name.clone(),
+                SymbolKind::Function {
+                    parameters,
+                    return_type,
+                },
+                ScopeId(0),
+                builtin_location.clone(),
+            );
+            self.symbol_table.builtins.insert(alias_sym_id);
+            tracing::debug!(
+                lang_name = %lang_name,
+                helper_name = %helper_name,
+                "Registered language-name → helper alias in resolver"
+            );
+
+            if let Some(dot_pos) = lang_name.find('.') {
+                let ns_name = &lang_name[..dot_pos];
+                namespace_functions
+                    .entry(ns_name.to_string())
+                    .or_default()
+                    .push(alias_sym_id);
+            }
+        }
+
+        for (ns_name, functions) in namespace_functions {
+            if self
+                .symbol_table
+                .lookup_symbol_in_scope(&ns_name, ScopeId(0))
+                .is_some()
+            {
+                continue;
+            }
+            let ns_id = self.symbol_table.create_symbol(
+                ns_name.clone(),
+                SymbolKind::Namespace { functions },
+                ScopeId(0),
+                builtin_location.clone(),
+            );
+            self.symbol_table.builtins.insert(ns_id);
+        }
+    }
+
     /// Register plugin bridge functions as builtins
     ///
     /// Bridge functions are declared in plugin.toml and provide runtime
@@ -4180,9 +4318,35 @@ impl NameResolver {
             crate::plugins::plugin_abi::PluginFunctionDef,
         >,
     ) -> Result<ResolutionResult, Vec<CompilerError>> {
+        Self::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            hir,
+            bridge_functions,
+            language_to_bridge,
+            language_fn_defs,
+            std::collections::HashMap::new(),
+        )
+    }
+
+    /// Full-fat resolver entry point: bridge aliases + language function defs +
+    /// language-name → plugin-emitted-helper aliases (Plugin Contracts:
+    /// `maps_to_helper` field). Closes FRAME-AUTH-JWT-HELPERS-UNREACHABLE — the
+    /// helper name (e.g. `jwt_sign`) is already registered via
+    /// `hir.functions`; this adds the language-facing name (e.g. `auth.jwt.sign`)
+    /// as an alias so both call sites resolve.
+    pub fn resolve_with_bridge_aliases_fn_defs_and_helpers(
+        hir: crate::hir::HirProgram,
+        bridge_functions: &[crate::plugins::BridgeFunction],
+        language_to_bridge: &std::collections::HashMap<String, String>,
+        language_fn_defs: std::collections::HashMap<
+            String,
+            crate::plugins::plugin_abi::PluginFunctionDef,
+        >,
+        language_to_helper: std::collections::HashMap<String, String>,
+    ) -> Result<ResolutionResult, Vec<CompilerError>> {
         let mut resolver = Self::new();
         resolver.pending_bridge_functions = bridge_functions.to_vec();
         resolver.pending_language_aliases = language_to_bridge.clone();
+        resolver.pending_language_helper_aliases = language_to_helper;
         resolver.pending_language_fn_defs = language_fn_defs;
 
         match resolver.resolve_program(hir) {
@@ -4318,6 +4482,140 @@ mod scope_tests {
             result.is_ok(),
             "Unexpected errors: {:?}",
             result.unwrap_err()
+        );
+    }
+
+    /// FRAME-AUTH-JWT-HELPERS-UNREACHABLE regression: when a plugin declares a
+    /// language function like `auth.jwt.sign` that maps to a plugin-emitted
+    /// helper `jwt_sign` (added to `hir.functions` during framework-block
+    /// expansion), the resolver must register the language-facing name as an
+    /// alias with the same signature so `auth.jwt.sign(claims)` resolves.
+    #[test]
+    fn maps_to_helper_registers_language_alias_for_plugin_helper() {
+        let helper_fn = HirFunction {
+            name: "jwt_sign".to_string(),
+            parameters: vec![crate::hir::HirParameter {
+                name: "claims".to_string(),
+                param_type: HirType::String,
+                default_value: None,
+                location: loc(),
+            }],
+            return_type: Some(HirType::String),
+            body: empty_block(),
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let hir = HirProgram {
+            functions: vec![helper_fn],
+            classes: vec![],
+            start_function: Some(HirFunction {
+                name: "start".to_string(),
+                parameters: vec![],
+                return_type: None,
+                body: empty_block(),
+                is_start: true,
+                is_private: false,
+                owner_screen: None,
+                location: loc(),
+            }),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+
+        let mut helper_map = std::collections::HashMap::new();
+        helper_map.insert("auth.jwt.sign".to_string(), "jwt_sign".to_string());
+
+        let result = NameResolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            hir,
+            &[],
+            &std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            helper_map,
+        );
+        assert!(
+            result.is_ok(),
+            "Resolution failed: {:?}",
+            result.err().unwrap()
+        );
+        let resolved = result.unwrap().resolved_hir;
+
+        // Both names must resolve — the raw helper (registered via hir.functions)
+        // and the language-facing alias (registered by
+        // register_language_helper_aliases).
+        assert!(
+            resolved.symbol_table.lookup_symbol("jwt_sign").is_some(),
+            "jwt_sign should be in symbol table (registered via hir.functions)"
+        );
+        assert!(
+            resolved
+                .symbol_table
+                .lookup_symbol("auth.jwt.sign")
+                .is_some(),
+            "auth.jwt.sign alias should be in symbol table (registered via maps_to_helper)"
+        );
+        // The `auth` namespace should also be registered so parser splits work.
+        assert!(
+            resolved.symbol_table.lookup_symbol("auth").is_some(),
+            "auth namespace should be registered when a language-helper alias uses dot notation"
+        );
+    }
+
+    /// Missing helper (e.g. wrong build variant) must not error the resolver —
+    /// the entry silently drops, matching the LSP-only fallback for
+    /// unresolved language function names.
+    #[test]
+    fn maps_to_helper_missing_helper_silently_drops() {
+        let hir = HirProgram {
+            functions: vec![],
+            classes: vec![],
+            start_function: Some(HirFunction {
+                name: "start".to_string(),
+                parameters: vec![],
+                return_type: None,
+                body: empty_block(),
+                is_start: true,
+                is_private: false,
+                owner_screen: None,
+                location: loc(),
+            }),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+
+        let mut helper_map = std::collections::HashMap::new();
+        helper_map.insert("auth.jwt.sign".to_string(), "jwt_sign".to_string());
+
+        let result = NameResolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            hir,
+            &[],
+            &std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            helper_map,
+        );
+        assert!(
+            result.is_ok(),
+            "Resolver should not error on missing helper"
+        );
+        let resolved = result.unwrap().resolved_hir;
+        assert!(
+            resolved
+                .symbol_table
+                .lookup_symbol("auth.jwt.sign")
+                .is_none(),
+            "alias should not be registered when helper is missing"
         );
     }
 }

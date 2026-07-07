@@ -1575,6 +1575,18 @@ impl MirCodeGenerator<'_> {
                                     self.wasm_generator.function_map.get(bridge_name).copied()
                                 },
                             )
+                        })
+                        // Plugin-emitted helper lookup: "auth.jwt.sign" → "jwt_sign"
+                        // (see language_to_helper_map above). Same fix as the
+                        // NamedFunction arm below; kept in parity so calls whose
+                        // callee arrives as SymbolFunction (resolver path) and
+                        // NamedFunction (parser fallback path) both resolve.
+                        .or_else(|| {
+                            self.language_to_helper_map.get(&function_name).and_then(
+                                |helper_name| {
+                                    self.wasm_generator.function_map.get(helper_name).copied()
+                                },
+                            )
                         });
 
                         if let Some(function_index) = function_index {
@@ -1673,6 +1685,19 @@ impl MirCodeGenerator<'_> {
                                 .get(name)
                                 .and_then(|bridge_name| {
                                     self.wasm_generator.function_map.get(bridge_name).copied()
+                                })
+                        })
+                        // Plugin-emitted helper lookup: "auth.jwt.sign" → "jwt_sign"
+                        // via language_to_helper_map. Fixes FRAME-AUTH-JWT-HELPERS-UNREACHABLE:
+                        // the helper WAS emitted (appended to program.functions during
+                        // framework-block expansion) but its language-facing dotted name
+                        // was previously dropped as "LSP-only" and had no route to the
+                        // helper's WASM index.
+                        .or_else(|| {
+                            self.language_to_helper_map
+                                .get(name)
+                                .and_then(|helper_name| {
+                                    self.wasm_generator.function_map.get(helper_name).copied()
                                 })
                         });
 

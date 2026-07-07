@@ -739,11 +739,12 @@ pub fn type_check_with_plugins(
             .into_iter()
             .map(|(k, v)| (k, v.clone()))
             .collect();
-        Resolver::resolve_with_bridge_aliases_and_fn_defs(
+        Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
             hir_result.hir,
             bridge_functions,
             &lang_to_bridge,
             lang_fn_defs_owned,
+            registry.language_to_helper_map(),
         )?
     };
     let resolved_hir = resolution_result.resolved_hir;
@@ -1134,6 +1135,7 @@ pub fn compile_with_plugins_and_opt_level(
     // recognised by the semantic analyser and resolver.
     let bridge_functions = registry.bridge_functions();
     let lang_to_bridge = registry.language_to_bridge_map();
+    let lang_to_helper = registry.language_to_helper_map();
     if !bridge_functions.is_empty() {
         tracing::debug!(
             bridge_function_count = bridge_functions.len(),
@@ -1290,8 +1292,16 @@ pub fn compile_with_plugins_and_opt_level(
 
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(hir_result.hir)?
-    } else if lang_to_bridge.is_empty() {
+    } else if lang_to_bridge.is_empty() && lang_to_helper.is_empty() {
         Resolver::resolve_with_bridge_functions(hir_result.hir, bridge_functions)?
+    } else if !lang_to_helper.is_empty() {
+        Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            hir_result.hir,
+            bridge_functions,
+            &lang_to_bridge,
+            std::collections::HashMap::new(),
+            lang_to_helper.clone(),
+        )?
     } else {
         Resolver::resolve_with_bridge_and_language_aliases(
             hir_result.hir,
@@ -1340,6 +1350,14 @@ pub fn compile_with_plugins_and_opt_level(
             "Passing language-to-bridge map to MIR code generator"
         );
         mir_codegen.set_language_to_bridge_map(lang_to_bridge);
+    }
+
+    if !lang_to_helper.is_empty() {
+        tracing::debug!(
+            helper_alias_count = lang_to_helper.len(),
+            "Passing language-to-helper map to MIR code generator"
+        );
+        mir_codegen.set_language_to_helper_map(lang_to_helper);
     }
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;
@@ -2338,6 +2356,10 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         .as_ref()
         .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
+    let lang_to_helper_multifile = registry
+        .as_ref()
+        .map(|r| r.language_to_helper_map())
+        .unwrap_or_default();
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
     use crate::hir::validation::HirValidator;
@@ -2364,14 +2386,15 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
         .unwrap_or_default();
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(merged_hir)?
-    } else if lang_to_bridge_multifile.is_empty() {
+    } else if lang_to_bridge_multifile.is_empty() && lang_to_helper_multifile.is_empty() {
         Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
-    } else if !lang_fn_defs_multi.is_empty() {
-        Resolver::resolve_with_bridge_aliases_and_fn_defs(
+    } else if !lang_fn_defs_multi.is_empty() || !lang_to_helper_multifile.is_empty() {
+        Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
             merged_hir,
             &bridge_functions,
             &lang_to_bridge_multifile,
             lang_fn_defs_multi,
+            lang_to_helper_multifile.clone(),
         )?
     } else {
         Resolver::resolve_with_bridge_and_language_aliases(
@@ -2411,6 +2434,14 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             "Passing language-to-bridge map to MIR code generator"
         );
         mir_codegen.set_language_to_bridge_map(lang_to_bridge_multifile);
+    }
+
+    if !lang_to_helper_multifile.is_empty() {
+        tracing::debug!(
+            helper_alias_count = lang_to_helper_multifile.len(),
+            "Passing language-to-helper map to MIR code generator"
+        );
+        mir_codegen.set_language_to_helper_map(lang_to_helper_multifile);
     }
 
     let codegen_result = mir_codegen.generate(mir_result.program)?;
@@ -2766,6 +2797,10 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         .as_ref()
         .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
+    let lang_to_helper = registry
+        .as_ref()
+        .map(|r| r.language_to_helper_map())
+        .unwrap_or_default();
 
     // Inject phantom HIR class stubs for every type declared in loaded plugin manifests.
     // Without this, HirValidator rejects named types like `Request` as "Undefined type"
@@ -2879,14 +2914,15 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
 
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(merged_hir)?
-    } else if lang_to_bridge.is_empty() {
+    } else if lang_to_bridge.is_empty() && lang_to_helper.is_empty() {
         Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
     } else {
-        Resolver::resolve_with_bridge_aliases_and_fn_defs(
+        Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
             merged_hir,
             &bridge_functions,
             &lang_to_bridge,
             lang_fn_defs_owned,
+            lang_to_helper.clone(),
         )?
     };
     let resolved_hir = resolution_result.resolved_hir;
@@ -2968,6 +3004,9 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     }
     if !lang_to_bridge.is_empty() {
         mir_codegen.set_language_to_bridge_map(lang_to_bridge);
+    }
+    if !lang_to_helper.is_empty() {
+        mir_codegen.set_language_to_helper_map(lang_to_helper);
     }
 
     // Plugin Contracts v2 — derive host class from (in priority order):
@@ -3284,6 +3323,22 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
         .as_ref()
         .map(|r| r.language_to_bridge_map())
         .unwrap_or_default();
+    let lang_to_helper = registry
+        .as_ref()
+        .map(|r| r.language_to_helper_map())
+        .unwrap_or_default();
+    let lang_fn_defs_release: std::collections::HashMap<
+        String,
+        crate::plugins::plugin_abi::PluginFunctionDef,
+    > = registry
+        .as_ref()
+        .map(|r| {
+            r.language_function_defs()
+                .into_iter()
+                .map(|(k, v)| (k, v.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Add language-name alias externals (identical to debug path)
     if !lang_to_bridge.is_empty() {
@@ -3332,8 +3387,16 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     // Stage 4: Resolution (identical to debug path)
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(merged_hir)?
-    } else if lang_to_bridge.is_empty() {
+    } else if lang_to_bridge.is_empty() && lang_to_helper.is_empty() {
         Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
+    } else if !lang_to_helper.is_empty() || !lang_fn_defs_release.is_empty() {
+        Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            merged_hir,
+            &bridge_functions,
+            &lang_to_bridge,
+            lang_fn_defs_release,
+            lang_to_helper.clone(),
+        )?
     } else {
         Resolver::resolve_with_bridge_and_language_aliases(
             merged_hir,
@@ -3375,6 +3438,9 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     }
     if !lang_to_bridge.is_empty() {
         mir_codegen.set_language_to_bridge_map(lang_to_bridge);
+    }
+    if !lang_to_helper.is_empty() {
+        mir_codegen.set_language_to_helper_map(lang_to_helper);
     }
     // Plugin Contracts v2 — release path must also honour the CLI target
     // override so that `cln compile --release --target browser` produces a

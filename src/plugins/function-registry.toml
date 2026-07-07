@@ -2421,6 +2421,39 @@ aliases     = ["auth.user_role"]
 hosts       = ["server"]
 description = "Get current authenticated user role as length-prefixed string; returns empty if unauthenticated"
 
+[[functions]]
+name        = "_jwt_refresh_and_rotate"
+layer       = 3
+category    = "auth"
+module      = "env"
+params      = ["string", "string", "string", "integer"]
+returns     = "ptr"
+aliases     = ["jwt.refresh_and_rotate"]
+hosts       = ["server"]
+description = "Atomically verify a JWT refresh token, mark its jti as consumed, and return a newly-signed token with new jti and new_ttl_seconds lifetime. Returns empty string on invalid, expired, or replayed tokens. Enforces AUTH-J007/AUTH-J009 single-use rotation."
+
+[[functions]]
+name        = "_auth_create_reset_token"
+layer       = 3
+category    = "auth"
+module      = "env"
+params      = ["integer", "integer"]
+returns     = "ptr"
+aliases     = ["auth.create_reset_token"]
+hosts       = ["server"]
+description = "Create a password reset token for user_id with ttl_seconds lifetime. Returns the length-prefixed plaintext token (opaque hex); server stores only sha256(token). Backs auth.createResetToken() in frame.auth spec §16. Empty string on error."
+
+[[functions]]
+name        = "_auth_consume_reset_token"
+layer       = 3
+category    = "auth"
+module      = "env"
+params      = ["string"]
+returns     = "integer"
+aliases     = ["auth.consume_reset_token"]
+hosts       = ["server"]
+description = "Atomically validate and consume a password reset token. Returns the associated user_id on success, or 0 if the token is invalid, expired, or already consumed. Backs auth.consumeResetToken() in frame.auth spec §16."
+
 # ============================================================
 # LAYER 3 - ROLES (3 functions)
 # ============================================================
