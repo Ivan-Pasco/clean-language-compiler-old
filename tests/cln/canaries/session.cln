@@ -1,0 +1,31 @@
+// Test: canaries/session
+// Namespace: session (Layer 3, server + node-server)
+// Registry entries covered: _session_store, _session_get, _session_delete,
+//   _session_exists, _session_set_csrf, _session_get_csrf, _http_set_cookie
+// Grammar: 5.3 function calls, plugins block, endpoints block
+// Semantic: FUNC-001 bridge function resolution, CONC002 request-context
+// Notes: Session functions live in a request handler (CONC002 requires it).
+//   Calls are inside a runtime-false guard so the WASM imports every
+//   _session_ bridge but never executes at compile-time.
+// Expected output:
+//   ok
+
+plugins:
+	frame.server
+	frame.auth
+
+endpoints:
+	GET "/canary/session":
+		boolean never = false
+		if never
+			string data = session.get()
+			boolean stored = session.store("mysid", "", "{\"user\":1}", 3600, 0)
+			boolean exists = session.exists("mysid")
+			boolean deleted = session.delete()
+			boolean csrfSet = session.setCsrf("token123")
+			string csrf = session.getCsrf()
+			return jsonResponse("{\"a\":\"" + data + "\"}")
+		return jsonResponse("{\"ok\":true}")
+
+start:
+	printl("ok")

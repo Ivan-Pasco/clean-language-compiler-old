@@ -1,0 +1,25 @@
+// Test: canaries/email
+// Namespace: email (Layer 3, server + node-server)
+// Registry entries covered: _email_configure, _email_send, _email_last_error
+// Grammar: 5.3 function calls, plugins block, endpoints block
+// Semantic: FUNC-001 bridge function resolution
+// Notes: email.* is exposed by frame.server. Calls are inside an endpoint
+//   handler and guarded by a runtime-false condition so the WASM imports
+//   every _email_ bridge but never executes.
+// Expected output:
+//   ok
+
+plugins:
+	frame.server
+
+endpoints:
+	GET "/canary/email":
+		boolean never = false
+		if never
+			boolean ok = email.sendFrom("a@b.c", "hi", "<p>x</p>", "x", "sender@b.c")
+			string err = email.lastError()
+			return jsonResponse("{\"ok\":" + ok.toString() + "}")
+		return jsonResponse("{\"ok\":true}")
+
+start:
+	printl("ok")

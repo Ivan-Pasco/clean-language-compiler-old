@@ -1,0 +1,32 @@
+// Test: canaries/storage
+// Namespace: storage (Layer 2, browser + server — server-side stubs return "")
+// Registry entries covered: _storage_local_get, _storage_local_set,
+//   _storage_local_remove, _storage_local_clear, _storage_session_get,
+//   _storage_session_set, _storage_session_remove, _storage_session_clear
+// Grammar: 5.3 function calls, plugins block
+// Semantic: FUNC-001 bridge function resolution
+// Notes: storage.local.* / storage.session.* are exposed by frame.ui. The
+//   compiler routes the language-level names to their _storage_ bridges via
+//   frame.ui's [language].functions mapping. Calls happen at top-level in
+//   start: so the reachability walk keeps every _storage_ bridge alive.
+//   The get() calls throw away their return value so runtime output stays
+//   deterministic across browser (real) and server (stub) hosts.
+// Expected output:
+//   ok
+
+plugins:
+	frame.ui
+
+start:
+	storage.local.set("canary", "value")
+	string lv = storage.local.get("canary")
+	storage.local.remove("canary")
+	storage.local.clear()
+	storage.session.set("canary", "value")
+	string sv = storage.session.get("canary")
+	storage.session.remove("canary")
+	storage.session.clear()
+	// Consume the values so they don't get DCE'd; length is deterministic
+	// (0 on server stub, 5 on browser after set) so we don't print it.
+	integer _n = lv.length() + sv.length()
+	printl("ok")

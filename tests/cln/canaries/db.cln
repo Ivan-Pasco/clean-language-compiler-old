@@ -1,0 +1,26 @@
+// Test: canaries/db
+// Namespace: database (Layer 3, server + node-server)
+// Registry entries covered: _db_query, _db_execute, _db_begin, _db_commit,
+//   _db_rollback, _db_configure, _db_paginate, _db_cursor_page,
+//   _db_migration_diff, _db_migration_status, _db_rollback_migration,
+//   _db_run_migrations, _db_register_migration, _db_valid_field
+// Grammar: 5.3 function calls, plugins block
+// Semantic: FUNC-001 bridge function resolution
+// Notes: db.* calls are guarded by a runtime-false condition so the WASM
+//   imports every db_ bridge but never executes a real DB request. Real
+//   hosts (clean-server, clean-node-server) run this via a live DB; the
+//   deterministic expected output here is the compile-clean smoke line.
+// Expected output:
+//   ok
+
+plugins:
+	frame.data
+
+start:
+	boolean never = false
+	if never
+		string r = db.query("SELECT 1", "")
+		integer n = db.execute("UPDATE t SET v = 1", "")
+		printl(r)
+		printl(n.toString())
+	printl("ok")

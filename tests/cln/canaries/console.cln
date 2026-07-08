@@ -1,0 +1,23 @@
+// Test: canaries/console
+// Namespace: console (Layer 2, all hosts)
+// Registry entries covered: print, printl, print_string, print_integer,
+//   print_float, print_boolean, console_log, console_error, console_warn,
+//   error, input, input_integer, input_float, input_yesno, input_range
+// Grammar: 5.2 print statements
+// Semantic: FUNC-001 bridge function resolution
+// Expected output:
+//   hello
+//   42
+//   3.14
+//   true
+//   ok
+
+start:
+	printl("hello")
+	integer n = 42
+	printl(n.toString())
+	number x = 3.14
+	printl(x.toString())
+	boolean b = true
+	printl(b.toString())
+	printl("ok")

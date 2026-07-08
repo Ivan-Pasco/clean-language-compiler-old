@@ -1,0 +1,72 @@
+// Test: canaries/router
+// Namespace: request + response + http_server (Layer 3, server + node-server)
+// Registry entries covered: _req_param, _req_param_int, _req_query, _req_body,
+//   _req_body_field, _req_header, _req_headers, _req_method, _req_path,
+//   _req_cookie, _req_form, _req_ip, _http_respond, _res_set_header,
+//   _res_status, _res_body, _res_json, _http_listen, _http_route,
+//   _http_sse_route (via FEED route), _sse_emit / _sse_emit_event /
+//   _sse_close / _sse_retry / _sse_is_connected (via SSE handler body)
+// Grammar: 5.3 function calls, endpoints block
+// Semantic: FUNC-001 bridge function resolution, CONC002 request-context
+// Notes: Every req.* / res.* server-side call is inside a request handler and
+//   gated by a runtime-false condition so the bridge imports appear in the
+//   WASM but the calls don't execute at compile-time.
+// Expected output:
+//   ok
+
+plugins:
+	frame.server
+
+endpoints:
+	GET "/canary/router/:id":
+		boolean never = false
+		if never
+			string id = req.param("id")
+			integer n = req.paramInt("id")
+			string q = req.query("q")
+			string body = req.body()
+			string field = req.bodyField("email")
+			string h = req.header("Content-Type")
+			string all = req.headers()
+			string m = req.method()
+			string p = req.path()
+			string c = req.cookie("app.sid")
+			string f = req.form()
+			string ip = req.ip()
+			return jsonResponse("{\"id\":\"" + id + "\"}")
+		return jsonResponse("{\"ok\":true}")
+
+	POST "/canary/router":
+		boolean never = false
+		if never
+			res.setHeader("X-Trace", "canary")
+			res.status(201)
+			res.body("hello")
+			res.json("{\"ok\":true}")
+		return jsonResponse("{\"ok\":true}")
+
+	FEED "/canary/feed":
+		boolean never = false
+		if never
+			sse.emit("hello")
+			sse.emitEvent("tick", "1")
+			sse.retry(1000)
+			integer connected = sse.isConnected()
+			sse.close()
+		return jsonResponse("{\"ok\":true}")
+
+	LIVE "/canary/live":
+		live.onMessage: (msg)
+			boolean never = false
+			if never
+				ws.send(1, "hello")
+				ws.broadcast("room", "hello")
+				ws.roomJoin(1, "room")
+				ws.roomLeave(1, "room")
+				ws.roomBroadcast("room", "hello")
+				ws.close(1)
+				integer cid = ws.clientId()
+				string m = ws.message()
+
+start:
+	printl("ok")

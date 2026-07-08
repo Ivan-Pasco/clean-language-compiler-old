@@ -1,0 +1,30 @@
+// Test: canaries/file
+// Namespace: file_io (Layer 2, server + node-server)
+// Registry entries covered: file_read, file_write, file_exists, file_delete,
+//   file_append
+// Grammar: 5.3 function calls, plugin block
+// Semantic: FUNC-001 bridge function resolution
+// Expected output:
+//   file.write:ok
+//   file.exists:true
+//   file.read:hello canary
+//   file.append:ok
+//   file.delete:ok
+//   file.exists:false
+
+start:
+	string path = "/tmp/clean_canary_file.txt"
+	// Best-effort cleanup — the canary must be idempotent across host runs.
+	file.delete(path)
+	file.write(path, "hello canary")
+	printl("file.write:ok")
+	boolean present = file.exists(path)
+	printl("file.exists:" + present.toString())
+	string got = file.read(path)
+	printl("file.read:" + got)
+	file.append(path, "!")
+	printl("file.append:ok")
+	file.delete(path)
+	printl("file.delete:ok")
+	boolean gone = file.exists(path)
+	printl("file.exists:" + gone.toString())

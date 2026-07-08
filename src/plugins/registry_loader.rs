@@ -51,6 +51,8 @@ pub struct RegistryFunction {
     #[serde(default)]
     pub layer: u8,
     #[serde(default)]
+    pub category: String,
+    #[serde(default)]
     pub module: String,
     #[serde(default)]
     pub params: Vec<String>,

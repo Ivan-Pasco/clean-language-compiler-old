@@ -1,0 +1,81 @@
+// Test: canaries/math
+// Namespace: math (Layer 2, all hosts)
+// Registry entries covered: math_sqrt, math_pow, math_abs, math_min, math_max,
+//   math_sin, math_cos, math_tan, math_floor, math_ceil, math_round,
+//   math_trunc, math_sign, math_ln, math_log10, math_log2, math_exp,
+//   math_asin, math_acos, math_atan, math_atan2, math_sinh, math_cosh,
+//   math_tanh, math_exp2, math_pi, math_e
+// Grammar: 5.3 function calls
+// Semantic: FUNC-001 bridge function resolution
+// Notes: Deterministic values chosen so runtime output is stable across hosts.
+//   Transcendental / hyperbolic functions are exercised through a runtime-false
+//   guard so their imports are emitted without polluting the expected output.
+//   math_random is emitted unconditionally by the compiler (see
+//   codegen_registration.rs:691) — the local wasmtime_runner has no stub for
+//   it and will fail to instantiate the WASM. Layer 2 hosts (server,
+//   node-server) do implement it, so the canary compiles cleanly for the L2
+//   audience. Local smoke-run is not expected to succeed for this canary
+//   until the runner grows a math_random stub.
+// Expected output:
+//   sqrt:4
+//   pow:8
+//   abs:5
+//   min:2
+//   max:7
+//   floor:3
+//   ceil:4
+//   round:4
+//   ok
+
+start:
+	printl("sqrt:" + math.sqrt(16.0).toString())
+	printl("pow:" + math.pow(2.0, 3.0).toString())
+	printl("abs:" + math.abs(-5.0).toString())
+	printl("min:" + math.min(2.0, 7.0).toString())
+	printl("max:" + math.max(2.0, 7.0).toString())
+	printl("floor:" + math.floor(3.7).toString())
+	printl("ceil:" + math.ceil(3.2).toString())
+	printl("round:" + math.round(3.6).toString())
+
+	boolean never = false
+	if never
+		number s = math.sin(0.0)
+		number c = math.cos(0.0)
+		number t = math.tan(0.0)
+		number ln = math.ln(1.0)
+		number l10 = math.log10(1.0)
+		number l2 = math.log2(1.0)
+		number ex = math.exp(0.0)
+		number as = math.asin(0.0)
+		number ac = math.acos(1.0)
+		number at = math.atan(0.0)
+		number at2 = math.atan2(0.0, 1.0)
+		number sh = math.sinh(0.0)
+		number ch = math.cosh(0.0)
+		number th = math.tanh(0.0)
+		number e2 = math.exp2(0.0)
+		number tr = math.trunc(1.5)
+		number sg = math.sign(-1.0)
+		number pi = math.pi()
+		number e = math.e()
+		printl(s.toString())
+		printl(c.toString())
+		printl(t.toString())
+		printl(ln.toString())
+		printl(l10.toString())
+		printl(l2.toString())
+		printl(ex.toString())
+		printl(as.toString())
+		printl(ac.toString())
+		printl(at.toString())
+		printl(at2.toString())
+		printl(sh.toString())
+		printl(ch.toString())
+		printl(th.toString())
+		printl(e2.toString())
+		printl(tr.toString())
+		printl(sg.toString())
+		printl(pi.toString())
+		printl(e.toString())
+
+	printl("ok")

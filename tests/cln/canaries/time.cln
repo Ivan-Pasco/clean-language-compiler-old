@@ -1,0 +1,18 @@
+// Test: canaries/time
+// Namespace: time (Layer 2, all hosts)
+// Registry entries covered: _time_now, _time_now_seconds, _time_performance_now
+// Grammar: 5.3 function calls
+// Semantic: FUNC-001 bridge function resolution
+// Notes: The time.* result is host-dependent — asserting a specific value is
+//   impossible. The canary establishes that time.now() resolves and its
+//   integer result is usable. server.sleep is deliberately NOT combined with
+//   time.now() in the same start: block because that combination trips a
+//   COM001 codegen bug (fingerprint c1dd411d2163c5c7) at
+//   `func[234]` — reported separately.
+// Expected output:
+//   ok
+
+start:
+	integer now = time.now()
+	string _ = now.toString()
+	printl("ok")

@@ -1,0 +1,64 @@
+// Test: canaries/canvas
+// Namespace: canvas + camera + scene + input + audio + sprite + tween +
+//   timeline + particles + collision + ease + path + gradient + layer +
+//   font + asset + anim (Layer 2/3, browser only)
+// Registry entries covered (subset — one call per subcategory to force
+// import emission):
+//   canvas: _canvas_init, _canvas_clear, _canvas_present,
+//           _canvas_rect_filled, _canvas_get_delta_time, _canvas_get_width,
+//           _canvas_get_height, _canvas_get_fps
+//   camera: _camera_set_position, _camera_set_zoom, _camera_shake
+//   scene:  _scene_change, _scene_push, _scene_pop
+//   input:  _input_mouse_x, _input_mouse_y, _input_key_down,
+//           _input_key_just_pressed, _input_key_just_released
+//   audio:  _audio_play_sound, _audio_music_play, _audio_music_stop
+// Grammar: 5.3 function calls, plugins block
+// Semantic: FUNC-001 bridge function resolution
+// Notes: The `canvasScene:` DSL block cannot be used here because frame.canvas
+//   3.x + cln 0.33.20 trips a compiler bug (PLUGIN013 batch.arrayPush) that's
+//   tracked upstream. This canary calls the * bridges directly through a
+//   runtime-false guard so the imports are emitted without runtime execution.
+//   Runtime output requires a browser host with WebGL / Canvas API; the local
+//   wasmtime_runner prints "ok" for the compile-time smoke test.
+//   Sub-namespaces exercised here are the ones with straightforward dot-
+//   notation surfaces; sprite/tween/timeline/particles/collision/ease/path/
+//   gradient/layer/font/asset/anim need their DSL blocks (which trip the
+//   same PLUGIN013 bug) so they're deferred to a plugin fix.
+// Expected output:
+//   ok
+
+plugins:
+	frame.canvas
+
+start:
+	boolean never = false
+	if never
+		integer handle = canvas.init(320, 240, "canary")
+		canvas.clear(handle)
+		canvas.rectFilled(handle, 0.0, 0.0, 100.0, 100.0, "#000")
+		canvas.present(handle)
+		integer w = canvas.getWidth(handle)
+		integer h = canvas.getHeight(handle)
+		number dt = canvas.getDeltaTime()
+		number fps = canvas.getFps()
+		camera.setPosition(0.0, 0.0)
+		camera.setZoom(1.0)
+		camera.shake(10.0, 0.3, 0)
+		scene.change("main")
+		scene.push("pause")
+		scene.pop()
+		number mx = input.mouseX()
+		number my = input.mouseY()
+		integer kd = input.keyDown("Space")
+		integer kp = input.keyJustPressed("Space")
+		integer kr = input.keyJustReleased("Space")
+		audio.play("beep", 0.8, 1.0)
+		audio.music.play("bg", 1, 0.8)
+		integer hit = collision.circles(0.0, 0.0, 10.0, 5.0, 5.0, 10.0)
+		integer hit2 = collision.rects(0.0, 0.0, 10.0, 10.0, 5.0, 5.0, 10.0, 10.0)
+		integer hit3 = collision.pointCircle(0.0, 0.0, 5.0, 5.0, 10.0)
+		integer hit4 = collision.pointRect(0.0, 0.0, 5.0, 5.0, 10.0, 10.0)
+		integer hit5 = collision.circleRect(0.0, 0.0, 10.0, 5.0, 5.0, 10.0, 10.0)
+		number hit6 = collision.rayCircle(0.0, 0.0, 1.0, 0.0, 10.0, 0.0, 5.0)
+		printl(w.toString())
+	printl("ok")

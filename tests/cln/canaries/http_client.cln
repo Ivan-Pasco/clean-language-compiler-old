@@ -1,0 +1,68 @@
+// Test: canaries/http_client
+// Namespace: http_client (Layer 2, server + node-server)
+// Registry entries covered: http_get, http_post, http_put, http_patch,
+//   http_delete, http_head, http_options, http_post_json, http_put_json,
+//   http_patch_json, http_post_form, http_get_with_headers,
+//   http_post_with_headers, http_get_response_code,
+//   http_encode_url, http_decode_url, http_build_query
+// Grammar: 5.3 function calls
+// Semantic: FUNC-001 bridge function resolution
+// Notes: URL-manipulation helpers produce deterministic output. Network verbs
+//   and response accessors are exercised through a runtime-false guard so their
+//   bridge imports appear in the WASM's import section without executing.
+//   http_set_user_agent, http_set_timeout, http_set_max_redirects,
+//   http_enable_cookies, http_get_response_headers, http_put_with_headers,
+//   http_patch_with_headers, http_delete_with_headers are NOT exercised here —
+//   they lack entries in the compiler's explicit_reachable table
+//   (`src/codegen/mir_codegen/utilities.rs:2155`) and are tree-shaken even
+//   when reachable from the MIR. This is filed as a follow-up compiler bug;
+//   once fixed, extend this canary to cover them.
+// Expected output:
+//   encode:hello%20world
+//   decode:hello world
+//   query:a=1&b=two
+//   ok
+
+start:
+	// URL helpers — deterministic runtime output.
+	string enc = http.encodeUrl("hello world")
+	printl("encode:" + enc)
+	string dec = http.decodeUrl("hello%20world")
+	printl("decode:" + dec)
+	string q = http.buildQuery("a=1&b=two")
+	printl("query:" + q)
+
+	// Runtime-false guard forces the compiler to emit every bridge import
+	// listed here without executing the call at runtime.
+	boolean never = false
+	if never
+		string _g   = http.get("http://x")
+		string _p   = http.post("http://x", "")
+		string _u   = http.put("http://x", "")
+		string _pa  = http.patch("http://x", "")
+		string _d   = http.delete("http://x")
+		string _h   = http.head("http://x")
+		string _o   = http.options("http://x")
+		string _pj  = http.postJson("http://x", "{}")
+		string _uj  = http.putJson("http://x", "{}")
+		string _paj = http.patchJson("http://x", "{}")
+		string _pf  = http.postForm("http://x", "a=1")
+		string _gwh = http.getWithHeaders("http://x", "H: v")
+		string _pwh = http.postWithHeaders("http://x", "", "H: v")
+		integer code = http.getResponseCode()
+		printl(_g)
+		printl(_p)
+		printl(_u)
+		printl(_pa)
+		printl(_d)
+		printl(_h)
+		printl(_o)
+		printl(_pj)
+		printl(_uj)
+		printl(_paj)
+		printl(_pf)
+		printl(_gwh)
+		printl(_pwh)
+		printl(code.toString())
+
+	printl("ok")

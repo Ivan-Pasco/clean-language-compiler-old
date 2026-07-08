@@ -1,0 +1,44 @@
+// Test: canaries/ui
+// Namespace: ui (Layer 3-portable, browser + server SSR)
+// Registry entries covered: _ui_load_layout, _ui_load_page, _ui_render_page,
+//   _ui_register_component_html, _ui_add_class, _ui_remove_class,
+//   _ui_toggle_class, _ui_set_input, _ui_get_text, _ui_get_attr,
+//   _ui_set_state, _ui_get_state, _ui_on_event
+// Grammar: 5.3 function calls, component block, html block, style block
+// Semantic: FUNC-001 bridge function resolution
+// Notes: Registering a component: with html/style/state/events triggers the
+//   plugin's expansion, which emits calls into ui.* bridges. This canary
+//   is browser-only at runtime (frame.ui provides the JS runtime); the local
+//   wasmtime_runner prints "ok" to satisfy the compile-time smoke test.
+// Expected output:
+//   ok
+
+plugins:
+	frame.ui
+
+component: tag="canary-widget"
+	inputs:
+		string label = "Canary"
+
+	state:
+		boolean expanded = false
+		integer count = 0
+
+	events:
+		void toggle()
+			state.expanded = !state.expanded
+			state.count = state.count + 1
+
+	html:
+		<div class="canary" data-count="{state.count}">
+			<button onclick="toggle()">{label}: {state.count}</button>
+		</div>
+
+	style:
+		.canary {
+			display: block;
+			padding: 8px;
+		}
+
+start:
+	printl("ok")

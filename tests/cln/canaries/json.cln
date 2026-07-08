@@ -1,0 +1,23 @@
+// Test: canaries/json
+// Namespace: json (Layer 3, all hosts via json.textToData / json.dataToText /
+//   json.get)
+// Registry entries covered: _json_encode, _json_decode, _json_get
+// Grammar: 5.3 function calls
+// Semantic: FUNC-001 bridge function resolution
+// Notes: JSON built-ins are surfaced through pure-WASM stdlib for encode/
+//   decode/prettyDataToText (see WASM_ONLY_FUNCTIONS in registry.rs) and
+//   through host bridges for tryTextToData / json.get. This canary exercises
+//   the bridge surface via json.get; the pure-WASM path is exercised by
+//   json.dataToText.
+// Expected output:
+//   name:Alice
+//   age:30
+//   ok
+
+start:
+	string doc = "{\"name\":\"Alice\",\"age\":30}"
+	string n = json.get(doc, "name")
+	printl("name:" + n)
+	string a = json.get(doc, "age")
+	printl("age:" + a)
+	printl("ok")

@@ -1,0 +1,38 @@
+// Test: canaries/auth
+// Namespace: auth (Layer 3, server + node-server)
+// Registry entries covered: _auth_get_session, _auth_can, _auth_has_any_role,
+//   _auth_set_session, _auth_clear_session, _auth_user_id, _auth_user_role,
+//   _auth_create_reset_token
+// Grammar: 5.3 function calls, plugins block, endpoints block
+// Semantic: FUNC-001 bridge function resolution
+// Notes: Auth functions live inside a request handler. Calls are guarded by
+//   a runtime-false condition so the WASM imports every _auth_ bridge but
+//   never executes at compile-time. The frame.auth `auth: session:` /
+//   `auth: jwt:` blocks currently trip plugin expansion bugs
+//   (FRAME-AUTH-E002 + PLUGIN013 batch.arrayPush) on cln 0.33.20 +
+//   frame.auth 2.4.2, so this canary avoids them and calls the auth.*
+//   builtins directly from an endpoint handler.
+// Expected output:
+//   ok
+
+plugins:
+	frame.server
+	frame.auth
+
+endpoints:
+	GET "/canary/auth":
+		boolean never = false
+		if never
+			string sess = auth.getSession()
+			boolean canRead = auth.can("read")
+			boolean hasRole = auth.hasAnyRole("admin")
+			boolean setOk = auth.setSession("{\"k\":\"v\"}")
+			boolean cleared = auth.clearSession()
+			integer uid = auth.userId()
+			string role = auth.userRole()
+			string resetTok = auth.createResetToken(1, 3600)
+			return jsonResponse("{\"u\":" + uid.toString() + "}")
+		return jsonResponse("{\"ok\":true}")
+
+start:
+	printl("ok")

@@ -1,0 +1,36 @@
+# WASM determinism corpus.
+#
+# One .cln path per line, relative to the compiler crate root. The
+# determinism check compiles each entry twice at the requested opt level and
+# fails if the two outputs differ byte-for-byte.
+#
+# Seed corpus mirrors the stage-snapshot canary (tests/test_stage_snapshots.rs)
+# so that a non-determinism regression surfaces in BOTH tests, not just one.
+
+tests/cln/core/basics/00_minimal.cln
+tests/cln/core/basics/01_hello_world.cln
+tests/cln/control/conditionals/08_stmt_after_nested_if_else.cln
+tests/cln/control/loops/else_break_inside_while.cln
+
+# Cross-component contract canaries — Layer 1 of the umbrella prompt
+# "Cross-Component Contract Canaries — Nightly Integration Tests"
+# (errors.cleanlanguage.dev/prompts umbrella 7fb425cb). One canary per bridge
+# namespace so a nightly determinism regression pinpoints the responsible
+# contract.
+tests/cln/canaries/console.cln
+tests/cln/canaries/file.cln
+tests/cln/canaries/crypto.cln
+tests/cln/canaries/http_client.cln
+tests/cln/canaries/db.cln
+tests/cln/canaries/session.cln
+tests/cln/canaries/auth.cln
+tests/cln/canaries/router.cln
+tests/cln/canaries/ui.cln
+tests/cln/canaries/canvas.cln
+tests/cln/canaries/math.cln
+tests/cln/canaries/json.cln
+tests/cln/canaries/time.cln
+tests/cln/canaries/env.cln
+tests/cln/canaries/storage.cln
+tests/cln/canaries/email.cln
+tests/cln/canaries/api.cln

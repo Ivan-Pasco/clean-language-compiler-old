@@ -1,0 +1,32 @@
+// Test: canaries/api
+// Namespace: api (Layer 2 browser, frame.client)
+// Registry entries covered: _api_get, _api_ok, _api_status, _api_json, _api_body
+// Grammar: 5.3 function calls, plugins block, later assignment
+// Semantic: FUNC-001 bridge function resolution, SEM-LATER-002 result.*
+//   properties resolve to bridge calls after CPS transform
+// Notes: The api.* namespace is exposed by frame.client. The `later` CPS
+//   transform is what causes r.ok / r.json / r.body / r.status to lower to
+//   the corresponding bridge calls. Runtime execution requires a browser
+//   host. This canary intentionally covers a subset (get + response-side
+//   accessors) — expanding to post/put/patch/delete + configuration
+//   accessors (auth, clearAuth, header, timeout, responseHeader) trips a
+//   COM001 codegen bug (fingerprint 73029c051f3a02b7) in the CPS lowering.
+//   Once fixed, extend this canary to cover the full api namespace.
+// Expected output:
+//   ok
+
+plugins:
+	frame.client
+
+start:
+	printl("ok")
+
+functions:
+	any probe()
+		later r = api.get("/x")
+		if r.ok
+			print(r.json("name"))
+			print(r.body)
+		else
+			integer s = r.status
+			print(s.toString())
