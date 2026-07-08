@@ -3,24 +3,30 @@
 // Registry entries covered: http_get, http_post, http_put, http_patch,
 //   http_delete, http_head, http_options, http_post_json, http_put_json,
 //   http_patch_json, http_post_form, http_get_with_headers,
-//   http_post_with_headers, http_get_response_code,
+//   http_post_with_headers, http_get_response_code, http_get_response_headers,
 //   http_encode_url, http_decode_url, http_build_query
 // Grammar: 5.3 function calls
 // Semantic: FUNC-001 bridge function resolution
-// Notes: URL-manipulation helpers produce deterministic output. Network verbs
-//   and response accessors are exercised through a runtime-false guard so their
-//   bridge imports appear in the WASM's import section without executing.
+// Notes: URL-manipulation helpers run at top-level so their bridge imports
+//   are always emitted; http.getResponseHeaders also runs at top-level
+//   (regression guard for the reachability entry added in
+//   src/codegen/mir_codegen/utilities.rs, fingerprint d9a899a19741).
+//   Network verbs and response accessors are exercised through a
+//   runtime-false guard so their bridge imports appear in the WASM's
+//   import section without executing.
 //   http_set_user_agent, http_set_timeout, http_set_max_redirects,
-//   http_enable_cookies, http_get_response_headers, http_put_with_headers,
-//   http_patch_with_headers, http_delete_with_headers are NOT exercised here —
-//   they lack entries in the compiler's explicit_reachable table
-//   (`src/codegen/mir_codegen/utilities.rs:2155`) and are tree-shaken even
-//   when reachable from the MIR. This is filed as a follow-up compiler bug;
-//   once fixed, extend this canary to cover them.
+//   http_enable_cookies are NOT exercised because their stdlib wrapper
+//   bodies in src/stdlib/http_class.rs produce invalid WASM (COM001).
+//   Filed as a separate compiler bug; once fixed, add them to the reachability
+//   table AND to this canary.
+//   http_put_with_headers, http_patch_with_headers, http_delete_with_headers
+//   have no stdlib surface name in http_class.rs — need register_stdlib_function
+//   calls before a canary can cover them.
 // Expected output:
 //   encode:hello%20world
 //   decode:hello world
 //   query:a=1&b=two
+//   headers-len:0
 //   ok
 
 start:
@@ -32,8 +38,16 @@ start:
 	string q = http.buildQuery("a=1&b=two")
 	printl("query:" + q)
 
-	// Runtime-false guard forces the compiler to emit every bridge import
-	// listed here without executing the call at runtime.
+	// getResponseHeaders — top-level so the reachability regression guard
+	// fires if the entry in explicit_reachable is ever removed. Prior to
+	// the fix, this call site raised COD000 "Function 'http.getResponseHeaders'
+	// not found in function map" because the import was tree-shaken.
+	// The runtime stub returns an empty pointer on all hosts; length is 0.
+	string hdrs = http.getResponseHeaders()
+	printl("headers-len:" + hdrs.length().toString())
+
+	// Runtime-false guard forces the compiler to emit every remaining bridge
+	// import without executing at runtime.
 	boolean never = false
 	if never
 		string _g   = http.get("http://x")

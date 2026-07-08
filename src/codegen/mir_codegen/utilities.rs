@@ -2176,6 +2176,19 @@ impl MirCodeGenerator<'_> {
             ("http.encodeUrl", "http_encode_url"),
             ("http.decodeUrl", "http_decode_url"),
             ("http.buildQuery", "http_build_query"),
+            // camelCase http.getResponseHeaders: dot→underscore expansion
+            // produces "http_getResponseHeaders" which does not match the
+            // actual import name "http_get_response_headers". Without this
+            // entry the import is tree-shaken even when the language-level
+            // name is in the MIR call graph. Fingerprint d9a899a19741
+            // (COD000). Other missing entries — setUserAgent, setTimeout,
+            // setMaxRedirects, enableCookies — cannot be added yet because
+            // their wrappers in `src/stdlib/http_class.rs` produce invalid
+            // WASM (COM001, filed as a separate bug); adding them to this
+            // table exposes that downstream bug at compile time. Once the
+            // wrapper bodies are fixed, extend this table with the four
+            // setters.
+            ("http.getResponseHeaders", "http_get_response_headers"),
         ];
         for (lang, import_field) in explicit_reachable {
             if names.contains(*lang) {
