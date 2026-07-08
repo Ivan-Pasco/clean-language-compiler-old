@@ -103,6 +103,12 @@ pub(super) struct PendingBridgeWrapper {
     pub(super) param_types: Vec<crate::builtins::registry::BuiltinType>,
     /// When true, emit `i32.wrap_i64` after the call (host returns i64, Clean caller expects i32).
     pub(super) wrap_i64: bool,
+    /// Positions in `param_types` (Clean-language positions, NOT raw WASM
+    /// positions) whose value must be widened `i32 → i64` via
+    /// `i64.extend_i32_s` before the raw call. Populated from
+    /// `BridgeFunction::param_is_i64`, so no plugin-name knowledge lives
+    /// in codegen. Empty when the wrapper does not widen any arg.
+    pub(super) extend_i32_to_i64_param_indices: Vec<usize>,
 }
 
 /// Info for a deferred no-op stub for a host-mismatched bridge.

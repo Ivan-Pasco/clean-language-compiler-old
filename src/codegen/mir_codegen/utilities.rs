@@ -2393,17 +2393,39 @@ impl MirCodeGenerator<'_> {
                 func.expand_strings && param_types.iter().any(|t| matches!(t, BuiltinType::String));
 
             if needs_wrapper {
-                // Build expanded signature for raw import (strings → ptr, len pairs)
+                // Detect param positions whose raw ABI is i64 (declared in the
+                // plugin/registry via "i64" / "long" / "integer:i64"). The
+                // wrapper still presents an i32 face to Clean callers; the
+                // widening is `i64.extend_i32_s` inserted pre-call. Reading
+                // from the plugin's own declaration keeps codegen free of
+                // plugin-name hardcodes (Principle 26 / architecture
+                // boundary).
+                let extend_i32_to_i64_param_indices: Vec<usize> = (0..func.params.len())
+                    .filter(|&i| func.param_is_i64(i))
+                    .collect();
+
+                // Build expanded signature for raw import (strings → ptr, len pairs).
+                // Widen slots listed in `extend_i32_to_i64_param_indices` to i64.
                 let mut raw_wasm_params = Vec::new();
-                for param_type in &param_types {
+                for (idx, param_type) in param_types.iter().enumerate() {
                     if matches!(param_type, BuiltinType::String) {
                         raw_wasm_params.push(WasmType::I32); // ptr
                         raw_wasm_params.push(WasmType::I32); // len
+                    } else if extend_i32_to_i64_param_indices.contains(&idx) {
+                        raw_wasm_params.push(WasmType::I64);
                     } else {
                         raw_wasm_params.push(Self::builtin_type_to_wasm_type(param_type));
                     }
                 }
 
+                let raw_wasm_return = if func.return_is_i64() {
+                    Some(WasmType::I64)
+                } else {
+                    match &return_type {
+                        BuiltinType::Void => None,
+                        _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                    }
+                };
                 let wasm_return = match &return_type {
                     BuiltinType::Void => None,
                     _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
@@ -2413,7 +2435,9 @@ impl MirCodeGenerator<'_> {
                     name = %func.name,
                     module = %module,
                     params = ?raw_wasm_params,
-                    returns = ?wasm_return,
+                    raw_return = ?raw_wasm_return,
+                    wrapper_return = ?wasm_return,
+                    widen = ?extend_i32_to_i64_param_indices,
                     "Registering plugin bridge import (expand_strings)"
                 );
 
@@ -2421,7 +2445,7 @@ impl MirCodeGenerator<'_> {
                     module,
                     &func.name,
                     &raw_wasm_params,
-                    wasm_return,
+                    raw_wasm_return,
                 )?;
 
                 // `register_import_function` returns `u32::MAX` as a sentinel
@@ -2456,7 +2480,8 @@ impl MirCodeGenerator<'_> {
                     wasm_return,
                     raw_func_index,
                     param_types: param_types.clone(),
-                    wrap_i64: false,
+                    wrap_i64: func.return_is_i64(),
+                    extend_i32_to_i64_param_indices,
                 });
             } else if func.name == "_time_now" {
                 // _time_now is a special case: the host bridge contract specifies () -> i64
@@ -2492,9 +2517,84 @@ impl MirCodeGenerator<'_> {
                         raw_func_index: raw_index,
                         param_types: vec![],
                         wrap_i64: true,
+                        extend_i32_to_i64_param_indices: Vec::new(),
                     },
                 );
             } else {
+                // Bridges without string params but whose declared ABI needs
+                // i32↔i64 width adjustment (e.g. `_auth_create_reset_token`
+                // params ["i64","i64"], `_auth_consume_reset_token` returns
+                // "i64"). Same pattern as the `expand_strings` branch above,
+                // but no string-expansion wrapper — just widen/wrap where the
+                // declaration says so. Info still reads from the bridge's own
+                // fields (`param_is_i64`, `return_is_i64`), no plugin-name
+                // knowledge here.
+                let extend_i32_to_i64_param_indices: Vec<usize> = (0..func.params.len())
+                    .filter(|&i| func.param_is_i64(i))
+                    .collect();
+                let needs_wrap_i64_return = func.return_is_i64();
+
+                if !extend_i32_to_i64_param_indices.is_empty() || needs_wrap_i64_return {
+                    // Register the raw import with adjusted widths, then defer a
+                    // wrapper that presents Clean-i32-facing params/return.
+                    let mut raw_wasm_params = Vec::new();
+                    for (idx, param_type) in param_types.iter().enumerate() {
+                        if extend_i32_to_i64_param_indices.contains(&idx) {
+                            raw_wasm_params.push(WasmType::I64);
+                        } else {
+                            raw_wasm_params.push(Self::builtin_type_to_wasm_type(param_type));
+                        }
+                    }
+
+                    let raw_wasm_return = if needs_wrap_i64_return {
+                        Some(WasmType::I64)
+                    } else {
+                        match &return_type {
+                            BuiltinType::Void => None,
+                            _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                        }
+                    };
+
+                    let raw_func_index = self.wasm_generator.register_import_function(
+                        module,
+                        &func.name,
+                        &raw_wasm_params,
+                        raw_wasm_return,
+                    )?;
+
+                    if raw_func_index == u32::MAX {
+                        continue;
+                    }
+
+                    let wrapper_params: Vec<WasmType> = param_types
+                        .iter()
+                        .map(Self::builtin_type_to_wasm_type)
+                        .collect();
+                    let wrapper_return = match &return_type {
+                        BuiltinType::Void => None,
+                        _ => Some(Self::builtin_type_to_wasm_type(&return_type)),
+                    };
+
+                    tracing::debug!(
+                        name = %func.name,
+                        raw_index = raw_func_index,
+                        widen = ?extend_i32_to_i64_param_indices,
+                        wrap_return = needs_wrap_i64_return,
+                        "Registered i64-ABI bridge; deferring wrapper"
+                    );
+
+                    self.pending_bridge_wrappers.push(PendingBridgeWrapper {
+                        name: func.name.clone(),
+                        params: wrapper_params,
+                        wasm_return: wrapper_return,
+                        raw_func_index,
+                        param_types: param_types.clone(),
+                        wrap_i64: needs_wrap_i64_return,
+                        extend_i32_to_i64_param_indices,
+                    });
+                    continue;
+                }
+
                 let wasm_params: Vec<WasmType> = param_types
                     .iter()
                     .map(Self::builtin_type_to_wasm_type)
@@ -2566,7 +2666,7 @@ impl MirCodeGenerator<'_> {
             let mut wrapper_instructions = Vec::new();
             let mut local_idx = 0u32;
 
-            for param_type in wrapper.param_types.iter() {
+            for (idx, param_type) in wrapper.param_types.iter().enumerate() {
                 if matches!(param_type, BuiltinType::String) {
                     // Expand Clean string (ptr → [len][content]) to (ptr+4, len)
                     wrapper_instructions.push(Instruction::LocalGet(local_idx));
@@ -2583,6 +2683,13 @@ impl MirCodeGenerator<'_> {
                     local_idx += 1;
                 } else {
                     wrapper_instructions.push(Instruction::LocalGet(local_idx));
+                    // Widen `i32 → i64` for slots whose declared raw ABI is
+                    // i64 (via BridgeFunction::param_is_i64). Same rationale
+                    // as `_time_now`'s post-call `i32.wrap_i64` but on the
+                    // arg side.
+                    if wrapper.extend_i32_to_i64_param_indices.contains(&idx) {
+                        wrapper_instructions.push(Instruction::I64ExtendI32S);
+                    }
                     local_idx += 1;
                 }
             }

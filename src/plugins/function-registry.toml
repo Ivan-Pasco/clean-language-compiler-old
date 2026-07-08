@@ -2426,7 +2426,10 @@ name        = "_jwt_refresh_and_rotate"
 layer       = 3
 category    = "auth"
 module      = "env"
-params      = ["string", "string", "string", "integer"]
+# new_ttl_seconds is i64 at the host ABI (matches clean-server bridge.rs:2236).
+# Clean caller supplies `integer` (i32); compiler wrapper widens pre-call with
+# i64.extend_i32_s. Paired with frame.auth 2.4.2 plugin.toml.
+params      = ["string", "string", "string", "i64"]
 returns     = "ptr"
 aliases     = ["jwt.refresh_and_rotate"]
 hosts       = ["server"]
@@ -2437,7 +2440,10 @@ name        = "_auth_create_reset_token"
 layer       = 3
 category    = "auth"
 module      = "env"
-params      = ["integer", "integer"]
+# Both params are i64 at the host ABI (matches clean-server bridge.rs:2141).
+# Wrapper widens with i64.extend_i32_s so the Clean-facing signature stays
+# `integer, integer`. Paired with frame.auth 2.4.2 plugin.toml.
+params      = ["i64", "i64"]
 returns     = "ptr"
 aliases     = ["auth.create_reset_token"]
 hosts       = ["server"]
@@ -2449,7 +2455,10 @@ layer       = 3
 category    = "auth"
 module      = "env"
 params      = ["string"]
-returns     = "integer"
+# Returns i64 user_id at the host ABI (clean-server bridge.rs:2197). Wrapper
+# applies i32.wrap_i64 so the Clean caller receives a Clean `integer`. Same
+# precedent as _time_now. Paired with frame.auth 2.4.2 plugin.toml.
+returns     = "i64"
 aliases     = ["auth.consume_reset_token"]
 hosts       = ["server"]
 description = "Atomically validate and consume a password reset token. Returns the associated user_id on success, or 0 if the token is invalid, expired, or already consumed. Backs auth.consumeResetToken() in frame.auth spec §16."
