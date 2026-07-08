@@ -187,8 +187,9 @@ fn register_underscore_aliases(linker: &mut Linker<PluginState>) -> Result<()> {
         ("batch.stmtFor", "_batch_stmtFor"),
         ("batch.stmtReturn", "_batch_stmtReturn"),
         ("batch.stmtBlock", "_batch_stmtBlock"),
-        // Function/class/terminal builders (7)
+        // Function/class/terminal builders (8 — batch.func2 added by Amendment 12)
         ("batch.func", "_batch_func"),
+        ("batch.func2", "_batch_func2"),
         ("batch.classField", "_batch_classField"),
         ("batch.method", "_batch_method"),
         ("batch.class", "_batch_class"),
@@ -977,7 +978,119 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
                 name,
                 params,
                 return_type,
+                body: Some(body),
+                body_handle: None,
+            }))
+        },
+    )?;
+
+    // batch.func2(ctx, name_lp, params_array_handle, return_type_lp,
+    //             body_array_handle_or_0, from_source_handle_or_0) -> func_handle
+    //
+    // Amendment 12 (§3.14) — sibling of batch.method's from_source path for
+    // top-level functions. Exactly one of body_array_handle_or_0 /
+    // from_source_handle_or_0 must be non-zero. body_array_handle_or_0 is a
+    // batch stmt-kind array (as batch.func takes today). from_source_handle_or_0
+    // is an AST stmt handle from _emit_stmt_from_source (§3.11) — stored in
+    // the arena as EmitNode::Stmt, resolved by _emit_helpers_batch before
+    // function_to_ast conversion.
+    linker.func_wrap(
+        "env",
+        "batch.func2",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         name_lp: i32,
+         params_array_handle: i32,
+         return_type_lp: i32,
+         body_array_handle_or_0: i32,
+         from_source_handle_or_0: i32|
+         -> i32 {
+            let name = match read_lp_string(&mut caller, name_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let return_type = match read_lp_string(&mut caller, return_type_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+
+            // Exclusive-or check: exactly one of the two body paths must be non-zero.
+            match (body_array_handle_or_0 != 0, from_source_handle_or_0 != 0) {
+                (false, false) => {
+                    emit_batch_plugin013(
+                        a,
+                        "batch.func2: both body_array_handle and from_source_handle are zero; \
+                         exactly one must be non-zero (typed-emission.md §3.14 Amendment 12)",
+                    );
+                    return 0;
+                }
+                (true, true) => {
+                    emit_batch_plugin013(
+                        a,
+                        "batch.func2: both body_array_handle and from_source_handle are non-zero; \
+                         exactly one must be non-zero (typed-emission.md §3.14 Amendment 12)",
+                    );
+                    return 0;
+                }
+                _ => {} // Exactly one is non-zero — proceed.
+            }
+
+            if let Err(e) = super::batch_schema::resolve_type(&return_type) {
+                emit_batch_plugin013(a, format!("batch.func2: {}", e.message()));
+                return 0;
+            }
+            let params = if params_array_handle == 0 {
+                Vec::new()
+            } else {
+                let (items, _kind) = handle_batch_err!(a, a.take_batch_array(params_array_handle));
+                handle_batch_err!(a, a.drain_batch_params(items))
+            };
+
+            // body_array_handle path: consume a batch stmt-kind array as batch.func does.
+            let (body, body_handle_opt) = if body_array_handle_or_0 != 0 {
+                if !super::arena::EmitArena::is_batch_handle(body_array_handle_or_0) {
+                    emit_batch_plugin013(
+                        a,
+                        format!(
+                            "batch.func2: body_array_handle {} is not a batch handle \
+                             (did you pass an AST handle? use from_source_handle instead)",
+                            body_array_handle_or_0
+                        ),
+                    );
+                    return 0;
+                }
+                let (items, _kind) =
+                    handle_batch_err!(a, a.take_batch_array(body_array_handle_or_0));
+                let stmts = handle_batch_err!(a, a.drain_batch_stmts(items));
+                (Some(stmts), None)
+            } else {
+                // from_source_handle path: consume an AST stmt handle (EmitNode::Stmt).
+                // Handle lives in the main (AST) arena; it is a raw int (no BATCH_TAG).
+                let handle = from_source_handle_or_0;
+                if super::arena::EmitArena::is_batch_handle(handle) {
+                    emit_batch_plugin013(
+                        a,
+                        format!(
+                            "batch.func2: from_source_handle {} is a batch handle, not an AST \
+                             stmt handle from _emit_stmt_from_source",
+                            handle
+                        ),
+                    );
+                    return 0;
+                }
+                (None, Some(handle))
+            };
+
+            a.alloc_batch(BatchNode::Function(BatchFunction {
+                name,
+                params,
+                return_type,
                 body,
+                body_handle: body_handle_opt,
             }))
         },
     )?;
@@ -1298,7 +1411,8 @@ mod tests {
             name: "helper".to_string(),
             params: Vec::new(),
             return_type: "void".to_string(),
-            body: Vec::new(),
+            body: Some(Vec::new()),
+            body_handle: None,
         }));
         let arr_h = a.alloc_batch(BatchNode::Array(BatchArray {
             kind: BatchArrayKind::Unset,
@@ -1354,7 +1468,8 @@ mod tests {
                 ty: "string".to_string(),
             }],
             return_type: "void".to_string(),
-            body: vec![BatchStatement::Return { expr: None }],
+            body: Some(vec![BatchStatement::Return { expr: None }]),
+            body_handle: None,
         }));
         let builder_fn_batch = a.take_batch_function(fn_h).unwrap();
         let builder_fn = function_to_ast(builder_fn_batch, false).unwrap();
@@ -1401,6 +1516,126 @@ mod tests {
         let m = a.take_batch_method(h).unwrap();
         assert!(m.body.is_none());
         assert_eq!(m.body_handle, Some(99));
+    }
+
+    // ── 7b. batch.func2 stores inline-body path (Amendment 12) ────────────────
+
+    #[test]
+    fn func2_with_inline_body_stores_stmts() {
+        let mut a = fresh_arena();
+        let function = BatchFunction {
+            name: "doThing".to_string(),
+            params: Vec::new(),
+            return_type: "void".to_string(),
+            body: Some(vec![BatchStatement::Return { expr: None }]),
+            body_handle: None,
+        };
+        let h = a.alloc_batch(BatchNode::Function(function));
+        let f = a.take_batch_function(h).unwrap();
+        assert!(f.body.is_some());
+        assert!(f.body_handle.is_none());
+        assert_eq!(f.body.unwrap().len(), 1);
+    }
+
+    // ── 7c. batch.func2 stores from_source handle path (Amendment 12) ────────
+
+    #[test]
+    fn func2_with_from_source_handle_stores_handle() {
+        let mut a = fresh_arena();
+        let function = BatchFunction {
+            name: "passThrough".to_string(),
+            params: Vec::new(),
+            return_type: "void".to_string(),
+            body: None,
+            body_handle: Some(77), // AST stmt handle (no BATCH_TAG)
+        };
+        let h = a.alloc_batch(BatchNode::Function(function));
+        let f = a.take_batch_function(h).unwrap();
+        assert!(f.body.is_none());
+        assert_eq!(f.body_handle, Some(77));
+    }
+
+    // ── 7d. function_to_ast rejects body_handle without pre-resolution ───────
+
+    #[test]
+    fn function_to_ast_rejects_bare_body_handle() {
+        use super::super::batch_schema::function_to_ast;
+        let f = BatchFunction {
+            name: "x".to_string(),
+            params: Vec::new(),
+            return_type: "void".to_string(),
+            body: None,
+            body_handle: Some(42),
+        };
+        let err = function_to_ast(f, false).unwrap_err();
+        assert!(matches!(
+            err,
+            super::super::batch_schema::BatchSchemaError::UnresolvedBodyHandle { handle: 42, .. }
+        ));
+    }
+
+    // ── 7e. function_to_ast rejects both body + body_handle (XOR violation) ──
+
+    #[test]
+    fn function_to_ast_rejects_both_body_and_handle() {
+        use super::super::batch_schema::function_to_ast;
+        let f = BatchFunction {
+            name: "x".to_string(),
+            params: Vec::new(),
+            return_type: "void".to_string(),
+            body: Some(vec![BatchStatement::Return { expr: None }]),
+            body_handle: Some(42),
+        };
+        let err = function_to_ast(f, false).unwrap_err();
+        match err {
+            super::super::batch_schema::BatchSchemaError::Json { message, .. } => {
+                assert!(message.contains("exactly one required"), "got: {}", message);
+            }
+            other => panic!("expected Json error, got {:?}", other),
+        }
+    }
+
+    // ── 7f. function_to_ast rejects neither body nor body_handle ─────────────
+
+    #[test]
+    fn function_to_ast_rejects_missing_body_and_handle() {
+        use super::super::batch_schema::function_to_ast;
+        let f = BatchFunction {
+            name: "x".to_string(),
+            params: Vec::new(),
+            return_type: "void".to_string(),
+            body: None,
+            body_handle: None,
+        };
+        let err = function_to_ast(f, false).unwrap_err();
+        match err {
+            super::super::batch_schema::BatchSchemaError::Json { message, .. } => {
+                assert!(message.contains("exactly one required"), "got: {}", message);
+            }
+            other => panic!("expected Json error, got {:?}", other),
+        }
+    }
+
+    // ── 7g. function_to_ast_with_body accepts pre-resolved statements ─────────
+
+    #[test]
+    fn function_to_ast_with_body_accepts_resolved() {
+        use super::super::batch_schema::{function_to_ast_with_body, BatchParam};
+        use crate::ast::{Expression, Statement, Value};
+        let body = vec![Statement::Return {
+            value: Some(Expression::Literal(Value::Integer(42))),
+            location: None,
+        }];
+        let params = vec![BatchParam {
+            name: "n".to_string(),
+            ty: "integer".to_string(),
+        }];
+        let f =
+            function_to_ast_with_body("f".to_string(), params, "integer".to_string(), body, true)
+                .unwrap();
+        assert_eq!(f.name, "f");
+        assert_eq!(f.parameters.len(), 1);
+        assert_eq!(f.body.len(), 1);
     }
 
     // ── 8. Handle type mismatch returns WrongNodeKind ─────────────────────────

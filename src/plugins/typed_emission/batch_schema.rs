@@ -96,7 +96,15 @@ pub struct BatchFunction {
     #[serde(default)]
     pub params: Vec<BatchParam>,
     pub return_type: String,
-    pub body: Vec<BatchStatement>,
+    /// Function body is either an inline statement list OR a reference to a
+    /// pre-computed stmt handle allocated by `_emit_stmt_from_source`
+    /// (Amendment 12, §3.14 `batch.func2`). Exactly one of `body` /
+    /// `body_handle` should be present; the schema itself does not enforce
+    /// this — the bridge validates.
+    #[serde(default)]
+    pub body: Option<Vec<BatchStatement>>,
+    #[serde(default)]
+    pub body_handle: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -924,14 +932,62 @@ pub fn stmt_to_ast(s: BatchStatement) -> Result<Statement, BatchSchemaError> {
 /// Convert a `BatchFunction` to an AST `Function`. `flags` bits are the same
 /// as `_emit_function`: bit 0 = exported (Public), higher bits ignored here
 /// (the caller applies bit 1 = BFS root at its own layer).
+///
+/// Only accepts the inline-body path (`body: Some(_)`, `body_handle: None`).
+/// For the `body_handle` path introduced by Amendment 12 (§3.14 `batch.func2`),
+/// callers must resolve the handle via arena.take_stmt() and use
+/// `function_to_ast_with_body`.
 pub fn function_to_ast(f: BatchFunction, exported: bool) -> Result<Function, BatchSchemaError> {
-    let mut params = Vec::with_capacity(f.params.len());
-    for p in f.params {
+    let inline = match (f.body, f.body_handle) {
+        (Some(stmts), None) => stmts,
+        (None, Some(h)) => {
+            return Err(BatchSchemaError::UnresolvedBodyHandle {
+                handle: h,
+                reason: "function_to_ast does not resolve body_handle; caller must \
+                         resolve via arena.take_stmt() and use function_to_ast_with_body"
+                    .to_string(),
+            });
+        }
+        (Some(_), Some(_)) => {
+            return Err(BatchSchemaError::Json {
+                message: "function has both `body` and `body_handle`; exactly one required"
+                    .to_string(),
+                byte_offset: None,
+            });
+        }
+        (None, None) => {
+            return Err(BatchSchemaError::Json {
+                message: "function has neither `body` nor `body_handle`; exactly one required"
+                    .to_string(),
+                byte_offset: None,
+            });
+        }
+    };
+    let mut resolved = Vec::with_capacity(inline.len());
+    for s in inline {
+        resolved.push(stmt_to_ast(s)?);
+    }
+    function_to_ast_with_body(f.name, f.params, f.return_type, resolved, exported)
+}
+
+/// Convert a `BatchFunction`'s header plus an already-resolved AST body into
+/// a `Function`. Sibling to `class_to_ast` which takes `method_bodies`; this
+/// separation lets the bridge consume `_emit_stmt_from_source` handles
+/// (Amendment 12 §3.14 `batch.func2` `from_source_handle_or_0` path) without
+/// this pure conversion layer having to know about arenas.
+pub fn function_to_ast_with_body(
+    name: String,
+    params_in: Vec<BatchParam>,
+    return_type_in: String,
+    body: Vec<Statement>,
+    exported: bool,
+) -> Result<Function, BatchSchemaError> {
+    let mut params = Vec::with_capacity(params_in.len());
+    for p in params_in {
         params.push(Parameter::new(p.name, resolve_type(&p.ty)?));
     }
-    let return_type = resolve_type(&f.return_type)?;
-    let body: Result<Vec<_>, _> = f.body.into_iter().map(stmt_to_ast).collect();
-    let mut func = Function::new(f.name, params, return_type, body?, None);
+    let return_type = resolve_type(&return_type_in)?;
+    let mut func = Function::new(name, params, return_type, body, None);
     if exported {
         func.visibility = Visibility::Public;
     }

@@ -11,9 +11,8 @@ use wasmtime::{Caller, Linker};
 
 use super::arena::BATCH_TAG;
 use super::batch_schema::{
-    self, class_to_ast, expand_from_spec, function_to_ast, parse_batch_spec,
-    parse_class_spec_with_entries, stmt_to_ast, BatchMethodEntry, BatchSchemaError, ClassSpec,
-    BATCH_FUNCTION_LIMIT,
+    self, class_to_ast, expand_from_spec, parse_batch_spec, parse_class_spec_with_entries,
+    stmt_to_ast, BatchMethodEntry, BatchSchemaError, ClassSpec, BATCH_FUNCTION_LIMIT,
 };
 use super::error::{EmitDiagnostic, EmitError};
 use super::json::{
@@ -1892,8 +1891,87 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
             let exported = !private;
 
             // ── Convert each function ─────────────────────────────────────────
-            for (idx, f) in batch.functions.into_iter().enumerate() {
-                let func = match function_to_ast(f, exported) {
+            for (idx, mut f) in batch.functions.into_iter().enumerate() {
+                // Amendment 12 §3.14: resolve BatchFunction body_handle (from
+                // batch.func2's from_source_handle path) into a concrete AST
+                // body before conversion. Mirrors the class-method path below.
+                let body_source = f.body.take();
+                let body_handle = f.body_handle;
+                let name = f.name.clone();
+                let resolved_body = match (body_source, body_handle) {
+                    (Some(stmts), None) => {
+                        let mut collected = Vec::with_capacity(stmts.len());
+                        for s in stmts {
+                            match super::batch_schema::stmt_to_ast(s) {
+                                Ok(ast) => collected.push(ast),
+                                Err(e) => {
+                                    let wrapped = BatchSchemaError::Json {
+                                        message: format!(
+                                            "function[{}] `{}`: {}",
+                                            idx,
+                                            name,
+                                            e.message()
+                                        ),
+                                        byte_offset: None,
+                                    };
+                                    emit_plugin013(a, &wrapped, 0);
+                                    return 1;
+                                }
+                            }
+                        }
+                        collected
+                    }
+                    (None, Some(handle)) => {
+                        // Consume the stmt handle from the arena. This is the
+                        // Amendment 12 composition with §3.11 for top-level
+                        // functions (mirrors the class-method §3.13 path).
+                        match a.take_stmt(ctx, handle) {
+                            Ok(stmt) => flatten_block(stmt),
+                            Err(super::error::EmitError::HandleConsumed { handle }) => {
+                                a.emit_plugin008(handle);
+                                return 1;
+                            }
+                            Err(e) => {
+                                let wrapped = BatchSchemaError::UnresolvedBodyHandle {
+                                    handle,
+                                    reason: format!("{:?}", e),
+                                };
+                                emit_plugin013(a, &wrapped, 0);
+                                return 1;
+                            }
+                        }
+                    }
+                    (Some(_), Some(_)) => {
+                        let wrapped = BatchSchemaError::Json {
+                            message: format!(
+                                "function[{}] `{}`: both `body` and `body_handle` are set; \
+                                 exactly one required",
+                                idx, name
+                            ),
+                            byte_offset: None,
+                        };
+                        emit_plugin013(a, &wrapped, 0);
+                        return 1;
+                    }
+                    (None, None) => {
+                        let wrapped = BatchSchemaError::Json {
+                            message: format!(
+                                "function[{}] `{}`: neither `body` nor `body_handle` is set",
+                                idx, name
+                            ),
+                            byte_offset: None,
+                        };
+                        emit_plugin013(a, &wrapped, 0);
+                        return 1;
+                    }
+                };
+                let func = match super::batch_schema::function_to_ast_with_body(
+                    f.name,
+                    f.params,
+                    f.return_type,
+                    resolved_body,
+                    exported,
+                ) {
                     Ok(f) => f,
                     Err(e) => {
                         let wrapped = BatchSchemaError::Json {
