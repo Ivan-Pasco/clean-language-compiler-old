@@ -764,6 +764,18 @@ impl MultiFileCompiler {
         // No folder name is hardcoded here. Plugin authors are the single
         // source of truth for what folders the compiler walks — adding a new
         // owned folder requires only updating the plugin's plugin.toml.
+        //
+        // Scope-narrowing rule (BRIDGE-HOST-MISMATCH fingerprint fbceaf3d51dd):
+        // When the manifest source explicitly declares `shared: [...]`, that
+        // list is authoritative. Plugin-owned folders are only added if they
+        // are inside (or equal to) at least one manifest-declared entry —
+        // sibling folders that a plugin claims via `[paths].owns` but the
+        // developer excluded from `shared:` are treated as belonging to a
+        // different target (e.g. a browser build) and are NOT compiled into
+        // the current target. Without an explicit `shared:` list, plugin-owned
+        // auto-scan behaves unchanged (backwards-compatible for projects that
+        // rely on the plugin registry as the sole ownership source).
+        let manifest_shared_scope: Vec<PathBuf> = info.shared_folders.clone();
         let mut declared_owned: HashSet<String> = HashSet::new();
         if let Some(registry) = plugin_registry {
             // `has_frame_server` is consumed by the assemble hook input
@@ -776,9 +788,21 @@ impl MultiFileCompiler {
                 for owned in &manifest.paths.owns {
                     declared_owned.insert(owned.trim_end_matches('/').to_string());
                     let dir = manifest_dir.join(owned);
-                    if dir.exists() && !info.shared_folders.contains(&dir) {
-                        info.shared_folders.push(dir);
+                    if !dir.exists() || info.shared_folders.contains(&dir) {
+                        continue;
                     }
+                    if !manifest_shared_scope.is_empty() {
+                        // Developer narrowed the scope — only accept a
+                        // plugin-owned folder if it is inside (or equal to)
+                        // one of the manifest's declared shared paths.
+                        let in_scope = manifest_shared_scope
+                            .iter()
+                            .any(|scope| dir == *scope || dir.starts_with(scope));
+                        if !in_scope {
+                            continue;
+                        }
+                    }
+                    info.shared_folders.push(dir);
                 }
             }
         }
@@ -1787,6 +1811,67 @@ start:
         assert!(
             info.shared_folders.contains(&fictional),
             "a folder declared by a plugin's manifest must be auto-discovered without compiler changes"
+        );
+    }
+
+    #[test]
+    fn test_manifest_shared_narrows_plugin_owned_scope() {
+        // BRIDGE-HOST-MISMATCH fingerprint fbceaf3d51dd:
+        // When the manifest explicitly declares `shared: [<path>]`, plugin-owned
+        // folders that live OUTSIDE that declared scope must not be pulled into
+        // the compilation unit — even if a loaded plugin declares them via
+        // `[paths].owns`. The developer's `shared:` list is authoritative when
+        // present; without it, plugin-owned auto-discovery still runs unchanged.
+        //
+        // Repro: server target with `shared: [app/ui/web/]` — files under
+        // `app/ui/components/` (which is a descendant of frame.ui's owned
+        // `app/ui` but NOT inside the narrower `app/ui/web/`) must not be
+        // compiled into the server WASM, so their browser-only bridge calls
+        // (e.g. `_ui_set_timeout`) don't trip host-class validation.
+        let manifest = "package: Test\n\tshared: [app/ui/web]\n\ttarget: server\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/server/main.cln\n";
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+
+        std::fs::create_dir_all(manifest_dir.join("app").join("server")).unwrap();
+        let inside_scope = manifest_dir.join("app").join("ui").join("web");
+        std::fs::create_dir_all(inside_scope.join("pages")).unwrap();
+        let outside_scope = manifest_dir.join("app").join("ui").join("components");
+        std::fs::create_dir_all(&outside_scope).unwrap();
+
+        // frame.ui declares ownership of the whole `app/ui` subtree. Without
+        // narrowing, that would sweep `app/ui/components/` into the build.
+        let registry = registry_with_owns(&[
+            (
+                "frame.ui",
+                &[
+                    "app/ui",
+                    "app/ui/shared",
+                    "app/ui/web",
+                    "app/ui/web/pages",
+                    "app/ui/web/components",
+                    "app/ui/web/layouts",
+                ],
+            ),
+            ("frame.server", &["app/server"]),
+        ]);
+        let (info, errors) =
+            MultiFileCompiler::parse_manifest_info(manifest, manifest_dir, Some(&registry));
+
+        assert!(errors.is_empty(), "no migration diagnostics expected");
+        assert!(
+            info.shared_folders.contains(&inside_scope)
+                || info
+                    .shared_folders
+                    .iter()
+                    .any(|p| inside_scope.starts_with(p)),
+            "the manifest's declared shared path must remain in scope"
+        );
+        assert!(
+            !info.shared_folders.iter().any(|p| p == &outside_scope
+                || outside_scope.starts_with(p) && *p != manifest_dir.to_path_buf()),
+            "a plugin-owned folder outside the manifest's declared `shared:` scope \
+             (here: app/ui/components/, inside frame.ui's owned `app/ui`) must not \
+             be added when the manifest explicitly narrows the scope"
         );
     }
 
