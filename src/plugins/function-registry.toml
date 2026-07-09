@@ -1900,11 +1900,11 @@ name        = "_ws_send"
 layer       = 3
 category    = "websocket"
 module      = "env"
-params      = ["integer", "string"]
+params      = ["i64", "string"]
 returns     = "void"
 aliases     = ["ws.send"]
 hosts       = ["server"]
-description = "Send message to a specific WebSocket client by ID"
+description = "Send message to a specific WebSocket client by ID. client_id is i64 because clean-server's next_client_id() returns i64 end-to-end (long-lived connection counter, no upper bound). Per WS-SEND-I32-VS-I64-001 (e6e66d65), server prompt fa7765e2, framework prompt 57474ef0 (frame.server 2.8.2)."
 
 [[functions]]
 name        = "_ws_broadcast"
@@ -1922,11 +1922,11 @@ name        = "_ws_close"
 layer       = 3
 category    = "websocket"
 module      = "env"
-params      = ["integer"]
+params      = ["i64"]
 returns     = "void"
 aliases     = ["ws.close"]
 hosts       = ["server"]
-description = "Close WebSocket connection for a specific client ID"
+description = "Close WebSocket connection for a specific client ID. client_id is i64 (see _ws_send)."
 
 [[functions]]
 name        = "_ws_client_id"
@@ -1934,10 +1934,10 @@ layer       = 3
 category    = "websocket"
 module      = "env"
 params      = []
-returns     = "integer"
+returns     = "i64"
 aliases     = ["ws.client_id"]
 hosts       = ["server"]
-description = "Get the current WebSocket client ID from the request context (inside an onConnect/onMessage/onClose handler)"
+description = "Get the current WebSocket client ID from the request context (inside an onConnect/onMessage/onClose handler). Returns i64 (see _ws_send)."
 
 [[functions]]
 name        = "_ws_message"
@@ -1955,22 +1955,22 @@ name        = "_ws_room_join"
 layer       = 3
 category    = "websocket"
 module      = "env"
-params      = ["integer", "string"]
+params      = ["i64", "string"]
 returns     = "void"
 aliases     = ["ws.room_join"]
 hosts       = ["server"]
-description = "Add a client to a named room: clientId, room"
+description = "Add a client to a named room: clientId, room. clientId is i64 (see _ws_send)."
 
 [[functions]]
 name        = "_ws_room_leave"
 layer       = 3
 category    = "websocket"
 module      = "env"
-params      = ["integer", "string"]
+params      = ["i64", "string"]
 returns     = "void"
 aliases     = ["ws.room_leave"]
 hosts       = ["server"]
-description = "Remove a client from a named room: clientId, room"
+description = "Remove a client from a named room: clientId, room. clientId is i64 (see _ws_send)."
 
 [[functions]]
 name        = "_ws_room_broadcast"
