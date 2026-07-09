@@ -768,16 +768,25 @@ pub fn resolve_type(name: &str) -> Result<Type, BatchSchemaError> {
         "boolean" => Ok(Type::Boolean),
         "void" => Ok(Type::Void),
         _ => {
-            // Array<T> → List(resolve(T))
-            if let Some(rest) = name.strip_prefix("Array<") {
-                if let Some(inner) = rest.strip_suffix('>') {
-                    let elem = resolve_type(inner)?;
-                    return Ok(Type::List(
-                        Box::new(elem),
-                        crate::ast::ListBehavior::Default,
-                    ));
+            // Array<T> and list<T> both → List(resolve(T)).
+            //
+            // grammar.ebnf uses `list<T>` (lowercase) as the primary Clean
+            // Language syntax; `Array<T>` (uppercase) is a legacy alias kept
+            // for the batch-spec JSON path. Both are accepted here so plugins
+            // can emit type strings that match user-visible language syntax
+            // — frame.data's ORM helpers generate `list<Todo>` from a source
+            // model name and expect that to parse as `List<Todo>`.
+            for prefix in ["Array<", "list<"] {
+                if let Some(rest) = name.strip_prefix(prefix) {
+                    if let Some(inner) = rest.strip_suffix('>') {
+                        let elem = resolve_type(inner)?;
+                        return Ok(Type::List(
+                            Box::new(elem),
+                            crate::ast::ListBehavior::Default,
+                        ));
+                    }
+                    return Err(BatchSchemaError::UnresolvableType(name.to_string()));
                 }
-                return Err(BatchSchemaError::UnresolvableType(name.to_string()));
             }
             // Anything else that starts with an uppercase letter is treated
             // as a class reference — matches `_type_class_ref` behaviour.

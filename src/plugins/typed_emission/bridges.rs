@@ -2329,21 +2329,65 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                         collected
                     }
                     (None, Some(handle)) => {
-                        // Consume the stmt handle from the arena. This is the
-                        // §3.13 composition with §3.11.
-                        match a.take_stmt(ctx, handle) {
-                            Ok(stmt) => flatten_block(stmt),
-                            Err(EmitError::HandleConsumed { handle }) => {
-                                a.emit_plugin008(handle);
-                                return 1;
+                        // §3.13 composition. The body_handle field accepts:
+                        //   - an arena stmt handle (from _emit_stmt_from_source per §3.11)
+                        //   - a batch stmt handle (from _batch_stmtBlock / batch stmt builders
+                        //     per §3.14). Spec line 417 & 483 describe this as a
+                        //     "_stmt_block handle" which under Am 4 is a batch handle.
+                        //
+                        // Dispatch on the BATCH_TAG bit (arena.rs is_batch_handle).
+                        // Prior to this fix, take_stmt was called unconditionally and
+                        // batch-tagged values decoded as bogus arena indices producing
+                        // `OutOfRange { handle: 16777XXX }` (PLUGIN013) or PLUGIN008 on
+                        // an unrelated already-consumed arena slot. Broke every
+                        // frame.data class method whose body is built via sblk()
+                        // (BatchNode::Stmt::Block), e.g. build_save_body.
+                        if super::arena::EmitArena::is_batch_handle(handle) {
+                            match a.take_batch_stmt(handle) {
+                                Ok(bstmt) => {
+                                    match super::batch_schema::stmt_to_ast(bstmt) {
+                                        Ok(stmt) => flatten_block(stmt),
+                                        Err(e) => {
+                                            let wrapped = BatchSchemaError::Json {
+                                                message: format!(
+                                                    "method[{}] `{}` batch body: {}",
+                                                    mi, name, e.message()
+                                                ),
+                                                byte_offset: None,
+                                            };
+                                            emit_plugin013(a, &wrapped, spec_len);
+                                            return 1;
+                                        }
+                                    }
+                                }
+                                Err(EmitError::HandleConsumed { handle }) => {
+                                    a.emit_plugin008(handle);
+                                    return 1;
+                                }
+                                Err(e) => {
+                                    let wrapped = BatchSchemaError::UnresolvedBodyHandle {
+                                        handle,
+                                        reason: format!("{:?}", e),
+                                    };
+                                    emit_plugin013(a, &wrapped, spec_len);
+                                    return 1;
+                                }
                             }
-                            Err(e) => {
-                                let wrapped = BatchSchemaError::UnresolvedBodyHandle {
-                                    handle,
-                                    reason: format!("{:?}", e),
-                                };
-                                emit_plugin013(a, &wrapped, spec_len);
-                                return 1;
+                        } else {
+                            match a.take_stmt(ctx, handle) {
+                                Ok(stmt) => flatten_block(stmt),
+                                Err(EmitError::HandleConsumed { handle }) => {
+                                    a.emit_plugin008(handle);
+                                    return 1;
+                                }
+                                Err(e) => {
+                                    let wrapped = BatchSchemaError::UnresolvedBodyHandle {
+                                        handle,
+                                        reason: format!("{:?}", e),
+                                    };
+                                    emit_plugin013(a, &wrapped, spec_len);
+                                    return 1;
+                                }
                             }
                         }
                     }
