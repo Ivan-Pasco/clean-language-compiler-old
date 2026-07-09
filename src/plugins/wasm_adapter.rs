@@ -4547,8 +4547,126 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 });
             }
 
-            // Drain the arena so subsequent calls get a clean one.
-            let _ = store.data_mut().emit_arena.take();
+            // Drain the arena. In the block-expansion path (line ~298) we call
+            // `.finish()` to harvest the PluginExpansion the plugin built up
+            // via ui_helper_function / push_start_stmt / etc. — that
+            // expansion is then merged into the source program.
+            //
+            // For assemble_typed, the return type is AssembleOutput (a
+            // different API shape: injected_sources / transformed_sources
+            // instead of PluginExpansion), so the block-expansion merge does
+            // not apply directly. Prior to this edit the arena was drained
+            // and discarded outright (`let _ = ...take()`), which SILENTLY
+            // lost every function, class, statement, and start-body line the
+            // plugin emitted from its assemble slot. For frame.ui that meant
+            // page-companion `_http_route(...)` registrations vanished and
+            // `GET /` returned 404 with no compile error — the exact
+            // FRAME-UI-COMPANION-ROUTES-NOT-REGISTERED (42ccde02) /
+            // COMPILER-ASSEMBLE-TYPED-DRAINS-EMIT-ARENA (4dad9b6a) pair.
+            //
+            // Minimum-correctness fix: harvest via .finish() (matching the
+            // block-expansion path), route diagnostics to the tracing
+            // channel, and error LOUDLY if the plugin emitted any content
+            // (functions/classes/statements/start-body). Silent regressions
+            // become visible; the caller can then either update the plugin
+            // to use `injected_sources` on the assemble return value or, once
+            // the compiler wires up expansion→InjectedSource conversion,
+            // this branch will pick that up automatically. A pretty-printer
+            // that serializes PluginExpansion back to Clean source (needed to
+            // actually MERGE the assemble output into the compilation unit)
+            // is tracked as a follow-up compiler task, not fixed here.
+            let arena = store.data_mut().emit_arena.take().expect(
+                "typed-emission: arena was taken during assemble_typed — cross-call arena reuse detected",
+            );
+            let (expansion, diagnostics, saw_error) = arena.finish();
+
+            for diag in &diagnostics {
+                if diag.severity >= 2 {
+                    tracing::error!(
+                        target: "compiler::plugins::typed_emission",
+                        plugin = %self.name,
+                        block = "assemble",
+                        code = %diag.code,
+                        message = %diag.message,
+                        "plugin typed-emission error"
+                    );
+                } else {
+                    tracing::warn!(
+                        target: "compiler::plugins::typed_emission",
+                        plugin = %self.name,
+                        block = "assemble",
+                        code = %diag.code,
+                        message = %diag.message,
+                        "plugin typed-emission warning"
+                    );
+                }
+            }
+
+            if saw_error {
+                let error_summary = diagnostics
+                    .iter()
+                    .filter(|d| d.severity >= 2)
+                    .map(|d| format!("[{}] {}", d.code, d.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: format!(
+                        "assemble_typed emitted typed-emission errors: {}",
+                        error_summary
+                    ),
+                    location: None,
+                });
+            }
+
+            // If the plugin emitted any content into the arena during
+            // assemble_typed, it expected that content to become part of the
+            // program. Today the compiler has no path to convert a
+            // PluginExpansion into an InjectedSource (needs an AST → Clean
+            // source pretty-printer, tracked separately). Rather than
+            // silently drop the content, surface a loud error naming the
+            // affected plugin and the counts. Callers get a compile error
+            // instead of a runtime 404. Fingerprint 4dad9b6a
+            // (COMPILER-ASSEMBLE-TYPED-DRAINS-EMIT-ARENA).
+            let emitted_functions = expansion.functions.len();
+            let emitted_classes = expansion.classes.len();
+            let emitted_externals = expansion.externals.len();
+            let emitted_statements = expansion.statements.len();
+            let emitted_start_body = expansion
+                .start_function
+                .as_ref()
+                .map(|f| f.body.len())
+                .unwrap_or(0);
+            let total_emitted = emitted_functions
+                + emitted_classes
+                + emitted_externals
+                + emitted_statements
+                + emitted_start_body;
+
+            if total_emitted > 0 {
+                return Err(crate::plugins::PluginError::ExpansionFailed {
+                    plugin_name: self.name.clone(),
+                    block_name: "assemble".to_string(),
+                    message: format!(
+                        "assemble_typed emitted {} functions, {} classes, {} externals, \
+                         {} inline statements, and {} start-body statements into the \
+                         emit_arena, but the compiler currently has no path to convert \
+                         these into an InjectedSource / TransformedSource. Either return \
+                         them via AssembleOutput.injected_sources directly from the \
+                         plugin, or wait for compiler support for expansion→source \
+                         conversion (tracked as follow-up to fingerprint 4dad9b6a — \
+                         COMPILER-ASSEMBLE-TYPED-DRAINS-EMIT-ARENA).",
+                        emitted_functions,
+                        emitted_classes,
+                        emitted_externals,
+                        emitted_statements,
+                        emitted_start_body,
+                    ),
+                    location: None,
+                });
+            }
+
             return Ok(AssembleOutput::default());
         } else {
             // v1 assemble signature: (input_lp) -> output_lp
