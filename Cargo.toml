@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.33.28"
+version = "0.33.29"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -128,6 +128,10 @@ module_inception = "allow"
 new_ret_no_self = "allow"
 # Caching the regex would be a larger architectural change
 regex_creation_in_loops = "allow"
+# Rust 1.97 flags `match { Ok => .. Err(e) => return Err(e) }` as needing `?`;
+# retaining the explicit match blocks is intentional (they document the value flow
+# for future contributors and make it easier to add extra work in the Ok arm).
+question_mark = "allow"
 
 [lints.rust]
 deprecated = "allow"
