@@ -393,7 +393,7 @@ impl ErrorReporter {
                 self.indent,
                 self.colors.blue,
                 self.colors.reset,
-                &location.file,
+                location.file,
                 location.line,
                 location.column
             )?;
@@ -649,7 +649,7 @@ impl ErrorReporter {
                     self.indent,
                     self.colors.cyan,
                     frame.function_name,
-                    &location.file,
+                    location.file,
                     location.line
                 )?;
             } else {

@@ -1342,7 +1342,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                                 if stmt_pair.as_rule() == Rule::function_body_statement {
                                     // function_body_statement = { INDENT+ ~ statement }
                                     // So we need to get the inner statement
-                                    let statement_pair = stmt_pair.into_inner().last().expect("invariant: function_body_statement has at least a statement child"); // Skip INDENT+, get statement
+                                    let statement_pair = stmt_pair.into_inner().next_back().expect("invariant: function_body_statement has at least a statement child"); // Skip INDENT+, get statement
 
                                     // Check if this statement contains an input_declaration
                                     let inner = statement_pair
