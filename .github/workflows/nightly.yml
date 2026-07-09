@@ -1,0 +1,540 @@
+name: Nightly deep tests
+
+# The T3 tier from documentation/testing-strategy — checks too expensive for
+# per-PR CI but cheap for a nightly build. Reports drift; does not gate PRs.
+#
+# Runs:
+#   1. Full unit + integration test suite.
+#   2. Stage-boundary snapshot stability across opt levels 0–3.
+#   3. WASM determinism check (currently reports drift; see TASKS.md).
+#   4. Bounded mutation testing on the fragile codegen module.
+#   5. Full-corpus compile smoke: verify every tests/cln/**/*.cln at least parses
+#      + compiles at opt-level 2. Runtime execution is intentionally skipped
+#      here (that is check_regressions.py + the .cln-corpus workflow's job).
+#
+# Notification: each job uploads its log as an artifact. When something goes
+# red, the maintainer opens the artifact rather than trying to read scattered
+# job logs.
+
+on:
+  schedule:
+    # 03:47 UTC — offset from fuzz.yml (03:17) so the two don't stack on the
+    # runner queue.
+    - cron: '47 3 * * *'
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  CLEAN_PLUGIN_REGISTRY_VALIDATION: all
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1. Full test suite (baseline)
+  # -------------------------------------------------------------------------
+  full-tests:
+    name: Full test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: nightly-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo test (all)
+        run: cargo test --verbose 2>&1 | tee full-tests.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-tests-log
+          path: full-tests.log
+          retention-days: 14
+
+  # -------------------------------------------------------------------------
+  # 2. Snapshot stability across all opt levels
+  #
+  # Every opt level should produce identical snapshots (semantically). If it
+  # doesn't, either the snapshots need to be parameterized by opt level, or
+  # a codegen change unintentionally became opt-level-sensitive.
+  # -------------------------------------------------------------------------
+  snapshots-across-opt:
+    name: Snapshot stability × opt-level
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        opt: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: nightly-cargo-snap-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run stage snapshots
+        # test_stage_snapshots today runs the pipeline internally; parameterizing
+        # over opt-level requires it to expose that knob. For now this matrix
+        # entry just re-runs the test — a real opt-level sweep is TASK'd.
+        env:
+          CLN_STAGE_SNAPSHOT_OPT: ${{ matrix.opt }}
+        run: |
+          cargo test --test test_stage_snapshots -- --nocapture 2>&1 | tee snapshots-opt-${{ matrix.opt }}.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snapshots-opt-${{ matrix.opt }}-log
+          path: snapshots-opt-${{ matrix.opt }}.log
+          retention-days: 14
+
+  # -------------------------------------------------------------------------
+  # 3. WASM determinism
+  # -------------------------------------------------------------------------
+  wasm-determinism:
+    name: WASM byte determinism
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Do not fail the workflow — this drift is tracked in TASKS.md. Once
+    # fixed, remove `continue-on-error` to promote the job to a gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: nightly-cargo-det-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build cln release
+        run: cargo build --release --bin cln
+
+      - name: Run determinism check (all opt levels)
+        run: |
+          python3 scripts/wasm_determinism.py --all-opt-levels \
+            --cln target/release/cln 2>&1 | tee determinism.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wasm-determinism-log
+          path: determinism.log
+          retention-days: 14
+
+  # -------------------------------------------------------------------------
+  # 4. Bounded mutation testing on the codegen module
+  #
+  # cargo-mutants is expensive; scope to the fragile codegen module and cap
+  # time. Even one surviving mutation is useful information — it means the
+  # test suite is under-specified for that instruction.
+  # -------------------------------------------------------------------------
+  mutation-testing:
+    name: Mutation testing (codegen)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: nightly-cargo-mutants-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+
+      - name: Run cargo-mutants (scoped to mir_codegen)
+        # -f narrows to a subtree so we get a meaningful signal within the
+        # workflow budget. Extend as coverage grows.
+        run: |
+          cargo mutants \
+            -f src/codegen/mir_codegen/ \
+            --timeout 180 \
+            --shard 0/1 \
+            2>&1 | tee mutants.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-testing-log
+          path: |
+            mutants.log
+            mutants.out/
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # 5. Full-corpus compile smoke
+  #
+  # Every tests/cln/**/*.cln must at least parse and compile at opt-level 2.
+  # Execution correctness is out of scope here — that is what check_regressions
+  # and the cln-corpus workflow test.
+  # -------------------------------------------------------------------------
+  corpus-compile-smoke:
+    name: Full corpus compile smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: nightly-cargo-corpus-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build cln release
+        run: cargo build --release --bin cln
+
+      - name: Compile every non-future .cln at opt-level 2
+        run: |
+          set +e
+          failures=0
+          total=0
+          {
+            find tests/cln -name '*.cln' -not -path '*/future/*' | sort > /tmp/corpus.list
+            wc -l /tmp/corpus.list
+          }
+          while IFS= read -r cln; do
+            total=$((total + 1))
+            out="/tmp/$(basename "${cln%.cln}").wasm"
+            if ! ./target/release/cln compile "$cln" --output "$out" --quiet \
+                 > "/tmp/last.log" 2>&1; then
+              failures=$((failures + 1))
+              echo "FAIL  $cln"
+              head -3 /tmp/last.log
+            fi
+          done < /tmp/corpus.list
+          echo "corpus_total=$total corpus_failures=$failures"
+          echo "corpus_total=$total"     >> "$GITHUB_STEP_SUMMARY"
+          echo "corpus_failures=$failures" >> "$GITHUB_STEP_SUMMARY"
+          # continue-on-error swallows this exit; the summary carries the signal.
+          [ "$failures" -eq 0 ]
+
+  # -------------------------------------------------------------------------
+  # 6. Spec-coverage report (informational)
+  # -------------------------------------------------------------------------
+  spec-coverage-nightly:
+    name: Spec-rule coverage (nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Ivan-Pasco/clean-language-spec
+          ref: main
+          path: foundation-checkout
+      - name: Symlink foundation/
+        run: |
+          set -euxo pipefail
+          if [ -d foundation-checkout/foundation ]; then
+            ln -s "$PWD/foundation-checkout/foundation" ../foundation
+          else
+            ln -s "$PWD/foundation-checkout" ../foundation
+          fi
+
+      - name: Coverage report
+        run: |
+          python3 scripts/spec_coverage.py --json spec-coverage.json 2>&1 | \
+            tee spec-coverage.txt
+          {
+            echo "## Spec-rule coverage (nightly)"
+            echo '```'
+            head -80 spec-coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spec-coverage-nightly
+          path: |
+            spec-coverage.txt
+            spec-coverage.json
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # 7. Cross-component canary matrix (Layer 3 of the canary umbrella)
+  #
+  # Per umbrella prompt 7fb425cb / L3 prompt 6b6f6f79:
+  #   1. Build cln release binary.
+  #   2. Compile every canary in tests/cln/canaries/ to a .wasm artifact.
+  #   3. Emit an applicability.json manifest so each host's L2 runner knows
+  #      which canaries apply to it.
+  #   4. Trigger each of the three host repos' nightly-canaries workflows
+  #      via workflow_dispatch, passing the compiler_ref (this build's SHA).
+  #   5. Poll each dispatched run for completion (30 min hard cap per host,
+  #      matches server L2 timeout-minutes: 45 with buffer for setup).
+  #   6. Download each host's canary-report artifact if available and
+  #      render a matrix summary — rows = canary, cols = host, cells = ✓
+  #      pass, ✗ fail (linked to host job log), skip / timeout / dispatch_error.
+  #   7. Publish the matrix to the workflow summary and upload as an
+  #      artifact for downstream tooling.
+  #
+  # This job never gates. Individual host failures are DATA, not errors:
+  # a red cell tells you something drifted, but the L3 workflow succeeds
+  # regardless. This matches the umbrella's explicit non-goal
+  # ("Not a real-time gate. This is nightly.").
+  #
+  # Requires:
+  #   secrets.CANARY_MATRIX_PAT — Personal Access Token with `repo` scope
+  #                              on Ivan-Pasco/{clean-server,clean-node-server,
+  #                              cleen-framework}. First nightly run without
+  #                              this secret fails LOUDLY at the dispatch step;
+  #                              that is the intended signal to set it up.
+  #
+  # Known limitations (tracked as follow-ups, not blockers for shipping L3):
+  #   - Only clean-node-server's L2 currently emits a stable JSON at
+  #     `canary-report/canary-report.json`. The other two hosts write
+  #     divergent formats (server: txt + jsonl per canary; framework:
+  #     Playwright report dir). Their cells will render as ✗ until each
+  #     host adds a `<host>-report.json` sibling with the shape
+  #     `{"results": {"<canary>": {"passed": bool}, ...}}`. This is a
+  #     small ask (2-line jq/python normalizer) but it lives in each
+  #     host's repo, not here.
+  # -------------------------------------------------------------------------
+  cross-component-canaries:
+    name: Cross-component canary matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: nightly-canary-matrix-${{ hashFiles('**/Cargo.lock') }}
+
+      # 1. Build release cln.
+      - name: Build release cln
+        run: cargo build --release --bin cln
+
+      # 2. Compile every canary to tests/output/canaries/<ns>.wasm.
+      - name: Compile canaries
+        run: |
+          set -euo pipefail
+          mkdir -p tests/output/canaries
+          for cln in tests/cln/canaries/*.cln; do
+            name=$(basename "$cln" .cln)
+            ./target/release/cln compile "$cln" \
+              --output "tests/output/canaries/${name}.wasm" \
+              --opt-level 2 --strict-hosts --plugins
+          done
+          ls -la tests/output/canaries/
+
+      # 3. Emit applicability manifest.
+      - name: Generate applicability manifest
+        run: |
+          python3 scripts/canary_applicability.py \
+            --out tests/output/canaries/applicability.json
+          cat tests/output/canaries/applicability.json
+
+      # 4. Upload the canary bundle as an artifact so hosts can fetch it
+      #    later (via api.github.com/repos/.../artifacts/<id>/zip). The
+      #    dispatched host workflows resolve this via compiler_ref + repo
+      #    identity rather than a direct URL — GH Actions doesn't expose
+      #    a stable artifact URL to cross-repo dispatch inputs.
+      - name: Upload canary artifact
+        id: canary-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: canaries-wasm
+          path: |
+            tests/output/canaries/*.wasm
+            tests/output/canaries/applicability.json
+          retention-days: 30
+
+      # 5. Trigger each host's nightly-canaries workflow via
+      #    workflow_dispatch, passing the compiler_ref so the host can
+      #    check out the exact canary source and download this run's
+      #    artifact if needed. Uses a repo-scoped PAT because
+      #    GITHUB_TOKEN cannot dispatch across repos.
+      #
+      #    Each dispatch is best-effort: if a host repo does not have a
+      #    nightly-canaries.yml, the gh call fails and we record
+      #    `dispatch_error` for that host without aborting the matrix.
+      - name: Dispatch host canary workflows
+        env:
+          GH_TOKEN: ${{ secrets.CANARY_MATRIX_PAT }}
+          COMPILER_REF: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          mkdir -p matrix-inputs
+          cp tests/output/canaries/applicability.json matrix-inputs/
+
+          declare -A HOSTS=(
+            ["server"]="Ivan-Pasco/clean-server"
+            ["node-server"]="Ivan-Pasco/clean-node-server"
+            ["browser"]="Ivan-Pasco/cleen-framework"
+          )
+
+          for host in "${!HOSTS[@]}"; do
+            repo="${HOSTS[$host]}"
+            echo "=== dispatching $host ($repo) ==="
+            if gh workflow run nightly-canaries.yml \
+                 --repo "$repo" \
+                 --ref main \
+                 -f compiler_ref="$COMPILER_REF" 2>&1 | tee "matrix-inputs/${host}-dispatch.log"; then
+              echo "dispatched" > "matrix-inputs/${host}-status.txt"
+            else
+              echo "dispatch_error" > "matrix-inputs/${host}-status.txt"
+              echo "" > "matrix-inputs/${host}-run-url.txt"
+              continue
+            fi
+
+            # Wait a moment for the dispatched run to appear in the run list,
+            # then capture its URL for later polling and matrix linking.
+            sleep 10
+            run_id=$(gh run list \
+              --repo "$repo" \
+              --workflow nightly-canaries.yml \
+              --limit 1 \
+              --json databaseId,event,createdAt \
+              --jq '.[] | select(.event == "workflow_dispatch") | .databaseId' \
+              | head -1)
+            if [ -n "${run_id:-}" ]; then
+              echo "https://github.com/${repo}/actions/runs/${run_id}" > "matrix-inputs/${host}-run-url.txt"
+              echo "$run_id" > "matrix-inputs/${host}-run-id.txt"
+              echo "  run: ${run_id}"
+            else
+              echo "" > "matrix-inputs/${host}-run-url.txt"
+              echo "  (could not resolve run id — matrix will link to workflow page)"
+            fi
+          done
+
+      # 6. Poll each dispatched run until it completes or hits the 30-min
+      #    per-host cap. `gh run watch` blocks until the run reaches a
+      #    terminal state; we run each in the background and cap total
+      #    wait via `timeout`. Records final status per host.
+      - name: Wait for host runs
+        env:
+          GH_TOKEN: ${{ secrets.CANARY_MATRIX_PAT }}
+        run: |
+          set -uo pipefail
+          for host in server node-server browser; do
+            case "$host" in
+              server)      repo="Ivan-Pasco/clean-server" ;;
+              node-server) repo="Ivan-Pasco/clean-node-server" ;;
+              browser)     repo="Ivan-Pasco/cleen-framework" ;;
+            esac
+
+            status_file="matrix-inputs/${host}-status.txt"
+            run_id_file="matrix-inputs/${host}-run-id.txt"
+            [ -f "$status_file" ] || echo "dispatch_error" > "$status_file"
+
+            # Skip polling if dispatch failed or no run id was captured.
+            if [ "$(cat "$status_file")" != "dispatched" ]; then
+              continue
+            fi
+            if [ ! -f "$run_id_file" ] || [ -z "$(cat "$run_id_file")" ]; then
+              echo "timeout" > "$status_file"
+              continue
+            fi
+
+            run_id=$(cat "$run_id_file")
+            echo "=== waiting for $host run $run_id (30 min cap) ==="
+            if timeout 1800 gh run watch \
+                 --repo "$repo" \
+                 --exit-status \
+                 "$run_id" 2>&1; then
+              echo "success" > "$status_file"
+            else
+              rc=$?
+              if [ $rc -eq 124 ]; then
+                echo "timeout" > "$status_file"
+              else
+                echo "failure" > "$status_file"
+              fi
+            fi
+            echo "  final: $(cat "$status_file")"
+          done
+
+      # 7. Download each host's canary-report artifact into matrix-inputs/
+      #    under a stable filename (<host>-report.json) so the renderer can
+      #    read it. Missing artifacts are OK — the renderer treats them as
+      #    "no data" and fills the row with ✗ + link to the host job.
+      - name: Collect host reports
+        env:
+          GH_TOKEN: ${{ secrets.CANARY_MATRIX_PAT }}
+        run: |
+          set -uo pipefail
+          for host in server node-server browser; do
+            case "$host" in
+              server)      repo="Ivan-Pasco/clean-server" ;;
+              node-server) repo="Ivan-Pasco/clean-node-server" ;;
+              browser)     repo="Ivan-Pasco/cleen-framework" ;;
+            esac
+            run_id_file="matrix-inputs/${host}-run-id.txt"
+            [ -f "$run_id_file" ] || continue
+            run_id=$(cat "$run_id_file")
+            [ -n "$run_id" ] || continue
+
+            echo "=== downloading $host artifacts from run $run_id ==="
+            dl_dir="matrix-inputs/${host}-artifacts"
+            mkdir -p "$dl_dir"
+            # Download all artifacts from the run. Failure here is not fatal;
+            # a host that produced no report just gets no data downstream.
+            gh run download "$run_id" \
+              --repo "$repo" \
+              --dir "$dl_dir" 2>&1 || true
+
+            # Look for a canary-report.json (node-server convention). If
+            # found, copy it to the flat name the renderer expects.
+            found=$(find "$dl_dir" -name "canary-report.json" -type f | head -1)
+            if [ -n "$found" ]; then
+              cp "$found" "matrix-inputs/${host}-report.json"
+              echo "  found: $found"
+            else
+              echo "  no canary-report.json found — cells will render as ✗ or no_report"
+              echo '{}' > "matrix-inputs/${host}-report.json"
+            fi
+          done
+
+      # 8. Render the matrix into a markdown summary + upload as artifact.
+      - name: Render matrix
+        run: |
+          set -euo pipefail
+          python3 scripts/canary_matrix.py \
+            --inputs-dir matrix-inputs \
+            --out matrix-inputs/matrix-summary.md
+          cat matrix-inputs/matrix-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cross-component-canary-matrix
+          path: |
+            matrix-inputs/matrix-summary.md
+            matrix-inputs/applicability.json
+            matrix-inputs/*-status.txt
+            matrix-inputs/*-run-url.txt
+            matrix-inputs/*-report.json
+          retention-days: 30
