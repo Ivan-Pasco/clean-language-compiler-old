@@ -4,21 +4,21 @@
 //   http_delete, http_head, http_options, http_post_json, http_put_json,
 //   http_patch_json, http_post_form, http_get_with_headers,
 //   http_post_with_headers, http_get_response_code, http_get_response_headers,
-//   http_encode_url, http_decode_url, http_build_query
+//   http_encode_url, http_decode_url, http_build_query, http_set_user_agent,
+//   http_set_timeout, http_set_max_redirects, http_enable_cookies
 // Grammar: 5.3 function calls
 // Semantic: FUNC-001 bridge function resolution
-// Notes: URL-manipulation helpers run at top-level so their bridge imports
-//   are always emitted; http.getResponseHeaders also runs at top-level
-//   (regression guard for the reachability entry added in
-//   src/codegen/mir_codegen/utilities.rs, fingerprint d9a899a19741).
+// Notes: URL-manipulation helpers, client-configuration setters, and
+//   http.getResponseHeaders run at top-level so their bridge imports are
+//   always emitted. These act as regression guards for two related fixes:
+//     • fingerprint d9a899a19741 — reachability entries in
+//       src/codegen/mir_codegen/utilities.rs `explicit_reachable` table
+//     • fingerprint 0cf6c5198b50 — void-return handling for the four
+//       setters in `get_stdlib_return_type` (utilities.rs) so the caller
+//       doesn't emit code to consume a non-existent i32.
 //   Network verbs and response accessors are exercised through a
 //   runtime-false guard so their bridge imports appear in the WASM's
 //   import section without executing.
-//   http_set_user_agent, http_set_timeout, http_set_max_redirects,
-//   http_enable_cookies are NOT exercised because their stdlib wrapper
-//   bodies in src/stdlib/http_class.rs produce invalid WASM (COM001).
-//   Filed as a separate compiler bug; once fixed, add them to the reachability
-//   table AND to this canary.
 //   http_put_with_headers, http_patch_with_headers, http_delete_with_headers
 //   have no stdlib surface name in http_class.rs — need register_stdlib_function
 //   calls before a canary can cover them.
@@ -26,6 +26,7 @@
 //   encode:hello%20world
 //   decode:hello world
 //   query:a=1&b=two
+//   config:ok
 //   headers-len:0
 //   ok
 
@@ -38,11 +39,16 @@ start:
 	string q = http.buildQuery("a=1&b=two")
 	printl("query:" + q)
 
-	// getResponseHeaders — top-level so the reachability regression guard
-	// fires if the entry in explicit_reachable is ever removed. Prior to
-	// the fix, this call site raised COD000 "Function 'http.getResponseHeaders'
-	// not found in function map" because the import was tree-shaken.
-	// The runtime stub returns an empty pointer on all hosts; length is 0.
+	// Client configuration — top-level so the reachability + void-handling
+	// regression guards fire if either fix is reverted.
+	http.setUserAgent("clean-canary/1.0")
+	http.setTimeout(5000)
+	http.setMaxRedirects(3)
+	http.enableCookies(true)
+	printl("config:ok")
+
+	// getResponseHeaders — top-level regression guard for the reachability
+	// entry. Runtime stub returns an empty pointer on all hosts.
 	string hdrs = http.getResponseHeaders()
 	printl("headers-len:" + hdrs.length().toString())
 

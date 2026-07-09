@@ -80,6 +80,18 @@ impl MirCodeGenerator<'_> {
             return Some(return_type.clone());
         }
 
+        // http.* void-returning client-configuration setters must NOT fall
+        // through to the `http.` → I32 heuristic below — the caller would
+        // then emit code to consume an i32 that the wrapper never pushes,
+        // producing COM001 "expected i32 but nothing on stack" at WASM
+        // validation. Fingerprint 0cf6c5198b50.
+        if matches!(
+            function_name,
+            "http.setUserAgent" | "http.setTimeout" | "http.setMaxRedirects" | "http.enableCookies"
+        ) {
+            return Some(MirType::Void);
+        }
+
         // Fallback: namespace-based heuristics for functions not explicitly registered
         match function_name {
             name if name.starts_with("string.") => Some(MirType::I32),
@@ -2176,19 +2188,20 @@ impl MirCodeGenerator<'_> {
             ("http.encodeUrl", "http_encode_url"),
             ("http.decodeUrl", "http_decode_url"),
             ("http.buildQuery", "http_build_query"),
-            // camelCase http.getResponseHeaders: dot→underscore expansion
-            // produces "http_getResponseHeaders" which does not match the
-            // actual import name "http_get_response_headers". Without this
-            // entry the import is tree-shaken even when the language-level
-            // name is in the MIR call graph. Fingerprint d9a899a19741
-            // (COD000). Other missing entries — setUserAgent, setTimeout,
-            // setMaxRedirects, enableCookies — cannot be added yet because
-            // their wrappers in `src/stdlib/http_class.rs` produce invalid
-            // WASM (COM001, filed as a separate bug); adding them to this
-            // table exposes that downstream bug at compile time. Once the
-            // wrapper bodies are fixed, extend this table with the four
-            // setters.
+            // camelCase http.getResponseHeaders + client-config setters:
+            // dot→underscore expansion produces the wrong snake_case import
+            // name (e.g. "http_getResponseHeaders" vs. actual
+            // "http_get_response_headers"). Without these entries the imports
+            // are tree-shaken even when the language-level name is in the MIR
+            // call graph. Fingerprints d9a899a19741 (COD000, reachability)
+            // and 0cf6c5198b50 (COM001, void handling for the four setters —
+            // resolved in tandem via is_known_void_builtin in
+            // src/codegen/mir_codegen/instructions.rs).
             ("http.getResponseHeaders", "http_get_response_headers"),
+            ("http.setUserAgent", "http_set_user_agent"),
+            ("http.setTimeout", "http_set_timeout"),
+            ("http.setMaxRedirects", "http_set_max_redirects"),
+            ("http.enableCookies", "http_enable_cookies"),
         ];
         for (lang, import_field) in explicit_reachable {
             if names.contains(*lang) {

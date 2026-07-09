@@ -1979,6 +1979,19 @@ impl MirCodeGenerator<'_> {
                         | Some("_server_sleep")
                         | Some("_state_reset_all")
                         | Some("_state_reset_named")
+                        // http_client client-configuration setters — void return,
+                        // called as expression statements. The stdlib wrappers in
+                        // src/stdlib/http_class.rs register these with
+                        // `return_type: None`, but the WASM-level lookup in
+                        // `wasm_function_is_void` misses them at codegen time.
+                        // Without this branch the fallback emits a spurious Drop
+                        // on top of the empty stack the void call leaves behind,
+                        // producing COM001 "expected i32 but nothing on stack".
+                        // Fingerprint 0cf6c5198b50 (COM001).
+                        | Some("http.setUserAgent")
+                        | Some("http.setTimeout")
+                        | Some("http.setMaxRedirects")
+                        | Some("http.enableCookies")
                 );
 
                 if is_known_void_builtin {
