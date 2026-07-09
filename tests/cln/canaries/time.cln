@@ -5,10 +5,16 @@
 // Semantic: FUNC-001 bridge function resolution
 // Notes: The time.* result is host-dependent — asserting a specific value is
 //   impossible. The canary establishes that time.now() resolves and its
-//   integer result is usable. server.sleep is deliberately NOT combined with
-//   time.now() in the same start: block because that combination trips a
-//   COM001 codegen bug (fingerprint c1dd411d2163c5c7) at
-//   `func[234]` — reported separately.
+//   integer result is usable in a toString() chain — the exact pattern that
+//   used to trap at wasm-function[234]:0x4bbf on clean-server (fingerprints
+//   95c8a7cd TIME-TOSTRING-001, ba77c082 CODEGEN-I64-TOSTRING-OOB, 97d07985
+//   COD001). Regression guard: reverting the typechecker's `time.now →
+//   Integer` inference (src/typechecker/type_inference.rs) causes the MIR
+//   builder to unbox the raw i32 timestamp as a boxed pointer at offset 4
+//   → OOB read.
+//   server.sleep + time.now in the same start block still trips a distinct
+//   COM001 codegen bug (fingerprint a97c328a) unrelated to the toString
+//   dispatch; that combo is left as a follow-up.
 // Expected output:
 //   ok
 

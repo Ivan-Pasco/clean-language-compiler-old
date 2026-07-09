@@ -4808,6 +4808,15 @@ impl<'a> TypeInference<'a> {
             || function_name == "list.indexOf"
             || function_name == "list_lastIndexOf"
             || function_name == "list.lastIndexOf"
+            // time.now (frame.server / frame.auth alias) returns a Unix timestamp.
+            // The typechecker needs to know this returns Integer (not Unknown/Any)
+            // so `integer now = time.now()` doesn't unbox the raw i32 as a
+            // pointer and OOB on the toString path. Fingerprints 95c8a7cd
+            // (TIME-TOSTRING-001), ba77c082 (CODEGEN-I64-TOSTRING-OOB),
+            // 97d07985 (COD001).
+            || function_name == "time.now"
+            || function_name == "time_now"
+            || function_name == "now"
         {
             return Ok(ConcreteType::Integer);
         }

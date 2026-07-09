@@ -1531,6 +1531,58 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
+                // NOTE: Handle Integer.toString() EARLY — same rationale as
+                // IntegerSized{64} above, but for i32 receivers. Without this
+                // early-dispatch, a non-zero method_symbol (e.g. resolver
+                // registered `toString` as symbol 11) skips the type-conversion
+                // fast-path at line ~1944 and falls into the general method-call
+                // path, which treats the value as Any and emits UnboxAnyToI32
+                // — reading the receiver's i32 value as a pointer and OOBing
+                // when the value is a large timestamp (from time.now → wrap_i64).
+                // Fingerprints 95c8a7cd (TIME-TOSTRING-001), ba77c082
+                // (CODEGEN-I64-TOSTRING-OOB), 97d07985 (COD001).
+                if matches!(&receiver_actual_type, ConcreteType::Integer)
+                    && method_name == "toString"
+                {
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::Ptr(Box::new(MirType::U8)),
+                        expression.location.clone(),
+                    );
+
+                    let symbol_id = self
+                        .symbol_table
+                        .lookup_symbol("int_to_string")
+                        .unwrap_or_else(|| {
+                            warn!(
+                                "int_to_string not found in symbol table for Integer.toString() early dispatch"
+                            );
+                            SymbolId(0)
+                        });
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: if symbol_id.0 == 0 {
+                                MirOperand::NamedFunction {
+                                    name: "int_to_string".to_string(),
+                                    symbol_id: SymbolId(0),
+                                }
+                            } else {
+                                MirOperand::Function(symbol_id)
+                            },
+                            arguments: vec![MirOperand::Value(receiver_id)],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
                 // NOTE: Handle Any.toInteger() EARLY for chained calls
                 // For chained calls like c.get().toInteger() where c.get() returns Any,
                 // the method_symbol might be non-zero, but we need to use UnboxAnyToI32 operation
