@@ -4828,8 +4828,16 @@ impl<'a> TypeInference<'a> {
         // reads the length prefix as a type tag → produces garbage output or
         // memory OOB. Fingerprints c2a2285c (ENV-GET-NULL-STRING-001),
         // eb2b423c (HTTP-GET-RESP-HEADERS-CORRUPTED-001), d45f7c28
-        // (CODEGEN-BRIDGE-PTR-LENGTH-CONSTANT-4 — length side of same bug),
-        // a89cf930 (COD002 — json.get on numeric field, same fall-through).
+        // (CODEGEN-BRIDGE-PTR-LENGTH-CONSTANT-4 — length side of same bug).
+        //
+        // NOTE: json.get / json_get is INTENTIONALLY excluded here because it
+        // returns a boxed Any pointer (tag byte + inner pointer, from
+        // `__json_get_path`), NOT a raw length-prefixed string. Typing it as
+        // String would tell the concat/length paths to read `mem[ptr+0]` as
+        // length — that reads the type tag byte instead, producing garbage
+        // output (`name:P` for "Alice"). The correct typing is Any, so the
+        // AnyToString runtime dispatch reads the tag and unwraps to the inner
+        // string. Fingerprint a89cf930 (COD002).
         if function_name == "env.get"
             || function_name == "env_get"
             || function_name == "http.getResponseHeaders"
@@ -4838,8 +4846,6 @@ impl<'a> TypeInference<'a> {
             || function_name == "http_get_response_body"
             || function_name == "http.responseBody"
             || function_name == "http.responseHeaders"
-            || function_name == "json.get"
-            || function_name == "json_get"
         {
             return Ok(ConcreteType::String);
         }
