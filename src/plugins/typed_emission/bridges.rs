@@ -1065,21 +1065,74 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          body_handle: i32,
          flags: i32|
          -> i32 {
+            // Read the function name up-front so failure diagnostics can name
+            // the offending function. Without this, a silent `return 1` on
+            // params/body decode would leave the plugin author staring at
+            // "SEM007 Function '__foo' not found" at codegen time with no hint
+            // that the compiler had earlier rejected the emission. Making these
+            // failures loud (via emit_diagnostic → compiler diagnostic channel)
+            // is the same architectural fix as the emit_arena-drain error from
+            // 0.33.29 (fingerprint 4dad9b6a).
             let name = match read_lp_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
-                _ => return 1,
+                _ => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN017".to_string(),
+                        message: format!(
+                            "_emit_function: name pointer read failed (name_lp={}) — plugin passed an invalid or empty function name",
+                            name_lp
+                        ),
+                        span_json: String::new(),
+                    });
+                    return 1;
+                }
             };
             let params_json = match read_lp_string(&mut caller, params_json_lp) {
                 Some(s) => s,
-                None => return 1,
+                None => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN017".to_string(),
+                        message: format!(
+                            "_emit_function for `{}`: params_json pointer read failed (params_json_lp={})",
+                            name, params_json_lp
+                        ),
+                        span_json: String::new(),
+                    });
+                    return 1;
+                }
             };
             let param_descs = match decode_param_array(&params_json) {
                 Ok(d) => d,
-                Err(_) => return 1,
+                Err(e) => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN017".to_string(),
+                        message: format!(
+                            "_emit_function for `{}`: params_json is malformed: {:?}. Received: `{}`. Expected each entry to have {{\"name\": \"<name>\", \"type_handle\": <handle>}}.",
+                            name, e, params_json
+                        ),
+                        span_json: String::new(),
+                    });
+                    return 1;
+                }
             };
 
             let a = arena!(caller);
-            if a.check_ctx(ctx).is_err() {
+            if let Err(e) = a.check_ctx(ctx) {
+                a.emit_diagnostic(EmitDiagnostic {
+                    severity: 2,
+                    code: "PLUGIN017".to_string(),
+                    message: format!(
+                        "_emit_function for `{}`: invalid arena ctx ({:?}). Plugin must call this from an active expand/assemble slot.",
+                        name, e
+                    ),
+                    span_json: String::new(),
+                });
                 return 1;
             }
 
@@ -1093,7 +1146,18 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                         a.emit_plugin008(handle);
                         return 1;
                     }
-                    Err(_) => return 1,
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN017".to_string(),
+                            message: format!(
+                                "_emit_function for `{}`: cannot resolve return_type_handle={}: {:?}",
+                                name, return_type_handle, e
+                            ),
+                            span_json: String::new(),
+                        });
+                        return 1;
+                    }
                 }
             };
 
@@ -1106,7 +1170,18 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                         a.emit_plugin008(handle);
                         return 1;
                     }
-                    Err(_) => return 1,
+                    Err(e) => {
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN017".to_string(),
+                            message: format!(
+                                "_emit_function for `{}`: parameter `{}` has invalid type_handle={}: {:?}",
+                                name, desc.name, desc.type_handle, e
+                            ),
+                            span_json: String::new(),
+                        });
+                        return 1;
+                    }
                 };
                 let default_value = if desc.default_expr_handle != 0 {
                     match a.take_expr(ctx, desc.default_expr_handle) {
@@ -1115,7 +1190,18 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                             a.emit_plugin008(handle);
                             return 1;
                         }
-                        Err(_) => return 1,
+                        Err(e) => {
+                            a.emit_diagnostic(EmitDiagnostic {
+                                severity: 2,
+                                code: "PLUGIN017".to_string(),
+                                message: format!(
+                                    "_emit_function for `{}`: parameter `{}` has invalid default_expr_handle={}: {:?}",
+                                    name, desc.name, desc.default_expr_handle, e
+                                ),
+                                span_json: String::new(),
+                            });
+                            return 1;
+                        }
                     }
                 } else {
                     None
@@ -1135,7 +1221,18 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                     a.emit_plugin008(handle);
                     return 1;
                 }
-                Err(_) => return 1,
+                Err(e) => {
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN017".to_string(),
+                        message: format!(
+                            "_emit_function for `{}`: cannot resolve body_handle={}: {:?}",
+                            name, body_handle, e
+                        ),
+                        span_json: String::new(),
+                    });
+                    return 1;
+                }
             };
             let body = flatten_block(body_stmt);
 
