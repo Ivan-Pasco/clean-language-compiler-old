@@ -4821,6 +4821,29 @@ impl<'a> TypeInference<'a> {
             return Ok(ConcreteType::Integer);
         }
 
+        // Bridge functions that always return String (length-prefixed pointer).
+        // Without a typechecker entry, these fall through to Unknown → MirType::Any
+        // in the MIR builder. Downstream operations (string concat, .length(),
+        // toString) then emit AnyToString / UnboxAny tag-dispatch codegen that
+        // reads the length prefix as a type tag → produces garbage output or
+        // memory OOB. Fingerprints c2a2285c (ENV-GET-NULL-STRING-001),
+        // eb2b423c (HTTP-GET-RESP-HEADERS-CORRUPTED-001), d45f7c28
+        // (CODEGEN-BRIDGE-PTR-LENGTH-CONSTANT-4 — length side of same bug),
+        // a89cf930 (COD002 — json.get on numeric field, same fall-through).
+        if function_name == "env.get"
+            || function_name == "env_get"
+            || function_name == "http.getResponseHeaders"
+            || function_name == "http_get_response_headers"
+            || function_name == "http.getResponseBody"
+            || function_name == "http_get_response_body"
+            || function_name == "http.responseBody"
+            || function_name == "http.responseHeaders"
+            || function_name == "json.get"
+            || function_name == "json_get"
+        {
+            return Ok(ConcreteType::String);
+        }
+
         // Functions that always return boolean
         if function_name == "list_contains"
             || function_name == "list.contains"
