@@ -1882,7 +1882,16 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
          flags: i32|
          -> i32 {
             let a = arena!(caller);
-            if a.check_ctx(ctx).is_err() {
+            if let Err(e) = a.check_ctx(ctx) {
+                a.emit_diagnostic(EmitDiagnostic {
+                    severity: 2,
+                    code: "PLUGIN017".to_string(),
+                    message: format!(
+                        "_emit_helpers_batch: invalid arena ctx ({:?}). Plugin must call this from an active expand/assemble slot.",
+                        e
+                    ),
+                    span_json: String::new(),
+                });
                 return 1;
             }
 
@@ -1958,7 +1967,19 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                 // we can borrow `caller` to read WASM memory.
                 let json = match read_lp_string(&mut caller, spec_handle_or_lp) {
                     Some(s) => s,
-                    None => return 1,
+                    None => {
+                        let a = arena!(caller);
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN017".to_string(),
+                            message: format!(
+                                "_emit_helpers_batch: spec_handle_or_lp={} points to unreadable memory (expected LP-string). If this was intended as a batch handle, the BATCH_TAG bit was not set.",
+                                spec_handle_or_lp
+                            ),
+                            span_json: String::new(),
+                        });
+                        return 1;
+                    }
                 };
                 let spec_len = json.len();
                 let a = arena!(caller);
@@ -2103,7 +2124,16 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
          flags: i32|
          -> i32 {
             let a = arena!(caller);
-            if a.check_ctx(ctx).is_err() {
+            if let Err(e) = a.check_ctx(ctx) {
+                a.emit_diagnostic(EmitDiagnostic {
+                    severity: 2,
+                    code: "PLUGIN017".to_string(),
+                    message: format!(
+                        "_emit_class_full: invalid arena ctx ({:?}). Plugin must call this from an active expand/assemble slot.",
+                        e
+                    ),
+                    span_json: String::new(),
+                });
                 return 1;
             }
 
@@ -2191,7 +2221,19 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                 // Borrow of `a` ends above.
                 let json = match read_lp_string(&mut caller, class_handle_or_lp) {
                     Some(s) => s,
-                    None => return 1,
+                    None => {
+                        let a = arena!(caller);
+                        a.emit_diagnostic(EmitDiagnostic {
+                            severity: 2,
+                            code: "PLUGIN017".to_string(),
+                            message: format!(
+                                "_emit_class_full: class_handle_or_lp={} points to unreadable memory (expected LP-string). If this was intended as a batch handle, the BATCH_TAG bit was not set.",
+                                class_handle_or_lp
+                            ),
+                            span_json: String::new(),
+                        });
+                        return 1;
+                    }
                 };
                 let spec_len = json.len();
                 let a = arena!(caller);

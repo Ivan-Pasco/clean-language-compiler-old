@@ -804,12 +804,20 @@ impl TokenParser {
             }
         };
 
-        // Keep keyword as name, put decl_name in attributes
-        // This allows plugins to check "block_name == 'data'" properly
+        // Keep keyword as name, put decl_name in attributes.
+        //
+        // Register as `model_name` (not as a keyless flag `{name: decl_name,
+        // value: None}`) so plugin's extract_attr("model_name") can find it.
+        // Before this fix, `data Todo` serialized to attrs_json `"Todo":true`,
+        // plugin's extract_attr("model_name") returned empty, and it hit the
+        // "no model_name → config block, return 0" branch — silently emitting
+        // nothing. See sister fix in parse_framework_block below.
+        //
+        // Fixes CODEGEN-PLUGIN-EMITTED-HELPER-BRIDGE-DROP (fp c2c6e33d).
         let block_name = keyword.clone();
         let attributes = vec![FrameworkAttribute {
-            name: decl_name,
-            value: None,
+            name: "model_name".to_string(),
+            value: Some(decl_name),
             location: Some(start_location.clone()),
         }];
 
@@ -952,11 +960,27 @@ impl TokenParser {
 
         // Merge prefix @attributes with the optional block_arg attribute.
         // prefix_attrs come first, then the block_arg (if any).
+        //
+        // Block argument (the identifier or string between block name and `:`,
+        // e.g. `Todo` in `data Todo:` or `Counter` in `screen "Counter":`) is
+        // registered as `model_name` — the canonical key plugins already use
+        // (frame.data's expand_block_typed does `extract_attr(attrs_json,
+        // "model_name")`). Before this fix, the argument was pushed as
+        // `{name: "Todo", value: None}`, which serialized to `"Todo":true`
+        // in the attrs_json handed to the plugin. The plugin's
+        // `extract_attr("model_name")` then returned empty, hit its "no
+        // model_name → treat as config block, return 0" branch, and
+        // __<Model>_exists / __<Model>_count helpers were silently never
+        // emitted. Same shape for endpoints/component/screen.
+        //
+        // Fixes CODEGEN-PLUGIN-EMITTED-HELPER-BRIDGE-DROP (fp c2c6e33d) — the
+        // "silent drop" was neither in codegen nor in the plugin's emit path;
+        // it was here at the parser boundary, upstream of everything.
         let mut attributes = prefix_attrs;
         if let Some(arg) = block_arg {
             attributes.push(FrameworkAttribute {
-                name: arg,
-                value: None,
+                name: "model_name".to_string(),
+                value: Some(arg),
                 location: Some(start_location.clone()),
             });
         }
