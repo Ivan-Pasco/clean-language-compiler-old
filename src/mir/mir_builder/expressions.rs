@@ -3629,10 +3629,27 @@ impl MirBuilder {
                     expression.expr_type,
                     ConcreteType::Array(ref t) if matches!(**t, ConcreteType::Number)
                 );
-                let capacity_hint = if element_is_f64 {
+                // Empty list literals (`[]`) must reserve some capacity or the
+                // first `list.push`/`list.add` writes past the allocation and
+                // clobbers the next heap allocation (bump-allocated adjacent
+                // list, string buffer, etc.). `list.add` (behavior-aware) does
+                // an in-place write at `list_ptr + 16 + size*4` with no growth
+                // check; `list_ops.rs::generate_list_add`'s contract is that
+                // the caller pre-allocates capacity. Reserve 8 slots by
+                // default — matches the invariant documented in
+                // `native_stdlib/list_ops.rs::gen_push_i32_inplace`. For
+                // non-empty literals we already have `elements.len()` slots
+                // which is sufficient for the initial fill.
+                const EMPTY_LIST_MIN_CAPACITY: i64 = 8;
+                let raw_capacity = if element_is_f64 {
                     (elements.len() * 2) as i64
                 } else {
                     elements.len() as i64
+                };
+                let capacity_hint = if elements.is_empty() {
+                    EMPTY_LIST_MIN_CAPACITY
+                } else {
+                    raw_capacity
                 };
 
                 // Create size constant

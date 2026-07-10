@@ -1,0 +1,62 @@
+// Test: bugfixes/codegen_empty_list_zero_capacity_clobbers_neighbor
+// Regression: SYN001 fingerprint c4d6481f (compiler 0.33.41). The reported
+//   symptom was the frame.ui plugin's assemble_typed producing a
+//   __plugin_frame_ui__/companion_routes.cln whose content byte-for-byte
+//   matched the project's main.cln manifest — surfacing as SYN001
+//   "Unexpected token at top level: Indent(1)" on the injected virtual path.
+//   The plugin-side v3.3.1 mitigations (`module_src + ""` forced-fresh-alloc
+//   plus a `package:` self-check) were both bypassed, so the corruption had
+//   to be on the compiler side.
+//
+// Root cause: `TastExpressionKind::ArrayLiteral` in
+//   `src/mir/mir_builder/expressions.rs` passed `elements.len()` (0 for an
+//   empty `[]`) as the capacity hint to `list.allocate`. That produced a
+//   list header of 16 bytes with ZERO slots for elements. The subsequent
+//   `list.push` / `list.add` in `src/stdlib/list_behavior.rs` is the
+//   in-place variant that writes at `list_ptr + 16 + size*4` without a
+//   growth check, per the "Caller must ensure capacity" contract in
+//   `native_stdlib/list_ops.rs::gen_push_i32_inplace`. With zero capacity,
+//   the first push to list A wrote at `A + 16` — which is the START of
+//   the next bump-allocated block, i.e. the header of list B. That
+//   corrupted B's size field, then B's element slot, so subsequent reads
+//   of `B[0]` returned garbage. The plugin's list<string> route_fn_names /
+//   route_fn_bodies collections were both `[]`-initialised, so every
+//   two-list-plus-subscript-append pattern (which is essentially every
+//   assemble_typed emission phase) lost content.
+//
+// Minimal shape:
+//   list<string> names = []       // header only, capacity 0
+//   list<string> bodies = []      // right after, sharing element slot 0
+//   names.push("A")               // writes "A" ptr into bodies' size field
+//   bodies.push("BA")              // reads garbage size, appends into limbo
+//   src = src + names[0]           // reads "A" (still valid by luck)
+//   src = src + bodies[0]          // reads garbage
+//
+// Fix: `ArrayLiteral` now reserves a minimum capacity of 8 element slots
+//   for `[]` so the first pushes stay within the allocated region. The
+//   `EMPTY_LIST_MIN_CAPACITY` constant matches the invariant that
+//   `list_ops.rs::gen_push_i32_inplace` documents. Non-empty literals
+//   `[a, b, c]` are unchanged — they still allocate exactly `elements.len()`
+//   slots, which is sufficient for the initial fill and lets the growth
+//   path in `gen_push_i32` kick in on subsequent pushes.
+//
+// This test exercises the two-list-plus-subscript-append pattern that is
+//   the smallest reproducer of the bug. If a future refactor of
+//   `list.add` adds a growth path (recommended follow-up) this test still
+//   catches an accidental regression in the empty-list allocation contract.
+//
+// Fixed in: compiler 0.33.42
+//
+// Expected output:
+//   ABA
+
+start:
+	list<string> names = []
+	list<string> bodies = []
+	names.push("A")
+	bodies.push("BA")
+
+	string src = ""
+	src = src + names[0]
+	src = src + bodies[0]
+	print(src)
