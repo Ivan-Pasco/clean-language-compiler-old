@@ -3985,48 +3985,6 @@ impl NameResolver {
                                 continue;
                             }
                         }
-
-                        // Symmetric guard for parameters: if the builtin declares any
-                        // parameter as `Any` and the plugin declares the same slot as
-                        // a narrower type, keep the builtin signature. Overwriting with
-                        // narrower params silently disables the MIR builder's
-                        // auto-boxing at the call site (`needs_boxing` in
-                        // `mir_builder/expressions.rs`), which the receiving stdlib
-                        // function's WASM code still requires. This is the root cause
-                        // of CODEGEN-STRING-ARG-ALIAS-JSONGET: frame.server's
-                        // plugin.toml declares `_json_get` with
-                        // `params = ["string", "string"]`, overwriting the compiler
-                        // builtin's `[Any, String]`. String arguments then flow into
-                        // `json.get`'s WASM code without boxing; the stdlib code
-                        // reads offset 0 as the Any tag byte (actually the length
-                        // prefix), mis-branches, and returns a garbage inner pointer
-                        // whose bytes end up interpreted as an out-of-bounds string.
-                        // Return-type guard alone did not catch this because the
-                        // plugin also declared the return as `string` (specific),
-                        // not `any` — only the params were incorrect.
-                        if let SymbolKind::Function {
-                            parameters: existing_parameters,
-                            ..
-                        } = &existing_sym.kind
-                        {
-                            let plugin_narrows_any_param = existing_parameters
-                                .iter()
-                                .zip(parameters.iter())
-                                .any(|(builtin_p, plugin_p)| {
-                                    matches!(builtin_p, HirType::Any)
-                                        && !matches!(plugin_p, HirType::Any)
-                                });
-                            if plugin_narrows_any_param {
-                                tracing::debug!(
-                                    lang_name = %lang_name,
-                                    bridge_name = %bridge_name,
-                                    existing_params = ?existing_parameters,
-                                    plugin_params = ?parameters,
-                                    "Skipping language alias — plugin params narrow a builtin Any param (would disable call-site boxing)"
-                                );
-                                continue;
-                            }
-                        }
                     }
                 }
 
