@@ -306,19 +306,7 @@ impl MultiFileCompiler {
             (&manifest_info, &manifest_root, &manifest_root)
         {
             // Pass 1: collect (file_path, shared_dir, raw_content) for every shared file.
-            let mut shared_files: Vec<(PathBuf, PathBuf, String)> = Vec::new();
-            for shared_dir in &info.shared_folders {
-                for file_path in Self::collect_cln_files(shared_dir) {
-                    let content = if let Some(id) = unit.module_id_for_path(&file_path) {
-                        unit.get_module(id).map(|m| m.source.clone())
-                    } else {
-                        fs::read_to_string(&file_path).ok()
-                    };
-                    if let Some(content) = content {
-                        shared_files.push((file_path, shared_dir.clone(), content));
-                    }
-                }
-            }
+            let shared_files = Self::collect_shared_files_deduped(&info.shared_folders, &unit);
 
             // Build the source-file list for assemble: every discovered .cln
             // module in the compilation unit, deduplicated by canonical path
@@ -849,6 +837,55 @@ impl MultiFileCompiler {
         }
 
         (info, errors)
+    }
+
+    /// Walk every entry in `shared_folders`, gathering `(file_path, shared_dir,
+    /// content)` for each `.cln` file, deduplicated by canonical file path.
+    ///
+    /// `shared_folders` frequently contains overlapping entries because
+    /// plugin-declared `[paths].owns` subdirectories (e.g. frame.ui's `app/ui`,
+    /// `app/ui/web`, `app/ui/web/pages`) all live under a manifest-declared
+    /// `shared:` scope like `[app/ui/]`. Without dedup a single file gets
+    /// walked once per ancestor shared_dir and shipped to
+    /// `AssembleInput.source_files` N times — reported as
+    /// COMPILER-ASSEMBLE-INPUT-DUPLICATE-SOURCE-FILES (fp b2357941).
+    ///
+    /// First-wins on `shared_dir`: the entry retained for a duplicated file
+    /// is the one seen first in `shared_folders` iteration order. That order
+    /// puts manifest-declared `shared: [...]` scopes ahead of plugin-owned
+    /// subdirs (parents before children within a single scope), so pass 3a's
+    /// `derive_companion_module_name` — which uses `shared_dir` to strip the
+    /// base prefix — still picks the outermost shared root.
+    ///
+    /// Content lookup mirrors the pre-dedup Pass 1: prefer the module
+    /// already loaded into `unit` (so any downstream edits stay visible)
+    /// and only fall back to the on-disk source when the file has not
+    /// been discovered as a module yet.
+    fn collect_shared_files_deduped(
+        shared_folders: &[PathBuf],
+        unit: &CompilationUnit,
+    ) -> Vec<(PathBuf, PathBuf, String)> {
+        let mut shared_files: Vec<(PathBuf, PathBuf, String)> = Vec::new();
+        let mut seen_shared: HashSet<PathBuf> = HashSet::new();
+        for shared_dir in shared_folders {
+            for file_path in Self::collect_cln_files(shared_dir) {
+                let canonical = file_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| file_path.clone());
+                if !seen_shared.insert(canonical) {
+                    continue;
+                }
+                let content = if let Some(id) = unit.module_id_for_path(&file_path) {
+                    unit.get_module(id).map(|m| m.source.clone())
+                } else {
+                    fs::read_to_string(&file_path).ok()
+                };
+                if let Some(content) = content {
+                    shared_files.push((file_path, shared_dir.clone(), content));
+                }
+            }
+        }
+        shared_files
     }
 
     /// Recursively collect all .cln files under a directory.
@@ -1872,6 +1909,86 @@ start:
             "a plugin-owned folder outside the manifest's declared `shared:` scope \
              (here: app/ui/components/, inside frame.ui's owned `app/ui`) must not \
              be added when the manifest explicitly narrows the scope"
+        );
+    }
+
+    #[test]
+    fn test_collect_shared_files_deduped_drops_ancestor_walk_duplicates() {
+        // Regression: COMPILER-ASSEMBLE-INPUT-DUPLICATE-SOURCE-FILES
+        // (fingerprint b2357941). When `shared_folders` contains overlapping
+        // entries — the manifest's `shared: [app/ui/]` scope AND the plugin's
+        // owned `app/ui/web`, `app/ui/web/pages` subdirs (frame.ui does
+        // exactly this) — a single .cln file used to appear in `shared_files`
+        // once per ancestor shared_dir. `AssembleInput.source_files` then
+        // shipped duplicates to plugin assemble hooks; a 4-file project
+        // reported 3 copies of one page file.
+        //
+        // The fix (`collect_shared_files_deduped`) dedupes by canonical path
+        // and keeps the first (outermost) `shared_dir` binding so pass 3a's
+        // `derive_companion_module_name` still strips the manifest-declared
+        // base prefix, not a plugin-owned inner subdir.
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_dir = tmp.path();
+        let pages = manifest_dir
+            .join("app")
+            .join("ui")
+            .join("web")
+            .join("pages");
+        std::fs::create_dir_all(&pages).unwrap();
+        std::fs::write(
+            pages.join("index.cln"),
+            "functions:\n\tany load(Request r)\n\t\treturn { title: \"Home\" }\n",
+        )
+        .unwrap();
+
+        // Simulate the shared_folders vector that `parse_manifest_info`
+        // builds when frame.ui's `[paths].owns` intersects manifest
+        // `shared: [app/ui/]` — the manifest scope plus every owned
+        // subdirectory that lives inside it. Nesting order matches
+        // production ordering (parent first, then children).
+        let shared_folders = vec![
+            manifest_dir.join("app").join("ui"),
+            manifest_dir.join("app").join("ui").join("web"),
+            manifest_dir
+                .join("app")
+                .join("ui")
+                .join("web")
+                .join("pages"),
+        ];
+
+        // A compilation unit is required for the module-vs-disk content
+        // preference. An entry file that does not overlap the walk is
+        // sufficient — the shared walk falls back to `fs::read_to_string`
+        // for files it does not find as loaded modules.
+        let unit = CompilationUnit::new(
+            "entry".to_string(),
+            manifest_dir.join("entry.cln"),
+            "start:\n\tprint(1)\n".to_string(),
+        );
+
+        let shared_files = MultiFileCompiler::collect_shared_files_deduped(&shared_folders, &unit);
+
+        assert_eq!(
+            shared_files.len(),
+            1,
+            "duplicate walks over the same file across overlapping shared_folders \
+             must dedup by canonical path (found {} entries: {:?})",
+            shared_files.len(),
+            shared_files
+                .iter()
+                .map(|(p, _, _)| p.display().to_string())
+                .collect::<Vec<_>>()
+        );
+
+        // First-wins policy: outermost shared_dir (`app/ui`) is retained,
+        // not the innermost (`app/ui/web/pages`). This preserves the
+        // module-name derivation contract for `derive_companion_module_name`.
+        let (_, shared_dir, _) = &shared_files[0];
+        assert_eq!(
+            shared_dir,
+            &manifest_dir.join("app").join("ui"),
+            "first-seen shared_dir must be retained on dedup (got {:?})",
+            shared_dir
         );
     }
 
