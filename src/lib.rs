@@ -2107,18 +2107,44 @@ fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> 
 /// server-only bridges like `_db_query` were silently emitted into a
 /// browser-target build instead of surfacing a hard compile error.
 fn extract_package_target(entry_source: &str) -> Option<String> {
-    if !entry_source.trim_start().starts_with("package:") {
-        return None;
-    }
-    // Look only at lines that are indented into the package block. Anything
-    // outside the block (blank lines, subsequent top-level blocks) is skipped
-    // by the `starts_with("\t")` / `starts_with("    ")` guard.
-    for line in entry_source.lines() {
-        let inside_block = line.starts_with('\t') || line.starts_with("    ");
-        if !inside_block {
+    // Find the `package:` declaration. Framework repros commonly ship with a
+    // multi-line comment header describing the file, so `.trim_start()` is
+    // not enough — we scan line-by-line and skip blank lines + `//` comments.
+    // Fixes framework prompt b6d79783: `cln build` on
+    // examples/bug-repro-db-in-browser/main.cln (10 lines of comment header
+    // before `package:`) missed the target derivation and shipped
+    // `_db_query` into a browser build without erroring.
+    let mut lines = entry_source.lines();
+    let mut in_package = false;
+    for line in lines.by_ref() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }
+        if trimmed.starts_with("package:") {
+            in_package = true;
+            break;
+        }
+        // First non-comment / non-blank line was NOT `package:`. This isn't
+        // a manifest file; nothing to extract.
+        return None;
+    }
+    if !in_package {
+        return None;
+    }
+    // Now scan the remainder of the source for a `target: <value>` line that
+    // is indented into the package block. Anything not indented ends the
+    // package block scan (subsequent top-level declarations).
+    for line in lines {
+        let indented = line.starts_with('\t') || line.starts_with("    ");
         let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        if !indented {
+            // Left the package block without finding target:.
+            return None;
+        }
         if let Some(rest) = trimmed.strip_prefix("target:") {
             let value = rest.trim().trim_matches('"');
             if !value.is_empty() {
