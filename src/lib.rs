@@ -2085,6 +2085,50 @@ fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> 
     plugins
 }
 
+/// Extract the `target:` value from a `package:` block in the entry source, if
+/// present. Returns e.g. `Some("browser")` for a manifest like:
+///
+/// ```clean
+/// package: MyApp
+///     version: "1.0.0"
+///     target: browser
+///         plugins: [frame.data, frame.ui]
+///         entry: app.cln
+/// ```
+///
+/// Returns `None` when the file does not start with `package:` OR when no
+/// `target:` line is present in the package block. This mirrors the parser
+/// convention: the package block content is raw text; the compiler scans it
+/// for the declarations it needs (plugins:, shared:, target:, entry:).
+///
+/// Fixes ac38e3d2 BRIDGE-HOST-MISMATCH: without this, a manifest declaring
+/// `target: browser` fell through to the codegen inference path, which
+/// defaulted to `server` when no browser-only bridges were reachable — so
+/// server-only bridges like `_db_query` were silently emitted into a
+/// browser-target build instead of surfacing a hard compile error.
+fn extract_package_target(entry_source: &str) -> Option<String> {
+    if !entry_source.trim_start().starts_with("package:") {
+        return None;
+    }
+    // Look only at lines that are indented into the package block. Anything
+    // outside the block (blank lines, subsequent top-level blocks) is skipped
+    // by the `starts_with("\t")` / `starts_with("    ")` guard.
+    for line in entry_source.lines() {
+        let inside_block = line.starts_with('\t') || line.starts_with("    ");
+        if !inside_block {
+            continue;
+        }
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("target:") {
+            let value = rest.trim().trim_matches('"');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Compiles a multi-file Clean Language program from an entry file
 ///
 /// This function supports programs with `import:` statements that reference
@@ -2541,6 +2585,27 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     })?;
 
     let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
+
+    // Bridge-host-classes: if a package: block declares `target: <host>`, treat
+    // it as an implicit --target flag so the codegen host-mismatch validator
+    // enforces host-restriction correctly. Without this, `target: browser`
+    // manifests fell through to inference and defaulted to `server` — server-
+    // only bridges silently emitted into browser builds instead of erroring.
+    // Only applied when the CLI has NOT already set an explicit override
+    // (main.rs's --target flag wins per bridge-host-classes.md §6 priority).
+    // Fixes ac38e3d2 BRIDGE-HOST-MISMATCH.
+    if target_host_class_override().is_none() {
+        if let Some(target) = extract_package_target(&entry_source) {
+            if let Some(hc) = target_to_host_class(&target) {
+                tracing::info!(
+                    target = %target,
+                    host_class = %hc,
+                    "Derived host class from package: target: manifest"
+                );
+                set_target_host_class_override(Some(hc.to_string()));
+            }
+        }
+    }
 
     // Plugin Contracts v2 — keep an Arc clone of the build-state keystore so
     // that, after compilation completes, callers (e.g. main.rs) can read every
