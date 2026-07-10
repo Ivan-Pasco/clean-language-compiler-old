@@ -1290,16 +1290,32 @@ pub fn compile_with_plugins_and_opt_level(
         "Registering plugin bridge functions in resolver"
     );
 
+    // Collect language function defs so the resolver picks up plugin-declared
+    // precise param/return types instead of falling back to the raw bridge
+    // signature. Without this, aliases whose bridge returns `ptr` or `any`
+    // resolve as boxed Any values, triggering spurious UnboxAnyToI32 emissions
+    // that produce invalid WASM ("values remaining on stack at end of block")
+    // in func[N] bodies where the boxed return meets a stack-typed use site.
+    // Fixes COM001 CLI-vs-library codegen divergence (fp ee1a83f9).
+    let lang_fn_defs: std::collections::HashMap<
+        String,
+        crate::plugins::plugin_abi::PluginFunctionDef,
+    > = registry
+        .language_function_defs()
+        .into_iter()
+        .map(|(k, v)| (k, v.clone()))
+        .collect();
+
     let resolution_result = if bridge_functions.is_empty() {
         Resolver::resolve(hir_result.hir)?
     } else if lang_to_bridge.is_empty() && lang_to_helper.is_empty() {
         Resolver::resolve_with_bridge_functions(hir_result.hir, bridge_functions)?
-    } else if !lang_to_helper.is_empty() {
+    } else if !lang_to_helper.is_empty() || !lang_fn_defs.is_empty() {
         Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
             hir_result.hir,
             bridge_functions,
             &lang_to_bridge,
-            std::collections::HashMap::new(),
+            lang_fn_defs,
             lang_to_helper.clone(),
         )?
     } else {
@@ -1360,6 +1376,28 @@ pub fn compile_with_plugins_and_opt_level(
         mir_codegen.set_language_to_helper_map(lang_to_helper);
     }
 
+    // Configure host class, strict-hosts, and ABI version so the library entry
+    // point matches the CLI's release path (compile_multi_file_release). Without
+    // these, host-mismatched bridges are emitted as real imports instead of
+    // deferred stubs, leaving the codegen's local funcidx and stack expectations
+    // out of sync with the import table — surface as "values remaining on stack
+    // at end of block" in func[N]. Fixes COM001 (fp ee1a83f9).
+    let host_class = target_host_class_override().unwrap_or_else(|| {
+        mir_codegen
+            .infer_host_class_from_mir(&mir_result.program)
+            .unwrap_or_else(|| "server".to_string())
+    });
+    mir_codegen.set_host_class(Some(host_class));
+    let strict = strict_hosts_override()
+        || std::env::var("CLEAN_STRICT_HOSTS")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+    mir_codegen.set_strict_hosts(strict);
+    if let Some(abi) = plugin_abi_version_override() {
+        mir_codegen.set_abi_version(Some(abi));
+    }
+
     let codegen_result = mir_codegen.generate(mir_result.program)?;
     let wasm_bytes = codegen_result.wasm_bytes;
     crate::codegen::validate::validate_generated_wasm(&wasm_bytes).map_err(|e| vec![e])?;
@@ -1418,42 +1456,99 @@ pub fn compile_with_external_plugins_and_opt_level(
     file_path: &str,
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
-    // Extract plugins from plugins: block in source
-    let plugin_names = extract_plugins(source);
+    // Route through the same multi-file pipeline the CLI uses so the library
+    // and the CLI produce byte-identical WASM for the same input. Prior to
+    // this, the library called `compile_with_plugins_and_opt_level` (a
+    // single-file direct-to-codegen path) which diverged from the CLI's
+    // `compile_multi_file_with_memory_tier` on plugin bridge handling,
+    // host-class inference, memory-tier selection, and language-function-def
+    // resolver plumbing. The divergence surfaced as codegen bugs that
+    // reproduced only via `clean_language_compiler::compile*` (e.g. func[N]
+    // stack imbalance on frame.auth + crypto.sha256). Consolidating to the
+    // multi-file compiler's codegen eliminates the entire class of
+    // reproduces-in-library-not-in-CLI failures.
+    // Fixes COM001 (fp ee1a83f9).
+    //
+    // The multi-file compiler needs a real entry file on disk to drive its
+    // discovery + plugin-lifecycle stages. If the caller-supplied `file_path`
+    // exists AND already contains this source verbatim, use it directly (no
+    // temp file). Otherwise materialise the source into a scratch directory
+    // that mirrors the caller-supplied path's basename, so file-path-based
+    // plugin behaviour (e.g. pages/ detection) is preserved.
+    use std::io::Write;
 
-    if plugin_names.is_empty() {
-        // No plugins declared: compile with empty registry, honouring opt_level.
-        tracing::debug!("No plugins found, compiling without external plugins");
-        let registry = plugins::PluginRegistry::builder()
-            .build()
-            .expect("Empty registry should always build");
-        return compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level);
-    }
+    let requested_path = std::path::Path::new(file_path);
+    let file_stem = requested_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "main.cln".to_string());
 
-    tracing::info!(plugins = ?plugin_names, "Loading external plugins from plugins: block");
+    let existing_matches = std::fs::read_to_string(requested_path)
+        .map(|existing| existing == source)
+        .unwrap_or(false);
 
-    // Load plugins using WasmPluginLoader
-    let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
-        vec![CompilerError::PluginError {
-            message: format!("Failed to create plugin loader: {}", e),
-            location: None,
-        }]
-    })?;
+    let (entry_path_owned, search_paths, cleanup_dir) = if existing_matches {
+        let parent = requested_path
+            .parent()
+            .map(|p| {
+                if p.as_os_str().is_empty() {
+                    std::path::PathBuf::from(".")
+                } else {
+                    p.to_path_buf()
+                }
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        (requested_path.to_path_buf(), vec![parent], None)
+    } else {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "cln_library_entry_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        std::fs::create_dir_all(&tmp_root).map_err(|e| {
+            vec![CompilerError::io_error(
+                format!("failed to create library entry scratch dir: {}", e),
+                None,
+                None,
+            )]
+        })?;
+        let entry = tmp_root.join(&file_stem);
+        let mut f = std::fs::File::create(&entry).map_err(|e| {
+            vec![CompilerError::io_error(
+                format!("failed to write library entry source: {}", e),
+                None,
+                None,
+            )]
+        })?;
+        f.write_all(source.as_bytes()).map_err(|e| {
+            vec![CompilerError::io_error(
+                format!("failed to write library entry source: {}", e),
+                None,
+                None,
+            )]
+        })?;
+        let parent = tmp_root.clone();
+        (entry, vec![parent], Some(tmp_root))
+    };
 
-    let registry = loader.load_plugins(&plugin_names).map_err(|e| {
-        vec![CompilerError::PluginError {
-            message: format!("[PLUGIN001] Failed to load plugins: {}", e),
-            location: None,
-        }]
-    })?;
-
-    tracing::info!(
-        plugins = ?registry.registered_plugins(),
-        "External plugins loaded"
+    let target_default = MemoryTier::default_for_target("server");
+    let result = compile_multi_file_with_memory_tier(
+        &entry_path_owned,
+        search_paths,
+        opt_level,
+        None,
+        target_default,
+        false,
     );
 
-    // Compile with loaded plugins
-    compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level)
+    if let Some(dir) = cleanup_dir {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    result.map(|(wasm, _build_state)| wasm)
 }
 
 /// Compiles Clean Language source code with a specific compilation target
