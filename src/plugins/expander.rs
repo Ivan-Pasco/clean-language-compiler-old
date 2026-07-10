@@ -1220,11 +1220,7 @@ mod tests {
                     newline: true,
                     location: None,
                 }],
-                start_function: None,
-                functions: Vec::new(),
-                classes: Vec::new(),
-                externals: Vec::new(),
-                state: None,
+                ..PluginExpansion::default()
             })
         }
     }
@@ -1598,11 +1594,6 @@ mod tests {
                 location: None,
             };
             Ok(PluginExpansion {
-                statements: Vec::new(),
-                start_function: None,
-                functions: Vec::new(),
-                classes: Vec::new(),
-                externals: Vec::new(),
                 state: Some(StateBlock {
                     declarations: vec![decl],
                     computed: Vec::new(),
@@ -1610,6 +1601,7 @@ mod tests {
                     scope: StateScope::App,
                     location: None,
                 }),
+                ..PluginExpansion::default()
             })
         }
     }

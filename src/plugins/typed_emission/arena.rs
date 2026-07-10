@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::error::{EmitDiagnostic, EmitError};
 /// Single-call arena for typed AST emission.
 ///
@@ -298,6 +300,24 @@ pub struct EmitArena {
 
     /// Consumption tracking for batch handles. Parallel to `batch_nodes`.
     batch_consumed: Vec<bool>,
+
+    /// Source-string origin for statements allocated via `_emit_stmt_from_source`.
+    /// Maps stmt handle → the raw Clean source text that was parsed into the
+    /// Statement. Used by the assemble_typed → InjectedSource conversion path
+    /// to reconstruct compilable source when a statement's body must be
+    /// serialized back out. Handles not created from source (batch builders,
+    /// _emit_class_full method bodies, etc.) are absent from this map — callers
+    /// that need source for such handles must fall back to the loud error.
+    /// See COMPILER-EMIT-ARENA-CONVERSION-MISSING (fp 3b15cd54).
+    pub stmt_source_origins: HashMap<i32, String>,
+
+    /// Source-string origin for expressions allocated via `_emit_expr_from_source`.
+    /// Mirror of `stmt_source_origins` for the expression bridge (Amendment 6
+    /// §3.16). Currently unused by the reconstruction path (frame.ui builds
+    /// standalone expressions inside function bodies whose source is already
+    /// captured on the enclosing stmt handle), but recorded for symmetry with
+    /// stmt tracking and future consumers.
+    pub expr_source_origins: HashMap<i32, String>,
 }
 
 impl EmitArena {
@@ -315,6 +335,8 @@ impl EmitArena {
             sticky_context: None,
             batch_nodes: vec![None], // index 0 = sentinel
             batch_consumed: vec![false],
+            stmt_source_origins: HashMap::new(),
+            expr_source_origins: HashMap::new(),
         }
     }
 
@@ -1154,6 +1176,15 @@ impl EmitArena {
     /// Push a statement into `expansion.start_function.body`, creating the
     /// start function if it does not exist yet.
     pub fn push_start_stmt(&mut self, s: Statement) {
+        self.push_start_stmt_with_source(s, None);
+    }
+
+    /// Variant of `push_start_stmt` that also records the original Clean source
+    /// text (when known — e.g. when the statement came from
+    /// `_emit_stmt_from_source`) into `expansion.start_body_sources`. The
+    /// parallel array stays 1:1 with `start_function.body` so downstream
+    /// reconstruction can join sources without misalignment.
+    pub fn push_start_stmt_with_source(&mut self, s: Statement, source: Option<String>) {
         let sf = self.expansion.start_function.get_or_insert_with(|| {
             Function::new(
                 "start".to_string(),
@@ -1164,6 +1195,7 @@ impl EmitArena {
             )
         });
         sf.body.push(s);
+        self.expansion.start_body_sources.push(source);
     }
 
     /// Push a statement into `expansion.statements`, the inline-replacement
@@ -1173,8 +1205,45 @@ impl EmitArena {
     /// which writes to `expansion.start_function.body`. Use this bridge when
     /// the statement should splice into the block's caller position, not the
     /// program's start. See Amendment 11 / §3.5.1.
+    #[allow(dead_code)]
     pub fn push_inline_stmt(&mut self, s: Statement) {
+        self.push_inline_stmt_with_source(s, None);
+    }
+
+    /// Variant of `push_inline_stmt` that also records the original Clean source
+    /// text (when known) into `expansion.inline_stmt_sources`.
+    pub fn push_inline_stmt_with_source(&mut self, s: Statement, source: Option<String>) {
         self.expansion.statements.push(s);
+        self.expansion.inline_stmt_sources.push(source);
+    }
+
+    /// Look up the recorded source origin (if any) for a statement handle.
+    /// Returns `None` for handles allocated by non-source bridges (batch
+    /// builders, etc.).
+    pub fn stmt_source_origin(&self, handle: i32) -> Option<&str> {
+        self.stmt_source_origins.get(&handle).map(|s| s.as_str())
+    }
+
+    /// Record the source origin for a freshly-allocated statement handle.
+    /// Called by `_emit_stmt_from_source` after `alloc_stmt`.
+    pub fn record_stmt_source(&mut self, handle: i32, source: String) {
+        self.stmt_source_origins.insert(handle, source);
+    }
+
+    /// Record the source origin for a freshly-allocated expression handle.
+    /// Called by `_emit_expr_from_source` after `alloc_expr`.
+    pub fn record_expr_source(&mut self, handle: i32, source: String) {
+        self.expr_source_origins.insert(handle, source);
+    }
+
+    /// Push a function into `expansion.functions` and record its body source
+    /// origin (if any) into the parallel `function_body_sources` array.
+    /// Callers should pass the source of the body statement when it was
+    /// allocated via `_emit_stmt_from_source`; pass `None` for structurally-
+    /// built bodies.
+    pub fn push_function_with_source(&mut self, f: Function, body_source: Option<String>) {
+        self.expansion.functions.push(f);
+        self.expansion.function_body_sources.push(body_source);
     }
 }
 

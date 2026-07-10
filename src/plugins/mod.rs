@@ -354,11 +354,7 @@ pub trait FrameworkPlugin: Send + Sync {
     fn expand_full(&self, block: &FrameworkBlock) -> PluginResult<PluginExpansion> {
         Ok(PluginExpansion {
             statements: self.expand(block)?,
-            start_function: None,
-            functions: Vec::new(),
-            classes: Vec::new(),
-            externals: Vec::new(),
-            state: None,
+            ..PluginExpansion::default()
         })
     }
 
@@ -600,6 +596,20 @@ pub struct PluginExpansion {
     /// plugin declarations come before user declarations; computed values
     /// concatenate; only one rules block is allowed across the whole program.
     pub state: Option<crate::ast::StateBlock>,
+    /// Parallel array to `functions`: original Clean source for each function's
+    /// body when the body was emitted via `_emit_stmt_from_source` (typed-emission
+    /// §3.11). `None` when the body was built structurally (batch builder API,
+    /// _emit_class_full, etc.) and no source text is available. Used by the
+    /// assemble_typed → InjectedSource reconstruction path in wasm_adapter.rs
+    /// to serialize the expansion back into a compilable Clean source module.
+    /// See COMPILER-EMIT-ARENA-CONVERSION-MISSING (fp 3b15cd54).
+    pub function_body_sources: Vec<Option<String>>,
+    /// Parallel array to `start_function.body`: original Clean source for each
+    /// statement in the start body when emitted via `_emit_stmt_from_source`.
+    pub start_body_sources: Vec<Option<String>>,
+    /// Parallel array to `statements`: original Clean source for each inline
+    /// splice statement when emitted via `_emit_stmt_from_source`.
+    pub inline_stmt_sources: Vec<Option<String>>,
 }
 
 #[cfg(test)]

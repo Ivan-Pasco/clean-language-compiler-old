@@ -132,7 +132,6 @@ const PENDING_CATEGORIES: &[&str] = &[
     "sprite",
     "timeline",
     "tween",
-    "ui",
     "ui_browser",
 ];
 
