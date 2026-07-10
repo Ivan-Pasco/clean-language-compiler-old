@@ -46,6 +46,24 @@ macro_rules! arena {
     };
 }
 
+// ─── PLUGIN018 refusal for the assemble_typed slot ───────────────────────────
+//
+// Per `foundation/spec/plugins/contracts/assemble.md` §6.2 all `batch.*` builder
+// bridges are illegal inside `assemble_typed`. Each closure calls this after
+// obtaining the arena so a single point emits PLUGIN018 + trips sticky-error.
+//
+// `$a` is the mutable arena reference (already obtained via `arena!`).
+// `$bridge` is a &'static str name shown in the diagnostic.
+// `$err_return` is the closure's error sentinel (0 for handle-returning
+// bridges, 1 for status-returning bridges like `batch.arrayPush`).
+macro_rules! refuse_if_assemble_typed_batch {
+    ($a:expr, $bridge:expr, $err_return:expr) => {{
+        if $a.is_assemble_typed() {
+            return $a.refuse_in_assemble_typed($bridge, $err_return);
+        }
+    }};
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LP-string reading helper (duplicated minimally — bridges.rs is pub(crate) but
 // read_lp_string is fn-private there; simpler to inline than expose).
@@ -218,6 +236,7 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.arrayNew", 0);
             a.alloc_batch(BatchNode::Array(BatchArray {
                 kind: BatchArrayKind::Unset,
                 items: Vec::new(),
@@ -238,6 +257,7 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 1;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.arrayPush", 1);
             handle_push_err!(a, a.batch_array_push(array_handle, item_handle));
             0
         },
@@ -283,6 +303,7 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtSeq", 0);
 
             match a.batch_stmt_seq_from_handles(&handles) {
                 Ok(h) => h,
@@ -373,6 +394,7 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.args", 0);
 
             match a.batch_array_from_handles(BatchArrayKind::Expr, &handles) {
                 Ok(h) => h,
@@ -436,6 +458,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stringLit", 0);
             a.alloc_batch(BatchNode::Expr(BatchExpr::StringLit { value }))
         },
     )?;
@@ -450,6 +473,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.intLit", 0);
             let value = ((hi as i64) << 32) | (lo as u32 as i64);
             a.alloc_batch(BatchNode::Expr(BatchExpr::IntLit { value }))
         },
@@ -465,6 +489,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.numberLit", 0);
             let bits = ((bits_hi as u64) << 32) | (bits_lo as u32 as u64);
             let value = f64::from_bits(bits);
             a.alloc_batch(BatchNode::Expr(BatchExpr::NumberLit { value }))
@@ -480,6 +505,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.boolLit", 0);
             a.alloc_batch(BatchNode::Expr(BatchExpr::BoolLit { value: value != 0 }))
         },
     )?;
@@ -497,6 +523,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.ident", 0);
             a.alloc_batch(BatchNode::Expr(BatchExpr::Ident { name }))
         },
     )?;
@@ -518,6 +545,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.field", 0);
             let receiver = handle_batch_err!(a, a.take_batch_expr(receiver_handle));
             a.alloc_batch(BatchNode::Expr(BatchExpr::Field {
                 receiver: Box::new(receiver),
@@ -543,6 +571,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.call", 0);
             let args = if args_array_handle == 0 {
                 Vec::new()
             } else {
@@ -571,6 +600,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.binop", 0);
             // Validate op string against the same resolver as the JSON path.
             if super::arena::map_binary_op(&op).is_none() {
                 emit_batch_plugin013(a, format!("batch.binop: unknown operator `{}`", op));
@@ -599,6 +629,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.unop", 0);
             if super::arena::map_unary_op(&op).is_none() {
                 emit_batch_plugin013(a, format!("batch.unop: unknown operator `{}`", op));
                 return 0;
@@ -624,6 +655,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.index", 0);
             let receiver = handle_batch_err!(a, a.take_batch_expr(receiver_handle));
             let index = handle_batch_err!(a, a.take_batch_expr(index_handle));
             a.alloc_batch(BatchNode::Expr(BatchExpr::Index {
@@ -642,6 +674,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.arrayLit", 0);
             let elems = if elems_array_handle == 0 {
                 Vec::new()
             } else {
@@ -662,6 +695,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.objectLit", 0);
             let fields = if fields_array_handle == 0 {
                 Vec::new()
             } else {
@@ -697,6 +731,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtCall", 0);
             let args = if args_array_handle == 0 {
                 Vec::new()
             } else {
@@ -720,6 +755,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtAssign", 0);
             let expr = handle_batch_err!(a, a.take_batch_expr(expr_handle));
             a.alloc_batch(BatchNode::Stmt(BatchStatement::Assign { target, expr }))
         },
@@ -740,6 +776,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtIf", 0);
             let cond = handle_batch_err!(a, a.take_batch_expr(cond_handle));
 
             let then = if then_array_handle == 0 {
@@ -773,6 +810,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtWhile", 0);
             let cond = handle_batch_err!(a, a.take_batch_expr(cond_handle));
             let body = if body_array_handle == 0 {
                 Vec::new()
@@ -802,6 +840,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtFor", 0);
             let iterable = handle_batch_err!(a, a.take_batch_expr(iterable_handle));
             let body = if body_array_handle == 0 {
                 Vec::new()
@@ -827,6 +866,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtReturn", 0);
             let expr = if expr_handle == 0 {
                 None
             } else {
@@ -845,6 +885,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtBlock", 0);
             let stmts = if stmts_array_handle == 0 {
                 Vec::new()
             } else {
@@ -880,6 +921,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.param", 0);
             // Validate type string (same resolver as the JSON path).
             if let Err(e) = super::batch_schema::resolve_type(&ty) {
                 emit_batch_plugin013(a, format!("batch.param: {}", e.message()));
@@ -902,6 +944,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.objectField", 0);
             let expr = handle_batch_err!(a, a.take_batch_expr(expr_handle));
             a.alloc_batch(BatchNode::ObjectField(BatchObjectField {
                 key: name,
@@ -927,6 +970,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.classField", 0);
             if let Err(e) = super::batch_schema::resolve_type(&ty) {
                 emit_batch_plugin013(a, format!("batch.classField: {}", e.message()));
                 return 0;
@@ -958,6 +1002,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.func", 0);
             if let Err(e) = super::batch_schema::resolve_type(&return_type) {
                 emit_batch_plugin013(a, format!("batch.func: {}", e.message()));
                 return 0;
@@ -1017,6 +1062,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.func2", 0);
 
             // Exclusive-or check: exactly one of the two body paths must be non-zero.
             match (body_array_handle_or_0 != 0, from_source_handle_or_0 != 0) {
@@ -1125,6 +1171,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.method", 0);
 
             // Exclusive-or check: exactly one of the two body handles must be non-zero.
             match (body_handle_or_0 != 0, from_source_handle_or_0 != 0) {
@@ -1245,6 +1292,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.class", 0);
             let fields = if fields_array_handle == 0 {
                 Vec::new()
             } else {
@@ -1277,6 +1325,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
             if a.check_ctx(ctx).is_err() {
                 return 0;
             }
+            refuse_if_assemble_typed_batch!(a, "batch.spec", 0);
             let functions = if functions_array_handle == 0 {
                 Vec::new()
             } else {
@@ -1304,6 +1353,102 @@ mod tests {
     use super::super::batch_schema::{
         BatchExpr, BatchField, BatchFunction, BatchMethod, BatchParam, BatchSpec, BatchStatement,
     };
+
+    /// `foundation/spec/plugins/contracts/assemble.md` §6.2 lists every
+    /// `batch.*` builder among the bridges that MUST refuse with PLUGIN018
+    /// when called from `assemble_typed`. Each `linker.func_wrap` block in
+    /// this file therefore must invoke `refuse_if_assemble_typed_batch!` in
+    /// its closure body — otherwise a batch bridge silently succeeds in the
+    /// assemble slot, violating the spec.
+    ///
+    /// This test scans the source of this file and asserts that every
+    /// registered bridge is followed (within its closure) by a matching
+    /// refusal call. It fails fast on future additions that forget the gate.
+    #[test]
+    fn every_batch_bridge_refuses_assemble_typed() {
+        let source = include_str!("batch_builders.rs");
+        let mut registrations = Vec::new();
+        let mut refused = Vec::new();
+
+        // A bridge is registered by the three-line block
+        //   linker.func_wrap(
+        //       "env",
+        //       "batch.<name>",
+        // We track the state so `"batch.<name>",` strings appearing inside
+        // diagnostic messages (`format!("batch.foo: ...")` etc.) are not
+        // misread as registrations.
+        let mut expect_env = false;
+        let mut expect_name = false;
+
+        for line in source.lines() {
+            let trim = line.trim();
+
+            if expect_name {
+                expect_name = false;
+                if let Some(name) = trim
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix("\","))
+                    .filter(|s| s.starts_with("batch.") && !s.contains(' '))
+                {
+                    registrations.push(name.to_string());
+                }
+                continue;
+            }
+            if expect_env {
+                expect_env = false;
+                if trim == "\"env\"," {
+                    expect_name = true;
+                }
+                continue;
+            }
+            if trim == "linker.func_wrap(" {
+                expect_env = true;
+                continue;
+            }
+
+            // Every gated closure calls the macro with the bridge name as
+            // its second argument, e.g. `refuse_if_assemble_typed_batch!(a, "batch.foo", 0);`.
+            if let Some(rest) = trim.strip_prefix("refuse_if_assemble_typed_batch!(a, \"") {
+                if let Some(name) = rest.split('"').next() {
+                    refused.push(name.to_string());
+                }
+            }
+        }
+
+        registrations.sort();
+        refused.sort();
+
+        // Every registration must have a matching refusal.
+        for name in &registrations {
+            assert!(
+                refused.contains(name),
+                "batch bridge `{}` is registered in this file but is missing its \
+                 `refuse_if_assemble_typed_batch!` gate — assemble.md §6.2 requires \
+                 every batch.* bridge to refuse when called from assemble_typed.",
+                name
+            );
+        }
+
+        // And every refusal must correspond to a registered bridge (catches
+        // stale gates left behind after a rename).
+        for name in &refused {
+            assert!(
+                registrations.contains(name),
+                "`refuse_if_assemble_typed_batch!` names `{}` but no bridge with that \
+                 name is registered in this file — the gate is dead code.",
+                name
+            );
+        }
+
+        // Sanity floor: the batch surface currently ships 31 bridges. If this
+        // number drops, either a bridge was renamed (update this test) or a
+        // registration was accidentally removed.
+        assert!(
+            registrations.len() >= 31,
+            "expected at least 31 batch bridges, found {}",
+            registrations.len()
+        );
+    }
 
     fn fresh_arena() -> EmitArena {
         EmitArena::new(42)

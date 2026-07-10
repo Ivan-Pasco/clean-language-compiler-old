@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use serde::de::DeserializeOwned;
 use std::sync::atomic::{AtomicI32, Ordering};
-use wasmtime::{Caller, Engine, Linker, Memory, Module, Store, TypedFunc};
+use wasmtime::{Caller, Engine, ExternType, Linker, Memory, Module, Store, TypedFunc, ValType};
 
 use crate::ast::{FrameworkBlock, Statement};
 use crate::plugins::{
@@ -53,6 +53,71 @@ pub struct WasmPluginAdapter {
     next_ctx_counter: AtomicI32,
 }
 
+/// Verify at load time that a plugin's declared `exports.assemble` export
+/// matches one of the two ABI shapes described in
+/// `foundation/spec/plugins/contracts/assemble.md` §5.3:
+///
+/// - v1 signature: `(i32) -> i32`  — `assemble(input_lp) -> output_lp`
+/// - v3 signature: `(i32, i32) -> i32` — `assemble_typed(ctx, input_lp) -> status`
+///
+/// Any other signature — including a missing export, a non-function export,
+/// mismatched arity, or non-i32 params/return — is rejected here with a
+/// diagnostic that names the plugin, the offending export, and the contract
+/// document. This gives plugin authors a precise failure at load time instead
+/// of a generic "does not export assemble" error surfaced on the first call.
+fn validate_assemble_export_signature(
+    module: &Module,
+    plugin_name: &str,
+    export_name: &str,
+) -> Result<()> {
+    let export = module.get_export(export_name).ok_or_else(|| {
+        anyhow!(
+            "plugin `{}`: manifest declares `exports.assemble = \"{}\"` but the WASM module has \
+             no export by that name. See foundation/spec/plugins/contracts/assemble.md §5.3.",
+            plugin_name,
+            export_name
+        )
+    })?;
+
+    let func_ty = match export {
+        ExternType::Func(ft) => ft,
+        other => {
+            return Err(anyhow!(
+                "plugin `{}`: export `{}` is a {:?}, not a function. The assemble hook must be \
+                 a function with one of the two signatures in \
+                 foundation/spec/plugins/contracts/assemble.md §5.3.",
+                plugin_name,
+                export_name,
+                other
+            ));
+        }
+    };
+
+    let params: Vec<ValType> = func_ty.params().collect();
+    let results: Vec<ValType> = func_ty.results().collect();
+
+    let all_i32 = |ts: &[ValType]| ts.iter().all(|t| matches!(t, ValType::I32));
+
+    let matches_v1 =
+        params.len() == 1 && all_i32(&params) && results.len() == 1 && all_i32(&results);
+    let matches_v3 =
+        params.len() == 2 && all_i32(&params) && results.len() == 1 && all_i32(&results);
+
+    if matches_v1 || matches_v3 {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "plugin `{}`: export `{}` has signature ({} params, {} results) which matches neither \
+         the v1 assemble signature `(i32) -> i32` nor the v3 assemble_typed signature \
+         `(i32, i32) -> i32`. See foundation/spec/plugins/contracts/assemble.md §5.3.",
+        plugin_name,
+        export_name,
+        params.len(),
+        results.len()
+    ))
+}
+
 impl WasmPluginAdapter {
     /// Create a new WASM plugin adapter
     pub fn new(
@@ -85,6 +150,20 @@ impl WasmPluginAdapter {
         // now a plugin manifest bug, not something the compiler silently
         // patches over.
         let expression_patterns_cache: Vec<String> = manifest.handles.expressions.clone();
+
+        // Assemble hook signature validation.
+        //
+        // `foundation/spec/plugins/contracts/assemble.md` §5.3 requires the
+        // compiler to detect the ABI shape (v1 `(i32) -> i32` vs v3
+        // `(i32, i32) -> i32`) FROM THE EXPORT'S FUNCTION SIGNATURE at load
+        // time, and to reject any other signature with a diagnostic that
+        // names the assemble contract. Doing the check here (instead of
+        // deferring to the first assemble() call) means malformed plugins
+        // fail to load with a precise message, rather than silently loading
+        // and failing later with a generic "does not export assemble" error.
+        if let Some(export_name) = manifest.exports.assemble.as_deref() {
+            validate_assemble_export_signature(&module, &name, export_name)?;
+        }
 
         let mut adapter = Self {
             name,
@@ -5957,5 +6036,127 @@ start:
             !start_fn.body.is_empty(),
             "start: block body empty after reorder parse"
         );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Assemble hook signature validation tests
+//
+// `foundation/spec/plugins/contracts/assemble.md` §5.3 requires the compiler
+// to detect the ABI shape of `exports.assemble` from its WASM function
+// signature at plugin load time and reject any signature that matches
+// neither the v1 nor the v3 shape. These tests exercise
+// `validate_assemble_export_signature` directly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod assemble_signature_validation_tests {
+    use super::validate_assemble_export_signature;
+    use wasmtime::{Engine, Module};
+
+    fn module(wat: &str) -> Module {
+        let engine = Engine::default();
+        Module::new(&engine, wat).expect("compile test WAT")
+    }
+
+    #[test]
+    fn accepts_v1_signature() {
+        let m = module(
+            r#"(module
+                (func (export "assemble") (param i32) (result i32) i32.const 0))"#,
+        );
+        validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect("v1 (i32) -> i32 must be accepted per assemble.md §5.3");
+    }
+
+    #[test]
+    fn accepts_v3_signature() {
+        let m = module(
+            r#"(module
+                (func (export "assemble_typed") (param i32 i32) (result i32) i32.const 0))"#,
+        );
+        validate_assemble_export_signature(&m, "test.plugin", "assemble_typed")
+            .expect("v3 (i32, i32) -> i32 must be accepted per assemble.md §5.3");
+    }
+
+    #[test]
+    fn rejects_missing_export() {
+        let m = module(r#"(module (func (export "other") (result i32) i32.const 0))"#);
+        let err = validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect_err("missing export must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("test.plugin"),
+            "diagnostic names plugin: {}",
+            msg
+        );
+        assert!(
+            msg.contains("assemble.md"),
+            "diagnostic links assemble contract: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn rejects_zero_arity() {
+        let m = module(r#"(module (func (export "assemble") (result i32) i32.const 0))"#);
+        let err = validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect_err("0-param signature matches neither v1 nor v3");
+        assert!(
+            err.to_string().contains("assemble.md"),
+            "diagnostic must link the spec: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn rejects_three_params() {
+        let m = module(
+            r#"(module (func (export "assemble") (param i32 i32 i32) (result i32) i32.const 0))"#,
+        );
+        let err = validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect_err("3-param signature matches neither v1 nor v3");
+        assert!(err.to_string().contains("assemble.md"));
+    }
+
+    #[test]
+    fn rejects_no_result() {
+        let m = module(r#"(module (func (export "assemble") (param i32)))"#);
+        let err = validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect_err("no-result signature must be rejected");
+        assert!(err.to_string().contains("assemble.md"));
+    }
+
+    #[test]
+    fn rejects_non_i32_param() {
+        let m =
+            module(r#"(module (func (export "assemble") (param i64) (result i32) i32.const 0))"#);
+        let err = validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect_err("i64 param does not match v1 or v3");
+        assert!(err.to_string().contains("assemble.md"));
+    }
+
+    #[test]
+    fn rejects_non_i32_result() {
+        let m =
+            module(r#"(module (func (export "assemble") (param i32) (result i64) i64.const 0))"#);
+        let err = validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect_err("i64 result does not match v1 or v3");
+        assert!(err.to_string().contains("assemble.md"));
+    }
+
+    #[test]
+    fn rejects_non_function_export() {
+        // A global export named `assemble` is not a function.
+        let m = module(r#"(module (global (export "assemble") i32 (i32.const 0)))"#);
+        let err = validate_assemble_export_signature(&m, "test.plugin", "assemble")
+            .expect_err("global export must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not a function"),
+            "diagnostic mentions non-function: {}",
+            msg
+        );
+        assert!(msg.contains("assemble.md"));
     }
 }
