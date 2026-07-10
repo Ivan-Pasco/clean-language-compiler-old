@@ -3613,7 +3613,6 @@ impl WasmPluginAdapter {
                     classes: program.classes,
                     externals: program.externals,
                     state: program.state,
-                    ..PluginExpansion::default()
                 });
             }
             Err(ref _e) => {
@@ -3704,7 +3703,6 @@ impl WasmPluginAdapter {
                 classes: program.classes,
                 externals: program.externals,
                 state: program.state,
-                ..PluginExpansion::default()
             });
         }
 
@@ -3754,7 +3752,6 @@ impl WasmPluginAdapter {
             classes: program.classes,
             externals: program.externals,
             state: program.state,
-            ..PluginExpansion::default()
         })
     }
 
@@ -4064,7 +4061,6 @@ impl WasmPluginAdapter {
             classes: parsed.classes,
             externals: parsed.externals,
             state: parsed.state,
-            ..PluginExpansion::default()
         })
     }
 
@@ -4614,9 +4610,10 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 });
             }
 
-            let mut out = AssembleOutput::default();
-            out.injected_sources = injected;
-            return Ok(out);
+            return Ok(AssembleOutput {
+                injected_sources: injected,
+                ..AssembleOutput::default()
+            });
         } else {
             // v1 assemble signature: (input_lp) -> output_lp
             let assemble_fn: wasmtime::TypedFunc<i32, i32> = instance

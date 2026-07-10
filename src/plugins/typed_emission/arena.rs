@@ -1521,7 +1521,7 @@ mod tests {
         // §3.15 of typed-emission.md defines that behaviour; we don't
         // assert on it here beyond noting the total count.
         assert!(
-            arena.diagnostics.len() >= 1,
+            !arena.diagnostics.is_empty(),
             "at least PLUGIN018 was recorded"
         );
     }
