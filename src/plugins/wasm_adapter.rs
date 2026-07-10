@@ -4466,8 +4466,13 @@ impl FrameworkPlugin for WasmPluginAdapter {
         //
         // Bug: frame.ui 3.0.0 assemble hook failed instantiation at client-mode
         // build with `unknown import: env::_emit_class_full` before this fix.
+        //
+        // Slot discriminator: the arena is created for `AssembleTyped` so
+        // structural bridges refuse with PLUGIN018 and only
+        // `_inject_source_file` succeeds. See
+        // `foundation/spec/plugins/contracts/assemble.md` §6.
         let ctx = self.next_ctx_handle();
-        let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
+        let arena = crate::plugins::typed_emission::EmitArena::new_assemble_typed(ctx);
         let mut store = self.create_store_with_arena(arena);
 
         let linker = self.build_typed_emission_linker().map_err(|e| {
@@ -4551,38 +4556,23 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 });
             }
 
-            // Drain the arena. In the block-expansion path (line ~298) we call
-            // `.finish()` to harvest the PluginExpansion the plugin built up
-            // via ui_helper_function / push_start_stmt / etc. — that
-            // expansion is then merged into the source program.
+            // Drain the arena and consume its `injected_sources`, populated
+            // by `_inject_source_file` — the sole legal typed-emission bridge
+            // inside `assemble_typed` per
+            // `foundation/spec/plugins/contracts/assemble.md` §6.1.
             //
-            // For assemble_typed, the return type is AssembleOutput (a
-            // different API shape: injected_sources / transformed_sources
-            // instead of PluginExpansion), so the block-expansion merge does
-            // not apply directly. Prior to this edit the arena was drained
-            // and discarded outright (`let _ = ...take()`), which SILENTLY
-            // lost every function, class, statement, and start-body line the
-            // plugin emitted from its assemble slot. For frame.ui that meant
-            // page-companion `_http_route(...)` registrations vanished and
-            // `GET /` returned 404 with no compile error — the exact
-            // FRAME-UI-COMPANION-ROUTES-NOT-REGISTERED (42ccde02) /
-            // COMPILER-ASSEMBLE-TYPED-DRAINS-EMIT-ARENA (4dad9b6a) pair.
-            //
-            // Minimum-correctness fix: harvest via .finish() (matching the
-            // block-expansion path), route diagnostics to the tracing
-            // channel, and error LOUDLY if the plugin emitted any content
-            // (functions/classes/statements/start-body). Silent regressions
-            // become visible; the caller can then either update the plugin
-            // to use `injected_sources` on the assemble return value or, once
-            // the compiler wires up expansion→InjectedSource conversion,
-            // this branch will pick that up automatically. A pretty-printer
-            // that serializes PluginExpansion back to Clean source (needed to
-            // actually MERGE the assemble output into the compilation unit)
-            // is tracked as a follow-up compiler task, not fixed here.
-            let arena = store.data_mut().emit_arena.take().expect(
+            // Structural bridges refuse with PLUGIN018 upstream (see the
+            // `refuse_if_assemble_typed!` gate at the entry of every
+            // structural bridge in `typed_emission/bridges.rs`), so on a
+            // successful call the arena's `expansion` fields are guaranteed
+            // to be empty. If anything landed in `expansion` despite the
+            // gate, the sticky-error flag will already have been tripped
+            // and `saw_error` catches it below.
+            let mut arena = store.data_mut().emit_arena.take().expect(
                 "typed-emission: arena was taken during assemble_typed — cross-call arena reuse detected",
             );
-            let (expansion, diagnostics, saw_error) = arena.finish();
+            let injected = std::mem::take(&mut arena.injected_sources);
+            let (_expansion, diagnostics, saw_error) = arena.finish();
 
             for diag in &diagnostics {
                 if diag.severity >= 2 {
@@ -4624,60 +4614,9 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 });
             }
 
-            // Reconstruct an InjectedSource from the arena's expansion using
-            // the source-origin strings captured by `_emit_stmt_from_source` /
-            // `_emit_expr_from_source` / `_emit_function` (Option B fix for
-            // COMPILER-EMIT-ARENA-CONVERSION-MISSING, fp 3b15cd54).
-            //
-            // The parallel arrays on `PluginExpansion` (function_body_sources,
-            // start_body_sources, inline_stmt_sources) hold the raw Clean source
-            // that was parsed to produce each corresponding AST node. Because
-            // frame.ui's assemble_typed builds every emitted function body,
-            // route registration, and helper via source-string bridges, we can
-            // serialize the expansion back to Clean source by simple string
-            // concatenation — no AST pretty-printer needed.
-            //
-            // Emissions built structurally (batch builders, _emit_class_full,
-            // externals, state blocks) have no source origin. If any such
-            // emission is present in this arena, we fall back to the loud
-            // error rather than guess — preserving the pre-existing safety net.
-            match reconstruct_assemble_source(&self.name, &expansion) {
-                Ok(Some(source_module)) => {
-                    let mut out = AssembleOutput::default();
-                    out.injected_sources
-                        .push(crate::plugins::plugin_abi::InjectedSource {
-                            virtual_path: format!(
-                                "__plugin_assemble_typed__/{}.cln",
-                                self.name.replace('.', "_")
-                            ),
-                            content: source_module,
-                        });
-                    return Ok(out);
-                }
-                Ok(None) => {
-                    // Empty arena — nothing to inject, but not an error.
-                    return Ok(AssembleOutput::default());
-                }
-                Err(reason) => {
-                    return Err(crate::plugins::PluginError::ExpansionFailed {
-                        plugin_name: self.name.clone(),
-                        block_name: "assemble".to_string(),
-                        message: format!(
-                            "assemble_typed emitted content into the emit_arena that the \
-                             compiler cannot serialize back to Clean source: {}. Either \
-                             return the affected declarations via \
-                             AssembleOutput.injected_sources directly from the plugin, \
-                             or route them through source-string bridges \
-                             (`_emit_stmt_from_source` / `_emit_function` with a \
-                             source-derived body_handle) so the compiler can preserve the \
-                             original text. Tracked in fingerprint 3b15cd54 — \
-                             COMPILER-EMIT-ARENA-CONVERSION-MISSING.",
-                            reason
-                        ),
-                        location: None,
-                    });
-                }
-            }
+            let mut out = AssembleOutput::default();
+            out.injected_sources = injected;
+            return Ok(out);
         } else {
             // v1 assemble signature: (input_lp) -> output_lp
             let assemble_fn: wasmtime::TypedFunc<i32, i32> = instance
@@ -5061,220 +5000,6 @@ mod arena_tests {
             "allocate_stable while a scope is open must panic in debug builds"
         );
     }
-}
-
-/// Reconstruct a Clean-source module from a `PluginExpansion` produced by
-/// `assemble_typed`, using the source-string origins captured by
-/// `_emit_stmt_from_source` / `_emit_function` / `_emit_statement_into_start`
-/// during typed emission.
-///
-/// This is the Option-B fix for COMPILER-EMIT-ARENA-CONVERSION-MISSING
-/// (fp 3b15cd54): rather than build a full AST pretty-printer, we lean on
-/// the fact that frame.ui (and every other current assemble_typed consumer)
-/// builds its emissions from Clean-source fragments in the first place —
-/// the source strings are already present, they just need to be joined and
-/// wrapped in the appropriate top-level container (`functions:`, `start:`,
-/// inline splice).
-///
-/// Returns:
-/// - `Ok(None)` when the arena is empty — no injection needed.
-/// - `Ok(Some(source))` when the reconstruction succeeded and the returned
-///   string is a compilable Clean-source module ready to hand to the
-///   multi-file compiler as an `InjectedSource.content`.
-/// - `Err(reason)` when at least one emitted declaration lacks a source
-///   origin (e.g. built via `batch.class`, `_emit_class_full`, external
-///   function declaration, or state block). Callers must surface this as
-///   the loud "no serialization path" error so the failure is visible at
-///   compile time rather than silently dropped.
-fn reconstruct_assemble_source(
-    plugin_name: &str,
-    expansion: &crate::plugins::PluginExpansion,
-) -> Result<Option<String>, String> {
-    // Empty arena — nothing to inject.
-    let is_empty = expansion.functions.is_empty()
-        && expansion.classes.is_empty()
-        && expansion.externals.is_empty()
-        && expansion.statements.is_empty()
-        && expansion
-            .start_function
-            .as_ref()
-            .map(|f| f.body.is_empty())
-            .unwrap_or(true)
-        && expansion.state.is_none();
-    if is_empty {
-        return Ok(None);
-    }
-
-    // Classes, externals, and state blocks are always structurally built —
-    // there is no source-origin bridge for them. If any are present in an
-    // assemble_typed arena, the pretty-printer path required is out of
-    // scope for the source-preservation fix.
-    if !expansion.classes.is_empty() {
-        return Err(format!(
-            "{} class declaration(s) built without source origin — assemble_typed \
-             does not currently preserve source for `_emit_class_full` / batch \
-             class specs",
-            expansion.classes.len()
-        ));
-    }
-    if !expansion.externals.is_empty() {
-        return Err(format!(
-            "{} external function declaration(s) built without source origin — \
-             assemble_typed does not currently preserve source for external \
-             declarations",
-            expansion.externals.len()
-        ));
-    }
-    if expansion.state.is_some() {
-        return Err(
-            "a `state:` block was emitted without source origin — assemble_typed \
-             does not currently preserve source for state-block emissions"
-                .to_string(),
-        );
-    }
-
-    let mut out = String::new();
-    out.push_str(&format!(
-        "// Auto-generated by {}::assemble_typed — do not edit.\n",
-        plugin_name
-    ));
-
-    // ── Functions ──────────────────────────────────────────────────────────
-    if !expansion.functions.is_empty() {
-        out.push_str("functions:\n");
-        for (i, func) in expansion.functions.iter().enumerate() {
-            let body_source = expansion
-                .function_body_sources
-                .get(i)
-                .and_then(|s| s.as_ref())
-                .ok_or_else(|| {
-                    format!(
-                        "function `{}` was emitted without a source-origin body — \
-                         its body_stmt_handle did not come from \
-                         `_emit_stmt_from_source`",
-                        func.name
-                    )
-                })?;
-
-            // Signature line: `<return_type> <name>(<params>)` — no leading
-            // visibility keyword needed; the `functions:` header already
-            // implies module scope, and Visibility::Public is expressed via
-            // the `public:` sub-section which we do not need here since
-            // frame.ui's helpers are all module-level.
-            let params_str = func
-                .parameters
-                .iter()
-                .map(|p| format!("{} {}", p.type_, p.name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push('\t');
-            out.push_str(&format!(
-                "{} {}({})\n",
-                func.return_type, func.name, params_str
-            ));
-
-            // Body: indent each non-empty line of the source with an extra tab
-            // so it lives under the signature. The source stored by
-            // `_emit_stmt_from_source` is at column-zero when the plugin
-            // hands it in (frame.ui builds bodies with `\n` newlines and no
-            // leading indent), which is the shape we need before indenting.
-            for line in body_source.lines() {
-                if line.trim().is_empty() {
-                    out.push('\n');
-                } else {
-                    out.push_str("\t\t");
-                    out.push_str(line);
-                    out.push('\n');
-                }
-            }
-        }
-    }
-
-    // ── Start body (populated by _emit_statement_into_start) ───────────────
-    let start_body_stmts = expansion
-        .start_function
-        .as_ref()
-        .map(|f| f.body.len())
-        .unwrap_or(0);
-    if start_body_stmts > 0 {
-        // Ensure every statement has a source origin.
-        for i in 0..start_body_stmts {
-            expansion
-                .start_body_sources
-                .get(i)
-                .and_then(|s| s.as_ref())
-                .ok_or_else(|| {
-                    format!(
-                        "start-body statement #{} was emitted without a source \
-                         origin — its stmt_handle did not come from \
-                         `_emit_stmt_from_source`",
-                        i
-                    )
-                })?;
-        }
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str("start:\n");
-        for i in 0..start_body_stmts {
-            let src = expansion.start_body_sources[i].as_ref().unwrap();
-            for line in src.lines() {
-                if line.trim().is_empty() {
-                    out.push('\n');
-                } else {
-                    out.push('\t');
-                    out.push_str(line);
-                    out.push('\n');
-                }
-            }
-        }
-    }
-
-    // ── Inline splice statements (populated by _emit_statement_inline) ─────
-    //
-    // `expansion.statements` is normally consumed as an INLINE replacement
-    // for the block that spawned the emission. During `assemble_typed` there
-    // is no host block to splice INTO, so these statements have to land
-    // somewhere concrete. The pragmatic mapping is to append them to the
-    // start-body, since the assemble hook fires at compilation-unit scope
-    // and program-start is the only universal execution site available.
-    if !expansion.statements.is_empty() {
-        for i in 0..expansion.statements.len() {
-            expansion
-                .inline_stmt_sources
-                .get(i)
-                .and_then(|s| s.as_ref())
-                .ok_or_else(|| {
-                    format!(
-                        "inline splice statement #{} was emitted without a source \
-                         origin — its stmt_handle did not come from \
-                         `_emit_stmt_from_source`",
-                        i
-                    )
-                })?;
-        }
-        // Reuse or open a start: block for these statements.
-        if start_body_stmts == 0 {
-            if !out.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str("start:\n");
-        }
-        for i in 0..expansion.statements.len() {
-            let src = expansion.inline_stmt_sources[i].as_ref().unwrap();
-            for line in src.lines() {
-                if line.trim().is_empty() {
-                    out.push('\n');
-                } else {
-                    out.push('\t');
-                    out.push_str(line);
-                    out.push('\n');
-                }
-            }
-        }
-    }
-
-    Ok(Some(out))
 }
 
 /// Helper to write a UTF-8 string as a Clean length-prefixed allocation

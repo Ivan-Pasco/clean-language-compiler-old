@@ -133,6 +133,22 @@ macro_rules! take_or_return {
     };
 }
 
+/// PLUGIN018 gate: refuse the current structural bridge when the arena is
+/// servicing `assemble_typed`. See
+/// `foundation/spec/plugins/contracts/assemble.md` §6.2.
+///
+/// `$bridge` is a &'static str name shown in the diagnostic. `$err_return` is
+/// the caller's error sentinel (0 for handle-returning bridges, 1 for
+/// status-returning bridges — matches each caller's existing convention).
+macro_rules! refuse_if_assemble_typed {
+    ($caller:expr, $bridge:expr, $err_return:expr) => {{
+        let a = arena!($caller);
+        if a.is_assemble_typed() {
+            return a.refuse_in_assemble_typed($bridge, $err_return);
+        }
+    }};
+}
+
 /// Same as `take_or_return!` but the result is `Option<T>` (nullable handle).
 macro_rules! take_opt_or_return {
     ($arena:expr, $result:expr) => {
@@ -827,6 +843,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          source_lp: i32,
          origin_offset: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_stmt_from_source", 0);
             let source = match read_lp_string(&mut caller, source_lp) {
                 Some(s) => s,
                 None => return 0,
@@ -843,14 +860,10 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
 
             match result {
                 SingleStatementParse::Statement(stmt) => {
-                    let handle = a.alloc_stmt(stmt);
-                    // Record the raw source fragment so the assemble_typed →
-                    // InjectedSource reconstruction path can serialize this
-                    // statement back into a compilable Clean source module
-                    // without needing an AST pretty-printer. See
-                    // COMPILER-EMIT-ARENA-CONVERSION-MISSING (fp 3b15cd54).
-                    a.record_stmt_source(handle, source);
-                    handle
+                    let _ = source; // No longer captured — assemble_typed now
+                                    // routes injected content through `_inject_source_file`
+                                    // per foundation/spec/plugins/contracts/assemble.md §6.1.
+                    a.alloc_stmt(stmt)
                 }
                 SingleStatementParse::ExpressionNotStatement => {
                     a.emit_diagnostic(EmitDiagnostic {
@@ -911,6 +924,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          source_lp: i32,
          origin_offset: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_expr_from_source", 0);
             let source = match read_lp_string(&mut caller, source_lp) {
                 Some(s) => s,
                 None => return 0,
@@ -927,9 +941,8 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
 
             match result {
                 SingleExpressionParse::Expression(expr) => {
-                    let handle = a.alloc_expr(expr);
-                    a.record_expr_source(handle, source);
-                    handle
+                    let _ = source; // No longer captured — see assemble.md §6.1.
+                    a.alloc_expr(expr)
                 }
                 SingleExpressionParse::StatementNotExpression => {
                     a.emit_diagnostic(EmitDiagnostic {
@@ -1078,6 +1091,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          body_handle: i32,
          flags: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_function", 1);
             // Read the function name up-front so failure diagnostics can name
             // the offending function. Without this, a silent `return 1` on
             // params/body decode would leave the plugin author staring at
@@ -1227,13 +1241,6 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                 params.push(p);
             }
 
-            // Capture the body's original Clean source (if the body handle came
-            // from `_emit_stmt_from_source`) BEFORE we consume the handle, so
-            // the assemble_typed → InjectedSource path can serialize this
-            // function back into compilable source. See
-            // COMPILER-EMIT-ARENA-CONVERSION-MISSING (fp 3b15cd54).
-            let body_source_origin = a.stmt_source_origin(body_handle).map(|s| s.to_string());
-
             // Decode body
             let body_stmt = match a.take_stmt(ctx, body_handle) {
                 Ok(s) => s,
@@ -1264,7 +1271,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
             // bit 1 = async/background root — not directly mapped; ignored for now.
             // bit 2 = inline — FunctionModifier::Inline if we ever add it.
 
-            a.push_function_with_source(func, body_source_origin);
+            a.expansion.functions.push(func);
             0 // success
         },
     )?;
@@ -1299,6 +1306,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          body_handle: i32,
          flags: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_define_function", 0);
             let name = match read_lp_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
@@ -1393,6 +1401,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          class_json_lp: i32,
          _flags: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_class", 1);
             let name = match read_lp_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
@@ -1472,6 +1481,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          return_type_handle: i32,
          host_class_lp: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_external", 1);
             let name = match read_lp_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
@@ -1553,6 +1563,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "env",
         "_emit_state_block",
         |mut caller: Caller<'_, PluginState>, ctx: i32, fields_json_lp: i32| -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_state_block", 1);
             let fields_json = match read_lp_string(&mut caller, fields_json_lp) {
                 Some(s) => s,
                 None => return 1,
@@ -1624,17 +1635,12 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "env",
         "_emit_statement_into_start",
         |mut caller: Caller<'_, PluginState>, ctx: i32, stmt_handle: i32| -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_statement_into_start", 1);
             let a = arena!(caller);
             if a.check_ctx(ctx).is_err() {
                 return 1;
             }
             // Capture source origin (if any) BEFORE take_stmt consumes the handle.
-            // Batch handles have no source origin — they are structurally built.
-            let source_origin = if (stmt_handle & BATCH_TAG) != 0 {
-                None
-            } else {
-                a.stmt_source_origin(stmt_handle).map(|s| s.to_string())
-            };
             let stmt = if (stmt_handle & BATCH_TAG) != 0 {
                 let batch_stmt = match a.take_batch_stmt(stmt_handle) {
                     Ok(s) => s,
@@ -1694,7 +1700,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                     }
                 }
             };
-            a.push_start_stmt_with_source(stmt, source_origin);
+            a.push_start_stmt(stmt);
             0
         },
     )?;
@@ -1710,15 +1716,11 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "env",
         "_emit_statement_inline",
         |mut caller: Caller<'_, PluginState>, ctx: i32, stmt_handle: i32| -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_statement_inline", 1);
             let a = arena!(caller);
             if a.check_ctx(ctx).is_err() {
                 return 1;
             }
-            let source_origin = if (stmt_handle & BATCH_TAG) != 0 {
-                None
-            } else {
-                a.stmt_source_origin(stmt_handle).map(|s| s.to_string())
-            };
             let stmt = if (stmt_handle & BATCH_TAG) != 0 {
                 let batch_stmt = match a.take_batch_stmt(stmt_handle) {
                     Ok(s) => s,
@@ -1778,7 +1780,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                     }
                 }
             };
-            a.push_inline_stmt_with_source(stmt, source_origin);
+            a.push_inline_stmt(stmt);
             0
         },
     )?;
@@ -1795,6 +1797,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          handler_handle: i32,
          _attrs_json_lp: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_route", 1);
             let method = match read_lp_string(&mut caller, method_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
@@ -1817,9 +1820,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
             // Mark handler as exported.
             handler.visibility = Visibility::Public;
             let handler_name = handler.name.clone();
-            // Route handlers built via _define_function have no source origin;
-            // push None to keep function_body_sources aligned.
-            a.push_function_with_source(handler, None);
+            a.expansion.functions.push(handler);
 
             // Emit `_http_route(method, path, handler_name)` into start.
             let route_stmt = Statement::Expression {
@@ -1846,6 +1847,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "env",
         "_emit_artifact_directive",
         |mut caller: Caller<'_, PluginState>, ctx: i32, artifact_json_lp: i32| -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_artifact_directive", 1);
             let artifact_json = match read_lp_string(&mut caller, artifact_json_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
@@ -1862,7 +1864,98 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                 ),
                 location: None,
             };
-            a.push_inline_stmt_with_source(stmt, None);
+            a.push_inline_stmt(stmt);
+            0
+        },
+    )?;
+
+    // _inject_source_file(ctx, virtual_path_lp, content_lp) -> i32
+    //
+    // The sole legal typed-emission bridge inside `assemble_typed`. Appends a
+    // synthetic Clean source file to the arena's `injected_sources`, which
+    // `wasm_adapter::call_assemble_typed` folds into the returned
+    // `AssembleOutput.injected_sources`.
+    //
+    // Failure modes (each trips sticky-error via PLUGIN014):
+    //  - either LP-string is unreadable or empty
+    //  - virtual_path collides with a path already registered in this arena
+    //
+    // Returns 0 on success, 1 on failure. See
+    // `foundation/spec/plugins/contracts/assemble.md` §6.1.
+    linker.func_wrap(
+        "env",
+        "_inject_source_file",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         virtual_path_lp: i32,
+         content_lp: i32|
+         -> i32 {
+            let virtual_path = match read_lp_string(&mut caller, virtual_path_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN014".to_string(),
+                        message: "_inject_source_file: virtual_path_lp is empty or unreadable — \
+                             expected a length-prefixed non-empty Clean source path (see \
+                             foundation/spec/plugins/contracts/assemble.md §6.1)"
+                            .to_string(),
+                        span_json: String::new(),
+                    });
+                    a.trip("_inject_source_file", "virtual_path empty");
+                    return 1;
+                }
+            };
+            let content = match read_lp_string(&mut caller, content_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN014".to_string(),
+                        message: format!(
+                            "_inject_source_file for `{}`: content_lp is empty or unreadable — \
+                             expected a length-prefixed non-empty Clean source string",
+                            virtual_path
+                        ),
+                        span_json: String::new(),
+                    });
+                    a.trip("_inject_source_file", "content empty");
+                    return 1;
+                }
+            };
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 1;
+            }
+            // Collision check against prior injections in this same call.
+            if a.injected_sources
+                .iter()
+                .any(|src| src.virtual_path == virtual_path)
+            {
+                a.emit_diagnostic(EmitDiagnostic {
+                    severity: 2,
+                    code: "PLUGIN014".to_string(),
+                    message: format!(
+                        "_inject_source_file: virtual_path `{}` already registered in this \
+                         assemble_typed call (assemble.md §6.1 requires uniqueness within the \
+                         call)",
+                        virtual_path
+                    ),
+                    span_json: String::new(),
+                });
+                a.trip(
+                    "_inject_source_file",
+                    format!("duplicate virtual_path `{}`", virtual_path),
+                );
+                return 1;
+            }
+            a.injected_sources
+                .push(crate::plugins::plugin_abi::InjectedSource {
+                    virtual_path,
+                    content,
+                });
             0
         },
     )?;
@@ -1915,6 +2008,7 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
          spec_handle_or_lp: i32,
          flags: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_helpers_batch", 1);
             let a = arena!(caller);
             if let Err(e) = a.check_ctx(ctx) {
                 a.emit_diagnostic(EmitDiagnostic {
@@ -2050,12 +2144,6 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                 let body_source = f.body.take();
                 let body_handle = f.body_handle;
                 let name = f.name.clone();
-                // Capture the source origin BEFORE we consume the stmt handle,
-                // so the function's body_source_origin is preserved for
-                // assemble_typed → InjectedSource reconstruction.
-                let body_source_origin = body_handle
-                    .filter(|&h| h != 0)
-                    .and_then(|h| a.stmt_source_origin(h).map(|s| s.to_string()));
                 let resolved_body = match (body_source, body_handle) {
                     (Some(stmts), None) => {
                         let mut collected = Vec::with_capacity(stmts.len());
@@ -2140,7 +2228,7 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                         return 1;
                     }
                 };
-                a.push_function_with_source(func, body_source_origin);
+                a.expansion.functions.push(func);
             }
 
             0 // success
@@ -2163,6 +2251,7 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
          class_handle_or_lp: i32,
          flags: i32|
          -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_class_full", 1);
             let a = arena!(caller);
             if let Err(e) = a.check_ctx(ctx) {
                 a.emit_diagnostic(EmitDiagnostic {

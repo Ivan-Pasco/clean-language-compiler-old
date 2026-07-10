@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use super::error::{EmitDiagnostic, EmitError};
 /// Single-call arena for typed AST emission.
 ///
@@ -301,29 +299,55 @@ pub struct EmitArena {
     /// Consumption tracking for batch handles. Parallel to `batch_nodes`.
     batch_consumed: Vec<bool>,
 
-    /// Source-string origin for statements allocated via `_emit_stmt_from_source`.
-    /// Maps stmt handle → the raw Clean source text that was parsed into the
-    /// Statement. Used by the assemble_typed → InjectedSource conversion path
-    /// to reconstruct compilable source when a statement's body must be
-    /// serialized back out. Handles not created from source (batch builders,
-    /// _emit_class_full method bodies, etc.) are absent from this map — callers
-    /// that need source for such handles must fall back to the loud error.
-    /// See COMPILER-EMIT-ARENA-CONVERSION-MISSING (fp 3b15cd54).
-    pub stmt_source_origins: HashMap<i32, String>,
+    /// Which lifecycle slot the arena is currently servicing. Structural bridges
+    /// (`_emit_function`, `_emit_class_full`, `_emit_stmt_from_source`, etc.)
+    /// check this at entry and refuse with PLUGIN018 when called from
+    /// `AssembleTyped` — see
+    /// `foundation/spec/plugins/contracts/assemble.md` §6.2. Set once by the
+    /// constructor and never mutated.
+    slot: EmitSlot,
 
-    /// Source-string origin for expressions allocated via `_emit_expr_from_source`.
-    /// Mirror of `stmt_source_origins` for the expression bridge (Amendment 6
-    /// §3.16). Currently unused by the reconstruction path (frame.ui builds
-    /// standalone expressions inside function bodies whose source is already
-    /// captured on the enclosing stmt handle), but recorded for symmetry with
-    /// stmt tracking and future consumers.
-    pub expr_source_origins: HashMap<i32, String>,
+    /// Synthetic source files injected via `_inject_source_file`. Populated
+    /// only when `slot == AssembleTyped`; every `_inject_source_file(ctx,
+    /// virtual_path, content)` call appends one entry. Consumed by
+    /// `wasm_adapter.rs::call_assemble_typed` to build the returned
+    /// `AssembleOutput.injected_sources`.
+    pub injected_sources: Vec<crate::plugins::plugin_abi::InjectedSource>,
+}
+
+/// Which plugin lifecycle slot an `EmitArena` is servicing.
+///
+/// Set by the constructor and never mutated. Structural bridges check this at
+/// entry so they can refuse with `PLUGIN018 AssembleTypedIllegalBridge` when
+/// called from `AssembleTyped`. See
+/// `foundation/spec/plugins/contracts/assemble.md` §6 for the full contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmitSlot {
+    /// Normal expansion — `expand_block_typed` or any lifecycle slot from
+    /// `lifecycle.md` §3.1–§3.6. Every typed-emission bridge is legal here.
+    Expand,
+    /// The whole-project source-assembly slot (`assemble_typed`). Only
+    /// `_inject_source_file` is legal; every structural bridge refuses.
+    AssembleTyped,
 }
 
 impl EmitArena {
     /// Construct a fresh arena for a single expand-block call.
     pub fn new(ctx_handle: i32) -> Self {
-        // Slot 0 is the sentinel in both arenas; pre-populate so 1-indexed handles align.
+        Self::new_for_slot(ctx_handle, EmitSlot::Expand)
+    }
+
+    /// Construct a fresh arena for the `assemble_typed` slot.
+    /// Structural bridges refuse with PLUGIN018 when they see this slot; only
+    /// `_inject_source_file` is legal. See
+    /// `foundation/spec/plugins/contracts/assemble.md`.
+    pub fn new_assemble_typed(ctx_handle: i32) -> Self {
+        Self::new_for_slot(ctx_handle, EmitSlot::AssembleTyped)
+    }
+
+    /// Shared constructor. Slot 0 is the sentinel in both arenas; pre-populate
+    /// so 1-indexed handles align.
+    fn new_for_slot(ctx_handle: i32, slot: EmitSlot) -> Self {
         Self {
             ctx_handle,
             nodes: vec![None],     // index 0 = sentinel
@@ -335,9 +359,44 @@ impl EmitArena {
             sticky_context: None,
             batch_nodes: vec![None], // index 0 = sentinel
             batch_consumed: vec![false],
-            stmt_source_origins: HashMap::new(),
-            expr_source_origins: HashMap::new(),
+            slot,
+            injected_sources: Vec::new(),
         }
+    }
+
+    /// Which lifecycle slot this arena is servicing.
+    #[inline]
+    #[allow(dead_code)]
+    pub fn slot(&self) -> EmitSlot {
+        self.slot
+    }
+
+    /// True when the arena is servicing `assemble_typed`. Bridges use this to
+    /// decide whether to refuse with PLUGIN018.
+    #[inline]
+    pub fn is_assemble_typed(&self) -> bool {
+        matches!(self.slot, EmitSlot::AssembleTyped)
+    }
+
+    /// Emit PLUGIN018 for a structural bridge called from `assemble_typed`,
+    /// trip the sticky-error flag, and return the caller's error sentinel
+    /// (typically 0 for handle-returning bridges, 1 for status-returning
+    /// bridges — the caller passes its own convention).
+    /// See `foundation/spec/plugins/contracts/assemble.md` §6.2.
+    pub fn refuse_in_assemble_typed(&mut self, bridge: &'static str, err_return: i32) -> i32 {
+        let msg = format!(
+            "{} is not legal inside assemble_typed — only _inject_source_file is permitted. \
+             See foundation/spec/plugins/contracts/assemble.md §6.2.",
+            bridge
+        );
+        self.emit_diagnostic(EmitDiagnostic {
+            severity: 2,
+            code: "PLUGIN018".to_string(),
+            message: msg.clone(),
+            span_json: String::new(),
+        });
+        self.trip(bridge, msg);
+        err_return
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1176,15 +1235,6 @@ impl EmitArena {
     /// Push a statement into `expansion.start_function.body`, creating the
     /// start function if it does not exist yet.
     pub fn push_start_stmt(&mut self, s: Statement) {
-        self.push_start_stmt_with_source(s, None);
-    }
-
-    /// Variant of `push_start_stmt` that also records the original Clean source
-    /// text (when known — e.g. when the statement came from
-    /// `_emit_stmt_from_source`) into `expansion.start_body_sources`. The
-    /// parallel array stays 1:1 with `start_function.body` so downstream
-    /// reconstruction can join sources without misalignment.
-    pub fn push_start_stmt_with_source(&mut self, s: Statement, source: Option<String>) {
         let sf = self.expansion.start_function.get_or_insert_with(|| {
             Function::new(
                 "start".to_string(),
@@ -1195,7 +1245,6 @@ impl EmitArena {
             )
         });
         sf.body.push(s);
-        self.expansion.start_body_sources.push(source);
     }
 
     /// Push a statement into `expansion.statements`, the inline-replacement
@@ -1205,45 +1254,8 @@ impl EmitArena {
     /// which writes to `expansion.start_function.body`. Use this bridge when
     /// the statement should splice into the block's caller position, not the
     /// program's start. See Amendment 11 / §3.5.1.
-    #[allow(dead_code)]
     pub fn push_inline_stmt(&mut self, s: Statement) {
-        self.push_inline_stmt_with_source(s, None);
-    }
-
-    /// Variant of `push_inline_stmt` that also records the original Clean source
-    /// text (when known) into `expansion.inline_stmt_sources`.
-    pub fn push_inline_stmt_with_source(&mut self, s: Statement, source: Option<String>) {
         self.expansion.statements.push(s);
-        self.expansion.inline_stmt_sources.push(source);
-    }
-
-    /// Look up the recorded source origin (if any) for a statement handle.
-    /// Returns `None` for handles allocated by non-source bridges (batch
-    /// builders, etc.).
-    pub fn stmt_source_origin(&self, handle: i32) -> Option<&str> {
-        self.stmt_source_origins.get(&handle).map(|s| s.as_str())
-    }
-
-    /// Record the source origin for a freshly-allocated statement handle.
-    /// Called by `_emit_stmt_from_source` after `alloc_stmt`.
-    pub fn record_stmt_source(&mut self, handle: i32, source: String) {
-        self.stmt_source_origins.insert(handle, source);
-    }
-
-    /// Record the source origin for a freshly-allocated expression handle.
-    /// Called by `_emit_expr_from_source` after `alloc_expr`.
-    pub fn record_expr_source(&mut self, handle: i32, source: String) {
-        self.expr_source_origins.insert(handle, source);
-    }
-
-    /// Push a function into `expansion.functions` and record its body source
-    /// origin (if any) into the parallel `function_body_sources` array.
-    /// Callers should pass the source of the body statement when it was
-    /// allocated via `_emit_stmt_from_source`; pass `None` for structurally-
-    /// built bodies.
-    pub fn push_function_with_source(&mut self, f: Function, body_source: Option<String>) {
-        self.expansion.functions.push(f);
-        self.expansion.function_body_sources.push(body_source);
     }
 }
 
@@ -1462,5 +1474,82 @@ mod tests {
         arena.set_error_context(String::new(), String::new());
         arena.trip("_a", "x");
         assert_eq!(arena.diagnostics[0].code, "PLUGIN014");
+    }
+
+    // ── assemble.md contract tests ───────────────────────────────────────────
+
+    #[test]
+    fn arena_new_defaults_to_expand_slot() {
+        let arena = EmitArena::new(1);
+        assert_eq!(arena.slot(), EmitSlot::Expand);
+        assert!(!arena.is_assemble_typed());
+    }
+
+    #[test]
+    fn arena_new_assemble_typed_reports_assemble_slot() {
+        let arena = EmitArena::new_assemble_typed(1);
+        assert_eq!(arena.slot(), EmitSlot::AssembleTyped);
+        assert!(arena.is_assemble_typed());
+        assert!(arena.injected_sources.is_empty());
+    }
+
+    #[test]
+    fn refuse_in_assemble_typed_emits_plugin018_and_trips_sticky() {
+        let mut arena = EmitArena::new_assemble_typed(1);
+        let ret = arena.refuse_in_assemble_typed("_emit_function", 1);
+        assert_eq!(ret, 1, "returns caller's error sentinel");
+        assert!(arena.is_sticky(), "trips sticky-error");
+
+        // The refuse helper emits a PLUGIN018 diagnostic that names the
+        // bridge and points at assemble.md.
+        let plugin018 = arena
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "PLUGIN018")
+            .expect("PLUGIN018 diagnostic emitted");
+        assert!(
+            plugin018.message.contains("_emit_function"),
+            "PLUGIN018 names the offending bridge"
+        );
+        assert!(
+            plugin018.message.contains("assemble.md"),
+            "PLUGIN018 points at the spec"
+        );
+
+        // The trip also auto-emits the sticky-error diagnostic
+        // (PLUGIN014 by default, unless the plugin set a custom context).
+        // §3.15 of typed-emission.md defines that behaviour; we don't
+        // assert on it here beyond noting the total count.
+        assert!(
+            arena.diagnostics.len() >= 1,
+            "at least PLUGIN018 was recorded"
+        );
+    }
+
+    #[test]
+    fn refuse_in_assemble_typed_is_idempotent_via_sticky() {
+        // A second refuse call after the sticky flag is set still emits
+        // its own PLUGIN018 diagnostic (the caller pushes it directly),
+        // but the trip() call is a no-op because sticky is already set —
+        // so we do NOT get a second PLUGIN014 pile-up on top.
+        let mut arena = EmitArena::new_assemble_typed(1);
+        arena.refuse_in_assemble_typed("_emit_function", 1);
+        let after_first = arena.diagnostics.len();
+        arena.refuse_in_assemble_typed("_emit_class_full", 1);
+        let after_second = arena.diagnostics.len();
+        // Second call adds exactly ONE diagnostic (its own PLUGIN018),
+        // not two — the sticky flag suppresses the auto PLUGIN014.
+        assert_eq!(
+            after_second - after_first,
+            1,
+            "sticky flag suppresses cascading PLUGIN014 on subsequent refuses"
+        );
+
+        let plugin018_count = arena
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "PLUGIN018")
+            .count();
+        assert_eq!(plugin018_count, 2, "each refuse emits its own diagnostic");
     }
 }
