@@ -1,0 +1,29 @@
+// Test: bugfixes/codegen_string_arg_alias_jsonget_plugin_narrows_params
+// Regression for CODEGEN-STRING-ARG-ALIAS-JSONGET (fingerprint 3957fce4).
+//
+// frame.server's plugin.toml declared `_json_get` with
+// `params = ["string", "string"]`, which overwrote the compiler's builtin
+// `json.get(any, string) -> any` symbol at resolver-registration time.
+// The narrower param list disabled the MIR builder's auto-boxing at the
+// call site (see `needs_boxing` in mir_builder/expressions.rs), so a String
+// argument flowed into json.get's WASM code without being wrapped in a
+// boxed Any struct. The stdlib json.get code reads offset 0 as the Any
+// type tag, but a raw Clean string's offset 0 is the length prefix — the
+// mis-branch produced a garbage inner pointer and the subsequent
+// json.textToData call read out-of-bounds memory (crash surfaced as
+// `String read out of bounds: ptr=NNNNN, len=1400000000+`).
+//
+// Fix: `register_language_function_aliases` now skips plugin aliases whose
+// parameter list would narrow a builtin `Any` param to a specific type.
+// The runtime contract (json.get expects a boxed Any first arg) is
+// preserved regardless of what the plugin declares in its plugin.toml.
+//
+// Fixed in: compiler 0.33.44
+//
+// Expected output:
+//   Alice
+
+start:
+	string j = "{\"name\":\"Alice\",\"age\":30}"
+	string got = json.get(j, "name")
+	print(got) +
