@@ -1,0 +1,71 @@
+// Test: bugfixes/codegen_substring_clamps_invalid_indices
+// Regression: CODEGEN000 fingerprint 74837f51f68b (compiler 0.33.48+).
+//   Reported as a WASM runtime trap at wasm function 207 offset 0x3ea9 —
+//   the substring/slice helper — inside frame.ui's `assemble_typed()`
+//   after several iterations. Symptom: "memory fault at wasm address ...
+//   in linear memory of size ...".
+//
+// Root cause: `gen_substring` in `src/codegen/native_stdlib/string_ops.rs`
+//   computed `new_len = end - start` as an unsigned subtraction. When
+//   `end < start` (produced upstream by e.g. `path.length() - 4` on an
+//   empty string, or an `indexOf`-derived index that failed to find
+//   its needle), the length underflowed to ~4 billion, malloc grew a
+//   huge region, and the byte-copy loop walked off the end of linear
+//   memory. The reporter's trap was masked by the frame.ui plugin
+//   working around the symptom at source level (parallel-list
+//   re-iteration → single accumulator); the underlying bug survived
+//   for every other call site.
+//
+// Fix: clamp `start` and `end` into `[0, str_len]` (signed compares)
+//   before computing `new_len`. If `end < start` after clamping, treat
+//   as an empty range. Every path returns a well-formed String with
+//   a valid length prefix — no user code needs to guard indices.
+//
+// Spec reference: foundation/spec/stdlib-reference.md line 165:
+//   > `.substring(start, end)` clamps to valid range rather than
+//   > halting.
+//
+// This test exercises the four out-of-range shapes that used to
+// trap and now must return an empty string per spec:
+//
+//   1. start > end on empty string (the frame.ui failure)
+//   2. start > str_len
+//   3. end > str_len
+//   4. negative end (signed)
+//
+// Fixed in: compiler 0.33.52
+//
+// Expected output:
+//   [0]
+//   [0]
+//   [0]
+//   [hello]
+//   [ello]
+//   done
+
+start:
+	// Case 1: start > end on empty string. Was trap.
+	string s0 = ""
+	string x0 = s0.substring(6, s0.length() - 4)
+	print("[" + x0.length().toString() + "]")
+
+	// Case 2: start beyond str_len. Was trap.
+	string s1 = "hi"
+	string x1 = s1.substring(50, 60)
+	print("[" + x1.length().toString() + "]")
+
+	// Case 3: negative end. Was trap.
+	string s2 = "hello"
+	string x2 = s2.substring(0, -3)
+	print("[" + x2.length().toString() + "]")
+
+	// Case 4: end past str_len — must clamp to str_len, not trap.
+	string s3 = "hello"
+	string x3 = s3.substring(0, 999)
+	print("[" + x3 + "]")
+
+	// Case 5: normal in-range still works (regression guard).
+	string x4 = s3.substring(1, 5)
+	print("[" + x4 + "]")
+
+	print("done")

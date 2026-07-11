@@ -3138,6 +3138,16 @@ impl HirBuilder {
         // reclaim was not.
         let mut body_local_string_names = std::collections::HashSet::new();
         Self::collect_body_local_string_names(&new_body, &mut body_local_string_names);
+        // Exclude names that escape the iteration via being stored in
+        // an outer-scope collection (list.push / pairs.set / etc.) —
+        // those pointers outlive the `__transient_scope_exit` at the
+        // end of the iteration and would dangle in the collection. See
+        // CODEGEN000, fingerprint 74837f51f68b, for the failure mode.
+        let mut escaping_names = std::collections::HashSet::new();
+        Self::collect_escaping_body_local_names(&new_body, &mut escaping_names);
+        for name in &escaping_names {
+            body_local_string_names.remove(name);
+        }
         Self::rewrite_body_local_helpers_to_transient(&mut new_body, &body_local_string_names);
 
         // Step 4a: the per-iter `string_builder_reclaim(__sb_N, __mark_N)`
@@ -3891,6 +3901,16 @@ impl HirBuilder {
         };
         let mut body_local_string_names = std::collections::HashSet::new();
         Self::collect_body_local_string_names(&new_body, &mut body_local_string_names);
+        // Exclude names that escape the iteration via being stored in
+        // an outer-scope collection (list.push / pairs.set / etc.) —
+        // those pointers outlive the `__transient_scope_exit` at the
+        // end of the iteration and would dangle in the collection. See
+        // CODEGEN000, fingerprint 74837f51f68b, for the failure mode.
+        let mut escaping_names = std::collections::HashSet::new();
+        Self::collect_escaping_body_local_names(&new_body, &mut escaping_names);
+        for name in &escaping_names {
+            body_local_string_names.remove(name);
+        }
         Self::rewrite_body_local_helpers_to_transient(&mut new_body, &body_local_string_names);
 
         // Add transient_scope_enter at the start and transient_scope_exit at the end.
@@ -4751,6 +4771,212 @@ impl HirBuilder {
         }
     }
 
+    /// Collect names of body-local strings that ESCAPE the loop's
+    /// iteration scope via being stored into an outer-scope collection
+    /// (list.push/add/insert/set/unshift/fill, pairs.set). These names
+    /// must NOT be routed through the transient arena — the transient
+    /// pool is reset at every `__transient_scope_exit`, so the pointer
+    /// held by the collection dangles and reads from any earlier index
+    /// return whatever the arena reused that slot for.
+    ///
+    /// Concrete failure (CODEGEN000, fingerprint 74837f51f68b):
+    ///   ```
+    ///   while ...
+    ///       string module_name = file_path.substring(...)
+    ///       names.push(module_name + "_render")
+    ///       string body_source = ""
+    ///       body_source = body_source + "\tany __rd = ..."
+    ///       bodies.push(body_source)
+    ///   ```
+    ///   Both `module_name + "_render"` (a stored concat chain) and
+    ///   `body_source` (a body-local that later gets stored) leaked
+    ///   into the outer collections. After the loop, every list slot
+    ///   pointed at the last-iter's transient bytes; downstream
+    ///   `.substring(start, end)` on those bytes read past the arena
+    ///   end and trapped.
+    ///
+    /// The escape set is computed BEFORE `rewrite_body_local_helpers_to_transient`
+    /// runs and subtracted from `body_local_string_names`, so escaping
+    /// names keep their main-heap allocation path.
+    fn collect_escaping_body_local_names(
+        block: &HirBlock,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for stmt in &block.statements {
+            Self::collect_escapes_in_statement(stmt, out);
+        }
+    }
+
+    fn collect_escapes_in_statement(
+        stmt: &HirStatement,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        match stmt {
+            HirStatement::Expression { expression, .. } => {
+                Self::collect_escapes_in_expression(expression, out);
+            }
+            HirStatement::Assignment { value, .. } => {
+                Self::collect_escapes_in_expression(value, out);
+            }
+            HirStatement::VariableDeclaration {
+                initializer: Some(init),
+                ..
+            } => {
+                Self::collect_escapes_in_expression(init, out);
+            }
+            HirStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::collect_escapes_in_expression(condition, out);
+                Self::collect_escaping_body_local_names(then_branch, out);
+                if let Some(eb) = else_branch {
+                    Self::collect_escaping_body_local_names(eb, out);
+                }
+            }
+            HirStatement::While {
+                condition, body, ..
+            } => {
+                Self::collect_escapes_in_expression(condition, out);
+                Self::collect_escaping_body_local_names(body, out);
+            }
+            HirStatement::For { body, .. } => {
+                Self::collect_escaping_body_local_names(body, out);
+            }
+            HirStatement::Return {
+                value: Some(expr), ..
+            } => {
+                // A body-local string returned from a helper function
+                // escapes to the caller — but we're only rewriting
+                // inside a loop body here, so returns already exit the
+                // scope. Still record variables that appear in a
+                // returned position to be safe.
+                if let HirExpression::Variable { name, .. } = expr {
+                    out.insert(name.clone());
+                }
+                Self::collect_escapes_in_expression(expr, out);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_escapes_in_expression(
+        expr: &HirExpression,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        match expr {
+            HirExpression::MethodCall {
+                receiver,
+                method,
+                arguments,
+                ..
+            } => {
+                Self::collect_escapes_in_expression(receiver, out);
+                if Self::method_stores_argument(method) {
+                    for arg in arguments {
+                        Self::record_variable_leaf(arg, out);
+                    }
+                }
+                for arg in arguments {
+                    Self::collect_escapes_in_expression(arg, out);
+                }
+            }
+            HirExpression::NamespaceCall {
+                namespace,
+                function,
+                arguments,
+                ..
+            } => {
+                if Self::namespace_call_stores_argument(namespace, function) {
+                    for arg in arguments {
+                        Self::record_variable_leaf(arg, out);
+                    }
+                }
+                for arg in arguments {
+                    Self::collect_escapes_in_expression(arg, out);
+                }
+            }
+            HirExpression::Call {
+                function,
+                arguments,
+                ..
+            } => {
+                if Self::function_name_stores_argument(function) {
+                    for arg in arguments {
+                        Self::record_variable_leaf(arg, out);
+                    }
+                }
+                for arg in arguments {
+                    Self::collect_escapes_in_expression(arg, out);
+                }
+            }
+            HirExpression::Constructor { arguments, .. } => {
+                // Constructor arguments become field values on the newly
+                // built instance and outlive the call.
+                for arg in arguments {
+                    Self::record_variable_leaf(arg, out);
+                    Self::collect_escapes_in_expression(arg, out);
+                }
+            }
+            HirExpression::StaticMethodCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::collect_escapes_in_expression(arg, out);
+                }
+            }
+            HirExpression::Index { array, index, .. } => {
+                Self::collect_escapes_in_expression(array, out);
+                Self::collect_escapes_in_expression(index, out);
+            }
+            HirExpression::Array { elements, .. } => {
+                // Elements pushed into an array literal ARE stored —
+                // same lifetime hazard as list.push.
+                for elem in elements {
+                    Self::record_variable_leaf(elem, out);
+                    Self::collect_escapes_in_expression(elem, out);
+                }
+            }
+            HirExpression::Cast { expression, .. } => {
+                Self::collect_escapes_in_expression(expression, out);
+            }
+            HirExpression::BinaryOp { left, right, .. } => {
+                Self::collect_escapes_in_expression(left, out);
+                Self::collect_escapes_in_expression(right, out);
+            }
+            HirExpression::UnaryOp { operand, .. } => {
+                Self::collect_escapes_in_expression(operand, out);
+            }
+            HirExpression::FieldAccess { object, .. } => {
+                Self::collect_escapes_in_expression(object, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// If `expr` is (or a concat chain contains) a `Variable` leaf,
+    /// record the variable's name as escaping. Used for the storing
+    /// argument positions.
+    fn record_variable_leaf(expr: &HirExpression, out: &mut std::collections::HashSet<String>) {
+        match expr {
+            HirExpression::Variable { name, .. } => {
+                out.insert(name.clone());
+            }
+            HirExpression::BinaryOp { left, right, .. } => {
+                // For a stored concat chain like `names.push(a + b + "_x")`
+                // every Variable leaf in the chain flows into the
+                // resulting stored string, so all such names need to
+                // survive the scope reset.
+                Self::record_variable_leaf(left, out);
+                Self::record_variable_leaf(right, out);
+            }
+            HirExpression::Cast { expression, .. } => {
+                Self::record_variable_leaf(expression, out);
+            }
+            _ => {}
+        }
+    }
+
     /// Walk `block` (descending into nested blocks). For every
     /// `Assignment` whose LHS variable is in `body_local_string_names`
     /// and whose RHS is a `BinaryOp::Add` / `StringConcat` chain,
@@ -4910,11 +5136,21 @@ impl HirBuilder {
                 ..
             } => {
                 let already_transient = function == "string_concat_transient";
+                // Some builtins are called through the Call arm with
+                // dotted names (`list.push`) or snake_case aliases
+                // (`list_push`) — see the exported functions list. If
+                // any resolve to a storing operation, their value
+                // argument outlives the call and cannot go through the
+                // transient arena.
+                let stores_argument = Self::function_name_stores_argument(function);
                 for arg in arguments.iter_mut() {
                     // Recurse into the arg's sub-structure first so any
                     // nested calls inside it get rewritten too.
                     Self::rewrite_call_arg_concats_in_expression(arg);
-                    if !already_transient && Self::is_provably_string_concat_chain(arg) {
+                    if !already_transient
+                        && !stores_argument
+                        && Self::is_provably_string_concat_chain(arg)
+                    {
                         let owned = std::mem::replace(arg, Self::placeholder_void_expression());
                         *arg = Self::fold_concat_chain_to_transient_calls(owned);
                     }
@@ -4922,6 +5158,7 @@ impl HirBuilder {
             }
             HirExpression::MethodCall {
                 receiver,
+                method,
                 arguments,
                 ..
             } => {
@@ -4940,6 +5177,52 @@ impl HirBuilder {
                         std::mem::replace(receiver.as_mut(), Self::placeholder_void_expression());
                     *receiver.as_mut() = Self::fold_concat_chain_to_transient_calls(owned);
                 }
+                // Skip transient routing when the method STORES an argument
+                // into the receiver (list.push/add/insert/set/unshift/fill,
+                // pairs.set). Routing would produce a transient pointer that
+                // dangles at the next `__transient_scope_exit`, so subsequent
+                // reads of the collection return whatever the arena reused
+                // that slot for. Concrete failure (CODEGEN000, fingerprint
+                // 74837f51f68b): `names.push(module_name + "_render")` where
+                // `module_name` is body-local; the routed concat gets a
+                // transient ptr that's reset each iter, so every list entry
+                // ends up pointing at the last iter's content — with the
+                // arena bump also happening to satisfy `.substring(start,end)`
+                // in a later re-iteration with start > end once the arena
+                // wraps into an unrelated region.
+                //
+                // Descend into args to catch nested consumers (e.g. a Call
+                // whose argument is a concat chain), but do NOT rewrite the
+                // top-level arg itself.
+                let stores_argument = Self::method_stores_argument(method);
+                for arg in arguments.iter_mut() {
+                    Self::rewrite_call_arg_concats_in_expression(arg);
+                    if !stores_argument && Self::is_provably_string_concat_chain(arg) {
+                        let owned = std::mem::replace(arg, Self::placeholder_void_expression());
+                        *arg = Self::fold_concat_chain_to_transient_calls(owned);
+                    }
+                }
+            }
+            HirExpression::NamespaceCall {
+                namespace,
+                function,
+                arguments,
+                ..
+            } => {
+                // A namespace call like `list.push(names, x)` stores `x`
+                // into `names` — same lifetime hazard as the MethodCall
+                // arm above. Constructor args are similarly stored in
+                // the new instance's fields (below).
+                let stores_argument = Self::namespace_call_stores_argument(namespace, function);
+                for arg in arguments.iter_mut() {
+                    Self::rewrite_call_arg_concats_in_expression(arg);
+                    if !stores_argument && Self::is_provably_string_concat_chain(arg) {
+                        let owned = std::mem::replace(arg, Self::placeholder_void_expression());
+                        *arg = Self::fold_concat_chain_to_transient_calls(owned);
+                    }
+                }
+            }
+            HirExpression::StaticMethodCall { arguments, .. } => {
                 for arg in arguments.iter_mut() {
                     Self::rewrite_call_arg_concats_in_expression(arg);
                     if Self::is_provably_string_concat_chain(arg) {
@@ -4948,15 +5231,16 @@ impl HirBuilder {
                     }
                 }
             }
-            HirExpression::NamespaceCall { arguments, .. }
-            | HirExpression::StaticMethodCall { arguments, .. }
-            | HirExpression::Constructor { arguments, .. } => {
+            HirExpression::Constructor { arguments, .. } => {
+                // Constructor arguments become field values on the newly
+                // built instance and outlive the call. Do NOT route
+                // concat chains through the transient arena here — the
+                // failure mode is identical to list.push (see MethodCall
+                // arm): the instance holds a pointer that dangles at
+                // the next scope reset. Still recurse to catch nested
+                // consumers whose *arguments* are safe.
                 for arg in arguments.iter_mut() {
                     Self::rewrite_call_arg_concats_in_expression(arg);
-                    if Self::is_provably_string_concat_chain(arg) {
-                        let owned = std::mem::replace(arg, Self::placeholder_void_expression());
-                        *arg = Self::fold_concat_chain_to_transient_calls(owned);
-                    }
                 }
             }
             HirExpression::Index { array, index, .. } => {
@@ -4996,6 +5280,69 @@ impl HirBuilder {
             // Leaves: Literal, Variable, etc. — nothing to rewrite.
             _ => {}
         }
+    }
+
+    /// Does the given method name (as it appears in `HirExpression::MethodCall.method`)
+    /// STORE at least one argument into the receiver so that the
+    /// argument's lifetime extends beyond the call?
+    ///
+    /// When true, the transient-arena rewrite in
+    /// `rewrite_call_arg_concats_in_expression` must skip its
+    /// value arguments — routing them through `string_concat_transient`
+    /// would give the receiver a pointer into the per-iteration pool,
+    /// which is reset at the next `__transient_scope_exit` (see
+    /// CODEGEN000 fingerprint 74837f51f68b for the failure mode: all
+    /// list entries end up pointing at the last iter's content, then
+    /// downstream `.substring(...)` calls trap when the arena wraps).
+    ///
+    /// Coverage rationale: the exported functions list of every
+    /// compiled module includes storing operations on the two mutable
+    /// collection types — `list.*` (push/add/insert/set/unshift/fill)
+    /// and `pairs.set`. All snake_case aliases (`list_push` etc.) go
+    /// through the `Call` arm and are handled by
+    /// `function_name_stores_argument`.
+    fn method_stores_argument(method: &str) -> bool {
+        matches!(
+            method,
+            "push" | "add" | "insert" | "set" | "unshift" | "fill"
+        )
+    }
+
+    /// NamespaceCall equivalent of `method_stores_argument`.
+    ///
+    /// Called for expressions like `list.push(names, value)` /
+    /// `pairs.set(m, k, v)` where the receiver is the first positional
+    /// argument. Return true when any positional argument gets stored
+    /// into the receiver.
+    fn namespace_call_stores_argument(namespace: &str, function: &str) -> bool {
+        match (namespace, function) {
+            ("list", "push" | "add" | "insert" | "set" | "unshift" | "fill") => true,
+            ("pairs", "set") => true,
+            _ => false,
+        }
+    }
+
+    /// `Call` equivalent of `method_stores_argument`. Recognises both
+    /// the dotted (`list.push`) and snake_case (`list_push`) surface
+    /// forms of the storing operations.
+    fn function_name_stores_argument(function: &str) -> bool {
+        matches!(
+            function,
+            "list.push"
+                | "list.add"
+                | "list.insert"
+                | "list.set"
+                | "list.unshift"
+                | "list.fill"
+                | "list_push"
+                | "list_add"
+                | "list_insert"
+                | "list_set"
+                | "list_unshift"
+                | "list_fill"
+                | "pairs.set"
+                | "pairs_set"
+        )
     }
 
     /// Is this expression a (possibly chained) `BinaryOp::Add` /

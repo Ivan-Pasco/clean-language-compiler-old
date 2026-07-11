@@ -1,0 +1,73 @@
+// Test: bugfixes/codegen_body_local_string_escapes_via_list_push
+// Regression: hardening added alongside the CODEGEN000 substring-clamp
+//   fix (fingerprint 74837f51f68b, compiler 0.33.52).
+//
+// Root cause (secondary path found while investigating the substring
+//   trap): the HIR-level accumulator-loop rewrite in `hir_builder.rs`
+//   routes body-local `string` values through the transient arena so
+//   that per-iteration helper allocations get reclaimed at
+//   `__transient_scope_exit`. When one of those body-local strings
+//   escapes the iteration by being pushed into an outer-scope
+//   `list<string>` (or set into `pairs`), the collection ends up
+//   holding a transient pointer that dangles at the next scope reset.
+//   Subsequent reads return whatever bytes the arena reused that slot
+//   for — with 6 iterations, every slot ends up pointing at the last
+//   iter's content.
+//
+// Fix: an escape-analysis pass in `try_match_accumulator_pair` collects
+//   the names of body-local strings that appear as arguments to
+//   storing operations (list.push/add/insert/set/unshift/fill,
+//   pairs.set) and excludes them from `body_local_string_names` before
+//   the transient rewrite runs. Escaping names keep their main-heap
+//   allocation path and survive across iterations.
+//
+// This minimal shape (build two parallel lists using body-local
+//   string helpers, then read them back) reproduces the pointer-aliasing
+//   symptom without the additional substring-clamp trap: if the escape
+//   analysis regresses, every name/body pair ends up identical (the
+//   last iteration's content).
+//
+// Fixed in: compiler 0.33.52
+//
+// Expected output:
+//   6
+//   a_render|body_a
+//   b_render|body_b
+//   c_render|body_c
+//   d_render|body_d
+//   e_render|body_e
+//   f_render|body_f
+
+start:
+	run_loop()
+
+functions:
+	void run_loop()
+		list<string> names = []
+		list<string> bodies = []
+		string accumulator = ""
+		integer i = 0
+		while i < 6
+			string tag = "a"
+			if i == 1
+				tag = "b"
+			if i == 2
+				tag = "c"
+			if i == 3
+				tag = "d"
+			if i == 4
+				tag = "e"
+			if i == 5
+				tag = "f"
+			names.push(tag + "_render")
+			string body_source = ""
+			body_source = body_source + "body_" + tag
+			bodies.push(body_source)
+			accumulator = accumulator + tag
+			i = i + 1
+
+		print(names.length().toString())
+		integer ri = 0
+		while ri < names.length()
+			print(names[ri] + "|" + bodies[ri])
+			ri = ri + 1

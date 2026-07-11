@@ -421,12 +421,15 @@ impl super::CodeGenerator {
         // NATIVE: string_substring - extracts a substring from a string
         // Parameters: str_ptr (i32), start (i32), end (i32)
         // Returns: pointer (i32) to new string
+        // Locals: str_len, new_len, new_ptr, i — needed because gen_substring
+        // now clamps signed indices per spec (stdlib-reference.md line 165);
+        // reading `str_len` requires a scratch local. Was 3 locals pre-clamp.
         let string_substring_instructions = native_stdlib::string_ops::gen_substring(malloc_idx);
         let string_substring_idx = self.register_function_with_locals(
             "__string_substring",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // 3 extra locals: new_len, new_ptr, i
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             &string_substring_instructions,
         )?;
         self.add_function_alias("string.substring", string_substring_idx);

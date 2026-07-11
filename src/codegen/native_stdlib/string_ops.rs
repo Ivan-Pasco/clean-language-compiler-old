@@ -1044,63 +1044,136 @@ pub fn gen_concat(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
-/// Generate instructions for string.substring (requires malloc)
+/// Generate instructions for string.substring (requires malloc).
+///
+/// Per `foundation/spec/stdlib-reference.md` §"Error semantics" (line 165):
+///
+/// > `.substring(start, end)` clamps to valid range rather than halting.
+///
+/// The pre-0.33.52 implementation trusted its callers and did `end - start`
+/// as an unsigned length. When `end < start` (produced by upstream code
+/// such as `path.length() - 4` on an empty string, or a `indexOf`-derived
+/// index that failed to find its needle), the subtraction underflowed to
+/// ~4 billion; the malloc-then-memcpy loop then walked off the end of
+/// linear memory and trapped. That failure was reported as CODEGEN000
+/// (fingerprint 74837f51f68b) in frame.ui's `assemble_typed`, but the
+/// same trap fires for every substring call anywhere in the language
+/// when its indices go out of range.
+///
+/// The fix clamps both endpoints to `[0, str_len]` and swaps them so
+/// that `end < start` returns an empty string. Every code path continues
+/// to produce a valid `String` value with a valid length prefix — no
+/// user code needs to guard indices.
 ///
 /// Parameters:
 ///   - local 0: str_ptr
-///   - local 1: start
-///   - local 2: end
+///   - local 1: start (signed i32; clamped in the body)
+///   - local 2: end   (signed i32; clamped in the body)
 ///
 /// Returns: i32 (pointer to new substring)
 ///
 /// Uses locals:
-///   - local 3: new_len
-///   - local 4: new_ptr
-///   - local 5: i (loop counter)
+///   - local 3: str_len
+///   - local 4: new_len
+///   - local 5: new_ptr
+///   - local 6: i (loop counter)
 pub fn gen_substring(malloc_func: u32) -> Vec<Instruction<'static>> {
     vec![
-        // Calculate new_len = end - start -> local 3
-        Instruction::LocalGet(2), // end
-        Instruction::LocalGet(1), // start
-        Instruction::I32Sub,
-        Instruction::LocalSet(3), // new_len
-        // Allocate new string: malloc(4 + new_len)
+        // str_len = str_ptr[0] -> local 3
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: STRING_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(3),
+        // Clamp start into [0, str_len].
+        // Signed compare so negative starts land at 0.
+        //   if start < 0 { start = 0 }
+        Instruction::LocalGet(1),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(1),
+        Instruction::End,
+        //   if start > str_len { start = str_len }
+        Instruction::LocalGet(1),
         Instruction::LocalGet(3),
+        Instruction::I32GtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalSet(1),
+        Instruction::End,
+        // Clamp end into [0, str_len].
+        //   if end < 0 { end = 0 }
+        Instruction::LocalGet(2),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(2),
+        Instruction::End,
+        //   if end > str_len { end = str_len }
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32GtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalSet(2),
+        Instruction::End,
+        // If end < start, treat as empty range (end = start).
+        // Spec: "clamps to valid range rather than halting" — the
+        // language-level guarantee is a well-formed empty String
+        // rather than a trap.
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32LtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(1),
+        Instruction::LocalSet(2),
+        Instruction::End,
+        // new_len = end - start -> local 4
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(4),
+        // Allocate new string: malloc(STRING_DATA_OFFSET + new_len)
+        Instruction::LocalGet(4),
         Instruction::I32Const(STRING_DATA_OFFSET as i32),
         Instruction::I32Add,
         Instruction::Call(malloc_func),
-        Instruction::LocalSet(4), // new_ptr
-        // Store length
+        Instruction::LocalSet(5),
+        // Store length prefix.
+        Instruction::LocalGet(5),
         Instruction::LocalGet(4),
-        Instruction::LocalGet(3),
         Instruction::I32Store(MemArg {
             offset: 0,
             align: 2,
             memory_index: 0,
         }),
-        // Copy bytes from str_ptr[4 + start] to new_ptr[4]
-        // i = 0
+        // Copy bytes from str_ptr[STRING_DATA_OFFSET + start] to new_ptr[STRING_DATA_OFFSET].
         Instruction::I32Const(0),
-        Instruction::LocalSet(5),
+        Instruction::LocalSet(6),
         Instruction::Block(BlockType::Empty),
         Instruction::Loop(BlockType::Empty),
         // if i >= new_len, exit
-        Instruction::LocalGet(5),
-        Instruction::LocalGet(3),
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(4),
         Instruction::I32GeU,
         Instruction::BrIf(1),
-        // new_ptr[4 + i] = str_ptr[4 + start + i]
-        Instruction::LocalGet(4),
+        // new_ptr[STRING_DATA_OFFSET + i] = str_ptr[STRING_DATA_OFFSET + start + i]
+        Instruction::LocalGet(5),
         Instruction::I32Const(STRING_DATA_OFFSET as i32),
         Instruction::I32Add,
-        Instruction::LocalGet(5),
+        Instruction::LocalGet(6),
         Instruction::I32Add,
         Instruction::LocalGet(0),
         Instruction::I32Const(STRING_DATA_OFFSET as i32),
         Instruction::I32Add,
-        Instruction::LocalGet(1), // start
+        Instruction::LocalGet(1),
         Instruction::I32Add,
-        Instruction::LocalGet(5),
+        Instruction::LocalGet(6),
         Instruction::I32Add,
         Instruction::I32Load8U(MemArg {
             offset: 0,
@@ -1113,15 +1186,15 @@ pub fn gen_substring(malloc_func: u32) -> Vec<Instruction<'static>> {
             memory_index: 0,
         }),
         // i++
-        Instruction::LocalGet(5),
+        Instruction::LocalGet(6),
         Instruction::I32Const(1),
         Instruction::I32Add,
-        Instruction::LocalSet(5),
+        Instruction::LocalSet(6),
         Instruction::Br(0),
         Instruction::End,
         Instruction::End,
         // Return new pointer
-        Instruction::LocalGet(4),
+        Instruction::LocalGet(5),
     ]
 }
 
