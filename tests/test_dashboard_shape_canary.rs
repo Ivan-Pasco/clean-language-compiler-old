@@ -49,35 +49,63 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Try to locate a cln binary. Returns `None` if none exists — the tests
-/// call `.expect_or_skip(...)` on this so `cargo test` in a fresh clone
-/// gracefully reports "skipped" instead of panicking with cryptic
-/// output. Mirrors the pattern in `test_canary_registry_coverage.rs`.
-fn cln_binary_opt() -> Option<PathBuf> {
-    let manifest_dir = repo_root();
-    let candidate_release = manifest_dir.join("target").join("release").join("cln");
-    if candidate_release.exists() {
-        return Some(candidate_release);
+/// Try to locate the release cln binary. Returns `None` if it doesn't
+/// exist — the tests skip gracefully in that case (matching the pattern
+/// in `test_canary_registry_coverage.rs`).
+///
+/// We deliberately do NOT fall back to the debug binary. `cargo test`
+/// (the default `Test Suite` CI job) does not build the release binary,
+/// so falling back to debug would make the tests actually try to run and
+/// fail on the `--plugins` load lookup (frame.data / frame.server live at
+/// `~/.cleen/plugins/` which is empty in a fresh CI runner). The
+/// dedicated `dashboard-shape-canary` CI job builds the release binary
+/// explicitly, and only that job runs these tests for real.
+fn cln_release_binary_opt() -> Option<PathBuf> {
+    let candidate = repo_root().join("target").join("release").join("cln");
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
     }
-    let candidate_debug = manifest_dir.join("target").join("debug").join("cln");
-    if candidate_debug.exists() {
-        return Some(candidate_debug);
-    }
-    None
 }
 
-fn cln_binary() -> PathBuf {
-    cln_binary_opt().unwrap_or_else(|| {
-        panic!(
-            "cln binary not found at target/release/cln or target/debug/cln — \
-             run `cargo build --release --bin cln` before this test"
-        )
-    })
+/// Verify the installed plugins directory (~/.cleen/plugins/) contains
+/// the plugin.wasm files this canary needs. The compiler's `--plugins`
+/// flag loads from this path unconditionally; there is no env-var
+/// override, so callers with an empty install (e.g. a bare CI runner)
+/// cannot run this test.
+///
+/// Returns `Ok(())` when both frame.data and frame.server appear present,
+/// otherwise a descriptive error the tests use as their skip reason.
+fn installed_plugins_ready() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or_else(|| "could not resolve $HOME".to_string())?;
+    let base = home.join(".cleen").join("plugins");
+    for plugin in ["frame.data", "frame.server"] {
+        let manifest = base.join(plugin).join("plugin.toml");
+        if !manifest.exists() {
+            return Err(format!(
+                "installed plugin `{plugin}` missing at {}; \
+                 run `cleen frame install latest` (or the dedicated CI job \
+                 that bootstraps ~/.cleen/plugins/) before running this test",
+                manifest.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
-/// Compile the canary with `--plugins` (frame.data + frame.server) and
-/// return the raw WASM bytes.
-fn compile_dashboard_canary() -> Vec<u8> {
+/// Compile the canary with `--plugins` and return `Ok(Vec<u8>)`, or
+/// `Err(reason)` if the environment doesn't have both a release binary
+/// and the required plugins installed. Tests treat `Err` as "skip".
+fn compile_dashboard_canary() -> Result<Vec<u8>, String> {
+    let cln = cln_release_binary_opt().ok_or_else(|| {
+        "release cln binary missing (target/release/cln); run \
+         `cargo build --release --bin cln` before this test"
+            .to_string()
+    })?;
+
+    installed_plugins_ready()?;
+
     let root = repo_root();
     let canary = root
         .join("tests")
@@ -90,23 +118,37 @@ fn compile_dashboard_canary() -> Vec<u8> {
         .join("dashboard_shape.wasm");
     let _ = std::fs::create_dir_all(out.parent().unwrap());
 
-    let status = Command::new(cln_binary())
+    let status = Command::new(&cln)
         .arg("compile")
         .arg("--plugins")
         .arg(&canary)
         .arg("--output")
         .arg(&out)
         .output()
-        .expect("failed to invoke cln");
+        .map_err(|e| format!("failed to invoke cln: {e}"))?;
 
-    assert!(
-        status.status.success(),
-        "cln compile failed for dashboard_shape.cln:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&status.stdout),
-        String::from_utf8_lossy(&status.stderr)
-    );
+    if !status.status.success() {
+        return Err(format!(
+            "cln compile failed for dashboard_shape.cln:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&status.stdout),
+            String::from_utf8_lossy(&status.stderr)
+        ));
+    }
 
-    std::fs::read(&out).expect("compiled WASM must exist")
+    std::fs::read(&out).map_err(|e| format!("read compiled WASM: {e}"))
+}
+
+/// Convenience helper: skip with a stderr message, return `None` if the
+/// environment isn't set up; return `Some(bytes)` otherwise. Individual
+/// tests early-return on `None`.
+fn compile_or_skip(test_name: &str) -> Option<Vec<u8>> {
+    match compile_dashboard_canary() {
+        Ok(bytes) => Some(bytes),
+        Err(reason) => {
+            eprintln!("skipping {test_name}: {reason}");
+            None
+        }
+    }
 }
 
 /// Convert the WASM to WAT via the in-crate `wasm2wat` binary. Keeps the
@@ -233,27 +275,22 @@ fn count_box_any_pattern(body: &str, mem_alloc_idx: u32) -> usize {
 
 #[test]
 fn dashboard_shape_canary_compiles_with_plugins() {
-    if cln_binary_opt().is_none() {
-        eprintln!(
-            "skipping: cln binary missing — build with `cargo build --release --bin cln` \
-             before running the dashboard-shape canary tests"
-        );
+    let Some(wasm) = compile_or_skip("dashboard_shape_canary_compiles_with_plugins") else {
         return;
-    }
+    };
     // First contract: the canary must compile. If this fails, the
     // canary itself is broken and the shape assertions below are
     // meaningless.
-    let wasm = compile_dashboard_canary();
     assert!(!wasm.is_empty());
     assert!(wasm.starts_with(&[0x00, 0x61, 0x73, 0x6d]), "WASM magic");
 }
 
 #[test]
 fn dashboard_page_does_not_box_expand_strings_wrapper_args() {
-    if cln_binary_opt().is_none() {
-        eprintln!("skipping: cln binary missing");
+    let Some(wasm) = compile_or_skip("dashboard_page_does_not_box_expand_strings_wrapper_args")
+    else {
         return;
-    }
+    };
     // Fingerprint #54887260abf6 — 0.33.44 regression class.
     //
     // `json.get` and `db.query` resolve to plugin `expand_strings=true`
@@ -267,7 +304,6 @@ fn dashboard_page_does_not_box_expand_strings_wrapper_args() {
     // In the working 0.33.45+ codegen, `dashboard_page` has ZERO 12-byte
     // BoxAny mallocs — arguments flow straight to the wrapper as raw
     // string pointers.
-    let wasm = compile_dashboard_canary();
     let wat = wasm_to_wat(&wasm);
 
     let dashboard_idx =
@@ -294,16 +330,16 @@ fn dashboard_page_does_not_box_expand_strings_wrapper_args() {
 
 #[test]
 fn dashboard_page_calls_json_get_and_db_query_via_plugin_wrappers() {
-    if cln_binary_opt().is_none() {
-        eprintln!("skipping: cln binary missing");
+    let Some(wasm) =
+        compile_or_skip("dashboard_page_calls_json_get_and_db_query_via_plugin_wrappers")
+    else {
         return;
-    }
+    };
     // Positive-shape assertion: the canary IS supposed to route through
     // the plugin wrappers, so the emitted WAT must contain calls to
     // BOTH json.get and db.query. If either export is missing, the
     // plugin bridge registration broke — that would silently make the
     // "no boxing" assertion above pass by producing an empty function.
-    let wasm = compile_dashboard_canary();
     let wat = wasm_to_wat(&wasm);
 
     let dashboard_idx =

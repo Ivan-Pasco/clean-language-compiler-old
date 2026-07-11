@@ -75,9 +75,25 @@ jobs:
   dashboard-shape-canary:
     name: Dashboard-shape codegen smoke test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-    - name: Checkout code
+    - name: Checkout compiler
       uses: actions/checkout@v4
+      with:
+        path: clean-language-compiler
+
+    # The canary compiles with `--plugins`, which loads the .wasm blobs
+    # from ~/.cleen/plugins/. The dedicated CI runner is empty at start,
+    # so we clone clean-framework and build each plugin from source
+    # using the freshly-built compiler. This exercises the exact
+    # compiler→plugin→app chain that ships to users, which is the point
+    # of the smoke test.
+    - name: Checkout framework (main)
+      uses: actions/checkout@v4
+      with:
+        repository: Ivan-Pasco/cleen-framework
+        ref: main
+        path: clean-framework
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
@@ -88,17 +104,45 @@ jobs:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
-          target/
-        key: ${{ runner.os }}-cargo-dashboard-canary-${{ hashFiles('**/Cargo.lock') }}
+          clean-language-compiler/target/
+        key: ${{ runner.os }}-cargo-dashboard-canary-${{ hashFiles('clean-language-compiler/Cargo.lock') }}
 
     # The canary compiles with `--plugins`, so the release cln binary AND
     # wasm2wat must both exist. Build them explicitly before the test.
     - name: Build release cln + wasm2wat
+      working-directory: clean-language-compiler
       run: |
         cargo build --release --bin cln
         cargo build --release --bin wasm2wat
 
+    - name: Build + install framework plugins
+      run: |
+        set -euo pipefail
+        CLN="$GITHUB_WORKSPACE/clean-language-compiler/target/release/cln"
+        mkdir -p "$HOME/.cleen/plugins"
+        for plugin_dir in clean-framework/plugins/*/; do
+          plugin_name=$(basename "$plugin_dir")
+          # The canary only imports frame.data + frame.server; skip everything
+          # else to keep the runtime low. The `dashboard_shape.cln`
+          # `plugins:` block lists exactly these two names.
+          case "$plugin_name" in
+            frame.data|frame.server) ;;
+            *) continue ;;
+          esac
+          echo "=== Building $plugin_name ==="
+          if [ ! -f "$plugin_dir/build.sh" ]; then
+            echo "no build.sh, skipping"; continue
+          fi
+          ( cd "$plugin_dir" && CLN_COMPILER="$CLN" bash build.sh )
+          install_dir="$HOME/.cleen/plugins/$plugin_name"
+          mkdir -p "$install_dir"
+          cp "$plugin_dir/plugin.toml" "$install_dir/plugin.toml"
+          cp "$plugin_dir/plugin.wasm" "$install_dir/plugin.wasm"
+          ls -la "$install_dir/"
+        done
+
     - name: Run dashboard-shape canary
+      working-directory: clean-language-compiler
       run: cargo test --release --test test_dashboard_shape_canary -- --nocapture
 
   plugin-registry-contract:
