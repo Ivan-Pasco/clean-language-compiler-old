@@ -378,14 +378,17 @@ impl MirBuilder {
             }
         }
 
-        // Initialize program structure
+        // Initialize program structure. BTreeMap keeps iteration order
+        // deterministic (sorted by SymbolId); see MirProgram doc for the
+        // wider incident this prevents.
+        use std::collections::BTreeMap;
         let mut mir_program = MirProgram {
-            functions: HashMap::new(),
-            globals: HashMap::new(),
+            functions: BTreeMap::new(),
+            globals: BTreeMap::new(),
             string_pool: Vec::new(),
             entry_point: None,
             debug_info: None,
-            symbol_name_map: HashMap::new(),
+            symbol_name_map: BTreeMap::new(),
             used_plugins: Vec::new(),
             state_rules: Vec::new(),
             state_guards: Vec::new(),

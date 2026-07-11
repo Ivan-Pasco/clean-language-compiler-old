@@ -8,8 +8,17 @@ use crate::hir::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-/// Unique identifier for symbols
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Unique identifier for symbols.
+///
+/// `PartialOrd`/`Ord` are required so BTreeMap<SymbolId, _> works. MirProgram
+/// uses BTreeMap keyed by SymbolId for functions / globals / symbol_name_map
+/// so codegen sees these in a deterministic sorted order, independent of
+/// per-process HashMap hasher seeds. Without that, the compiler emits
+/// different WASM bytes on every recompile of the same source — the
+/// root cause of CODEGEN-STRING-ARG-ALIAS-JSONGET's flaky
+/// tasks_list_page memory-access-out-of-bounds symptom (some recompiles
+/// land memory layouts that happen to trap, others don't).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SymbolId(pub usize);
 
 // ============================================================================

@@ -1790,8 +1790,12 @@ impl super::CodeGenerator {
         // Set up memory section
         self.setup_memory_section();
 
-        // Export all registered functions
-        for (func_name, &func_index) in &self.function_map.clone() {
+        // Export all registered functions.
+        // Sort by name for deterministic export ordering (matches the fix
+        // in `mir_codegen/utilities.rs::finalize_module`).
+        let mut sorted: Vec<(&String, &u32)> = self.function_map.iter().collect();
+        sorted.sort_by(|a, b| a.0.cmp(b.0));
+        for (func_name, &func_index) in sorted {
             self.export_section
                 .export(func_name, wasm_encoder::ExportKind::Func, func_index);
         }

@@ -6,7 +6,7 @@
 use crate::ast::SourceLocation;
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::ConcreteType;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 /// Unique identifier for basic blocks
@@ -21,14 +21,25 @@ pub struct ValueId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RegisterId(pub usize);
 
-/// Complete MIR program representation
+/// Complete MIR program representation.
+///
+/// The maps below use `BTreeMap` instead of `HashMap` so codegen iterates
+/// them in a deterministic (SymbolId-sorted) order. Rust's default `HashMap`
+/// hasher is randomized per-process — iterating produces different orders
+/// on every recompile, and downstream codegen ends up laying out user
+/// functions at different WASM indices each build. That flakes into
+/// runtime failures whenever a specific layout happens to hit an OOB
+/// (this is the mechanism behind CODEGEN-STRING-ARG-ALIAS-JSONGET's
+/// intermittent tasks_list_page trap).
+///
+/// `SymbolId` derives `Ord` for this to work.
 #[derive(Debug, Clone)]
 pub struct MirProgram {
-    /// All functions in the program
-    pub functions: HashMap<SymbolId, MirFunction>,
+    /// All functions in the program (sorted by SymbolId).
+    pub functions: BTreeMap<SymbolId, MirFunction>,
 
-    /// Global variables and constants
-    pub globals: HashMap<SymbolId, MirGlobal>,
+    /// Global variables and constants (sorted by SymbolId).
+    pub globals: BTreeMap<SymbolId, MirGlobal>,
 
     /// String literals pool
     pub string_pool: Vec<String>,
@@ -39,10 +50,10 @@ pub struct MirProgram {
     /// Debug information if enabled
     pub debug_info: Option<MirDebugInfo>,
 
-    /// NOTE: Mapping from SymbolId to function name for ALL functions
-    /// This includes both builtin functions (print, math.*, etc.) and user-defined functions
-    /// Used by code generator to resolve function calls
-    pub symbol_name_map: HashMap<SymbolId, String>,
+    /// Mapping from SymbolId to function name for ALL functions
+    /// (builtins + user-defined). Used by code generator to resolve function
+    /// calls. Sorted by SymbolId for deterministic iteration.
+    pub symbol_name_map: BTreeMap<SymbolId, String>,
 
     /// Plugins used by this program, detected during AST parsing
     /// Maps plugin name to whether it was explicitly imported or auto-detected

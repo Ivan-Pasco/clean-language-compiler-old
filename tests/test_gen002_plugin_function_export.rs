@@ -21,7 +21,7 @@ use clean_language_compiler::mir::mir_types::{
     MirType,
 };
 use clean_language_compiler::resolver::SymbolId;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use wasmparser::{Parser as WasmParser, Payload};
 
 /// Build a minimal MirProgram containing a single void function with the given
@@ -112,17 +112,17 @@ fn build_program_with_function(func_name: &str) -> MirProgram {
         location: Default::default(),
     };
 
-    let mut functions = HashMap::new();
+    let mut functions = BTreeMap::new();
     functions.insert(handler_symbol, handler_fn);
     functions.insert(start_symbol, start_fn);
 
-    let mut symbol_name_map = HashMap::new();
+    let mut symbol_name_map = BTreeMap::new();
     symbol_name_map.insert(handler_symbol, func_name.to_string());
     symbol_name_map.insert(start_symbol, "start".to_string());
 
     MirProgram {
         functions,
-        globals: HashMap::new(),
+        globals: BTreeMap::new(),
         string_pool: vec![],
         entry_point: Some(start_symbol),
         debug_info: None,
@@ -320,19 +320,19 @@ fn gen002_duplicate_symbol_ids_same_name_exports_exactly_once() {
         location: Default::default(),
     };
 
-    let mut functions = HashMap::new();
+    let mut functions = BTreeMap::new();
     functions.insert(sym_a, fn_a);
     functions.insert(sym_b, fn_b); // duplicate name — must be silently dropped
     functions.insert(start_sym, start_fn);
 
-    let mut symbol_name_map = HashMap::new();
+    let mut symbol_name_map = BTreeMap::new();
     symbol_name_map.insert(sym_a, func_name.to_string());
     symbol_name_map.insert(sym_b, func_name.to_string());
     symbol_name_map.insert(start_sym, "start".to_string());
 
     let mir_program = MirProgram {
         functions,
-        globals: HashMap::new(),
+        globals: BTreeMap::new(),
         string_pool: vec![],
         entry_point: Some(start_sym),
         debug_info: None,

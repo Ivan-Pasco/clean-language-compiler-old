@@ -1145,18 +1145,37 @@ impl MirCodeGenerator<'_> {
         if needs_reverse_lookup {
             if let MirOperand::Function(symbol_id) = function {
                 if let Some(&function_index) = self.symbol_to_function_index.get(symbol_id) {
-                    // Reverse-lookup: find the function name that maps to this index
-                    for (name, &index) in &self.wasm_generator.function_map {
-                        if index == function_index {
-                            debug_mir!(
-                                "DEBUG REVERSE LOOKUP: SymbolId({}) -> index {} -> name '{}'",
-                                symbol_id.0,
-                                function_index,
-                                name
-                            );
-                            function_name = Some(name.clone());
-                            break;
-                        }
+                    // Reverse-lookup: find the function name that maps to this
+                    // index. Multiple names alias to the same index (e.g. the
+                    // language alias `json.get` + the bridge alias `_json_get`
+                    // + potentially a wrapper alias) — which name wins here
+                    // determines which arm of the big call-dispatch match
+                    // below fires downstream. If we iterate the raw HashMap,
+                    // the "first match" depends on random hasher state and
+                    // produces different codegen across recompiles (the root
+                    // cause of the flaky WASM-out-of-bounds tasks_list_page
+                    // failures reported in CODEGEN-STRING-ARG-ALIAS-JSONGET).
+                    //
+                    // Sort the candidates alphabetically so the same name
+                    // always wins for a given index. Choosing the
+                    // lexicographically smallest is arbitrary but stable and
+                    // matches the sorted export order.
+                    let mut candidates: Vec<&String> = self
+                        .wasm_generator
+                        .function_map
+                        .iter()
+                        .filter(|(_, &idx)| idx == function_index)
+                        .map(|(name, _)| name)
+                        .collect();
+                    candidates.sort();
+                    if let Some(name) = candidates.first() {
+                        debug_mir!(
+                            "DEBUG REVERSE LOOKUP: SymbolId({}) -> index {} -> name '{}'",
+                            symbol_id.0,
+                            function_index,
+                            name
+                        );
+                        function_name = Some(name.to_string());
                     }
                 }
             }

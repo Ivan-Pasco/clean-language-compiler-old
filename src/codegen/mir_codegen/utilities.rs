@@ -1199,8 +1199,21 @@ impl MirCodeGenerator<'_> {
         //    with "unknown function N: exported function index out of bounds".
         //    When that happens it's a registration bug upstream — log and
         //    skip rather than silently emitting invalid bytes.
+        // 3. Collect and SORT before iterating. `function_map` is a `HashMap`
+        //    whose iteration order is randomized per-process. Emitting the
+        //    export section in HashMap order made every recompilation produce
+        //    a different WASM binary (root cause of
+        //    CODEGEN-STRING-ARG-ALIAS-JSONGET's flakiness: some recompiles
+        //    happened to land memory layouts that hit an OOB in
+        //    tasks_list_page, others didn't — same source, same compiler,
+        //    same plugins, different bytes). Sorting by name makes both the
+        //    export section AND the downstream code layout (which depends on
+        //    export ordering via `element_section` indices) deterministic.
         let total_functions = self.wasm_generator.function_count;
-        for (name, &index) in &self.wasm_generator.function_map {
+        let mut function_map_entries: Vec<(&String, &u32)> =
+            self.wasm_generator.function_map.iter().collect();
+        function_map_entries.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, &index) in function_map_entries {
             if index == u32::MAX {
                 continue;
             }
@@ -1248,8 +1261,17 @@ impl MirCodeGenerator<'_> {
             }
         }
 
-        // Export handler functions as handle_event_N for runtime callback dispatch
-        for (handler_name, &handler_index) in &self.handler_indices {
+        // Export handler functions as handle_event_N for runtime callback dispatch.
+        //
+        // `handler_indices` is a `HashMap<String, u32>`. Iterating it directly
+        // would emit exports in randomized order per-process — the same
+        // determinism hazard as the `function_map` loop above. Sort by name
+        // before iterating so the resulting export section is stable across
+        // recompilations. (The export NAMES include `handler_index` so ties
+        // don't matter, but sorting keeps the diff-of-diffs minimal.)
+        let mut handler_entries: Vec<(&String, &u32)> = self.handler_indices.iter().collect();
+        handler_entries.sort_by(|a, b| a.0.cmp(b.0));
+        for (handler_name, &handler_index) in handler_entries {
             if let Some(&func_index) = self.wasm_generator.function_map.get(handler_name) {
                 let export_name = format!("handle_event_{}", handler_index);
                 tracing::debug!(
