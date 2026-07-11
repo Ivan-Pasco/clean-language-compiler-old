@@ -118,7 +118,13 @@ jobs:
     - name: Build + install framework plugins
       run: |
         set -euo pipefail
-        CLN="$GITHUB_WORKSPACE/clean-language-compiler/target/release/cln"
+        # Framework plugin build.sh scripts invoke `cln` directly (not via
+        # $CLN_COMPILER), so put the freshly-built release binary on PATH
+        # under the expected name.
+        CLN_BIN_DIR="$GITHUB_WORKSPACE/clean-language-compiler/target/release"
+        export PATH="$CLN_BIN_DIR:$PATH"
+        command -v cln
+        cln --version
         mkdir -p "$HOME/.cleen/plugins"
         for plugin_dir in clean-framework/plugins/*/; do
           plugin_name=$(basename "$plugin_dir")
@@ -133,7 +139,7 @@ jobs:
           if [ ! -f "$plugin_dir/build.sh" ]; then
             echo "no build.sh, skipping"; continue
           fi
-          ( cd "$plugin_dir" && CLN_COMPILER="$CLN" bash build.sh )
+          ( cd "$plugin_dir" && bash build.sh )
           install_dir="$HOME/.cleen/plugins/$plugin_name"
           mkdir -p "$install_dir"
           cp "$plugin_dir/plugin.toml" "$install_dir/plugin.toml"
