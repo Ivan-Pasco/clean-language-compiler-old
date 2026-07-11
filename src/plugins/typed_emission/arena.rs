@@ -313,6 +313,15 @@ pub struct EmitArena {
     /// `wasm_adapter.rs::call_assemble_typed` to build the returned
     /// `AssembleOutput.injected_sources`.
     pub injected_sources: Vec<crate::plugins::plugin_abi::InjectedSource>,
+
+    /// Replacement content for existing discovered source files, submitted via
+    /// `_transform_source_file`. Populated only when `slot == AssembleTyped`;
+    /// every `_transform_source_file(ctx, path, new_content)` call appends one
+    /// entry. Consumed by `wasm_adapter.rs::call_assemble_typed` to build the
+    /// returned `AssembleOutput.transformed_sources`; the compilation pipeline
+    /// then applies them in `multi_file_compiler.rs` before HIR/semantic
+    /// analysis. See `foundation/spec/plugins/contracts/assemble.md` §6.1.
+    pub transformed_sources: Vec<crate::plugins::plugin_abi::TransformedSource>,
 }
 
 /// Which plugin lifecycle slot an `EmitArena` is servicing.
@@ -361,6 +370,7 @@ impl EmitArena {
             batch_consumed: vec![false],
             slot,
             injected_sources: Vec::new(),
+            transformed_sources: Vec::new(),
         }
     }
 
@@ -385,7 +395,8 @@ impl EmitArena {
     /// See `foundation/spec/plugins/contracts/assemble.md` §6.2.
     pub fn refuse_in_assemble_typed(&mut self, bridge: &'static str, err_return: i32) -> i32 {
         let msg = format!(
-            "{} is not legal inside assemble_typed — only _inject_source_file is permitted. \
+            "{} is not legal inside assemble_typed — only _inject_source_file and \
+             _transform_source_file are permitted. \
              See foundation/spec/plugins/contracts/assemble.md §6.2.",
             bridge
         );

@@ -4679,9 +4679,10 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 });
             }
 
-            // Drain the arena and consume its `injected_sources`, populated
-            // by `_inject_source_file` — the sole legal typed-emission bridge
-            // inside `assemble_typed` per
+            // Drain the arena and consume its `injected_sources` +
+            // `transformed_sources`, populated by `_inject_source_file` and
+            // `_transform_source_file` — the two legal typed-emission
+            // bridges inside `assemble_typed` per
             // `foundation/spec/plugins/contracts/assemble.md` §6.1.
             //
             // Structural bridges refuse with PLUGIN018 upstream (see the
@@ -4695,6 +4696,7 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 "typed-emission: arena was taken during assemble_typed — cross-call arena reuse detected",
             );
             let injected = std::mem::take(&mut arena.injected_sources);
+            let transformed = std::mem::take(&mut arena.transformed_sources);
             let (_expansion, diagnostics, saw_error) = arena.finish();
 
             for diag in &diagnostics {
@@ -4739,7 +4741,7 @@ impl FrameworkPlugin for WasmPluginAdapter {
 
             return Ok(AssembleOutput {
                 injected_sources: injected,
-                ..AssembleOutput::default()
+                transformed_sources: transformed,
             });
         } else {
             // v1 assemble signature: (input_lp) -> output_lp

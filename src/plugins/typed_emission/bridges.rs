@@ -1871,8 +1871,9 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
 
     // _inject_source_file(ctx, virtual_path_lp, content_lp) -> i32
     //
-    // The sole legal typed-emission bridge inside `assemble_typed`. Appends a
-    // synthetic Clean source file to the arena's `injected_sources`, which
+    // One of two legal typed-emission bridges inside `assemble_typed` (the
+    // other is `_transform_source_file`, defined below). Appends a synthetic
+    // Clean source file to the arena's `injected_sources`, which
     // `wasm_adapter::call_assemble_typed` folds into the returned
     // `AssembleOutput.injected_sources`.
     //
@@ -1955,6 +1956,104 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                 .push(crate::plugins::plugin_abi::InjectedSource {
                     virtual_path,
                     content,
+                });
+            0
+        },
+    )?;
+
+    // _transform_source_file(ctx, path_lp, new_content_lp) -> i32
+    //
+    // Companion of `_inject_source_file`: the second legal typed-emission
+    // bridge inside `assemble_typed`. Records a replacement content for an
+    // existing discovered source file. The compilation pipeline applies these
+    // via the transformed_sources fold in `multi_file_compiler.rs` before HIR
+    // is built, so the plugin can rename user-scope symbols (e.g. rewrite a
+    // companion page's `any load(Request r)` to a per-page name like
+    // `any pages_index_load(Request r)`) and reference the renamed names from
+    // an injected router module — resolving the multi-page global-symbol
+    // collision that motivated this bridge.
+    //
+    // Failure modes (each trips sticky-error via PLUGIN014):
+    //  - either LP-string is unreadable or empty
+    //  - path collides with a path already registered in this arena's
+    //    transformed_sources (same call, same file recorded twice)
+    //
+    // Note: collisions against `injected_sources` are NOT rejected here —
+    // `_inject_source_file` requires a *virtual* path (a path not present in
+    // the discovered set), whereas `_transform_source_file` targets *existing*
+    // discovered paths. They occupy different namespaces on the plugin side.
+    // Downstream, `multi_file_compiler.rs` only replaces content for paths it
+    // already knows about; transforms targeting unknown paths are silently
+    // dropped by design (same behavior as v1 `transformed_sources`).
+    //
+    // Returns 0 on success, 1 on failure. See
+    // `foundation/spec/plugins/contracts/assemble.md` §6.1.
+    linker.func_wrap(
+        "env",
+        "_transform_source_file",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, path_lp: i32, new_content_lp: i32| -> i32 {
+            let path = match read_lp_string(&mut caller, path_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN014".to_string(),
+                        message: "_transform_source_file: path_lp is empty or unreadable — \
+                             expected a length-prefixed non-empty Clean source path (see \
+                             foundation/spec/plugins/contracts/assemble.md §6.1)"
+                            .to_string(),
+                        span_json: String::new(),
+                    });
+                    a.trip("_transform_source_file", "path empty");
+                    return 1;
+                }
+            };
+            let new_content = match read_lp_string(&mut caller, new_content_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN014".to_string(),
+                        message: format!(
+                            "_transform_source_file for `{}`: new_content_lp is empty or \
+                             unreadable — expected a length-prefixed non-empty Clean source \
+                             string",
+                            path
+                        ),
+                        span_json: String::new(),
+                    });
+                    a.trip("_transform_source_file", "new_content empty");
+                    return 1;
+                }
+            };
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 1;
+            }
+            if a.transformed_sources.iter().any(|src| src.path == path) {
+                a.emit_diagnostic(EmitDiagnostic {
+                    severity: 2,
+                    code: "PLUGIN014".to_string(),
+                    message: format!(
+                        "_transform_source_file: path `{}` already transformed in this \
+                         assemble_typed call (assemble.md §6.1 requires each file be \
+                         transformed at most once per call)",
+                        path
+                    ),
+                    span_json: String::new(),
+                });
+                a.trip(
+                    "_transform_source_file",
+                    format!("duplicate path `{}`", path),
+                );
+                return 1;
+            }
+            a.transformed_sources
+                .push(crate::plugins::plugin_abi::TransformedSource {
+                    path,
+                    content: new_content,
                 });
             0
         },
