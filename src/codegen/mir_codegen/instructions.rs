@@ -1352,6 +1352,34 @@ impl MirCodeGenerator<'_> {
                         continue;
                     }
 
+                    // Defensive guard against re-shipping CODEGEN-STRING-ALIAS-REGRESSED-0334
+                    // (compiler 0.33.44 fingerprint 54887260). If the callee resolves to a
+                    // plugin `expand_strings=true` bridge wrapper, its WASM code reads
+                    // `mem[ptr+0]` as the Clean-string length prefix. Passing a boxed
+                    // Any (whose offset 0 is the type tag byte) causes the wrapper to
+                    // forward `(ptr+4, tag_byte_as_len)` — either an OOB host read or a
+                    // garbage response. Catch this at codegen time in debug builds.
+                    //
+                    // Runtime cost in release builds is zero: `debug_assert!` compiles out.
+                    debug_assert!(
+                        !(function_name
+                            .as_deref()
+                            .is_some_and(|n| self.resolves_to_expand_strings_wrapper(n))
+                            && matches!(arg, MirOperand::Value(v) if matches!(self.value_to_type.get(v), Some(MirType::Any)))),
+                        "call-site guard: `{}` resolves to an expand_strings=true bridge wrapper \
+                         (registered via register_pending_bridge_wrappers), which expects raw \
+                         length-prefixed Clean String pointers. Argument {} is typed `MirType::Any` \
+                         (boxed [tag][ptr] struct). The wrapper will read the tag byte (typically 4 \
+                         for String) as the length and forward `(box_ptr+4, 4)` to the host — \
+                         producing an out-of-bounds read or a garbage response. \
+                         Fix at the MIR-builder level, not by inserting an unbox here: \
+                         the whole point of the guard is that the caller was already wrong \
+                         upstream, and hiding the mismatch here masks the real bug. \
+                         See fingerprint 54887260abf6 for the incident that motivates this guard.",
+                        function_name.as_deref().unwrap_or("<unknown>"),
+                        i
+                    );
+
                     self.load_operand(arg)?;
 
                     // Automatic type conversion: if parameter expects f64 but we have i32, convert

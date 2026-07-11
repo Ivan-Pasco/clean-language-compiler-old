@@ -1,0 +1,76 @@
+// Test: canaries/dashboard_shape
+// Namespace: cross-cutting (frame.data + frame.server + json + string.concat)
+// Purpose: pins the codegen shape of the clean-errors `/tasks` dashboard's
+//   `tasks_list_page` handler. If a compiler change alters this shape in a
+//   way that regresses the dashboard, the accompanying `test_dashboard_shape_canary_codegen`
+//   assertion fails at CI time — not after prod rolls back to a pre-fix WASM.
+//
+// This canary is the executable form of the CI improvement suggested in
+// error-report #54887260abf6:
+//
+//   "add a smoke test in their CI that literally builds this dashboard's
+//    main.cln and curls the URLs — that would have caught the 0.33.44
+//    regression before it shipped."
+//
+// We can't run the actual endpoint in unit-test CI (no MySQL, no clean-server
+// binary). But the codegen shape IS the delivery contract for the runtime
+// — the WAT inspection in the accompanying Rust test catches the classes
+// of failure that shipped as 0.33.44 fingerprint #54887260abf6 (spurious
+// boxing before an expand_strings=true wrapper) and 0.33.41-43 fingerprint
+// #3957fce40e09 (missing boxing before a boxed-Any wrapper). Both classes
+// leave visible fingerprints in the emitted WASM.
+//
+// Notes on the shape:
+//   * Two db.query calls interleaved with sequential string concats — the
+//     exact shape that repeatedly regressed on 0.33.41-44.
+//   * json.get called before and after a while-loop accumulator. This is
+//     the pattern that triggers the HIR-level string-accumulator rewrite
+//     (see `rewrite_string_accumulator_loops` in `hir/hir_builder.rs`).
+//   * The while body has if/else branches that materialize string locals
+//     inside the transient scope — the exact shape the `body_local_string_names`
+//     collector runs over.
+//   * Guarded by a runtime-false condition so this compiles clean but never
+//     dispatches to the missing bridges under wasmtime_runner.
+// Grammar: 5.3 function calls, 5.4 while loops, 5.5 assignments
+// Semantic: FUNC-001 bridge resolution, CGE-002 accumulator rewrite,
+//   CGE-003 transient-scope routing
+// Expected output:
+//   ok
+
+plugins:
+	frame.data
+	frame.server
+
+start:
+	boolean never = false
+	if never
+		string page = dashboard_page("error")
+		printl(page)
+	printl("ok")
+
+functions:
+	string dashboard_page(string origin_filter)
+		string where_clause = "1=1"
+		string params_arr = "[]"
+		if origin_filter != ""
+			where_clause = where_clause + " AND origin = ?"
+			params_arr = "[" + "\"" + origin_filter + "\"" + "]"
+		string cnt_sql = "SELECT COUNT(*) as cnt FROM tasks WHERE " + where_clause
+		string cnt_result = db.query(cnt_sql, params_arr)
+		integer total = json.get(cnt_result, "data.rows.0.cnt").toInteger()
+		string list_sql = ("SELECT task_id, origin, title FROM tasks WHERE " + where_clause
+			+ " ORDER BY task_id DESC LIMIT 5")
+		string list_result = db.query(list_sql, params_arr)
+		string rows_html = ""
+		integer i = 0
+		while i < 5
+			string idx = i.toString()
+			string r_id = json.get(list_result, "data.rows." + idx + ".task_id")
+			if r_id == ""
+				i = 5
+			else
+				string r_origin = json.get(list_result, "data.rows." + idx + ".origin")
+				string r_title = json.get(list_result, "data.rows." + idx + ".title")
+				rows_html = rows_html + "<tr><td>" + r_id + "</td><td>" + r_origin + "</td><td>" + r_title + "</td></tr>"
+				i = i + 1
+		return "<p>total: " + total.toString() + "</p><table>" + rows_html + "</table>"

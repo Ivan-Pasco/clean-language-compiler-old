@@ -2752,6 +2752,20 @@ impl MirCodeGenerator<'_> {
                 &wrapper_instructions,
             )?;
 
+            // Record that every name resolving to this wrapper receives
+            // `expand_strings` treatment. See
+            // `MirCodeGenerator::expand_strings_wrapper_names` for the
+            // invariant a caller of a name in this set must respect: pass
+            // raw length-prefixed Clean String pointers, NOT boxed Any
+            // structs or any other pre-transformed shape. Populated eagerly
+            // (bridge name + public name + language aliases) so the
+            // `resolves_to_expand_strings_wrapper` predicate is O(1) at
+            // call-site inspection time.
+            self.expand_strings_wrapper_names
+                .insert(wrapper.name.clone());
+            self.expand_strings_wrapper_names
+                .insert(public_name.clone());
+
             // Register language-name aliases for the wrapper
             if let Some(&wrapper_index) = self.wasm_generator.function_map.get(&public_name) {
                 for (lang_name, bridge_name) in &self.language_to_bridge_map {
@@ -2765,6 +2779,7 @@ impl MirCodeGenerator<'_> {
                         self.wasm_generator
                             .function_map
                             .insert(lang_name.clone(), wrapper_index);
+                        self.expand_strings_wrapper_names.insert(lang_name.clone());
                     }
                 }
                 // now() is a bare alias for time.now() used by frame.data plugin-generated code
@@ -2772,11 +2787,37 @@ impl MirCodeGenerator<'_> {
                     self.wasm_generator
                         .function_map
                         .insert("now".to_string(), wrapper_index);
+                    self.expand_strings_wrapper_names.insert("now".to_string());
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// True iff `name` resolves to a plugin bridge wrapper produced by
+    /// `register_pending_bridge_wrappers` — i.e. a wrapper that applies
+    /// the `expand_strings=true` treatment to its string parameters
+    /// (reads `mem[ptr+0]` as the Clean length prefix and forwards
+    /// `(ptr+4, len)` to the host).
+    ///
+    /// Query this before introducing any pre-call transformation of a
+    /// string argument (boxing, packing into a struct, allocating a
+    /// heap copy, etc.). Wrappers in this set REQUIRE the caller to
+    /// pass a raw length-prefixed Clean String pointer; passing anything
+    /// else corrupts the length read and produces either an
+    /// out-of-bounds host read or a garbage response — the exact class
+    /// of failure that shipped as CODEGEN-STRING-ALIAS-REGRESSED-0334
+    /// in compiler 0.33.44 and was reverted in 0.33.45.
+    ///
+    /// Accepts both the raw bridge name (`"_json_get"`), the public
+    /// wrapper name (also `"_json_get"` — same in the shared case, or
+    /// `"time.now"` for the `_time_now` wrap-i64 case), and every
+    /// language-facing alias registered via `language_to_bridge_map`
+    /// (`"json.get"`, `"db.query"`, etc.).
+    #[allow(dead_code)] // used by future MIR-builder call-site inspection
+    pub(super) fn resolves_to_expand_strings_wrapper(&self, name: &str) -> bool {
+        self.expand_strings_wrapper_names.contains(name)
     }
 
     /// Register the deferred no-op stubs for host-mismatched bridges queued
@@ -3228,5 +3269,82 @@ mod host_class_enforcement_tests {
                 .contains_key("_browser_only_fn"),
             "host-matched bridge must still be registered"
         );
+    }
+}
+
+/// Regression tests for the `expand_strings` wrapper-awareness that landed
+/// after CODEGEN-STRING-ALIAS-REGRESSED-0334 (fingerprint 54887260).
+///
+/// The 0.33.44 fix I shipped for CODEGEN-STRING-ARG-ALIAS-JSONGET added
+/// call-site boxing for `json.get` first arguments without checking whether
+/// the receiving WASM function was the stdlib boxed-Any implementation or a
+/// plugin `expand_strings=true` wrapper that expects a raw length-prefixed
+/// Clean string pointer. The mismatch produced a garbage `(ptr+4, tag_byte)`
+/// (ptr, len) pair that the host either OOB-read or forwarded as junk JSON.
+///
+/// These tests pin the invariant so a future codegen change that assumes
+/// "json.get always takes a boxed Any" panics loudly during unit tests
+/// instead of shipping.
+#[cfg(test)]
+mod expand_strings_wrapper_awareness_tests {
+    use crate::codegen::mir_codegen::MirCodeGenerator;
+
+    /// Baseline: a fresh MirCodeGenerator with no plugin wrappers must
+    /// report `false` for every name.
+    #[test]
+    fn resolves_to_expand_strings_wrapper_returns_false_when_empty() {
+        let gen = MirCodeGenerator::new_minimal();
+        assert!(!gen.resolves_to_expand_strings_wrapper("_json_get"));
+        assert!(!gen.resolves_to_expand_strings_wrapper("json.get"));
+        assert!(!gen.resolves_to_expand_strings_wrapper("db.query"));
+    }
+
+    /// Direct manipulation of the tracked set (simulates
+    /// register_pending_bridge_wrappers doing its work). Verifies the
+    /// query API returns `true` for both the raw bridge name and the
+    /// language alias, and stays `false` for unrelated names.
+    #[test]
+    fn resolves_to_expand_strings_wrapper_returns_true_after_registration() {
+        let mut gen = MirCodeGenerator::new_minimal();
+        // Simulate what register_pending_bridge_wrappers records: the raw
+        // bridge name, the public wrapper name (identical here — the
+        // wrap_i64 rename is `_time_now` → `time.now` only), and each
+        // language-facing alias populated via language_to_bridge_map.
+        gen.expand_strings_wrapper_names
+            .insert("_json_get".to_string());
+        gen.expand_strings_wrapper_names
+            .insert("json.get".to_string());
+        gen.expand_strings_wrapper_names
+            .insert("_db_query".to_string());
+        gen.expand_strings_wrapper_names
+            .insert("db.query".to_string());
+
+        // Every recorded name resolves.
+        assert!(gen.resolves_to_expand_strings_wrapper("_json_get"));
+        assert!(gen.resolves_to_expand_strings_wrapper("json.get"));
+        assert!(gen.resolves_to_expand_strings_wrapper("_db_query"));
+        assert!(gen.resolves_to_expand_strings_wrapper("db.query"));
+
+        // Unrelated names must still return false. `json.dataToText` is a
+        // stdlib boxed-Any function (does NOT get an expand_strings wrapper),
+        // and `string.concat` is a native compiler helper, not a plugin
+        // bridge — neither should ever appear in this set.
+        assert!(!gen.resolves_to_expand_strings_wrapper("json.dataToText"));
+        assert!(!gen.resolves_to_expand_strings_wrapper("string.concat"));
+        assert!(!gen.resolves_to_expand_strings_wrapper("print"));
+    }
+
+    /// Case-sensitivity guard: `json.get` and `Json.Get` must NOT alias.
+    /// Cleen namespace lookups are case-sensitive; a caller passing a
+    /// mis-cased name should get `false` and be visibly wrong at the
+    /// resolver level, not silently masked here.
+    #[test]
+    fn resolves_to_expand_strings_wrapper_is_case_sensitive() {
+        let mut gen = MirCodeGenerator::new_minimal();
+        gen.expand_strings_wrapper_names
+            .insert("json.get".to_string());
+        assert!(gen.resolves_to_expand_strings_wrapper("json.get"));
+        assert!(!gen.resolves_to_expand_strings_wrapper("Json.Get"));
+        assert!(!gen.resolves_to_expand_strings_wrapper("JSON.GET"));
     }
 }

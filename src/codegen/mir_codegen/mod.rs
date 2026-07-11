@@ -276,6 +276,25 @@ pub struct MirCodeGenerator<'a> {
     /// Maps bridge function name → list of `BuiltinType` parameter types.
     pub(super) bridge_param_types: HashMap<String, Vec<crate::builtins::registry::BuiltinType>>,
 
+    /// Names — both the raw bridge name (e.g. `_json_get`) and every
+    /// language-facing alias (e.g. `json.get`) — that resolve to a plugin
+    /// bridge wrapper produced by `register_pending_bridge_wrappers`. Those
+    /// wrappers apply the `expand_strings=true` treatment: for each string
+    /// parameter the wrapper reads `mem[ptr+0]` as the Clean length prefix
+    /// and passes `(ptr+4, len)` to the host.
+    ///
+    /// Any MIR-level pre-call transformation that assumes the callee wants
+    /// a boxed Any struct (or any other non-raw-string shape) for a
+    /// String-typed argument is WRONG for names in this set. The wrapper
+    /// would read the box's tag byte as the length, produce a malformed
+    /// `(ptr+4, tag_byte_as_len)` pair, and the host would either OOB or
+    /// return garbage. This regression class shipped once as compiler
+    /// 0.33.44 (fingerprint 54887260) — the guard below (see
+    /// `resolves_to_expand_strings_wrapper`) exists so a second attempt
+    /// panics loudly instead of shipping.
+    #[allow(dead_code)] // populated eagerly; read via `resolves_to_expand_strings_wrapper`
+    pub(super) expand_strings_wrapper_names: HashSet<String>,
+
     /// Memory budget tier — controls initial/max pages in the WASM memory section
     /// and the `clean:memory` custom section emitted into the module.
     pub(super) memory_tier: crate::MemoryTier,
@@ -359,6 +378,7 @@ impl MirCodeGenerator<'_> {
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
+            expand_strings_wrapper_names: HashSet::new(),
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
             user_defined_function_names: HashSet::new(),
@@ -403,6 +423,7 @@ impl MirCodeGenerator<'_> {
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
+            expand_strings_wrapper_names: HashSet::new(),
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
             user_defined_function_names: HashSet::new(),
@@ -447,6 +468,7 @@ impl MirCodeGenerator<'_> {
             handler_indices: HashMap::new(),
             next_handler_index: 0,
             bridge_param_types: HashMap::new(),
+            expand_strings_wrapper_names: HashSet::new(),
             memory_tier: crate::MemoryTier::Standard,
             referenced_function_indices: HashSet::new(),
             user_defined_function_names: HashSet::new(),
