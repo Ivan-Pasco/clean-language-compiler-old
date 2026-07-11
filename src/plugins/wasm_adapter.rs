@@ -6,7 +6,9 @@
 use anyhow::{anyhow, Result};
 use serde::de::DeserializeOwned;
 use std::sync::atomic::{AtomicI32, Ordering};
-use wasmtime::{Caller, Engine, ExternType, Linker, Memory, Module, Store, TypedFunc, ValType};
+use wasmtime::{
+    Caller, Engine, Extern, ExternType, Linker, Memory, Module, Store, TypedFunc, ValType,
+};
 
 use crate::ast::{FrameworkBlock, Statement};
 use crate::plugins::{
@@ -2286,18 +2288,64 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, _ptr: i32| {},
         )?;
 
-        // memory_runtime.mem_scope_push - Push scope mark for arena allocation (no-op in this impl)
+        // memory_runtime.mem_scope_push - Push scope mark for arena allocation.
+        //
+        // Mirrors `wasmtime_runner`'s implementation: save the current
+        // host bump-allocator offset AND the WASM-side `__heap_ptr` global.
+        // Without saving `__heap_ptr`, the paired `mem_scope_pop` cannot
+        // rewind WASM-side `malloc` allocations, and later reads of arena
+        // objects (list<string> elements, substrings, etc.) hit stale
+        // pointers whose backing memory has been reused — corrupting output
+        // silently, or producing `substring(start > end)` traps at wasm
+        // function 207 when the reused bytes decode as a bogus length.
+        // PLG001 (fp 81ee7e44) / framework fp d9f480ae.
         linker.func_wrap(
             "memory_runtime",
             "mem_scope_push",
-            |_: Caller<'_, PluginState>| {},
+            |mut caller: Caller<'_, PluginState>| {
+                let alloc_offset = caller.data().alloc_offset;
+                let wasm_heap =
+                    if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                        heap_global.get(&mut caller).i32().unwrap_or(0) as usize
+                    } else {
+                        alloc_offset
+                    };
+                caller
+                    .data_mut()
+                    .mem_scope_marks
+                    .push((alloc_offset, wasm_heap));
+            },
         )?;
 
-        // memory_runtime.mem_scope_pop - Pop scope mark for arena allocation (no-op in this impl)
+        // memory_runtime.mem_scope_pop - Pop the top scope mark and rewind
+        // both the host arena bump pointer and the WASM `__heap_ptr` global
+        // to the saved values, reclaiming every allocation made between the
+        // paired push and pop. Defensive: no-op if the stack is empty
+        // (e.g. a plugin trap mid-scope left it unbalanced).
+        // PLG001 (fp 81ee7e44) / framework fp d9f480ae.
         linker.func_wrap(
             "memory_runtime",
             "mem_scope_pop",
-            |_: Caller<'_, PluginState>| {},
+            |mut caller: Caller<'_, PluginState>| {
+                let mark = caller.data_mut().mem_scope_marks.pop();
+                if let Some((saved_alloc, saved_heap)) = mark {
+                    // Rewind host arena — only if the mark is above the
+                    // stable zone and not above the current top. Mirrors
+                    // the guard in `arena_reset` (release-build safe).
+                    let state = caller.data_mut();
+                    if saved_alloc >= state.stable_zone_end && saved_alloc <= state.alloc_offset {
+                        state.alloc_offset = saved_alloc;
+                    }
+                    // Rewind WASM-side `__heap_ptr` if the export exists.
+                    if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
+                        let current = heap_global.get(&mut caller).i32().unwrap_or(0) as usize;
+                        if saved_heap <= current {
+                            let _ =
+                                heap_global.set(&mut caller, wasmtime::Val::I32(saved_heap as i32));
+                        }
+                    }
+                }
+            },
         )?;
 
         // env._arena_scope_push — push a save mark onto the host arena stack.
@@ -4814,6 +4862,14 @@ pub(crate) struct PluginState {
     /// calls. Each entry is the `alloc_offset` at the time of the push.
     /// `arena_reset` pops the top entry and rewinds `alloc_offset` to it.
     arena_marks: Vec<usize>,
+    /// Stack of save marks for nested `mem_scope_push` / `mem_scope_pop`
+    /// calls. Each entry is `(host alloc_offset, wasm __heap_ptr)` at the
+    /// time of the push. `mem_scope_pop` rewinds both. This is kept
+    /// separate from `arena_marks` because the two APIs are emitted by
+    /// different HIR rewrites and can interleave with different depths;
+    /// sharing a stack risked one API popping a mark pushed by the other.
+    /// PLG001 (fp 81ee7e44).
+    mem_scope_marks: Vec<(usize, usize)>,
     /// Last error reported by plugin
     last_error: Option<String>,
     /// Pointer to a pre-allocated empty LP-string in plugin memory.
@@ -4897,6 +4953,7 @@ impl PluginState {
             stable_zone_end: 524288,
             peak_alloc_offset: 524288,
             arena_marks: Vec::new(),
+            mem_scope_marks: Vec::new(),
             last_error: None,
             cached_empty_lp_ptr: None,
             oom_during_call: None,
@@ -5058,6 +5115,39 @@ mod arena_tests {
         assert!(
             state.alloc_offset < outer_ptr_before_outer_reset,
             "outer reset must rewind past inner allocations"
+        );
+    }
+
+    #[test]
+    fn mem_scope_marks_lifo_pair_alloc_and_heap() {
+        // PLG001 (fp 81ee7e44): mem_scope_push/mem_scope_pop must save AND
+        // restore both the host bump-allocator offset and the WASM
+        // __heap_ptr snapshot together, and behave as a LIFO stack that is
+        // independent of `arena_marks`. The bridge relies on this stack
+        // holding (alloc_offset, wasm_heap_ptr) pairs so pop can rewind
+        // both. Verify the stack behaves as a LIFO regardless of
+        // interleaved `arena_marks` activity.
+        let mut state = PluginState::new();
+        state.mem_scope_marks.push((1_000, 2_000));
+        // Simulate an unrelated arena scope opening — the mem_scope stack
+        // must not observe it.
+        let _arena = state.arena_mark();
+        state.mem_scope_marks.push((3_000, 4_000));
+        assert_eq!(state.mem_scope_marks.len(), 2, "both marks pushed");
+        assert_eq!(
+            state.mem_scope_marks.pop(),
+            Some((3_000, 4_000)),
+            "LIFO: top was the last push"
+        );
+        assert_eq!(
+            state.mem_scope_marks.pop(),
+            Some((1_000, 2_000)),
+            "LIFO: bottom was the first push, unaffected by arena_marks"
+        );
+        assert_eq!(
+            state.mem_scope_marks.pop(),
+            None,
+            "empty stack pops to None (defensive: unbalanced scopes)"
         );
     }
 
