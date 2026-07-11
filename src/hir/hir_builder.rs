@@ -4780,7 +4780,7 @@ impl HirBuilder {
     /// return whatever the arena reused that slot for.
     ///
     /// Concrete failure (CODEGEN000, fingerprint 74837f51f68b):
-    ///   ```
+    ///   ```text
     ///   while ...
     ///       string module_name = file_path.substring(...)
     ///       names.push(module_name + "_render")
@@ -5315,11 +5315,13 @@ impl HirBuilder {
     /// argument. Return true when any positional argument gets stored
     /// into the receiver.
     fn namespace_call_stores_argument(namespace: &str, function: &str) -> bool {
-        match (namespace, function) {
-            ("list", "push" | "add" | "insert" | "set" | "unshift" | "fill") => true,
-            ("pairs", "set") => true,
-            _ => false,
-        }
+        matches!(
+            (namespace, function),
+            (
+                "list",
+                "push" | "add" | "insert" | "set" | "unshift" | "fill"
+            ) | ("pairs", "set")
+        )
     }
 
     /// `Call` equivalent of `method_stores_argument`. Recognises both
