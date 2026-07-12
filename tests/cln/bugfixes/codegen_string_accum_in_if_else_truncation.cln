@@ -1,0 +1,74 @@
+// Test: bugfixes/codegen_string_accum_in_if_else_truncation
+// Grammar: while_statement, if_statement, variable_declaration, assignment, binary_expression
+// Semantic: SEM020 (accumulator pattern), CODEGEN-STRING-ACCUM-LOOP-TRUNCATION
+//
+// Regression pin for #0d080661e5f2 / #8e9e5be5614c
+// (CODEGEN-STRING-ACCUM-LOOP-TRUNCATION).
+//
+// Reproduces the exact structure from the failing production /tasks page:
+//   - render_row concatenates many json.get() results (bridge memory)
+//   - build_all runs a while loop with body-local `row = render_row(...)`
+//   - self-append `rows_html = rows_html + row` lives INSIDE an if/else
+//
+// Root cause (fixed in this commit): when string_builder_append's grow
+// malloc failed under memory pressure, it returned 0 to the caller.
+// The caller's `__sb_N = string_builder_append(__sb_N, frag)` overwrote
+// the still-valid builder pointer with 0. The next append call then read
+// capacity/length from linear memory offset 0 (the reserved header area)
+// and produced corrupted writes plus a garbage finalize pointer — the
+// STATE A "truncated tail fragment" symptom.
+//
+// Fix: return the OLD builder pointer on grow failure so the caller
+// preserves the content already built (truncated but structurally valid),
+// AND add a null-builder guard at append entry so a truly-null builder
+// (from a failed string_builder_new) short-circuits without touching
+// memory. See src/codegen/native_stdlib/string_builder.rs.
+//
+// This test exercises a fixture size well below the memory cap. The
+// accumulator produces exactly 3 rows × 171 bytes each = 513 bytes.
+//
+// Fixed in: compiler 0.33.56
+// Expected output:
+//   513
+
+start:
+	string fixture = "{\"data\":{\"rows\":[{\"id\":\"1\",\"origin\":\"error\",\"title\":\"one\",\"status\":\"open\",\"priority\":\"50\",\"components_json\":\"[]\",\"last_activity_at\":\"2026-07-12\",\"event_count\":\"1\"},{\"id\":\"2\",\"origin\":\"error\",\"title\":\"one\",\"status\":\"open\",\"priority\":\"50\",\"components_json\":\"[]\",\"last_activity_at\":\"2026-07-12\",\"event_count\":\"1\"},{\"id\":\"3\",\"origin\":\"error\",\"title\":\"one\",\"status\":\"open\",\"priority\":\"50\",\"components_json\":\"[]\",\"last_activity_at\":\"2026-07-12\",\"event_count\":\"1\"}]}}"
+	string rows_html = build_all(fixture, 3)
+	printl(rows_html.length().toString())
+
+functions:
+	string render_row(string list_result, string idx)
+		string r_id = json.get(list_result, "data.rows." + idx + ".id")
+		if r_id == ""
+			return ""
+		string r_origin = json.get(list_result, "data.rows." + idx + ".origin")
+		string r_title = json.get(list_result, "data.rows." + idx + ".title")
+		string r_status = json.get(list_result, "data.rows." + idx + ".status")
+		string r_prio = json.get(list_result, "data.rows." + idx + ".priority")
+		string r_comps = json.get(list_result, "data.rows." + idx + ".components_json")
+		string r_activity = json.get(list_result, "data.rows." + idx + ".last_activity_at")
+		string r_evc = json.get(list_result, "data.rows." + idx + ".event_count")
+		return ("<tr>"
+			+ "<td>#" + r_id + "</td>"
+			+ "<td>" + r_origin + "</td>"
+			+ "<td title='" + r_title + "'>" + r_title + "</td>"
+			+ "<td>" + r_comps + "</td>"
+			+ "<td><span>" + r_status + "</span></td>"
+			+ "<td>" + r_prio + "</td>"
+			+ "<td>" + r_evc + "</td>"
+			+ "<td>" + r_activity + "</td>"
+			+ "<td><a href='/tasks/" + r_id + "'>View</a></td>"
+			+ "</tr>")
+
+	string build_all(string fixture, integer per_page)
+		string rows_html = ""
+		integer i = 0
+		while i < per_page
+			string idx = i.toString()
+			string row = render_row(fixture, idx)
+			if row == ""
+				i = per_page
+			else
+				rows_html = rows_html + row
+				i = i + 1
+		return rows_html

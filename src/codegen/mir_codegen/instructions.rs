@@ -1941,13 +1941,63 @@ impl MirCodeGenerator<'_> {
                             || matches!(dest_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
 
                         if is_any_or_ptr_void {
-                            debug_mir!(
-                                "DEBUG ANY DEST: Storing value to Any/dynamic type dest {:?}",
-                                dest
+                            // If the function is a known void built-in, do NOT store —
+                            // there is nothing on the stack. The MIR may assign a dest
+                            // (Any-typed) to a void call as a byproduct of expression
+                            // lowering, but the WASM-level call left the stack empty
+                            // because the bridge signature is `-> void`. Storing here
+                            // produces COM001 "expected i32 but nothing on stack".
+                            //
+                            // Fingerprint pattern: repro is a bare `server.sleep(0)`
+                            // or similar void call to a namespaced built-in whose
+                            // callsite propagates as Any through the MIR.
+                            let is_known_void_by_name = function_name
+                                .as_deref()
+                                .and_then(|name| self.function_return_types.get(name))
+                                .is_some_and(|rt| {
+                                    matches!(rt, MirType::Void)
+                                        || matches!(rt, MirType::Ptr(inner) if matches!(**inner, MirType::Void))
+                                });
+                            let is_known_void_hardcoded = matches!(
+                                function_name.as_deref(),
+                                Some("print")
+                                    | Some("printl")
+                                    | Some("list.set")
+                                    | Some("list.clear")
+                                    | Some("list.setFlags")
+                                    | Some("pairs.set")
+                                    | Some("__pairs_set")
+                                    | Some("mem_release")
+                                    | Some("mem_retain")
+                                    | Some("mem_scope_push")
+                                    | Some("mem_scope_pop")
+                                    | Some("string_builder_reclaim")
+                                    | Some("__string_builder_reclaim")
+                                    | Some("transient_scope_exit")
+                                    | Some("__transient_scope_exit")
+                                    | Some("server.sleep")
+                                    | Some("_server_sleep")
+                                    | Some("_state_reset_all")
+                                    | Some("_state_reset_named")
+                                    | Some("http.setUserAgent")
+                                    | Some("http.setTimeout")
+                                    | Some("http.setMaxRedirects")
+                                    | Some("http.enableCookies")
                             );
-                            // For Any/Ptr(Void) destinations no coercion is appropriate
-                            // (Any is the boxed-pointer representation; treat as opaque).
-                            self.store_to_local(dest)?;
+                            if is_known_void_by_name || is_known_void_hardcoded {
+                                debug_mir!(
+                                    "DEBUG ANY DEST: Skipping store for known void {:?}",
+                                    function_name
+                                );
+                            } else {
+                                debug_mir!(
+                                    "DEBUG ANY DEST: Storing value to Any/dynamic type dest {:?}",
+                                    dest
+                                );
+                                // For Any/Ptr(Void) destinations no coercion is appropriate
+                                // (Any is the boxed-pointer representation; treat as opaque).
+                                self.store_to_local(dest)?;
+                            }
                         } else if wasm_return_mir.is_some() {
                             // We now know the source type from the WASM type section;
                             // route through the conversion helper to handle i32↔f64 mismatch.

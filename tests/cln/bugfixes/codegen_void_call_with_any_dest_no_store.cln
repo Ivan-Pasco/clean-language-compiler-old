@@ -1,0 +1,30 @@
+// Test: bugfixes/codegen_void_call_with_any_dest_no_store
+// Grammar: expression_statement, function_call
+// Semantic: SEM020 (call resolution), COM001 (WASM validation)
+//
+// Regression pin for the COM001 family recorded locally on 0.33.23 as
+// fingerprint a97c328ab0393810 (+ 10 related fingerprints, all with the
+// same offset pattern near func[234]).
+//
+// The MIR builder assigns a temporary `dest` (Any-typed) to expression-
+// statement calls like `server.sleep(0)`. In the codegen path for
+// has_dest=true + wasm_return_mir=None + dest_type=Any, `store_to_local`
+// was called unconditionally — but the WASM call left nothing on the
+// stack because the bridge signature is `(i64) -> void`. That produced
+// COM001 "expected i32 but nothing on stack" at validation time.
+//
+// Fix: check `is_known_void_by_name` OR the hardcoded void-builtin list
+// before storing, and skip the store if the call is void. See
+// src/codegen/mir_codegen/instructions.rs (the Any-dest branch inside
+// the has_dest+no-signature path).
+//
+// This test just calls `server.sleep(0)` at start-block level — the
+// exact 3-line shape that reproduced the bug on 0.33.55.
+//
+// Fixed in: compiler 0.33.56
+// Expected output:
+//   ok
+
+start:
+	server.sleep(0)
+	printl("ok")

@@ -1,0 +1,18 @@
+# WASM determinism allowlist.
+#
+# Files listed here still get checked by `scripts/wasm_determinism.py`, but
+# any drift they exhibit is downgraded to a warning instead of a hard fail.
+# This lets us promote the determinism check to a blocking CI gate WITHOUT
+# breaking the build on the small set of files that still legitimately drift.
+#
+# NEVER add a NEW file to this allowlist. The whole point of the gate is to
+# catch new sources of non-determinism the moment they land.
+#
+# Format: one relative path per line, from the repo root. `#` for comments.
+#
+# When you fix the underlying non-determinism for a file, REMOVE the line —
+# CI will keep the fix from regressing.
+
+# Uses async plugin state whose HashMap iteration order still leaks into
+# the emitted WASM's export section. Tracked separately.
+tests/cln/canaries/auth.cln

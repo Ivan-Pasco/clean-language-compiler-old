@@ -375,6 +375,64 @@ python3 tests/qa/scripts/validate_syntax_compliance.py tests/cln/
 - **Internet Search**: Access to latest solutions and patterns
 - **Deep Thinking**: Architectural analysis with proven procedures
 
+## 🛡️ **AUTOMATED STRATEGY-MAINTENANCE GUARDS**
+
+The strategy above is enforced by three automated layers. Every new test
+file passes through them; legacy debt is tracked in explicit baseline files
+so contributors can see and drain it over time.
+
+### Layer 1: `.githooks/pre-commit` (fast, ~30 s)
+Runs `scripts/check_test_quality.py --strict --paths <staged files>` on
+every commit that touches a test file. **Strict on staged files** because
+whatever you're editing right now must comply, no grandfathering.
+
+Bypass: `git commit --no-verify` or `CLN_SKIP_PRE_COMMIT=1`.
+
+### Layer 2: `.githooks/pre-push` (medium, ~2–5 min warm)
+Runs the full-tree quality guard (with baseline), `cargo test --lib`, and
+`scripts/check_regressions.py`. Catches bad work before it hits CI.
+
+Bypass: `git push --no-verify` or `CLN_SKIP_PRE_PUSH=1`.
+
+### Layer 3: CI (blocking)
+- **`architecture-guards.yml → test-quality-guard`** — baseline mode. New
+  violations block the PR; legacy debt tracked in
+  `tests/.test_quality_baseline.txt`.
+- **`regressions.yml`** — runs `check_regressions.py` on every PR + push
+  to main. A previously-fixed bug re-opening blocks the merge.
+- **`spec-coverage.yml`** — ratcheted semantic-rule citation coverage
+  (54.93% baseline).
+- **`nightly.yml → wasm-determinism`** — allowlisted drift only; new
+  non-determinism blocks nightly.
+
+### Rules the guard enforces (from `scripts/check_test_quality.py`)
+
+| Rule | Applies to                | What it catches                                                            |
+|------|---------------------------|----------------------------------------------------------------------------|
+| R1   | Rust `#[test]` bodies     | `todo!()`, `unimplemented!()`, `panic!("not implemented"/"TODO"/"stub")`   |
+| R2   | Rust `#[test]` bodies     | Vacuous asserts: `assert!(true)`, `assert_eq!(N, N)`, `assert!(1==1)`      |
+| R3   | Any `#[ignore]`           | Ignored tests without a justification (`#[ignore = "reason"]` OR nearby `// reason:` / `// obsolete:` / `// TODO:` / `// blocked on` / `// see #NNNN` comment) |
+| R4   | Rust `#[test]` bodies     | Empty bodies or only `Ok(())` with no assertions                           |
+| C1   | `tests/cln/bugfixes/*.cln`| Missing any of the mandatory headers: `// Test:`, `// Grammar:` OR `// Semantic:`, `// Fixed in:`, `// Expected output:` |
+| C2   | Any `tests/cln/**/*.cln`  | Placeholder-only bodies (`print("todo")`, etc.)                            |
+| C3   | `tests/cln/future/`       | (Exempt: incomplete features are allowed to break C1/C2.)                  |
+
+### Baseline drain policy
+
+Legacy files listed in `tests/.test_quality_baseline.txt` are ignored by
+CI. **This baseline exists to shrink, not to grow.** Two rules:
+
+1. **Never add a new file** to the baseline. New test files must comply
+   from day one.
+2. **Fix + remove**: when you touch a legacy file, bring it into
+   compliance and delete its line from the baseline. Run the guard
+   locally with `--strict` to verify.
+
+The number of remaining baseline files is reported at the end of every
+`test-quality-guard` CI run.
+
+---
+
 ## 🎯 **EXPECTED OUTCOMES**
 
 ### **Immediate Results**

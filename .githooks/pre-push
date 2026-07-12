@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Clean Language compiler — advisory pre-push hook
+#
+# Runs medium-weight checks that catch bad commits BEFORE they hit CI. Slower
+# than pre-commit (~2–5 min on a warm cache), but still fast enough to be
+# useful. What CI does is the source of truth; this hook is a courtesy layer.
+#
+# Stages:
+#   1. Test-quality guard on the WHOLE tree with baseline mode (mirrors CI).
+#   2. cargo test --lib          — the same 620+ unit tests CI runs.
+#   3. Bugfix regression pins    — python3 scripts/check_regressions.py.
+#      Requires release binaries; we build them if absent.
+#
+# ADVISORY: bypass with `git push --no-verify` when you know the change is
+# push-safe but locally slow (e.g. a doc-only edit).
+#
+# Install: run scripts/install-hooks.sh once, or:
+#   git config core.hooksPath .githooks
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+BLUE='\033[1;34m'
+YELLOW='\033[1;33m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Allow developer opt-out via env var
+if [ "${CLN_SKIP_PRE_PUSH:-0}" = "1" ]; then
+    printf "${DIM}[pre-push] CLN_SKIP_PRE_PUSH=1, skipping${NC}\n"
+    exit 0
+fi
+
+# Read the ref list that would be pushed. If nothing new is being pushed
+# (e.g. re-pushing an existing ref), skip.
+NEW_REFS=""
+while IFS=' ' read -r _local_ref _local_sha _remote_ref remote_sha; do
+    NEW_REFS+="$remote_sha "
+done
+# If stdin was empty, `while read` doesn't iterate and NEW_REFS is empty.
+if [ -z "${NEW_REFS// /}" ]; then
+    # This happens for pushes without remote-ref info (e.g. force-push new branch
+    # to a URL with no tracking). Fall through and run the checks anyway.
+    :
+fi
+
+printf "${BLUE}[pre-push]${NC} clean-language-compiler medium-weight checks\n"
+
+# -----------------------------------------------------------------------------
+# 1. Test-quality guard (whole tree, baseline mode)
+# -----------------------------------------------------------------------------
+printf "${BLUE}[1/3]${NC} test-quality guard (whole tree, baseline mode)...\n"
+if ! python3 scripts/check_test_quality.py --baseline 2>&1 | tail -10; then
+    printf "${RED}[pre-push] test-quality guard failed${NC}\n"
+    printf "${DIM}  bypass: git push --no-verify${NC}\n"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# 2. cargo test --lib
+# -----------------------------------------------------------------------------
+printf "${BLUE}[2/3]${NC} cargo test --lib...\n"
+if ! cargo test --lib --quiet 2>&1 | tail -5; then
+    printf "${RED}[pre-push] cargo test --lib failed${NC}\n"
+    printf "${DIM}  bypass: git push --no-verify${NC}\n"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# 3. Bugfix regression pins
+# -----------------------------------------------------------------------------
+printf "${BLUE}[3/3]${NC} bugfix regression pins (scripts/check_regressions.py)...\n"
+
+# Ensure release binaries exist. Build them if not.
+if [ ! -x target/release/cln ] || [ ! -x target/release/wasmtime_runner ]; then
+    printf "  ${DIM}→ building release binaries (first-time or after clean)...${NC}\n"
+    if ! cargo build --release --bin cln --bin wasmtime_runner --quiet 2>&1 | tail -5; then
+        printf "${RED}[pre-push] failed to build release binaries${NC}\n"
+        printf "${DIM}  bypass: git push --no-verify${NC}\n"
+        exit 1
+    fi
+fi
+
+if ! python3 scripts/check_regressions.py 2>&1 | tail -15; then
+    printf "${RED}[pre-push] bugfix regression pins failed${NC}\n"
+    printf "${YELLOW}  → a previously-fixed bug has re-opened, or a bugfix test's expected \n"
+    printf "    output has drifted. See the mismatch details above.${NC}\n"
+    printf "${DIM}  bypass: git push --no-verify (if you're absolutely sure)${NC}\n"
+    exit 1
+fi
+
+printf "${GREEN}[pre-push] all checks passed${NC}\n"
+exit 0

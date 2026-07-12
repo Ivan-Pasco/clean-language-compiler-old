@@ -134,6 +134,18 @@ pub fn gen_string_builder_new(malloc_func: u32) -> Vec<Instruction<'static>> {
 /// one, so the geometric sum is O(n).
 pub fn gen_string_builder_append(malloc_func: u32) -> Vec<Instruction<'static>> {
     vec![
+        // Null-builder guard: if the caller's builder is 0 (because a prior
+        // `string_builder_new` OOM'd), return 0 immediately without touching
+        // memory. Without this guard, the reads at BUILDER_CAPACITY_OFFSET
+        // and BUILDER_LENGTH_OFFSET would target linear-memory offset 0 —
+        // the reserved header area — and produce garbage capacity/length,
+        // then the copy loop below would corrupt low memory.
+        Instruction::LocalGet(0),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
         // Read current capacity -> local 2
         Instruction::LocalGet(0),
         Instruction::I32Load(MemArg {
@@ -196,10 +208,19 @@ pub fn gen_string_builder_append(malloc_func: u32) -> Vec<Instruction<'static>> 
         Instruction::I32Add,
         Instruction::Call(malloc_func),
         Instruction::LocalTee(7),
-        // If allocation failed, return 0 (already on stack via LocalTee).
+        // If allocation failed, return the OLD builder pointer unchanged.
+        // Returning 0 here would null out the caller's builder local, and
+        // the next append call would read capacity/length from linear memory
+        // offset 0 (the reserved header area), producing corrupted writes
+        // and a garbage finalize pointer — the STATE A truncation family
+        // documented in CODEGEN-STRING-ACCUM-LOOP-TRUNCATION. Returning the
+        // old pointer instead lets the caller keep the partial content
+        // that already fit; subsequent appends will keep hitting this
+        // branch and no-oping, and finalize will produce a truncated but
+        // structurally valid string with the pre-OOM prefix intact.
         Instruction::I32Eqz,
         Instruction::If(BlockType::Empty),
-        Instruction::I32Const(0),
+        Instruction::LocalGet(0),
         Instruction::Return,
         Instruction::End,
         // Write new capacity at new_builder_ptr + 0
@@ -603,6 +624,81 @@ mod tests {
             matches!(instructions[0], Instruction::GlobalGet(HEAP_PTR_GLOBAL)),
             "heap_ptr_snapshot must read HEAP_PTR_GLOBAL — reading any other \
              global would return the wrong save-point"
+        );
+    }
+
+    /// Regression guard for CODEGEN-STRING-ACCUM-LOOP-TRUNCATION (#0d080661e5f2 /
+    /// #8e9e5be5614c). Under memory pressure the grow-path malloc may fail;
+    /// returning 0 to the caller nulls out the caller's builder local and
+    /// the next append call reads capacity/length from linear memory offset 0
+    /// (the reserved header area), producing corrupted writes and a garbage
+    /// finalize pointer. The fix returns the OLD builder pointer (LocalGet 0)
+    /// instead of 0 so the caller preserves the partial content already built.
+    #[test]
+    fn test_string_builder_append_preserves_old_ptr_on_grow_failure() {
+        let instructions = gen_string_builder_append(0);
+        // Find the eqz+if that guards the grow-path malloc result. The
+        // instruction inside the if-body must be LocalGet(0) (the OLD builder
+        // pointer), NOT I32Const(0).
+        // Signature: LocalTee(7), I32Eqz, If(_), LocalGet(0), Return, End
+        let idx = instructions
+            .windows(6)
+            .position(|w| {
+                matches!(w[0], Instruction::LocalTee(7))
+                    && matches!(w[1], Instruction::I32Eqz)
+                    && matches!(w[2], Instruction::If(_))
+                    && matches!(w[3], Instruction::LocalGet(0))
+                    && matches!(w[4], Instruction::Return)
+                    && matches!(w[5], Instruction::End)
+            })
+            .expect(
+                "string_builder_append must return the OLD builder pointer (LocalGet 0) \
+                 on grow-path malloc failure — returning 0 would corrupt caller state \
+                 and re-open CODEGEN-STRING-ACCUM-LOOP-TRUNCATION",
+            );
+        assert!(
+            idx > 0,
+            "grow-failure guard must not be the first instruction"
+        );
+    }
+
+    /// Regression guard: string_builder_append must short-circuit when its
+    /// builder argument is 0. Without this guard, reads at
+    /// BUILDER_CAPACITY_OFFSET / BUILDER_LENGTH_OFFSET would target linear
+    /// memory offset 0 — the reserved header area — producing garbage
+    /// capacity/length and corrupting low memory when the copy loop runs.
+    #[test]
+    fn test_string_builder_append_null_builder_guard() {
+        let instructions = gen_string_builder_append(0);
+        // The null guard must appear as the very first executable check.
+        // Signature: LocalGet(0), I32Eqz, If(_), I32Const(0), Return, End
+        assert!(
+            instructions.len() >= 6,
+            "string_builder_append body too short to contain a null-builder guard"
+        );
+        assert!(
+            matches!(instructions[0], Instruction::LocalGet(0)),
+            "null-builder guard must read the builder_ptr param first"
+        );
+        assert!(
+            matches!(instructions[1], Instruction::I32Eqz),
+            "null-builder guard must test the builder_ptr with I32Eqz"
+        );
+        assert!(
+            matches!(instructions[2], Instruction::If(_)),
+            "null-builder guard must enter an If block on eqz"
+        );
+        assert!(
+            matches!(instructions[3], Instruction::I32Const(0)),
+            "null-builder guard must push 0 as the return value"
+        );
+        assert!(
+            matches!(instructions[4], Instruction::Return),
+            "null-builder guard must return immediately"
+        );
+        assert!(
+            matches!(instructions[5], Instruction::End),
+            "null-builder guard must close its If block"
         );
     }
 }

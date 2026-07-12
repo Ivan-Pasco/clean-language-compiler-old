@@ -105,9 +105,10 @@ jobs:
     name: WASM byte determinism
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Do not fail the workflow — this drift is tracked in TASKS.md. Once
-    # fixed, remove `continue-on-error` to promote the job to a gate.
-    continue-on-error: true
+    # BLOCKING gate. Files with known drift are listed in
+    # scripts/wasm_determinism_allowlist.txt and produce warnings without
+    # failing. New drift fails the build — catches new sources of
+    # non-determinism the moment they land.
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

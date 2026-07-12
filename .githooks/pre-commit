@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Clean Language compiler — advisory pre-commit hook
+#
+# What it does (in < 30s on a typical commit):
+#   1. cargo fmt --check on staged Rust files
+#   2. cargo clippy --lib -- -D warnings   (fast; skips tests/binaries)
+#   3. Fragile-area detector: if a staged file is listed in
+#      .claude/fragile-paths.txt, warn and print the relevant KNOWLEDGE.md
+#      section. If no test files are staged alongside, ask the developer to
+#      confirm.
+#   4. Affected unit tests: for each staged src/ module, run its #[cfg(test)]
+#      module. Fails on red.
+#   5. Test-quality guard: scan staged test files for placeholders, vacuous
+#      asserts, missing bugfix headers, and undocumented #[ignore]s.
+#      Uses --strict (no baseline) since we're only checking staged files —
+#      if you're touching a test file the whole file must comply.
+#
+# ADVISORY: this hook is meant to warn, not to be a wall. You can always
+# bypass it with `git commit --no-verify` when you know what you are doing.
+# The equivalent CI job (architecture-guards.yml) is the blocking gate.
+#
+# Install: run scripts/install-hooks.sh once, or:
+#   git config core.hooksPath .githooks
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+FRAGILE_FILE="$REPO_ROOT/.claude/fragile-paths.txt"
+YELLOW='\033[1;33m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+BLUE='\033[1;34m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Skip entirely when no commit is happening (e.g. --amend --no-edit paths that
+# call the hook with no staged content, or interactive rebases).
+STAGED_ALL=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$STAGED_ALL" ]; then
+    exit 0
+fi
+
+STAGED_RS=$(printf '%s\n' "$STAGED_ALL" | grep -E '^src/.*\.rs$' || true)
+STAGED_TESTS=$(printf '%s\n' "$STAGED_ALL" | grep -E '^tests/' || true)
+
+# Allow developer opt-out via env var (documented in scripts/install-hooks.sh)
+if [ "${CLN_SKIP_PRE_COMMIT:-0}" = "1" ]; then
+    printf "${DIM}[pre-commit] CLN_SKIP_PRE_COMMIT=1, skipping${NC}\n"
+    exit 0
+fi
+
+printf "${BLUE}[pre-commit]${NC} clean-language-compiler advisory checks\n"
+
+# -----------------------------------------------------------------------------
+# 1. cargo fmt --check (staged Rust files only)
+# -----------------------------------------------------------------------------
+if [ -n "$STAGED_RS" ]; then
+    printf "${BLUE}[1/4]${NC} cargo fmt --check on staged files...\n"
+    if ! printf '%s\n' "$STAGED_RS" | xargs cargo fmt -- --check 2>/dev/null; then
+        printf "${RED}[pre-commit] cargo fmt found unformatted files. Run: cargo fmt${NC}\n"
+        printf "${DIM}  bypass: git commit --no-verify${NC}\n"
+        exit 1
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# 2. cargo clippy on library (fast; no test/binary compilation)
+# -----------------------------------------------------------------------------
+if [ -n "$STAGED_RS" ]; then
+    printf "${BLUE}[2/4]${NC} cargo clippy --lib (deny warnings)...\n"
+    if ! cargo clippy --lib --quiet -- -D warnings 2>&1 | tail -20; then
+        printf "${RED}[pre-commit] clippy found issues. Fix or bypass with --no-verify${NC}\n"
+        exit 1
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# 3. Fragile-area detector
+# -----------------------------------------------------------------------------
+if [ -f "$FRAGILE_FILE" ]; then
+    printf "${BLUE}[3/4]${NC} fragile-area detector...\n"
+    FRAGILE_HITS=""
+    while IFS= read -r line; do
+        # Strip inline comments and trim
+        clean=$(printf '%s' "$line" | sed 's/#.*$//' | awk '{$1=$1;print}')
+        [ -z "$clean" ] && continue
+
+        while IFS= read -r staged; do
+            [ -z "$staged" ] && continue
+            case "$staged" in
+                "$clean"*)
+                    FRAGILE_HITS="${FRAGILE_HITS}${staged} matches ${clean}\n"
+                    ;;
+            esac
+        done <<< "$STAGED_ALL"
+    done < "$FRAGILE_FILE"
+
+    if [ -n "$FRAGILE_HITS" ]; then
+        printf "${YELLOW}\n  ─────────────────────────────────────────────${NC}\n"
+        printf "${YELLOW}  FRAGILE AREA EDIT DETECTED${NC}\n"
+        printf "${YELLOW}  ─────────────────────────────────────────────${NC}\n"
+        printf "  This commit touches files listed as fragile in\n"
+        printf "  ${DIM}.claude/fragile-paths.txt${NC}. Please:\n\n"
+        printf "$FRAGILE_HITS\n"
+        printf "  → Read the referenced KNOWLEDGE.md section(s) before proceeding.\n"
+        printf "  → CI (architecture-guards.yml) will REQUIRE this PR to also modify\n"
+        printf "    at least one file under tests/ (unit, integration, or .cln).\n\n"
+
+        if [ -z "$STAGED_TESTS" ]; then
+            printf "  ${RED}⚠  No test files are staged in this commit.${NC}\n"
+            printf "  ${YELLOW}This commit will likely FAIL CI unless followed by a test change.${NC}\n\n"
+
+            if [ -t 0 ] || [ -c /dev/tty ]; then
+                # Interactive terminal available — ask for explicit confirmation
+                printf "  Proceed with commit anyway? [y/N] "
+                if [ -c /dev/tty ]; then
+                    read -r answer < /dev/tty
+                else
+                    read -r answer
+                fi
+                case "$answer" in
+                    [yY]|[yY][eE][sS])
+                        printf "  ${DIM}Proceeding at your request.${NC}\n"
+                        ;;
+                    *)
+                        printf "  ${DIM}Aborted. Stage a test change, or re-run with CLN_SKIP_PRE_COMMIT=1.${NC}\n"
+                        exit 1
+                        ;;
+                esac
+            else
+                printf "  ${DIM}(non-interactive shell — cannot prompt; use --no-verify to force)${NC}\n"
+                exit 1
+            fi
+        else
+            printf "  ${GREEN}✓ Test files staged alongside — CI should be happy.${NC}\n\n"
+        fi
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# 4. Affected unit tests
+#    Extract module names from staged src/ paths and run just those.
+#    Time-boxed so a slow test can't hang the commit.
+# -----------------------------------------------------------------------------
+if [ -n "$STAGED_RS" ]; then
+    printf "${BLUE}[4/4]${NC} affected unit tests...\n"
+
+    # Turn src/foo/bar.rs into "foo::bar", src/foo/mod.rs into "foo",
+    # and dedupe to top-level modules to keep filter expressions tractable.
+    MODULES=$(printf '%s\n' "$STAGED_RS" \
+        | sed -E 's|^src/||; s|/mod\.rs$||; s|\.rs$||; s|/|::|g' \
+        | awk -F'::' '{print $1}' \
+        | sort -u)
+
+    for m in $MODULES; do
+        [ "$m" = "main" ] && continue
+        [ "$m" = "lib" ] && continue
+        # Skip modules that clearly won't have tests (bins, build.rs)
+        case "$m" in bin) continue ;; esac
+
+        printf "  ${DIM}→ cargo test --lib -q ${m}::${NC}\n"
+        if ! cargo test --lib -q "${m}::" -- --test-threads=4 2>&1 | tail -5; then
+            printf "${RED}[pre-commit] tests failed for module ${m}${NC}\n"
+            printf "${DIM}  bypass: git commit --no-verify${NC}\n"
+            exit 1
+        fi
+    done
+fi
+
+# -----------------------------------------------------------------------------
+# 5. Test-quality guard on staged test files
+# -----------------------------------------------------------------------------
+STAGED_TESTFILES=$(printf '%s\n' "$STAGED_ALL" | grep -E '(^tests/.*\.(rs|cln)$|^src/.*\.rs$)' || true)
+if [ -n "$STAGED_TESTFILES" ]; then
+    printf "${BLUE}[5/5]${NC} test-quality guard on staged test files...\n"
+    # Pass staged paths explicitly. --strict because staged edits should
+    # comply (baseline is for legacy files nobody's touching in this commit).
+    STAGED_PATH_ARGS=$(printf '%s\n' "$STAGED_TESTFILES" | tr '\n' ' ')
+    # shellcheck disable=SC2086  # word-splitting is intentional here
+    if ! python3 scripts/check_test_quality.py --strict --paths $STAGED_PATH_ARGS 2>&1; then
+        printf "${RED}[pre-commit] test-quality guard rejected staged files${NC}\n"
+        printf "${DIM}  see rule descriptions in scripts/check_test_quality.py${NC}\n"
+        printf "${DIM}  bypass: git commit --no-verify${NC}\n"
+        exit 1
+    fi
+fi
+
+printf "${GREEN}[pre-commit] all advisory checks passed${NC}\n"
+exit 0

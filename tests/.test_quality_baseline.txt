@@ -1,0 +1,87 @@
+# Test-quality baseline for `scripts/check_test_quality.py --baseline`.
+#
+# Files listed here are EXEMPT from the test-quality guard, so that legacy
+# violations don't block CI. As tests are cleaned up (see the rule descriptions
+# in `scripts/check_test_quality.py`), the corresponding line should be REMOVED
+# from this file. Running with `--strict` shows all violations regardless of
+# baseline.
+#
+# NEVER add a NEW file to this baseline. New test files must comply with the
+# rules from day one — that's why the baseline exists.
+#
+# Regenerate (only when intentionally accepting a new legacy set):
+#   python3 scripts/check_test_quality.py --strict 2>&1 \
+#     | grep -E '^  /' \
+#     | sed 's|:.*||; s|^  '"$PWD"'/||' \
+#     | sort -u > tests/.test_quality_baseline.txt
+
+tests/cln/bugfixes/assignment_unbox_any_for_non_any_target.cln
+tests/cln/bugfixes/canvas_callbacks_exported.cln
+tests/cln/bugfixes/codegen_body_local_string_escapes_via_list_push.cln
+tests/cln/bugfixes/codegen_empty_list_zero_capacity_clobbers_neighbor.cln
+tests/cln/bugfixes/codegen_f64_bridge_number_param.cln
+tests/cln/bugfixes/codegen_f64_bridge_return_coercion.cln
+tests/cln/bugfixes/codegen_html_interp_cross_iter_recur.cln
+tests/cln/bugfixes/codegen_nested_if_continuation_dropped.cln
+tests/cln/bugfixes/codegen_outer_merge_inlined_in_nested.cln
+tests/cln/bugfixes/codegen_stack_remaining_capability_class_pattern.cln
+tests/cln/bugfixes/codegen_stack_remaining_cross_class_void_from_method_body.cln
+tests/cln/bugfixes/codegen_stack_remaining_static_call_to_sibling_caller.cln
+tests/cln/bugfixes/codegen_stack_remaining_static_call_to_void_method.cln
+tests/cln/bugfixes/codegen_stack_underflow_class_method_409d484628cc.cln
+tests/cln/bugfixes/codegen_string_arg_alias_jsonget_multi_concat.cln
+tests/cln/bugfixes/codegen_substring_clamps_invalid_indices.cln
+tests/cln/bugfixes/dual_accumulator_with_separator.cln
+tests/cln/bugfixes/e002_namespace_called_as_function.cln
+tests/cln/bugfixes/e007_void_function_if_else_bridge_type.cln
+tests/cln/bugfixes/e010_redirect_in_functions_block.cln
+tests/cln/bugfixes/events_block_bare_name_export.cln
+tests/cln/bugfixes/events_block_plugin_shape.cln
+tests/cln/bugfixes/expand_endpoints_oom.cln
+tests/cln/bugfixes/expand_endpoints_oom_branched.cln
+tests/cln/bugfixes/frame_ui_html_empty_body_no_span_cascade_20bf15897ae0.cln
+tests/cln/bugfixes/frame_ui_html_inside_functions_block_5c60dd8b9611.cln
+tests/cln/bugfixes/frame_ui_html_multi_interpolation_row_6b5818c8c013.cln
+tests/cln/bugfixes/frame_ui_html_role_and_interpolation_2bd910ed867b.cln
+tests/cln/bugfixes/frame_ui_html_single_quote_attributes_f967ad3debd1.cln
+tests/cln/bugfixes/if_without_else_no_unreachable.cln
+tests/cln/bugfixes/integer_64_literal_roundtrip.cln
+tests/cln/bugfixes/json_get_in_loop_with_accumulator.cln
+tests/cln/bugfixes/json_get_object_unbox_to_string.cln
+tests/cln/bugfixes/json_get_parse_cache.cln
+tests/cln/bugfixes/json_get_with_rfc8259_escapes.cln
+tests/cln/bugfixes/json_round_trip_nested.cln
+tests/cln/bugfixes/lex001_html_entities_and_unicode.cln
+tests/cln/bugfixes/lexer_brace_alpha_comma_in_string.cln
+tests/cln/bugfixes/lexer_brace_in_string_literal.cln
+tests/cln/bugfixes/method_call_as_statement.cln
+tests/cln/bugfixes/method_call_with_toplevel_collision.cln
+tests/cln/bugfixes/multiple_break_in_function.cln
+tests/cln/bugfixes/multiple_break_in_while.cln
+tests/cln/bugfixes/multiple_break_indexof.cln
+tests/cln/bugfixes/multiple_break_simple.cln
+tests/cln/bugfixes/plugin_output_page_boundary.cln
+tests/cln/bugfixes/reset_state_named_restores_initial.cln
+tests/cln/bugfixes/return_any_unboxes_to_concrete.cln
+tests/cln/bugfixes/sem001_constraint_solver_50_data_models.cln
+tests/cln/bugfixes/sem001_request_query_in_functions_block.cln
+tests/cln/bugfixes/sem003_orm_variable_bound_in_function.cln
+tests/cln/bugfixes/sem007_sibling_call_in_stateless_class.cln
+tests/cln/bugfixes/ssr_concat_chain_no_oom.cln
+tests/cln/bugfixes/ssr_concat_conditional_helper_no_oom.cln
+tests/cln/bugfixes/ssr_concat_in_call_arg_no_oom.cln
+tests/cln/bugfixes/ssr_concat_in_loop_no_oom.cln
+tests/cln/bugfixes/ssr_concat_in_loop_no_oom_nested_call.cln
+tests/cln/bugfixes/ssr_integer_add_in_call_arg_not_routed.cln
+tests/cln/bugfixes/ssr_reclaim_no_live_pointer_corruption.cln
+tests/cln/bugfixes/ssr_singleshot_chain_19_operands.cln
+tests/cln/bugfixes/ssr_singleshot_chain_uses_string_builder.cln
+tests/cln/bugfixes/syn001_class_body_colon_patterns.cln
+tests/cln/bugfixes/syn001_html_hash_character.cln
+tests/cln/bugfixes/syn001_multiline_pairs_literal.cln
+tests/cln/bugfixes/syn001_orm_query_in_function.cln
+tests/cln/bugfixes/syn001_precision_modifier_no_regression.cln
+tests/cln/bugfixes/utf8_multibyte_json_get_roundtrip.cln
+tests/cln/bugfixes/vld001_json_namespace_direct_call.cln
+tests/cln/bugfixes/vld004_html_as_response_helper.cln
+tests/specification_parser_tests.rs
