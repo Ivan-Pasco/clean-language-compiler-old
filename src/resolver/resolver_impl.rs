@@ -3985,6 +3985,50 @@ impl NameResolver {
                                 continue;
                             }
                         }
+
+                        // Symmetric guard on PARAMETERS: refuse to overwrite a
+                        // builtin whose parameter list contains `Any` slots
+                        // narrowed by the plugin to a concrete type. The
+                        // MIR builder's `needs_boxing` check keys off the
+                        // parameter type (see `mir_builder/expressions.rs`
+                        // `needs_boxing = matches!(param_type_opt, Some(ConcreteType::Any))`),
+                        // so replacing the builtin `Any` param with e.g.
+                        // `String` disables the BoxAny emission at every
+                        // call site. The receiving host then reads whatever
+                        // was in that slot (a raw length-prefixed string
+                        // pointer) as if it were a boxed Any struct — the
+                        // failure mode reported as CODEGEN-STRING-ARG-ALIAS-JSONGET
+                        // (fingerprint 3957fce4) on the frame.server `_json_get`
+                        // bridge. A previous attempt at this guard (d3059176)
+                        // was reverted (be27d07c) because the receiving host
+                        // wrapper was itself string-typed and expected raw
+                        // strings; the fix now ships alongside plugin.toml
+                        // updates that declare `params=["any","string"]`
+                        // (framework prompt 4de6f0df / 88d9c863), so both
+                        // sides agree on the boxed-Any contract.
+                        if let SymbolKind::Function {
+                            parameters: existing_parameters,
+                            ..
+                        } = &existing_sym.kind
+                        {
+                            let any_param_narrowed = existing_parameters
+                                .iter()
+                                .zip(parameters.iter())
+                                .any(|(existing, plugin)| {
+                                    matches!(existing, HirType::Any)
+                                        && !matches!(plugin, HirType::Any)
+                                });
+                            if any_param_narrowed {
+                                tracing::debug!(
+                                    lang_name = %lang_name,
+                                    bridge_name = %bridge_name,
+                                    existing_params = ?existing_parameters,
+                                    plugin_params = ?parameters,
+                                    "Skipping language alias — plugin narrows an Any param to a concrete type"
+                                );
+                                continue;
+                            }
+                        }
                     }
                 }
 

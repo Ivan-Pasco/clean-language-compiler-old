@@ -217,6 +217,14 @@ fn normalize_return(t: &str) -> &'static str {
     // `register_plugin_bridge_imports` actually emits (SYNC-PLUGIN-DRIFT).
     match strip_tag(t) {
         "string" | "ptr" => "i32_ptr",
+        // "any" is a pointer to a 12-byte boxed struct
+        // (`[tag@0:i32][value1@4:i32][value2@8:i32]`, foundation/spec/type-system.md).
+        // At the WASM level it's a single i32 that shares its shape with
+        // "string" / "ptr" (all length-prefixed or tagged pointers). We
+        // classify it as `i32_ptr` so validation treats it as a pointer
+        // rather than a plain integer, and reject accidental cross-wiring
+        // between `any`-returning bridges and `integer`-returning hosts.
+        "any" => "i32_ptr",
         "i64" => "i64",
         "number" | "f64" => "f64",
         "integer" | "boolean" | "i32" => "i32",
@@ -248,6 +256,19 @@ fn params_to_wasm_shape(params: &[String], expand_strings: bool) -> Vec<&'static
                 shape.push("i32"); // len
             }
             "string" | "ptr" => shape.push("i32"), // single lp-ptr
+            // "any" is a single i32 pointing at a 12-byte boxed struct
+            // `[tag@0:i32][value1@4:i32][value2@8:i32]`. The wrapper is a
+            // pass-through: the host reads the tag and dispatches. This
+            // matches the compiler-stdlib json.get contract
+            // (`__json_get_path(obj_boxed_ptr, ...)`) so a plugin that
+            // declares `params=["any", "string"]` shares its ABI shape
+            // with the builtin json.get and never conflicts with the
+            // Any-boxing MIR-builder emission.
+            //
+            // `expand_strings` is intentionally ignored for `any` — it
+            // has no meaning here (no length prefix to unpack; the tag
+            // *is* the type discriminator).
+            "any" => shape.push("i32"),
             "i64" => shape.push("i64"),
             "number" | "f64" => shape.push("f64"),
             "integer" | "boolean" | "i32" | "handler" => shape.push("i32"),
@@ -487,6 +508,58 @@ mod tests {
         let i64_shape = params_to_wasm_shape(&["i64".into()], false);
         assert_eq!(i64_shape, vec!["i64"]);
         assert_ne!(integer_shape, i64_shape);
+    }
+
+    #[test]
+    fn wasm_shape_any_is_single_i32_ptr_regardless_of_expand_strings() {
+        // "any" is a pointer to a 12-byte boxed struct
+        // `[tag@0:i32][value1@4:i32][value2@8:i32]`
+        // (foundation/spec/type-system.md). At the WASM level it is one
+        // i32; `expand_strings` is meaningless here because there is no
+        // length prefix to unpack — the *tag* is the discriminator.
+        //
+        // Regression guard for the framework prompt 4de6f0df /
+        // CODEGEN-STRING-ARG-ALIAS-JSONGET follow-up. Before this fix,
+        // "any" fell through `_ => shape.push("unknown")` in both
+        // `params_to_wasm_shape` and `normalize_return`, so any
+        // plugin.toml declaring `params=["any", ...]` (or
+        // `returns="any"`) produced an unrepresentable WASM signature
+        // and validation-time rejection.
+        let no_expand = params_to_wasm_shape(&["any".into()], false);
+        let with_expand = params_to_wasm_shape(&["any".into()], true);
+        assert_eq!(no_expand, vec!["i32"]);
+        assert_eq!(
+            no_expand, with_expand,
+            "`any` must ignore expand_strings — the tag encodes the type"
+        );
+    }
+
+    #[test]
+    fn wasm_shape_any_matches_string_ptr_shape() {
+        // Both `any` and `string` (without expand_strings) lower to a
+        // single i32 that points at a length-prefixed / tag-prefixed
+        // buffer. The compiler's json.get stdlib is defined against a
+        // boxed-Any first arg (`__json_get_path(obj_boxed_ptr, ...)`),
+        // and this equivalence lets a plugin.toml bridge declaration
+        // `_json_get(any, string) -> any` register a raw WASM import
+        // whose shape matches what MIR-builder call sites emit after
+        // BoxAny.
+        assert_eq!(
+            params_to_wasm_shape(&["any".into(), "string".into()], false),
+            vec!["i32", "i32"]
+        );
+    }
+
+    #[test]
+    fn normalize_return_any_is_i32_ptr() {
+        // `returns = "any"` in plugin.toml must resolve to the same
+        // shape as `returns = "string"` / `returns = "ptr"` — a single
+        // i32 pointing at a runtime-tagged buffer. Anything else
+        // (previously "unknown") produced WASM validation errors when
+        // the bridge was invoked.
+        assert_eq!(normalize_return("any"), "i32_ptr");
+        assert_eq!(normalize_return("any"), normalize_return("string"));
+        assert_eq!(normalize_return("any"), normalize_return("ptr"));
     }
 
     #[test]

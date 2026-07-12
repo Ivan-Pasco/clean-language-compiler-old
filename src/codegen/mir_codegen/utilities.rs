@@ -2376,6 +2376,12 @@ impl MirCodeGenerator<'_> {
                 BuiltinType::Integer | BuiltinType::Boolean => MirType::I32,
                 BuiltinType::Number => MirType::F64,
                 BuiltinType::String => MirType::Ptr(Box::new(MirType::I8)),
+                // Bridge returns Any → runtime type is a boxed pointer.
+                // Recording `MirType::Any` rather than a bare `I32` lets
+                // downstream call-site typing (see `MirCodeGenerator::function_return_types`)
+                // recognize the value as boxed so no additional Any-wrapping
+                // is emitted on the caller side (foundation/spec/type-system.md).
+                BuiltinType::Any => MirType::Any,
                 _ => MirType::I32,
             };
             // Collect language aliases first to avoid borrow conflicts.

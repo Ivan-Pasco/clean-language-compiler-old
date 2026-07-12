@@ -867,6 +867,13 @@ impl BridgeFunction {
             // The server's write_string_to_caller always allocates this plain format — NOT a
             // boxed Any tagged-union. Mapping to String ensures no UnboxAnyToI32 is generated.
             "ptr" => BuiltinType::String,
+            // "any" is the dynamic type — a pointer to a 12-byte boxed struct
+            // `[tag@0:i32][value1@4:i32][value2@8:i32]` per foundation/spec/type-system.md.
+            // Bridge functions declaring `params=["any"]` receive the raw boxed
+            // pointer; the host implementation reads the tag and dispatches
+            // on value1/value2. `returns="any"` symmetrically means the host
+            // returns a raw boxed-Any pointer.
+            "any" => BuiltinType::Any,
             _ => BuiltinType::Any, // Default to Any for unknown types
         }
     }
