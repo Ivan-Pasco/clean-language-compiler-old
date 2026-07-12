@@ -1,0 +1,63 @@
+// Test: bugfixes/codegen_return_concat_chain_rewritten_to_builder
+// Grammar: return_statement, binary_expression, function_declaration
+// Semantic: CODEGEN-CONCAT-CHAIN-IN-RETURN-NOT-REWRITTEN
+//
+// Regression pin for #1f824643b07b (STATE C symptom from the original
+// CODEGEN-STRING-ACCUM-LOOP-TRUNCATION report family).
+//
+// A helper function that ends with `return (chain of concats)` — no
+// intermediate accumulator variable — must be rewritten to use
+// string_builder_new + N string_builder_append + string_builder_finalize.
+// Without the rewrite each call strands O(N × L) intermediate strings on
+// the main heap; called from an SSR loop at ~3000 iters this blows past
+// the 32 MB Standard tier cap and produces a WASM trap at the linear
+// memory boundary.
+//
+// Verification here: build 500 rows through a render_row helper that has
+// a 20-operand return-concat chain, sum the total length. On 0.33.55 this
+// trapped; on 0.33.56 it succeeded but only because render_row's
+// intermediates happened to fit; at 3000 iters it still trapped. On
+// 0.33.57+ with the return-concat rewrite in place, both cases run to
+// completion.
+//
+// Row length per render_row call: 171 chars (see below). 500 * 171 = 85500.
+//
+// Fixed in: compiler 0.33.57
+// Expected output:
+//   85500
+
+start:
+	string fixture = "{\"data\":{\"rows\":[{\"id\":\"1\",\"origin\":\"error\",\"title\":\"one\",\"status\":\"open\",\"priority\":\"50\",\"components_json\":\"[]\",\"last_activity_at\":\"2026-07-12\",\"event_count\":\"1\"}]}}"
+	string rows_html = build_all(fixture, 500)
+	printl(rows_html.length().toString())
+
+functions:
+	string render_row(string list_result, string idx)
+		string r_id = json.get(list_result, "data.rows." + idx + ".id")
+		string r_origin = json.get(list_result, "data.rows." + idx + ".origin")
+		string r_title = json.get(list_result, "data.rows." + idx + ".title")
+		string r_status = json.get(list_result, "data.rows." + idx + ".status")
+		string r_prio = json.get(list_result, "data.rows." + idx + ".priority")
+		string r_comps = json.get(list_result, "data.rows." + idx + ".components_json")
+		string r_activity = json.get(list_result, "data.rows." + idx + ".last_activity_at")
+		string r_evc = json.get(list_result, "data.rows." + idx + ".event_count")
+		return ("<tr>"
+			+ "<td>#" + r_id + "</td>"
+			+ "<td>" + r_origin + "</td>"
+			+ "<td title='" + r_title + "'>" + r_title + "</td>"
+			+ "<td>" + r_comps + "</td>"
+			+ "<td><span>" + r_status + "</span></td>"
+			+ "<td>" + r_prio + "</td>"
+			+ "<td>" + r_evc + "</td>"
+			+ "<td>" + r_activity + "</td>"
+			+ "<td><a href='/tasks/" + r_id + "'>View</a></td>"
+			+ "</tr>")
+
+	string build_all(string fixture, integer per_page)
+		string rows_html = ""
+		integer i = 0
+		while i < per_page
+			string row = render_row(fixture, "0")
+			rows_html = rows_html + row
+			i = i + 1
+		return rows_html

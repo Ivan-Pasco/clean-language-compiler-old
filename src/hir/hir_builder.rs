@@ -1197,6 +1197,21 @@ impl HirBuilder {
             // string_builder_finalize, mirroring what javac/Kotlin/Go
             // do for chained concatenation regardless of loop context.
             self.rewrite_string_accumulator_singleshot(&mut block.statements);
+            // Return-concat rewrite — Step 5.
+            // Catches helper functions whose body ends with an inline
+            // return of a chained concat, WITHOUT an explicit accumulator
+            // variable:
+            //   return ("<tr>" + "<td>#" + r_id + "</td>" + ... + "</tr>")
+            // These strand O(N) intermediate strings on the main heap per
+            // call. Called from inside SSR loops in the caller, they blow
+            // past the 32 MB Standard tier cap and trap.
+            //
+            // Same treatment as the accumulator-decl singleshot: rewrite
+            // to string_builder_new + N append + finalize + return-of-
+            // finalize. See rewrite_return_concat_chain_to_singleshot_builder
+            // for the safety argument. Fingerprint: CODEGEN-CONCAT-CHAIN-
+            // IN-RETURN-NOT-REWRITTEN (#1f824643b07b).
+            self.rewrite_return_concat_chain_to_singleshot_builder(&mut block.statements);
         }
         result
     }
@@ -2944,6 +2959,241 @@ impl HirBuilder {
             // i (decl) + 1 + new_segment_len (appends + finalize) = next index
             i = i + 1 + new_segment_len;
         }
+    }
+
+    /// Return-concat rewrite (STATE C fix, fingerprint
+    /// CODEGEN-CONCAT-CHAIN-IN-RETURN-NOT-REWRITTEN #1f824643b07b).
+    ///
+    /// Catches:
+    ///
+    /// ```text
+    /// return (e1 + e2 + ... + eN)     // N >= 3 operands
+    /// ```
+    ///
+    /// where the chain is a `BinaryOp::Add` / `StringConcat` left-fold and
+    /// at least one leaf is a string literal (so we can prove it's a
+    /// string chain and not integer addition). Rewrites the return to:
+    ///
+    /// ```text
+    /// string __sb_N = string_builder_new()
+    /// __sb_N = string_builder_append(__sb_N, e1)
+    /// __sb_N = string_builder_append(__sb_N, e2)
+    /// ...
+    /// __sb_N = string_builder_append(__sb_N, eN)
+    /// return string_builder_finalize(__sb_N)
+    /// ```
+    ///
+    /// Why: without this rewrite, the emitted chain becomes N-1 back-to-
+    /// back `string.concat` calls. Each intermediate concat allocates a
+    /// new bump-heap block whose size is the sum of the two operands. For
+    /// a chain of length N producing a final string of L bytes, the
+    /// intermediates strand O(N × L) bytes on the main heap. Called from
+    /// inside an SSR loop with ~3000 iterations, this blows past the
+    /// 32 MB Standard tier cap and traps at `out of bounds memory access`.
+    ///
+    /// Safety: the builder lives in the function's frame. `finalize` runs
+    /// before any caller sees the return value, so what the caller
+    /// receives is a normal `__malloc`-allocated string. The intermediate
+    /// operand strings are local temporaries the host reclaims on the
+    /// per-request `scope_pop`. Same invariants as `rewrite_string_
+    /// accumulator_singleshot` — this is just the accumulator-less
+    /// entry point into the same emission shape.
+    ///
+    /// Threshold: only rewrite when the chain has >= 3 operands
+    /// (i.e. >= 2 `+` operators). At chain length 2 the naive path (one
+    /// concat call) is already optimal and the rewrite would pessimize.
+    ///
+    /// Recursion: descends into `If`, `While`, `For` bodies so nested
+    /// returns are caught too.
+    fn rewrite_return_concat_chain_to_singleshot_builder(&mut self, stmts: &mut Vec<HirStatement>) {
+        for stmt in stmts.iter_mut() {
+            // Descend into nested blocks first so inner returns get rewritten
+            // before we mutate the enclosing statement (avoids re-visiting).
+            match stmt {
+                HirStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    self.rewrite_return_concat_chain_to_singleshot_builder(
+                        &mut then_branch.statements,
+                    );
+                    if let Some(eb) = else_branch {
+                        self.rewrite_return_concat_chain_to_singleshot_builder(&mut eb.statements);
+                    }
+                }
+                HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                    self.rewrite_return_concat_chain_to_singleshot_builder(&mut body.statements);
+                }
+                _ => {}
+            }
+        }
+
+        // Now handle Return statements at THIS level. Two-pass because a
+        // rewrite expands a single Return into (1 + N + 1) statements
+        // (decl + N appends + return-of-finalize), and we want them
+        // spliced back into the same block position.
+        let mut i = 0;
+        while i < stmts.len() {
+            let should_rewrite = matches!(
+                &stmts[i],
+                HirStatement::Return { value: Some(expr), .. }
+                    if Self::should_rewrite_return_chain(expr)
+            );
+            if !should_rewrite {
+                i += 1;
+                continue;
+            }
+
+            // Extract the chain fragments in source order.
+            let HirStatement::Return {
+                value: Some(chain),
+                location,
+            } = stmts.remove(i)
+            else {
+                unreachable!("just checked matches! above");
+            };
+
+            let fragments = Self::flatten_concat_chain_fragments(chain);
+            debug_assert!(
+                fragments.len() >= 3,
+                "should_rewrite_return_chain guarantees >= 3 operands"
+            );
+
+            // Allocate a fresh builder name and build the replacement sequence.
+            let sb_name = format!("__sb_{}", self.string_builder_counter);
+            self.string_builder_counter += 1;
+
+            let mut inserted: Vec<HirStatement> = Vec::with_capacity(fragments.len() + 2);
+            // string __sb_N = string_builder_new()
+            inserted.push(HirStatement::VariableDeclaration {
+                name: sb_name.clone(),
+                var_type: HirType::String,
+                initializer: Some(HirExpression::Call {
+                    function: "string_builder_new".to_string(),
+                    arguments: vec![],
+                    location: location.clone(),
+                }),
+                is_mutable: true,
+                location: location.clone(),
+            });
+            // One assignment per fragment.
+            for frag in fragments {
+                inserted.push(HirStatement::Assignment {
+                    target: HirLValue::Variable {
+                        name: sb_name.clone(),
+                        location: location.clone(),
+                    },
+                    value: HirExpression::Call {
+                        function: "string_builder_append".to_string(),
+                        arguments: vec![
+                            HirExpression::Variable {
+                                name: sb_name.clone(),
+                                location: location.clone(),
+                            },
+                            frag,
+                        ],
+                        location: location.clone(),
+                    },
+                    location: location.clone(),
+                });
+            }
+            // return string_builder_finalize(__sb_N)
+            inserted.push(HirStatement::Return {
+                value: Some(HirExpression::Call {
+                    function: "string_builder_finalize".to_string(),
+                    arguments: vec![HirExpression::Variable {
+                        name: sb_name.clone(),
+                        location: location.clone(),
+                    }],
+                    location: location.clone(),
+                }),
+                location: location.clone(),
+            });
+
+            let inserted_len = inserted.len();
+            stmts.splice(i..i, inserted);
+            // Skip past the newly inserted statements (all are safe;
+            // the final Return has no chain to re-rewrite).
+            i += inserted_len;
+        }
+    }
+
+    /// Predicate for `rewrite_return_concat_chain_to_singleshot_builder`:
+    /// is this expression a left-folded chain of `+` / `StringConcat`
+    /// with at least 3 operands AND at least one string-literal leaf?
+    ///
+    /// The literal-leaf requirement mirrors `is_provably_string_concat_chain`
+    /// — it's the cheapest way to prove the chain is string-typed without
+    /// consulting the typechecker (which hasn't run yet at HIR-build time).
+    /// A rewrite of an integer chain into `string_builder_*` calls would
+    /// produce SEM001 type errors, so false positives here are a
+    /// correctness bug.
+    fn should_rewrite_return_chain(expr: &HirExpression) -> bool {
+        if !Self::is_string_concat_chain(expr) {
+            return false;
+        }
+        if !Self::chain_contains_string_literal_leaf(expr) {
+            return false;
+        }
+        // Count operands: at least 3 means at least 2 `+` operators.
+        Self::count_chain_operands(expr) >= 3
+    }
+
+    /// Count the operand leaves of a left-folded `+` / `StringConcat`
+    /// chain. Non-chain expressions count as 1 (a single leaf).
+    fn count_chain_operands(expr: &HirExpression) -> usize {
+        match expr {
+            HirExpression::BinaryOp {
+                left,
+                op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                right,
+                ..
+            } => {
+                // A left-fold `((a + b) + c) + d` has one RHS per node;
+                // the leftmost leaf is the base. Recurse on `left`.
+                Self::count_chain_operands(left) + Self::count_chain_operands(right)
+            }
+            _ => 1,
+        }
+    }
+
+    /// Walk a left-folded `+` / `StringConcat` chain and collect the
+    /// leaves in source order. `((a + b) + c) + d` yields `[a, b, c, d]`.
+    /// Non-chain inputs are returned as a single-element vector.
+    ///
+    /// Consumes the input to avoid a clone of what may be a very large
+    /// tree of expressions.
+    fn flatten_concat_chain_fragments(expr: HirExpression) -> Vec<HirExpression> {
+        let mut out: Vec<HirExpression> = Vec::new();
+        let mut stack: Vec<HirExpression> = vec![expr];
+        // Walk down `left` while stashing `right`s. Because we take the
+        // leftmost leaf last, we assemble the reverse of source order,
+        // then reverse at the end.
+        let mut collected: Vec<HirExpression> = Vec::new();
+        while let Some(cur) = stack.pop() {
+            match cur {
+                HirExpression::BinaryOp {
+                    left,
+                    op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                    right,
+                    ..
+                } => {
+                    // Handle `right` after `left`; but since we're using a
+                    // LIFO stack, push right FIRST so left is processed first.
+                    stack.push(*right);
+                    stack.push(*left);
+                }
+                other => {
+                    // Leaf.
+                    collected.push(other);
+                }
+            }
+        }
+        // The stack-driven walk already produces source order because we
+        // push left before right, and the pop-order matches that pushing.
+        out.append(&mut collected);
+        out
     }
 
     /// True iff `stmt` is `acc = acc + e1 + e2 + ... + eN` (a chained
