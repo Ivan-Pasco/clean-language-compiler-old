@@ -1,0 +1,68 @@
+// Test: bugfixes/codegen_string_arg_alias_jsonget_multi_concat
+// Regression: CODEGEN-STRING-ARG-ALIAS-JSONGET, fingerprint 3957fce40e09,
+//   compiler 0.33.9-0.33.54 (open until 0.33.55). The reporter's
+//   `tasks_list_page` handler built several +-concatenated string
+//   locals then called `json.get(sql_result, "some.path")`; the host
+//   crashed with "String read out of bounds: ptr=N, len=1.4B+".
+//
+// Root cause chain:
+//   - Frame.server plugin.toml <2.8.4 declared _json_get with
+//     `params=["string","string"]` `expand_strings=true`. The plugin
+//     bridge wrapper became the WASM function that call sites resolved
+//     to.
+//   - Compiler 0.33.44's d3059176 resolver guard was reverted in
+//     0.33.45 because the plugin wrapper still expected raw strings.
+//   - Meanwhile the compiler-stdlib json.get(any, string) -> any
+//     expected a boxed-Any first argument. When the plugin narrowed
+//     the alias, MIR-level BoxAny emission was disabled, and raw
+//     String pointers flowed into the stdlib. The stdlib body read
+//     offset 0 as the Any tag (which for a raw string is the length
+//     prefix), produced a garbage inner pointer, and json.textToData
+//     walked out-of-bounds.
+//
+// Coordinated fix (compiler 0.33.55 + frame.server 2.8.4):
+//   1. Compiler 0.33.54: params_to_wasm_shape / normalize_return
+//      recognize "any"; resolver guards against Any→concrete param
+//      narrowing (framework prompt 4de6f0df).
+//   2. Frame.server 2.8.4: plugin.toml declares
+//      _json_get(any, string) -> any expand_strings=false — the
+//      boxed-Any contract.
+//   3. Compiler 0.33.55: function-registry.toml updated to
+//      params=["any", "i32"] returns="any" so the registry-drift
+//      validator agrees with the plugin.
+//
+// This test reproduces the exact reporter shape (several +-concat
+// string locals, then several json.get calls on a hand-crafted JSON
+// blob that mirrors what db.query would have returned). No plugin
+// dependency at compile time — the bug is purely on the resolver +
+// registry path, and the test guards against a regression there.
+//
+// Fixed in: compiler 0.33.55
+//
+// Expected output:
+//   first_id=[T-1]
+//   first_title=[first]
+//   cnt=[7]
+
+start:
+	string filter_val = "error"
+	string where_a = "1=1"
+	if filter_val != ""
+		where_a = where_a + " AND origin = ?"
+	string params_a = "["
+	if filter_val != ""
+		params_a = params_a + "\"" + filter_val + "\""
+	params_a = params_a + "]"
+	string cnt_sql = "SELECT COUNT(*) as cnt FROM tasks WHERE " + where_a
+	string list_sql = ("SELECT task_id FROM tasks WHERE " + where_a + " LIMIT 25")
+
+	string list_result = "{\"data\": {\"rows\": [{\"task_id\": \"T-1\", \"title\": \"first\"}]}}"
+	string cnt_result = "{\"data\": {\"rows\": [{\"cnt\": \"7\"}]}}"
+
+	string first_id = json.get(list_result, "data.rows.0.task_id")
+	string first_title = json.get(list_result, "data.rows.0.title")
+	string cnt_val = json.get(cnt_result, "data.rows.0.cnt")
+
+	print("first_id=[" + first_id + "]")
+	print("first_title=[" + first_title + "]")
+	print("cnt=[" + cnt_val + "]")

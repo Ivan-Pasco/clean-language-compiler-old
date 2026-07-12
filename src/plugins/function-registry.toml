@@ -2693,11 +2693,18 @@ name        = "_json_get"
 layer       = 3
 category    = "json"
 module      = "env"
-params      = ["string", "string"]
-returns     = "ptr"
+# Registry side uses the always-expand convention (see "VALIDATOR
+# COMPARISON RULE" at top of file). The plugin side ships
+# expand_strings = false, so its single "string" param emits a bare
+# i32 (length-prefixed pointer, no wrapper). To match at the WASM
+# level, the registry describes that same slot as "i32". First slot
+# is "any" — a single i32 pointing at the 12-byte boxed struct
+# `[tag@0:i32][value1@4:i32][value2@8:i32]` (foundation/spec/type-system.md).
+params      = ["any", "i32"]
+returns     = "any"
 aliases     = ["json.get"]
 hosts       = ["all"]
-description = "Extract a value from a JSON object (ptr+len) using a dot-separated path (ptr+len, e.g., 'user.name')"
+description = "Extract a value from a JSON object (any-boxed; typically a raw SQL result or an already-boxed JSON string) using a dot-separated path (single lp-ptr). Returns a boxed Any value. Frame.server v2.8.4+ / compiler 0.33.54+ signature — see CODEGEN-STRING-ARG-ALIAS-JSONGET (3957fce4). Pre-0.33.54 was params=[\"string\",\"string\"] returns=\"ptr\", expand_strings=true — that shape mismatched the compiler-stdlib json.get(any, string) -> any and disabled BoxAny emission at the call site, producing garbage inner pointers on multi-concat function shapes."
 
 # ============================================================
 # LAYER 3 - ASYNC (3 functions)
