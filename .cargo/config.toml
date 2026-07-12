@@ -1,6 +1,17 @@
 [build]
-# Optimize build times
-rustflags = ["-C", "target-cpu=native"]
+# NOTE: Do NOT set `target-cpu=native` here.
+#
+# `native` compiles CPU-specific instructions (AVX-512, AVX2, etc.) for
+# whatever CPU the builder happens to have. When the resulting binary
+# runs on a machine with an older/different CPU, execution fails with
+# SIGILL (Illegal Instruction). This is exactly what happened to the
+# v0.33.57 Linux binary: ubuntu-22.04 builder compiled AVX-512 into
+# the binary, and ubuntu-latest (24.04) GitHub Actions runners have
+# a CPU without those instructions. See #7d26edd03f80.
+#
+# For local dev builds you can still opt into it via env:
+#   RUSTFLAGS="-C target-cpu=native" cargo build
+# without breaking the release binaries.
 
 [test]
 # Test configuration
