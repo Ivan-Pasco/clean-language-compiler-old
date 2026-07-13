@@ -48,8 +48,16 @@ impl AccumulatorAnalysis {
 /// `rewrite_string_accumulator_loops` to splice the rewrite into the
 /// caller's statement vector.
 struct AccumulatorRewrite {
-    /// Replaces the original `string acc = ""` decl with the builder init.
+    /// Replaces the original `string acc = "..."` decl with the builder init.
     decl_replacement: HirStatement,
+    /// Seeds the builder with the accumulator's initial string literal when
+    /// that literal is non-empty (e.g. `string result = "["`). Inserted
+    /// immediately after `decl_replacement`. Shape:
+    ///   `__sb_N = string_builder_append(__sb_N, "<literal>")`
+    /// `None` when the decl was `string acc = ""` — the builder starts
+    /// empty and no seed is needed. Resolves
+    /// CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK (fingerprint 6fca1073d4bd).
+    seed_append: Option<HirStatement>,
     /// Captures HEAP_PTR right after the builder is constructed. Inserted
     /// between `decl_replacement` and the loop ONLY when a paired
     /// per-iter `string_builder_reclaim` call is also emitted into the
@@ -2756,18 +2764,26 @@ impl HirBuilder {
 
             // Splice the rewrite:
             //   - replace decl at i with decl_replacement,
-            //   - optionally insert mark_decl at i + 1 (captures HEAP_PTR
+            //   - optionally insert seed_append at i + 1 (seeds the builder
+            //     with the accumulator's initial non-empty literal; resolves
+            //     CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK),
+            //   - optionally insert mark_decl next (captures HEAP_PTR
             //     right after the builder is constructed; only emitted
             //     when the body is reclaim-safe and a reclaim call is
             //     also emitted into the body),
-            //   - replace the (now-shifted) loop at loop_idx + 1 with
-            //     replacement_loop,
+            //   - replace the (now-shifted) loop with replacement_loop,
             //   - insert finalize_decl after the loop.
             stmts[i] = rewrite.decl_replacement;
             let mut shifted_loop_idx = loop_idx;
+            let mut insert_at = i + 1;
+            if let Some(seed_append) = rewrite.seed_append {
+                stmts.insert(insert_at, seed_append);
+                shifted_loop_idx += 1;
+                insert_at += 1;
+            }
             if let Some(mark_decl) = rewrite.mark_decl {
-                stmts.insert(i + 1, mark_decl);
-                shifted_loop_idx = loop_idx + 1;
+                stmts.insert(insert_at, mark_decl);
+                shifted_loop_idx += 1;
             }
             stmts[shifted_loop_idx] = rewrite.replacement_loop;
             stmts.insert(shifted_loop_idx + 1, rewrite.finalize_decl);
@@ -3781,11 +3797,21 @@ impl HirBuilder {
         if !matches!(var_type, HirType::String) {
             return None;
         }
+        // Accept ANY string literal initializer, empty or not. When
+        // non-empty, `try_match_accumulator_pair` seeds the builder with
+        // a single `string_builder_append(__sb_N, <literal>)` immediately
+        // after `string_builder_new` so downstream self-appends see the
+        // correct starting content. Resolves
+        // CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK (fingerprint
+        // 6fca1073d4bd) — before this relaxation, `string result = "["`
+        // fell through to the raw string.concat path and every
+        // `result = result + ...` in the loop leaked the previous value
+        // onto the main heap (O(N²)).
         match initializer {
             Some(HirExpression::Literal {
-                value: Value::String(s),
+                value: Value::String(_),
                 ..
-            }) if s.is_empty() => Some(name.clone()),
+            }) => Some(name.clone()),
             _ => None,
         }
     }
@@ -3813,8 +3839,14 @@ impl HirBuilder {
         decl: &HirStatement,
         loop_stmt: &HirStatement,
     ) -> Option<AccumulatorRewrite> {
-        // -- Step 1: decl must be `string <name> = ""`.
-        let (acc_name, decl_loc) = match decl {
+        // -- Step 1: decl must be `string <name> = <string literal>`.
+        // The initial literal may be empty ("") or non-empty ("[",
+        // "functions:\n", etc.); when non-empty we seed the builder in
+        // Step 4b. Resolves CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK
+        // (fingerprint 6fca1073d4bd) — before this, only the empty
+        // initializer matched and every other initializer left the
+        // accumulator on the leaking raw-concat path.
+        let (acc_name, init_literal, decl_loc) = match decl {
             HirStatement::VariableDeclaration {
                 name,
                 var_type,
@@ -3829,7 +3861,7 @@ impl HirBuilder {
                     Some(HirExpression::Literal {
                         value: Value::String(s),
                         ..
-                    }) if s.is_empty() => (name.clone(), location.clone()),
+                    }) => (name.clone(), s.clone(), location.clone()),
                     _ => return None,
                 }
             }
@@ -4020,6 +4052,40 @@ impl HirBuilder {
             location: decl_loc.clone(),
         };
 
+        // Step 4b-seed: if the accumulator was declared with a non-empty
+        // literal (e.g. `string result = "["`), seed the builder with a
+        // single `__sb_N = string_builder_append(__sb_N, "<literal>")`
+        // call. Without this seed, the finalize step would produce a
+        // string missing the leading literal. Resolves
+        // CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK (fingerprint
+        // 6fca1073d4bd). The empty-literal case emits no seed — the
+        // builder starts empty which is what `""` means.
+        let seed_append = if init_literal.is_empty() {
+            None
+        } else {
+            Some(HirStatement::Assignment {
+                target: HirLValue::Variable {
+                    name: sb_name.clone(),
+                    location: decl_loc.clone(),
+                },
+                value: HirExpression::Call {
+                    function: "string_builder_append".to_string(),
+                    arguments: vec![
+                        HirExpression::Variable {
+                            name: sb_name.clone(),
+                            location: decl_loc.clone(),
+                        },
+                        HirExpression::Literal {
+                            value: Value::String(init_literal.clone()),
+                            location: decl_loc.clone(),
+                        },
+                    ],
+                    location: decl_loc.clone(),
+                },
+                location: decl_loc.clone(),
+            })
+        };
+
         // Step 4b': capture HEAP_PTR right after the builder is built.
         // This becomes the `init_mark` argument to every per-iter
         // `string_builder_reclaim` call. Only emitted when the body is
@@ -4054,6 +4120,7 @@ impl HirBuilder {
         // replacement loop in a side channel.
         Some(AccumulatorRewrite {
             decl_replacement,
+            seed_append,
             mark_decl,
             finalize_decl,
             replacement_loop: new_loop,

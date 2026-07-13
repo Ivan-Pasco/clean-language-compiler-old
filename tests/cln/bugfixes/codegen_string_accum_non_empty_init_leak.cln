@@ -1,0 +1,69 @@
+// Test: bugfixes/codegen_string_accum_non_empty_init_leak
+// Grammar: variable_declaration, while_statement, binary_expression
+// Semantic: CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK
+//
+// Regression pin for dashboard fingerprint 6fca1073d4bd (reported against
+// 0.33.61).
+//
+// The HIR single-accumulator rewrite (rewrite_string_accumulator_loops in
+// src/hir/hir_builder.rs) only fires when the accumulator is declared as
+// `string acc = ""` — an empty-literal initializer. When the initializer
+// is any other string literal (e.g. `string result = "["`), the whole
+// pipeline (string_builder_new + string_builder_append + finalize +
+// transient-scope wrap) is skipped and every `result = result + ...` in
+// the loop body stays on the raw string.concat path. Each concat
+// __malloc's a fresh block on the main heap and orphans the previous
+// `result`, giving O(N²) main-heap growth. At 500 iterations with
+// ~30-byte fragments this traps at the linear memory boundary on the
+// standalone runner.
+//
+// Fix: seed the builder with the initial literal as a single
+// string_builder_append(__sb_N, <init literal>) call right after
+// string_builder_new, mirroring the shape apply_dual_scope_rewrite
+// already uses for non-empty A/B seeds.
+//
+// Body has exactly one self-append on `result` (the accumulator-rewrite
+// predicate `analysis.is_rewritable()` requires self_appends == 1). The
+// RHS is a pure string literal so this test isolates the non-empty-init
+// leak from unrelated per-iter heap allocations (e.g. `k.toString()`
+// bridge returns).
+//
+// Total length: 1 (`[`) + 3000 * len(",") + 1 (`]`) = 3002.
+//
+// Pre-fix (0.33.63 and earlier): the accumulator rewrite predicate
+// `accumulator_decl_name` in src/hir/hir_builder.rs required the
+// initializer to be `""`; `string result = "["` failed the predicate and
+// the whole pipeline (string_builder_new + string_builder_append +
+// finalize + transient-scope wrap) was skipped. Every
+// `result = result + ","` in the loop stayed on the raw string.concat
+// path, __malloc-ing a fresh block on the main heap and orphaning the
+// prior `result`. At 3000 iterations wasmtime's linear-memory grew
+// unboundedly and emitted `memory.grow failed for 1 pages` thousands of
+// times before the pass completed (or trapped, on tighter runners like
+// clean-server).
+//
+// Post-fix (0.33.64+): `accumulator_decl_name` accepts any string
+// literal, `try_match_accumulator_pair` seeds the builder with a single
+// `__sb_N = string_builder_append(__sb_N, "[")` right after
+// `string_builder_new`, and every subsequent self-append routes through
+// host-arena bump inside the transient scope. Main-heap growth is
+// bounded, `memory.grow failed` no longer fires, and the finalized
+// string length is exactly 3002.
+//
+// Fixed in: compiler 0.33.64
+// Expected output:
+//   3002
+
+start:
+	string blob = build_array(3000)
+	printl(blob.length().toString())
+
+functions:
+	string build_array(integer n)
+		string result = "["
+		integer k = 0
+		while k < n
+			result = result + ","
+			k = k + 1
+		result = result + "]"
+		return result
