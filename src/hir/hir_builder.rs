@@ -3021,25 +3021,26 @@ impl HirBuilder {
         disqualified: &mut bool,
     ) {
         match stmt {
-            HirStatement::Assignment { target, value, .. } => {
-                if let HirLValue::Variable { name: lhs_name, .. } = target {
-                    if lhs_name == name {
-                        if !Self::is_string_returning_call(value) {
-                            // Assignment shape doesn't match — e.g.
-                            // `X = other_string + suffix`. Bail so the
-                            // caller doesn't rewrite anything.
-                            *disqualified = true;
-                            return;
-                        }
-                        if found.is_some() {
-                            // Second reassign — pattern rejects.
-                            *disqualified = true;
-                            return;
-                        }
-                        *found = Some(value.clone());
-                    }
+            HirStatement::Assignment {
+                target: HirLValue::Variable { name: lhs_name, .. },
+                value,
+                ..
+            } if lhs_name == name => {
+                if !Self::is_string_returning_call(value) {
+                    // Assignment shape doesn't match — e.g.
+                    // `X = other_string + suffix`. Bail so the
+                    // caller doesn't rewrite anything.
+                    *disqualified = true;
+                    return;
                 }
+                if found.is_some() {
+                    // Second reassign — pattern rejects.
+                    *disqualified = true;
+                    return;
+                }
+                *found = Some(value.clone());
             }
+            HirStatement::Assignment { .. } => {}
             HirStatement::VariableDeclaration { name: n, .. } => {
                 if n == name {
                     // A nested re-declaration would shadow the outer
@@ -3149,23 +3150,16 @@ impl HirBuilder {
                 continue;
             }
 
-            match &mut block.statements[i] {
-                HirStatement::If {
-                    then_branch,
-                    else_branch,
-                    ..
-                } => {
-                    Self::rewrite_carryover_reassign_in_block(
-                        then_branch,
-                        x_name,
-                        parity_name,
-                        loc,
-                    );
-                    if let Some(eb) = else_branch {
-                        Self::rewrite_carryover_reassign_in_block(eb, x_name, parity_name, loc);
-                    }
+            if let HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } = &mut block.statements[i]
+            {
+                Self::rewrite_carryover_reassign_in_block(then_branch, x_name, parity_name, loc);
+                if let Some(eb) = else_branch {
+                    Self::rewrite_carryover_reassign_in_block(eb, x_name, parity_name, loc);
                 }
-                _ => {}
             }
             i += 1;
         }
