@@ -1,5 +1,47 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🔎 INVESTIGATION NOTES (2026-07-13) — receiver_type inference for `.toNumber()` / `.toBoolean()` on chained `json.get(...)`
+
+Discovered while fixing CODEGEN-UNBOX-TO-I32-MISSING-STRING-TAG-CASE (#0ccc47714523).
+
+`Any.toInteger()` correctly routes through `UnboxAnyToI32` when the receiver
+type is inferred as `Any`, e.g.:
+- `json.get(blob, key).toInteger()` inside a wrapper function → OK
+- `any x = json.get(...); x.toInteger()` → OK
+
+But `.toNumber()` and `.toBoolean()` on the SAME chained shape route
+through a different lowering path — the emitted WASM shows an
+`emit_any_to_string`-style multi-tag dispatch that stringifies the Any
+per-tag and then feeds the resulting string to `string_to_float`. That
+dispatch does not call `UnboxAnyToF64` / `UnboxAnyToBoolean` at all, so
+the tag=String branches I just added never fire on the chained shape.
+
+Reproduction:
+- `json.get(blob, key).toNumber()` (chained, no intermediate) → returns 0
+- `any r = json.get(blob, key); r.toNumber()` → correct
+- `json.get(blob, key).toBoolean()` (chained) → returns false
+- `any r = json.get(...); r.toBoolean()` → correct
+
+Suspected cause: the receiver_type at
+`src/mir/mir_builder/expressions.rs:1997` is not `ConcreteType::Any` when
+the receiver is a chained `Call` expression whose declared return type is
+`Any`. Something in type inference between HIR and MIR is narrowing the
+type prematurely. Since the `(ConcreteType::Any, "toNumber")` branch at
+line 2157 is skipped, the fallback lowering emits stringify-then-parse
+which is buggy.
+
+Not fixing in this session — reporter's actual repro (integer path) is
+closed, and the chained-toNumber path is not a regression from this
+change. The pre-existing multi-tag stringify code path was already
+producing wrong results for tag=String, this fix just doesn't reach it.
+
+Workaround for callers: assign `json.get(...)` to `any r` before calling
+`.toNumber()` / `.toBoolean()`.
+
+Fix location once someone picks this up:
+`src/mir/mir_builder/expressions.rs:1997` — trace why receiver_type is not
+`ConcreteType::Any` for a chained call whose function returns Any.
+
 ## 🔎 INVESTIGATION NOTES (2026-07-13) — /fix run findings, not yet actionable
 
 Recorded so the next /fix run does not repeat this work.

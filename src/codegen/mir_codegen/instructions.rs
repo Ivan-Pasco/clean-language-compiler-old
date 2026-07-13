@@ -501,22 +501,141 @@ impl MirCodeGenerator<'_> {
             MirOperation::UnboxAnyToBoolean { value } => {
                 debug_mir!(?value, "Processing UnboxAnyToBoolean");
 
-                // Load the boxed any pointer onto the stack
-                self.load_operand(value)?;
+                // Boxed Any layout: [tag@0][value1@4][value2@8]
+                // Tags (from AnyTypeTag): 1=Integer, 2=Boolean, 3=Number,
+                //                         4=String, 5=List, 6=Object
+                // Boolean box: tag=2, value1 = 0 (false) or 1 (true).
+                //
+                // Prior to the fix, this operation returned `1` only when
+                // tag == 2 and effectively ignored value1 — which happens to
+                // be right for booleans stored via the standard boxing path
+                // (value1 was always 1 when the Any was constructed from a
+                // true boolean), but wrong for tag==4 (String) where a
+                // caller doing `json.get(blob, "flag").toBoolean()` expected
+                // "true"/"false" string parsing.
+                //
+                // New behaviour:
+                //   tag == 2 (Boolean): return value1 (already 0 or 1)
+                //   tag == 4 (String):  parse "true" as 1, everything else 0
+                //   otherwise:          return 0 (safe default; Integer/Number/
+                //                       collection coercions are out of scope)
 
-                // Boxed Any layout: [type_tag: i32 @ offset 0] [value: i32/f64 @ offset 4]
-                // Type tags: 1 = false, 2 = true, 3 = number, 4 = string, 5 = array, 6 = object
-                // For boolean: tag == 2 means true (return 1), anything else involving tag 1 = false
-                // Simple approach: read tag, check if tag == 2
+                // Save the pointer to a temp so we can read tag AND value1.
+                let ptr_local = self.next_local_index;
+                self.next_local_index += 1;
+                self.temp_local_types.insert(ptr_local, ValType::I32);
+
+                self.load_operand(value)?;
+                self.current_instructions
+                    .push(Instruction::LocalSet(ptr_local));
+
+                // Read the tag.
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
                 self.current_instructions
                     .push(Instruction::I32Load(wasm_encoder::MemArg {
                         offset: 0,
                         align: 2,
                         memory_index: 0,
                     }));
+
+                // tag == 2 (Boolean)?
                 self.current_instructions.push(Instruction::I32Const(2));
                 self.current_instructions.push(Instruction::I32Eq);
-                // Result: 1 if tag was 2 (true), 0 otherwise (including tag 1 = false)
+                self.current_instructions
+                    .push(Instruction::If(wasm_encoder::BlockType::Result(
+                        ValType::I32,
+                    )));
+
+                // tag=2: return value1 (0 or 1)
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+
+                self.current_instructions.push(Instruction::Else);
+
+                // Not Boolean. tag == 4 (String)?
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                self.current_instructions.push(Instruction::I32Const(4));
+                self.current_instructions.push(Instruction::I32Eq);
+                self.current_instructions
+                    .push(Instruction::If(wasm_encoder::BlockType::Result(
+                        ValType::I32,
+                    )));
+
+                // tag=4: value1 is an LP-string pointer. The parsed length is
+                // the first 4 bytes (little-endian). We compare against the
+                // literal `true` in-place:
+                //   length == 4 && bytes at (ptr+4..ptr+8) == "true"
+                // Byte-comparison via a single i32 load (little-endian) —
+                // "true" = 0x65 0x75 0x72 0x74 → 0x65757274.
+                //
+                // This is intentionally strict: only lowercase "true" → 1;
+                // any other string → 0. Matches the conservative behaviour
+                // string.toBoolean uses on non-recognisable inputs elsewhere.
+                let strptr_local = self.next_local_index;
+                self.next_local_index += 1;
+                self.temp_local_types.insert(strptr_local, ValType::I32);
+                self.current_instructions
+                    .push(Instruction::LocalGet(ptr_local));
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                self.current_instructions
+                    .push(Instruction::LocalSet(strptr_local));
+
+                // length check: *strptr == 4
+                self.current_instructions
+                    .push(Instruction::LocalGet(strptr_local));
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                self.current_instructions.push(Instruction::I32Const(4));
+                self.current_instructions.push(Instruction::I32Eq);
+
+                // bytes check: *(strptr+4) == 0x65757274 ("true" little-endian)
+                self.current_instructions
+                    .push(Instruction::LocalGet(strptr_local));
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 4,
+                        align: 0, // may be unaligned inside string bytes
+                        memory_index: 0,
+                    }));
+                self.current_instructions
+                    .push(Instruction::I32Const(0x65757274));
+                self.current_instructions.push(Instruction::I32Eq);
+
+                self.current_instructions.push(Instruction::I32And);
+
+                self.current_instructions.push(Instruction::Else);
+
+                // Fallback for any other tag (Integer, Number, List, Object,
+                // Null): return 0. Wider coercion is out of scope for the
+                // String-tag fix; callers wanting Integer→bool should
+                // explicitly compare against 0.
+                self.current_instructions.push(Instruction::I32Const(0));
+
+                self.current_instructions.push(Instruction::End); // close tag==4 else
+                self.current_instructions.push(Instruction::End); // close tag==2 else
 
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
@@ -2756,8 +2875,31 @@ impl MirCodeGenerator<'_> {
     }
 
     /// Emit code to unbox a value from an `any` type to i32.
+    ///
+    /// Handles boxed Any tag layout: `[tag@0][value1@4][value2@8]`, tags:
+    /// 1=Integer, 2=Boolean, 3=Number(f64), 4=String, 5=List, 6=Object.
+    ///
+    /// - tag=3 (Number): f64 at offset 4+8, truncate to i32
+    /// - tag=4 (String): value1 is an LP-string pointer; parse via `string_to_int`
+    /// - anything else: read value1 (offset 4) as raw i32
     pub(super) fn emit_unbox_to_i32(&mut self) -> Result<(), CompilerError> {
         debug_mir!("Unboxing any value to i32");
+
+        // Resolve `string_to_int` before emitting any instructions so a missing
+        // helper is a clean codegen error rather than an invalid WASM.
+        let string_to_int_idx = *self
+            .wasm_generator
+            .function_map
+            .get("string_to_int")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "string_to_int function not found in function_map for Any->i32 unbox"
+                        .to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
 
         // Save pointer to a temp local so we can read both tag and value
         let ptr_local = self.next_local_index;
@@ -2799,7 +2941,44 @@ impl MirCodeGenerator<'_> {
 
         self.current_instructions.push(Instruction::Else);
 
-        // Type tag is not 3: Read i32 at offset 4 directly (type tag 1 = Integer)
+        // Not tag=3. Now check tag=4 (String): value1 is an LP-string pointer
+        // (see AnyTypeTag::String in src/mir/mir_types.rs). Without this branch
+        // `json.get(blob, key).toInteger()` returned the LP-string address as
+        // the integer — resolves CODEGEN-UNBOX-TO-I32-MISSING-STRING-TAG-CASE
+        // (#0ccc47714523) and its downstream node-server symptom
+        // BRIDGE-JSON-GET-INTEGER-RETURNS-POINTER-AGGREGATE-QUERY (#61ef80a34ec6).
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions.push(Instruction::I32Const(4));
+        self.current_instructions.push(Instruction::I32Eq);
+        self.current_instructions
+            .push(Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::I32,
+            )));
+
+        // Type tag is 4 (String): value1 at offset 4 is an LP-string pointer.
+        // string_to_int walks the length prefix internally, so hand it the
+        // pointer directly.
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions
+            .push(Instruction::Call(string_to_int_idx));
+
+        self.current_instructions.push(Instruction::Else);
+
+        // Fallback (tag 1 = Integer, anything unknown): read value1@4 as i32.
         self.current_instructions
             .push(Instruction::LocalGet(ptr_local));
         self.current_instructions
@@ -2809,7 +2988,8 @@ impl MirCodeGenerator<'_> {
                 memory_index: 0,
             }));
 
-        self.current_instructions.push(Instruction::End);
+        self.current_instructions.push(Instruction::End); // close tag==4 else
+        self.current_instructions.push(Instruction::End); // close tag==3 else
 
         Ok(())
     }
@@ -2826,8 +3006,35 @@ impl MirCodeGenerator<'_> {
     }
 
     /// Emit code to unbox a value to f64.
+    /// Emit code to unbox an Any value to f64.
+    ///
+    /// - tag=3 (Number): value stored as two i32 halves (value1@4, value2@8);
+    ///   combine and reinterpret as f64 (the pre-fix path, kept for Numbers).
+    /// - tag=4 (String): value1 is an LP-string pointer; parse via
+    ///   `string_to_float` — resolves the f64 twin of
+    ///   CODEGEN-UNBOX-TO-I32-MISSING-STRING-TAG-CASE (#0ccc47714523).
+    /// - tag=1 (Integer): value1@4 is an i32; convert to f64.
+    ///
+    /// Any other tag falls through to the Number path (existing behaviour),
+    /// which is wrong for Booleans / Lists / Objects but out of scope here.
     pub(super) fn emit_unbox_to_f64(&mut self) -> Result<(), CompilerError> {
         debug_mir!("Unboxing any value to f64");
+
+        // Resolve `string_to_float` up front so a missing helper is a codegen
+        // error rather than an invalid WASM at runtime.
+        let string_to_float_idx = *self
+            .wasm_generator
+            .function_map
+            .get("string_to_float")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "string_to_float function not found in function_map for Any->f64 unbox"
+                        .to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
 
         // Save pointer to temp
         let ptr_local = self.next_local_index;
@@ -2836,7 +3043,72 @@ impl MirCodeGenerator<'_> {
         self.current_instructions
             .push(Instruction::LocalSet(ptr_local));
 
-        // Read low bits from offset 4
+        // Read tag
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+
+        // tag == 4 (String)?
+        self.current_instructions.push(Instruction::I32Const(4));
+        self.current_instructions.push(Instruction::I32Eq);
+        self.current_instructions
+            .push(Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::F64,
+            )));
+
+        // Type tag is 4 (String): value1@4 is LP-string pointer, parse via
+        // string_to_float. Without this, `.toNumber()` on a json.get() result
+        // returned garbage f64 bits synthesised from an LP-pointer.
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions
+            .push(Instruction::Call(string_to_float_idx));
+
+        self.current_instructions.push(Instruction::Else);
+
+        // Not String. Now check tag == 1 (Integer)?
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions.push(Instruction::I32Const(1));
+        self.current_instructions.push(Instruction::I32Eq);
+        self.current_instructions
+            .push(Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::F64,
+            )));
+
+        // Type tag is 1 (Integer): value1@4 is a signed i32, promote to f64.
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions.push(Instruction::F64ConvertI32S);
+
+        self.current_instructions.push(Instruction::Else);
+
+        // Fallback (tag 3 = Number): value stored as two i32 halves at 4 and 8.
+        // Combine and reinterpret as f64. This is the pre-fix path, kept for
+        // Number-tagged Anys (which don't fit in a single i32).
         self.current_instructions
             .push(Instruction::LocalGet(ptr_local));
         self.current_instructions
@@ -2847,7 +3119,6 @@ impl MirCodeGenerator<'_> {
             }));
         self.current_instructions.push(Instruction::I64ExtendI32U);
 
-        // Read high bits from offset 8
         self.current_instructions
             .push(Instruction::LocalGet(ptr_local));
         self.current_instructions
@@ -2860,12 +3131,12 @@ impl MirCodeGenerator<'_> {
         self.current_instructions.push(Instruction::I64Const(32));
         self.current_instructions.push(Instruction::I64Shl);
 
-        // Combine: high | low
         self.current_instructions.push(Instruction::I64Or);
-
-        // Reinterpret as f64
         self.current_instructions
             .push(Instruction::F64ReinterpretI64);
+
+        self.current_instructions.push(Instruction::End); // close tag==1 else
+        self.current_instructions.push(Instruction::End); // close tag==4 else
 
         Ok(())
     }

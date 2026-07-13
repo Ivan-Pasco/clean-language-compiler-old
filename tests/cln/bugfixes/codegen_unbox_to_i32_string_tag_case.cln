@@ -1,0 +1,64 @@
+// Test: bugfixes/codegen_unbox_to_i32_string_tag_case
+// Grammar: SEMANTIC/FUNC (implicit Any->Integer/Number/Boolean unbox on .toX())
+// Semantic: unbox from Any must handle tag=String (4) by parsing the LP-string
+// Fixed in: compiler 0.33.59
+// Expected output:
+// 7 11 22
+// 1.5 2.5 3.5
+// true false true
+//
+// Regression: CODEGEN-UNBOX-TO-I32-MISSING-STRING-TAG-CASE (#0ccc47714523)
+// Also closes: BRIDGE-JSON-GET-INTEGER-RETURNS-POINTER-AGGREGATE-QUERY (#61ef80a34ec6)
+//   (node-server-side symptom of the same compiler bug)
+//
+// Before the fix, emit_unbox_to_i32 / emit_unbox_to_f64 / UnboxAnyToBoolean
+// had no tag==4 (String) branch. When json.get returned tag=String with
+// value1 = LP-string pointer, callers of .toInteger() / .toNumber() /
+// .toBoolean() received the LP-string address (or garbage f64 built from
+// LP-pointer bits) instead of the parsed value.
+//
+// Fix: each unbox helper now has a tag==4 branch that treats value1 as an
+// LP-string pointer and calls the appropriate parser (string_to_int,
+// string_to_float, or an in-place byte-compare against "true").
+//
+// The integer shape (digits_of wrapper) is the exact reporter's minimal
+// repro. The number and boolean shapes assign json.get to an explicit
+// `any` local first — the receiver_type on `.toNumber()`/`.toBoolean()`
+// must be exactly `Any` to route through the (ConcreteType::Any, ...)
+// branches in the MIR builder. Chaining without the intermediate `any`
+// binding routes through a different lowering path that this fix does
+// not touch (tracked separately in TASKS.md).
+
+start:
+	// integer via .toInteger() on json.get result (exact reporter shape)
+	string blob = "{\"a\":\"7\",\"b\":\"11\",\"c\":\"22\"}"
+	integer a = digits_of(blob, "a")
+	integer b = digits_of(blob, "b")
+	integer c = digits_of(blob, "c")
+	print(a.toString() + " " + b.toString() + " " + c.toString())
+	print("\n")
+
+	// number via .toNumber() on Any-typed local
+	string nblob = "{\"a\":\"1.5\",\"b\":\"2.5\",\"c\":\"3.5\"}"
+	any ra = json.get(nblob, "a")
+	any rb = json.get(nblob, "b")
+	any rc = json.get(nblob, "c")
+	number na = ra.toNumber()
+	number nb = rb.toNumber()
+	number nc = rc.toNumber()
+	print(na.toString() + " " + nb.toString() + " " + nc.toString())
+	print("\n")
+
+	// boolean via .toBoolean() on Any-typed local
+	string bblob = "{\"a\":\"true\",\"b\":\"false\",\"c\":\"true\"}"
+	any bra = json.get(bblob, "a")
+	any brb = json.get(bblob, "b")
+	any brc = json.get(bblob, "c")
+	boolean ba = bra.toBoolean()
+	boolean bb = brb.toBoolean()
+	boolean bc = brc.toBoolean()
+	print(ba.toString() + " " + bb.toString() + " " + bc.toString())
+
+functions:
+	integer digits_of(string blob, string key)
+		return json.get(blob, key).toInteger()
