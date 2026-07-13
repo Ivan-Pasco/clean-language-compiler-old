@@ -18,9 +18,9 @@
 name: reporter-artifacts
 
 on:
-  # push:
-  #   tags:
-  #     - 'v*'
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       target_version:
