@@ -131,6 +131,7 @@ pub const CARRYOVER_POOL_SIZE: i32 = 32_768;
 ///   - 4: pool_base (chosen slot's global value)
 ///   - 5: dst_ptr (return value; either pool_base or a fresh __malloc)
 ///   - 6: copy_i (memcpy loop counter)
+#[allow(clippy::vec_init_then_push)]
 pub fn gen_carryover_copy(malloc_func: u32) -> Vec<Instruction<'static>> {
     let mut ins: Vec<Instruction<'static>> = Vec::new();
 
