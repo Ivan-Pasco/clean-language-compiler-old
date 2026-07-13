@@ -1,5 +1,29 @@
 # Clean Language Compiler - Implementation Tasks
 
+## 🔎 INVESTIGATION NOTES (2026-07-13) — /fix run findings, not yet actionable
+
+Recorded so the next /fix run does not repeat this work.
+
+### CODEGEN-STRING-ACCUM-LOOP-TRUNCATION-V2 (fp `eed00ffee567`) — minimal repro from bug does NOT reproduce on 0.33.58 standalone
+
+- The bug's `minimal_repro` (`build_rows` function with 9-fragment `+` chain inside `while + if/else`, iterating a single-row JSON fixture) was reduced to a standalone `.cln` file, compiled with 0.33.58, executed under `wasmtime_runner`. Output was **correct** (466 chars, starts with `<tr><td class='task-id-col'>#1</td>`, ends with `</tr>`, no truncation).
+- Reporter's own note admits their existing regression pin `codegen_string_accum_in_if_else_truncation.cln` also passes locally. Truncation only fires in the **full production shape** (`clean-errors app/server/pages/tasks.cln`, ~900 lines, many concat sites across many functions in the same module).
+- Suggests a scale-sensitive heap-layout or bump-alloc-interaction bug: minimal file compiles a small linear-memory footprint, does not trigger the aliasing condition.
+- **Do not chase the minimal repro further.** Next fixer needs the reporter's real `pages/tasks.cln` shape (with surrounding module) and to bisect by shrinking IT, not by expanding a synthetic repro.
+- Test artefact at `/tmp/accum-v2/test.cln` if needed to see the "passing" shape.
+
+### WASM-HANDLER-TRAP-JSON-ITERATION (fp `5986e77a214f`) — compiler-side minimal repro passes; bug lives in endpoint/plugin path
+
+- Extracted the essence of the bug (while-loop iterating `json.get(arr, i.toString())` with per-iteration class construction + html-like string return) into standalone `.cln`. Runs cleanly on 0.33.58 in `wasmtime_runner`, outputs `<div class="card"><h3>A</h3></div>...` for 3 iterations, exits 0, no trap.
+- Reporter's trap only fires when the same pattern runs inside `endpoints server: GET "/probe"` under `clean-server 1.9.76` with `frame.server` plugin.
+- Rules out reporter's hypothesis (a): `json.get(arr, out-of-range)` correctly returns `""` and the loop exits — no infinite loop in the compiler-side code path.
+- Bug likely lives in one of:
+  1. Plugin-generated route wrapper (compiled by cln, but source is from frame.server plugin.wasm)
+  2. `clean-server`'s handler dispatch or response bridge
+  3. Interaction between the plugin's assemble hook and per-iteration class-constructor allocation under a route context (heap owned by the request, not the module)
+- **Not fixable inside the compiler alone.** Needs a session that boots clean-server + frame.server together and reproduces the trap end-to-end.
+- Test artefact at `/tmp/json-iter-trap/test2.cln` (passes).
+
 ## 🔍 POST-PLAN CLEANUP: Dev-queue investigations (2026-06-29)
 
 ### SEM007 (fingerprint 2426d9b5f7f0cd4d) — `Function 'expand_block' not found`
