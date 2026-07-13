@@ -35,8 +35,7 @@ start:
 	integer a = digits_of(blob, "a")
 	integer b = digits_of(blob, "b")
 	integer c = digits_of(blob, "c")
-	print(a.toString() + " " + b.toString() + " " + c.toString())
-	print("\n")
+	printl(a.toString() + " " + b.toString() + " " + c.toString())
 
 	// number via .toNumber() on Any-typed local
 	string nblob = "{\"a\":\"1.5\",\"b\":\"2.5\",\"c\":\"3.5\"}"
@@ -46,8 +45,7 @@ start:
 	number na = ra.toNumber()
 	number nb = rb.toNumber()
 	number nc = rc.toNumber()
-	print(na.toString() + " " + nb.toString() + " " + nc.toString())
-	print("\n")
+	printl(na.toString() + " " + nb.toString() + " " + nc.toString())
 
 	// boolean via .toBoolean() on Any-typed local
 	string bblob = "{\"a\":\"true\",\"b\":\"false\",\"c\":\"true\"}"
@@ -57,7 +55,7 @@ start:
 	boolean ba = bra.toBoolean()
 	boolean bb = brb.toBoolean()
 	boolean bc = brc.toBoolean()
-	print(ba.toString() + " " + bb.toString() + " " + bc.toString())
+	printl(ba.toString() + " " + bb.toString() + " " + bc.toString())
 
 functions:
 	integer digits_of(string blob, string key)

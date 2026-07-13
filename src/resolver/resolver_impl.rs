@@ -3358,6 +3358,18 @@ impl NameResolver {
             Some(HirType::String),
             builtin_location.clone(),
         );
+        // Carryover slot copy (see native_stdlib::carryover). Two-slot
+        // ping-pong pool used by the HIR accumulator-loop rewrite to
+        // stop O(N) main-heap growth for an outer-scope string variable
+        // that is reassigned once per iteration inside the loop (the
+        // canonical `string item = json.get(arr, i.toString())` shape).
+        // Signature: carryover_copy(str_ptr, slot) -> str_ptr.
+        self.register_builtin_fn(
+            "carryover_copy",
+            vec![HirType::String, HirType::Integer],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
 
         // Host bridge arena scope push/pop — used by the HIR dual-accumulator
         // rewrite (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE, fp b80c2f907c71).

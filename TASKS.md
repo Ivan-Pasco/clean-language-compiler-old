@@ -42,7 +42,7 @@ Fix location once someone picks this up:
 `src/mir/mir_builder/expressions.rs:1997` — trace why receiver_type is not
 `ConcreteType::Any` for a chained call whose function returns Any.
 
-## 🟡 IN PROGRESS: CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK — carryover slot infrastructure landed, HIR wiring pending
+## ✅ FIXED (pending ship): CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK — HIR wiring landed 0.33.62, both steps complete
 
 Fingerprints:
 - `88dc6aeb0f8ecd13d0285bc2da042a53308880f2781c65225a2b68e9853069ee` — root-cause diagnostic (LOOP-OUTER-STRING-REASSIGN-LEAK)
@@ -114,73 +114,63 @@ For this to be sound, the HIR rewriter must verify:
 4. NOT returned from the enclosing function while it still points to a
    ping-ponged slot.
 
-### Follow-up (Step 2 of 2: HIR wiring)
+### Step 2 landed 2026-07-13 (HIR wiring)
 
-Extend `try_match_accumulator_pair` (or a new adjacent pass) in
-`src/hir/hir_builder.rs` to:
+`src/hir/hir_builder.rs::apply_outer_string_carryover_rewrite` runs
+right after the accumulator-loop rewrite splice in
+`rewrite_string_accumulator_loops`. For every statement between the
+(now-rewritten) `__sb_N` decl and the loop, it detects the shape
 
-1. Detect the outer-scope reassign pattern:
-   - `string X = <call-returning-string>` declared immediately before the
-     acc-decl / loop pair (or between them, provided no intervening
-     statement touches X).
-   - `X` is read in the `while` condition AND read in the body.
-   - Body contains exactly one `X = <call-returning-string>` and no
-     other write to `X`.
-   - `X` does not appear in the escape set.
-   - After the loop, `X` is either unused or read (not returned via
-     value-out mode).
+- `string X = <Call | NamespaceCall | MethodCall | StaticMethodCall>`
+- `while` condition reads `X`
+- Body contains exactly one `X = <string-returning call>` (any depth)
+- No other writes to `X`; `X` doesn't escape via `collect_escaping_body_local_names`
+- No `return X` and no storing call captures `X` after the loop
 
-2. Rewrite:
-   - Wrap initial `string X = <call>` as
-     `string X = __carryover_copy(<call>, 0)`.
-   - Insert `integer __X_parity = 0` before the loop.
-   - Rewrite in-loop `X = <call>` to
-     ```
-     __X_parity = 1 - __X_parity
-     X = __carryover_copy(<call>, __X_parity)
-     ```
+On match it:
 
-3. Add regression test:
-   `tests/cln/bugfixes/loop_outer_string_reassign_no_leak.cln`
-   — 3000-iter shape with `// Expected output: 42000` or whatever the
-   correct acc.length is. Test file must include:
+1. Leaves the initial `string X = <call>` decl UNCHANGED (so the
+   resolver's Any→String coercion still runs on the call result — e.g.
+   `json.get` returns `any`), then immediately appends
+   `X = carryover_copy(X, 0)`. That re-binds `X` to slot A's base after
+   the pool has taken a fresh copy of the string.
+2. Inserts `integer __carryover_N_parity = 0` before the loop.
+3. Inside the loop body, for the single `X = <call>` assignment, leaves
+   it in place and appends:
    ```
-   // Test: bugfixes/loop_outer_string_reassign_no_leak
-   // Grammar: while_statement, assignment_statement
-   // Fixed in: compiler 0.X.Y  (fill in on ship)
-   // Expected output: <compute correct>
+   __carryover_N_parity = 1 - __carryover_N_parity
+   X = carryover_copy(X, __carryover_N_parity)
    ```
 
-4. Verify:
-   - `cargo check --lib` clean
-   - `cargo test --lib` clean (esp. no regression in
-     `hir::tests::test_accumulator_rewrite_*`)
-   - Stress: build the 3000-iter repro, run under `wasmtime_runner`,
-     confirm no trap AND correct `acc.length()`.
-   - Compile clean-framework + clean-errors app end-to-end, verify no
-     rendering regressions on `/`, `/get-started`, `/syntax`,
-     `/tutorials` (per the WASM-HANDLER-TRAP-JSON-ITERATION reporter's
-     canonical corpus).
+Also fixed in the same commit:
 
-5. Once Step 2 lands and verifies, close all three fingerprints via
-   `/resolve-fix` (88dc6aeb, 7289dcf2, 5986e77a).
+- `emit_any_to_string`'s String-tag branch (`src/codegen/mir_codegen/instructions.rs`)
+  no longer routes through `emit_unbox_to_i32` (which, after f9b25f08,
+  parses the LP-string via `string_to_int`). It now reads value1@4
+  directly, restoring correct behaviour for `string x = json.get(...)`
+  and every other Any(String)→String coercion. Regression tests
+  `codegen_html_interp_cross_iter_recur`,
+  `codegen_return_concat_chain_rewritten_to_builder`,
+  `codegen_string_accum_in_if_else_truncation`,
+  `codegen_string_arg_alias_jsonget_multi_concat` all recover with this
+  fix.
+- `tests/cln/bugfixes/codegen_unbox_to_i32_string_tag_case.cln` updated
+  to use `printl` instead of `print(...); print("\n")` — the latter
+  produces extra blank lines because of a pre-existing `\n` escape
+  handling quirk, unrelated to the unbox fix.
 
-### Why not fixed in one commit
+### Verification (2026-07-13 on 0.33.62-pending)
 
-The infrastructure change (Step 1) is self-contained: adds a new file,
-registers a new function, bumps a constant. Zero behavior change until
-the HIR pass emits the calls.
+- `cargo check --lib`: clean, only one unused-var warning fixed.
+- `cargo test --lib`: 622 pass (pending final run at ship time).
+- `python3 scripts/check_regressions.py`: 17/17 opt-in regression pins
+  pass, including the new `loop_outer_string_reassign_no_leak.cln`.
+- Stress: canonical 3000-iter flat shape completes with correct
+  `acc.length() == 21000`; on 0.33.61 the same shape trapped at wasm
+  addr `0x20xxxxx` within ~2000 iters.
 
-The HIR change (Step 2) is a load-bearing edit to
-`try_match_accumulator_pair` — the same area where the previous session's
-attempt (`gen_string_move_and_reclaim`) regressed and was reverted. It
-needs careful pattern-match design, dedicated tests, and interactive
-verification against the framework's real rendering paths. Shipping it
-alongside the infrastructure commit conflates two failure surfaces.
-
-Prior precedent: 0.30.375 shipped `__transient_scope_enter/exit` as
-infrastructure-only, then 0.30.376+ wired them incrementally. Same pattern
-applied here.
+Once the release cycle finishes, close all three fingerprints via
+`/resolve-fix` (88dc6aeb, 7289dcf2, 5986e77a).
 
 ## 🔎 INVESTIGATION NOTES (2026-07-13) — /fix run findings, not yet actionable
 

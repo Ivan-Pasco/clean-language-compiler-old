@@ -1,0 +1,64 @@
+// Test: bugfixes/loop_outer_string_reassign_no_leak
+// Grammar: while_statement, assignment_statement, variable_declaration
+// Semantic: SEM020 (accumulator pattern), outer-scope carryover invariant
+// Fixed in: compiler 0.33.62
+//
+// Regression: CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK
+// Fingerprints:
+//   - 88dc6aeb0f8e (root-cause diagnostic)
+//   - 7289dcf25032 (prior failed-attempt: string_move_and_reclaim)
+//   - 5986e77a214f (downstream: WASM-HANDLER-TRAP-JSON-ITERATION)
+//
+// The canonical shape:
+//
+//   string item = json.get(arrJson, "0")
+//   while item != ""
+//       acc = acc + "row-" + item + ";"
+//       i = i + 1
+//       item = json.get(arrJson, i.toString())
+//
+// leaks O(N) main-heap bytes because the HIR accumulator-rewrite
+// deliberately excludes `item` from the transient arena (it's declared
+// OUTSIDE the loop and `mem_release` is a no-op). Every iter allocates
+// a fresh string via `__malloc` through `json.get`; the previous iter's
+// bytes are orphaned. Cumulative growth trips the 32 MB linear-memory
+// cap.
+//
+// Fix (0.33.62): the HIR builder detects the outer-scope-reassign shape
+// and inserts a `carryover_copy(<var>, slot)` re-binding immediately
+// after each write of `<var>`. A parity local threads the slot argument
+// so successive writes alternate between two fixed 32 KB pools (see
+// `src/codegen/native_stdlib/carryover.rs`). The main heap sees O(1)
+// live-carryover overhead instead of O(N).
+//
+// Verification here: 3000 iterations by wrapping around a 10-element
+// JSON literal array. Per-iter accumulator append: "row-" + item + ";"
+// (4 + 2 + 1 = 7 chars). Total accumulator length: 3000 * 7 = 21000.
+// On 0.33.61 (pre-carryover), this pattern trapped at wasm addr
+// 0x20xxxxx within ~2000 iters (the leaked json.get results dominated
+// the main heap). On 0.33.62 it completes and prints the correct
+// length.
+//
+// A 3000-iteration flat loop is enough to observe the linear-memory
+// exhaustion pre-fix while staying well under CI time budgets. The
+// index wraps `i = 0` when `i >= 10` so `json.get(arrJson, i.toString())`
+// always finds a valid element and the loop only exits when `total`
+// reaches 3000.
+//
+// Expected output:
+//   21000
+
+start:
+	string arrJson = "[\"r0\",\"r1\",\"r2\",\"r3\",\"r4\",\"r5\",\"r6\",\"r7\",\"r8\",\"r9\"]"
+	string acc = ""
+	integer i = 0
+	string item = json.get(arrJson, "0")
+	integer total = 0
+	while total < 3000
+		acc = acc + "row-" + item + ";"
+		i = i + 1
+		if i >= 10
+			i = 0
+		item = json.get(arrJson, i.toString())
+		total = total + 1
+	printl(acc.length().toString())

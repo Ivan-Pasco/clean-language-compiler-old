@@ -3279,10 +3279,25 @@ impl MirCodeGenerator<'_> {
                     self.current_instructions
                         .push(Instruction::If(BlockType::Empty));
                     {
-                        // String case: return value directly (it's already a string pointer)
+                        // String case: value1 (offset 4) is already an LP-string
+                        // pointer. Read it directly rather than routing through
+                        // `emit_unbox_to_i32` — the latter's tag==4 branch (added
+                        // in f9b25f08 to fix .toInteger() on Any(String)) PARSES
+                        // the LP-string via `string_to_int`, which would turn
+                        // every string like "row0" into 0, losing the pointer.
+                        // Regression: `codegen_html_interp_cross_iter_recur`,
+                        // `codegen_string_arg_alias_jsonget_multi_concat`, and
+                        // the string-accumulator tests all read Any(String)
+                        // results into `string` locals via this path.
                         self.current_instructions
                             .push(Instruction::LocalGet(ptr_local));
-                        self.emit_unbox_to_i32()?;
+                        self.current_instructions.push(Instruction::I32Load(
+                            wasm_encoder::MemArg {
+                                offset: 4,
+                                align: 2,
+                                memory_index: 0,
+                            },
+                        ));
                         self.current_instructions
                             .push(Instruction::LocalSet(result_local));
                     }

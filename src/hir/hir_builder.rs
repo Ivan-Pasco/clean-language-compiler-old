@@ -110,6 +110,13 @@ pub struct HirBuilder {
     /// `__sb_N` local. Mirrors `later_counter` — never reset, so a single
     /// build never produces colliding names.
     string_builder_counter: usize,
+    /// Monotonic counter used to name temporaries introduced by the
+    /// outer-scope-string-reassign carryover rewrite (resolves
+    /// CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK, fingerprint 88dc6aeb0f8e).
+    /// Each rewritten outer variable gets a unique `__carryover_N_parity`
+    /// integer local. Kept separate from `string_builder_counter` so the
+    /// two rewrites can interleave freely.
+    carryover_counter: usize,
 }
 
 impl HirBuilder {
@@ -129,6 +136,7 @@ impl HirBuilder {
             api_response_vars: std::collections::HashMap::new(),
             state_initializers: std::collections::HashMap::new(),
             string_builder_counter: 0,
+            carryover_counter: 0,
         }
     }
 
@@ -2764,9 +2772,505 @@ impl HirBuilder {
             stmts[shifted_loop_idx] = rewrite.replacement_loop;
             stmts.insert(shifted_loop_idx + 1, rewrite.finalize_decl);
 
-            // Resume scanning after the newly inserted finalize.
-            i = shifted_loop_idx + 2;
+            // Post-splice: try the outer-scope-string-reassign carryover
+            // rewrite for any string variable declared BETWEEN the
+            // accumulator decl and the loop, that is:
+            //   - initialized from a call returning a string,
+            //   - read in the loop's condition,
+            //   - reassigned exactly once inside the loop body via a call
+            //     returning a string,
+            //   - not captured into an outer-scope collection or returned,
+            //   - has no other write inside the loop.
+            //
+            // The rewrite wraps both writes in `carryover_copy(<call>, s)`
+            // and threads a parity local so successive writes alternate
+            // between slot 0 and slot 1. See
+            // `src/codegen/native_stdlib/carryover.rs` for the pool
+            // layout and the ping-pong safety invariant. Resolves
+            // CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK (88dc6aeb0f8e).
+            let added = self.apply_outer_string_carryover_rewrite(stmts, i + 1, shifted_loop_idx);
+
+            // Resume scanning after the newly inserted finalize (and
+            // any parity decls the carryover pass inserted before the
+            // loop).
+            i = shifted_loop_idx + 2 + added;
         }
+    }
+
+    /// Detect and rewrite the outer-scope-string-reassign leak pattern
+    /// for the accumulator-rewritten loop at `stmts[loop_idx]`. Scans
+    /// `stmts[start_idx..loop_idx]` for a candidate `string X = <call>`
+    /// decl and, on match, rewrites both the initial decl and the
+    /// in-loop assignment to route through `carryover_copy`. Returns
+    /// the number of statements inserted BEFORE `loop_idx` so the
+    /// caller can shift its cursor.
+    ///
+    /// Returns 0 (and leaves `stmts` unchanged) when no candidate is
+    /// found or the safety invariants aren't met. Multiple candidates
+    /// are handled in one call: each qualifying decl in the search
+    /// range gets its own rewrite with its own parity local.
+    fn apply_outer_string_carryover_rewrite(
+        &mut self,
+        stmts: &mut Vec<HirStatement>,
+        start_idx: usize,
+        loop_idx: usize,
+    ) -> usize {
+        let mut inserted = 0usize;
+        let mut cursor = start_idx;
+        while cursor < loop_idx + inserted {
+            // Candidate must be `string <name> = <call-returning-string>`.
+            let Some((x_name, x_call, decl_loc)) =
+                Self::extract_outer_string_reassign_candidate(&stmts[cursor])
+            else {
+                cursor += 1;
+                continue;
+            };
+
+            // The loop (now at loop_idx + inserted) must:
+            //   1. Read `x_name` in its condition (a plain read, not a
+            //      write — the loop is a `While` after the accumulator
+            //      rewrite).
+            //   2. Contain exactly one `x_name = <call-returning-string>`
+            //      assignment inside its body.
+            //   3. Contain no other write to `x_name`.
+            //   4. Not escape `x_name` via any storing call
+            //      (list.push, pairs.set, ...) inside the body.
+            let loop_stmt_idx = loop_idx + inserted;
+            let HirStatement::While {
+                condition,
+                body,
+                location: loop_loc,
+            } = &stmts[loop_stmt_idx]
+            else {
+                // Only While loops are rewritten by the accumulator
+                // pass; a For loop here means the pattern doesn't
+                // match. Bail on this candidate.
+                cursor += 1;
+                continue;
+            };
+            if !Self::expr_reads_variable(condition, &x_name) {
+                cursor += 1;
+                continue;
+            }
+            let Some(_new_call_expr) = Self::find_unique_reassign_call(body, &x_name) else {
+                cursor += 1;
+                continue;
+            };
+            let mut escaping = std::collections::HashSet::new();
+            Self::collect_escaping_body_local_names(body, &mut escaping);
+            if escaping.contains(&x_name) {
+                cursor += 1;
+                continue;
+            }
+            // Reject if `x_name` is returned or otherwise escapes the
+            // block AFTER the loop. Simplest safe rule: bail if any
+            // statement after the loop's finalize reads `x_name`.
+            // Reads of `x_name` after the loop observe the last-iter
+            // slot content — which stays valid until this HIR-level
+            // scope exits, because we never call the carryover helper
+            // again. That's OK. But a `return x` from an outer
+            // function would keep the pointer live past the scope
+            // exit; we conservatively reject.
+            let post_start = loop_stmt_idx + 1;
+            if Self::any_stmt_stores_or_returns_variable(&stmts[post_start..], &x_name) {
+                cursor += 1;
+                continue;
+            }
+
+            // All invariants met. Emit the rewrite.
+            let carryover_id = self.carryover_counter;
+            self.carryover_counter += 1;
+            let parity_name = format!("__carryover_{carryover_id}_parity");
+            let loc = decl_loc.clone();
+            let loop_loc = loop_loc.clone();
+            let _ = x_call; // decl's initializer is left in place.
+
+            // 1. Leave the initial `string X = <call>` decl UNCHANGED so the
+            //    resolver's Any→String coercion still runs on the call
+            //    result (needed when the call returns Any, e.g. `json.get`).
+            //    Immediately after, insert `X = carryover_copy(X, 0)` so the
+            //    coerced string pointer gets copied into pool slot 0 and
+            //    `X` is re-bound to point at that slot.
+            //
+            // 2. Then insert `integer __carryover_N_parity = 0`.
+            let initial_wrap = HirStatement::Assignment {
+                target: HirLValue::Variable {
+                    name: x_name.clone(),
+                    location: loc.clone(),
+                },
+                value: Self::make_carryover_copy_call(
+                    HirExpression::Variable {
+                        name: x_name.clone(),
+                        location: loc.clone(),
+                    },
+                    0,
+                    &loc,
+                ),
+                location: loc.clone(),
+            };
+            let parity_decl = HirStatement::VariableDeclaration {
+                name: parity_name.clone(),
+                var_type: HirType::Integer,
+                initializer: Some(HirExpression::Literal {
+                    value: Value::Integer(0),
+                    location: loc.clone(),
+                }),
+                is_mutable: true,
+                location: loc.clone(),
+            };
+            stmts.insert(cursor + 1, initial_wrap);
+            stmts.insert(cursor + 2, parity_decl);
+            inserted += 2;
+            let loop_stmt_idx_after = loop_stmt_idx + 2;
+
+            // 3. Inside the loop body, replace the assignment
+            //    `X = <call>` with three statements:
+            //       X = <call>                                (unchanged; keeps coercion)
+            //       __carryover_N_parity = 1 - __carryover_N_parity
+            //       X = carryover_copy(X, __carryover_N_parity)
+            if let HirStatement::While { body, .. } = &mut stmts[loop_stmt_idx_after] {
+                Self::rewrite_carryover_reassign_in_block(body, &x_name, &parity_name, &loop_loc);
+            }
+
+            cursor += 3; // advance past decl, initial_wrap, parity_decl.
+        }
+        inserted
+    }
+
+    /// Return Some((name, call_expr, decl_location)) when `stmt` is a
+    /// `string <name> = <Call | NamespaceCall | MethodCall>` — the
+    /// candidate shape for the outer-scope carryover rewrite. The
+    /// call's return type is not verified here (we rely on the
+    /// declaration's `HirType::String` annotation as the type-check
+    /// witness). Non-string decls and decls whose initializer is not
+    /// a call are rejected.
+    fn extract_outer_string_reassign_candidate(
+        stmt: &HirStatement,
+    ) -> Option<(String, HirExpression, SourceLocation)> {
+        let HirStatement::VariableDeclaration {
+            name,
+            var_type,
+            initializer: Some(init),
+            location,
+            ..
+        } = stmt
+        else {
+            return None;
+        };
+        if !matches!(var_type, HirType::String) {
+            return None;
+        }
+        if !Self::is_string_returning_call(init) {
+            return None;
+        }
+        Some((name.clone(), init.clone(), location.clone()))
+    }
+
+    /// True when `expr` is a call form whose result is a string. We
+    /// accept `Call`, `NamespaceCall`, `MethodCall`, and
+    /// `StaticMethodCall` here — the resolver has already type-checked
+    /// the enclosing `string X = ...` decl, so the call's return type
+    /// is guaranteed to be String. Rejecting non-call shapes (variable
+    /// reads, literals, concat chains) matches the design invariant
+    /// that the rewrite is only useful when the initializer produces
+    /// a fresh heap allocation per call.
+    fn is_string_returning_call(expr: &HirExpression) -> bool {
+        matches!(
+            expr,
+            HirExpression::Call { .. }
+                | HirExpression::NamespaceCall { .. }
+                | HirExpression::MethodCall { .. }
+                | HirExpression::StaticMethodCall { .. }
+        )
+    }
+
+    /// Walk `body` looking for the unique `<name> = <call>` assignment
+    /// (any depth). Returns Some(the call expression) only when:
+    ///   - exactly one such assignment exists,
+    ///   - no other write to `<name>` exists,
+    ///   - the RHS is a string-returning call.
+    fn find_unique_reassign_call(body: &HirBlock, name: &str) -> Option<HirExpression> {
+        let mut found: Option<HirExpression> = None;
+        let mut disqualified = false;
+        Self::scan_reassigns_in_block(body, name, &mut found, &mut disqualified);
+        if disqualified {
+            None
+        } else {
+            found
+        }
+    }
+
+    fn scan_reassigns_in_block(
+        block: &HirBlock,
+        name: &str,
+        found: &mut Option<HirExpression>,
+        disqualified: &mut bool,
+    ) {
+        for stmt in &block.statements {
+            if *disqualified {
+                return;
+            }
+            Self::scan_reassigns_in_stmt(stmt, name, found, disqualified);
+        }
+    }
+
+    fn scan_reassigns_in_stmt(
+        stmt: &HirStatement,
+        name: &str,
+        found: &mut Option<HirExpression>,
+        disqualified: &mut bool,
+    ) {
+        match stmt {
+            HirStatement::Assignment { target, value, .. } => {
+                if let HirLValue::Variable { name: lhs_name, .. } = target {
+                    if lhs_name == name {
+                        if !Self::is_string_returning_call(value) {
+                            // Assignment shape doesn't match — e.g.
+                            // `X = other_string + suffix`. Bail so the
+                            // caller doesn't rewrite anything.
+                            *disqualified = true;
+                            return;
+                        }
+                        if found.is_some() {
+                            // Second reassign — pattern rejects.
+                            *disqualified = true;
+                            return;
+                        }
+                        *found = Some(value.clone());
+                    }
+                }
+            }
+            HirStatement::VariableDeclaration { name: n, .. } => {
+                if n == name {
+                    // A nested re-declaration would shadow the outer
+                    // variable — safest to bail rather than reason
+                    // about scoping.
+                    *disqualified = true;
+                }
+            }
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::scan_reassigns_in_block(then_branch, name, found, disqualified);
+                if let Some(eb) = else_branch {
+                    Self::scan_reassigns_in_block(eb, name, found, disqualified);
+                }
+            }
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                // A nested loop reassigning `X` is beyond the pattern
+                // scope — bail to keep safety analysis simple.
+                let mut inner = None;
+                let mut inner_disq = false;
+                Self::scan_reassigns_in_block(body, name, &mut inner, &mut inner_disq);
+                if inner.is_some() || inner_disq {
+                    *disqualified = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// For the single `<name> = <call>` assignment inside `block` (recursing
+    /// into if/else), leave it in place and append two statements after
+    /// it so the sequence becomes:
+    ///     <name> = <call>                              (unchanged;
+    ///                                                   keeps the resolver's
+    ///                                                   Any→String coercion
+    ///                                                   on the call result)
+    ///     __parity = 1 - __parity
+    ///     <name> = carryover_copy(<name>, __parity)
+    ///
+    /// Precondition: `find_unique_reassign_call` returned Some for this
+    /// (block, name) pair.
+    fn rewrite_carryover_reassign_in_block(
+        block: &mut HirBlock,
+        x_name: &str,
+        parity_name: &str,
+        loc: &SourceLocation,
+    ) {
+        let mut i = 0;
+        while i < block.statements.len() {
+            let is_target = matches!(
+                &block.statements[i],
+                HirStatement::Assignment {
+                    target: HirLValue::Variable { name, .. },
+                    value,
+                    ..
+                } if name == x_name && Self::is_string_returning_call(value)
+            );
+
+            if is_target {
+                let assign_loc =
+                    if let HirStatement::Assignment { location, .. } = &block.statements[i] {
+                        location.clone()
+                    } else {
+                        unreachable!("matched Assignment above");
+                    };
+
+                let flip = HirStatement::Assignment {
+                    target: HirLValue::Variable {
+                        name: parity_name.to_string(),
+                        location: assign_loc.clone(),
+                    },
+                    value: HirExpression::BinaryOp {
+                        op: HirBinaryOp::Subtract,
+                        left: Box::new(HirExpression::Literal {
+                            value: Value::Integer(1),
+                            location: assign_loc.clone(),
+                        }),
+                        right: Box::new(HirExpression::Variable {
+                            name: parity_name.to_string(),
+                            location: assign_loc.clone(),
+                        }),
+                        location: assign_loc.clone(),
+                    },
+                    location: assign_loc.clone(),
+                };
+                let wrapped = HirStatement::Assignment {
+                    target: HirLValue::Variable {
+                        name: x_name.to_string(),
+                        location: assign_loc.clone(),
+                    },
+                    value: Self::make_carryover_copy_call_with_parity(
+                        HirExpression::Variable {
+                            name: x_name.to_string(),
+                            location: assign_loc.clone(),
+                        },
+                        parity_name,
+                        &assign_loc,
+                    ),
+                    location: assign_loc,
+                };
+                block.statements.insert(i + 1, flip);
+                block.statements.insert(i + 2, wrapped);
+                i += 3;
+                continue;
+            }
+
+            match &mut block.statements[i] {
+                HirStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::rewrite_carryover_reassign_in_block(
+                        then_branch,
+                        x_name,
+                        parity_name,
+                        loc,
+                    );
+                    if let Some(eb) = else_branch {
+                        Self::rewrite_carryover_reassign_in_block(eb, x_name, parity_name, loc);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
+    /// Build a `carryover_copy(<call>, <slot literal>)` expression.
+    fn make_carryover_copy_call(
+        call_expr: HirExpression,
+        slot: i64,
+        loc: &SourceLocation,
+    ) -> HirExpression {
+        HirExpression::Call {
+            function: "carryover_copy".to_string(),
+            arguments: vec![
+                call_expr,
+                HirExpression::Literal {
+                    value: Value::Integer(slot),
+                    location: loc.clone(),
+                },
+            ],
+            location: loc.clone(),
+        }
+    }
+
+    /// Build a `carryover_copy(<call>, <parity variable>)` expression.
+    fn make_carryover_copy_call_with_parity(
+        call_expr: HirExpression,
+        parity_name: &str,
+        loc: &SourceLocation,
+    ) -> HirExpression {
+        HirExpression::Call {
+            function: "carryover_copy".to_string(),
+            arguments: vec![
+                call_expr,
+                HirExpression::Variable {
+                    name: parity_name.to_string(),
+                    location: loc.clone(),
+                },
+            ],
+            location: loc.clone(),
+        }
+    }
+
+    /// True when any subexpression of `expr` is a `Variable { name }`.
+    /// Used to verify that the loop condition reads `x_name` before
+    /// applying the carryover rewrite.
+    fn expr_reads_variable(expr: &HirExpression, name: &str) -> bool {
+        match expr {
+            HirExpression::Variable { name: n, .. } => n == name,
+            HirExpression::BinaryOp { left, right, .. } => {
+                Self::expr_reads_variable(left, name) || Self::expr_reads_variable(right, name)
+            }
+            HirExpression::UnaryOp { operand, .. } => Self::expr_reads_variable(operand, name),
+            HirExpression::Call { arguments, .. }
+            | HirExpression::NamespaceCall { arguments, .. }
+            | HirExpression::StaticMethodCall { arguments, .. } => {
+                arguments.iter().any(|a| Self::expr_reads_variable(a, name))
+            }
+            HirExpression::MethodCall {
+                receiver,
+                arguments,
+                ..
+            } => {
+                Self::expr_reads_variable(receiver, name)
+                    || arguments.iter().any(|a| Self::expr_reads_variable(a, name))
+            }
+            HirExpression::FieldAccess { object, .. } => Self::expr_reads_variable(object, name),
+            HirExpression::Index { array, index, .. } => {
+                Self::expr_reads_variable(array, name) || Self::expr_reads_variable(index, name)
+            }
+            HirExpression::Cast { expression, .. } => Self::expr_reads_variable(expression, name),
+            HirExpression::Constructor { arguments, .. } => {
+                arguments.iter().any(|a| Self::expr_reads_variable(a, name))
+            }
+            HirExpression::Array { elements, .. } => {
+                elements.iter().any(|e| Self::expr_reads_variable(e, name))
+            }
+            _ => false,
+        }
+    }
+
+    /// True when any statement in `stmts` stores `name` into a
+    /// collection (list.push / pairs.set / ...) or returns it — those
+    /// exits keep the pointer live past the enclosing scope, which
+    /// would dangle once the carryover pool is overwritten (or the
+    /// function frame exits). Reads that just observe the value
+    /// (`print(x)`, `y = x + z`) are NOT rejected — they only need
+    /// the last-iter slot to survive until control leaves the scope,
+    /// which it does (the pool is a `__malloc`-allocated block that
+    /// lives on the main heap).
+    fn any_stmt_stores_or_returns_variable(stmts: &[HirStatement], name: &str) -> bool {
+        let mut escaping = std::collections::HashSet::new();
+        for stmt in stmts {
+            Self::collect_escapes_in_statement(stmt, &mut escaping);
+            if let HirStatement::Return {
+                value: Some(HirExpression::Variable { name: n, .. }),
+                ..
+            } = stmt
+            {
+                if n == name {
+                    return true;
+                }
+            }
+        }
+        escaping.contains(name)
     }
 
     /// Single-shot (loop-free) accumulator rewrite. Catches the pattern
