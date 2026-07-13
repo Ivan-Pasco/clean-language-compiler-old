@@ -1122,6 +1122,15 @@ impl MirCodeGenerator<'_> {
         // restores TRANSIENT_PTR — the mechanism that replaces the
         // rolled-back string_builder_reclaim (see ARCHITECTURE in
         // transient_arena.rs).
+        //
+        // Globals 6-7: carryover slot pools
+        // (see native_stdlib::carryover). Two independent single-tenanted
+        // pools used to ping-pong an outer-scope string variable that is
+        // reassigned once per iteration inside an accumulator-rewritten
+        // loop. Both start at 0; each pool is lazily __malloc-allocated
+        // on the first __carryover_copy call to its slot. Motivation:
+        // CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK (fingerprint
+        // 88dc6aeb0f8e).
         for _ in 0..(crate::codegen::native_stdlib::RESERVED_GLOBAL_COUNT - 1) {
             global_section.global(
                 wasm_encoder::GlobalType {

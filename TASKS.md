@@ -42,6 +42,146 @@ Fix location once someone picks this up:
 `src/mir/mir_builder/expressions.rs:1997` — trace why receiver_type is not
 `ConcreteType::Any` for a chained call whose function returns Any.
 
+## 🟡 IN PROGRESS: CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK — carryover slot infrastructure landed, HIR wiring pending
+
+Fingerprints:
+- `88dc6aeb0f8ecd13d0285bc2da042a53308880f2781c65225a2b68e9853069ee` — root-cause diagnostic (LOOP-OUTER-STRING-REASSIGN-LEAK)
+- `7289dcf25032ddd4a88c58cabced6823b983aab1d965fedf0438d1803bb15640` — prior failed-attempt record (STRING-MOVE-AND-RECLAIM-CORRUPTS-STRING)
+- `5986e77a214fa373d9d1f7deadc7459466bbd3822e6278f376c7315d354c8d4c` — downstream runtime symptom (WASM-HANDLER-TRAP-JSON-ITERATION)
+
+### Root cause (verified on 0.33.59, 2026-07-13)
+
+The canonical shape
+
+```clean
+string item = json.get(arrJson, "0")
+while item != ""
+    acc = acc + "row-" + item + ";"
+    i = i + 1
+    item = json.get(arrJson, i.toString())
+```
+
+leaks O(N) main-heap bytes because:
+
+- `item` is declared OUTSIDE the loop, so the HIR accumulator-rewrite in
+  `try_match_accumulator_pair` deliberately excludes it from
+  `body_local_string_names` (by design — the exclusion prevents the
+  CMP-SSR-RECLAIM-FREES-LIVE-POINTER failure mode).
+- Every iteration allocates a fresh string via `__malloc` (through
+  `json.get`) and stores it in `item`. The previous iteration's bytes
+  are orphaned — `mem_release` is a no-op in current hosts.
+- Cumulative growth: at 3000 iterations the 32 MB linear-memory cap trips
+  with `memory fault at wasm address 0x20130d8`, exactly matching the
+  reporter's stress-repro output.
+- Repro confirmed via `/tmp/leak-repro/leak-stress.cln` (built_array
+  3000, wasmtime_runner) — traps as expected.
+
+### Design landed 2026-07-13 (Step 1 of 2: infrastructure)
+
+Per the bug reporter's leading recommendation ("2-slot ping-pong that
+survives 1 scope_exit"), a new carryover arena is added:
+
+- **`src/codegen/native_stdlib/carryover.rs`** — `__carryover_copy(str_ptr, slot)`
+  helper: lazy-alloced fixed 32 KB pool per slot, single-tenanted,
+  spills to `__malloc` on oversize.
+- Two new globals: `CARRYOVER_A_BASE_GLOBAL` (6),
+  `CARRYOVER_B_BASE_GLOBAL` (7). Both initialize to 0 (uninit); pools
+  lazy-alloced on first write to each slot. `RESERVED_GLOBAL_COUNT` bumped
+  6 → 8.
+- Registered via `codegen_registration.rs`: WASM function
+  `__carryover_copy` + alias `carryover_copy`, sharing `malloc_idx` with
+  the transient arena family.
+
+The helper is **not yet called** by any codegen path — this commit only
+ships infrastructure, mirroring the 0.30.375 pattern that shipped
+`transient_scope_enter/exit` before wiring it up.
+
+### Safety invariant (verify before implementing Step 2)
+
+Iter N writes into slot `s = N mod 2`. Iter N+1 reads slot `s` (still
+live, because we haven't touched it since iter N tail) and writes into
+slot `1-s`. Iter N+2 writes slot `s`, overwriting the now-dead iter N
+value. Every read observes a live value; every value is freed by the
+NEXT write to its slot (implicit via `memcpy` overwriting the pool from
+base).
+
+For this to be sound, the HIR rewriter must verify:
+1. Target is declared OUTSIDE the loop.
+2. Reassigned exactly once per iteration path, via a call returning a
+   Clean string.
+3. NOT captured into a collection (list.push, pairs.set, etc.) — same
+   escape-set that `collect_escaping_body_local_names` computes.
+4. NOT returned from the enclosing function while it still points to a
+   ping-ponged slot.
+
+### Follow-up (Step 2 of 2: HIR wiring)
+
+Extend `try_match_accumulator_pair` (or a new adjacent pass) in
+`src/hir/hir_builder.rs` to:
+
+1. Detect the outer-scope reassign pattern:
+   - `string X = <call-returning-string>` declared immediately before the
+     acc-decl / loop pair (or between them, provided no intervening
+     statement touches X).
+   - `X` is read in the `while` condition AND read in the body.
+   - Body contains exactly one `X = <call-returning-string>` and no
+     other write to `X`.
+   - `X` does not appear in the escape set.
+   - After the loop, `X` is either unused or read (not returned via
+     value-out mode).
+
+2. Rewrite:
+   - Wrap initial `string X = <call>` as
+     `string X = __carryover_copy(<call>, 0)`.
+   - Insert `integer __X_parity = 0` before the loop.
+   - Rewrite in-loop `X = <call>` to
+     ```
+     __X_parity = 1 - __X_parity
+     X = __carryover_copy(<call>, __X_parity)
+     ```
+
+3. Add regression test:
+   `tests/cln/bugfixes/loop_outer_string_reassign_no_leak.cln`
+   — 3000-iter shape with `// Expected output: 42000` or whatever the
+   correct acc.length is. Test file must include:
+   ```
+   // Test: bugfixes/loop_outer_string_reassign_no_leak
+   // Grammar: while_statement, assignment_statement
+   // Fixed in: compiler 0.X.Y  (fill in on ship)
+   // Expected output: <compute correct>
+   ```
+
+4. Verify:
+   - `cargo check --lib` clean
+   - `cargo test --lib` clean (esp. no regression in
+     `hir::tests::test_accumulator_rewrite_*`)
+   - Stress: build the 3000-iter repro, run under `wasmtime_runner`,
+     confirm no trap AND correct `acc.length()`.
+   - Compile clean-framework + clean-errors app end-to-end, verify no
+     rendering regressions on `/`, `/get-started`, `/syntax`,
+     `/tutorials` (per the WASM-HANDLER-TRAP-JSON-ITERATION reporter's
+     canonical corpus).
+
+5. Once Step 2 lands and verifies, close all three fingerprints via
+   `/resolve-fix` (88dc6aeb, 7289dcf2, 5986e77a).
+
+### Why not fixed in one commit
+
+The infrastructure change (Step 1) is self-contained: adds a new file,
+registers a new function, bumps a constant. Zero behavior change until
+the HIR pass emits the calls.
+
+The HIR change (Step 2) is a load-bearing edit to
+`try_match_accumulator_pair` — the same area where the previous session's
+attempt (`gen_string_move_and_reclaim`) regressed and was reverted. It
+needs careful pattern-match design, dedicated tests, and interactive
+verification against the framework's real rendering paths. Shipping it
+alongside the infrastructure commit conflates two failure surfaces.
+
+Prior precedent: 0.30.375 shipped `__transient_scope_enter/exit` as
+infrastructure-only, then 0.30.376+ wired them incrementally. Same pattern
+applied here.
+
 ## 🔎 INVESTIGATION NOTES (2026-07-13) — /fix run findings, not yet actionable
 
 Recorded so the next /fix run does not repeat this work.

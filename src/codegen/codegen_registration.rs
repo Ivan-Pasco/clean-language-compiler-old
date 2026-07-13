@@ -280,6 +280,35 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("transient_alloc", transient_alloc_idx);
 
+        // NATIVE: carryover slot copy (`__carryover_copy`) — two-slot
+        // ping-pong pool for an outer-scope string variable that is
+        // reassigned once per iteration inside an accumulator-rewritten
+        // loop. Fixes `CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK`
+        // (fingerprint `88dc6aeb0f8e`): before this helper, every iter
+        // of the canonical `item = json.get(arr, i.toString())` shape
+        // leaked the previous `item`'s bytes to the main heap, driving
+        // O(N) growth that trips the 32 MB linear-memory cap at
+        // ~3000 iterations.
+        //
+        // Signature: `(str_ptr: i32, slot: i32) -> i32`
+        // See `native_stdlib/carryover.rs` for the layout and the
+        // invariant that makes the ping-pong safe.
+        let carryover_copy_instructions = native_stdlib::carryover::gen_carryover_copy(malloc_idx);
+        let carryover_copy_idx = self.register_function_with_locals(
+            "__carryover_copy",
+            &[WasmType::I32, WasmType::I32], // (src_str_ptr, slot)
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // local 2: len
+                WasmType::I32, // local 3: total (aligned)
+                WasmType::I32, // local 4: pool_base
+                WasmType::I32, // local 5: dst_ptr
+                WasmType::I32, // local 6: copy_i (memcpy loop counter)
+            ],
+            &carryover_copy_instructions,
+        )?;
+        self.add_function_alias("carryover_copy", carryover_copy_idx);
+
         // NATIVE: string_concat_transient — identical to __string_concat
         // but routes the result allocation through __transient_alloc
         // instead of __malloc. Used by the MIR builder when a string

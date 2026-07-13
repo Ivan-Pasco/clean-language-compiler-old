@@ -13,6 +13,7 @@
 //! - File system: file_read, file_write, etc.
 //! - HTTP: http_get, http_post, etc.
 
+pub mod carryover;
 pub mod list_ops;
 pub mod memory;
 pub mod pairs_ops;
@@ -90,14 +91,23 @@ pub const LIST_ELEMENT_SIZE_F64: u32 = 8;
 ///   to release per-iteration intermediates without touching the main bump
 ///   heap (and therefore without risking the "free a live pointer" failure
 ///   mode that bit `CMP-SSR-RECLAIM-FREES-LIVE-POINTER`).
+/// - 6-7: carryover slot pools (`CARRYOVER_A_BASE_GLOBAL`,
+///   `CARRYOVER_B_BASE_GLOBAL`). See `carryover.rs`. Two independent
+///   fixed-position pools used to ping-pong an outer-scope string
+///   variable that is reassigned once per iteration inside an
+///   accumulator-rewritten loop (bug `CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK`,
+///   fingerprint `88dc6aeb0f8e`). Each pool is single-tenanted per
+///   iteration; lazy `__malloc`-allocated on first write.
 pub const HEAP_PTR_GLOBAL: u32 = 0;
 pub const TRANSIENT_BASE_GLOBAL: u32 = 4;
 pub const TRANSIENT_PTR_GLOBAL: u32 = 5;
+pub const CARRYOVER_A_BASE_GLOBAL: u32 = 6;
+pub const CARRYOVER_B_BASE_GLOBAL: u32 = 7;
 
 /// Number of reserved compiler-owned globals (heap ptr + json cache +
-/// transient arena). User-level state globals are assigned indices
-/// starting at `RESERVED_GLOBAL_COUNT`.
-pub const RESERVED_GLOBAL_COUNT: u32 = 6;
+/// transient arena + carryover pool bases). User-level state globals
+/// are assigned indices starting at `RESERVED_GLOBAL_COUNT`.
+pub const RESERVED_GLOBAL_COUNT: u32 = 8;
 
 /// Generate instructions for reading string length
 pub fn gen_string_length() -> Vec<Instruction<'static>> {
