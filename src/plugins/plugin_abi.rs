@@ -909,6 +909,27 @@ impl BridgeFunction {
         Self::type_str_is_i64(&self.returns)
     }
 
+    /// True when the declared param type is the raw `ptr` designator.
+    ///
+    /// `parse_type("ptr")` maps to `BuiltinType::String` so language-level
+    /// typing keeps working for bridges returning length-prefixed buffers
+    /// (see `parse_type` doc). But `expand_strings=true` bridges must NOT
+    /// expand `ptr` params into (ptr, len) pairs — the caller already holds
+    /// a single pointer (byte handle from `_req_body_bytes`, etc.). Use this
+    /// predicate at wrapper-generation time to keep the raw-import shape
+    /// aligned with the host and to skip the +4/i32.load unpack in the
+    /// wrapper body. Any tagged suffix (`ptr:i64`) is preserved but only
+    /// the base designator drives the match, mirroring `parse_type`.
+    pub fn param_is_raw_ptr(&self, idx: usize) -> bool {
+        self.params
+            .get(idx)
+            .map(|s| {
+                let base = s.split(':').next().unwrap_or(s);
+                base.eq_ignore_ascii_case("ptr")
+            })
+            .unwrap_or(false)
+    }
+
     fn type_str_is_i64(s: &str) -> bool {
         let lower = s.to_lowercase();
         lower == "i64" || lower == "long" || lower == "integer:i64" || lower == "int:i64"

@@ -2469,13 +2469,29 @@ impl MirCodeGenerator<'_> {
 
                 // Build expanded signature for raw import (strings → ptr, len pairs).
                 // Widen slots listed in `extend_i32_to_i64_param_indices` to i64.
+                //
+                // `raw_ptr` params (declared as `"ptr"` in the plugin/registry)
+                // parse to `BuiltinType::String` for language typing but must
+                // NOT be expanded into (ptr, len) pairs — the caller passes a
+                // single opaque handle (byte-handle from `_req_body_bytes`,
+                // etc.). Recognize them here so the raw import shape stays
+                // 1 slot and the wrapper body skips the +4/i32.load unpack.
+                let raw_ptr_param_indices: Vec<usize> = (0..func.params.len())
+                    .filter(|&i| func.param_is_raw_ptr(i))
+                    .collect();
+
                 let mut raw_wasm_params = Vec::new();
                 for (idx, param_type) in param_types.iter().enumerate() {
-                    if matches!(param_type, BuiltinType::String) {
+                    if matches!(param_type, BuiltinType::String)
+                        && !raw_ptr_param_indices.contains(&idx)
+                    {
                         raw_wasm_params.push(WasmType::I32); // ptr
                         raw_wasm_params.push(WasmType::I32); // len
                     } else if extend_i32_to_i64_param_indices.contains(&idx) {
                         raw_wasm_params.push(WasmType::I64);
+                    } else if raw_ptr_param_indices.contains(&idx) {
+                        // Opaque handle — pass single i32 pointer.
+                        raw_wasm_params.push(WasmType::I32);
                     } else {
                         raw_wasm_params.push(Self::builtin_type_to_wasm_type(param_type));
                     }
@@ -2545,6 +2561,7 @@ impl MirCodeGenerator<'_> {
                     param_types: param_types.clone(),
                     wrap_i64: func.return_is_i64(),
                     extend_i32_to_i64_param_indices,
+                    raw_ptr_param_indices,
                 });
             } else if func.name == "_time_now" {
                 // _time_now is a special case: the host bridge contract specifies () -> i64
@@ -2581,6 +2598,7 @@ impl MirCodeGenerator<'_> {
                         param_types: vec![],
                         wrap_i64: true,
                         extend_i32_to_i64_param_indices: Vec::new(),
+                        raw_ptr_param_indices: Vec::new(),
                     },
                 );
             } else {
@@ -2654,6 +2672,13 @@ impl MirCodeGenerator<'_> {
                         param_types: param_types.clone(),
                         wrap_i64: needs_wrap_i64_return,
                         extend_i32_to_i64_param_indices,
+                        // This branch handles bridges without expand_strings
+                        // (or where no param is String), so no `ptr`-designator
+                        // param can be a "second-slot" expansion target. Still
+                        // populate the field to keep the invariant.
+                        raw_ptr_param_indices: (0..func.params.len())
+                            .filter(|&i| func.param_is_raw_ptr(i))
+                            .collect(),
                     });
                     continue;
                 }
@@ -2730,7 +2755,9 @@ impl MirCodeGenerator<'_> {
             let mut local_idx = 0u32;
 
             for (idx, param_type) in wrapper.param_types.iter().enumerate() {
-                if matches!(param_type, BuiltinType::String) {
+                if matches!(param_type, BuiltinType::String)
+                    && !wrapper.raw_ptr_param_indices.contains(&idx)
+                {
                     // Expand Clean string (ptr → [len][content]) to (ptr+4, len)
                     wrapper_instructions.push(Instruction::LocalGet(local_idx));
                     wrapper_instructions.push(Instruction::I32Const(4));
@@ -2745,6 +2772,10 @@ impl MirCodeGenerator<'_> {
 
                     local_idx += 1;
                 } else {
+                    // Plain integer/handle/pointer — one slot, no unpack.
+                    // `raw_ptr` params land here even though `param_type` is
+                    // `String` (they parse as String for language typing;
+                    // wrapper must NOT expand them per opaque-handle contract).
                     wrapper_instructions.push(Instruction::LocalGet(local_idx));
                     // Widen `i32 → i64` for slots whose declared raw ABI is
                     // i64 (via BridgeFunction::param_is_i64). Same rationale

@@ -109,6 +109,13 @@ pub(super) struct PendingBridgeWrapper {
     /// `BridgeFunction::param_is_i64`, so no plugin-name knowledge lives
     /// in codegen. Empty when the wrapper does not widen any arg.
     pub(super) extend_i32_to_i64_param_indices: Vec<usize>,
+    /// Positions in `param_types` whose declared plugin/registry designator
+    /// is `"ptr"` (opaque handle). `parse_type` maps `"ptr" → BuiltinType::String`
+    /// so language-level typing keeps working, but the expand_strings wrapper
+    /// must NOT unpack them as (ptr, len) — the caller already holds a single
+    /// pointer. Wrapper body forwards them via a single `LocalGet(idx)`.
+    /// Populated from `BridgeFunction::param_is_raw_ptr`.
+    pub(super) raw_ptr_param_indices: Vec<usize>,
 }
 
 /// Info for a deferred no-op stub for a host-mismatched bridge.

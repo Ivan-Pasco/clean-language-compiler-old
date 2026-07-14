@@ -132,6 +132,47 @@ fn fs_namespace_is_registered() {
 }
 
 #[test]
+fn fs_write_bytes_wrapper_body_matches_raw_import_shape() {
+    // CODEGEN-FS-WRITE-BYTES-STACK-LEAK regression.
+    //
+    // `_fs_write_bytes` declares `params = ["string", "ptr"]` at the plugin/
+    // registry level. `parse_type("ptr")` returns `BuiltinType::String` so
+    // language-level typing keeps working (Clean callers pass an integer
+    // handle). But the `expand_strings=true` wrapper previously treated the
+    // ptr param as if it were a Clean string, emitting the +4/i32.load
+    // unpack. That pushed 4 values (path_ptr+4, path_len, handle+4,
+    // load_at_handle) onto the stack, then called a raw import declared with
+    // only 3 params — leaving one value stranded, which wasmparser rejects
+    // as "values remaining on stack at end of block".
+    //
+    // With the raw_ptr_param_indices carve-out in the wrapper body:
+    //   - path (String) expands to 2 slots
+    //   - handle (ptr → String) does NOT expand — 1 slot
+    //   - Call raw import with exactly 3 args → valid WASM.
+    //
+    // Minimal reproduction of the compile that failed on cln 0.33.66.
+    let source = r#"start:
+	integer h = 12345
+	integer rc = fs.write_bytes("/tmp/upload.bin", h)
+	print(rc.toString())
+"#;
+
+    let wasm = clean_language_compiler::compile(source).expect(
+        "fs.write_bytes wrapper must produce valid WASM — see \
+         CODEGEN-FS-WRITE-BYTES-STACK-LEAK / #368283b7. The wrapper generator \
+         must NOT expand `ptr`-designator params as (ptr, len) even though \
+         parse_type maps them to BuiltinType::String.",
+    );
+
+    // Sanity: the module must import the canonical bridge name.
+    let imports = list_import_names(&wasm);
+    assert!(
+        imports.iter().any(|n| n == "_fs_write_bytes"),
+        "expected `env._fs_write_bytes` import in {imports:?}",
+    );
+}
+
+#[test]
 fn req_body_bytes_conc002_matches_req_body_behavior() {
     // req.body_bytes() is subject to the same CONC002 request-context rule
     // as req.body — outside a handler both must error. This is not a bug;
