@@ -1123,6 +1123,18 @@ impl GlobalSymbolTable {
             // Additive to req.body (UTF-8 string). Handle typed as integer
             // until a bytes primitive lands.
             ("req.body_bytes", vec![], HirType::Integer),
+            // crypto.sha256_bytes(handle) — SHA-256 of the length-prefixed byte
+            // buffer at the opaque handle. Handle is an integer per
+            // spec/type-system.md §9b (pointer to a [4-byte LE length][bytes]
+            // buffer, same layout as req.body_bytes output). Returns a
+            // lowercase hex string (64 chars). Third bridge in the
+            // opaque-handle triad (req.body_bytes → crypto.sha256_bytes →
+            // fs.write_bytes).
+            (
+                "crypto.sha256_bytes",
+                vec![HirType::Integer],
+                HirType::String,
+            ),
             // JSON namespace functions  // BOOK: json-module
             // JSON parse functions return Any type (dynamic data structures)
             ("json.textToData", vec![HirType::String], HirType::Any),
@@ -1269,6 +1281,16 @@ impl GlobalSymbolTable {
             // (pointer to a length-prefixed byte buffer). See
             // foundation/spec/type-system.md §9b "Opaque Handle Convention".
             ("_req_body_bytes", vec![], HirType::Integer),
+            // _crypto_sha256_bytes(handle) -> hex string. Bridge-level entry
+            // for the language-surface crypto.sha256_bytes above. Handle is an
+            // Integer per §9b. Registered so files that call the raw bridge
+            // name (e.g. generated framework code) resolve without needing an
+            // explicit plugin declaration.
+            (
+                "_crypto_sha256_bytes",
+                vec![HirType::Integer],
+                HirType::String,
+            ),
             ("_req_header", vec![HirType::String], HirType::String),
             ("_req_method", vec![], HirType::String),
             ("_req_path", vec![], HirType::String),

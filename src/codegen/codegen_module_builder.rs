@@ -187,6 +187,34 @@ impl super::CodeGenerator {
             self.function_count += 1;
         }
 
+        // _crypto_sha256_bytes(handle: i32) -> i32
+        // Handle is a pointer to a length-prefixed byte buffer produced by
+        // _req_body_bytes (opaque handle — see spec/type-system.md §9b).
+        // Returns a length-prefixed lowercase hex string (64 chars).
+        // Third bridge in the opaque-handle triad (_req_body_bytes →
+        // _crypto_sha256_bytes → _fs_write_bytes). Registered here alongside
+        // _fs_write_bytes so the triad ships as a unit.
+        let crypto_sha256_bytes_type =
+            self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?;
+        if self.emit_import(
+            "env",
+            "_crypto_sha256_bytes",
+            wasm_encoder::EntityType::Function(crypto_sha256_bytes_type),
+        ) {
+            let crypto_sha256_bytes_index = self.function_count;
+            self.file_import_indices.insert(
+                "_crypto_sha256_bytes".to_string(),
+                crypto_sha256_bytes_index,
+            );
+            self.function_map.insert(
+                "_crypto_sha256_bytes".to_string(),
+                crypto_sha256_bytes_index,
+            );
+            self.function_map
+                .insert("crypto.sha256_bytes".to_string(), crypto_sha256_bytes_index);
+            self.function_count += 1;
+        }
+
         Ok(())
     }
 

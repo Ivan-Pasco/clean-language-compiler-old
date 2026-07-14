@@ -1436,6 +1436,17 @@ hosts       = ["all"]
 description = "Compute SHA-256 digest of input; returns lowercase hex string"
 
 [[functions]]
+name        = "_crypto_sha256_bytes"
+layer       = 2
+category    = "crypto"
+module      = "env"
+params      = ["ptr"]
+returns     = "ptr"
+aliases     = ["crypto.sha256_bytes"]
+hosts       = ["all"]
+description = "SHA-256 of the length-prefixed byte buffer at handle. Handle layout is [4-byte LE length][bytes] (identical to _req_body_bytes output). Returns a length-prefixed lowercase hex string (64 chars). Companion consumer to _req_body_bytes producer; forms the triad _req_body_bytes → _crypto_sha256_bytes → _fs_write_bytes for binary uploads that must not be UTF-8 decoded. Motivation: the errors dashboard's POST /api/v1/reports/tarball-upload endpoint recomputes SHA-256 on the raw body bytes and rejects the request on mismatch against X-Tarball-SHA256; the string-input _crypto_hash_sha256 cannot handle octet-stream bodies."
+
+[[functions]]
 name        = "_crypto_hash_sha512"
 layer       = 2
 category    = "crypto"

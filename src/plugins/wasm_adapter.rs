@@ -2874,6 +2874,24 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // env._crypto_sha256_bytes - SHA-256 of length-prefixed byte handle (stub).
+        // Params: (handle). Handle is a pointer to a length-prefixed byte buffer
+        // ([4-byte LE length][bytes]) — same layout as _req_body_bytes output.
+        // Returns a length-prefixed lowercase hex string (64 chars in real hosts).
+        // Third bridge in the opaque-handle triad (_req_body_bytes →
+        // _crypto_sha256_bytes → _fs_write_bytes). Real hosts compute the actual
+        // digest; the plugin sandbox stub allocates a 4-byte empty result so
+        // plugin instantiation and callers reading the returned pointer as a
+        // length-prefixed string do not crash. See spec/type-system.md §9b.
+        linker.func_wrap(
+            "env",
+            "_crypto_sha256_bytes",
+            |mut caller: Caller<'_, PluginState>, _handle: i32| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
         Ok(())
     }
 

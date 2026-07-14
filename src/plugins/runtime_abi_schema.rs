@@ -131,9 +131,12 @@ mod tests {
         // (_req_body_bytes, _fs_write_bytes) that unblock the errors
         // dashboard's tarball-upload endpoint. See spec/type-system.md §9b
         // and spec/plugins/frame-server.ebnf (req_body_bytes, fs_write_bytes).
+        // Bumped 152 → 153 for _crypto_sha256_bytes, the third bridge in the
+        // opaque-handle triad (_req_body_bytes → _crypto_sha256_bytes →
+        // _fs_write_bytes) needed by tarball-upload SHA-256 verification.
         assert_eq!(
             bridges.len(),
-            152,
+            153,
             "v1.toml must catalogue exactly 152 bridges (matches \
              `grep -c 'func_wrap(' src/plugins/wasm_adapter.rs` at authoring \
              time). Update this assertion AND wasm_adapter.rs together when \

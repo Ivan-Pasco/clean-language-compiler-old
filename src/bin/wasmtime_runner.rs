@@ -327,6 +327,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "_fs_write_bytes", |_: i32, _: i32, _: i32| -> i32 {
         0
     })?;
+    linker.func_wrap("env", "_crypto_sha256_bytes", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_header", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_method", || -> i32 { 0 })?;
     linker.func_wrap("env", "_req_path", || -> i32 { 0 })?;

@@ -1007,6 +1007,15 @@ host_class = "server"
 semantics  = "stub"
 source     = "wasm_adapter.rs:_fs_write_bytes_stub"
 
+[[bridge]]
+name       = "_crypto_sha256_bytes"
+module     = "env"
+params     = ["i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "stub"
+source     = "wasm_adapter.rs:_crypto_sha256_bytes_stub"
+
 # =============================================================================
 # Group: math
 # Source: src/plugins/wasm_adapter.rs::register_math_functions (line 2734)
