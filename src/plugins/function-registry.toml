@@ -1081,7 +1081,7 @@ layer       = 2
 category    = "file_io"
 module      = "env"
 params      = ["string", "ptr"]
-returns     = "integer"
+returns     = "i32"
 aliases     = ["fs.write_bytes"]
 hosts       = ["server"]
 description = "Write an opaque byte sequence to path. First param is the destination path (ptr+len). Second param is a pointer to a length-prefixed byte buffer ([4-byte LE length][bytes]) — the identical layout produced by _req_body_bytes, so bytes read from a request body flow through verbatim without any UTF-8 detour. Host implementations MUST: (1) reject paths containing '..', null bytes, or paths outside the host-configured allowlist (default: none — hosts SHOULD document a tarball-root env var); (2) write atomically via 'path.tmp' + rename so a partial write never leaves a corrupt file at path; (3) mkdir -p on the parent directory; (4) overwrite existing files (repeat calls to the same path replace prior contents). Returns 0 on success; non-zero error code on failure — 1 = permission denied, 2 = disk full, 3 = invalid path (allowlist violation, '..', null byte), 4 = parent path exists but is not a directory, 5 = generic I/O error. Additive to file_write (UTF-8 string surface) — this bridge is binary-safe. Bridge implementations ship in clean-server (Rust std::fs) and clean-node-server (Node fs.writeFileSync + rename). Motivation: the errors dashboard's POST /api/v1/reports/tarball-upload endpoint hashes _req_body_bytes and writes the exact wire bytes to disk; a UTF-8 detour would corrupt gzip payloads and break SHA-256 integrity checks."
