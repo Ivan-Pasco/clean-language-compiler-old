@@ -879,6 +879,11 @@ impl HirValidator {
                     "jwt",
                     "env",
                     "time",
+                    // fs — bytes-safe filesystem bridges (opaque handle
+                    // convention). See foundation/spec/type-system.md §9b
+                    // and foundation/spec/plugins/frame-server.ebnf
+                    // `fs_expression`.
+                    "fs",
                     // Layer 3 server namespaces (registered in symbol_table.rs builtins).
                     // These are server-only but still declared as builtins so the resolver
                     // can validate them; the host enforces server-context restrictions at runtime.

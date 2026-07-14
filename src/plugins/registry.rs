@@ -827,6 +827,12 @@ impl PluginRegistry {
     /// 2. Convention: replace `.` with `_` and prepend `_`
     ///    (`req.param` → `_req_param`).  Only accepted when the derived name
     ///    is declared in the same plugin's `[bridge]` section.
+    /// 3. Explicit `aliases = [...]` list on the canonical
+    ///    `foundation/platform-architecture/function-registry.toml` entry.
+    ///    This covers bridges that the compiler registers directly (e.g. via
+    ///    `codegen_module_builder.rs`) without a matching plugin manifest
+    ///    entry, and lets new byte-safe bridges add their language surface by
+    ///    editing only the registry (no codegen changes required).
     ///
     /// Language functions that cannot be resolved to a bridge function are
     /// silently omitted — they are treated as LSP-only (hover, completions).
@@ -891,6 +897,33 @@ impl PluginRegistry {
                             map.entry(camel_dot_name).or_insert_with(|| bf.name.clone());
                         }
                     }
+                }
+            }
+        }
+
+        // Phase 3: Registry-level aliases.
+        //
+        // The canonical function-registry.toml lists dot-notation aliases on
+        // every bridge that has one. Some bridges (e.g. `_req_body_bytes`,
+        // `_fs_write_bytes`) are registered directly by the compiler in
+        // `codegen_module_builder.rs` and never appear in a plugin manifest's
+        // `[bridge]` section — Phase 2 therefore can't see them. Consult the
+        // registry so those aliases still reach the codegen resolver.
+        //
+        // We use `or_insert_with` so plugin-declared mappings win over the
+        // registry copy (the plugin manifest is authoritative for anything it
+        // covers). Load failures are silently ignored — a missing registry is
+        // reported through the separate validation path.
+        const WASM_ONLY_FUNCTIONS: &[&str] =
+            &["json.encode", "json.dataToText", "json.prettyDataToText"];
+        if let Ok(idx) = crate::plugins::registry_loader::RegistryIndex::load() {
+            for reg_fn in idx.functions() {
+                for alias in &reg_fn.aliases {
+                    if WASM_ONLY_FUNCTIONS.contains(&alias.as_str()) {
+                        continue;
+                    }
+                    map.entry(alias.clone())
+                        .or_insert_with(|| reg_fn.name.clone());
                 }
             }
         }
@@ -1807,10 +1840,12 @@ mod tests {
         assert_eq!(map.get("db.run"), Some(&"_db_execute".to_string()));
         // Auto-derived from bridge "_db_execute" (phase 2)
         assert_eq!(map.get("db.execute"), Some(&"_db_execute".to_string()));
-        // No matching bridge — must NOT appear
+        // Convention name that isn't a real bridge — must NOT appear.
+        // (Registry-level aliases from the canonical function-registry.toml
+        // also contribute mappings via phase 3, so we no longer assert on
+        // the total size — the phase 1/2 entries above are what this test
+        // guards.)
         assert!(!map.contains_key("db.nonexistent"));
-        // Total: 2 from phase 1 + 1 auto-derived from phase 2
-        assert_eq!(map.len(), 3);
     }
 
     #[test]

@@ -526,6 +526,12 @@ pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
     if field.starts_with("_db_") || field.starts_with("db_") {
         return true;
     }
+    // _fs_* — bytes-safe filesystem bridges (opaque handle convention,
+    // see spec/type-system.md §9b). Gated so client-only builds don't
+    // pay the import cost.
+    if field.starts_with("_fs_") {
+        return true;
+    }
     if field.starts_with("_env_") || field.starts_with("env_") {
         return true;
     }

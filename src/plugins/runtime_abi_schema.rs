@@ -125,12 +125,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v1_toml_parses_and_has_150_entries() {
+    fn v1_toml_parses_and_has_expected_entries() {
         let bridges = expected_bridges();
+        // Bumped from 150 → 152 on 2026-07-14 for the bytes-handle bridges
+        // (_req_body_bytes, _fs_write_bytes) that unblock the errors
+        // dashboard's tarball-upload endpoint. See spec/type-system.md §9b
+        // and spec/plugins/frame-server.ebnf (req_body_bytes, fs_write_bytes).
         assert_eq!(
             bridges.len(),
-            150,
-            "v1.toml must catalogue exactly 150 bridges (matches \
+            152,
+            "v1.toml must catalogue exactly 152 bridges (matches \
              `grep -c 'func_wrap(' src/plugins/wasm_adapter.rs` at authoring \
              time). Update this assertion AND wasm_adapter.rs together when \
              adding entries."

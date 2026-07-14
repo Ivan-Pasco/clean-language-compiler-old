@@ -912,6 +912,15 @@ semantics  = "stub"
 source     = "wasm_adapter.rs:2620"
 
 [[bridge]]
+name       = "_req_body_bytes"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:2625"
+
+[[bridge]]
 name       = "_req_header"
 module     = "env"
 params     = ["i32", "i32"]
@@ -988,6 +997,15 @@ returns    = "i32"
 host_class = ["server", "native"]
 semantics  = "stub"
 source     = "wasm_adapter.rs:2714"
+
+[[bridge]]
+name       = "_fs_write_bytes"
+module     = "env"
+params     = ["i32", "i32", "i32"]
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:_fs_write_bytes_stub"
 
 # =============================================================================
 # Group: math

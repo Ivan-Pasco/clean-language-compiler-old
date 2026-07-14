@@ -197,3 +197,22 @@ The fix excludes Jumps that target any `exit_block_id` in `self.loop_context_sta
 - New regression fixtures live under `tests/cln/control/conditionals/08_stmt_after_nested_if_else.cln` and `tests/cln/control/loops/else_break_inside_while.cln`; the Rust gate is `tests/test_codegen_nested_control_flow.rs`. Don't delete either side.
 
 **Origin bug:** `COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS` (dashboard fp `f80ee96ce507`). frame.ui's `process_text_node` was the canonical reproducer for §13.1 (the `remaining = remaining.substring(...)` statement following the inner if/else got dropped, so the `while` loop never advanced — the safety counter `if c > 100: break` the plugin author added masked it as a bounded but redundant 100-iteration loop instead of an outright hang). With §13.1 fixed, `find_unescaped_quote` surfaced §13.2 as the next hang. With both fixed, page-project compiles run end-to-end instead of trapping on the plugin-call deadline.
+
+---
+
+## 14. Opaque Byte Handles (`_req_body_bytes`, `_fs_write_bytes`)
+
+**What:** Some bridges deal in raw bytes that cannot survive UTF-8 decoding (application/octet-stream request bodies, gzipped tarballs). Clean Language has no `bytes` primitive yet, so these bridges use the **opaque handle** convention: a bytes-producing bridge returns an integer that is actually a pointer to a `[4-byte LE length][bytes]` buffer (identical layout to length-prefixed strings), and a bytes-consuming bridge takes that integer unchanged and reads the length prefix on the host side. See `foundation/spec/type-system.md` §9b for the full rule set.
+
+**Where:**
+- `src/plugins/function-registry.toml` — `_req_body_bytes` (Layer 3 request) and `_fs_write_bytes` (Layer 2 file_io) entries with `aliases = ["req.body_bytes"]` / `["fs.write_bytes"]`.
+- `src/plugins/runtime-abi-v1.toml` — bridge catalog entries; total count is enforced against `func_wrap(` sites in `wasm_adapter.rs`.
+- `src/codegen/mod.rs::is_reachability_gated_import` — `_fs_` prefix is gated so client-only builds tree-shake the import.
+- `src/codegen/codegen_module_builder.rs::register_file_imports` — emits `_fs_write_bytes` WASM import and maps `fs.write_bytes` → same function index.
+- `src/codegen/codegen_module_builder.rs::register_http_imports` (server block) — emits `_req_body_bytes`.
+- `src/resolver/symbol_table.rs` — registers both raw underscore names as builtin functions typed `Integer` (opaque handle).
+
+**Watch for:**
+- Anyone adding "bytes manipulation" primitives (slice, index, compare) to Clean code touching these handles: the whole point of the opaque convention is to defer that until a real `bytes` type lands. If you find yourself wanting to inspect a handle in Clean code, escalate to a language change instead — do NOT introduce ad-hoc string-cast escape hatches.
+- Adding more bytes-producing or bytes-consuming bridges: match the same convention (returns/params `= "ptr"` in the registry, docs cite spec §9b). Every new bridge MUST be listed in the §9b handle-user table in `type-system.md`.
+- The compiler-local `runtime-abi-v1.toml` is auto-synced from `foundation/platform-architecture/runtime-abi/v1.toml`. Edits to the compiler-local copy may be silently reverted by the sync — always edit the foundation copy first, then `cp` (or wait for the sync) into `src/plugins/runtime-abi-v1.toml`. The count invariant `bridges_in_toml == func_wrap_sites_in_wasm_adapter` is enforced by `runtime_abi_schema.rs::verify_registrations_against_schema`; both files must move together.

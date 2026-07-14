@@ -2751,6 +2751,18 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        // env._req_body_bytes - Get request body as opaque byte handle (stub).
+        // Returns a 4-byte allocation ([len=0][no bytes]) so plugin sandbox
+        // instantiation succeeds; real byte payloads live in the server hosts.
+        linker.func_wrap(
+            "env",
+            "_req_body_bytes",
+            |mut caller: Caller<'_, PluginState>| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
+
         // env._req_header - Get request header (stub)
         linker.func_wrap(
             "env",
@@ -2845,6 +2857,19 @@ impl WasmPluginAdapter {
              _content_ptr: i32,
              _content_len: i32|
              -> i32 {
+                0 // Success
+            },
+        )?;
+
+        // env._fs_write_bytes - Write opaque byte handle to path (stub).
+        // Params: (path_ptr, path_len, handle). Handle is a pointer to a
+        // length-prefixed byte buffer. Real hosts do the actual write;
+        // the plugin sandbox stub returns 0 (success) so compilation
+        // and plugin instantiation don't fail.
+        linker.func_wrap(
+            "env",
+            "_fs_write_bytes",
+            |_: Caller<'_, PluginState>, _path_ptr: i32, _path_len: i32, _handle: i32| -> i32 {
                 0 // Success
             },
         )?;

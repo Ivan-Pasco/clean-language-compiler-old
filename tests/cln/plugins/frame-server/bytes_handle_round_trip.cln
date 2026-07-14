@@ -1,0 +1,19 @@
+// Test: plugins/frame-server/bytes_handle_round_trip
+// Grammar: frame-server.ebnf req_body_bytes, fs_write_bytes
+// Semantic: type-system.md §9b Opaque Handle Convention
+// Fixed in: compiler 0.33.65
+// Expected output:
+//   ok
+
+// Guards the tarball-upload chain used by the errors dashboard: read the
+// raw request body as an opaque byte handle, then write the exact wire
+// bytes to disk without any UTF-8 detour. The handle is typed `integer`
+// per spec/type-system.md §9b until a bytes primitive lands.
+
+start:
+	integer handle = req.body_bytes()
+	integer rc = fs.write_bytes("/tmp/upload.tar.gz", handle)
+	if rc == 0
+		print("ok")
+	else
+		print("err")

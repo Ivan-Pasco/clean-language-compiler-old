@@ -1110,6 +1110,19 @@ impl GlobalSymbolTable {
             ),
             ("file.exists", vec![HirType::String], HirType::Boolean),
             ("file.delete", vec![HirType::String], HirType::Boolean),
+            // fs.write_bytes(path, handle) — opaque-handle bytes writer.
+            // Handle is an integer per spec/type-system.md §9b (pointer to
+            // a [4-byte LE length][bytes] buffer). Returns integer error
+            // code (0 = success; see spec/plugins/frame-server.ebnf).
+            (
+                "fs.write_bytes",
+                vec![HirType::String, HirType::Integer],
+                HirType::Integer,
+            ),
+            // req.body_bytes() — opaque byte handle for the raw request body.
+            // Additive to req.body (UTF-8 string). Handle typed as integer
+            // until a bytes primitive lands.
+            ("req.body_bytes", vec![], HirType::Integer),
             // JSON namespace functions  // BOOK: json-module
             // JSON parse functions return Any type (dynamic data structures)
             ("json.textToData", vec![HirType::String], HirType::Any),
@@ -1252,10 +1265,21 @@ impl GlobalSymbolTable {
             ("_req_param", vec![HirType::String], HirType::String),
             ("_req_query", vec![HirType::String], HirType::String),
             ("_req_body", vec![], HirType::String),
+            // _req_body_bytes returns an opaque byte handle typed as Integer
+            // (pointer to a length-prefixed byte buffer). See
+            // foundation/spec/type-system.md §9b "Opaque Handle Convention".
+            ("_req_body_bytes", vec![], HirType::Integer),
             ("_req_header", vec![HirType::String], HirType::String),
             ("_req_method", vec![], HirType::String),
             ("_req_path", vec![], HirType::String),
             ("_req_cookie", vec![HirType::String], HirType::String),
+            // _fs_write_bytes(path, handle) -> integer error code.
+            // path is String; handle is an opaque Integer per §9b.
+            (
+                "_fs_write_bytes",
+                vec![HirType::String, HirType::Integer],
+                HirType::Integer,
+            ),
             // auth.* / session.* / server.sleep removed in 0.30.296 — provided by:
             //   - frame.server plugin.toml: auth.getSession, auth.requireAuth, auth.requireRole,
             //     auth.can, auth.hasAnyRole, server.sleep
@@ -1505,6 +1529,27 @@ impl GlobalSymbolTable {
             },
         );
         self.builtins.insert(file_namespace_id);
+
+        // Create fs namespace — bytes-safe filesystem surface. See
+        // spec/plugins/frame-server.ebnf `fs_expression` and
+        // spec/type-system.md §9b for the opaque handle convention.
+        let fs_functions = vec![self.lookup_symbol("fs.write_bytes").unwrap_or(SymbolId(0))];
+
+        let fs_namespace_id = self.create_symbol(
+            "fs".to_string(),
+            SymbolKind::Namespace {
+                functions: fs_functions,
+            },
+            global_scope,
+            SourceLocation {
+                file: "<builtin>".to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            },
+        );
+        self.builtins.insert(fs_namespace_id);
 
         // Create json namespace  // BOOK: json-module
         let json_functions = vec![

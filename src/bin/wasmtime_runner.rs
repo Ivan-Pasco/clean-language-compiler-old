@@ -323,6 +323,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "_req_param", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_query", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_body", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_body_bytes", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_fs_write_bytes", |_: i32, _: i32, _: i32| -> i32 {
+        0
+    })?;
     linker.func_wrap("env", "_req_header", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "_req_method", || -> i32 { 0 })?;
     linker.func_wrap("env", "_req_path", || -> i32 { 0 })?;

@@ -163,6 +163,30 @@ impl super::CodeGenerator {
             self.function_count += 1;
         }
 
+        // _fs_write_bytes(pathPtr: i32, pathLen: i32, handle: i32) -> i32
+        // Handle is a pointer to a length-prefixed byte buffer produced by
+        // _req_body_bytes (opaque handle — see spec/type-system.md §9b).
+        // Returns 0 on success or a non-zero error code (see
+        // spec/plugins/frame-server.ebnf `fs_write_bytes`).
+        let fs_write_bytes_type = self.add_function_type(
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+        )?;
+        if self.emit_import(
+            "env",
+            "_fs_write_bytes",
+            wasm_encoder::EntityType::Function(fs_write_bytes_type),
+        ) {
+            let fs_write_bytes_index = self.function_count;
+            self.file_import_indices
+                .insert("_fs_write_bytes".to_string(), fs_write_bytes_index);
+            self.function_map
+                .insert("_fs_write_bytes".to_string(), fs_write_bytes_index);
+            self.function_map
+                .insert("fs.write_bytes".to_string(), fs_write_bytes_index);
+            self.function_count += 1;
+        }
+
         Ok(())
     }
 
@@ -622,6 +646,22 @@ impl super::CodeGenerator {
                     .insert("_req_body".to_string(), self.function_count);
                 self.function_map
                     .insert("_req_body".to_string(), self.function_count);
+                self.function_count += 1;
+            }
+
+            // _req_body_bytes() -> i32 (returns opaque byte-handle: pointer to
+            // a length-prefixed [4-byte LE length][bytes] buffer).
+            // Opaque handle convention — see spec/type-system.md §9b.
+            let req_body_bytes_type = self.add_function_type(&[], Some(WasmType::I32))?;
+            if self.emit_import(
+                "env",
+                "_req_body_bytes",
+                wasm_encoder::EntityType::Function(req_body_bytes_type),
+            ) {
+                self.http_import_indices
+                    .insert("_req_body_bytes".to_string(), self.function_count);
+                self.function_map
+                    .insert("_req_body_bytes".to_string(), self.function_count);
                 self.function_count += 1;
             }
 

@@ -1075,6 +1075,17 @@ aliases     = []
 hosts       = ["server"]
 description = "Append content to file; path and content as (ptr+len) pairs; returns 1 on success, 0 on failure"
 
+[[functions]]
+name        = "_fs_write_bytes"
+layer       = 2
+category    = "file_io"
+module      = "env"
+params      = ["string", "ptr"]
+returns     = "integer"
+aliases     = ["fs.write_bytes"]
+hosts       = ["server"]
+description = "Write an opaque byte sequence to path. First param is the destination path (ptr+len). Second param is a pointer to a length-prefixed byte buffer ([4-byte LE length][bytes]) — the identical layout produced by _req_body_bytes, so bytes read from a request body flow through verbatim without any UTF-8 detour. Host implementations MUST: (1) reject paths containing '..', null bytes, or paths outside the host-configured allowlist (default: none — hosts SHOULD document a tarball-root env var); (2) write atomically via 'path.tmp' + rename so a partial write never leaves a corrupt file at path; (3) mkdir -p on the parent directory; (4) overwrite existing files (repeat calls to the same path replace prior contents). Returns 0 on success; non-zero error code on failure — 1 = permission denied, 2 = disk full, 3 = invalid path (allowlist violation, '..', null byte), 4 = parent path exists but is not a directory, 5 = generic I/O error. Additive to file_write (UTF-8 string surface) — this bridge is binary-safe. Bridge implementations ship in clean-server (Rust std::fs) and clean-node-server (Node fs.writeFileSync + rename). Motivation: the errors dashboard's POST /api/v1/reports/tarball-upload endpoint hashes _req_body_bytes and writes the exact wire bytes to disk; a UTF-8 detour would corrupt gzip payloads and break SHA-256 integrity checks."
+
 # ============================================================
 # LAYER 2 - HTTP CLIENT (22 functions, all canonical)
 # ============================================================
@@ -1790,6 +1801,17 @@ returns     = "ptr"
 aliases     = ["req.body"]
 hosts       = ["server"]
 description = "Get full raw request body; returns length-prefixed string"
+
+[[functions]]
+name        = "_req_body_bytes"
+layer       = 3
+category    = "request"
+module      = "env"
+params      = []
+returns     = "ptr"
+aliases     = ["req.body_bytes"]
+hosts       = ["server"]
+description = "Get the raw request body as an opaque byte sequence — no UTF-8 decoding, no normalization, no encoding assumption. Returns a length-prefixed buffer laid out identically to a length-prefixed string ([4-byte LE length][bytes]); Clean code holds the pointer and passes it verbatim to any bridge that consumes bytes (SHA-256 hashers, _fs_write_bytes, HTTP forwarders). When Content-Length is set on the request, the returned length equals it. Additive to _req_body — the string surface stays untouched. Motivation: application/octet-stream request bodies (e.g. .tar.gz uploads for the errors dashboard's tarball-upload endpoint) cannot survive a UTF-8 decode; the receiver needs the exact wire bytes to verify integrity."
 
 [[functions]]
 name        = "_req_body_field"

@@ -26,15 +26,81 @@ impl FileClass {
     /// same pattern; both classes generate wrappers over Layer 2 host bridge
     /// imports that get tree-shaken by the Import Minimality Rule.
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        if !codegen.has_reachable_prefix("file_") {
+        // fs.write_bytes may be reachable independently of file_* (the errors
+        // dashboard's tarball-upload chain uses fs.write_bytes without ever
+        // touching file.write). Register it whenever _fs_ imports exist,
+        // even if file_* is entirely tree-shaken.
+        let has_file = codegen.has_reachable_prefix("file_");
+        let has_fs = codegen.has_reachable_prefix("_fs_");
+        if !has_file && !has_fs {
             tracing::debug!(
-                "FileClass: no file_* imports reachable, skipping wrapper registration"
+                "FileClass: no file_* or _fs_* imports reachable, skipping wrapper registration"
             );
             return Ok(());
         }
-        self.register_basic_operations(codegen)?;
-        self.register_info_operations(codegen)?;
+        if has_file {
+            self.register_basic_operations(codegen)?;
+            self.register_info_operations(codegen)?;
+        }
+        if has_fs {
+            self.register_fs_bytes_operations(codegen)?;
+        }
         Ok(())
+    }
+
+    /// Register `fs.*` wrappers over the bytes-safe host bridges. Opaque
+    /// handle convention — see spec/type-system.md §9b.
+    fn register_fs_bytes_operations(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
+        if codegen.get_file_import_index("_fs_write_bytes").is_some() {
+            register_stdlib_function(
+                codegen,
+                "fs.write_bytes",
+                // (path_str_ptr, handle: i32) — path expands to (ptr+4, len);
+                // handle passes through unchanged.
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                self.generate_fs_write_bytes(codegen)?,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn generate_fs_write_bytes(
+        &self,
+        codegen: &CodeGenerator,
+    ) -> Result<Vec<Instruction>, CompilerError> {
+        let import_index = codegen
+            .get_file_import_index("_fs_write_bytes")
+            .ok_or_else(|| {
+                CompilerError::codegen_error(
+                    "File import function '_fs_write_bytes' not found",
+                    Some("Make sure fs imports are properly registered".to_string()),
+                    None,
+                )
+            })?;
+
+        // Local 0: path string pointer (points at [4-byte length][utf8]).
+        // Local 1: opaque byte handle (already a valid ptr to [len][bytes]).
+        // Expand path to (content_ptr, length); pass handle unchanged.
+        Ok(vec![
+            // path_ptr := local0 + 4
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            // path_len := i32.load(local0)
+            Instruction::LocalGet(0),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // handle passes through
+            Instruction::LocalGet(1),
+            Instruction::Call(import_index),
+        ])
     }
 
     fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
