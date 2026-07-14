@@ -162,9 +162,12 @@ pub fn parse_registrations(source: &str) -> Vec<Registration> {
                     .to_string();
             }
 
-            let line = source[..start.min(source.len())]
-                .bytes()
-                .filter(|b| *b == b'\n')
+            // `start` is a char index into `chars`; count '\n' characters up
+            // to that point directly (avoids byte-index slicing of `source`,
+            // which would panic if a multi-byte character sits before `start`).
+            let line = chars[..start.min(chars.len())]
+                .iter()
+                .filter(|c| **c == '\n')
                 .count()
                 + 1;
 
