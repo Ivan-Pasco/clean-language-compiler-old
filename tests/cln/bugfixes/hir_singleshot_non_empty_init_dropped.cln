@@ -1,0 +1,48 @@
+// Test: bugfixes/hir_singleshot_non_empty_init_dropped
+// Grammar: variable_declaration, binary_expression
+// Semantic: SEM007-PLUGIN-EMITTED-FSTR-PARAMS-UNRESOLVED
+// Fixed in: compiler 0.33.70
+//
+// Regression pin for dashboard fingerprint da29eb806cc8 (reported against
+// 0.33.69, but latent since 0.33.61 when accumulator_decl_name was widened
+// to accept any string literal).
+//
+// The single-shot rewrite (rewrite_string_accumulator_singleshot in
+// src/hir/hir_builder.rs) matches `string acc = <lit>` followed by a run
+// of self-appends OUTSIDE a loop (frame.data emits this shape to build up
+// source-code strings for _emit_stmt_from_source). The loop-version fix
+// for CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK added a `seed_append` that
+// emits `__sb_N = string_builder_append(__sb_N, <init literal>)` when the
+// initializer is non-empty — but the single-shot path was never updated
+// in parallel. The initial literal was silently dropped, so the finalized
+// string was missing its first N characters.
+//
+// Downstream effect: frame.data's `emit_json_rows_function` builds a
+// source fragment starting with `"list<string> __fstr_result = []\n"`
+// and then appends more lines. The dropped first line meant the emitted
+// helper referenced `__fstr_result` without declaring it, producing
+// SEM007 at plugin-expansion time for every ORM model in the project
+// (380+ errors in the clean-errors dashboard build).
+//
+// The test exercises the pattern directly: `string src = "L0\n"` followed
+// by four self-appends. Pre-fix output was `L1\nL2\nL3\nL4\n` (L0
+// missing). Post-fix output matches the source verbatim.
+//
+// Expected output:
+//   L0
+//   L1
+//   L2
+//   L3
+//   L4
+
+start:
+	print(build_src())
+
+functions:
+	string build_src()
+		string src = "L0\n"
+		src = src + "L1\n"
+		src = src + "L2\n"
+		src = src + "L3\n"
+		src = src + "L4"
+		return src

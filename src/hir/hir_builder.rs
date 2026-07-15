@@ -3408,15 +3408,41 @@ impl HirBuilder {
             // Commit. Allocate a fresh builder name.
             let sb_name = format!("__sb_{}", self.string_builder_counter);
             self.string_builder_counter += 1;
-            let decl_loc = match &stmts[i] {
-                HirStatement::VariableDeclaration { location, .. } => location.clone(),
+            // Extract the initial literal from the decl. `accumulator_decl_name`
+            // already verified `stmts[i]` is `string <acc> = <string literal>`, so
+            // pattern-matching the initializer is guaranteed to succeed.
+            let (decl_loc, init_literal) = match &stmts[i] {
+                HirStatement::VariableDeclaration {
+                    location,
+                    initializer:
+                        Some(HirExpression::Literal {
+                            value: Value::String(s),
+                            ..
+                        }),
+                    ..
+                } => (location.clone(), s.clone()),
                 _ => {
-                    unreachable!("accumulator_decl_name pre-validated this is VariableDeclaration")
+                    unreachable!("accumulator_decl_name pre-validated this is VariableDeclaration with string-literal initializer")
                 }
             };
 
             // Build the replacement statements:
             //   - decl_replacement: `string __sb_M = string_builder_new()`
+            //   - seed_append (optional): `__sb_M = string_builder_append(__sb_M, "<init_literal>")`
+            //     emitted only when the original decl had a non-empty literal
+            //     initializer (e.g. `string src = "L0\n"`). Without this seed
+            //     the initial content is silently dropped — the same class of
+            //     bug the loop-version fix (CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK,
+            //     fingerprint 6fca1073d4bd) addressed for the loop rewrite, but
+            //     the single-shot path was never updated in parallel. That gap
+            //     miscompiled every plugin helper that starts with
+            //     `string src = "..."` and repeatedly appends more source lines
+            //     (frame.data `emit_json_rows_function`, `build_to_params_body`,
+            //     `build_delete_body`, etc.), producing plugin-emitted function
+            //     bodies missing their first declaration and cascading into
+            //     380+ SEM007 errors downstream. Resolves
+            //     SEM007-PLUGIN-EMITTED-FSTR-PARAMS-UNRESOLVED (fingerprint
+            //     da29eb806cc8).
             //   - flattened appends:   one statement per fragment, replacing
             //                          the N chained self-append statements
             //   - finalize_decl:    `string acc = string_builder_finalize(__sb_M)`
@@ -3431,6 +3457,31 @@ impl HirBuilder {
                 }),
                 is_mutable: true,
                 location: decl_loc.clone(),
+            };
+            let seed_append = if init_literal.is_empty() {
+                None
+            } else {
+                Some(HirStatement::Assignment {
+                    target: HirLValue::Variable {
+                        name: sb_name.clone(),
+                        location: decl_loc.clone(),
+                    },
+                    value: HirExpression::Call {
+                        function: "string_builder_append".to_string(),
+                        arguments: vec![
+                            HirExpression::Variable {
+                                name: sb_name.clone(),
+                                location: decl_loc.clone(),
+                            },
+                            HirExpression::Literal {
+                                value: Value::String(init_literal.clone()),
+                                location: decl_loc.clone(),
+                            },
+                        ],
+                        location: decl_loc.clone(),
+                    },
+                    location: decl_loc.clone(),
+                })
             };
             let finalize_decl = HirStatement::VariableDeclaration {
                 name: acc_name.clone(),
@@ -3463,14 +3514,18 @@ impl HirBuilder {
 
             // Splice in the rewrite output:
             //   - replace stmts[i] with decl_replacement
-            //   - insert flattened_appends + finalize_decl right after it
+            //   - insert (seed_append?) + flattened_appends + finalize_decl right after it
             stmts[i] = decl_replacement;
-            let mut to_insert = flattened_appends;
+            let mut to_insert: Vec<HirStatement> = Vec::new();
+            if let Some(seed) = seed_append {
+                to_insert.push(seed);
+            }
+            to_insert.extend(flattened_appends);
             to_insert.push(finalize_decl);
             let new_segment_len = to_insert.len();
             stmts.splice(i + 1..i + 1, to_insert);
             // Resume scanning after the newly inserted finalize.
-            // i (decl) + 1 + new_segment_len (appends + finalize) = next index
+            // i (decl) + 1 + new_segment_len (optional seed + appends + finalize) = next index
             i = i + 1 + new_segment_len;
         }
     }
