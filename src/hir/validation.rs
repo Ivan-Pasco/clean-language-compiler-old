@@ -1169,6 +1169,7 @@ impl HirValidator {
                     && !context.plugin_namespaces.contains(name.as_str())
                     && !context.classes.contains_key(name)
                     && !is_class_field
+                    && !Self::is_registry_alias_namespace(name)
                 {
                     // SEM007: emit a context-aware message for well-known
                     // plugin-injected implicit variables so developers get
@@ -1557,6 +1558,35 @@ impl HirValidator {
     /// a CONC002 violation: no active request context exists at those call sites.
     fn is_request_context_namespace(namespace: &str) -> bool {
         matches!(namespace, "req" | "res" | "session" | "auth")
+    }
+
+    /// Check whether `namespace` is the receiver-prefix of a registry-declared
+    /// bridge alias (e.g. `dev` from `_dev_snapshot`'s `aliases = ["dev.snapshot"]`).
+    /// Used at validation time so that a namespace call like `dev.snapshot()`
+    /// reaches the resolver instead of being rejected as an undefined
+    /// variable — the resolver then registers the bridge on demand.
+    ///
+    /// Consults the embedded `function-registry.toml`. Load failures return
+    /// false: a missing registry surfaces separately through the
+    /// registry-loader validation path, and this check is only a permissive
+    /// gate before the resolver runs.
+    fn is_registry_alias_namespace(namespace: &str) -> bool {
+        static CACHE: std::sync::OnceLock<std::collections::HashSet<String>> =
+            std::sync::OnceLock::new();
+        let prefixes = CACHE.get_or_init(|| {
+            let mut set = std::collections::HashSet::new();
+            if let Ok(idx) = crate::plugins::registry_loader::RegistryIndex::load() {
+                for reg_fn in idx.functions() {
+                    for alias in &reg_fn.aliases {
+                        if let Some(dot_pos) = alias.find('.') {
+                            set.insert(alias[..dot_pos].to_string());
+                        }
+                    }
+                }
+            }
+            set
+        });
+        prefixes.contains(namespace)
     }
 
     /// Walk the class inheritance chain to check whether `field_name` is declared

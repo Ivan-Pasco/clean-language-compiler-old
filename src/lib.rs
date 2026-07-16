@@ -1133,7 +1133,8 @@ pub fn compile_with_plugins_and_opt_level(
     // Also registers language-level function names (dot-notation API) as aliases
     // pointing to the same signatures, so that calls like `db.query(...)` are
     // recognised by the semantic analyser and resolver.
-    let bridge_functions = registry.bridge_functions();
+    let mut bridge_functions: Vec<plugins::BridgeFunction> = registry.bridge_functions().to_vec();
+    extend_with_registry_bridges(&mut bridge_functions);
     let lang_to_bridge = registry.language_to_bridge_map();
     let lang_to_helper = registry.language_to_helper_map();
     if !bridge_functions.is_empty() {
@@ -1150,7 +1151,7 @@ pub fn compile_with_plugins_and_opt_level(
                 .map(|bf| (bf.name.as_str(), bf))
                 .collect();
 
-        for bf in bridge_functions {
+        for bf in bridge_functions.iter() {
             // Skip if already declared (from parsed external: block or plugin expansion)
             if ast.externals.iter().any(|e| e.name == bf.name) {
                 continue;
@@ -2116,6 +2117,72 @@ fn extend_with_source_plugin_bridges(
     }
 }
 
+/// Extend `bridge_functions` with any registry entries not already declared
+/// by a loaded plugin manifest.
+///
+/// Some Layer-3 bridges (e.g. `_dev_snapshot`) are declared only in the
+/// canonical `foundation/platform-architecture/function-registry.toml` and
+/// never in a plugin.toml `[bridge]` section — the framework calls them
+/// directly by their `_prefixed` name. Codegen only emits WASM imports for
+/// bridges present in `bridge_functions`, and codegen already filters that
+/// list by `used_bridge_function_names`, so injecting every registry entry
+/// here is safe: only entries actually referenced by user code produce an
+/// import. Unused registry entries are dropped by
+/// `register_plugin_bridge_imports` (see codegen/mir_codegen/utilities.rs).
+///
+/// Complements the resolver-side on-demand registration in
+/// `resolver_impl.rs::try_register_bridge_from_registry` — the resolver
+/// makes the call resolve, this makes codegen emit the import.
+fn extend_with_registry_bridges(bridge_functions: &mut Vec<plugins::BridgeFunction>) {
+    let idx = match plugins::registry_loader::RegistryIndex::load() {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to load function-registry.toml — skipping registry-only bridge extension");
+            return;
+        }
+    };
+
+    let already: std::collections::HashSet<String> =
+        bridge_functions.iter().map(|bf| bf.name.clone()).collect();
+
+    let mut added = 0usize;
+    for reg_fn in idx.functions() {
+        if already.contains(&reg_fn.name) {
+            continue;
+        }
+        bridge_functions.push(plugins::BridgeFunction {
+            name: reg_fn.name.clone(),
+            params: reg_fn.params.clone(),
+            returns: reg_fn.returns.clone(),
+            module: if reg_fn.module.is_empty() {
+                "env".to_string()
+            } else {
+                reg_fn.module.clone()
+            },
+            description: reg_fn.description.clone(),
+            // Registry convention: `"string"` params expand to (ptr, len) at
+            // the WASM level. Matches `RegistryIndex::check_bridge` which
+            // compares plugin declarations against the registry with
+            // expand_strings=true.
+            expand_strings: true,
+            hosts: if reg_fn.hosts.is_empty() {
+                None
+            } else {
+                Some(reg_fn.hosts.clone())
+            },
+            ..Default::default()
+        });
+        added += 1;
+    }
+
+    if added > 0 {
+        tracing::debug!(
+            added = added,
+            "Extended bridge set with registry-only entries; codegen will emit imports only for those actually used"
+        );
+    }
+}
+
 fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> Vec<String> {
     let mut plugins: Vec<String> = extract_plugins(entry_source);
 
@@ -2517,6 +2584,7 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
     // up against the stale installed manifest and SEM007 fires before the
     // plugin can be rebuilt.
     extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
+    extend_with_registry_bridges(&mut bridge_functions);
     let lang_to_bridge_multifile = registry
         .as_ref()
         .map(|r| r.language_to_bridge_map())
@@ -2979,6 +3047,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED — see the matching
     // call in `compile_multi_file_with_memory_tier`.
     extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
+    extend_with_registry_bridges(&mut bridge_functions);
     let lang_to_bridge = registry
         .as_ref()
         .map(|r| r.language_to_bridge_map())
@@ -3505,6 +3574,7 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED — see the matching
     // call in `compile_multi_file_with_memory_tier`.
     extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
+    extend_with_registry_bridges(&mut bridge_functions);
     let lang_to_bridge = registry
         .as_ref()
         .map(|r| r.language_to_bridge_map())

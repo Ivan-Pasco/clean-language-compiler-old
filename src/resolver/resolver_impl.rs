@@ -1897,6 +1897,20 @@ impl NameResolver {
             (function.to_string(), function_symbol_opt)
         };
 
+        // Last-resort registry consultation: some bridges (e.g. `_dev_snapshot`)
+        // are declared only in `foundation/platform-architecture/function-registry.toml`
+        // and not in any plugin.toml `[bridge]` section — the framework fragment
+        // calls them directly by their `_prefixed` name. Register the missing
+        // bridge on demand from the embedded registry so the call resolves
+        // cleanly and codegen emits the WASM import. Only widens resolution to
+        // names actually present in the registry — unknown `_foo()` still fails
+        // SEM007 below.
+        let function_symbol_opt = if function_symbol_opt.is_none() {
+            self.try_register_bridge_from_registry(&function)
+        } else {
+            function_symbol_opt
+        };
+
         // If still not found, emit error with a did-you-mean hint when we can
         // suggest a canonical Clean name for a known misname (parseInt →
         // string.toInteger, etc.) or a Levenshtein-near existing symbol.
@@ -2130,6 +2144,36 @@ impl NameResolver {
                             arguments: resolved_arguments,
                             location: location.clone(),
                         });
+                    }
+                }
+            }
+
+            // Registry-alias fallback: the receiver Variable name isn't yet a
+            // symbol, but the canonical function-registry.toml declares
+            // `<class_name>.<method>` as an alias for some `_bridge_name`
+            // (e.g. `dev.snapshot` → `_dev_snapshot`). Route the call through
+            // the on-demand bridge registration so codegen sees the canonical
+            // import name. Mirrors the direct-call fallback in
+            // resolve_call_expression.
+            if self.symbol_table.lookup_symbol(class_name).is_none() {
+                let alias = format!("{}.{}", class_name, method);
+                if let Ok(idx) = crate::plugins::registry_loader::RegistryIndex::load() {
+                    if let Some(reg_fn) = idx.lookup(&alias) {
+                        let bridge_name = reg_fn.name.clone();
+                        if let Some(fn_sym_id) =
+                            self.try_register_bridge_from_registry(&bridge_name)
+                        {
+                            let mut resolved_arguments = Vec::new();
+                            for arg in arguments {
+                                resolved_arguments.push(self.resolve_expression(arg)?);
+                            }
+                            return Ok(ResolvedHirExpression::Call {
+                                function: bridge_name,
+                                function_symbol_id: fn_sym_id,
+                                arguments: resolved_arguments,
+                                location: location.clone(),
+                            });
+                        }
                     }
                 }
             }
@@ -3894,8 +3938,20 @@ impl NameResolver {
             byte_end: None,
         };
 
+        // Cache a synthesized BridgeFunction for any registry-only bridge names
+        // we need to resolve here, so their references outlive this loop.
+        let registry_bridges: Vec<crate::plugins::BridgeFunction> = language_to_bridge
+            .values()
+            .filter(|bn| !bridge_by_name.contains_key(bn.as_str()))
+            .filter_map(|bn| Self::bridge_from_registry(bn))
+            .collect();
+        let mut effective_bridge_by_name = bridge_by_name.clone();
+        for bf in &registry_bridges {
+            effective_bridge_by_name.insert(bf.name.as_str(), bf);
+        }
+
         for (lang_name, bridge_name) in language_to_bridge {
-            if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
+            if let Some(bf) = effective_bridge_by_name.get(bridge_name.as_str()) {
                 let lang_def = self.pending_language_fn_defs.get(lang_name.as_str());
 
                 // Use the language def's param types if declared, else bridge params
@@ -4322,6 +4378,67 @@ impl NameResolver {
                 builtin_location.clone(),
             );
         }
+    }
+
+    /// Synthesize a `BridgeFunction` from an entry in the embedded
+    /// `foundation/platform-architecture/function-registry.toml`. Returns
+    /// `None` when the registry cannot be loaded or the name is unknown.
+    ///
+    /// Accepts either the canonical bridge name (`_dev_snapshot`) or a
+    /// declared alias (`dev.snapshot`); in both cases the synthesized
+    /// BridgeFunction carries the canonical name so the on-demand
+    /// registration writes the bridge symbol under its real WASM import name.
+    fn bridge_from_registry(name: &str) -> Option<crate::plugins::BridgeFunction> {
+        let idx = crate::plugins::registry_loader::RegistryIndex::load().ok()?;
+        let reg_fn = idx.lookup(name)?;
+        Some(crate::plugins::BridgeFunction {
+            name: reg_fn.name.clone(),
+            params: reg_fn.params.clone(),
+            returns: reg_fn.returns.clone(),
+            module: if reg_fn.module.is_empty() {
+                "env".to_string()
+            } else {
+                reg_fn.module.clone()
+            },
+            description: reg_fn.description.clone(),
+            // Registry convention: `"string"` params expand to (ptr, len) at
+            // the WASM level. Matches the shape used by `check_bridge` in
+            // registry_loader.rs when comparing plugin declarations.
+            expand_strings: true,
+            hosts: if reg_fn.hosts.is_empty() {
+                None
+            } else {
+                Some(reg_fn.hosts.clone())
+            },
+            ..Default::default()
+        })
+    }
+
+    /// Direct-call fallback for the resolver's SEM007 path. When a bare
+    /// `_bridge_name()` call misses in the symbol table, consult the
+    /// embedded registry and register the bridge on demand so codegen emits
+    /// the WASM import. Returns the newly registered SymbolId, or `None`
+    /// when the name is not in the registry.
+    ///
+    /// Only widens resolution — unknown `_foo()` still falls through to
+    /// SEM007. Restricted to `_`-prefixed names to avoid quietly resolving
+    /// user identifiers that happen to collide with a registry alias.
+    ///
+    /// Registers into the GLOBAL scope regardless of the current scope at
+    /// the call site: bridge symbols must be reachable from every function
+    /// body, and the type inference initializer walks the global scope's
+    /// symbol chain to seed the type environment
+    /// (typechecker/type_inference.rs `initialize_builtins`).
+    fn try_register_bridge_from_registry(&mut self, name: &str) -> Option<SymbolId> {
+        if !name.starts_with('_') {
+            return None;
+        }
+        let bf = Self::bridge_from_registry(name)?;
+        let saved_scope = self.symbol_table.current_scope_id();
+        self.symbol_table.enter_scope(ScopeId(0));
+        self.register_plugin_bridge_functions(std::slice::from_ref(&bf));
+        self.symbol_table.enter_scope(saved_scope);
+        self.symbol_table.lookup_symbol(&bf.name)
     }
 
     /// Convert BuiltinType to HirType
