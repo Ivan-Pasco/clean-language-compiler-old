@@ -47,11 +47,20 @@ pub struct ValidationContext {
 
     /// Set to `true` while validating a function that is a request handler.
     /// Request handlers are identified by: a parameter named `req` or `request`,
-    /// a parameter whose type is named `Request`, or a function whose name starts
-    /// with `__route_handler_` (the compiler-generated route handler prefix).
+    /// a parameter whose type is named `Request`, a function whose name starts
+    /// with `__route_handler_` (the compiler-generated route handler prefix), or
+    /// a function whose name appears as the third argument of an `_http_route`
+    /// or `_http_route_protected` call anywhere in the program (plugins register
+    /// handlers this way — see [[fix_conc002_plugin_handlers]]).
     /// Any use of request-context builtins (req.*, session.*, res.*) outside a
     /// request handler triggers CONC002.
     pub inside_request_handler: bool,
+
+    /// Function names that are registered as request handlers by an
+    /// `_http_route(_, _, handler)` or `_http_route_protected(_, _, handler, _)`
+    /// call anywhere in the program. Populated in a pre-pass before validation
+    /// so that both user-written and plugin-emitted handlers are recognised.
+    pub plugin_registered_handlers: HashSet<String>,
 
     /// Validation errors and warnings
     pub errors: Vec<CompilerError>,
@@ -76,6 +85,7 @@ impl ValidationContext {
             state_var_names: HashSet::new(),
             inside_background: false,
             inside_request_handler: false,
+            plugin_registered_handlers: HashSet::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -110,12 +120,17 @@ impl ValidationContext {
         None
     }
 
-    /// Determine whether `function` qualifies as a request handler for CONC002 purposes.
+    /// Determine whether `function` qualifies as a request handler for CONC002 purposes,
+    /// using only the function's own signature and name.
     ///
     /// A function is a request handler when ANY of the following hold:
     /// - Its name starts with `__route_handler_` (compiler-generated route wrapper)
     /// - It has a parameter named exactly `req` or `request`
     /// - It has a parameter whose type is `HirType::Named { name: "Request", .. }`
+    ///
+    /// Note: this static form does NOT know about plugin-emitted `_http_route`
+    /// registrations. Callers that have a `ValidationContext` should prefer
+    /// [`Self::is_request_handler`] which also consults the plugin-registered set.
     pub fn function_is_request_handler(function: &HirFunction) -> bool {
         if function.name.starts_with("__route_handler_") {
             return true;
@@ -131,6 +146,16 @@ impl ValidationContext {
             }
         }
         false
+    }
+
+    /// Determine whether `function` qualifies as a request handler for CONC002 purposes,
+    /// consulting both the function's own signature and the set of plugin-registered
+    /// handlers collected in the pre-pass (`_http_route` third-arg).
+    pub fn is_request_handler(&self, function: &HirFunction) -> bool {
+        if Self::function_is_request_handler(function) {
+            return true;
+        }
+        self.plugin_registered_handlers.contains(&function.name)
     }
 
     /// Add an error
@@ -200,6 +225,18 @@ impl HirValidator {
 
         // First pass: collect all function and class definitions
         Self::collect_definitions(&mut context, hir);
+
+        // Pre-pass for CONC002: walk every function body (plus start, screen
+        // functions, class methods, and tests) looking for
+        // `_http_route(method, path, handler)` and
+        // `_http_route_protected(method, path, handler, role)` calls. Any
+        // function whose name appears as the third argument is a
+        // plugin-registered request handler. This is how framework plugins
+        // (frame.server, frame.pages, …) attach handlers at compile time;
+        // without walking these calls, plugin-emitted handlers appear to the
+        // validator as ordinary functions and every `req.*` call inside them
+        // raises a spurious CONC002.
+        Self::collect_plugin_registered_handlers(&mut context, hir);
 
         // Second pass: validate all constructs
         Self::validate_program(&mut context, hir);
@@ -309,6 +346,232 @@ impl HirValidator {
         }
     }
 
+    /// Walk every block in the program looking for `_http_route(_, _, handler)`
+    /// and `_http_route_protected(_, _, handler, _)` calls, and add the third
+    /// argument's function name to `context.plugin_registered_handlers`.
+    ///
+    /// The third argument is expected to be either:
+    /// - `HirExpression::Variable { name, .. }` — the typed-emission bridge form
+    ///   (see `src/plugins/typed_emission/bridges.rs::_emit_route`), or
+    /// - `HirExpression::Literal { value: Value::String(name), .. }` — the
+    ///   textual-assembler form (see `src/plugins/builtin_assemblers.rs`).
+    ///
+    /// Anything else (dynamic dispatch, computed handler names) is not
+    /// currently supported and simply won't be added — those handlers would
+    /// need to declare a `req`/`request`/`Request` parameter to be recognised.
+    fn collect_plugin_registered_handlers(context: &mut ValidationContext, hir: &HirProgram) {
+        for function in &hir.functions {
+            Self::scan_block_for_route_registrations(context, &function.body);
+        }
+        if let Some(start_func) = &hir.start_function {
+            Self::scan_block_for_route_registrations(context, &start_func.body);
+        }
+        for class in &hir.classes {
+            if let Some(constructor) = &class.constructor {
+                Self::scan_block_for_route_registrations(context, &constructor.body);
+            }
+            for method in &class.methods {
+                Self::scan_block_for_route_registrations(context, &method.body);
+            }
+        }
+        for screen in &hir.screen_blocks {
+            for function in &screen.functions {
+                Self::scan_block_for_route_registrations(context, &function.body);
+            }
+        }
+        for test in &hir.tests {
+            Self::scan_block_for_route_registrations(context, &test.body);
+        }
+    }
+
+    fn scan_block_for_route_registrations(context: &mut ValidationContext, block: &HirBlock) {
+        for stmt in &block.statements {
+            Self::scan_stmt_for_route_registrations(context, stmt);
+        }
+    }
+
+    fn scan_stmt_for_route_registrations(context: &mut ValidationContext, stmt: &HirStatement) {
+        match stmt {
+            HirStatement::VariableDeclaration { initializer, .. } => {
+                if let Some(expr) = initializer {
+                    Self::scan_expr_for_route_registrations(context, expr);
+                }
+            }
+            HirStatement::Assignment { value, .. } => {
+                Self::scan_expr_for_route_registrations(context, value);
+            }
+            HirStatement::Expression { expression, .. } => {
+                Self::scan_expr_for_route_registrations(context, expression);
+            }
+            HirStatement::Return { value, .. } => {
+                if let Some(expr) = value {
+                    Self::scan_expr_for_route_registrations(context, expr);
+                }
+            }
+            HirStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::scan_expr_for_route_registrations(context, condition);
+                Self::scan_block_for_route_registrations(context, then_branch);
+                if let Some(else_block) = else_branch {
+                    Self::scan_block_for_route_registrations(context, else_block);
+                }
+            }
+            HirStatement::For { iterable, body, .. } => {
+                Self::scan_expr_for_route_registrations(context, iterable);
+                Self::scan_block_for_route_registrations(context, body);
+            }
+            HirStatement::While {
+                condition, body, ..
+            } => {
+                Self::scan_expr_for_route_registrations(context, condition);
+                Self::scan_block_for_route_registrations(context, body);
+            }
+            HirStatement::Print { expression, .. } => {
+                Self::scan_expr_for_route_registrations(context, expression);
+            }
+            HirStatement::LaterAssignment { expression, .. } => {
+                Self::scan_expr_for_route_registrations(context, expression);
+            }
+            HirStatement::Background { expression, .. } => {
+                Self::scan_expr_for_route_registrations(context, expression);
+            }
+            HirStatement::Require { condition, .. } => {
+                Self::scan_expr_for_route_registrations(context, condition);
+            }
+            HirStatement::Ensure { condition, .. } => {
+                Self::scan_expr_for_route_registrations(context, condition);
+            }
+            HirStatement::Break { .. } | HirStatement::Continue { .. } => {}
+        }
+    }
+
+    fn scan_expr_for_route_registrations(context: &mut ValidationContext, expr: &HirExpression) {
+        match expr {
+            HirExpression::Call {
+                function,
+                arguments,
+                ..
+            } => {
+                if (function == "_http_route" || function == "_http_route_protected")
+                    && arguments.len() >= 3
+                {
+                    if let Some(name) = Self::handler_name_from_expr(&arguments[2]) {
+                        context.plugin_registered_handlers.insert(name);
+                    }
+                }
+                for arg in arguments {
+                    Self::scan_expr_for_route_registrations(context, arg);
+                }
+            }
+            HirExpression::BinaryOp { left, right, .. } => {
+                Self::scan_expr_for_route_registrations(context, left);
+                Self::scan_expr_for_route_registrations(context, right);
+            }
+            HirExpression::UnaryOp { operand, .. } => {
+                Self::scan_expr_for_route_registrations(context, operand);
+            }
+            HirExpression::MethodCall {
+                receiver,
+                arguments,
+                ..
+            } => {
+                Self::scan_expr_for_route_registrations(context, receiver);
+                for arg in arguments {
+                    Self::scan_expr_for_route_registrations(context, arg);
+                }
+            }
+            HirExpression::FieldAccess { object, .. } => {
+                Self::scan_expr_for_route_registrations(context, object);
+            }
+            HirExpression::Index { array, index, .. } => {
+                Self::scan_expr_for_route_registrations(context, array);
+                Self::scan_expr_for_route_registrations(context, index);
+            }
+            HirExpression::Array { elements, .. } => {
+                for el in elements {
+                    Self::scan_expr_for_route_registrations(context, el);
+                }
+            }
+            HirExpression::Constructor { arguments, .. } => {
+                for arg in arguments {
+                    Self::scan_expr_for_route_registrations(context, arg);
+                }
+            }
+            HirExpression::Cast { expression, .. } => {
+                Self::scan_expr_for_route_registrations(context, expression);
+            }
+            HirExpression::Assignment { value, .. } => {
+                Self::scan_expr_for_route_registrations(context, value);
+            }
+            HirExpression::NamespaceCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::scan_expr_for_route_registrations(context, arg);
+                }
+            }
+            HirExpression::StaticMethodCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::scan_expr_for_route_registrations(context, arg);
+                }
+            }
+            HirExpression::OnError {
+                expression,
+                fallback,
+                ..
+            } => {
+                Self::scan_expr_for_route_registrations(context, expression);
+                Self::scan_expr_for_route_registrations(context, fallback);
+            }
+            HirExpression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                Self::scan_expr_for_route_registrations(context, condition);
+                Self::scan_expr_for_route_registrations(context, then_expr);
+                Self::scan_expr_for_route_registrations(context, else_expr);
+            }
+            HirExpression::BaseCall { arguments, .. } => {
+                for arg in arguments {
+                    Self::scan_expr_for_route_registrations(context, arg);
+                }
+            }
+            HirExpression::Range {
+                start, end, step, ..
+            } => {
+                Self::scan_expr_for_route_registrations(context, start);
+                Self::scan_expr_for_route_registrations(context, end);
+                if let Some(step_expr) = step {
+                    Self::scan_expr_for_route_registrations(context, step_expr);
+                }
+            }
+            HirExpression::ObjectLiteral { fields, .. } => {
+                for (_, value_expr) in fields {
+                    Self::scan_expr_for_route_registrations(context, value_expr);
+                }
+            }
+            HirExpression::Literal { .. } | HirExpression::Variable { .. } => {}
+        }
+    }
+
+    /// Extract a handler function name from the third argument of an
+    /// `_http_route(...)` call. Supports the variable form (typed-emission) and
+    /// the string-literal form (textual assemblers).
+    fn handler_name_from_expr(expr: &HirExpression) -> Option<String> {
+        match expr {
+            HirExpression::Variable { name, .. } => Some(name.clone()),
+            HirExpression::Literal { value, .. } => match value {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Validate the entire program structure
     fn validate_program(context: &mut ValidationContext, hir: &HirProgram) {
         // Validate imports (basic structure check)
@@ -380,7 +643,7 @@ impl HirValidator {
         // request-context builtins (req.*, session.*, res.*) are only allowed in
         // handler bodies.
         let old_inside_handler = context.inside_request_handler;
-        if ValidationContext::function_is_request_handler(function) {
+        if context.is_request_handler(function) {
             context.inside_request_handler = true;
         }
 
@@ -2095,6 +2358,261 @@ mod concurrency_tests {
         assert!(
             !ValidationContext::function_is_request_handler(&non_handler),
             "Regular function must NOT be detected as handler"
+        );
+    }
+
+    // --- CONC002: plugin-emitted `_http_route` handler recognition ---------
+    //
+    // These tests cover the false-positive filed against cln 0.33.71: a
+    // function registered by a plugin via `_http_route(method, path, handler)`
+    // is a legitimate request-context site, so `req.*`, `session.*`, `res.*`
+    // calls inside it must not raise CONC002. Prior to the fix,
+    // `function_is_request_handler` only looked at parameter names / types /
+    // `__route_handler_` prefix, so plugin-emitted handlers (which carry
+    // plugin-chosen names like `__debug_capture_handler` and no `req` param)
+    // were rejected.
+
+    /// Build a `start:` function that contains a single `_http_route` call
+    /// registering `handler_name` for `GET "/path"`.
+    fn start_registering_route(handler_name: &str, protected: bool) -> HirFunction {
+        let mut args = vec![
+            HirExpression::Literal {
+                value: crate::ast::Value::String("GET".to_string()),
+                location: loc(),
+            },
+            HirExpression::Literal {
+                value: crate::ast::Value::String("/path".to_string()),
+                location: loc(),
+            },
+            HirExpression::Variable {
+                name: handler_name.to_string(),
+                location: loc(),
+            },
+        ];
+        if protected {
+            args.push(HirExpression::Literal {
+                value: crate::ast::Value::String("admin".to_string()),
+                location: loc(),
+            });
+        }
+        let route_call = HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: if protected {
+                    "_http_route_protected".to_string()
+                } else {
+                    "_http_route".to_string()
+                },
+                arguments: args,
+                location: loc(),
+            },
+            location: loc(),
+        };
+        HirFunction {
+            name: "__start".to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::Void),
+            body: HirBlock {
+                statements: vec![route_call],
+                location: loc(),
+            },
+            is_start: true,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        }
+    }
+
+    /// Build a function whose body returns `namespace.method("id")`.
+    /// Used to fabricate plugin-emitted handlers with a chosen name.
+    fn handler_returning_namespace_call(name: &str, namespace: &str, method: &str) -> HirFunction {
+        HirFunction {
+            name: name.to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::String),
+            body: HirBlock {
+                statements: vec![HirStatement::Return {
+                    value: Some(HirExpression::NamespaceCall {
+                        namespace: namespace.to_string(),
+                        function: method.to_string(),
+                        arguments: vec![HirExpression::Literal {
+                            value: crate::ast::Value::String("id".to_string()),
+                            location: loc(),
+                        }],
+                        location: loc(),
+                    }),
+                    location: loc(),
+                }],
+                location: loc(),
+            },
+            is_start: false,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        }
+    }
+
+    /// CONC002 negative: a plugin-emitted handler `__debug_capture_handler`
+    /// registered via `_http_route("GET", "/path", __debug_capture_handler)`
+    /// is recognised as a request-context site.
+    /// `req.param(...)` inside it must NOT raise CONC002.
+    #[test]
+    fn test_conc002_plugin_registered_handler_variable_form() {
+        let handler = handler_returning_namespace_call("__debug_capture_handler", "req", "param");
+        let start = start_registering_route("__debug_capture_handler", false);
+
+        let program = HirProgram {
+            functions: vec![handler],
+            classes: vec![],
+            start_function: Some(start),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+        let result = HirValidator::validate(&program);
+        if let Err(ref errors) = result {
+            assert!(
+                !errors.iter().any(|e| e.to_string().contains("CONC002")),
+                "Unexpected CONC002 inside a plugin-registered handler: {:?}",
+                errors
+            );
+        }
+    }
+
+    /// CONC002 negative: same as above but with `_http_route_protected` and
+    /// a handler using `req.body`, `req.header`, and `req.method`.
+    #[test]
+    fn test_conc002_plugin_registered_handler_protected_various_builtins() {
+        // Handler body: return req.body(); ignoring header/method by
+        // constructing individual test functions instead of chaining, to keep
+        // the HIR simple.
+        for method in ["body", "header", "method"] {
+            let handler = handler_returning_namespace_call("__protected_handler", "req", method);
+            let start = start_registering_route("__protected_handler", true);
+            let program = HirProgram {
+                functions: vec![handler],
+                classes: vec![],
+                start_function: Some(start),
+                imports: vec![],
+                tests: vec![],
+                state: None,
+                watch_blocks: vec![],
+                externals: vec![],
+                screen_blocks: vec![],
+                location: loc(),
+            };
+            let result = HirValidator::validate(&program);
+            if let Err(ref errors) = result {
+                assert!(
+                    !errors.iter().any(|e| e.to_string().contains("CONC002")),
+                    "Unexpected CONC002 for req.{} inside protected handler: {:?}",
+                    method,
+                    errors
+                );
+            }
+        }
+    }
+
+    /// CONC002 negative: the string-literal form used by textual assemblers
+    /// (`_http_route("GET", "/path", "handlerName")`) also registers the
+    /// handler correctly.
+    #[test]
+    fn test_conc002_plugin_registered_handler_string_literal_form() {
+        let handler = handler_returning_namespace_call("__page_handler_home", "req", "param");
+
+        // start: registers the handler by string-literal name
+        let route_call = HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: "_http_route".to_string(),
+                arguments: vec![
+                    HirExpression::Literal {
+                        value: crate::ast::Value::String("GET".to_string()),
+                        location: loc(),
+                    },
+                    HirExpression::Literal {
+                        value: crate::ast::Value::String("/".to_string()),
+                        location: loc(),
+                    },
+                    HirExpression::Literal {
+                        value: crate::ast::Value::String("__page_handler_home".to_string()),
+                        location: loc(),
+                    },
+                ],
+                location: loc(),
+            },
+            location: loc(),
+        };
+        let start = HirFunction {
+            name: "__start".to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::Void),
+            body: HirBlock {
+                statements: vec![route_call],
+                location: loc(),
+            },
+            is_start: true,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let program = HirProgram {
+            functions: vec![handler],
+            classes: vec![],
+            start_function: Some(start),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+        let result = HirValidator::validate(&program);
+        if let Err(ref errors) = result {
+            assert!(
+                !errors.iter().any(|e| e.to_string().contains("CONC002")),
+                "Unexpected CONC002 inside string-literal-registered handler: {:?}",
+                errors
+            );
+        }
+    }
+
+    /// CONC002 positive regression: an unrelated function that uses
+    /// `req.param` but is NOT registered by any `_http_route` call must still
+    /// raise CONC002. This protects against turning the check off wholesale.
+    #[test]
+    fn test_conc002_unregistered_function_still_rejected() {
+        let bogus = handler_returning_namespace_call("randomUtility", "req", "param");
+        // A `_http_route` call registers a DIFFERENT function; `randomUtility`
+        // is not the third arg anywhere.
+        let start = start_registering_route("__actual_handler", false);
+        let real_handler = handler_returning_namespace_call("__actual_handler", "req", "param");
+        let program = HirProgram {
+            functions: vec![bogus, real_handler],
+            classes: vec![],
+            start_function: Some(start),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+        let result = HirValidator::validate(&program);
+        assert!(
+            result.is_err(),
+            "CONC002 must still reject req.param inside an unregistered function"
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.to_string().contains("CONC002")),
+            "Expected CONC002 error on the unregistered function, got: {:?}",
+            errors
         );
     }
 }
