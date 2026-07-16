@@ -134,10 +134,15 @@ mod tests {
         // Bumped 152 → 153 for _crypto_sha256_bytes, the third bridge in the
         // opaque-handle triad (_req_body_bytes → _crypto_sha256_bytes →
         // _fs_write_bytes) needed by tarball-upload SHA-256 verification.
+        // Bumped 153 → 154 for _dev_snapshot (Layer 3, server-only), the
+        // dev-mode capture bridge implemented in clean-server::dev_capture and
+        // consumed by framework's /_debug/capture handler + errors dashboard's
+        // retest sandbox. Framework 2.9.1 ships with emit_dev_capture disabled
+        // until cln recognises the import; this bump unblocks 2.9.2.
         assert_eq!(
             bridges.len(),
-            153,
-            "v1.toml must catalogue exactly 152 bridges (matches \
+            154,
+            "v1.toml must catalogue exactly 154 bridges (matches \
              `grep -c 'func_wrap(' src/plugins/wasm_adapter.rs` at authoring \
              time). Update this assertion AND wasm_adapter.rs together when \
              adding entries."

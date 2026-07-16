@@ -596,6 +596,7 @@ impl WasmPluginAdapter {
     /// - `register_memory_runtime_functions` SHARED: allocator / memory growth primitives
     /// - `register_http_client_functions` SHARED: http_get/post/put/patch/delete
     /// - `register_http_server_functions` SHARED (stubs): _http_route/_http_listen, return 0
+    /// - `register_dev_capture_functions` SHARED (stub): _dev_snapshot, returns LP empty string
     /// - `register_request_context_functions` SHARED (stubs): _req_param/_req_query, return 0
     /// - `register_file_functions` SHARED: file I/O stubs for optional file-calling plugins
     /// - `register_math_functions` SHARED: Math.sin/cos/sqrt/pow/random/etc.
@@ -616,6 +617,8 @@ impl WasmPluginAdapter {
         self.register_http_client_functions(linker)?;
         // HTTP server stubs (_http_route, _http_listen — zero returns)
         self.register_http_server_functions(linker)?;
+        // Dev capture stub (_dev_snapshot — LP empty string, real impl in clean-server)
+        self.register_dev_capture_functions(linker)?;
         // Request context stubs (_req_param, _req_query, … — zero/empty returns)
         self.register_request_context_functions(linker)?;
         // File I/O stubs
@@ -2713,6 +2716,25 @@ impl WasmPluginAdapter {
             },
         )?;
 
+        Ok(())
+    }
+
+    // =========================================
+    // DEV CAPTURE - Server-only runtime snapshot (stub)
+    // Real impl lives in clean-server (src/dev_capture.rs); sandbox returns
+    // an LP empty string so plugin WASM importing _dev_snapshot instantiates
+    // cleanly. See foundation/platform-architecture/function-registry.toml
+    // category=dev_capture and SERVER_EXTENSIONS.md §Dev-mode Capture.
+    // =========================================
+    fn register_dev_capture_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+        linker.func_wrap(
+            "env",
+            "_dev_snapshot",
+            |mut caller: Caller<'_, PluginState>| -> i32 {
+                let state = caller.data_mut();
+                state.allocate(4) as i32
+            },
+        )?;
         Ok(())
     }
 

@@ -1,0 +1,24 @@
+// Test: plugins/frame-server/dev_snapshot_import
+// Grammar: plugins-block, endpoints-block
+// Semantic: bridge registry parity (SEM: unknown-import must not fire on _dev_snapshot)
+// Fixed in: compiler 0.33.71
+// Expected output:
+//   ok
+
+// Smoke test that a frame.server-plugin app compiles cleanly after the
+// _dev_snapshot bridge was added to the compiler's registry. Framework
+// 2.9.1 ships with emit_dev_capture commented out (waiting on cln 0.33.71+
+// to recognise the import); 2.9.2 will uncomment it and inject a call to
+// _dev_snapshot in expand_server_typed. This test verifies the compiler
+// does not reject a frame.server plugin import — the actual _dev_snapshot
+// WASM import will surface once framework 2.9.2 ships.
+
+plugins:
+	frame.server
+
+start:
+	print("ok")
+
+endpoints:
+	GET "/ok":
+		return http.respond(200, "text/plain", "ok")

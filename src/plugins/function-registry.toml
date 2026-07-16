@@ -3181,6 +3181,27 @@ hosts       = ["browser", "server"]
 description = "Browser-only. Returns LP string '{}' on the server. §FEXT-1"
 
 # ============================================================
+# LAYER 3 - DEV CAPTURE (1 function)
+# Server-only runtime snapshot for the framework's /_debug/capture
+# handler and the errors dashboard's retest sandbox. Gated on the
+# CLEAN_DEV=1 environment variable at the bridge level: returns an
+# empty length-prefixed string in production. See
+# foundation/platform-architecture/SERVER_EXTENSIONS.md §Dev-mode
+# Capture for the payload contract.
+# ============================================================
+
+[[functions]]
+name        = "_dev_snapshot"
+layer       = 3
+category    = "dev_capture"
+module      = "env"
+params      = []
+returns     = "ptr"
+aliases     = ["dev.snapshot"]
+hosts       = ["server"]
+description = "Return the raw dev-mode capture payload as a length-prefixed JSON string. Gated on CLEAN_DEV=1; returns LP empty string otherwise. Framework's GET /_debug/capture wraps this."
+
+# ============================================================
 # LAYER 2 - FRAME.CANVAS (238 functions)
 # ============================================================
 

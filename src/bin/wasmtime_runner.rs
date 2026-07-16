@@ -305,6 +305,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
     )?;
     linker.func_wrap("env", "_http_listen", |_: i32| -> i32 { 0 })?;
+    // Dev capture stub — real impl in clean-server; standalone runner returns 0 ptr
+    linker.func_wrap("env", "_dev_snapshot", || -> i32 { 0 })?;
     // State reset stubs (runtime resets are no-ops in standalone test runner)
     linker.func_wrap("env", "_state_reset_all", || {})?;
     linker.func_wrap("env", "_state_reset_named", |_: i32| {})?;

@@ -1532,6 +1532,26 @@ semantics  = "wired"
 source     = "wasm_adapter.rs:5025"
 
 # =============================================================================
-# End of v1.0.0 catalog. Total entries: 150 (must match
+# Group: dev_capture
+# Source: src/plugins/wasm_adapter.rs::register_dev_capture_functions
+# Purpose: Server-only dev-mode snapshot bridge for framework's
+#          /_debug/capture handler and the errors dashboard's retest
+#          sandbox. Real impl lives in clean-server (src/dev_capture.rs);
+#          sandbox stub returns an LP empty string. See
+#          foundation/platform-architecture/SERVER_EXTENSIONS.md
+#          §Dev-mode Capture for the payload contract.
+# =============================================================================
+
+[[bridge]]
+name       = "_dev_snapshot"
+module     = "env"
+params     = []
+returns    = "i32"
+host_class = "server"
+semantics  = "stub"
+source     = "wasm_adapter.rs:register_dev_capture_functions"
+
+# =============================================================================
+# End of v1.0.0 catalog. Total entries: 154 (must match
 # `grep -c 'func_wrap(' src/plugins/wasm_adapter.rs`).
 # =============================================================================
