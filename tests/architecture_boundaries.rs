@@ -79,6 +79,30 @@ const EXEMPT_FILES: &[&str] = &[
     "src/codegen/mod.rs",
     // Doc-comment example only — no executable plugin knowledge:
     "src/hir/mod.rs",
+    // KNOWN VIOLATION (tracked as ARCH-CONC002-HARDCODES-HTTP-ROUTE,
+    // local report b675e266-0d58-4acb-a685-d67459f9fa41 pending dashboard sync):
+    //
+    // WHY the file needs the knowledge: CONC002 must decide, per function,
+    // whether it is a legitimate request-context site so that `req.*`,
+    // `session.*`, and `res.*` calls inside it are allowed. Plugins register
+    // handlers by emitting `_http_route(method, path, handler)` or
+    // `_http_route_protected(method, path, handler, role)` into `start:`, so
+    // any function whose name appears as the third argument of one of those
+    // calls is a request-context site. Without recognising this,
+    // plugin-emitted handlers (which take zero parameters and have
+    // plugin-chosen names like `__debug_capture_handler`) triggered spurious
+    // CONC002 for every `req.param` etc. call inside them. The pre-pass in
+    // `HirValidator::collect_plugin_registered_handlers` extracts those
+    // handler names — which requires matching the two bridge names.
+    //
+    // RIGHT LONG-TERM FIX: teach plugin.toml `[[bridge]]` to declare
+    // `registers_handler_at_arg = <int>` (or add a `[[route_registration]]`
+    // section). Expose the aggregated set from the plugin registry via a
+    // `handler_registering_bridges()` query. `scan_expr_for_route_registrations`
+    // then becomes generic over any bridge that opts in — WebSocket, gRPC,
+    // MQTT subscribe bridges, etc. would work with zero compiler changes.
+    // Once that lands, drop this exemption entry.
+    "src/hir/validation.rs",
     // KNOWN VIOLATION (BUILTIN-NAMESPACE-OVERREACH, sub-finding A — last residue):
     // Resolver pre-registers raw bridge names (`_req_*`, `_server_sleep`) as
     // hardcoded builtin function signatures so direct bridge calls from
