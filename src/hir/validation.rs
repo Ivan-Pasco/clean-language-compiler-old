@@ -564,10 +564,10 @@ impl HirValidator {
     fn handler_name_from_expr(expr: &HirExpression) -> Option<String> {
         match expr {
             HirExpression::Variable { name, .. } => Some(name.clone()),
-            HirExpression::Literal { value, .. } => match value {
-                Value::String(s) => Some(s.clone()),
-                _ => None,
-            },
+            HirExpression::Literal {
+                value: Value::String(s),
+                ..
+            } => Some(s.clone()),
             _ => None,
         }
     }
