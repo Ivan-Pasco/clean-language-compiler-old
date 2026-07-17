@@ -138,3 +138,10 @@ ai-sessions/
 
 # Claude scheduled tasks
 .claude/scheduled_tasks.lock
+
+# Local job runner cache (cln dev-queue / cln jobs SQLite)
+.clean/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
