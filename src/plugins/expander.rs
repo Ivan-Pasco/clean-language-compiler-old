@@ -644,10 +644,14 @@ impl<'a> PluginExpander<'a> {
                         let expanded = self.expand_statements_full(expansion.statements)?;
                         result.extend(expanded);
                     } else {
-                        result.push(Statement::FrameworkBlock {
-                            name,
-                            content: block.content,
-                            attributes: block.attributes,
+                        // No plugin registered for this block. Nothing downstream
+                        // handles a pass-through FrameworkBlock — resolver, type
+                        // checker, HIR, MIR, and codegen all skip it — so it would
+                        // vanish silently and the program would compile with a
+                        // missing feature. Fail here with a clear error so the
+                        // author knows to add the owning plugin to `plugins:`.
+                        return Err(PluginError::UnknownBlockType {
+                            block_name: name,
                             location,
                         });
                     }
@@ -701,12 +705,11 @@ impl<'a> PluginExpander<'a> {
                         let expanded = self.expand_statements(expanded)?;
                         result.extend(expanded);
                     } else {
-                        // No handler - keep the block for later error reporting
-                        // (will fail in semantic analysis with helpful error)
-                        result.push(Statement::FrameworkBlock {
-                            name,
-                            content: block.content,
-                            attributes: block.attributes,
+                        // See matching branch in expand_statements_full: unhandled
+                        // FrameworkBlocks are invisible to every stage after the
+                        // expander, so pass-through means silent feature drop.
+                        return Err(PluginError::UnknownBlockType {
+                            block_name: name,
                             location,
                         });
                     }
@@ -1151,7 +1154,14 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_block_passes_through() {
+    fn test_unknown_block_is_hard_error() {
+        // COMPILER-IMPLICIT-PLUGIN-ACTIVATION (dashboard fp 73cfeba24d14).
+        // A FrameworkBlock whose owning plugin isn't registered used to pass
+        // through the expander with a comment claiming "will fail later in
+        // semantic analysis" — but no downstream stage handled it, so it
+        // vanished silently. Now the expander itself fails fast with
+        // UnknownBlockType, forcing the author to either add the plugin to
+        // `plugins:` or remove the block.
         let registry = PluginRegistry::new();
 
         let program = make_test_program(vec![Statement::FrameworkBlock {
@@ -1161,13 +1171,11 @@ mod tests {
             location: None,
         }]);
 
-        // Unknown blocks should pass through (will fail later in semantic analysis)
         let mut expander = PluginExpander::new(&registry);
-        let result = expander.expand_program(program).unwrap();
-        assert_eq!(result.statements.len(), 1);
+        let result = expander.expand_program(program);
         assert!(matches!(
-            result.statements[0],
-            Statement::FrameworkBlock { .. }
+            result,
+            Err(PluginError::UnknownBlockType { ref block_name, .. }) if block_name == "unknown"
         ));
     }
 

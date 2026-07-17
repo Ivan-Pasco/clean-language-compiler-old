@@ -696,6 +696,29 @@ impl HirBuilder {
                         }
                     }
                 }
+                Statement::FrameworkBlock { name, location, .. } => {
+                    // COMPILER-IMPLICIT-PLUGIN-ACTIVATION (dashboard fp 73cfeba24d14).
+                    // A FrameworkBlock reaching HIR construction means the expander was
+                    // skipped (no plugin_registry — i.e. no `plugins:` declaration) or
+                    // an installed plugin didn't claim the block. Either way, no
+                    // downstream stage handles it, so we must fail here instead of
+                    // silently dropping the block and compiling a program that's
+                    // missing the feature the author asked for.
+                    return Err(CompilerError::syntax_error(
+                        format!(
+                            "No plugin loaded handles block '{}:'. Declare the owning \
+                             plugin in the file's `plugins:` block (e.g. `plugins:\\n\\t\
+                             frame.canvas`) or remove the block.",
+                            name
+                        ),
+                        Some(format!(
+                            "Add a `plugins:` declaration listing whichever plugin owns \
+                             '{}:' before the block appears.",
+                            name
+                        )),
+                        location.clone(),
+                    ));
+                }
                 _ => {
                     // Handle other top-level statements if needed
                 }
