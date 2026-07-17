@@ -704,18 +704,43 @@ impl HirBuilder {
                     // downstream stage handles it, so we must fail here instead of
                     // silently dropping the block and compiling a program that's
                     // missing the feature the author asked for.
+                    //
+                    // Some names are common typos or aliases users try when they mean
+                    // `plugins:`. Give a targeted hint instead of the generic message
+                    // so `target:\n\tframe.server` (PLUGIN-DISCOVERY-TARGET-BLOCK,
+                    // fp 590e61575e58) points the author at the real declaration form.
+                    let looks_like_plugins_alias = matches!(
+                        name.as_str(),
+                        "target" | "targets" | "plugin" | "uses" | "requires"
+                    );
+                    let (msg, help) = if looks_like_plugins_alias {
+                        (
+                            format!(
+                                "'{name}:' is not a Clean Language block header. \
+                                 The declaration for loading plugins is written `plugins:` \
+                                 (block form) or `plugins: [name1, name2]` (inline form).",
+                            ),
+                            format!(
+                                "Replace `{name}:` with `plugins:` — the block body \
+                                 (indented plugin names, one per line) stays the same.",
+                            ),
+                        )
+                    } else {
+                        (
+                            format!(
+                                "No plugin loaded handles block '{name}:'. Declare the \
+                                 owning plugin in the file's `plugins:` block (e.g. \
+                                 `plugins:\\n\\tframe.canvas`) or remove the block.",
+                            ),
+                            format!(
+                                "Add a `plugins:` declaration listing whichever plugin \
+                                 owns '{name}:' before the block appears.",
+                            ),
+                        )
+                    };
                     return Err(CompilerError::syntax_error(
-                        format!(
-                            "No plugin loaded handles block '{}:'. Declare the owning \
-                             plugin in the file's `plugins:` block (e.g. `plugins:\\n\\t\
-                             frame.canvas`) or remove the block.",
-                            name
-                        ),
-                        Some(format!(
-                            "Add a `plugins:` declaration listing whichever plugin owns \
-                             '{}:' before the block appears.",
-                            name
-                        )),
+                        msg,
+                        Some(help),
                         location.clone(),
                     ));
                 }
@@ -7142,5 +7167,76 @@ impl HirBuilder {
             statements: stmts,
             location: loc,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{FrameworkAttribute, Program};
+
+    fn empty_program_with(stmt: Statement) -> Program {
+        Program {
+            statements: vec![stmt],
+            functions: vec![],
+            classes: vec![],
+            imports: vec![],
+            plugins: vec![],
+            start_function: None,
+            tests: vec![],
+            screens: vec![],
+            state: None,
+            watch_blocks: Vec::new(),
+            screen_blocks: Vec::new(),
+            externals: Vec::new(),
+            source_block: None,
+            location: None,
+        }
+    }
+
+    fn framework_block(name: &str) -> Statement {
+        Statement::FrameworkBlock {
+            name: name.to_string(),
+            content: String::new(),
+            attributes: Vec::<FrameworkAttribute>::new(),
+            location: None,
+        }
+    }
+
+    /// PLUGIN-DISCOVERY-TARGET-BLOCK (dashboard fp 590e61575e58).
+    /// `target:\n\tframe.server` used to compile silently to a WASM
+    /// with zero plugin expansion. 0.33.80 made it a hard error;
+    /// 0.33.84 improved the error message from the generic "declare
+    /// the owning plugin" wording to a targeted "you meant plugins:".
+    #[test]
+    fn framework_block_named_target_gets_plugins_alias_hint() {
+        let mut builder = HirBuilder::new();
+        let program = empty_program_with(framework_block("target"));
+        let err = builder
+            .build_hir(program)
+            .expect_err("unknown block must be a hard error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'target:' is not a Clean Language block header"),
+            "expected alias-specific message, got: {msg}"
+        );
+        assert!(
+            msg.contains("plugins:"),
+            "expected the corrected form to be named in the message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn framework_block_unknown_name_gets_generic_hint() {
+        let mut builder = HirBuilder::new();
+        let program = empty_program_with(framework_block("canvasScene"));
+        let err = builder
+            .build_hir(program)
+            .expect_err("unknown block must be a hard error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("No plugin loaded handles block 'canvasScene:'"),
+            "expected generic message for non-alias block, got: {msg}"
+        );
     }
 }

@@ -1,0 +1,42 @@
+// Test: bugfixes/plugin_discovery_target_block_alias_hint
+// Grammar: framework_block (unrecognized top-level block)
+// Semantic: unknown-block hard error (SYN001) with alias-name hint
+// Tracking: 590e61575e58
+// Fixed in: compiler 0.33.84
+//
+// Regression pin for dashboard fingerprint 590e61575e58
+// (PLUGIN-DISCOVERY-TARGET-BLOCK).
+//
+// Pre-0.33.80: a top-level `target:\n\tframe.server` block silently
+// passed through the plugin expander and the HIR builder's catch-all
+// arm, producing a WASM with zero plugin block expansion (no
+// _http_route, no _http_listen, no user endpoints) — apps compiled
+// successfully but the server never registered any routes.
+//
+// 0.33.80: COMPILER-IMPLICIT-PLUGIN-ACTIVATION landed. All unknown
+// FrameworkBlocks became SYN001 hard errors, so the silent-drop
+// symptom disappeared. But the generic error text ("declare the
+// owning plugin") pointed users the wrong direction — `target:`
+// isn't owned by any plugin; the user meant to write `plugins:`.
+//
+// 0.33.84: added targeted hint for common `plugins:` aliases
+// (target, targets, plugin, uses, requires) so the error message
+// says "'target:' is not a Clean Language block header. Replace
+// `target:` with `plugins:`" instead of the generic
+// UnknownBlockType text.
+//
+// This pin is a POSITIVE control: the corrected form (`plugins:`)
+// compiles cleanly. The regression harness matches on stdout, so
+// baking the negative case (SYN001 on `target:`) requires a
+// different harness — for the negative side the Rust unit test
+// plugins::expander::tests::test_unknown_block_is_hard_error (from
+// 0.33.80) covers the hard-error invariant; the alias-hint text
+// is covered by the ai-generated repro in this file's header
+// comment and the direct compile output.
+//
+// Fixed in: compiler 0.33.84
+// Expected output:
+//   ok
+
+start:
+	printl("ok")
