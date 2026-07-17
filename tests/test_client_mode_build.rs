@@ -30,9 +30,14 @@ fn write_project(root: &std::path::Path) {
     )
     .unwrap();
 
+    // Component with events: — must live inside a class per frame-ui-semantics
+    // (events: is a class-body section, not a top-level block). The stray
+    // top-level events: this test used previously was silently dropped by the
+    // pre-0.33.80 expander pass-through, which meant the test compiled empty
+    // WASM and its assertions passed for the wrong reason.
     std::fs::write(
         root.join("app/web/components/Btn.cln"),
-        "events:\n\tvoid onMount()\n\t\tprintl(\"mounted\")\n",
+        "plugins:\n\tframe.ui\n\nclass Btn\n\tevents:\n\t\tonMount():\n\t\t\tprintl(\"mounted\")\n",
     )
     .unwrap();
 }
@@ -145,9 +150,12 @@ fn client_mode_does_not_leak_server_bridge_imports() {
     .unwrap();
 
     // Client component: registers a click handler, never calls find_user.
+    // events: is a class-body section (frame-ui-semantics §UI-B009); the raw
+    // top-level events: block this test used previously was silently dropped
+    // by the pre-0.33.80 expander pass-through.
     std::fs::write(
         root.join("app/web/components/Btn.cln"),
-        "events:\n\tvoid onClick()\n\t\tprintl(\"clicked\")\n",
+        "plugins:\n\tframe.ui\n\nclass Btn\n\tevents:\n\t\tonClick():\n\t\t\tprintl(\"clicked\")\n",
     )
     .unwrap();
 
