@@ -2150,6 +2150,19 @@ fn extend_with_registry_bridges(bridge_functions: &mut Vec<plugins::BridgeFuncti
         if already.contains(&reg_fn.name) {
             continue;
         }
+        // Only inject bridge-convention names (leading underscore). Registry
+        // entries WITHOUT the underscore (e.g. `http_get`, `http_post`,
+        // `string_split`) are already registered by the compiler's built-in
+        // importers (`register_http_imports`, `register_string_split_import`,
+        // etc.) with specific WASM shapes. Adding them here as generic
+        // `expand_strings=true` bridges causes the HTTP importer's skip
+        // filter (mir_codegen/mod.rs `skip_http_functions`) to drop them,
+        // leaving downstream codegen unable to find them in `function_map`.
+        // Registry-only bridges that the resolver needs to resolve on demand
+        // are all `_prefixed` — `_dev_snapshot` and its Layer 3 peers.
+        if !reg_fn.name.starts_with('_') {
+            continue;
+        }
         bridge_functions.push(plugins::BridgeFunction {
             name: reg_fn.name.clone(),
             params: reg_fn.params.clone(),
