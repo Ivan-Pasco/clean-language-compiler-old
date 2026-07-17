@@ -3368,29 +3368,62 @@ Rules:
 - For intermediate HTML fragments, use helper functions that each return an html: block
 - Double quotes for HTML attributes inside html: blocks (single quotes cause lexer errors)
 
-### Rule A — ORM first, raw SQL only when necessary
+### Rule A — Entity + Database service first, raw SQL only when necessary (frame.data v2)
 
-Use ORM DSL (`Model.exists:`, `Model.update:`, `Model.delete:`, `Model.count:`) for any CRUD operation the ORM supports. Fall back to `db.query()` **only** when the ORM cannot express it:
-- Aggregate aliases: `COUNT(*) AS cnt`
-- Date formatting: `DATE_FORMAT(...)`
-- Multi-table joins
-- Post-insert `SELECT` to retrieve the new ID
+Under frame.data v2 there are exactly three places to touch persisted data:
+
+1. **`Entity.data.<method>(args)`** — for reads. `<method>` is declared in the paired data block's `queries:` sub-block and returns `Entity`, `Entity?`, or `list<Entity>`.
+2. **`Database.save(entity)` / `Database.delete(entity)` / `Database.deleteOrFail(entity)` / `Database.saveAll(list)` / `Database.deleteAll(list)`** — for writes.
+3. **`db.query(sql, params)` / `db.queryAs(Type): sql: ... params: ...`** — raw SQL escape hatch, used inside report classes in `app/data/reports/` when the DSL can't express the query.
+
+**Removed under v2 (compile-time error — E FRAME-DATA-E021):** `Model.insert:`, `Model.insert_id:`, `Model.update:`, `Model.upsert:`, `Model.delete:` block forms. `db.update:`, `db.insert:`, `db.delete:` block forms are also removed.
+
+**Migration recipes (v1 → v2):**
 
 ```
-// WRONG — raw SQL for a standard update
-string sql = "UPDATE users SET name = ? WHERE id = ?"
-db.query(sql, params)
+// WRONG (v1) — Model.insert: block form
+User.insert:
+    email = "a@b.com"
+    status = "pending"
 
-// CORRECT — ORM DSL
-db.update:
-    model Users
-    set name = {name}
-    where id = {id}
+// CORRECT (v2) — construct entity, call Database.save
+User u = User(email: "a@b.com", status: "pending")
+Database.save(u)
+// After save, u.id is mutated in place to the DB-generated primary key.
 
-// CORRECT — raw SQL justified: COUNT alias + DATE_FORMAT are ORM-inexpressible
-string sql = "SELECT DATE_FORMAT(created_at, '%Y-%m') as month, COUNT(*) AS cnt FROM users GROUP BY month"
-string result = db.query(sql, params)
+// WRONG (v1) — Model.update: block form
+User.update:
+    set status = "active"
+    where id == userId
+
+// CORRECT (v2) — load, mutate, save
+User u = User.data.findOrFailById(userId)
+u.status = "active"
+Database.save(u)
+
+// WRONG (v1) — Model.delete: block form
+User.delete:
+    where id == userId
+
+// CORRECT (v2) — load, delete
+User u = User.data.findOrFailById(userId)
+Database.delete(u)       // lenient — no error if already gone
+// or Database.deleteOrFail(u) if the row MUST have existed (raises NOT_FOUND)
+
+// CORRECT (v2) — raw SQL still the escape hatch for aggregates / joins that
+// the DSL can't express. Lives in a report class under app/data/reports/.
+class MonthlySignups
+    functions:
+        public:
+            list<map<string, any>> byMonth()
+                return db.query:
+                    sql: "SELECT DATE_FORMAT(created_at, '%Y-%m') as month, COUNT(*) AS cnt FROM users GROUP BY month"
+                    params: []
 ```
+
+**Reads use the `.data` accessor** — `Entity.data.<method>` resolves at compile time to a `queries:` method on the paired data block. It cannot be captured (`var q = User.data` is a compile-time error per DAT-A001).
+
+See specs `foundation/spec/plugins/frame-data-semantics.md` DAT-S001..S010 (`Database`), DAT-A001..A005 (`.data`), DAT-Q014/DAT-Q015 (retired mutation blocks).
 
 ### Rule B — Compose functions, never duplicate queries
 
@@ -3595,12 +3628,20 @@ Does NOT apply to plugins, library packages, or single-file scripts under 200 LO
 ```
 my-app/
 ├── main.cln                    REQUIRED — declares shared: and target: blocks
+│                               (also holds the frame.data: connection config
+│                                under v2 — no more app/data/config.cln)
 ├── public/{css,images}/        Static assets
 └── app/
     ├── auth/                   frame.auth configuration and guards
     ├── types/                  Validated value types (Email, Money, Slug)
+    ├── entity/                 Entity classes — the DOMAIN shape
+    │                           (fields + invariants + methods; NO persistence)
     ├── data/
-    │   ├── models/             data: blocks — schema only, NO methods
+    │   ├── models/             data <T>: blocks — the PERSISTENCE view of an
+    │   │                         entity T. Sub-block form (table, fields:,
+    │   │                         indexes:, relations:, queries:). One per file.
+    │   ├── reports/            Report classes — cross-entity or aggregate
+    │   │                         queries using db.query / db.queryAs
     │   └── migrations/         Versioned schema migration files
     ├── logic/                  Business logic — ONE class per capability
     ├── server/
@@ -3616,21 +3657,30 @@ No other folders inside `app/`. FORBIDDEN filenames anywhere in `app/`:
 `utils.cln`, `helpers.cln`, `common.cln`, `misc.cln`, `lib.cln`, `shared.cln`,
 `tools.cln`, `core.cln`. These always degrade into junk drawers.
 
+**Entity ↔ data pairing (v2, DAT-P001..P005).** An entity class `User` lives in
+`app/entity/user.cln`. Its persistence view — table name, indexes, relations,
+queries — lives in `app/data/models/user.cln` as a `data User:` block. The two
+files must share a basename. An entity may exist without a data block (session
+shapes, request DTOs), but every data block requires a paired entity.
+
 ## 2. The Two Laws (non-negotiable)
 
 ### Law 1 — Dependency direction is one-way
 
 ```
-api, pages, components, middleware  →  logic  →  data/models  →  types
+api, pages, components, middleware  →  logic  →  data/models, data/reports
+                                          ↓         ↓
+                                        entity     entity
                                           ↓
                                         types
 ```
 
 - `types/` imports nothing from the app
-- `data/models/` imports only from `types/`
-- `logic/` imports from `data/models/` and `types/`
+- `entity/` imports only from `types/` (entities are persistence-ignorant, DAT-E003)
+- `data/models/` and `data/reports/` import from `entity/` and `types/`
+- `logic/` imports from `entity/`, `data/models/`, `data/reports/`, and `types/`
 - `server/api/`, `server/middleware/`, `web/pages/`, `web/components/` import
-  from `logic/` and `types/`
+  from `logic/`, `entity/`, and `types/`
 - A reverse import is a structural error
 
 ### Law 2 — One class per logic file, called statically
@@ -3647,24 +3697,39 @@ Apply in order. First match wins.
 
 1. Validates or represents a primitive value (Email, Money, Slug)?
    → `app/types/<name>.cln`
-2. Defines a database row shape?
-   → `data:` block in `app/data/models/<entity>.cln`
-3. ANY behavior — pure helper, workflow, I/O, validation, computation?
-   → method on a class in `app/logic/<capability>.cln`
-4. HTTP route?
+2. Represents a domain object — fields, invariants, business methods
+   (User, Order, Product; whether persistent or not)?
+   → `class T` in `app/entity/<basename>.cln`
+3. Persistence view of an entity — table, indexes, relations, entity-scoped
+   queries returning `T` / `T?` / `list<T>`?
+   → `data T:` block in `app/data/models/<basename>.cln` (basename matches
+     the entity file per DAT-M014)
+4. Cross-entity, aggregate, or raw-SQL query (returns a report shape, not
+   an entity type)?
+   → Report class in `app/data/reports/<capability>.cln` — uses `db.query`
+     or `db.queryAs(SomeType)` (see DAT-R001..R003)
+5. ANY behavior that orchestrates entities + persistence + I/O — workflow,
+   validation, computation across multiple entities?
+   → method on a class in `app/logic/<capability>.cln` — calls
+     `Entity.data.<method>` for reads and `Database.save` / `Database.delete`
+     for writes
+6. HTTP route?
    → `app/server/api/<area>.cln` — body calls EXACTLY ONE logic method
-5. Request filter (auth check, logging, CORS)?
+7. Request filter (auth check, logging, CORS)?
    → `app/server/middleware/<name>.cln`
-6. Page template or companion adapter?
+8. Page template or companion adapter?
    → `app/web/pages/<route>.{html,cln}`
-7. Reusable UI component?
+9. Reusable UI component?
    → `app/web/components/<name>.cln`
-8. Page layout wrapper?
-   → `app/web/layouts/<name>.html`
-9. Auth configuration?
-   → `app/auth/`
-10. Schema migration?
+10. Page layout wrapper?
+    → `app/web/layouts/<name>.html`
+11. Auth configuration?
+    → `app/auth/`
+12. Schema migration?
     → `app/data/migrations/`
+13. Database connection configuration (engine, host, credentials, pool)?
+    → `frame.data:` block in `main.cln` (v2: NOT `app/data/config.cln`;
+      per DAT-I004)
 
 If nothing matches, the code does not belong in the app.
 
@@ -3693,7 +3758,7 @@ If you ever need an instance, pick a name the plugins don't own:
 |---|---|
 | `E-STRUCT-001` | Junk-drawer filename (`utils.cln`, `helpers.cln`, etc.) |
 | `E-STRUCT-002` | Entity-named logic class or file (`UserService`, `OrderManager`) |
-| `E-STRUCT-003` | `functions:` block inside a `data:` block (frame.data drops it silently) |
+| `E-STRUCT-003` | `functions:` block inside a `data:` block (v2: business methods go on the entity, not the data block; queries go in `queries:` sub-block) |
 | `E-STRUCT-004` | Database call from `app/server/api/`, `app/web/components/`, or page companion |
 | `E-STRUCT-005` | More than one class or `data:` block in a single file |
 | `E-STRUCT-006` | Logic class with fields or constructor (must be stateless namespace) |
@@ -3701,6 +3766,11 @@ If you ever need an instance, pick a name the plugins don't own:
 | `E-STRUCT-008` | Reverse import (lower layer importing from higher layer) |
 | `E-STRUCT-009` | Logic file importing another logic file |
 | `W-STRUCT-010` | Variable shadows reserved plugin namespace |
+| `E-STRUCT-012` | `data T:` block without a paired `class T` in `app/entity/` (DAT-P001) |
+| `E-STRUCT-013` | Bare-field `data T:` declaration (v1) — use the sub-block form under v2 |
+| `E-STRUCT-014` | Field named in `fields:` not declared on the paired entity (DAT-P003) |
+| `E-STRUCT-015` | Non-optional entity field missing from `fields:` (DAT-P004) |
+| `FRAME-DATA-E021` | Removed v1 block form (`Model.insert:`, `Model.update:`, `Model.delete:`, `Model.upsert:`, `Model.insert_id:`) — use `Database.save` / `Database.delete` |
 
 (Error codes are reserved but not yet enforced. They will be promoted to
 warnings, then to hard errors, over the v0.31–v0.33 release window.)
@@ -3712,6 +3782,7 @@ A new app starts with ONLY:
 ```
 main.cln
 app/
+├── entity/
 ├── data/models/
 ├── server/api/
 └── web/pages/
@@ -3721,8 +3792,9 @@ Add the rest ONLY when the first real need arises:
 
 | Trigger | Folder to add |
 |---|---|
-| Endpoint or page companion grows beyond a single concern, or touches more than one model | `app/logic/` |
+| Endpoint or page companion grows beyond a single concern, or touches more than one entity | `app/logic/` |
 | Same validation rule appears twice | `app/types/` |
+| Cross-entity or aggregate query needed (return type is not `T` / `T?` / `list<T>`) | `app/data/reports/` |
 | UI pattern used in more than one page | `app/web/components/` |
 | Pages share header/footer/layout | `app/web/layouts/` |
 | Schema needs to evolve in production | `app/data/migrations/` |
@@ -3731,25 +3803,71 @@ Add the rest ONLY when the first real need arises:
 
 Empty folders are FORBIDDEN.
 
-## 8. Known Limitations (today)
+## 8. Known Limitations and v2 Migration Notes (today)
 
-- `data: T` does NOT register `T` as a usable Clean type — you cannot declare
-  `User u` after a `data: User` block, and you cannot write a function that
-  takes `User user` as a parameter. All single-record helpers therefore live
-  in `app/logic/` (not co-located with the model).
-- `functions:` blocks inside `data:` blocks are accepted by the parser but
-  IGNORED by frame.data. Do NOT use this pattern — the methods will never be
-  callable. All behavior moves to `app/logic/`.
+- **Under v2, the entity class IS the type.** `class User` in `app/entity/user.cln`
+  is the type used throughout the app: `User u = User.data.findOrFailById(id)`,
+  `void notify(User user)`, `list<User> subscribers`. The `data User:` block in
+  `app/data/models/user.cln` is the persistence view, not the type declaration.
+- **`.data` is a compile-time namespace, not a value** (DAT-A001). `var q = User.data`
+  is a compile-time error. Call methods directly: `User.data.findByEmail(email)`.
+- **`Database` is a compile-time namespace, not a value** (DAT-S007). `var db = Database`
+  is a compile-time error.
+- **Bare-field `data: T` (v1) and `Model.insert:`/`update:`/`delete:`/`upsert:`
+  block forms are removed.** They emit `FRAME-DATA-E021` at compile time with a
+  message pointing at the v2 replacement. Do not attempt to use them in new code.
+- **Business methods go on the entity, not the data block.** The `data T:` block
+  is schema and queries only. Behavior lives in the entity's `functions:` block
+  or in `app/logic/` capabilities.
 
-## 9. Example — Auth Capability End-to-End
+## 9. Example — Auth Capability End-to-End (v2)
+
+`app/entity/user.cln`
+```clean
+class User
+    integer? id
+    string email
+    private string passwordHash
+    string status
+    datetime createdAt
+
+    always:
+        status in ["active", "pending", "suspended"]
+
+    functions:
+        public:
+            boolean canPost()
+                return status == "active"
+
+            boolean verifiesPassword(string input)
+                return crypto.verify(input, passwordHash)
+```
 
 `app/data/models/user.cln`
 ```clean
-data: User
-    email: String
-    password_hash: String
-    role: String
-    created_at: DateTime
+data User:
+    table "users"
+
+    fields:
+        id primary generated
+        email required unique
+        passwordHash required as "password_hash"
+        status required default: "pending"
+        createdAt required as "created_at"
+
+    indexes:
+        email unique
+        (status, createdAt)
+
+    queries:
+        User? byEmail(string email)
+            return User.first: where: email == email
+
+        User findOrFailById(integer id)
+            return User.findOrFail: where: id == id
+
+        list<User> activeUsers()
+            return User.find: where: status == "active"
 ```
 
 `app/types/email.cln`
@@ -3766,14 +3884,24 @@ class Email
 ```clean
 class Auth
     functions:
-        integer register(string email, string password)
-            // hash password, persist via frame.data, send welcome email
-            return newUserId
+        public:
+            integer register(string email, string password)
+                User u = User(email: email, passwordHash: hash(password), status: "pending", createdAt: time.now())
+                Database.save(u)               // mutates u.id in place, enforces always: invariants
+                Mailer.sendWelcome(u.email)
+                return u.id!
 
-        string login(string email, string password)
-            return sessionToken
+            string? login(string email, string password)
+                User? candidate = User.data.byEmail(email)
+                if candidate == null
+                    return null
+                User u = candidate!
+                if not u.verifiesPassword(password)
+                    return null
+                return Sessions.issue(u.id!)
 
-        void logout(string sessionToken)
+            void logout(string sessionToken)
+                Sessions.revoke(sessionToken)
 ```
 
 `app/server/api/auth.cln`
@@ -3784,9 +3912,17 @@ endpoints:
         return json({ id: userId })
 
     POST /api/login
-        string token = Auth.login(req.body.email, req.body.password)
-        return json({ token: token })
+        string? token = Auth.login(req.body.email, req.body.password)
+        if token == null
+            return res.status(401).json({ error: "invalid credentials" })
+        return json({ token: token! })
 ```
+
+Note the shape: entity in `app/entity/` (domain + invariants + methods), data
+block in `app/data/models/` (schema + queries), logic in `app/logic/` (orchestrates
+entities + Database + other capabilities), endpoint in `app/server/api/` (thin
+call to logic method). No `functions:` in the data block, no `Model.insert:`
+anywhere, no `db.query` in this flow (it's an escape hatch, not a default).
 "##;
 
     JsonRpcResponse::success(
@@ -3795,7 +3931,7 @@ endpoints:
             "success": true,
             "architecture": architecture,
             "version": crate::VERSION,
-            "tip": "Apply the decision tree (§3) BEFORE creating any .cln file. Logic classes are stateless namespaces — call them as Auth.register(...) without instantiating. If a file or class name doesn't fit a capability (Auth, Checkout, Mailer), it almost certainly belongs in app/data/models/ or app/types/ instead."
+            "tip": "Apply the decision tree (§3) BEFORE creating any .cln file. Under v2 the domain shape (fields + invariants + methods) lives in app/entity/<name>.cln; the persistence view (table, indexes, queries) lives in app/data/models/<name>.cln paired by basename. Reads go through <Entity>.data.<method>; writes go through Database.save / Database.delete. Logic classes are stateless capabilities called as Auth.register(...) without instantiating. If a file or class name doesn't fit a capability, it almost certainly belongs in app/entity/, app/data/models/, or app/types/ instead."
         }),
     )
 }
