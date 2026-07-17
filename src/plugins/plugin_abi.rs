@@ -497,6 +497,23 @@ pub struct BridgeFunction {
     /// v2 §4 — closes SRV001 by giving _ui_render_page a documented purpose.
     #[serde(default)]
     pub callback: Option<BridgeCallback>,
+    /// Zero-indexed argument position that carries a request-handler function
+    /// name when the bridge is called. Present when the bridge registers a
+    /// request handler at compile time — e.g. frame.server's
+    /// `_http_route(method, path, handler)` has `registers_handler_at_arg = 2`.
+    ///
+    /// HIR validation (CONC002 request-context check) uses this to identify
+    /// plugin-emitted handler functions so their body counts as a legitimate
+    /// request-context site. Without it, the compiler falls back to hardcoded
+    /// recognition of `_http_route` / `_http_route_protected` (see
+    /// `ValidationContext::collect_plugin_registered_handlers`). Any plugin
+    /// adding a new handler-registering bridge (WebSocket, GraphQL
+    /// subscription, etc.) can opt in by declaring this field on its bridge
+    /// entry — no compiler change needed.
+    ///
+    /// Fixes ARCH-CONC002-HARDCODES-HTTP-ROUTE (dashboard fp 12ce9f522815).
+    #[serde(default)]
+    pub registers_handler_at_arg: Option<usize>,
 }
 
 fn default_bridge_module() -> String {
@@ -520,6 +537,7 @@ impl Default for BridgeFunction {
             browser_stub: None,
             native_stub: None,
             callback: None,
+            registers_handler_at_arg: None,
         }
     }
 }

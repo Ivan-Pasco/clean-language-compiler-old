@@ -721,8 +721,10 @@ pub fn type_check_with_plugins(
     let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    // See handler_bridges plumbing note in compile_with_plugins_and_opt_level.
     use crate::hir::validation::HirValidator;
-    HirValidator::validate(&hir_result.hir)?;
+    let handler_bridges = registry.handler_registering_bridges();
+    HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
 
     // Stage 4: Name and Module Resolution
     let bridge_functions = registry.bridge_functions();
@@ -1273,8 +1275,14 @@ pub fn compile_with_plugins_and_opt_level(
     );
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    // Pass registry's handler-registering bridges so any plugin declaring
+    // `registers_handler_at_arg` in plugin.toml is recognized by the CONC002
+    // pre-pass. Fixes ARCH-CONC002-HARDCODES-HTTP-ROUTE (fp 12ce9f522815) —
+    // the historical hardcoded fallback for _http_route(_protected) is
+    // preserved so builds without a modernized plugin.toml keep working.
     use crate::hir::validation::HirValidator;
-    HirValidator::validate(&hir_result.hir)?;
+    let handler_bridges = registry.handler_registering_bridges();
+    HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
     tracing::debug!("Stage 3b complete: HIR validation passed");
 
     // Stage 4: Name and Module Resolution - symbol resolution per specification
@@ -1655,8 +1663,10 @@ pub fn compile_with_target(
     let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
+    // See handler_bridges plumbing note in compile_with_plugins_and_opt_level.
     use crate::hir::validation::HirValidator;
-    HirValidator::validate(&hir_result.hir)?;
+    let handler_bridges = handler_bridges_from_slice(&source_bridges);
+    HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
 
     // Stage 4: Name and Module Resolution
     let resolution_result = if source_bridges.is_empty() {
@@ -2200,6 +2210,26 @@ fn extend_with_registry_bridges(bridge_functions: &mut Vec<plugins::BridgeFuncti
     }
 }
 
+/// Collect every loaded bridge that declares `registers_handler_at_arg`
+/// on its plugin.toml `[[bridge]]` entry, returning
+/// `(bridge_name, handler_arg_index)` pairs. Used by
+/// `HirValidator::validate_with_handler_bridges` to recognize plugin-emitted
+/// route handlers as legitimate request-context sites (CONC002).
+/// Mirrors `PluginRegistry::handler_registering_bridges()` but works off a
+/// raw slice — the multi-file paths compute bridge_functions inline before
+/// they have a full registry handle.
+///
+/// Fixes ARCH-CONC002-HARDCODES-HTTP-ROUTE (fp 12ce9f522815).
+fn handler_bridges_from_slice(bridges: &[plugins::BridgeFunction]) -> Vec<(String, usize)> {
+    bridges
+        .iter()
+        .filter_map(|bf| {
+            bf.registers_handler_at_arg
+                .map(|idx| (bf.name.clone(), idx))
+        })
+        .collect()
+}
+
 fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> Vec<String> {
     let mut plugins: Vec<String> = extract_plugins(entry_source);
 
@@ -2613,7 +2643,8 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
     use crate::hir::validation::HirValidator;
-    HirValidator::validate(&merged_hir)?;
+    let handler_bridges = handler_bridges_from_slice(&bridge_functions);
+    HirValidator::validate_with_handler_bridges(&merged_hir, &handler_bridges)?;
     tracing::debug!("Stage 3b complete: HIR validation passed");
 
     // Stage 4: Resolution (with bridge functions if plugins are loaded)
@@ -3157,7 +3188,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
     use crate::hir::validation::HirValidator;
-    HirValidator::validate(&merged_hir)?;
+    let handler_bridges = handler_bridges_from_slice(&bridge_functions);
+    HirValidator::validate_with_handler_bridges(&merged_hir, &handler_bridges)?;
     tracing::debug!("Stage 3b complete: HIR validation passed");
 
     // Remove dot-notation language alias externals: they existed only so HIR validation
@@ -3649,7 +3681,8 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     }
 
     use crate::hir::validation::HirValidator;
-    HirValidator::validate(&merged_hir)?;
+    let handler_bridges = handler_bridges_from_slice(&bridge_functions);
+    HirValidator::validate_with_handler_bridges(&merged_hir, &handler_bridges)?;
 
     if !lang_to_bridge.is_empty() {
         merged_hir

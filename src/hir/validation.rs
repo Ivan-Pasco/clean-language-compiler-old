@@ -62,6 +62,15 @@ pub struct ValidationContext {
     /// so that both user-written and plugin-emitted handlers are recognised.
     pub plugin_registered_handlers: HashSet<String>,
 
+    /// Plugin-declared bridges whose calls register a request handler at a
+    /// specific argument position. Each `(bridge_name, handler_arg_index)`
+    /// pair comes from a plugin.toml `[[bridge]]` entry with
+    /// `registers_handler_at_arg = <n>`. Empty when no loaded plugin declares
+    /// any — in that case the pre-pass falls back to hardcoded recognition
+    /// of `_http_route` / `_http_route_protected`. See
+    /// [`HirValidator::validate_with_handler_bridges`].
+    pub handler_bridges: Vec<(String, usize)>,
+
     /// Validation errors and warnings
     pub errors: Vec<CompilerError>,
     pub warnings: Vec<CompilerError>,
@@ -86,6 +95,7 @@ impl ValidationContext {
             inside_background: false,
             inside_request_handler: false,
             plugin_registered_handlers: HashSet::new(),
+            handler_bridges: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -206,9 +216,35 @@ impl ValidationContext {
 pub struct HirValidator;
 
 impl HirValidator {
-    /// Validate a complete HIR program
+    /// Validate a complete HIR program.
+    ///
+    /// Uses the historical hardcoded set of handler-registering bridges
+    /// (`_http_route`, `_http_route_protected`). Prefer
+    /// [`validate_with_handler_bridges`] when the plugin registry is
+    /// available so any plugin declaring
+    /// `registers_handler_at_arg` in plugin.toml is honored.
     pub fn validate(hir: &HirProgram) -> Result<(), Vec<CompilerError>> {
+        Self::validate_with_handler_bridges(hir, &[])
+    }
+
+    /// Same as [`validate`] but consults an explicit list of
+    /// handler-registering bridges alongside the historical hardcoded set.
+    ///
+    /// `extra_handler_bridges` comes from
+    /// `PluginRegistry::handler_registering_bridges()` — each entry is a
+    /// `(bridge_name, handler_arg_index)` pair sourced from a plugin's
+    /// `[[bridge]]` entry whose `registers_handler_at_arg = <n>` field is
+    /// set. Any function name appearing at that argument position in a
+    /// call to one of these bridges is registered as a request handler
+    /// (CONC002 legitimate site), same as `_http_route(_, _, handler)`.
+    ///
+    /// Fixes ARCH-CONC002-HARDCODES-HTTP-ROUTE (dashboard fp 12ce9f522815).
+    pub fn validate_with_handler_bridges(
+        hir: &HirProgram,
+        extra_handler_bridges: &[(String, usize)],
+    ) -> Result<(), Vec<CompilerError>> {
         let mut context = ValidationContext::new();
+        context.handler_bridges = extra_handler_bridges.to_vec();
 
         // Derive plugin-registered namespace prefixes from externals whose names
         // contain a dot (e.g. "req.query" → namespace "req", "db.query" → "db").
@@ -456,7 +492,32 @@ impl HirValidator {
                 arguments,
                 ..
             } => {
-                if (function == "_http_route" || function == "_http_route_protected")
+                // Plugin-declared handler-registering bridges take priority.
+                // If any loaded plugin's plugin.toml declares this bridge with
+                // `registers_handler_at_arg = <n>`, extract the handler name
+                // from that argument slot. Any plugin (frame.server today,
+                // future WebSocket / GraphQL subscription bridges tomorrow)
+                // can opt in without a compiler change.
+                let mut matched_plugin_bridge = false;
+                for (bridge_name, arg_index) in &context.handler_bridges {
+                    if function == bridge_name && arguments.len() > *arg_index {
+                        if let Some(name) = Self::handler_name_from_expr(&arguments[*arg_index]) {
+                            context.plugin_registered_handlers.insert(name);
+                        }
+                        matched_plugin_bridge = true;
+                        break;
+                    }
+                }
+                // Fallback: hardcoded recognition of frame.server's
+                // `_http_route(method, path, handler)` and
+                // `_http_route_protected(method, path, handler, role)`.
+                // Kept so existing installs work while framework maintainers
+                // add the `registers_handler_at_arg` metadata to plugin.toml.
+                // Once every handler-registering bridge declares the field,
+                // this fallback can be removed alongside the corresponding
+                // `EXEMPT_FILES` entry in tests/architecture_boundaries.rs.
+                if !matched_plugin_bridge
+                    && (function == "_http_route" || function == "_http_route_protected")
                     && arguments.len() >= 3
                 {
                     if let Some(name) = Self::handler_name_from_expr(&arguments[2]) {
@@ -2644,5 +2705,99 @@ mod concurrency_tests {
             "Expected CONC002 error on the unregistered function, got: {:?}",
             errors
         );
+    }
+
+    /// ARCH-CONC002-HARDCODES-HTTP-ROUTE (dashboard fp 12ce9f522815).
+    ///
+    /// A plugin can declare `registers_handler_at_arg = <n>` on any
+    /// `[[bridge]]` entry to mark it as a handler-registering call. The
+    /// HIR validator's CONC002 pre-pass consults that list before falling
+    /// back to hardcoded `_http_route` / `_http_route_protected` names.
+    /// This test exercises a fabricated bridge named `_ws_on_message`
+    /// (WebSocket) with the handler at arg index 1, proving that no
+    /// compiler change is needed to teach the CONC002 check about new
+    /// route-like registrations — a plugin.toml opt-in is enough.
+    #[test]
+    fn test_conc002_recognises_plugin_declared_handler_bridge() {
+        // Handler body: return req.body() — request-context builtin.
+        let handler = handler_returning_namespace_call("__ws_message_handler", "req", "body");
+
+        // start: _ws_on_message("chatroom", __ws_message_handler)
+        //   arg 0 = channel name
+        //   arg 1 = handler variable   ← registers_handler_at_arg = 1
+        let route_call = HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: "_ws_on_message".to_string(),
+                arguments: vec![
+                    HirExpression::Literal {
+                        value: crate::ast::Value::String("chatroom".to_string()),
+                        location: loc(),
+                    },
+                    HirExpression::Variable {
+                        name: "__ws_message_handler".to_string(),
+                        location: loc(),
+                    },
+                ],
+                location: loc(),
+            },
+            location: loc(),
+        };
+        let start = HirFunction {
+            name: "__start".to_string(),
+            parameters: vec![],
+            return_type: Some(HirType::Void),
+            body: HirBlock {
+                statements: vec![route_call],
+                location: loc(),
+            },
+            is_start: true,
+            is_private: false,
+            owner_screen: None,
+            location: loc(),
+        };
+
+        let program = HirProgram {
+            functions: vec![handler],
+            classes: vec![],
+            start_function: Some(start),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+
+        // With no plugin-declared bridge, __ws_message_handler is NOT a
+        // known request-context site, so req.body() raises CONC002.
+        let baseline = HirValidator::validate(&program);
+        assert!(
+            baseline.is_err(),
+            "Without plugin registration, __ws_message_handler should be an unknown \
+             request handler and req.body must raise CONC002 — baseline sanity check"
+        );
+        assert!(
+            baseline
+                .unwrap_err()
+                .iter()
+                .any(|e| e.to_string().contains("CONC002")),
+            "Baseline: expected CONC002 for the unregistered handler"
+        );
+
+        // With `_ws_on_message` declared as a handler-registering bridge
+        // (handler at arg index 1), the pre-pass extracts the handler
+        // name and marks __ws_message_handler as a request handler — no
+        // CONC002 fires.
+        let extra = vec![("_ws_on_message".to_string(), 1usize)];
+        let recognised = HirValidator::validate_with_handler_bridges(&program, &extra);
+        if let Err(ref errors) = recognised {
+            assert!(
+                !errors.iter().any(|e| e.to_string().contains("CONC002")),
+                "With plugin-declared handler bridge, req.body inside the \
+                 registered handler must NOT raise CONC002. Got errors: {:?}",
+                errors
+            );
+        }
     }
 }

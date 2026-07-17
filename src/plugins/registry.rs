@@ -502,6 +502,30 @@ impl PluginRegistry {
         self.bridge_functions.iter().find(|f| f.name == name)
     }
 
+    /// Enumerate every loaded bridge function that registers a request-handler
+    /// at call time — one whose plugin.toml entry sets
+    /// `registers_handler_at_arg = <n>`.
+    ///
+    /// Returns pairs `(bridge_name, handler_arg_index)` used by
+    /// `hir::validation::ValidationContext::collect_plugin_registered_handlers`
+    /// to recognize plugin-emitted route handlers as legitimate
+    /// request-context sites (CONC002). Empty when no loaded plugin declares
+    /// any such bridge — in that case the HIR validator falls back to its
+    /// historical hardcoded recognition of frame.server's `_http_route` /
+    /// `_http_route_protected` so existing installs keep working while
+    /// framework maintainers add the metadata to plugin.toml.
+    ///
+    /// Fixes ARCH-CONC002-HARDCODES-HTTP-ROUTE (dashboard fp 12ce9f522815).
+    pub fn handler_registering_bridges(&self) -> Vec<(String, usize)> {
+        self.bridge_functions
+            .iter()
+            .filter_map(|bf| {
+                bf.registers_handler_at_arg
+                    .map(|idx| (bf.name.clone(), idx))
+            })
+            .collect()
+    }
+
     /// Run all registered assemble hooks, merging their outputs.
     ///
     /// Called once per compilation after source discovery but before parsing.
