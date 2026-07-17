@@ -56,12 +56,15 @@ jobs:
       - name: Run spec_coverage.py
         # Do not fail this step on low coverage — we want the report even when
         # rules are uncovered. The ratchet gate below is what enforces policy.
+        # --min-per-rule=0 keeps the script from exiting 1 on any UNCOVERED
+        # rule; the report is written regardless and the ratchet step reads
+        # spec-coverage.json to enforce percentage floors.
         run: |
           set -uo pipefail
-          python3 scripts/spec_coverage.py --json spec-coverage.json \
+          python3 scripts/spec_coverage.py --min-per-rule 0 --json spec-coverage.json \
             | tee spec-coverage.txt
-          # Preserve exit status separately for visibility; do not fail here.
-          echo "spec_coverage exit was: $?" >&2
+          rc=${PIPESTATUS[0]}
+          echo "spec_coverage exit was: $rc" >&2
 
       - name: Enforce ratchet against baseline
         run: |
