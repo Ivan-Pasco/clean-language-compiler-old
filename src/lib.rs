@@ -2174,10 +2174,14 @@ fn extend_with_registry_bridges(bridge_functions: &mut Vec<plugins::BridgeFuncti
             },
             description: reg_fn.description.clone(),
             // Registry convention: `"string"` params expand to (ptr, len) at
-            // the WASM level. Matches `RegistryIndex::check_bridge` which
-            // compares plugin declarations against the registry with
-            // expand_strings=true.
-            expand_strings: true,
+            // the WASM level by default. Individual entries opt out via
+            // `expand_strings = false` in the toml when the canonical plugin
+            // ships bare length-prefixed pointers — e.g. `_json_get`, so its
+            // second param can be declared as `"string"` (language level) and
+            // resolved to HirType::String while still matching the plugin's
+            // ABI. Propagating that flag here also keeps codegen import shape
+            // aligned.
+            expand_strings: reg_fn.expand_strings,
             hosts: if reg_fn.hosts.is_empty() {
                 None
             } else {

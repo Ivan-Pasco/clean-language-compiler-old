@@ -2726,14 +2726,19 @@ name        = "_json_get"
 layer       = 3
 category    = "json"
 module      = "env"
-# Registry side uses the always-expand convention (see "VALIDATOR
-# COMPARISON RULE" at top of file). The plugin side ships
-# expand_strings = false, so its single "string" param emits a bare
-# i32 (length-prefixed pointer, no wrapper). To match at the WASM
-# level, the registry describes that same slot as "i32". First slot
-# is "any" — a single i32 pointing at the 12-byte boxed struct
-# `[tag@0:i32][value1@4:i32][value2@8:i32]` (foundation/spec/type-system.md).
-params      = ["any", "i32"]
+# Match the canonical plugin declaration (frame.server 2.8.4+ /
+# frame.auth 2.4.4+): both ship `expand_strings = false`, so the
+# "string" path param emits a single bare i32 (length-prefixed
+# pointer) at the WASM level. Declaring it here as "string" (rather
+# than "i32") lets the resolver's `parse_bridge_hir_type` map the
+# slot to `HirType::String` — otherwise plugin-less builds
+# (e.g. `--target browser` with only frame.client, which does NOT
+# re-declare `_json_get`) fall back to this registry entry via
+# `extend_with_registry_bridges` and the second slot resolves to
+# `Integer`, producing SEM001 at every `string v = json.get(any, str)`
+# call site. Fixes SEM001-JSON-GET-STRING-BROWSER-TARGET (fp 7ba4d133b44a).
+params      = ["any", "string"]
+expand_strings = false
 returns     = "any"
 aliases     = ["json.get"]
 hosts       = ["all"]

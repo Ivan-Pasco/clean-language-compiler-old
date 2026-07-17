@@ -1,0 +1,39 @@
+// Test: bugfixes/json_get_string_browser_target
+// Semantic: SEM001 must not fire on `string v = json.get(string, string)`
+// Tracking: 7ba4d133b44a
+// Fixed in: compiler 0.33.82
+//
+// Regression pin for dashboard fingerprint 7ba4d133b44a
+// (SEM001-JSON-GET-STRING-BROWSER-TARGET).
+//
+// Pre-fix: when a `.cln` file was compiled without any plugin that
+// re-declares the `_json_get` bridge (typical of client-target files
+// that only load frame.client), the compiler synthesized the bridge
+// from foundation/platform-architecture/function-registry.toml via
+// extend_with_registry_bridges. That entry declared the second param
+// as `"i32"` at WASM level to match the plugin's expand_strings=false
+// shape, but the resolver's parse_bridge_hir_type mapped `"i32"` to
+// `HirType::Integer`. Users writing the documented shape
+// `string v = json.get(bodyString, "field")` hit SEM001 "Cannot unify
+// types: string and integer".
+//
+// Fix: registry entry now declares `params = ["any", "string"]`
+// with `expand_strings = false`, so the WASM shape stays the same
+// (bare i32 for the path pointer) but the resolver sees the second
+// slot as `HirType::String`. RegistryFunction.expand_strings is new
+// (defaults to true to preserve behavior for every other entry).
+//
+// Note: the runtime path (calling _json_get with no host bridge)
+// requires wasmtime_runner to stub the import — this file uses a
+// literal JSON string that the pure-WASM `json.decode` handles
+// without the bridge, so it runs end-to-end on the standalone
+// runner and produces the expected output.
+//
+// Fixed in: compiler 0.33.82
+// Expected output:
+//   value=hello
+
+start:
+	string body = "{\"field\":\"hello\"}"
+	string v = json.get(body, "field")
+	print("value=" + v)

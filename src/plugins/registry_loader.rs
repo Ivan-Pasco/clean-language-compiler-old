@@ -65,12 +65,27 @@ pub struct RegistryFunction {
     pub param_names: Vec<String>,
     #[serde(default)]
     pub returns: String,
+    /// Whether `"string"` params expand to (ptr, len) at the WASM level.
+    /// Default `true` matches the registry's "always-expand" convention (see
+    /// header of function-registry.toml). Set to `false` for entries whose
+    /// canonical plugin declaration ships bare length-prefixed pointers
+    /// (`expand_strings = false`) — this lets the compiler describe the slot
+    /// as `"string"` at the language level (so `parse_bridge_hir_type` maps
+    /// it to `HirType::String`) while still matching the plugin's WASM ABI
+    /// for `check_bridge`. Introduced to fix SEM001-JSON-GET-STRING-BROWSER-TARGET
+    /// (dashboard fp 7ba4d133b44a).
+    #[serde(default = "default_expand_strings")]
+    pub expand_strings: bool,
     #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default)]
     pub hosts: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+fn default_expand_strings() -> bool {
+    true
 }
 
 /// Indexed view over the registry. Lookup is by canonical name OR alias —
@@ -158,12 +173,13 @@ declaration from this plugin.",
         // `"boolean"`, etc. — they all emit a single i32 import. Only the
         // expanded shape is what the linker actually checks.
         //
-        // The registry uses the "expand" convention by default (per the
-        // header doc: `"string" -> WASM (i32, i32)`), so we expand its
-        // params with `expand_strings=true`. The plugin side respects
-        // whatever flag the manifest declares.
+        // The registry defaults to the "expand" convention (per the header
+        // doc: `"string" -> WASM (i32, i32)`), but individual entries can
+        // opt out via `expand_strings = false` in the toml to match plugins
+        // that ship bare length-prefixed pointers. The plugin side respects
+        // whatever flag its manifest declares.
         let plugin_shape = params_to_wasm_shape(&decl.params, decl.expand_strings);
-        let registry_shape = params_to_wasm_shape(&reg.params, true);
+        let registry_shape = params_to_wasm_shape(&reg.params, reg.expand_strings);
         if plugin_shape != registry_shape {
             issues.push(format!(
                 "  - {plugin_name}/{}: params {:?} (expand_strings={}) emit WASM {:?}, registry {:?} expects WASM {:?}",
