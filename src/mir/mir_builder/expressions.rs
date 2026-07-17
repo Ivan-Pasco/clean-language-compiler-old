@@ -876,6 +876,64 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
+                // NOTE: Handle standalone toString(number) function calls.
+                //
+                // `toString` is registered in the resolver's symbol table as
+                // `(Integer) -> String` (see resolver_impl.rs). When callers pass a
+                // Number (f64) argument, the type checker resolves the call to that
+                // symbol and the general FunctionCall codegen path loads an f64 onto
+                // the stack — into the callee's i32 parameter slot. wasmparser then
+                // rejects the module with "type mismatch: expected i32, found f64"
+                // (COM001 fingerprint f26672a3b9a11308, discovered while investigating
+                // the sibling Number.toString() method-call bug in July 2026).
+                //
+                // Redirect to the `float_to_string` host import, which has the
+                // correct `(f64) -> i32` signature.
+                if matches!(function_name_opt.as_deref(), Some("toString"))
+                    && arguments.len() == 1
+                    && matches!(arguments[0].expr_type, ConcreteType::Number)
+                {
+                    let arg_id = self.build_expression(context, &arguments[0])?;
+
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::Ptr(Box::new(MirType::U8)),
+                        expression.location.clone(),
+                    );
+
+                    let symbol_id = self
+                        .symbol_table
+                        .lookup_symbol("float_to_string")
+                        .unwrap_or_else(|| {
+                            warn!(
+                                "float_to_string not found in symbol table for toString(number) early dispatch"
+                            );
+                            SymbolId(0)
+                        });
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: if symbol_id.0 == 0 {
+                                MirOperand::NamedFunction {
+                                    name: "float_to_string".to_string(),
+                                    symbol_id: SymbolId(0),
+                                }
+                            } else {
+                                MirOperand::Function(symbol_id)
+                            },
+                            arguments: vec![MirOperand::Value(arg_id)],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
                 // json.encode / json.dataToText — call-site dispatch by source type.
                 // The generic `json.dataToText(any)` only knows how to walk values that
                 // are already in the JSON-tagged tree format produced by `json.decode`
@@ -1570,6 +1628,60 @@ impl MirBuilder {
                             function: if symbol_id.0 == 0 {
                                 MirOperand::NamedFunction {
                                     name: "int_to_string".to_string(),
+                                    symbol_id: SymbolId(0),
+                                }
+                            } else {
+                                MirOperand::Function(symbol_id)
+                            },
+                            arguments: vec![MirOperand::Value(receiver_id)],
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+                    return Ok(result_id);
+                }
+
+                // NOTE: Handle Number.toString() EARLY — same rationale as the
+                // Integer.toString() dispatch above. `stdlib::method_style`
+                // registers `number.toString` as an `(i32) → i32` identity stub
+                // (same shape as `integer.toString`/`boolean.toString`), so the
+                // type checker resolves a non-zero method symbol and skips the
+                // `method_symbol.0 == 0` special case at line ~2034 that would
+                // have dispatched to `float_to_string`. Without this early
+                // dispatch, an f64 value is passed to an i32 slot and wasmparser
+                // rejects the module with "type mismatch: expected i32, found
+                // f64". Reproduces on `data:` models with a `number` field when
+                // the frame.data plugin generates `<field>.toString()` in
+                // `__to_params`/`__update_set` builders.
+                if matches!(&receiver_actual_type, ConcreteType::Number)
+                    && method_name == "toString"
+                {
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        MirType::Ptr(Box::new(MirType::U8)),
+                        expression.location.clone(),
+                    );
+
+                    let symbol_id = self
+                        .symbol_table
+                        .lookup_symbol("float_to_string")
+                        .unwrap_or_else(|| {
+                            warn!(
+                                "float_to_string not found in symbol table for Number.toString() early dispatch"
+                            );
+                            SymbolId(0)
+                        });
+
+                    let instruction = MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Call {
+                            function: if symbol_id.0 == 0 {
+                                MirOperand::NamedFunction {
+                                    name: "float_to_string".to_string(),
                                     symbol_id: SymbolId(0),
                                 }
                             } else {
