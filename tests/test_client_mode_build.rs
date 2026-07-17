@@ -30,14 +30,16 @@ fn write_project(root: &std::path::Path) {
     )
     .unwrap();
 
-    // Component with events: — must live inside a class per frame-ui-semantics
-    // (events: is a class-body section, not a top-level block). The stray
-    // top-level events: this test used previously was silently dropped by the
-    // pre-0.33.80 expander pass-through, which meant the test compiled empty
-    // WASM and its assertions passed for the wrong reason.
+    // Component placeholder — the test only verifies the compile pipeline
+    // works when the project has a components/ directory populated with a
+    // .cln file. Using a plain start: (not `events:`) keeps the fixture
+    // independent of framework plugins so CI runs without needing
+    // `cleen frame install`. The stray top-level `events:` this fixture
+    // used previously was silently dropped by the pre-0.33.80 expander
+    // pass-through and the test compiled effectively empty WASM.
     std::fs::write(
         root.join("app/web/components/Btn.cln"),
-        "plugins:\n\tframe.ui\n\nclass Btn\n\tevents:\n\t\tonMount():\n\t\t\tprintl(\"mounted\")\n",
+        "start:\n\tprintl(\"mounted\")\n",
     )
     .unwrap();
 }
@@ -149,13 +151,14 @@ fn client_mode_does_not_leak_server_bridge_imports() {
     )
     .unwrap();
 
-    // Client component: registers a click handler, never calls find_user.
-    // events: is a class-body section (frame-ui-semantics §UI-B009); the raw
-    // top-level events: block this test used previously was silently dropped
-    // by the pre-0.33.80 expander pass-through.
+    // Client entry: just a bare start: block that never calls find_user.
+    // The test's purpose is to prove that unreachable server-only functions
+    // (find_user → _db_query) are DCE'd out of client builds — it does NOT
+    // need to exercise any framework plugin's block. Using a plain start:
+    // keeps CI self-sufficient (no framework plugin install required).
     std::fs::write(
         root.join("app/web/components/Btn.cln"),
-        "plugins:\n\tframe.ui\n\nclass Btn\n\tevents:\n\t\tonClick():\n\t\t\tprintl(\"clicked\")\n",
+        "start:\n\tprintl(\"clicked\")\n",
     )
     .unwrap();
 
