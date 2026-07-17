@@ -3198,7 +3198,7 @@ module      = "env"
 params      = []
 returns     = "ptr"
 aliases     = ["dev.snapshot"]
-hosts       = ["server"]
+hosts       = ["server", "node-server"]
 description = "Return the raw dev-mode capture payload as a length-prefixed JSON string. Gated on CLEAN_DEV=1; returns LP empty string otherwise. Framework's GET /_debug/capture wraps this."
 
 # ============================================================
