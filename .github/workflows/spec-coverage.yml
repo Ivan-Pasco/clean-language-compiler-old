@@ -1,0 +1,106 @@
+name: Spec-rule coverage
+
+# Measures how many numbered spec rules from foundation/spec/semantic-rules.md
+# have at least one citing test under tests/cln/. Publishes the report as an
+# artifact and to the PR summary. Fails only if coverage drops below the
+# committed baseline (ratchet), not on absolute floor — the current baseline
+# is well below 100% and a hard floor would block every PR.
+#
+# See scripts/spec_coverage.py for the citation rules.
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+env:
+  # Committed baseline. Raise this only via a PR that also demonstrably
+  # increased coverage. If a PR drops coverage below this number, the job
+  # fails and the author must add tests or revert the drop.
+  #
+  # 2026-07-06 baseline: 54.93% (39/71 rules cited with default lenient scan).
+  SPEC_COVERAGE_BASELINE_PCT: "54.93"
+
+jobs:
+  measure:
+    name: Measure and ratchet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout foundation (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: Ivan-Pasco/clean-language-spec
+          ref: main
+          path: foundation-checkout
+
+      - name: Wire foundation/ next to the compiler checkout
+        # spec_coverage.py resolves ../foundation/spec/semantic-rules.md
+        # relative to the compiler crate root. In a normal dev tree that path
+        # exists because the compiler is a subdir of the spec repo; in CI we
+        # emulate the layout by symlinking the checked-out spec repo's
+        # foundation/ dir one level up from the compiler.
+        run: |
+          set -euxo pipefail
+          if [ -d foundation-checkout/foundation ]; then
+            ln -s "$PWD/foundation-checkout/foundation" ../foundation
+          else
+            echo "warning: no foundation/ inside foundation-checkout, trying flat layout"
+            ln -s "$PWD/foundation-checkout" ../foundation
+          fi
+          ls -la ../foundation/spec/semantic-rules.md
+
+      - name: Run spec_coverage.py
+        # Do not fail this step on low coverage — we want the report even when
+        # rules are uncovered. The ratchet gate below is what enforces policy.
+        run: |
+          set -uo pipefail
+          python3 scripts/spec_coverage.py --json spec-coverage.json \
+            | tee spec-coverage.txt
+          # Preserve exit status separately for visibility; do not fail here.
+          echo "spec_coverage exit was: $?" >&2
+
+      - name: Enforce ratchet against baseline
+        run: |
+          set -euo pipefail
+          pct=$(python3 -c "import json; print(json.load(open('spec-coverage.json'))['coverage_pct'])")
+          baseline="${SPEC_COVERAGE_BASELINE_PCT}"
+          echo "coverage: $pct%   baseline: $baseline%"
+          python3 -c "
+          import sys
+          pct = float('$pct')
+          baseline = float('$baseline')
+          # Allow a 0.01pp float-rounding tolerance.
+          if pct + 0.01 < baseline:
+              print(f'FAIL: coverage {pct}% dropped below baseline {baseline}%.', file=sys.stderr)
+              print('If this drop is intentional (e.g. rules were added to the spec),', file=sys.stderr)
+              print('update SPEC_COVERAGE_BASELINE_PCT in .github/workflows/spec-coverage.yml.', file=sys.stderr)
+              sys.exit(1)
+          print(f'OK: coverage {pct}% >= baseline {baseline}%.')
+          "
+
+      - name: Publish report to PR summary
+        if: always()
+        run: |
+          {
+            echo "## Spec-rule coverage"
+            echo
+            echo '```'
+            head -80 spec-coverage.txt
+            echo '```'
+            echo
+            echo "Full report is attached as the \`spec-coverage\` artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-coverage
+          path: |
+            spec-coverage.txt
+            spec-coverage.json
+          retention-days: 30
