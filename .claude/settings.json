@@ -46,7 +46,8 @@
       "Bash(cp \"/Users/earcandy/Desktop/Screenshot 2026-06-30 at 12.16.12 AM 1.png\" /tmp/shot3.png)",
       "Bash(mkdir -p /tmp/bugcheck && cd /tmp/bugcheck && ls)",
       "Skill(team-prompts-list)",
-      "Skill(team-prompts-list:*)"
+      "Skill(team-prompts-list:*)",
+      "Bash(git -C \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler\" log -20 --format='%h %s')"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
