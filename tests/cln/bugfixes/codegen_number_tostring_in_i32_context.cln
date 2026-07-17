@@ -1,0 +1,36 @@
+// Test: bugfixes/codegen_number_tostring_in_i32_context
+// Semantic: codegen must dispatch Number.toString to float_to_string, not int_to_string
+// Tracking: 322f839eb828
+// Fixed in: compiler 0.33.77
+//
+// Regression pin for dashboard fingerprint 322f839eb828
+// (codegen-f64-in-i32-slot).
+//
+// Pre-fix: `string s = toString(number_expr)` compiled with an incorrect
+// MIR dispatch that pushed the f64 value directly into a bridge slot
+// expecting i32, producing WASM with "type mismatch: expected i32,
+// found f64" at codegen time. The clean-errors project surfaced this
+// on the tarball-upload endpoint (dashboard fp 322f839eb828, reported
+// against cln 0.33.66); dev-queue entry f26672a3b9a11308 captured the
+// same shape with this 4-line repro. Byte-pattern signature of the
+// broken instruction stream:
+//     21 00 20 00 21 01 20 01 10 64 21 02 20 02 21 03
+//
+// Fix: src/mir/mir_builder.rs early-dispatches Number.toString to
+// float_to_string (commit 727db5c3, shipped v0.33.77). The generated
+// WASM now inserts the float→string bridge on the number path
+// instead of routing through the integer-typed default.
+//
+// Success criteria: this pin compiles cleanly AND the emitted WASM
+// validates. Runtime execution prints the string representation of
+// 3.14; formatting is float_to_string's responsibility, not this
+// pin's — any string-like output containing "3.14" is a valid pass.
+//
+// Fixed in: compiler 0.33.77
+// Expected output:
+//   3.14
+
+start:
+	number x = 3.14
+	string s = toString(x)
+	print(s)
