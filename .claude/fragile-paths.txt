@@ -1,0 +1,55 @@
+# Fragile paths — Clean Language compiler
+#
+# Editing any file listed here should trigger extra scrutiny:
+#   - The pre-commit hook (.githooks/pre-commit) prints a warning citing the
+#     KNOWLEDGE.md section(s) that apply.
+#   - The CI job architecture-guards.yml requires the PR to also modify at
+#     least one file under tests/ (unit, integration, or .cln).
+#
+# Format: one path per line, blank lines and `# comments` ignored.
+# Paths are matched by prefix against the repo-relative path of each staged
+# file. A trailing slash makes the entry a directory prefix; otherwise it is
+# a literal path.
+#
+# Cite: keep the KNOWLEDGE.md section number in the trailing comment so the
+# hook can print the right reference to the developer.
+
+# §1 String heap pointer initialization order
+src/codegen/mir_codegen/mod.rs                                  # §1, §2, §3, §4, §5, §6
+src/codegen/mir_codegen.rs                                      # §1, §2, §5, §6 (legacy path, still touched)
+src/codegen/mod.rs                                              # §1, §3, §5 (infrastructure fields for MirCodeGenerator)
+
+# §3 Codegen architecture — active path only, no additions to legacy path
+src/codegen/mir_codegen/                                        # §3, §13
+
+# §4 Recursive function pre-registration invariant
+src/codegen/mir_codegen/utilities.rs                            # §4, §10 (GEN003 preamble bridge registration)
+
+# §10 GEN003 — reachable preamble bridge imports must be registered
+src/codegen/mir_codegen/instructions.rs                         # §5 stack balance, §13 control-flow lowering
+src/codegen/mir_codegen/operands.rs                             # §5, §6
+src/codegen/mir_codegen/blocks.rs                               # §13.1, §13.2
+src/codegen/mir_codegen/control_flow.rs                         # §13.1, §13.2
+
+# §11 Bridge Contract Conformance — four-layer chain
+src/plugins/host_conformance.rs                                 # §11
+src/plugins/registry_loader.rs                                  # §11
+src/plugins/wasm_adapter.rs                                     # §11, §12
+src/plugins/wasm_loader.rs                                      # §12 plugin call timeout / epoch ticker
+src/bin/wasmtime_runner.rs                                      # §11 host-registration parity
+
+# §11 Function registry — spec change control
+foundation/platform-architecture/function-registry.toml         # §11 single source of truth
+
+# Semantic pipeline — resolver + typechecker are dense and easy to break silently
+src/resolver/resolver_impl.rs                                   # cross-refs SEM/SCOPE rules; two-pass sensitivity
+src/typechecker/type_inference.rs                               # SEM001-SEM010 constraint solving
+src/hir/hir_builder.rs                                          # AST -> HIR list-behavior injection, method-call resolution
+src/mir/mir_builder/                                            # TAST -> MIR SSA lowering; string-type Ptr(U8) vs Ptr(I8)
+
+# Parser — soft keywords + namespace-call precedence
+src/parser/grammar.pest                                         # grammar changes; must match foundation/spec/grammar.ebnf
+src/parser/token_parser.rs                                      # skip_whitespace at paren_depth=0 consumes Newline
+
+# Builtins registry — Layer 0 vs Layer 2 boundary
+src/builtins/registry.rs                                        # what belongs in the compiler vs. plugin bridges

@@ -1,0 +1,184 @@
+name: Architecture Guards
+
+# Blocking CI gate that enforces the compiler's architectural invariants.
+# See documentation/testing-strategy.md and .claude/fragile-paths.txt.
+#
+# Three checks:
+#   1. architecture_boundaries — tests/architecture_boundaries.rs (dead-code
+#      pile, plugin-bridge leakage, dual-naming). Already existed; this job
+#      promotes it to a required, isolated status check.
+#   2. fragile-path correlation — a PR that touches a path listed in
+#      .claude/fragile-paths.txt MUST also touch at least one file under
+#      tests/ (unit, integration, or .cln). Rationale: the fragile-area
+#      classification comes from KNOWLEDGE.md; every edit to those areas
+#      needs a matching test change.
+#   3. stage-snapshot presence — if tests/snapshots/ has any .snap.new files,
+#      fail. The PR author must accept snapshots locally via
+#      `cargo insta review` and commit the resulting .snap changes.
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  boundaries:
+    name: Architecture boundaries test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-arch-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run architecture_boundaries
+        run: cargo test --test architecture_boundaries -- --nocapture
+
+  fragile-path-correlation:
+    name: Fragile-path / test-modification correlation
+    runs-on: ubuntu-latest
+    # Only meaningful on PRs — pushes to main have already passed a PR gate.
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout with history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute changed files vs. base
+        id: diff
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE" "$HEAD" > changed.txt
+          echo "Changed files:"
+          cat changed.txt
+
+      - name: Enforce fragile-path correlation
+        run: |
+          set -euo pipefail
+
+          FRAGILE=".claude/fragile-paths.txt"
+          if [ ! -f "$FRAGILE" ]; then
+            echo "note: $FRAGILE not present — nothing to enforce."
+            exit 0
+          fi
+
+          # Any fragile path hit?
+          fragile_hits=()
+          while IFS= read -r line; do
+            entry=$(printf '%s' "$line" | sed 's/#.*$//' | awk '{$1=$1;print}')
+            [ -z "$entry" ] && continue
+            while IFS= read -r changed; do
+              [ -z "$changed" ] && continue
+              case "$changed" in
+                "$entry"*)
+                  fragile_hits+=("$changed (matches $entry)")
+                  ;;
+              esac
+            done < changed.txt
+          done < "$FRAGILE"
+
+          if [ ${#fragile_hits[@]} -eq 0 ]; then
+            echo "✓ No fragile-area edits in this PR."
+            exit 0
+          fi
+
+          echo "This PR touches the following fragile paths:"
+          for h in "${fragile_hits[@]}"; do
+            echo "  - $h"
+          done
+          echo
+
+          # Any test file changed?
+          if grep -qE '^tests/' changed.txt; then
+            echo "✓ Test files also modified — correlation satisfied."
+            grep -E '^tests/' changed.txt | sed 's/^/  /'
+            exit 0
+          fi
+
+          echo "✗ No files under tests/ were modified alongside the fragile-area edits." >&2
+          echo >&2
+          echo "  Per .claude/fragile-paths.txt (seeded from KNOWLEDGE.md), any edit" >&2
+          echo "  to these paths must be paired with a matching test change." >&2
+          echo "  Add or update: tests/*.rs, tests/cln/**/*.cln, or an in-file" >&2
+          echo "  #[cfg(test)] mod tests { ... } block." >&2
+          echo >&2
+          echo "  If you truly cannot add a test (e.g. tooling-only change), add" >&2
+          echo "  the label 'no-test-required' to the PR to bypass this check." >&2
+          exit 1
+
+  fragile-path-correlation-label-bypass:
+    name: Fragile-path bypass (label-only)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'no-test-required')
+    steps:
+      - name: Announce bypass
+        run: |
+          echo "PR carries the 'no-test-required' label — fragile-path correlation bypassed."
+          echo "This should only be used for tooling/build-config/docs-only changes."
+
+  snapshot-review-required:
+    name: Snapshot review required
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail if any .snap.new files are checked in
+        run: |
+          set -euo pipefail
+          if find tests/snapshots -name '*.snap.new' -print -quit 2>/dev/null | grep -q .; then
+            echo "✗ Uncommitted snapshot new-files found:" >&2
+            find tests/snapshots -name '*.snap.new' >&2
+            echo >&2
+            echo "  Run: cargo insta review" >&2
+            echo "  Accept or reject each change, then commit the resulting .snap files." >&2
+            exit 1
+          fi
+          echo "✓ No pending snapshot reviews."
+
+  test-quality-guard:
+    name: Test-quality guard
+    runs-on: ubuntu-latest
+    # Enforces: no test placeholders (todo!/unimplemented!/vacuous asserts),
+    # no undocumented #[ignore]s, bugfix .cln tests carry the full header set
+    # (Test:, Grammar:/Semantic:, Fixed in:, Expected output:).
+    # Legacy debt is captured in tests/.test_quality_baseline.txt; only NEW
+    # violations fail the build. See scripts/check_test_quality.py for rules.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run test-quality guard (baseline mode)
+        run: python3 scripts/check_test_quality.py --baseline
+
+      - name: Report baseline drain progress
+        # Purely informational — not gating. Reminds contributors the baseline
+        # exists to be shrunk over time.
+        if: always()
+        run: |
+          if [ -f tests/.test_quality_baseline.txt ]; then
+            remaining=$(grep -cvE '^[[:space:]]*(#|$)' tests/.test_quality_baseline.txt || true)
+            echo "Legacy test-quality debt: $remaining file(s) still on the baseline."
+            echo "Removing entries as they are fixed helps CI cover more of the tree."
+          fi
