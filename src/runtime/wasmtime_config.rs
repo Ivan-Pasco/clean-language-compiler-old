@@ -20,9 +20,12 @@ impl CleanWasmtimeConfig {
         // Optimization settings
         config.cranelift_opt_level(wasmtime::OptLevel::Speed);
 
-        // Memory settings for better performance
-        config.static_memory_maximum_size(1024 * 1024 * 64); // 64MB max
-        config.dynamic_memory_guard_size(1024 * 1024); // 1MB guard
+        // Memory settings for better performance.
+        // wasmtime 21 → 46 renamed:
+        //   static_memory_maximum_size → memory_reservation
+        //   dynamic_memory_guard_size  → memory_guard_size
+        config.memory_reservation(1024 * 1024 * 64); // 64MB reservation
+        config.memory_guard_size(1024 * 1024); // 1MB guard
 
         // Enable debugging info in development builds
         #[cfg(debug_assertions)]
