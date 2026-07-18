@@ -24,7 +24,7 @@ wasmparser = "0.121"
 wat = "1.0.71"
 
 # WebAssembly Runtimes (feature-gated)  
-wasmtime = { version = "21.0", optional = true }
+wasmtime = { version = "46.0", optional = true }
 wasmer = { version = "7.2", optional = true, features = ["cranelift", "sys"] }
 
 # Error handling

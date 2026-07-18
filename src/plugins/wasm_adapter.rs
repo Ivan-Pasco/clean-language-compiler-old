@@ -5243,10 +5243,10 @@ mod arena_tests {
 /// "out of bounds memory access at wasm function 276" instead of the bare
 /// `<unknown>!<wasm function 276>`. See
 /// `compiler-build-state-bridge-runtime-trap.md`.
-fn describe_plugin_trap(err: &anyhow::Error, context: &str) -> String {
+fn describe_plugin_trap(err: &wasmtime::Error, context: &str) -> String {
     let mut prefix = format!("Plugin trap in {}", context);
-    // Walk the error chain for the first wasmtime::Trap. wasmtime returns
-    // the Trap inside an anyhow::Error whose root cause is the Trap value.
+    // Walk the error chain for the first wasmtime::Trap. wasmtime::Error
+    // wraps a Trap in its cause chain when a wasm-level trap occurred.
     let trap = err
         .chain()
         .find_map(|cause| cause.downcast_ref::<wasmtime::Trap>());
@@ -5290,7 +5290,7 @@ fn describe_plugin_trap(err: &anyhow::Error, context: &str) -> String {
 /// when oom context exists, prepend a structured note pointing at the
 /// real root cause and offer concrete remediation steps.
 fn describe_plugin_trap_with_oom(
-    err: &anyhow::Error,
+    err: &wasmtime::Error,
     context: &str,
     oom_context: Option<&str>,
 ) -> String {
