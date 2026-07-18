@@ -624,6 +624,11 @@ impl CompletionProvider {
             ("repeat", "Repeat loop until break", "repeat\n\t${1:body}"),
             ("return", "Return statement", "return ${1:value}"),
             ("is", "Class inheritance", "is ${1:BaseClass}"),
+            (
+                "can",
+                "Capability claim / declaration",
+                "can ${1:CapabilityName}",
+            ),
             ("base", "Base constructor call", "base(${1:arguments})"),
             (
                 "onError",

@@ -169,6 +169,7 @@ impl FormattingProvider {
         let block_keywords = [
             "functions:",
             "class",
+            "can",
             "constants:",
             "types:",
             "if",

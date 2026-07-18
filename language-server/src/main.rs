@@ -554,7 +554,7 @@ impl Backend {
             // Modifiers
             "private", "constant", "extends", "base", "new",
             // Operators
-            "and", "or", "not", "is",
+            "and", "or", "not", "is", "can",
             // Async
             "later", "background",
             // AI integration
