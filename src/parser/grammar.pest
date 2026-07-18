@@ -264,11 +264,11 @@ argument_expression = { argument_logical }
 
 // Argument expressions support logical, comparison, and arithmetic operations
 argument_logical = { argument_comparison ~ (WHITESPACE* ~ logical_op ~ WHITESPACE* ~ argument_comparison)* }
-argument_comparison = { argument_unary ~ (WHITESPACE* ~ comparison_op ~ WHITESPACE* ~ argument_unary)* }
-argument_unary = { (unary_op ~ WHITESPACE*)* ~ argument_additive }
+argument_comparison = { argument_additive ~ (WHITESPACE* ~ comparison_op ~ WHITESPACE* ~ argument_additive)* }
 argument_additive = { argument_multiplicative ~ (WHITESPACE* ~ additive_op ~ WHITESPACE* ~ argument_multiplicative)* }
 argument_multiplicative = { argument_power ~ (WHITESPACE* ~ multiplicative_op ~ WHITESPACE* ~ argument_power)* }
-argument_power = { argument_primary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_primary)* }
+argument_power = { argument_unary ~ (WHITESPACE* ~ power_op ~ WHITESPACE* ~ argument_unary)* }
+argument_unary = { (unary_op ~ WHITESPACE*)* ~ argument_primary }
 argument_primary = { primary }
 
 // Named argument: label: expression (grammar.ebnf: named_argument)
@@ -408,16 +408,18 @@ on_error_expr = { base_expression ~ "onError" ~ base_expression }
 on_error_block = { base_expression ~ "onError" ~ ":" ~ indented_block }
 standalone_on_error = { "onError" ~ ":" ~ indented_block }
 
-// Expression with proper operator precedence (logical < comparison < arithmetic < unary)
+// Expression with proper operator precedence (logical < comparison < additive < multiplicative < power < unary < primary)
+// Per Clean_Language_Specification.md §Expressions → Operator Precedence:
+// unary prefix (not, -) binds TIGHTER than power (^). So -2^2 parses as (-2)^2 = 4.
 // Now supports optional whitespace (spaces, newlines, and indentation) around operators for multi-line expressions
 logical_expression = { comparison_expression ~ (whitespace_around_op ~ logical_op ~ whitespace_around_op ~ comparison_expression)* }
-comparison_expression = { unary_expression ~ (whitespace_around_op ~ comparison_op ~ whitespace_around_op ~ unary_expression)* }
-unary_expression = { (unary_op ~ WHITESPACE*)* ~ additive_expression }
+comparison_expression = { additive_expression ~ (whitespace_around_op ~ comparison_op ~ whitespace_around_op ~ additive_expression)* }
 
-// Arithmetic expressions with proper precedence: power > multiplicative > additive
+// Arithmetic expressions with proper precedence: unary > power > multiplicative > additive
 additive_expression = { multiplicative_expression ~ (whitespace_around_op ~ additive_op ~ whitespace_around_op ~ multiplicative_expression)* }
 multiplicative_expression = { power_expression ~ (whitespace_around_op ~ multiplicative_op ~ whitespace_around_op ~ power_expression)* }
-power_expression = { primary ~ (whitespace_around_op ~ power_op ~ whitespace_around_op ~ primary)* }
+power_expression = { unary_expression ~ (whitespace_around_op ~ power_op ~ whitespace_around_op ~ unary_expression)* }
+unary_expression = { (unary_op ~ WHITESPACE*)* ~ primary }
 
 // Whitespace handling for operators - supports spaces only within single line expressions
 // Removed NEWLINE and INDENT to prevent consuming next statement's indentation
@@ -427,11 +429,11 @@ whitespace_around_op = _{ " "* }
 multiline_whitespace_around_op = _{ (WHITESPACE | NEWLINE | INDENT)* }
 multiline_default_expression = { multiline_logical_expression }
 multiline_logical_expression = { multiline_comparison_expression ~ (multiline_whitespace_around_op ~ logical_op ~ multiline_whitespace_around_op ~ multiline_comparison_expression)* }
-multiline_comparison_expression = { multiline_unary_expression ~ (multiline_whitespace_around_op ~ comparison_op ~ multiline_whitespace_around_op ~ multiline_unary_expression)* }
-multiline_unary_expression = { (unary_op ~ (WHITESPACE | NEWLINE | INDENT)*)* ~ multiline_additive_expression }
+multiline_comparison_expression = { multiline_additive_expression ~ (multiline_whitespace_around_op ~ comparison_op ~ multiline_whitespace_around_op ~ multiline_additive_expression)* }
 multiline_additive_expression = { multiline_multiplicative_expression ~ (multiline_whitespace_around_op ~ additive_op ~ multiline_whitespace_around_op ~ multiline_multiplicative_expression)* }
 multiline_multiplicative_expression = { multiline_power_expression ~ (multiline_whitespace_around_op ~ multiplicative_op ~ multiline_whitespace_around_op ~ multiline_power_expression)* }
-multiline_power_expression = { multiline_primary ~ (multiline_whitespace_around_op ~ power_op ~ multiline_whitespace_around_op ~ multiline_primary)* }
+multiline_power_expression = { multiline_unary_expression ~ (multiline_whitespace_around_op ~ power_op ~ multiline_whitespace_around_op ~ multiline_unary_expression)* }
+multiline_unary_expression = { (unary_op ~ (WHITESPACE | NEWLINE | INDENT)*)* ~ multiline_primary }
 multiline_primary = { primary }
 
 // Legacy arithmetic_expression for backward compatibility
@@ -476,11 +478,11 @@ pair_element = { (string | identifier | decimal_integer) ~ " "* ~ ":" ~ " "* ~ s
 single_line_expression = { single_line_default_expression }
 single_line_default_expression = { single_line_logical_expression }
 single_line_logical_expression = { single_line_comparison_expression ~ (" "* ~ logical_op ~ " "* ~ single_line_comparison_expression)* }
-single_line_comparison_expression = { single_line_unary_expression ~ (" "* ~ comparison_op ~ " "* ~ single_line_unary_expression)* }
-single_line_unary_expression = { (unary_op ~ " "*)* ~ single_line_additive_expression }
+single_line_comparison_expression = { single_line_additive_expression ~ (" "* ~ comparison_op ~ " "* ~ single_line_additive_expression)* }
 single_line_additive_expression = { single_line_multiplicative_expression ~ (" "* ~ additive_op ~ " "* ~ single_line_multiplicative_expression)* }
 single_line_multiplicative_expression = { single_line_power_expression ~ (" "* ~ multiplicative_op ~ " "* ~ single_line_power_expression)* }
-single_line_power_expression = { single_line_primary ~ (" "* ~ power_op ~ " "* ~ single_line_primary)* }
+single_line_power_expression = { single_line_unary_expression ~ (" "* ~ power_op ~ " "* ~ single_line_unary_expression)* }
+single_line_unary_expression = { (unary_op ~ " "*)* ~ single_line_primary }
 
 // Single-line primary expression (no newlines/indentation)
 single_line_primary = {

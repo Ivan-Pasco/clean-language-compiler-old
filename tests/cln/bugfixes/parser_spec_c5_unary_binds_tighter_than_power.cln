@@ -1,0 +1,31 @@
+// Test: bugfixes/parser_spec_c5_unary_binds_tighter_than_power
+// Grammar: expression → comparison_expression → additive_expression →
+//          multiplicative_expression → power_expression → unary_expression → primary
+// Semantic: SPEC-C5-PRECEDENCE (fingerprint cc827b9aeb61)
+// Fixed in: compiler 0.33.88
+//
+// Runtime check is done via Rust unit tests in
+//   src/parser/expression_parser.rs::tests::test_spec_c5_*
+// (asserts the AST shape). This .cln file exists as a compile-only
+// smoke test — a runtime output pin would need a math_pow-friendly host
+// runner, which the standalone wasmtime_runner does not provide (unused
+// math_random import blocks instantiation for any expression that uses
+// the ^ operator).
+//
+// Regression: the pest chain in src/parser/grammar.pest previously placed
+//   unary_expression ABOVE additive_expression (looser), which meant
+//   `-2 ^ 2` parsed as `-(2 ^ 2) = -4`. Clean_Language_Specification.md
+//   §Expressions → Operator Precedence and foundation/spec/grammar.ebnf §3.1
+//   both state unary (level 3) binds TIGHTER than power (level 4), so
+//   `-x^2` must parse as `(-x)^2` (standard mathematical convention).
+//   Grammar fix: swap the chain so power_expression's operand is
+//   unary_expression, and unary_expression's operand is primary.
+//   Parser fix: update parse_comparison, parse_unary, parse_power (plus
+//   the argument_/single_line_/multiline_ mirrors) to match.
+
+start:
+	number a = -2.0 ^ 2.0
+	number b = -2.0 ^ 3.0
+	number c = 3.0 ^ 2.0
+	number d = 2.0 ^ 3.0 ^ 2.0
+	print("compiled")

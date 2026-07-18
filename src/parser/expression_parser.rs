@@ -406,8 +406,8 @@ pub fn parse_comparison_expression(pair: Pair<Rule>) -> Result<Expression, Compi
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::unary_expression => {
-                expr_stack.push(parse_unary_expression(item)?);
+            Rule::additive_expression => {
+                expr_stack.push(parse_additive_expression(item)?);
             }
             Rule::comparison_op => {
                 let op = match item.as_str() {
@@ -478,7 +478,7 @@ pub fn parse_comparison_expression(pair: Pair<Rule>) -> Result<Expression, Compi
 
 pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut unary_ops = Vec::new();
-    let mut additive_expr = None;
+    let mut operand = None;
 
     for item in pair.into_inner() {
         match item.as_rule() {
@@ -496,24 +496,24 @@ pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
                 };
                 unary_ops.push(op);
             }
-            Rule::additive_expression => {
-                additive_expr = Some(parse_additive_expression(item)?);
+            Rule::primary => {
+                operand = Some(parse_primary(item)?);
             }
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in unary expression: {:?}", item.as_rule()),
                     Some(convert_to_ast_location(&get_location(&item))),
-                    Some("Expected unary operator or additive expression".to_string()),
+                    Some("Expected unary operator or primary expression".to_string()),
                 ))
             }
         }
     }
 
-    let mut result = additive_expr.ok_or_else(|| {
+    let mut result = operand.ok_or_else(|| {
         CompilerError::parse_error(
-            "Missing additive expression in unary expression".to_string(),
+            "Missing primary expression in unary expression".to_string(),
             None,
-            Some("Unary expression must contain an additive expression".to_string()),
+            Some("Unary expression must contain a primary expression".to_string()),
         )
     })?;
 
@@ -684,8 +684,8 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::primary => {
-                expr_stack.push(parse_primary(item)?);
+            Rule::unary_expression => {
+                expr_stack.push(parse_unary_expression(item)?);
             }
             Rule::power_op => {
                 let op = match item.as_str() {
@@ -704,7 +704,7 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in power expression: {:?}", item.as_rule()),
                     Some(convert_to_ast_location(&get_location(&item))),
-                    Some("Expected primary expression or power operator".to_string()),
+                    Some("Expected unary expression or power operator".to_string()),
                 ))
             }
         }
@@ -715,7 +715,7 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
         return Err(CompilerError::parse_error(
             "Empty power expression".to_string(),
             None,
-            Some("Power expression must contain at least one primary expression".to_string()),
+            Some("Power expression must contain at least one unary expression".to_string()),
         ));
     }
 
@@ -2209,11 +2209,11 @@ pub fn parse_argument_comparison(pair: Pair<Rule>) -> Result<Expression, Compile
         .next()
         .expect("invariant: argument_comparison left operand");
 
-    let mut left = parse_argument_unary(first)?;
+    let mut left = parse_argument_additive(first)?;
 
     while let (Some(op_pair), Some(right_pair)) = (pairs.next(), pairs.next()) {
         let op = op_pair.as_str();
-        let right = parse_argument_unary(right_pair)?;
+        let right = parse_argument_additive(right_pair)?;
 
         let binary_op = match op {
             "==" => BinaryOperator::Equal,
@@ -2304,14 +2304,11 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
         .next()
         .expect("invariant: argument_power left operand");
 
-    let mut left = match first.as_rule() {
-        Rule::argument_primary => parse_argument_primary(first)?,
-        _ => parse_argument_primary(first)?,
-    };
+    let mut left = parse_argument_unary(first)?;
 
     while let (Some(op_pair), Some(right_pair)) = (pairs.next(), pairs.next()) {
         let op = op_pair.as_str();
-        let right = parse_argument_primary(right_pair)?;
+        let right = parse_argument_unary(right_pair)?;
 
         let binary_op = match op {
             "^" => BinaryOperator::Power,
@@ -2335,34 +2332,34 @@ pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerErro
 
     // Collect unary operators
     let mut operators = Vec::new();
-    let mut additive_pair = None;
+    let mut primary_pair = None;
 
     for child in inner {
         match child.as_rule() {
             Rule::unary_op => operators.push(child.as_str().to_string()),
-            Rule::argument_additive => {
-                additive_pair = Some(child);
+            Rule::argument_primary => {
+                primary_pair = Some(child);
                 break;
             }
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in argument unary: {:?}", child.as_rule()),
                     Some(convert_to_ast_location(&location)),
-                    Some("Expected unary_op or argument_additive".to_string()),
+                    Some("Expected unary_op or argument_primary".to_string()),
                 ));
             }
         }
     }
 
-    let additive_pair = additive_pair.ok_or_else(|| {
+    let primary_pair = primary_pair.ok_or_else(|| {
         CompilerError::parse_error(
-            "Missing additive expression in argument unary expression".to_string(),
+            "Missing primary expression in argument unary expression".to_string(),
             Some(convert_to_ast_location(&location)),
-            Some("Argument unary should contain argument_additive".to_string()),
+            Some("Argument unary should contain argument_primary".to_string()),
         )
     })?;
 
-    let mut expr = parse_argument_additive(additive_pair)?;
+    let mut expr = parse_argument_primary(primary_pair)?;
 
     // Apply unary operators from right to left
     for op in operators.into_iter().rev() {
@@ -2512,8 +2509,8 @@ pub fn parse_single_line_comparison_expression(
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::single_line_unary_expression => {
-                expr_stack.push(parse_single_line_unary_expression(item)?);
+            Rule::single_line_additive_expression => {
+                expr_stack.push(parse_single_line_additive_expression(item)?);
             }
             Rule::comparison_op => {
                 let op = match item.as_str() {
@@ -2579,7 +2576,7 @@ pub fn parse_single_line_unary_expression(pair: Pair<Rule>) -> Result<Expression
     })?;
 
     match inner.as_rule() {
-        Rule::single_line_additive_expression => parse_single_line_additive_expression(inner),
+        Rule::single_line_primary => parse_single_line_primary(inner),
         Rule::unary_op => {
             let op = match inner.as_str() {
                 "not" => UnaryOperator::Not,
@@ -2742,8 +2739,8 @@ pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::single_line_primary => {
-                expr_stack.push(parse_single_line_primary(item)?);
+            Rule::single_line_unary_expression => {
+                expr_stack.push(parse_single_line_unary_expression(item)?);
             }
             Rule::power_op => {
                 let op = match item.as_str() {
@@ -2893,8 +2890,8 @@ pub fn parse_multiline_comparison_expression(
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::multiline_unary_expression => {
-                expr_stack.push(parse_multiline_unary_expression(item)?);
+            Rule::multiline_additive_expression => {
+                expr_stack.push(parse_multiline_additive_expression(item)?);
             }
             Rule::comparison_op => {
                 let op = match item.as_str() {
@@ -2958,7 +2955,7 @@ pub fn parse_multiline_comparison_expression(
 /// Parse multiline unary expression
 pub fn parse_multiline_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let mut unary_ops = Vec::new();
-    let mut additive_expr = None;
+    let mut operand = None;
 
     for item in pair.into_inner() {
         match item.as_rule() {
@@ -2975,19 +2972,19 @@ pub fn parse_multiline_unary_expression(pair: Pair<Rule>) -> Result<Expression, 
                     }
                 });
             }
-            Rule::multiline_additive_expression => {
-                additive_expr = Some(parse_multiline_additive_expression(item)?);
+            Rule::multiline_primary => {
+                operand = Some(parse_multiline_primary(item)?);
                 break;
             }
             _ => {} // Skip whitespace/newlines
         }
     }
 
-    let mut result = additive_expr.ok_or_else(|| {
+    let mut result = operand.ok_or_else(|| {
         CompilerError::parse_error(
-            "Missing additive expression in multiline unary expression".to_string(),
+            "Missing primary expression in multiline unary expression".to_string(),
             None,
-            Some("Multiline unary expression must contain an additive expression".to_string()),
+            Some("Multiline unary expression must contain a primary expression".to_string()),
         )
     })?;
 
@@ -3131,8 +3128,8 @@ pub fn parse_multiline_power_expression(pair: Pair<Rule>) -> Result<Expression, 
 
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::multiline_primary => {
-                expr_stack.push(parse_multiline_primary(item)?);
+            Rule::multiline_unary_expression => {
+                expr_stack.push(parse_multiline_unary_expression(item)?);
             }
             Rule::power_op => {
                 let op = match item.as_str() {
@@ -3431,6 +3428,106 @@ mod tests {
             }
         } else {
             panic!("Expected start function in HirProgram");
+        }
+    }
+
+    // SPEC-C5-PRECEDENCE (fingerprint cc827b9aeb61):
+    // Unary (-, not) binds TIGHTER than power (^). `-2 ^ 2` must parse as
+    // `(-2) ^ 2 = 4`, not `-(2 ^ 2) = -4`. Per Clean_Language_Specification.md
+    // §Expressions → Operator Precedence and foundation/spec/grammar.ebnf §3.1.
+    // Prior to the fix, the pest chain placed unary_expression ABOVE
+    // additive_expression, inverting the intended precedence.
+    #[test]
+    fn test_spec_c5_unary_tighter_than_power() {
+        let src = "-2 ^ 2";
+        let result =
+            CleanParser::parse(Rule::expression, src).expect("SPEC-C5: -2 ^ 2 should parse");
+        let expr_pair = result.into_iter().next().expect("expression pair");
+        let expr = parse_expression(expr_pair).expect("SPEC-C5: parse_expression");
+        match expr {
+            Expression::Binary(lhs, BinaryOperator::Power, rhs) => {
+                match *lhs {
+                    Expression::Unary(UnaryOperator::Negate, _) => {}
+                    other => panic!(
+                        "SPEC-C5: expected LHS Unary(Negate, ...); got {:?}. \
+                         This means unary is looser than power (the pre-fix bug).",
+                        other
+                    ),
+                }
+                assert!(matches!(*rhs, Expression::Literal(_)));
+            }
+            other => panic!(
+                "SPEC-C5: expected Binary(Power, ...); got {:?}. \
+                 This means power did not bind above unary.",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_spec_c5_not_tighter_than_power() {
+        // `not x ^ 2` parses as `(not x) ^ 2`, mirroring the negation case.
+        // `x` is a variable here to avoid the type checker rejecting `not 2`.
+        let src = "not x ^ 2";
+        let result =
+            CleanParser::parse(Rule::expression, src).expect("SPEC-C5: not x ^ 2 should parse");
+        let expr_pair = result.into_iter().next().expect("expression pair");
+        let expr = parse_expression(expr_pair).expect("SPEC-C5: parse_expression");
+        match expr {
+            Expression::Binary(lhs, BinaryOperator::Power, _) => match *lhs {
+                Expression::Unary(UnaryOperator::Not, _) => {}
+                other => panic!("SPEC-C5: expected LHS Unary(Not, ...); got {:?}", other),
+            },
+            other => panic!("SPEC-C5: expected Binary(Power, ...); got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_spec_c5_double_unary_tighter_than_power() {
+        // `--2 ^ 2` == `(-(-2)) ^ 2`. Every unary sits below the power operand.
+        let src = "--2 ^ 2";
+        let result =
+            CleanParser::parse(Rule::expression, src).expect("SPEC-C5: --2 ^ 2 should parse");
+        let expr_pair = result.into_iter().next().expect("expression pair");
+        let expr = parse_expression(expr_pair).expect("SPEC-C5: parse_expression");
+        match expr {
+            Expression::Binary(lhs, BinaryOperator::Power, _) => match *lhs {
+                Expression::Unary(UnaryOperator::Negate, inner) => match *inner {
+                    Expression::Unary(UnaryOperator::Negate, _) => {}
+                    other => panic!(
+                        "SPEC-C5: expected nested Unary(Negate, Unary(Negate, ...)); got {:?}",
+                        other
+                    ),
+                },
+                other => panic!(
+                    "SPEC-C5: expected outer Unary(Negate, ...); got {:?}",
+                    other
+                ),
+            },
+            other => panic!("SPEC-C5: expected Binary(Power, ...); got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_spec_c5_power_is_right_associative() {
+        // `2 ^ 3 ^ 2 = 2 ^ (3 ^ 2) = 512`. Right-associativity preserved.
+        let src = "2 ^ 3 ^ 2";
+        let result =
+            CleanParser::parse(Rule::expression, src).expect("SPEC-C5: 2 ^ 3 ^ 2 should parse");
+        let expr_pair = result.into_iter().next().expect("expression pair");
+        let expr = parse_expression(expr_pair).expect("SPEC-C5: parse_expression");
+        match expr {
+            Expression::Binary(lhs, BinaryOperator::Power, rhs) => {
+                assert!(
+                    matches!(*lhs, Expression::Literal(_)),
+                    "power is right-associative — LHS should be a leaf"
+                );
+                assert!(
+                    matches!(*rhs, Expression::Binary(_, BinaryOperator::Power, _)),
+                    "power is right-associative — RHS should be another Power binary"
+                );
+            }
+            other => panic!("SPEC-C5: expected Binary(Power, ...); got {:?}", other),
         }
     }
 }
