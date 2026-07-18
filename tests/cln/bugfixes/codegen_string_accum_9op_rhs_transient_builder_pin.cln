@@ -1,0 +1,83 @@
+// Test: bugfixes/codegen_string_accum_9op_rhs_transient_builder_pin
+// Grammar: expression (accumulator self-concat rewritten to string_builder by HIR)
+// Semantic: CODEGEN-STRING-ACCUM-LOOP-TRUNCATION-V2 (fingerprint eed00ffee567)
+// Fixed in: compiler 0.33.88
+// Expected output:
+//   <tr><td class='task-id-col'>#1</td><td class='task-origin-col'>error</td><td class='prompt-title' title='row1'>row1</td><td class='task-comp-col'><div class='comp-strip'><span class='comp-pip comp-pip-actionable' title='compiler: actionable'>compiler</span></div></td><td><span class='badge badge-open'>open</span></td><td class='task-prio-col'>56</td><td class='task-events-col'>1</td><td>2026-07-11</td><td><a href='/tasks/1' class='link-detail'>View</a></td></tr>
+//
+// Regression: the reported bug shape — accumulator `rows_html` inside a while
+//   loop whose else-branch does a 9-operand parenthesized RHS concat mixing
+//   static literals, json.get() bridge returns, and helper-function returns —
+//   truncates or empties on heap-layout-dependent hosts (node-server with its
+//   pre-grown 16 MB memory + bumpHeapPtr guard). On the memory model
+//   wasmtime_runner uses (fresh page, no host malloc alongside native malloc)
+//   the emitted WASM produces the correct full row output — which the
+//   Expected output header above asserts.
+//
+// Attribution note: this pin runtime-verifies the emitted WASM on the
+//   wasmtime memory model, NOT on the node-server host. The truncation
+//   observed by node-server (bug #eed00ffee567) is heap-layout-dependent
+//   and does NOT reproduce on wasmtime_runner (see the compiler-side
+//   ownership audit at prompt 41e44fdf-826a-11f1). If this pin ever fails,
+//   either the HIR return-concat-to-builder rewrite regressed, the
+//   string_concat_transient result no longer feeds string_builder_append
+//   with a real byte copy, or the per-iter transient_scope shape changed
+//   in a way that dangles the transient bytes before the append reads them.
+//   Any of those would be a compiler-side regression, catchable here.
+
+start:
+	string fixture = "{\"data\":{\"rows\":[{\"id\":\"1\",\"origin\":\"error\",\"title\":\"row1\",\"status\":\"open\",\"priority\":\"56\",\"comps\":\"[]\",\"activity\":\"2026-07-11\",\"evc\":\"1\"}]}}"
+	string out = build_rows(fixture, 25)
+	print(out)
+
+functions:
+	string title_shortener(string s)
+		if s.length() > 90
+			return s.substring(0, 87) + "..."
+		return s
+
+	string comp_strip_for(string comps, string status)
+		string state = "actionable"
+		if status == "resolved"
+			state = "done"
+		return "<div class='comp-strip'><span class='comp-pip comp-pip-" + state + "' title='compiler: " + state + "'>compiler</span></div>"
+
+	string status_class(string s)
+		if s == "resolved"
+			return "badge-resolved"
+		if s == "in_progress"
+			return "badge-progress"
+		return "badge-open"
+
+	string build_rows(string fixture, integer per_page)
+		string rows_html = ""
+		integer i = 0
+		while i < per_page
+			string idx = i.toString()
+			string r_id = json.get(fixture, "data.rows." + idx + ".id")
+			if r_id == ""
+				i = per_page
+			else
+				string r_origin = json.get(fixture, "data.rows." + idx + ".origin")
+				string r_title = json.get(fixture, "data.rows." + idx + ".title")
+				string r_status = json.get(fixture, "data.rows." + idx + ".status")
+				string r_prio = json.get(fixture, "data.rows." + idx + ".priority")
+				string r_comps = json.get(fixture, "data.rows." + idx + ".comps")
+				string r_activity = json.get(fixture, "data.rows." + idx + ".activity")
+				string r_evc = json.get(fixture, "data.rows." + idx + ".evc")
+				string r_title_safe = title_shortener(r_title)
+				string r_comp_strip = comp_strip_for(r_comps, r_status)
+				string r_status_class = status_class(r_status)
+				rows_html = rows_html + ("<tr>"
+					+ "<td class='task-id-col'>#" + r_id + "</td>"
+					+ "<td class='task-origin-col'>" + r_origin + "</td>"
+					+ "<td class='prompt-title' title='" + r_title + "'>" + r_title_safe + "</td>"
+					+ "<td class='task-comp-col'>" + r_comp_strip + "</td>"
+					+ "<td><span class='badge " + r_status_class + "'>" + r_status + "</span></td>"
+					+ "<td class='task-prio-col'>" + r_prio + "</td>"
+					+ "<td class='task-events-col'>" + r_evc + "</td>"
+					+ "<td>" + r_activity + "</td>"
+					+ "<td><a href='/tasks/" + r_id + "' class='link-detail'>View</a></td>"
+					+ "</tr>")
+				i = i + 1
+		return rows_html
