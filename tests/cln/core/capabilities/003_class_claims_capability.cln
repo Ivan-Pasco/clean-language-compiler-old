@@ -1,0 +1,17 @@
+// Test: core/capabilities — class claims a capability and provides the required method
+// Grammar: class_declaration with can_clause (grammar.ebnf §6.4)
+// Semantic: class must implement every required capability method (SEM011 otherwise)
+// Expected output:
+//   ok
+
+start:
+	print("ok")
+
+can Draw:
+	draw()
+
+class Circle can Draw
+	functions:
+		public:
+			draw()
+				print("drew a circle")

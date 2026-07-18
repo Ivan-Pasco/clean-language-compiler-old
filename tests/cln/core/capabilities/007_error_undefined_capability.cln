@@ -1,0 +1,13 @@
+// Test: core/capabilities — claiming a capability that was never declared
+// Grammar: can_clause identifier resolution
+// Semantic: SEM012 (undefined capability) — semantic-rules.md §SEM012
+// Expected compile error: SEM012
+
+start:
+	print("unreachable")
+
+class Circle can Movable
+	functions:
+		public:
+			draw()
+				print("circle")

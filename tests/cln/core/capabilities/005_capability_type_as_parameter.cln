@@ -1,0 +1,23 @@
+// Test: core/capabilities — capability names may appear as parameter types
+// Grammar: type ::= identifier (resolved to Capability symbol in the resolver)
+// Semantic: Class C is assignable to Capability P iff C claims P (nominal)
+// Expected output:
+//   ok
+
+start:
+	Circle c = Circle()
+	acceptDraw(c)
+	print("ok")
+
+can Draw:
+	draw()
+
+class Circle can Draw
+	functions:
+		public:
+			draw()
+				print("circle")
+
+functions:
+	acceptDraw(Draw thing)
+		return

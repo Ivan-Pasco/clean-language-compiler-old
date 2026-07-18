@@ -1,0 +1,13 @@
+// Test: core/capabilities — capability with a mix of required signatures and default bodies
+// Grammar: can_body_item, can_default_body (grammar.ebnf §6.4a)
+// Semantic: A default body means the class may omit the method without SEM011
+// Expected output:
+//   ok
+
+start:
+	print("ok")
+
+can Describable:
+	string describe()
+	string tag()
+		return "[default]"

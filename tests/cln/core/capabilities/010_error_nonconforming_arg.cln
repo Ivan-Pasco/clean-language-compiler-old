@@ -1,0 +1,22 @@
+// Test: core/capabilities — passing a class that doesn't claim a capability to a
+//                            capability-typed parameter is rejected
+// Grammar: type unification (Class → Interface / Capability)
+// Semantic: nominal conformance — class must explicitly declare `can C`
+// Expected compile error: "does not conform to capability"
+
+start:
+	Square s = Square()
+	acceptDraw(s)
+
+can Draw:
+	draw()
+
+class Square
+	functions:
+		public:
+			draw()
+				print("square")
+
+functions:
+	acceptDraw(Draw thing)
+		return

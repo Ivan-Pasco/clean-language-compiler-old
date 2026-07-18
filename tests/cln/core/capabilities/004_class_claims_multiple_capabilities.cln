@@ -1,0 +1,22 @@
+// Test: core/capabilities — a single class claims two capabilities via `can C1, C2`
+// Grammar: can_clause with comma-separated names (grammar.ebnf §6.4a)
+// Semantic: class must satisfy each capability's method contract
+// Expected output:
+//   ok
+
+start:
+	print("ok")
+
+can Draw:
+	draw()
+
+can Describable:
+	string describe()
+
+class Circle can Draw, Describable
+	functions:
+		public:
+			draw()
+				print("circle drawn")
+			string describe()
+				return "a circle"

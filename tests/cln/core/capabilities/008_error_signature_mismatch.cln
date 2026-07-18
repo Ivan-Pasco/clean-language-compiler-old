@@ -1,0 +1,17 @@
+// Test: core/capabilities — class provides a method whose signature does not match the
+//                            capability's declared signature
+// Grammar: capability method signature match
+// Semantic: SEM013 (signature mismatch) — semantic-rules.md §SEM013
+// Expected compile error: SEM013
+
+start:
+	print("unreachable")
+
+can Draw:
+	draw()
+
+class Circle can Draw
+	functions:
+		public:
+			integer draw()
+				return 1

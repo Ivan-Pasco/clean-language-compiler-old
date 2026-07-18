@@ -1,0 +1,11 @@
+// Test: core/capabilities — declare a capability with only required signatures
+// Grammar: can_declaration (grammar.ebnf §6.4a)
+// Semantic: SEM011 (would fire if a claiming class omitted a required method)
+// Expected output:
+//   ok
+
+start:
+	print("ok")
+
+can Draw:
+	draw()

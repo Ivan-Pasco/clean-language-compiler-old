@@ -1,0 +1,13 @@
+// Test: core/capabilities — class claiming a capability without providing a required
+//                            method must fail with SEM011
+// Grammar: capability conformance validation in the resolver
+// Semantic: SEM011 (missing capability method) — semantic-rules.md §SEM011
+// Expected compile error: SEM011
+
+start:
+	print("unreachable")
+
+can Draw:
+	draw()
+
+class Circle can Draw
