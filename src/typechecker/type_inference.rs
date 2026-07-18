@@ -3741,6 +3741,37 @@ impl<'a> TypeInference<'a> {
             })
             .unwrap_or(crate::resolver::symbol_table::SymbolId(0)); // SymbolId(0) for built-in methods
 
+        // Capability-typed receiver method calls are type-safe (Stage 6 verifies
+        // the method belongs to the capability's contract) but not yet
+        // dispatchable at runtime — codegen would silently no-op today because
+        // there is no per-instance class_id or vtable machinery. Fail loudly
+        // so users don't ship code that silently does nothing.
+        // Runtime dispatch is deferred to a follow-up (see "Full dynamic" and
+        // "Static-only via monomorphization" in the plan's non-goals). Users
+        // can still declare capabilities, type parameters with them, and
+        // enforce SEM011/012/013 conformance.
+        if matches!(resolved_receiver_type, ConcreteType::Interface { .. }) {
+            let cap_name = match &resolved_receiver_type {
+                ConcreteType::Interface { symbol_id, .. } => self
+                    .symbol_table
+                    .get_symbol(*symbol_id)
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| format!("#{}", symbol_id.0)),
+                _ => "<unknown>".to_string(),
+            };
+            return Err(CompilerError::type_error(
+                format!(
+                    "Method call on capability-typed value ('{}.{}') is not yet dispatchable — v1 supports declaring and passing capability values, but calling methods through them requires runtime dispatch that ships in a follow-up. Call the method directly on the concrete class instead.",
+                    cap_name, method
+                ),
+                Some(format!(
+                    "Refactor to accept the concrete class as a parameter, or call `{}` directly on a `{}` instance.",
+                    method, cap_name
+                )),
+                Some(location.clone()),
+            ));
+        }
+
         // SEM005: Private method access check.
         // If the method is private, it may only be called from within the class that
         // owns it.  We know the receiver's class (from resolved_receiver_type) and the
