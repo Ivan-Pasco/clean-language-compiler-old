@@ -39,6 +39,15 @@ pub struct ConstraintSolver<'a> {
 
     /// Symbol table for checking inheritance relationships
     symbol_table: Option<&'a crate::resolver::GlobalSymbolTable>,
+
+    /// Per-class capability conformance closure supplied by `TypeInference`
+    /// before solving starts. `class_conformance[class_sym]` is the full set
+    /// of capabilities the class satisfies (own + transitive parent ones).
+    /// Used by the Class → Interface unification rule to accept a class value
+    /// in a capability-typed slot iff the class declared `can C` (nominally).
+    /// See Clean Language Specification §Capabilities.
+    class_conformance:
+        HashMap<crate::resolver::SymbolId, std::collections::HashSet<crate::resolver::SymbolId>>,
 }
 
 /// Result of constraint solving
@@ -60,6 +69,7 @@ impl<'a> ConstraintSolver<'a> {
             type_var_bounds: HashMap::new(),
             errors: Vec::new(),
             symbol_table: None,
+            class_conformance: HashMap::new(),
         }
     }
 
@@ -73,7 +83,21 @@ impl<'a> ConstraintSolver<'a> {
             type_var_bounds: HashMap::new(),
             errors: Vec::new(),
             symbol_table: Some(symbol_table),
+            class_conformance: HashMap::new(),
         }
+    }
+
+    /// Install the per-class capability conformance closure computed by
+    /// `TypeInference` from the resolver's vtable_descriptors. Consulted
+    /// during `unify` for Class → Interface (capability) checks.
+    pub fn set_class_conformance(
+        &mut self,
+        conformance: HashMap<
+            crate::resolver::SymbolId,
+            std::collections::HashSet<crate::resolver::SymbolId>,
+        >,
+    ) {
+        self.class_conformance = conformance;
     }
 
     /// Generate a fresh type variable
@@ -326,6 +350,71 @@ impl<'a> ConstraintSolver<'a> {
                 }
 
                 Ok(())
+            }
+
+            // Class → Interface (capability) unification.
+            // A class value is compatible with a capability-typed slot iff the
+            // class transitively conforms to that capability. Conformance is
+            // nominal: the class must have declared `can C` explicitly (or
+            // inherited the claim from a parent). Populated from the
+            // resolver's vtable_descriptors via `set_class_conformance`.
+            // See Clean Language Specification §Capabilities.
+            (
+                ConcreteType::Class {
+                    symbol_id: class_id,
+                    ..
+                },
+                ConcreteType::Interface {
+                    symbol_id: cap_id, ..
+                },
+            ) => {
+                let conforms = self
+                    .class_conformance
+                    .get(class_id)
+                    .map(|set| set.contains(cap_id))
+                    .unwrap_or(false);
+                if conforms {
+                    Ok(())
+                } else {
+                    Err(CompilerError::type_error(
+                        format!(
+                            "Class#{} does not conform to capability#{} — add `can <capability>` to the class header",
+                            class_id.0, cap_id.0
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ))
+                }
+            }
+
+            // Interface → Interface unification. Two capability-typed values
+            // unify iff they refer to the exact same capability symbol.
+            // Nominal typing — no structural subtyping between capabilities.
+            (
+                ConcreteType::Interface {
+                    symbol_id: a,
+                    type_args: aa,
+                },
+                ConcreteType::Interface {
+                    symbol_id: b,
+                    type_args: bb,
+                },
+            ) => {
+                if a == b && aa.len() == bb.len() {
+                    for (t1, t2) in aa.iter().zip(bb.iter()) {
+                        self.unify(t1, t2, location)?;
+                    }
+                    Ok(())
+                } else {
+                    Err(CompilerError::type_error(
+                        format!(
+                            "Cannot unify incompatible capabilities: #{} vs #{}",
+                            a.0, b.0
+                        ),
+                        None,
+                        Some(location.clone()),
+                    ))
+                }
             }
 
             // Tuple unification

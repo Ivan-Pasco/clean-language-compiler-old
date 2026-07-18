@@ -22,6 +22,13 @@ pub struct ValidationContext {
     /// Classes available in the current scope
     pub classes: HashMap<String, HirClass>,
 
+    /// Names of capabilities (`can Name:`) declared in the program.
+    /// Used by `validate_type` so that capability names are accepted as valid
+    /// types anywhere a named type is expected (parameters, return types,
+    /// variable declarations, generic type args).
+    /// See Clean Language Specification §Capabilities.
+    pub capabilities: HashSet<String>,
+
     /// Variables in the current scope stack
     pub variables: Vec<HashMap<String, HirType>>,
 
@@ -87,6 +94,7 @@ impl ValidationContext {
         Self {
             functions: HashMap::new(),
             classes: HashMap::new(),
+            capabilities: HashSet::new(),
             variables: vec![HashMap::new()], // Global scope
             current_class: None,
             current_return_type: None,
@@ -334,6 +342,14 @@ impl HirValidator {
             } else {
                 context.classes.insert(class.name.clone(), class.clone());
             }
+        }
+
+        // Collect capability names so `validate_type` accepts them as valid
+        // named types wherever a class name would be valid. Actual conformance
+        // validation runs in the resolver (Stage 5, SEM011–SEM014); this only
+        // teaches the HIR validator that `Draw` is a real type.
+        for cap in &hir.capabilities {
+            context.capabilities.insert(cap.name.clone());
         }
 
         // Collect top-level state variables into global scope so expressions
@@ -1576,7 +1592,9 @@ impl HirValidator {
         location: &SourceLocation,
     ) {
         match hir_type {
-            HirType::Named { name, .. } if !context.classes.contains_key(name) => {
+            HirType::Named { name, .. }
+                if !context.classes.contains_key(name) && !context.capabilities.contains(name) =>
+            {
                 context.error(&format!("Undefined type '{}'", name), location.clone());
             }
             HirType::Named { .. } => {}

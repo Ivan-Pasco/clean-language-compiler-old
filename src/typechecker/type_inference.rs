@@ -39,6 +39,13 @@ pub struct TypeInference<'a> {
     /// (parameters without defaults)
     required_param_counts: HashMap<SymbolId, usize>,
 
+    /// Capability conformance closure per class, derived from the resolver's
+    /// vtable_descriptors. `class_conformance[class_sym]` is the full set of
+    /// capabilities that class satisfies (its own declared `can C1, C2, ...`
+    /// plus every ancestor's). Consulted by the constraint solver's
+    /// Class → Interface unification rule.
+    class_conformance: HashMap<SymbolId, std::collections::HashSet<SymbolId>>,
+
     /// Current context for inference
     current_function: Option<SymbolId>,
     current_class: Option<SymbolId>,
@@ -70,6 +77,7 @@ impl<'a> TypeInference<'a> {
             constraint_solver: ConstraintSolver::with_symbol_table(symbol_table),
             symbol_table,
             required_param_counts: HashMap::new(),
+            class_conformance: HashMap::new(),
             current_function: None,
             current_class: None,
             current_return_type: None,
@@ -94,6 +102,23 @@ impl<'a> TypeInference<'a> {
 
         // Register state variables from symbol table
         self.register_state_variables();
+
+        // Derive per-class capability conformance closure from the resolver's
+        // vtable_descriptors. Keys of that map are already (class_sym, cap_sym)
+        // pairs where the class transitively conforms to the capability, so
+        // one grouping pass gives us the class → set-of-capabilities lookup
+        // the constraint solver uses for Class → Interface unification.
+        for (class_sym, cap_sym) in program.vtable_descriptors.keys() {
+            self.class_conformance
+                .entry(*class_sym)
+                .or_default()
+                .insert(*cap_sym);
+        }
+        // Forward the map to the constraint solver so it can validate
+        // Class → Interface (capability) unifications without needing to
+        // walk the resolver's descriptor map at each unification site.
+        self.constraint_solver
+            .set_class_conformance(self.class_conformance.clone());
 
         // Infer types for all program elements
         let tast_program = self.infer_program(&program);
@@ -5076,6 +5101,33 @@ impl<'a> TypeInference<'a> {
             // Any type methods - returns string for toString, preserves any for others
             (ConcreteType::Any, "toString") => Ok(ConcreteType::String),
 
+            // Capability-typed receiver (`Draw thing; thing.draw()`).
+            // Method resolution goes through the capability's method contract,
+            // not any concrete class — dispatch is dynamic and codegen will
+            // vtable-lookup the actual implementation at runtime.
+            // See Clean Language Specification §Capabilities.
+            (ConcreteType::Interface { symbol_id, .. }, _) => {
+                if let Some(cap_sym) = self.symbol_table.get_symbol(*symbol_id) {
+                    if let crate::resolver::symbol_table::SymbolKind::Capability { methods } =
+                        &cap_sym.kind
+                    {
+                        if let Some(m) = methods.iter().find(|m| m.name == method_name) {
+                            return Ok(Self::hir_type_to_concrete_type(&m.return_type));
+                        }
+                        // Named method is not part of this capability's contract.
+                        return Err(CompilerError::type_error(
+                            format!(
+                                "Capability '{}' has no method '{}'",
+                                cap_sym.name, method_name
+                            ),
+                            None,
+                            None,
+                        ));
+                    }
+                }
+                Ok(ConcreteType::Unknown)
+            }
+
             // Class instance methods - look up in symbol table
             (ConcreteType::Class { symbol_id, .. }, _) => {
                 // Look up the method in the class's symbol table
@@ -5881,6 +5933,19 @@ impl<'a> TypeInference<'a> {
                                 // 3. Type inference for generic parameters
                                 // For now, classes are instantiated without type arguments
                                 ConcreteType::Class {
+                                    symbol_id,
+                                    type_args: Vec::new(),
+                                }
+                            }
+                            SymbolKind::Capability { .. } => {
+                                // A `can` capability used as a type — parameters, return
+                                // types, and variable declarations may all name a capability.
+                                // Reuses the existing `Interface` variant (semantically
+                                // identical: nominal contract of methods) so MIR/codegen
+                                // treat capability values as object pointers uniformly.
+                                // See Clean Language Specification §Capabilities and
+                                // grammar.ebnf §6.4a.
+                                ConcreteType::Interface {
                                     symbol_id,
                                     type_args: Vec::new(),
                                 }
