@@ -20,6 +20,38 @@ pub const PLUGIN_OUTPUT_V2_ROOT_MARKER: &str = "<plugin-output-v2-root>";
 /// See `plugins/expander.rs` `collect_slot_statements`.
 pub const LIFECYCLE_SLOT_OUTPUT_MARKER: &str = "<lifecycle-slot-output>";
 
+/// Prefix stamped on `SourceLocation.file` for statements emitted by a
+/// specific plugin's `expand_block` hook. Format: `<plugin:NAME>` — e.g.
+/// `<plugin:frame.canvas>`. Lets the telemetry classifier route diagnostics
+/// on plugin-synthesized code to the plugin's owning component instead of
+/// hardcoding `compiler`. See `plugins/expander.rs` and
+/// `telemetry/mod.rs::extract_error_info`.
+pub const PLUGIN_ORIGIN_PREFIX: &str = "<plugin:";
+pub const PLUGIN_ORIGIN_SUFFIX: &str = ">";
+
+/// Extract the plugin name from a `SourceLocation.file` marker of the form
+/// `<plugin:NAME>`. Returns `None` if the file is not a plugin-origin marker.
+pub fn plugin_name_from_origin_marker(file: &str) -> Option<&str> {
+    let name = file.strip_prefix(PLUGIN_ORIGIN_PREFIX)?;
+    let name = name.strip_suffix(PLUGIN_ORIGIN_SUFFIX)?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// True when the file marker is any of the compiler's known synthetic
+/// placeholders. Statement-stamping logic only overwrites markers of this
+/// class — real user file paths are left alone so debugging info survives.
+pub fn is_synthetic_file_marker(file: &str) -> bool {
+    file.is_empty()
+        || file == PLUGIN_OUTPUT_MARKER
+        || file == PLUGIN_OUTPUT_V2_ROOT_MARKER
+        || file == LIFECYCLE_SLOT_OUTPUT_MARKER
+        || file == "plugin"
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize)]
 pub struct SourceLocation {
     pub line: usize,
@@ -1878,6 +1910,45 @@ impl Type {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_origin_marker_round_trips() {
+        // Format is <plugin:NAME>; parser must recover NAME exactly.
+        let marker = format!(
+            "{}frame.canvas{}",
+            PLUGIN_ORIGIN_PREFIX, PLUGIN_ORIGIN_SUFFIX
+        );
+        assert_eq!(
+            plugin_name_from_origin_marker(&marker),
+            Some("frame.canvas")
+        );
+        // Not a marker at all.
+        assert_eq!(plugin_name_from_origin_marker(""), None);
+        assert_eq!(plugin_name_from_origin_marker("/tmp/user.cln"), None);
+        // Malformed markers must not be silently accepted.
+        assert_eq!(plugin_name_from_origin_marker("<plugin:>"), None);
+        assert_eq!(
+            plugin_name_from_origin_marker("<plugin:missing-suffix"),
+            None
+        );
+    }
+
+    #[test]
+    fn synthetic_file_markers_are_recognized() {
+        assert!(is_synthetic_file_marker(""));
+        assert!(is_synthetic_file_marker(PLUGIN_OUTPUT_MARKER));
+        assert!(is_synthetic_file_marker(PLUGIN_OUTPUT_V2_ROOT_MARKER));
+        assert!(is_synthetic_file_marker(LIFECYCLE_SLOT_OUTPUT_MARKER));
+        assert!(is_synthetic_file_marker("plugin"));
+        // Real user paths must not be treated as synthetic — otherwise the
+        // stamping logic would overwrite them and destroy debug info.
+        assert!(!is_synthetic_file_marker("/home/user/app.cln"));
+        assert!(!is_synthetic_file_marker("src/main.cln"));
+        // A plugin-origin marker is itself synthetic, but is already tagged;
+        // the stamping logic keys off `is_synthetic_file_marker` for the
+        // pre-stamp state so plugin markers are NOT reconsidered synthetic.
+        assert!(!is_synthetic_file_marker("<plugin:frame.canvas>"));
+    }
 
     #[test]
     fn test_ast_serialization() {

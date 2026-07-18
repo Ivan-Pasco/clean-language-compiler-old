@@ -724,10 +724,47 @@ struct ErrorInfo {
     message: String,
 }
 
+/// Map a plugin name to its owning component. Plugins in the `frame.*`
+/// family live in the `clean-framework` repository, so their compiler-side
+/// diagnostics should route to the `framework` component.
+///
+/// Unknown plugins fall back to `framework` on the assumption that any
+/// third-party plugin is owned by whoever authored it — and the vast majority
+/// of plugin-emitted code today comes from `frame.*`. If a specific mapping
+/// is needed for other plugin families, add it here.
+fn owning_component_for_plugin(plugin_name: &str) -> &'static str {
+    if plugin_name.starts_with("frame.") {
+        "framework"
+    } else {
+        // Conservative default — better than routing plugin-origin errors
+        // back to `compiler` (which is what the bug fixes).
+        "framework"
+    }
+}
+
+/// If the error's `SourceLocation.file` carries a plugin-origin marker
+/// (`<plugin:NAME>`), return the (component, subsystem) pair to override the
+/// default classification with. Returns `None` for user-code locations,
+/// which keeps the existing routing untouched.
+///
+/// Resolves `TELEMETRY-SYNTHETIC-ORIGIN-CLASSIFICATION` (fingerprint
+/// f5f2a9954225): SEM007 and related validation errors emitted against
+/// plugin-synthesized code previously misclassified as `component=compiler`
+/// even though the responsibility for fixing them lies with the plugin.
+fn component_override_from_location(
+    location: Option<&crate::ast::SourceLocation>,
+) -> Option<(String, Option<String>)> {
+    let loc = location?;
+    let plugin_name = crate::ast::plugin_name_from_origin_marker(&loc.file)?;
+    let component = owning_component_for_plugin(plugin_name).to_string();
+    let subsystem = Some(format!("plugin:{}", plugin_name));
+    Some((component, subsystem))
+}
+
 /// Extract structured error info from a CompilerError.
 /// Returns (code, category, component, subsystem, message).
 fn extract_error_info(error: &crate::error::CompilerError) -> ErrorInfo {
-    match error {
+    let mut info = match error {
         crate::error::CompilerError::Syntax { context } => ErrorInfo {
             code: context
                 .error_code
@@ -849,6 +886,37 @@ fn extract_error_info(error: &crate::error::CompilerError) -> ErrorInfo {
             subsystem: Some("plugin".to_string()),
             message: message.clone(),
         },
+    };
+    // If the offending source location carries a plugin-origin marker
+    // (`<plugin:NAME>`), override the component so the dashboard routes the
+    // report to the plugin's owning component instead of `compiler`.
+    // Only applies to error classes whose default component is `compiler` —
+    // errors that were already correctly attributed (e.g. `PluginError`
+    // routes to `framework`, `Runtime` to `server`) are left untouched.
+    if info.component == "compiler" {
+        if let Some((component, subsystem)) = component_override_from_location(location_of(error)) {
+            info.component = component;
+            info.subsystem = subsystem;
+        }
+    }
+    info
+}
+
+/// Extract the `SourceLocation` from a `CompilerError`, when available.
+fn location_of(error: &crate::error::CompilerError) -> Option<&crate::ast::SourceLocation> {
+    use crate::error::CompilerError as E;
+    match error {
+        E::Syntax { context }
+        | E::Type { context }
+        | E::Codegen { context }
+        | E::Runtime { context }
+        | E::Memory { context }
+        | E::IO { context }
+        | E::Validation { context }
+        | E::Module { context }
+        | E::Testing { context } => context.location.as_ref(),
+        E::LexError(_) => None,
+        E::PluginError { location, .. } => location.as_ref(),
     }
 }
 
@@ -921,6 +989,81 @@ mod tests {
             "category must not be the catch-all 'system'"
         );
         assert_eq!(info.category, "memory");
+    }
+
+    #[test]
+    fn plugin_origin_marker_reroutes_validation_error_to_framework() {
+        // Resolves TELEMETRY-SYNTHETIC-ORIGIN-CLASSIFICATION (f5f2a9954225).
+        // Validation errors raised against plugin-synthesized code must route
+        // to the plugin's owning component, not the compiler.
+        use crate::ast::SourceLocation;
+        let loc = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<plugin:frame.canvas>".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let err = CompilerError::validation_error("Undefined variable 'dt'", loc);
+        let info = extract_error_info(&err);
+        assert_eq!(info.component, "framework");
+        assert_eq!(info.subsystem.as_deref(), Some("plugin:frame.canvas"));
+        assert_eq!(info.category, "validation");
+    }
+
+    #[test]
+    fn plugin_origin_marker_leaves_non_plugin_locations_untouched() {
+        // User-file locations must not be rerouted — only synthetic
+        // plugin-marker files are eligible for the framework override.
+        use crate::ast::SourceLocation;
+        let loc = SourceLocation {
+            line: 12,
+            column: 4,
+            file: "/home/user/project/app.cln".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let err = CompilerError::validation_error("Undefined variable 'foo'", loc);
+        let info = extract_error_info(&err);
+        assert_eq!(info.component, "compiler");
+        assert_eq!(info.subsystem.as_deref(), Some("resolver"));
+    }
+
+    #[test]
+    fn plugin_origin_marker_unknown_plugin_still_reroutes() {
+        // Unknown plugin names default to `framework` (better than routing
+        // back to `compiler`).
+        use crate::ast::SourceLocation;
+        let loc = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<plugin:third.party.foo>".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let err = CompilerError::validation_error("Undefined variable 'x'", loc);
+        let info = extract_error_info(&err);
+        assert_eq!(info.component, "framework");
+        assert_eq!(info.subsystem.as_deref(), Some("plugin:third.party.foo"));
+    }
+
+    #[test]
+    fn plugin_origin_marker_reroutes_syntax_error() {
+        // Plugin-synthesized code that fails at SYN000 (rare — plugins
+        // generally emit already-parseable code, but v3 typed-emission can
+        // produce forms that trip validate_program) must also reroute.
+        use crate::ast::SourceLocation;
+        let loc = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<plugin:frame.data>".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let err = CompilerError::syntax_error("unexpected token", None, Some(loc));
+        let info = extract_error_info(&err);
+        assert_eq!(info.component, "framework");
+        assert_eq!(info.subsystem.as_deref(), Some("plugin:frame.data"));
     }
 
     #[test]

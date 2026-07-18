@@ -22,6 +22,125 @@ use crate::plugins::enforcement::validate_plugin_permissions;
 /// distinct sources contribute one. `scope` is taken from the first non-None
 /// block; mismatched scopes are also a caller concern (top-level `state:` is
 /// always App scope per `foundation/spec/semantic-rules.md`).
+/// Stamp plugin origin across an entire `PluginExpansion` payload: the
+/// top-level statements, the start_function body, every plugin-emitted
+/// free function body, and every plugin-emitted class method body. This is
+/// the top-level entry point every FrameworkBlock branch should call after
+/// obtaining the expansion.
+fn stamp_plugin_origin_expansion(expansion: &mut super::PluginExpansion, plugin_name: &str) {
+    stamp_plugin_origin(&mut expansion.statements, plugin_name);
+    if let Some(ref mut start_fn) = expansion.start_function {
+        stamp_plugin_origin(&mut start_fn.body, plugin_name);
+    }
+    for f in expansion.functions.iter_mut() {
+        stamp_plugin_origin(&mut f.body, plugin_name);
+    }
+    for c in expansion.classes.iter_mut() {
+        for m in c.methods.iter_mut() {
+            stamp_plugin_origin(&mut m.body, plugin_name);
+        }
+    }
+}
+
+/// Stamp every statement in `stmts` whose `SourceLocation.file` is missing
+/// or one of the compiler's known synthetic markers with `<plugin:NAME>`.
+/// Recurses into compound statements (`If`, `While`, `Iterate`,
+/// `RangeIterate`, `OnErrorBlock`, `FunctionsBlock`, class-method bodies)
+/// so nested plugin-synthesized statements are routed correctly too.
+///
+/// Real user file paths are left alone so debugging info survives when a
+/// plugin block is nested inside user code.
+///
+/// Resolves `TELEMETRY-SYNTHETIC-ORIGIN-CLASSIFICATION` (fingerprint
+/// f5f2a9954225): before this stamp, SEM007 errors surfaced from
+/// plugin-synthesized code carried an empty `SourceLocation`, so the
+/// telemetry classifier defaulted them to `component=compiler` instead of
+/// routing to the plugin's owning component (framework for frame.*).
+fn stamp_plugin_origin(stmts: &mut [Statement], plugin_name: &str) {
+    let marker = format!(
+        "{}{}{}",
+        crate::ast::PLUGIN_ORIGIN_PREFIX,
+        plugin_name,
+        crate::ast::PLUGIN_ORIGIN_SUFFIX
+    );
+    for stmt in stmts.iter_mut() {
+        stamp_one_statement(stmt, &marker);
+    }
+}
+
+/// Recursive worker for `stamp_plugin_origin`. Stamps this statement's own
+/// location then descends into any nested statement blocks.
+fn stamp_one_statement(stmt: &mut Statement, marker: &str) {
+    // Stamp own location.
+    let loc = stmt.location_mut();
+    match loc {
+        Some(l) if crate::ast::is_synthetic_file_marker(&l.file) => {
+            l.file = marker.to_string();
+        }
+        Some(_) => {
+            // Real user file path — leave it alone.
+        }
+        None => {
+            *loc = Some(crate::ast::SourceLocation {
+                file: marker.to_string(),
+                line: 0,
+                column: 0,
+                byte_start: None,
+                byte_end: None,
+            });
+        }
+    }
+    // Descend into nested blocks.
+    match stmt {
+        Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            for s in then_branch.iter_mut() {
+                stamp_one_statement(s, marker);
+            }
+            if let Some(body) = else_branch.as_mut() {
+                for s in body.iter_mut() {
+                    stamp_one_statement(s, marker);
+                }
+            }
+        }
+        Statement::Iterate { body, .. }
+        | Statement::RangeIterate { body, .. }
+        | Statement::While { body, .. } => {
+            for s in body.iter_mut() {
+                stamp_one_statement(s, marker);
+            }
+        }
+        Statement::OnErrorBlock { error_block, .. } => {
+            for s in error_block.iter_mut() {
+                stamp_one_statement(s, marker);
+            }
+        }
+        Statement::StandaloneErrorHandler { body, .. } => {
+            for s in body.iter_mut() {
+                stamp_one_statement(s, marker);
+            }
+        }
+        Statement::FunctionsBlock { functions, .. } => {
+            for f in functions.iter_mut() {
+                for s in f.body.iter_mut() {
+                    stamp_one_statement(s, marker);
+                }
+            }
+        }
+        Statement::ClassDefinition { class, .. } => {
+            for m in class.methods.iter_mut() {
+                for s in m.body.iter_mut() {
+                    stamp_one_statement(s, marker);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn merge_state_block(target: &mut Option<StateBlock>, incoming: Option<StateBlock>) {
     let incoming = match incoming {
         Some(s) => s,
@@ -267,6 +386,17 @@ impl<'a> PluginExpander<'a> {
             is_client_build: false,
             build_context: super::BuildContext::new(),
         }
+    }
+
+    /// Resolve the name of the plugin that owns a given block or expression
+    /// pattern. Used for `stamp_plugin_origin`. Consults both block handlers
+    /// (`get_handler`, e.g. `canvasScene`) and expression handlers
+    /// (`get_expression_handler`, e.g. `User.find`).
+    fn plugin_name_for_block(&self, block_name: &str) -> Option<String> {
+        self.registry
+            .get_handler(block_name)
+            .or_else(|| self.registry.get_expression_handler(block_name))
+            .map(|h| h.name().to_string())
     }
 
     /// Plugin Contracts v2 — declare which build shape this expansion pass
@@ -585,20 +715,29 @@ impl<'a> PluginExpander<'a> {
 
                     if self.registry.handles(&name) {
                         // Use expand_full to preserve start function
-                        let expansion = self.registry.expand_full(&block)?;
+                        let mut expansion = self.registry.expand_full(&block)?;
                         self.blocks_expanded += 1;
                         self.statements_generated += expansion.statements.len();
 
-                        // Validate that the expanded code only calls bridge functions
-                        // that the plugin declared in its [bridge] section.
-                        if let Some(plugin_name) = self
+                        // Stamp plugin origin on every synthesized statement so
+                        // downstream diagnostics route to the plugin's owning
+                        // component (framework for frame.*). Resolves
+                        // TELEMETRY-SYNTHETIC-ORIGIN-CLASSIFICATION
+                        // (fingerprint f5f2a9954225).
+                        let owning_plugin = self
                             .registry
                             .get_handler(&name)
-                            .map(|h| h.name().to_string())
-                        {
+                            .map(|h| h.name().to_string());
+                        if let Some(ref plugin_name) = owning_plugin {
+                            stamp_plugin_origin_expansion(&mut expansion, plugin_name);
+                        }
+
+                        // Validate that the expanded code only calls bridge functions
+                        // that the plugin declared in its [bridge] section.
+                        if let Some(ref plugin_name) = owning_plugin {
                             let violations = validate_plugin_permissions(
                                 self.registry,
-                                &plugin_name,
+                                plugin_name,
                                 &expansion.statements,
                             );
                             if !violations.is_empty() {
@@ -691,9 +830,20 @@ impl<'a> PluginExpander<'a> {
 
                     // Check if we have a handler
                     if self.registry.handles(&name) {
-                        let expanded = self.registry.expand(&block)?;
+                        let mut expanded = self.registry.expand(&block)?;
                         self.blocks_expanded += 1;
                         self.statements_generated += expanded.len();
+
+                        // Stamp plugin origin so telemetry routes diagnostics
+                        // on this synthesized code to the plugin's owning
+                        // component. See `stamp_plugin_origin` docstring.
+                        if let Some(plugin_name) = self
+                            .registry
+                            .get_handler(&name)
+                            .map(|h| h.name().to_string())
+                        {
+                            stamp_plugin_origin(&mut expanded, &plugin_name);
+                        }
 
                         tracing::trace!(
                             block_name = %name,
@@ -867,6 +1017,13 @@ impl<'a> PluginExpander<'a> {
                         if let Some(sf) = expansion.start_function {
                             expanded.extend(sf.body);
                         }
+                        // Stamp plugin origin so telemetry routes diagnostics
+                        // on ORM-block-synthesized code (e.g. `User.find:`) to
+                        // the plugin's owning component (frame.data → framework).
+                        // See `stamp_plugin_origin` docstring.
+                        if let Some(plugin_name) = self.plugin_name_for_block(&block_name) {
+                            stamp_plugin_origin(&mut expanded, &plugin_name);
+                        }
                         self.pending_functions.extend(expansion.functions);
                         self.pending_classes.extend(expansion.classes);
                         self.pending_externals.extend(expansion.externals);
@@ -925,6 +1082,13 @@ impl<'a> PluginExpander<'a> {
                         let mut expanded = expansion.statements;
                         if let Some(sf) = expansion.start_function {
                             expanded.extend(sf.body);
+                        }
+                        // Stamp plugin origin so telemetry routes diagnostics
+                        // on ORM-block-synthesized code (e.g. `User.find:`) to
+                        // the plugin's owning component (frame.data → framework).
+                        // See `stamp_plugin_origin` docstring.
+                        if let Some(plugin_name) = self.plugin_name_for_block(&block_name) {
+                            stamp_plugin_origin(&mut expanded, &plugin_name);
                         }
                         self.pending_functions.extend(expansion.functions);
                         self.pending_classes.extend(expansion.classes);
@@ -996,6 +1160,13 @@ impl<'a> PluginExpander<'a> {
                         let mut expanded = expansion.statements;
                         if let Some(sf) = expansion.start_function {
                             expanded.extend(sf.body);
+                        }
+                        // Stamp plugin origin so telemetry routes diagnostics
+                        // on ORM-block-synthesized code (e.g. `User.find:`) to
+                        // the plugin's owning component (frame.data → framework).
+                        // See `stamp_plugin_origin` docstring.
+                        if let Some(plugin_name) = self.plugin_name_for_block(&block_name) {
+                            stamp_plugin_origin(&mut expanded, &plugin_name);
                         }
                         self.pending_functions.extend(expansion.functions);
                         self.pending_classes.extend(expansion.classes);
