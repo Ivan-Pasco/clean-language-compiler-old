@@ -1648,6 +1648,10 @@ pub struct Class {
     /// Each expression must evaluate to boolean.
     /// Checked after every public method call on the class (debug builds only).
     pub invariants: Vec<Expression>,
+    /// Capabilities claimed via `can C1, C2, ...` clause on the class header.
+    /// Nominal — each name must resolve to a `Capability` declaration.
+    /// See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.
+    pub capabilities: Vec<String>,
     pub location: Option<SourceLocation>,
 }
 
@@ -1664,9 +1668,42 @@ impl Class {
             methods: Vec::new(),
             constructor: None,
             invariants: Vec::new(),
+            capabilities: Vec::new(),
             location,
         }
     }
+}
+
+/// A capability declaration (`can Name:`). Names a contract of methods
+/// that classes may claim via `can Name` on their class declaration.
+/// See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Capability {
+    pub name: String,
+    pub methods: Vec<CapabilityMethod>,
+    pub location: Option<SourceLocation>,
+}
+
+impl Capability {
+    pub fn new(name: String, location: Option<SourceLocation>) -> Self {
+        Self {
+            name,
+            methods: Vec::new(),
+            location,
+        }
+    }
+}
+
+/// One method entry in a capability. `default_body` is `None` for a
+/// required signature (class MUST implement) and `Some(...)` for a
+/// default the class inherits unless it overrides.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CapabilityMethod {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Type,
+    pub default_body: Option<Vec<Statement>>,
+    pub location: Option<SourceLocation>,
 }
 
 /// External function declaration - a function provided by the WASM host (imported)
@@ -1727,6 +1764,8 @@ pub struct Program {
     pub statements: Vec<Statement>,
     pub functions: Vec<Function>,
     pub classes: Vec<Class>,
+    /// Top-level capability declarations (`can Name:`).
+    pub capabilities: Vec<Capability>,
     pub start_function: Option<Function>,
     pub tests: Vec<TestCase>,
     pub screens: Vec<Screen>,             // Clean UI screens (legacy)
@@ -1748,6 +1787,7 @@ impl Program {
             statements: Vec::new(),
             functions: Vec::new(),
             classes: Vec::new(),
+            capabilities: Vec::new(),
             start_function: None,
             tests: Vec::new(),
             screens: Vec::new(),
@@ -1989,6 +2029,7 @@ mod tests {
             statements: vec![],
             functions: vec![func],
             classes: vec![],
+            capabilities: vec![],
             start_function: None,
             tests: vec![],
             screens: vec![],

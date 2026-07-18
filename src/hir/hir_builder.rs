@@ -788,6 +788,13 @@ impl HirBuilder {
             classes.push(self.build_class(class)?);
         }
 
+        // Lower top-level capability declarations (`can Name:`).
+        // See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.
+        let mut capabilities: Vec<HirCapability> = Vec::new();
+        for cap in &program.capabilities {
+            capabilities.push(self.build_capability(cap)?);
+        }
+
         // Handle the start function if it exists
         if let Some(start_func) = &program.start_function {
             start_function = Some(self.build_function(start_func)?);
@@ -929,6 +936,7 @@ impl HirBuilder {
             watch_blocks,
             externals,
             screen_blocks,
+            capabilities,
             location: program.location.unwrap_or_default(),
         };
 
@@ -1027,6 +1035,7 @@ impl HirBuilder {
             constructor,
             methods,
             invariants,
+            capabilities: class.capabilities.clone(),
             location: class.location.clone().unwrap_or_default(),
         })
     }
@@ -1116,6 +1125,40 @@ impl HirBuilder {
             body,
             is_private: method.visibility == crate::ast::Visibility::Private,
             location: method.location.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Convert AST capability declaration to HIR capability.
+    /// See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.
+    fn build_capability(
+        &mut self,
+        cap: &crate::ast::Capability,
+    ) -> Result<HirCapability, CompilerError> {
+        let mut methods = Vec::with_capacity(cap.methods.len());
+        for m in &cap.methods {
+            let parameters = m
+                .parameters
+                .iter()
+                .map(|p| self.build_parameter(p))
+                .collect::<Result<Vec<_>, _>>()?;
+            let return_type = self.build_type(&m.return_type)?;
+            let default_body = if let Some(body) = &m.default_body {
+                Some(self.build_block(body)?)
+            } else {
+                None
+            };
+            methods.push(HirCapabilityMethod {
+                name: m.name.clone(),
+                parameters,
+                return_type,
+                default_body,
+                location: m.location.clone().unwrap_or_default(),
+            });
+        }
+        Ok(HirCapability {
+            name: cap.name.clone(),
+            methods,
+            location: cap.location.clone().unwrap_or_default(),
         })
     }
 
@@ -7189,6 +7232,7 @@ mod tests {
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
             externals: Vec::new(),
+            capabilities: Vec::new(),
             source_block: None,
             location: None,
         }

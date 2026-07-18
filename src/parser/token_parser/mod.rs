@@ -26,8 +26,11 @@ use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
 use std::collections::HashSet;
 use tracing::{debug, trace};
 
-/// Returns the ordering index for the 5 core sections, or None for non-core sections.
-/// Order: import: (1) → start: (2) → state: (3) → class (4) → functions: (5)
+/// Returns the ordering index for the 6 core sections, or None for non-core sections.
+/// Order: import: (1) → start: (2) → state: (3) → class / can (4) → functions: (5)
+///
+/// `can` declarations are class-like structural declarations that belong at the same
+/// ordering slot as `class` (index 4). See grammar.ebnf §6.4 and §6.4a.
 ///
 /// Enforces the ordering rule documented in
 /// `documentation/Clean_Language_Specification.md:1114-1134` and formalised in
@@ -37,7 +40,7 @@ fn core_section_order(kind: &TokenKind) -> Option<u8> {
         TokenKind::Import => Some(1),
         TokenKind::Start => Some(2),
         TokenKind::State => Some(3),
-        TokenKind::Class => Some(4),
+        TokenKind::Class | TokenKind::Can => Some(4),
         TokenKind::Functions => Some(5),
         _ => None,
     }
@@ -49,7 +52,7 @@ fn core_section_name(order: u8) -> &'static str {
         1 => "import:",
         2 => "start:",
         3 => "state:",
-        4 => "class",
+        4 => "class / can",
         5 => "functions:",
         _ => "unknown",
     }
@@ -153,6 +156,7 @@ impl TokenParser {
 
         let mut functions = Vec::new();
         let mut classes = Vec::new();
+        let mut capabilities: Vec<crate::ast::Capability> = Vec::new();
         let mut tests = Vec::new();
         let mut imports = Vec::new();
         let mut plugins = Vec::new();
@@ -231,6 +235,18 @@ impl TokenParser {
                     }
                     Err(e) => self.errors.push(e),
                 },
+                TokenKind::Can => {
+                    // Parse a top-level `can Name:` capability declaration.
+                    // Grammar: foundation/spec/grammar.ebnf §6.4 and §6.4a.
+                    debug!("Parsing can declaration");
+                    match self.parse_can_declaration() {
+                        Ok(cap) => {
+                            debug!(capability_name = %cap.name, method_count = cap.methods.len(), "Parsed can declaration");
+                            capabilities.push(cap);
+                        }
+                        Err(e) => self.errors.push(e),
+                    }
+                }
                 TokenKind::Tests => {
                     debug!("Parsing tests: block");
                     match self.parse_tests_block() {
@@ -461,6 +477,7 @@ impl TokenParser {
             statements,
             functions,
             classes,
+            capabilities,
             start_function,
             tests,
             screens,

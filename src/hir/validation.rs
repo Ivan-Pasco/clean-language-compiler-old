@@ -1744,6 +1744,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: test_location(),
         };
@@ -1781,6 +1782,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: test_location(),
         };
@@ -1836,6 +1838,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: test_location(),
         };
@@ -1863,6 +1866,7 @@ mod tests {
                     constructor: None,
                     methods: vec![],
                     invariants: vec![],
+                    capabilities: vec![],
                     type_parameters: vec![],
                     location: test_location(),
                 },
@@ -1873,6 +1877,7 @@ mod tests {
                     constructor: None,
                     methods: vec![],
                     invariants: vec![],
+                    capabilities: vec![],
                     type_parameters: vec![],
                     location: test_location(),
                 },
@@ -1883,6 +1888,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: test_location(),
         };
@@ -1903,6 +1909,7 @@ mod tests {
                     constructor: None,
                     methods: vec![],
                     invariants: vec![],
+                    capabilities: vec![],
                     type_parameters: vec![],
                     location: test_location(),
                 },
@@ -1913,6 +1920,7 @@ mod tests {
                     constructor: None,
                     methods: vec![],
                     invariants: vec![],
+                    capabilities: vec![],
                     type_parameters: vec![],
                     location: test_location(),
                 },
@@ -1923,6 +1931,7 @@ mod tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: test_location(),
         };
@@ -2059,6 +2068,7 @@ mod concurrency_tests {
             }),
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         }
@@ -2233,6 +2243,7 @@ mod concurrency_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
@@ -2295,6 +2306,7 @@ mod concurrency_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
@@ -2345,6 +2357,7 @@ mod concurrency_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
@@ -2560,6 +2573,7 @@ mod concurrency_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
@@ -2592,6 +2606,7 @@ mod concurrency_tests {
                 state: None,
                 watch_blocks: vec![],
                 externals: vec![],
+                capabilities: vec![],
                 screen_blocks: vec![],
                 location: loc(),
             };
@@ -2659,6 +2674,7 @@ mod concurrency_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
@@ -2691,6 +2707,7 @@ mod concurrency_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
@@ -2765,6 +2782,7 @@ mod concurrency_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };

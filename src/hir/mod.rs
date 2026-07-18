@@ -33,6 +33,9 @@ pub struct HirProgram {
     pub externals: Vec<HirExternalFunction>,
     /// Screen blocks — each has its own local state scope (SCOPE005)
     pub screen_blocks: Vec<HirScreenBlock>,
+    /// Top-level capability declarations (`can Name:`).
+    /// See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.
+    pub capabilities: Vec<HirCapability>,
     pub location: SourceLocation,
 }
 
@@ -153,6 +156,31 @@ pub struct HirClass {
     /// Each expression must evaluate to boolean.
     /// Checked after every public method call on the class (debug/contracts builds).
     pub invariants: Vec<HirExpression>,
+    /// Capabilities claimed via the class header's `can C1, C2, ...` clause.
+    /// Nominal — each name must resolve to an `HirCapability` in the program.
+    /// Validation happens in the resolver (SEM011/012/013).
+    pub capabilities: Vec<String>,
+    pub location: SourceLocation,
+}
+
+/// HIR Capability - a nominal contract of methods that classes may claim.
+/// See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.
+#[derive(Debug, Clone)]
+pub struct HirCapability {
+    pub name: String,
+    pub methods: Vec<HirCapabilityMethod>,
+    pub location: SourceLocation,
+}
+
+/// HIR Capability Method — one entry in a capability's method contract.
+/// `default_body` is `None` for a required signature (class MUST implement)
+/// and `Some(...)` for a default the class inherits unless it overrides.
+#[derive(Debug, Clone)]
+pub struct HirCapabilityMethod {
+    pub name: String,
+    pub parameters: Vec<HirParameter>,
+    pub return_type: HirType,
+    pub default_body: Option<HirBlock>,
     pub location: SourceLocation,
 }
 

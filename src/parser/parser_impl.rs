@@ -283,6 +283,7 @@ impl ErrorRecoveringParser {
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
             externals: Vec::new(),
+            capabilities: Vec::new(),
             source_block: None,
             location: None,
         };
@@ -445,6 +446,7 @@ impl ErrorRecoveringParser {
                 watch_blocks: Vec::new(),
                 screen_blocks: Vec::new(),
                 externals: Vec::new(),
+                capabilities: Vec::new(),
                 source_block: None,
                 location: None,
             });
@@ -547,6 +549,7 @@ impl ErrorRecoveringParser {
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
                     externals: Vec::new(),
+                    capabilities: Vec::new(),
                     source_block: None,
                     location: None,
                 })
@@ -578,6 +581,7 @@ impl ErrorRecoveringParser {
                     watch_blocks: Vec::new(),
                     screen_blocks: Vec::new(),
                     externals: Vec::new(),
+                    capabilities: Vec::new(),
                     source_block: None,
                     location: None,
                 })
@@ -635,6 +639,7 @@ impl ErrorRecoveringParser {
                     methods: Vec::new(),
                     constructor: None,
                     invariants: Vec::new(),
+                    capabilities: Vec::new(),
                     location: self.calculate_location_from_segment(segment),
                 }));
             }
@@ -818,6 +823,7 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
         statements: Vec::new(),
         functions,
         classes,
+        capabilities: Vec::new(),
         start_function,
         tests,
         screens: Vec::new(),

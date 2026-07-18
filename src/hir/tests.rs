@@ -33,6 +33,7 @@ fn test_program_with_functions(functions: Vec<Function>) -> Program {
         watch_blocks: Vec::new(),
         screen_blocks: Vec::new(),
         externals: Vec::new(),
+        capabilities: Vec::new(),
         source_block: None,
         location: Some(test_location()),
     }
@@ -53,6 +54,7 @@ fn test_program_with_start(start_fn: Function) -> Program {
         watch_blocks: Vec::new(),
         screen_blocks: Vec::new(),
         externals: Vec::new(),
+        capabilities: Vec::new(),
         source_block: None,
         location: Some(test_location()),
     }
@@ -73,6 +75,7 @@ fn test_program_with_classes(classes: Vec<Class>) -> Program {
         watch_blocks: Vec::new(),
         screen_blocks: Vec::new(),
         externals: Vec::new(),
+        capabilities: Vec::new(),
         source_block: None,
         location: Some(test_location()),
     }
@@ -213,6 +216,7 @@ mod hir_builder_tests {
                 location: Some(test_location()),
             }),
             invariants: vec![],
+            capabilities: vec![],
             location: Some(test_location()),
         };
 
@@ -285,6 +289,7 @@ mod hir_builder_tests {
             methods: vec![],
             constructor: None,
             invariants: vec![],
+            capabilities: vec![],
             location: Some(test_location()),
         };
 
@@ -298,6 +303,7 @@ mod hir_builder_tests {
             methods: vec![],
             constructor: None,
             invariants: vec![],
+            capabilities: vec![],
             location: Some(test_location()),
         };
 
@@ -473,6 +479,7 @@ mod integration_tests {
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
             externals: Vec::new(),
+            capabilities: Vec::new(),
             source_block: None,
             location: Some(test_location()),
         };
@@ -541,6 +548,7 @@ mod integration_tests {
             }],
             constructor: None,
             invariants: vec![],
+            capabilities: vec![],
             location: Some(test_location()),
         };
 
@@ -560,6 +568,7 @@ mod integration_tests {
             methods: vec![],
             constructor: None,
             invariants: vec![],
+            capabilities: vec![],
             location: Some(test_location()),
         };
 

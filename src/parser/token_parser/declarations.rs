@@ -11,8 +11,9 @@
 
 use super::TokenParser;
 use crate::ast::{
-    Class, Constructor, Expression, Field, Function, FunctionModifier, FunctionSyntax, ImportItem,
-    ListBehavior, Parameter, Statement, Type, Visibility,
+    Capability, CapabilityMethod, Class, Constructor, Expression, Field, Function,
+    FunctionModifier, FunctionSyntax, ImportItem, ListBehavior, Parameter, Statement, Type,
+    Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
@@ -605,6 +606,27 @@ impl TokenParser {
         };
 
         self.skip_whitespace();
+
+        // Capability conformance clause (optional): `can C1, C2, ...`
+        // Grammar: can_clause = "can", identifier, { ",", identifier }
+        // Order rule: `is` must precede `can` — this placement enforces it naturally.
+        let mut class_capabilities: Vec<String> = Vec::new();
+        if self.eat(&TokenKind::Can) {
+            self.skip_whitespace();
+            let first_cap = self.expect_identifier()?;
+            class_capabilities.push(first_cap.text.clone());
+            loop {
+                self.skip_whitespace();
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                self.skip_whitespace();
+                let cap_token = self.expect_identifier()?;
+                class_capabilities.push(cap_token.text.clone());
+            }
+            self.skip_whitespace();
+        }
+
         // DON'T skip indentation here - let parse_class_body handle it
 
         // Record how many synthetic classes exist before parsing this class body.
@@ -640,6 +662,7 @@ impl TokenParser {
             methods,
             constructor,
             invariants,
+            capabilities: class_capabilities,
             location: Some(location),
         })
     }
@@ -663,7 +686,7 @@ impl TokenParser {
         while !self.is_at_end()
             && !matches!(
                 self.current_kind(),
-                TokenKind::Class | TokenKind::Function | TokenKind::Start
+                TokenKind::Class | TokenKind::Function | TokenKind::Start | TokenKind::Can
             )
         {
             self.skip_whitespace();
@@ -724,13 +747,15 @@ impl TokenParser {
                             break;
                         }
 
-                        // Check for end of functions block (top-level declarations)
+                        // Check for end of functions block (top-level declarations).
+                        // `can` at top level terminates the class body.
                         if matches!(
                             self.current_kind(),
                             TokenKind::Class
                                 | TokenKind::Start
                                 | TokenKind::Function
                                 | TokenKind::Tests
+                                | TokenKind::Can
                         ) {
                             break;
                         }
@@ -832,6 +857,7 @@ impl TokenParser {
                                 | TokenKind::Always
                                 | TokenKind::Class
                                 | TokenKind::Start
+                                | TokenKind::Can
                                 | TokenKind::Dedent(_)
                         ) {
                             break;
@@ -910,6 +936,7 @@ impl TokenParser {
                                     | TokenKind::Always
                                     | TokenKind::Public
                                     | TokenKind::Constructor
+                                    | TokenKind::Can
                             ) {
                                 break;
                             }
@@ -1002,7 +1029,8 @@ impl TokenParser {
                                 if self.is_at_end() {
                                     break;
                                 }
-                                // Stop at class-level section keywords or top-level declarations
+                                // Stop at class-level section keywords or top-level declarations.
+                                // `can` is a top-level declaration — stop if encountered here.
                                 if matches!(
                                     self.current_kind(),
                                     TokenKind::Functions
@@ -1011,6 +1039,7 @@ impl TokenParser {
                                         | TokenKind::Public
                                         | TokenKind::Class
                                         | TokenKind::Start
+                                        | TokenKind::Can
                                         | TokenKind::Dedent(_)
                                 ) {
                                     break;
@@ -1048,6 +1077,7 @@ impl TokenParser {
                                     methods: Vec::new(),
                                     constructor: None,
                                     invariants: Vec::new(),
+                                    capabilities: Vec::new(),
                                     location: Some(section_location),
                                 });
                             }
@@ -1141,7 +1171,8 @@ impl TokenParser {
                 break;
             }
 
-            // Stop at class-section keywords or EOF
+            // Stop at class-section keywords, top-level declarations, or EOF.
+            // `can` is a top-level declaration — it must not appear inside a class body.
             if matches!(
                 self.current_kind(),
                 TokenKind::Functions
@@ -1150,6 +1181,7 @@ impl TokenParser {
                     | TokenKind::Always
                     | TokenKind::Class
                     | TokenKind::Start
+                    | TokenKind::Can
                     | TokenKind::Dedent(_)
                     | TokenKind::Eof
             ) {
@@ -1167,6 +1199,218 @@ impl TokenParser {
         }
 
         Ok(conditions)
+    }
+
+    /// Parse a top-level `can Name:` block into a [`Capability`].
+    ///
+    /// Grammar (foundation/spec/grammar.ebnf §6.4 and §6.4a):
+    /// ```text
+    /// can_declaration = "can", identifier, ":", NEWLINE,
+    ///                   { empty_line },
+    ///                   INDENT, { INDENT }, can_body_item,
+    ///                   { NEWLINE, { empty_line }, INDENT, { INDENT }, can_body_item } ;
+    ///
+    /// can_body_item = can_method_signature, [ can_default_body ] ;
+    ///
+    /// can_method_signature = [ return_type ], identifier, "(", [ parameter_list ], ")" ;
+    ///
+    /// can_default_body = NEWLINE, INDENT, INDENT, statement, { NEWLINE, INDENT, INDENT, statement } ;
+    /// ```
+    ///
+    /// A method without a default body is "required" (class must implement it).
+    /// A method with an indented default body is "default" (class inherits or overrides).
+    pub(super) fn parse_can_declaration(&mut self) -> Result<Capability, CompilerError> {
+        let can_token = self.expect(&TokenKind::Can)?;
+        let location = can_token.location.clone();
+        self.skip_whitespace();
+
+        let name_token = self.expect_identifier()?;
+        let name = name_token.text.clone();
+        self.skip_whitespace();
+
+        self.expect(&TokenKind::Colon)?;
+        self.skip_whitespace();
+
+        // Consume optional leading newline after the colon
+        if matches!(self.current_kind(), TokenKind::Newline) {
+            self.bump();
+        }
+
+        // Consume the opening Indent token and record the capability body's indent level.
+        // Method signatures sit at this level; default bodies are one level deeper.
+        let body_indent_level = if let TokenKind::Indent(level) = self.current_kind() {
+            let level = *level;
+            self.bump();
+            level
+        } else {
+            1
+        };
+
+        let mut methods: Vec<CapabilityMethod> = Vec::new();
+
+        loop {
+            self.skip_whitespace();
+            if self.is_at_end() {
+                break;
+            }
+
+            // A Dedent below our level exits the can body.
+            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
+                if *dedent_level < body_indent_level {
+                    break;
+                }
+                self.bump();
+                self.skip_whitespace();
+                continue;
+            }
+
+            // Continuation Indent tokens at our level.
+            if let TokenKind::Indent(indent_level) = self.current_kind() {
+                if *indent_level < body_indent_level {
+                    break;
+                }
+                self.bump();
+            }
+
+            self.skip_whitespace();
+            if self.is_at_end() {
+                break;
+            }
+
+            // Top-level declarations terminate the can body.
+            if matches!(
+                self.current_kind(),
+                TokenKind::Class
+                    | TokenKind::Function
+                    | TokenKind::Start
+                    | TokenKind::Can
+                    | TokenKind::Functions
+                    | TokenKind::Import
+                    | TokenKind::State
+                    | TokenKind::Eof
+            ) {
+                break;
+            }
+
+            // Each line in the body is a can_body_item: method signature with optional default body.
+            // Signature format: [return_type] name(params)
+            // This mirrors parse_function_in_block's optional-return-type / parameter-list logic.
+            let method_location = self.current().location.clone();
+            let saved_cursor = self.cursor;
+
+            // Parse [return_type] name — same optional-leading-type logic as parse_function_in_block.
+            let (return_type, method_name) = match self.parse_type() {
+                Ok(typ) => {
+                    self.skip_whitespace();
+                    if matches!(typ, Type::Object(_)) && self.check(&TokenKind::LeftParen) {
+                        // The identifier was parsed as Type::Object but it's really the method name
+                        // (void method, no return type prefix).
+                        let name = if let Type::Object(n) = typ {
+                            n
+                        } else {
+                            unreachable!()
+                        };
+                        (Type::Void, name)
+                    } else {
+                        // Parsed a real return type; next token is the method name.
+                        let name_token = self.expect_name()?;
+                        (typ, name_token.text.clone())
+                    }
+                }
+                Err(_) => {
+                    // parse_type failed — backtrack and treat the first token as the method name.
+                    self.cursor = saved_cursor;
+                    let first_token = self.expect_name()?;
+                    (Type::Void, first_token.text.clone())
+                }
+            };
+
+            self.skip_whitespace();
+
+            // Parse parameter list: (type name, ...)
+            self.expect(&TokenKind::LeftParen)?;
+            self.skip_whitespace();
+
+            let mut parameters: Vec<Parameter> = Vec::new();
+            if !self.check(&TokenKind::RightParen) {
+                loop {
+                    let param_type = self.parse_type()?;
+                    self.skip_whitespace();
+                    let param_name_token = self.expect_name()?;
+                    let param_name = param_name_token.text.clone();
+                    self.skip_whitespace();
+
+                    let default_value = if self.eat(&TokenKind::Assign) {
+                        self.skip_whitespace();
+                        Some(self.parse_expression()?)
+                    } else {
+                        None
+                    };
+
+                    parameters.push(Parameter {
+                        name: param_name,
+                        type_: param_type,
+                        default_value,
+                    });
+
+                    self.skip_whitespace();
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.skip_whitespace();
+                }
+            }
+
+            self.expect(&TokenKind::RightParen)?;
+
+            // Decide whether there is a default body.
+            // A default body starts with NEWLINE then an Indent token at a level
+            // strictly deeper than the method signature's indent level (body_indent_level).
+            // If the next Newline is followed by an Indent at our same level or a Dedent,
+            // the next token is another method signature — no default body.
+            let default_body: Option<Vec<Statement>> =
+                if matches!(self.current_kind(), TokenKind::Newline) {
+                    // Peek ahead past the newline to see the indent level.
+                    let mut peek_offset = 1;
+                    let next_indent_level = loop {
+                        let tok = self.look_ahead(peek_offset);
+                        match &tok.kind {
+                            TokenKind::Indent(level) => break Some(*level),
+                            TokenKind::Newline => {
+                                peek_offset += 1;
+                            }
+                            _ => break None,
+                        }
+                    };
+
+                    if matches!(next_indent_level, Some(level) if level > body_indent_level) {
+                        // Consume the newline; parse_block will consume the Indent.
+                        self.bump(); // consume Newline
+                        Some(self.parse_block()?)
+                    } else {
+                        // No default body — consume just the newline to advance.
+                        self.bump();
+                        None
+                    }
+                } else {
+                    // No newline after `)` — no default body.
+                    None
+                };
+
+            methods.push(CapabilityMethod {
+                name: method_name,
+                parameters,
+                return_type,
+                default_body,
+                location: Some(method_location),
+            });
+        }
+
+        Ok(Capability {
+            name,
+            methods,
+            location: Some(location),
+        })
     }
 
     pub(super) fn parse_field(&mut self) -> Result<Field, CompilerError> {

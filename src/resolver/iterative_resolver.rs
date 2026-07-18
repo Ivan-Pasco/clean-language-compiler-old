@@ -195,6 +195,7 @@ impl IterativeNameResolver {
             symbol_table: self.symbol_table.clone(),
             location: hir.location,
             externals: Vec::new(), // External resolution handled by main resolver
+            capabilities: Vec::new(),
         })
     }
 

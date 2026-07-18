@@ -56,11 +56,12 @@ pub enum TokenKind {
     True,        // true
     While,       // while
     Is,          // is
-    Returns,     // returns
+    Can, // can — capability declaration/conformance clause (Clean Language Specification §Capabilities, grammar.ebnf §6.4a)
+    Returns, // returns
     Description, // description
-    Input,       // input
-    Unit,        // unit
-    Public,      // public — opens a public: sub-section that exposes the
+    Input, // input
+    Unit, // unit
+    Public, // public — opens a public: sub-section that exposes the
     // contained members; default visibility otherwise is private
     Constant,  // constant
     Functions, // functions
@@ -190,6 +191,7 @@ impl fmt::Display for TokenKind {
             TokenKind::True => write!(f, "true"),
             TokenKind::While => write!(f, "while"),
             TokenKind::Is => write!(f, "is"),
+            TokenKind::Can => write!(f, "can"),
             TokenKind::Returns => write!(f, "returns"),
             TokenKind::Description => write!(f, "description"),
             TokenKind::Input => write!(f, "input"),
@@ -417,6 +419,7 @@ impl Keywords {
             "true" => Some(TokenKind::True),
             "while" => Some(TokenKind::While),
             "is" => Some(TokenKind::Is),
+            "can" => Some(TokenKind::Can),
             "returns" => Some(TokenKind::Returns),
             "description" => Some(TokenKind::Description),
             "input" => Some(TokenKind::Input),
@@ -498,6 +501,7 @@ impl TokenKind {
             TokenKind::Import => "import".to_string(),
             TokenKind::In => "in".to_string(),
             TokenKind::Is => "is".to_string(),
+            TokenKind::Can => "can".to_string(),
             TokenKind::Iterate => "iterate".to_string(),
             TokenKind::Later => "later".to_string(),
             TokenKind::Not => "not".to_string(),

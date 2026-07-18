@@ -978,6 +978,7 @@ fn inject_plugin_type_stubs(ast: &mut ast::Program, registry: &plugins::PluginRe
                 methods: Vec::new(),
                 constructor: None,
                 invariants: Vec::new(),
+                capabilities: Vec::new(),
                 location: None,
             });
         }
@@ -2612,6 +2613,10 @@ pub fn compile_multi_file<P: AsRef<std::path::Path>>(
             watch_blocks: merged_watch_blocks,
             externals: all_externals,
             screen_blocks: merged_screen_blocks,
+            // Cross-module capability merging is not yet implemented; the
+            // single-module path in hir_builder.rs populates capabilities from
+            // Program.capabilities. Multi-module can-imports arrive in a v2.
+            capabilities: Vec::new(),
             location,
         }
     };
@@ -3084,6 +3089,10 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
             watch_blocks: merged_watch_blocks,
             externals: all_externals,
             screen_blocks: merged_screen_blocks,
+            // Cross-module capability merging is not yet implemented; the
+            // single-module path in hir_builder.rs populates capabilities from
+            // Program.capabilities. Multi-module can-imports arrive in a v2.
+            capabilities: Vec::new(),
             location,
         }
     };
@@ -3144,6 +3153,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
                     constructor: None,
                     methods: Vec::new(),
                     invariants: Vec::new(),
+                    capabilities: Vec::new(),
                     location: Default::default(),
                 });
             }
@@ -3612,6 +3622,10 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
             watch_blocks: merged_watch_blocks,
             externals: all_externals,
             screen_blocks: merged_screen_blocks,
+            // Cross-module capability merging is not yet implemented; the
+            // single-module path in hir_builder.rs populates capabilities from
+            // Program.capabilities. Multi-module can-imports arrive in a v2.
+            capabilities: Vec::new(),
             location,
         }
     };

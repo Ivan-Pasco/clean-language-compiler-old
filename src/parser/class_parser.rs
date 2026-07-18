@@ -162,6 +162,7 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
         // The legacy Pest-based class parser does not handle always: blocks yet;
         // always: support is only available through the token parser path.
         invariants: Vec::new(),
+        capabilities: Vec::new(),
         location: Some(ast_location),
     })
 }

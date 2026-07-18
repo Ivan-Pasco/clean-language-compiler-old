@@ -371,6 +371,7 @@ mod tests {
             watch_blocks: vec![],
             screen_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             source_block: None,
             location: None,
         }

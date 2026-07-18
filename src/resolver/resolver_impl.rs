@@ -4626,6 +4626,7 @@ mod scope_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![screen],
             location: loc(),
         }
@@ -4699,6 +4700,7 @@ mod scope_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
@@ -4764,6 +4766,7 @@ mod scope_tests {
             state: None,
             watch_blocks: vec![],
             externals: vec![],
+            capabilities: vec![],
             screen_blocks: vec![],
             location: loc(),
         };
