@@ -80,6 +80,7 @@ tests/cln/bugfixes/syn001_class_body_colon_patterns.cln
 tests/cln/bugfixes/syn001_html_hash_character.cln
 tests/cln/bugfixes/syn001_multiline_pairs_literal.cln
 tests/cln/bugfixes/syn001_orm_query_in_function.cln
+tests/cln/bugfixes/parser_spec_c5_unary_binds_tighter_than_power.cln
 tests/cln/bugfixes/syn001_precision_modifier_no_regression.cln
 tests/cln/bugfixes/utf8_multibyte_json_get_roundtrip.cln
 tests/cln/bugfixes/vld001_json_namespace_direct_call.cln
