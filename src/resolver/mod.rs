@@ -41,6 +41,43 @@ pub struct ResolvedHirProgram {
     pub location: SourceLocation,
     /// External functions (WASM imports from host)
     pub externals: Vec<ResolvedHirExternalFunction>,
+    /// Resolved top-level capability declarations (`can Name:`).
+    /// Preserved so codegen can look up per-capability method-slot layout.
+    pub capabilities: Vec<ResolvedHirCapability>,
+    /// Per-class vtable descriptors keyed by (class symbol id, capability symbol id).
+    /// The `Vec<Option<SymbolId>>` is one entry per method slot of the target
+    /// capability, in the capability's declaration order. `Some(method_symbol_id)`
+    /// points to the method function that satisfies the slot (either an
+    /// override on the class, an inherited parent method, or the capability's
+    /// default). `None` indicates the resolver failed to satisfy the slot —
+    /// SEM011 has already been reported and codegen must not consume the
+    /// entry as-is.
+    ///
+    /// Populated by Stage 5c (`build_vtable_descriptors`). Consumed by
+    /// Stage 8 codegen to emit vtable rows into linear memory.
+    pub vtable_descriptors: std::collections::HashMap<(SymbolId, SymbolId), Vec<Option<SymbolId>>>,
+}
+
+/// Resolved capability declaration — a passed-through, symbol-annotated
+/// version of `HirCapability`. Preserved so codegen and IDE tooling can
+/// enumerate capabilities and their method-slot layouts.
+#[derive(Debug, Clone)]
+pub struct ResolvedHirCapability {
+    pub name: String,
+    pub symbol_id: SymbolId,
+    pub methods: Vec<ResolvedHirCapabilityMethod>,
+    pub location: SourceLocation,
+}
+
+/// One method entry in a resolved capability. Slot index in the containing
+/// vec is the stable dispatch slot used by vtables.
+#[derive(Debug, Clone)]
+pub struct ResolvedHirCapabilityMethod {
+    pub name: String,
+    pub parameters: Vec<crate::hir::HirParameter>,
+    pub return_type: HirType,
+    pub default_body: Option<crate::hir::HirBlock>,
+    pub location: SourceLocation,
 }
 
 /// Resolved HIR External Function (WASM import)
@@ -88,6 +125,11 @@ pub struct ResolvedHirClass {
     pub methods: Vec<ResolvedHirMethod>,
     /// Resolved invariant conditions from the `always:` block.
     pub invariants: Vec<ResolvedHirExpression>,
+    /// Capability symbols this class conforms to via its `can C1, C2, ...`
+    /// clause. Does NOT include capabilities inherited from a parent class —
+    /// use `vtable_descriptors` on `ResolvedHirProgram` for the full
+    /// conformance closure per capability.
+    pub capabilities: Vec<SymbolId>,
     pub location: SourceLocation,
 }
 

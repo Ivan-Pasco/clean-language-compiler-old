@@ -86,6 +86,22 @@ pub struct ModuleId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(pub usize);
 
+/// One method entry inside a capability contract, as stored on
+/// `SymbolKind::Capability`. Slot index in the containing vec is the
+/// stable dispatch slot used by codegen vtables (Stage 8).
+///
+/// `has_default` is `true` when the capability declaration itself provided
+/// a body (`default_body: Some(_)` in HIR). A conforming class may inherit
+/// the default or override it; missing implementation of a non-default
+/// method is SEM011.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapabilityMethodEntry {
+    pub name: String,
+    pub parameters: Vec<HirType>,
+    pub return_type: HirType,
+    pub has_default: bool,
+}
+
 /// Symbol kinds for type checking and usage validation
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolKind {
@@ -123,6 +139,14 @@ pub enum SymbolKind {
     },
     Namespace {
         functions: Vec<SymbolId>,
+    },
+    /// A capability declaration (`can Name:`) — a nominal contract of methods
+    /// that classes may claim via `can Name` on their class header.
+    /// See Clean Language Specification §Capabilities and semantic-rules.md SEM011–SEM013.
+    Capability {
+        /// Method contract entries in source order. Slot index in this vec is
+        /// stable and used by codegen to build per-class vtables (Stage 8).
+        methods: Vec<CapabilityMethodEntry>,
     },
     /// State variable - persistent global variable with optional guard
     StateVariable {

@@ -202,6 +202,63 @@ impl NameResolver {
             });
         }
 
+        // Stage 5b — Capability conformance validation.
+        // For every class that claims one or more capabilities, verify that each
+        // capability method is implemented on the class (or has a default) with
+        // a matching signature. Emits SEM011 (missing) / SEM013 (mismatch).
+        // Also computes each class's transitive conformance closure and Stage 5c
+        // vtable descriptors keyed by (class symbol id, capability symbol id).
+        let vtable_descriptors =
+            self.validate_and_build_capability_descriptors(&resolved_classes, &hir.capabilities);
+
+        // Preserve HIR capability declarations as resolved capabilities so
+        // codegen and IDE tooling can enumerate method-slot layouts.
+        let mut resolved_capabilities: Vec<ResolvedHirCapability> =
+            Vec::with_capacity(hir.capabilities.len());
+        for cap in &hir.capabilities {
+            let Some(cap_sym_id) = self.symbol_table.lookup_symbol(&cap.name) else {
+                // Capability symbol registration failed earlier (e.g. name conflict).
+                // Skip; the earlier error is already reported.
+                continue;
+            };
+            resolved_capabilities.push(ResolvedHirCapability {
+                name: cap.name.clone(),
+                symbol_id: cap_sym_id,
+                methods: cap
+                    .methods
+                    .iter()
+                    .map(|m| ResolvedHirCapabilityMethod {
+                        name: m.name.clone(),
+                        parameters: m.parameters.clone(),
+                        return_type: m.return_type.clone(),
+                        default_body: m.default_body.clone(),
+                        location: m.location.clone(),
+                    })
+                    .collect(),
+                location: cap.location.clone(),
+            });
+        }
+
+        // Surface capability-conformance errors (SEM011/SEM012/SEM013) as
+        // hard compile failures. Unlike the pre-existing SEM003 accumulation
+        // pattern that silently swallows some resolver diagnostics, the
+        // capability rules from Clean Language Specification §Capabilities
+        // are non-negotiable — a class that claims a capability MUST satisfy
+        // its contract. Missing a required method or naming an undefined
+        // capability must fail compilation.
+        let has_capability_errors = self.errors.iter().any(|e| match e {
+            CompilerError::Validation { context } => {
+                matches!(
+                    context.error_code.as_deref(),
+                    Some("SEM011") | Some("SEM012") | Some("SEM013")
+                )
+            }
+            _ => false,
+        });
+        if has_capability_errors {
+            return Err(());
+        }
+
         Ok(ResolvedHirProgram {
             functions: resolved_functions,
             classes: resolved_classes,
@@ -213,7 +270,174 @@ impl NameResolver {
             symbol_table: self.symbol_table.clone(),
             location: hir.location,
             externals: resolved_externals,
+            capabilities: resolved_capabilities,
+            vtable_descriptors,
         })
+    }
+
+    /// Stage 5b + 5c — Validate capability conformance for every class and
+    /// build per-class vtable descriptors.
+    ///
+    /// For each class `C` and each capability `Cap` in `C.transitive_capabilities`:
+    ///   for each method slot `s` in `Cap.methods` (source order):
+    ///     - if `C` (or an ancestor) defines a method with the slot's name
+    ///       AND parameters/return type match → record its SymbolId
+    ///     - else if the capability method has a default body → record `None`
+    ///       here (codegen synthesises a shared default-thunk function at
+    ///       Stage 8 and patches the slot at emit time)
+    ///     - else → emit SEM011 (missing method); leave the slot as `None`
+    ///
+    /// Signature mismatches emit SEM013. Missing capability names were
+    /// already reported by `resolve_class` as SEM012.
+    ///
+    /// Clean Language Specification §Capabilities · semantic-rules.md
+    /// SEM011/SEM013 · grammar.ebnf §6.4a.
+    fn validate_and_build_capability_descriptors(
+        &mut self,
+        classes: &[ResolvedHirClass],
+        hir_capabilities: &[crate::hir::HirCapability],
+    ) -> std::collections::HashMap<(SymbolId, SymbolId), Vec<Option<SymbolId>>> {
+        use std::collections::HashMap;
+
+        // Fast index: capability name → its HIR declaration (for slot layouts).
+        let cap_by_name: HashMap<&str, &crate::hir::HirCapability> = hir_capabilities
+            .iter()
+            .map(|c| (c.name.as_str(), c))
+            .collect();
+
+        let mut descriptors: HashMap<(SymbolId, SymbolId), Vec<Option<SymbolId>>> = HashMap::new();
+
+        for class in classes {
+            // Compute this class's transitive capability set: its own +
+            // every ancestor's. Parent already went through resolve_class,
+            // so its ResolvedHirClass.capabilities is authoritative.
+            let mut transitive: Vec<SymbolId> = class.capabilities.clone();
+            let mut cursor = class.parent;
+            while let Some(parent_id) = cursor {
+                if let Some(parent_class) = classes.iter().find(|c| c.symbol_id == parent_id) {
+                    for pc in &parent_class.capabilities {
+                        if !transitive.contains(pc) {
+                            transitive.push(*pc);
+                        }
+                    }
+                    cursor = parent_class.parent;
+                } else {
+                    break;
+                }
+            }
+
+            // For each conformed capability, build a per-slot resolution vec.
+            for cap_sym_id in &transitive {
+                // Look up the capability's declared name via the symbol table.
+                let Some(cap_name) = self
+                    .symbol_table
+                    .get_symbol(*cap_sym_id)
+                    .map(|s| s.name.clone())
+                else {
+                    continue;
+                };
+                let Some(cap_decl) = cap_by_name.get(cap_name.as_str()) else {
+                    // Capability symbol exists but no HIR declaration was
+                    // registered — impossible unless the symbol table is out
+                    // of sync. Skip silently; no user-facing error to emit.
+                    continue;
+                };
+
+                let mut slots: Vec<Option<SymbolId>> = Vec::with_capacity(cap_decl.methods.len());
+                for cap_method in &cap_decl.methods {
+                    let matching = self.find_class_method(class, classes, &cap_method.name);
+                    match matching {
+                        Some((method_sym_id, params, ret)) => {
+                            // Signature check: parameter types (excluding
+                            // implicit receiver) and return type must match
+                            // the capability's declared signature.
+                            let cap_param_types: Vec<crate::hir::HirType> = cap_method
+                                .parameters
+                                .iter()
+                                .map(|p| p.param_type.clone())
+                                .collect();
+                            if params == cap_param_types && ret == cap_method.return_type {
+                                slots.push(Some(method_sym_id));
+                            } else {
+                                self.error_with_code(
+                                    &format!(
+                                        "Method '{}' on class '{}' does not match capability '{}': signature mismatch",
+                                        cap_method.name, class.name, cap_name
+                                    ),
+                                    "SEM013",
+                                    class.location.clone(),
+                                );
+                                slots.push(None);
+                            }
+                        }
+                        None => {
+                            if cap_method.default_body.is_some() {
+                                // Class inherits the capability's default —
+                                // codegen synthesises the thunk. Leave slot
+                                // unresolved here; Stage 8 patches it.
+                                slots.push(None);
+                            } else {
+                                self.error_with_code(
+                                    &format!(
+                                        "Class '{}' claims capability '{}' but does not implement required method '{}({})'",
+                                        class.name,
+                                        cap_name,
+                                        cap_method.name,
+                                        cap_method
+                                            .parameters
+                                            .iter()
+                                            .map(|p| format!("{:?}", p.param_type))
+                                            .collect::<Vec<_>>()
+                                            .join(", "),
+                                    ),
+                                    "SEM011",
+                                    class.location.clone(),
+                                );
+                                slots.push(None);
+                            }
+                        }
+                    }
+                }
+
+                descriptors.insert((class.symbol_id, *cap_sym_id), slots);
+            }
+        }
+
+        descriptors
+    }
+
+    /// Walk the class's own methods and its ancestor chain looking for a
+    /// method with the given name. Returns the method's symbol id plus its
+    /// parameter and return types. First match wins (child overrides parent).
+    fn find_class_method(
+        &self,
+        class: &ResolvedHirClass,
+        all_classes: &[ResolvedHirClass],
+        method_name: &str,
+    ) -> Option<(SymbolId, Vec<crate::hir::HirType>, crate::hir::HirType)> {
+        // Check this class's own methods first.
+        for m in &class.methods {
+            if m.name == method_name {
+                let params = m.parameters.iter().map(|p| p.param_type.clone()).collect();
+                return Some((m.symbol_id, params, m.return_type.clone()));
+            }
+        }
+        // Then walk the parent chain.
+        let mut cursor = class.parent;
+        while let Some(parent_id) = cursor {
+            if let Some(parent_class) = all_classes.iter().find(|c| c.symbol_id == parent_id) {
+                for m in &parent_class.methods {
+                    if m.name == method_name {
+                        let params = m.parameters.iter().map(|p| p.param_type.clone()).collect();
+                        return Some((m.symbol_id, params, m.return_type.clone()));
+                    }
+                }
+                cursor = parent_class.parent;
+            } else {
+                break;
+            }
+        }
+        None
     }
 
     /// First pass: Register all top-level symbols (functions, classes)
@@ -337,6 +561,40 @@ impl NameResolver {
                 self.class_method_names
                     .insert(class.name.clone(), method_set);
             }
+        }
+
+        // Register top-level capability declarations (`can Name:`).
+        // Clean Language Specification §Capabilities · grammar.ebnf §6.4a.
+        // Registered after classes so that a class body's method-name map is
+        // already populated when conformance validation runs (Stage 5b).
+        for cap in &hir.capabilities {
+            if self.symbol_table.has_symbol_in_current_scope(&cap.name) {
+                self.error_with_code(
+                    &format!(
+                        "Capability '{}' conflicts with an existing top-level name",
+                        cap.name
+                    ),
+                    "SEM003",
+                    cap.location.clone(),
+                );
+                continue;
+            }
+            let methods: Vec<crate::resolver::symbol_table::CapabilityMethodEntry> = cap
+                .methods
+                .iter()
+                .map(|m| crate::resolver::symbol_table::CapabilityMethodEntry {
+                    name: m.name.clone(),
+                    parameters: m.parameters.iter().map(|p| p.param_type.clone()).collect(),
+                    return_type: m.return_type.clone(),
+                    has_default: m.default_body.is_some(),
+                })
+                .collect();
+            let _cap_symbol_id = self.symbol_table.create_symbol(
+                cap.name.clone(),
+                SymbolKind::Capability { methods },
+                self.symbol_table.current_scope_id(),
+                cap.location.clone(),
+            );
         }
 
         // Register state variables (global scope)
@@ -790,6 +1048,44 @@ impl NameResolver {
             }
         }
 
+        // Resolve capability names claimed via the class header's
+        // `can C1, C2, ...` clause. SEM012 for unknown names or names that
+        // resolve to something other than a capability. Full method-signature
+        // validation runs later in `validate_class_capability_conformance`.
+        let mut capability_ids: Vec<SymbolId> = Vec::new();
+        for cap_name in &class.capabilities {
+            match self.symbol_table.lookup_symbol(cap_name) {
+                Some(sym_id) => {
+                    let is_capability = matches!(
+                        self.symbol_table.get_symbol(sym_id).map(|s| &s.kind),
+                        Some(SymbolKind::Capability { .. })
+                    );
+                    if is_capability {
+                        capability_ids.push(sym_id);
+                    } else {
+                        self.error_with_code(
+                            &format!(
+                                "'{}' is not a capability — class '{}' cannot claim it via `can`",
+                                cap_name, class.name
+                            ),
+                            "SEM012",
+                            class.location.clone(),
+                        );
+                    }
+                }
+                None => {
+                    self.error_with_code(
+                        &format!(
+                            "Undefined capability '{}' in `can` clause of class '{}'",
+                            cap_name, class.name
+                        ),
+                        "SEM012",
+                        class.location.clone(),
+                    );
+                }
+            }
+        }
+
         // Exit class scope
         self.symbol_table.exit_scope();
         self.current_class = None;
@@ -802,6 +1098,7 @@ impl NameResolver {
             constructor: resolved_constructor,
             methods: resolved_methods,
             invariants: resolved_invariants,
+            capabilities: capability_ids,
             location: class.location,
         })
     }
