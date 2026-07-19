@@ -358,6 +358,20 @@ thread_local! {
     /// receives `--target=plugin`; cleared otherwise so user-code builds carry
     /// no stamp. See foundation/spec/plugins/contracts/runtime-abi.md §4.
     static PLUGIN_ABI_VERSION: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// STATE-A heap-probe hunt — when true, codegen emits `env._probe_ptr`,
+    /// `env._probe_ptr_dump`, `env._probe_ptr_reset` imports and injects a
+    /// `call $_probe_ptr(callsite_id, result_ptr)` immediately after every
+    /// WASM `call` to `__string_builder_append` / `__string_builder_finalize`.
+    /// Off by default: zero production cost. Set by `--emit-heap-probes`.
+    /// Contract acked to node-server in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
+    static EMIT_HEAP_PROBES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// STATE-A heap-probe hunt — callsite metadata captured from the last
+    /// `MirCodegenResult`. Written by the codegen pipeline; drained by the
+    /// CLI when writing the `.probes.json` sidecar. Empty when
+    /// `--emit-heap-probes` is off. Uses a thread-local so the many
+    /// `compile_multi_file_*` entry points don't need signature changes.
+    static HEAP_PROBE_CALLSITES: std::cell::RefCell<Vec<crate::codegen::mir_codegen::ProbeCallsite>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Plugin Contracts v2 Phase B — set the Clean Runtime ABI version to stamp
@@ -426,6 +440,42 @@ pub fn set_strict_emission_ops_override(strict: bool) {
 /// Read the active `--strict-emission-ops` override for the current thread.
 pub fn strict_emission_ops_override() -> bool {
     STRICT_EMISSION_OPS.with(|cell| cell.get())
+}
+
+/// Set the `--emit-heap-probes` flag for the current thread.
+///
+/// When true, codegen emits three env imports (`_probe_ptr`, `_probe_ptr_dump`,
+/// `_probe_ptr_reset`) and injects a `call $_probe_ptr(callsite_id, result_ptr)`
+/// after every WASM `call` to `__string_builder_append` and
+/// `__string_builder_finalize`. Off by default: no imports, no extra calls.
+///
+/// Used by the STATE-A heap-probe bug hunt with clean-node-server. See the
+/// ack in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
+pub fn set_emit_heap_probes_override(enable: bool) {
+    EMIT_HEAP_PROBES.with(|cell| cell.set(enable));
+}
+
+/// Read the active `--emit-heap-probes` override for the current thread.
+pub fn emit_heap_probes_override() -> bool {
+    EMIT_HEAP_PROBES.with(|cell| cell.get())
+}
+
+/// Replace the heap-probe callsite list for the current thread.
+///
+/// Called by the codegen pipeline after each compile finishes so the CLI can
+/// pick up the collected callsites and write them to the `.probes.json`
+/// sidecar. Always overwrites any previous list.
+pub fn set_heap_probe_callsites(callsites: Vec<crate::codegen::mir_codegen::ProbeCallsite>) {
+    HEAP_PROBE_CALLSITES.with(|cell| {
+        *cell.borrow_mut() = callsites;
+    });
+}
+
+/// Drain and return the heap-probe callsites captured on the current thread.
+/// After this call the thread-local list is empty. Used by the CLI's sidecar
+/// writer right after a successful compile.
+pub fn take_heap_probe_callsites() -> Vec<crate::codegen::mir_codegen::ProbeCallsite> {
+    HEAP_PROBE_CALLSITES.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
 }
 
 /// Translate a CLI `--target` value into the bridge host class it implies.

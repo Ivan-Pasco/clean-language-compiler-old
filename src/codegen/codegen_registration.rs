@@ -42,6 +42,26 @@ impl super::CodeGenerator {
         Ok(())
     }
 
+    /// Register heap-probe imports for the STATE-A hunt with node-server.
+    ///
+    /// Called only when `--emit-heap-probes` is set. Zero cost when the flag
+    /// is off (no imports, no callsites). Signatures ack'd in prompt
+    /// 410a2312-836c-11f1-9d55-da25a95a496b:
+    ///
+    /// - `env._probe_ptr(tag: i32, ptr: i32) -> void`
+    /// - `env._probe_ptr_dump() -> i32`    (LP-string JSON pointer)
+    /// - `env._probe_ptr_reset() -> void`
+    ///
+    /// Must be called BEFORE any local functions (like the other `register_*_imports`
+    /// families) so import indices sit before the local-function index space —
+    /// WASM's funcidx puts all imports before local funcs.
+    pub fn register_heap_probe_imports(&mut self) -> Result<(), CompilerError> {
+        self.register_import_function("env", "_probe_ptr", &[WasmType::I32, WasmType::I32], None)?;
+        self.register_import_function("env", "_probe_ptr_dump", &[], Some(WasmType::I32))?;
+        self.register_import_function("env", "_probe_ptr_reset", &[], None)?;
+        Ok(())
+    }
+
     /// Register JSON operations for parsing and stringifying JSON
     /// BOOK: json-module - pure WASM JSON implementation
     pub fn register_json_operations(&mut self) -> Result<(), CompilerError> {

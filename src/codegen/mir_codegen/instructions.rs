@@ -1670,6 +1670,7 @@ impl MirCodeGenerator<'_> {
                         );
                         self.current_instructions
                             .push(Instruction::Call(function_index));
+                        self.maybe_emit_probe_after_call(function_index, &instruction.location);
                     } else if let Some(function_name) = self.get_function_name_by_symbol(*symbol_id)
                     {
                         // Fallback to name-based lookup for built-in functions
@@ -1778,6 +1779,7 @@ impl MirCodeGenerator<'_> {
                             );
                             self.current_instructions
                                 .push(Instruction::Call(function_index));
+                            self.maybe_emit_probe_after_call(function_index, &instruction.location);
                         } else {
                             // NOTE: No more silent fallbacks to index 0
                             // Return a proper error when function is not found in function_map
@@ -1894,6 +1896,7 @@ impl MirCodeGenerator<'_> {
                             "Calling named function at WASM index"
                         );
                         self.current_instructions.push(Instruction::Call(idx));
+                        self.maybe_emit_probe_after_call(idx, &instruction.location);
                     } else {
                         // NOTE: Return a proper error when named function is not found
                         debug_mir!(
@@ -2341,6 +2344,105 @@ impl MirCodeGenerator<'_> {
 
         debug_mir!("DEBUG MIR: Call operation processing completed");
         Ok(())
+    }
+
+    /// STATE-A heap-probe hunt — if the callee at `function_index` is
+    /// `__string_builder_append` or `__string_builder_finalize`, emit a
+    /// `call $_probe_ptr(callsite_id, result_ptr)` immediately after the
+    /// call, preserving the returned pointer on the stack for the caller.
+    ///
+    /// Sequence emitted (only when `--emit-heap-probes` is set AND the
+    /// callee matches):
+    ///
+    /// ```text
+    ///   (Instruction::Call(fn_idx) was just pushed by the caller)
+    ///   local.tee <probe_scratch>   ;; ptr stays on the stack
+    ///   i32.const <callsite_id>
+    ///   local.get <probe_scratch>
+    ///   call $_probe_ptr
+    /// ```
+    ///
+    /// No-op when the flag is off (early return). No-op when `_probe_ptr`
+    /// wasn't registered (a defensive check — shouldn't happen because the
+    /// import registration path is gated on the same flag).
+    ///
+    /// Also records a [`ProbeCallsite`] entry for the sidecar JSON.
+    pub(super) fn maybe_emit_probe_after_call(
+        &mut self,
+        function_index: u32,
+        instruction_loc: &crate::ast::SourceLocation,
+    ) {
+        if !crate::emit_heap_probes_override() {
+            return;
+        }
+
+        // Which string_builder alias does this index belong to? We match on
+        // the *raw* internal name registered by `register_function_with_locals`
+        // (see codegen_registration.rs:175 for append, :195 for finalize).
+        // The public aliases `string_builder_append` / `string_builder_finalize`
+        // also map to the same index — either resolves.
+        let append_idx = self
+            .wasm_generator
+            .function_map
+            .get("__string_builder_append")
+            .copied();
+        let finalize_idx = self
+            .wasm_generator
+            .function_map
+            .get("__string_builder_finalize")
+            .copied();
+
+        let callee_label: &str = if Some(function_index) == append_idx {
+            "string_builder_append"
+        } else if Some(function_index) == finalize_idx {
+            "string_builder_finalize"
+        } else {
+            return;
+        };
+
+        // The probe import must exist. If it doesn't, the CLI flag was set
+        // but the import registration was skipped for some reason — bail
+        // rather than emitting a broken call.
+        let Some(&probe_ptr_idx) = self.wasm_generator.function_map.get("_probe_ptr") else {
+            return;
+        };
+
+        // Allocate an i32 scratch local to tee the returned pointer into.
+        let scratch = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(scratch, ValType::I32);
+
+        // Assign this callsite an id. Sidecar order matches emission order.
+        let callsite_id: u32 = (self.probe_callsites.len() as u32) + 1;
+
+        // Emit the probe sequence. `LocalTee` keeps the value on the stack
+        // for the caller to consume, while also writing it into `scratch`.
+        self.current_instructions
+            .push(Instruction::LocalTee(scratch));
+        self.current_instructions
+            .push(Instruction::I32Const(callsite_id as i32));
+        self.current_instructions
+            .push(Instruction::LocalGet(scratch));
+        self.current_instructions
+            .push(Instruction::Call(probe_ptr_idx));
+
+        // Record the sidecar entry.
+        let caller_name = self
+            .current_function
+            .as_ref()
+            .map(|f| f.name.clone())
+            .unwrap_or_default();
+        let source = if instruction_loc.file.is_empty() {
+            format!("<unknown>:{}", instruction_loc.line)
+        } else {
+            format!("{}:{}", instruction_loc.file, instruction_loc.line)
+        };
+        self.probe_callsites.push(super::ProbeCallsite {
+            id: callsite_id,
+            function: callee_label.to_string(),
+            caller: caller_name,
+            source,
+        });
     }
 
     /// Lower a `MirOperation::CallCapability` into a runtime class-id switch

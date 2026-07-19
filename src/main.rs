@@ -206,6 +206,18 @@ enum Commands {
         /// See foundation/spec/plugins/contracts/typed-emission.md §3.10.
         #[arg(long)]
         strict_emission_ops: bool,
+
+        /// Emit heap-probe instrumentation for STATE-A hunt.
+        ///
+        /// When set, imports `env._probe_ptr`, `env._probe_ptr_dump`,
+        /// `env._probe_ptr_reset` and injects a `call $_probe_ptr(callsite_id,
+        /// result_ptr)` immediately after every WASM `call` to
+        /// `__string_builder_append` and `__string_builder_finalize`. Also
+        /// writes a `<output>.probes.json` sidecar mapping callsite ids to
+        /// caller function + source location. Off by default (zero production
+        /// cost). Wired for the node-server heap-observability probe.
+        #[arg(long)]
+        emit_heap_probes: bool,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -501,6 +513,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             release,
             strict_hosts,
             strict_emission_ops,
+            emit_heap_probes,
         } => {
             handle_compile(
                 input,
@@ -514,6 +527,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 release,
                 strict_hosts,
                 strict_emission_ops,
+                emit_heap_probes,
                 &output_config,
             )
             .await?
@@ -709,6 +723,7 @@ async fn handle_serve(
         false,                // release mode: off for serve
         false,                // strict_hosts off for serve
         false,                // strict_emission_ops off for serve
+        false,                // emit_heap_probes off for serve
         output_config,
     )
     .await;
@@ -1303,6 +1318,7 @@ async fn handle_compile(
     release: bool,
     strict_hosts: bool,
     strict_emission_ops: bool,
+    emit_heap_probes: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Plugin Contracts v2 — thread `--target` and `--strict-hosts` into the
@@ -1319,6 +1335,8 @@ async fn handle_compile(
     clean_language_compiler::set_strict_hosts_override(strict_hosts);
     // Plugin Contracts v3 Layer D step 2 — thread --strict-emission-ops.
     clean_language_compiler::set_strict_emission_ops_override(strict_emission_ops);
+    // STATE-A heap-probe hunt — thread --emit-heap-probes.
+    clean_language_compiler::set_emit_heap_probes_override(emit_heap_probes);
 
     // Plugin Contracts v2 Phase B — when building a plugin, resolve the
     // Clean Runtime ABI version from the sibling plugin.toml's
@@ -1424,6 +1442,41 @@ async fn handle_compile(
     }
 
     fs::write(&output, &wasm_binary)?;
+
+    // STATE-A heap-probe hunt — when `--emit-heap-probes` is on, drain the
+    // callsite list captured during codegen and write it to a
+    // `<output>.probes.json` sidecar. The sidecar maps `callsite_id` back to
+    // caller + source location so node-server's `_probe_ptr_dump` output
+    // can be correlated with the source `.cln` that produced it. See ack
+    // in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
+    if emit_heap_probes {
+        let callsites = clean_language_compiler::take_heap_probe_callsites();
+        let module_name = Path::new(&output)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "output.wasm".to_string());
+        let sidecar = serde_json::json!({
+            "version": 1,
+            "module": module_name,
+            "callsites": callsites,
+        });
+        let sidecar_path = format!("{}.probes.json", output);
+        match serde_json::to_vec_pretty(&sidecar) {
+            Ok(bytes) => {
+                fs::write(&sidecar_path, bytes)?;
+                if !output_config.quiet {
+                    println!(
+                        "Wrote heap-probe sidecar: {} ({} callsites)",
+                        sidecar_path,
+                        callsites.len()
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to serialize heap-probe sidecar: {}", e);
+            }
+        }
+    }
 
     // Plugin Contracts v2 — orchestrate plugin-declared [[artifacts]] before
     // writing the manifest. Previously only `cln build` ran the orchestrator

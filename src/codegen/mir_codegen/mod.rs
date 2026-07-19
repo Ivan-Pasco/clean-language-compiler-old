@@ -58,6 +58,32 @@ pub struct MirCodegenResult {
 
     /// Warnings produced during generation.
     pub warnings: Vec<CompilerError>,
+
+    /// Heap-probe callsites collected during generation.
+    ///
+    /// Populated only when `--emit-heap-probes` is set. The CLI writes this
+    /// to a `<output>.probes.json` sidecar so node-server's probe dump can
+    /// map `callsite_id` back to caller + source location. Empty when the
+    /// flag is off. Ack'd in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
+    pub probe_callsites: Vec<ProbeCallsite>,
+}
+
+/// One entry in the heap-probe sidecar. See [`MirCodegenResult::probe_callsites`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProbeCallsite {
+    /// Callsite id — the first `i32` argument passed to `_probe_ptr`.
+    /// Assigned sequentially starting at 1 in the order callsites are emitted.
+    pub id: u32,
+    /// Which stdlib function is being probed: `"string_builder_append"` or
+    /// `"string_builder_finalize"`.
+    pub function: String,
+    /// Name of the WASM function containing the call (the *caller*), taken
+    /// from the current MIR function's name. Empty when the call is emitted
+    /// outside any function context (should not happen in practice).
+    pub caller: String,
+    /// Source location of the call in the form `<file>:<line>`, threaded
+    /// through from the MIR instruction's `SourceLocation`.
+    pub source: String,
 }
 
 /// Statistics about MIR code generation.
@@ -352,6 +378,11 @@ pub struct MirCodeGenerator<'a> {
     /// custom section. Only populated for plugin builds; when `None`, no stamp
     /// is emitted. See `foundation/spec/plugins/contracts/runtime-abi.md` §4.
     pub(super) abi_version: Option<String>,
+
+    /// Heap-probe callsites collected during codegen. Populated only when
+    /// `--emit-heap-probes` is active. Consumed by `MirCodegenResult` and the
+    /// CLI's sidecar writer. See [`ProbeCallsite`].
+    pub(super) probe_callsites: Vec<ProbeCallsite>,
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +433,7 @@ impl MirCodeGenerator<'_> {
             strict_hosts: false,
             client_mode: false,
             abi_version: None,
+            probe_callsites: Vec::new(),
         }
     }
 
@@ -448,6 +480,7 @@ impl MirCodeGenerator<'_> {
             strict_hosts: false,
             client_mode: false,
             abi_version: None,
+            probe_callsites: Vec::new(),
         }
     }
 
@@ -494,6 +527,7 @@ impl MirCodeGenerator<'_> {
             strict_hosts: false,
             client_mode: false,
             abi_version: None,
+            probe_callsites: Vec::new(),
         }
     }
 
@@ -676,6 +710,18 @@ impl MirCodeGenerator<'_> {
             self.wasm_generator
                 .register_print_imports()
                 .map_err(|e| vec![e])?;
+
+            // STATE-A heap-probe instrumentation. Registered right after print
+            // imports so it participates in the normal import ordering (before
+            // any local functions get their indices). Only emitted when the
+            // `--emit-heap-probes` CLI flag is set — zero cost when off.
+            // Ack'd in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
+            if crate::emit_heap_probes_override() {
+                debug_mir!("DEBUG MIR: Registering heap-probe imports (--emit-heap-probes)");
+                self.wasm_generator
+                    .register_heap_probe_imports()
+                    .map_err(|e| vec![e])?;
+            }
 
             // Console input is registered EARLY in the import sequence, so
             // skipping it shifts all subsequent import indices. Some wrapper
@@ -1303,10 +1349,20 @@ impl MirCodeGenerator<'_> {
 
         stats.generation_time_us = start_time.elapsed().as_micros() as u64;
 
+        let probe_callsites = std::mem::take(&mut self.probe_callsites);
+
+        // Publish callsites to the crate-level thread-local so the CLI can
+        // drain them for the `.probes.json` sidecar without having to plumb
+        // the vec through the 24 `compile_multi_file_*` entry points.
+        // Always publishes — even an empty list — so the CLI never sees a
+        // stale vec from a previous compile on this thread.
+        crate::set_heap_probe_callsites(probe_callsites.clone());
+
         Ok(MirCodegenResult {
             wasm_bytes,
             stats,
             warnings,
+            probe_callsites,
         })
     }
 }
