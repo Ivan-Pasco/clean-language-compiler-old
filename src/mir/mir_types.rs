@@ -76,6 +76,19 @@ pub struct MirProgram {
     /// Each entry is (SymbolId of the `__test_*` function, human-readable test name).
     /// Consumed by the codegen phase to emit the `_run_tests` exported function.
     pub test_functions: Vec<(crate::resolver::SymbolId, String)>,
+
+    /// Runtime class-id assigned to each user class. Written into every
+    /// instance's object header at construction and read by capability
+    /// dispatch at call sites. See helpers.rs::OBJECT_HEADER_SIZE.
+    pub class_ids: BTreeMap<crate::resolver::SymbolId, u32>,
+
+    /// Per-capability-method dispatch table. Keyed by (capability SymbolId,
+    /// slot_index), value is the sorted list of (class_id, method function
+    /// SymbolId) pairs — one entry per class that conforms to the capability.
+    /// Consumed by the `CallCapability` codegen path to emit the class-id
+    /// switch that routes to the correct concrete method.
+    pub capability_dispatch:
+        BTreeMap<(crate::resolver::SymbolId, usize), Vec<(u32, crate::resolver::SymbolId)>>,
 }
 
 /// MIR External Function - a function provided by the WASM host (imported)
@@ -317,6 +330,26 @@ pub enum MirOperation {
     /// Function call
     Call {
         function: MirOperand,
+        arguments: Vec<MirOperand>,
+    },
+
+    /// Dynamic dispatch call on a capability-typed receiver.
+    ///
+    /// `capability_symbol` is the SymbolId of the capability declaration
+    /// (e.g. `Draw`). `slot_index` is the position of the method within
+    /// that capability's method list. `receiver` is the object whose
+    /// class_id (at offset 0 of its instance header) determines which
+    /// concrete method runs.
+    ///
+    /// Lowered to a class-id switch that calls the correct per-class
+    /// method implementation, filled in using the resolver's
+    /// `vtable_descriptors` map.
+    ///
+    /// See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.
+    CallCapability {
+        receiver: MirOperand,
+        capability_symbol: SymbolId,
+        slot_index: usize,
         arguments: Vec<MirOperand>,
     },
 

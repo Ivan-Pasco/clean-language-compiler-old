@@ -467,6 +467,16 @@ impl DeadCodeEliminationPass {
                     self.mark_operand_live(arg, function);
                 }
             }
+            MirOperation::CallCapability {
+                receiver,
+                arguments,
+                ..
+            } => {
+                self.mark_operand_live(receiver, function);
+                for arg in arguments {
+                    self.mark_operand_live(arg, function);
+                }
+            }
             MirOperation::Load { source } => {
                 self.mark_operand_live(source, function);
             }

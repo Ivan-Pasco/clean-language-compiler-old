@@ -1227,6 +1227,9 @@ impl<'a> TypeInference<'a> {
             // NOTE: Pass symbol table through to MIR for dynamic SymbolId resolution
             symbol_table: std::sync::Arc::new(program.symbol_table.clone()),
             externals: tast_externals,
+            // Forward the resolver's per-class capability vtable descriptors
+            // through to MIR so it can synthesize class-id dispatch tables.
+            vtable_descriptors: program.vtable_descriptors.clone(),
         }
     }
 
@@ -3741,36 +3744,9 @@ impl<'a> TypeInference<'a> {
             })
             .unwrap_or(crate::resolver::symbol_table::SymbolId(0)); // SymbolId(0) for built-in methods
 
-        // Capability-typed receiver method calls are type-safe (Stage 6 verifies
-        // the method belongs to the capability's contract) but not yet
-        // dispatchable at runtime — codegen would silently no-op today because
-        // there is no per-instance class_id or vtable machinery. Fail loudly
-        // so users don't ship code that silently does nothing.
-        // Runtime dispatch is deferred to a follow-up (see "Full dynamic" and
-        // "Static-only via monomorphization" in the plan's non-goals). Users
-        // can still declare capabilities, type parameters with them, and
-        // enforce SEM011/012/013 conformance.
-        if matches!(resolved_receiver_type, ConcreteType::Interface { .. }) {
-            let cap_name = match &resolved_receiver_type {
-                ConcreteType::Interface { symbol_id, .. } => self
-                    .symbol_table
-                    .get_symbol(*symbol_id)
-                    .map(|s| s.name.clone())
-                    .unwrap_or_else(|| format!("#{}", symbol_id.0)),
-                _ => "<unknown>".to_string(),
-            };
-            return Err(CompilerError::type_error(
-                format!(
-                    "Method call on capability-typed value ('{}.{}') is not yet dispatchable — v1 supports declaring and passing capability values, but calling methods through them requires runtime dispatch that ships in a follow-up. Call the method directly on the concrete class instead.",
-                    cap_name, method
-                ),
-                Some(format!(
-                    "Refactor to accept the concrete class as a parameter, or call `{}` directly on a `{}` instance.",
-                    method, cap_name
-                )),
-                Some(location.clone()),
-            ));
-        }
+        // Capability-typed receivers dispatch dynamically. The MIR builder
+        // emits `MirOperation::CallCapability` for these, which codegen
+        // lowers to a runtime class-id switch. No compile-time error needed.
 
         // SEM005: Private method access check.
         // If the method is private, it may only be called from within the class that
@@ -5143,7 +5119,17 @@ impl<'a> TypeInference<'a> {
                         &cap_sym.kind
                     {
                         if let Some(m) = methods.iter().find(|m| m.name == method_name) {
-                            return Ok(Self::hir_type_to_concrete_type(&m.return_type));
+                            // HirType::Void → ConcreteType::Undefined so the
+                            // auto-return path in MIR treats void-method calls
+                            // as truly void (no local push before return).
+                            // The static hir_type_to_concrete_type maps Void
+                            // to ConcreteType::Null which triggers a spurious
+                            // implicit-return-value branch downstream.
+                            let ret = match &m.return_type {
+                                crate::hir::HirType::Void => ConcreteType::Undefined,
+                                other => Self::hir_type_to_concrete_type(other),
+                            };
+                            return Ok(ret);
                         }
                         // Named method is not part of this capability's contract.
                         return Err(CompilerError::type_error(

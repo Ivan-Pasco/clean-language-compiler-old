@@ -26,6 +26,13 @@ pub struct TastProgram {
     pub symbol_table: Arc<GlobalSymbolTable>,
     /// External functions (WASM imports from host)
     pub externals: Vec<TastExternalFunction>,
+    /// Per-class capability vtable descriptors, forwarded verbatim from the
+    /// resolver. Keyed by (class SymbolId, capability SymbolId), value is a
+    /// vec with one entry per method slot of the capability — Some(method
+    /// SymbolId) if the class implements it, None if it inherits the
+    /// capability's default. Consumed by MIR to build the runtime dispatch
+    /// table. See Clean Language Specification §Capabilities.
+    pub vtable_descriptors: HashMap<(SymbolId, SymbolId), Vec<Option<SymbolId>>>,
 }
 
 /// Type-checked external function (WASM import)

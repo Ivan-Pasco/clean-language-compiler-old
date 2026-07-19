@@ -426,7 +426,9 @@ impl MirBuilder {
         }
 
         let mut fragments: Vec<FieldFragment> = Vec::new();
-        let mut byte_offset: usize = 0;
+        // Start past the per-instance object header (class-id at offset 0).
+        // See `helpers.rs::OBJECT_HEADER_SIZE`.
+        let mut byte_offset: usize = Self::OBJECT_HEADER_SIZE;
 
         for field in &fields {
             let field_size = self.get_type_byte_size(&field.field_type);

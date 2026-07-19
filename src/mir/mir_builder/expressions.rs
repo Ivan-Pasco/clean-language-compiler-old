@@ -1143,6 +1143,25 @@ impl MirBuilder {
 
                     self.add_instruction(context, alloc_instr);
 
+                    // Write the runtime class-id into the instance's object header
+                    // (bytes 0-3). Read by dynamic dispatch on capability-typed
+                    // receivers to look up the correct method via the per-class
+                    // vtable. See helpers.rs::OBJECT_HEADER_SIZE.
+                    let class_id_val = self.class_ids.get(class_symbol_id).copied().unwrap_or(0);
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: None,
+                            operation: MirOperation::Store {
+                                destination: MirOperand::Value(alloc_result),
+                                value: MirOperand::Constant(MirConstant::Integer(
+                                    class_id_val as i64,
+                                )),
+                            },
+                            location: expression.location.clone(),
+                        },
+                    );
+
                     // Prepend instance pointer as first argument to constructor
                     mir_arguments.push(MirOperand::Value(alloc_result));
                 }
@@ -1511,6 +1530,126 @@ impl MirBuilder {
                     actual_type = ?receiver_actual_type,
                     "Method call receiver"
                 );
+
+                // Capability-typed receiver — emit dynamic dispatch via
+                // MirOperation::CallCapability. The receiver's class-id (at
+                // offset 0 of its instance header) drives the class switch
+                // in codegen; the target method's return type comes from
+                // the capability's declared signature.
+                // See Clean Language Specification §Capabilities.
+                if let ConcreteType::Interface {
+                    symbol_id: cap_sym, ..
+                } = &receiver_actual_type
+                {
+                    let slot_index = self.symbol_table.get_symbol(*cap_sym).and_then(|s| {
+                        if let crate::resolver::symbol_table::SymbolKind::Capability { methods } =
+                            &s.kind
+                        {
+                            methods.iter().position(|m| &m.name == method_name)
+                        } else {
+                            None
+                        }
+                    });
+                    let Some(slot_index) = slot_index else {
+                        // Type checker should have caught this — capability has
+                        // no such method. Fall through to the general error path.
+                        return Err(vec![CompilerError::codegen_error(
+                            format!(
+                                "Capability #{} has no method '{}' — this should have been rejected at type-check time",
+                                cap_sym.0, method_name
+                            ),
+                            None,
+                            Some(expression.location.clone()),
+                        )]);
+                    };
+
+                    // Lower arguments (receiver is separate).
+                    let mut mir_args = Vec::with_capacity(arguments.len());
+                    for arg in arguments {
+                        let arg_id = self.build_expression(context, arg)?;
+                        mir_args.push(MirOperand::Value(arg_id));
+                    }
+
+                    // Determine the result type from the capability method's declared return.
+                    let (result_type, has_return) = self
+                        .symbol_table
+                        .get_symbol(*cap_sym)
+                        .and_then(|s| {
+                            if let crate::resolver::symbol_table::SymbolKind::Capability {
+                                methods,
+                            } = &s.kind
+                            {
+                                methods.get(slot_index).map(|m| {
+                                    let has_ret =
+                                        !matches!(&m.return_type, crate::hir::HirType::Void);
+                                    // MIR's HirType-aware conversion path uses a
+                                    // Concrete detour via TAST — for our purposes
+                                    // (Interface method dispatch), map the HirType
+                                    // directly to a MirType via existing helpers.
+                                    let mir_ty = match &m.return_type {
+                                        crate::hir::HirType::Integer => MirType::I32,
+                                        crate::hir::HirType::Number => MirType::F64,
+                                        crate::hir::HirType::Boolean => MirType::I32,
+                                        crate::hir::HirType::String => {
+                                            MirType::Ptr(Box::new(MirType::I8))
+                                        }
+                                        crate::hir::HirType::Void => MirType::Void,
+                                        _ => MirType::I32, // Pointers for classes, lists, etc.
+                                    };
+                                    (mir_ty, has_ret)
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or((MirType::Void, false));
+
+                    // Always allocate a fresh result ValueId, even for void
+                    // returns. The MethodCall caller sometimes routes the
+                    // returned ValueId into a Return terminator (which would
+                    // emit `local.get N; return`), so we cannot re-use the
+                    // receiver's ValueId as a placeholder — that would push
+                    // the receiver onto the stack of a void-returning
+                    // function. For void methods we register a dummy i32
+                    // local that codegen never stores to.
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    let dest = if has_return {
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            result_type,
+                            expression.location.clone(),
+                        );
+                        Some(result_id)
+                    } else {
+                        // Void method — register an unused i32 marker so any
+                        // downstream lookup on `result_id` returns something
+                        // sensible, but don't set dest so codegen skips
+                        // store_to_local.
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            MirType::I32,
+                            expression.location.clone(),
+                        );
+                        None
+                    };
+
+                    let instruction = MirInstruction {
+                        dest,
+                        operation: MirOperation::CallCapability {
+                            receiver: MirOperand::Value(receiver_id),
+                            capability_symbol: *cap_sym,
+                            slot_index,
+                            arguments: mir_args,
+                        },
+                        location: expression.location.clone(),
+                    };
+                    self.add_instruction(context, instruction);
+
+                    return Ok(result_id);
+                }
 
                 // SPECIAL CASE: String.toString() is identity operation - just return the receiver
                 if method_symbol.0 == 0

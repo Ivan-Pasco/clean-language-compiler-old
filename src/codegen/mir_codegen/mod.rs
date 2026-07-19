@@ -187,6 +187,14 @@ pub struct MirCodeGenerator<'a> {
     /// Avoids name collisions for constructors/methods with the same names.
     pub(super) symbol_to_function_index: HashMap<SymbolId, u32>,
 
+    /// Per-capability-method dispatch table copied from MirProgram at the
+    /// start of `generate`. Keyed by (capability SymbolId, slot_index),
+    /// value is the list of (class_id, method SymbolId) pairs sorted by
+    /// class_id. Consumed by CallCapability codegen to emit the runtime
+    /// class-id switch that routes to the correct concrete method.
+    pub(super) capability_dispatch:
+        std::collections::BTreeMap<(SymbolId, usize), Vec<(u32, SymbolId)>>,
+
     /// Function signature map for parameter/return type handling.
     pub(super) function_signatures: HashMap<SymbolId, MirFunction>,
 
@@ -365,6 +373,7 @@ impl MirCodeGenerator<'_> {
             value_to_string_index: HashMap::new(),
             function_symbol_map: HashMap::new(),
             symbol_to_function_index: HashMap::new(),
+            capability_dispatch: std::collections::BTreeMap::new(),
             function_signatures: HashMap::new(),
             function_return_types: HashMap::new(),
             value_to_type: HashMap::new(),
@@ -410,6 +419,7 @@ impl MirCodeGenerator<'_> {
             value_to_string_index: HashMap::new(),
             function_symbol_map: HashMap::new(),
             symbol_to_function_index: HashMap::new(),
+            capability_dispatch: std::collections::BTreeMap::new(),
             function_signatures: HashMap::new(),
             function_return_types: HashMap::new(),
             value_to_type: HashMap::new(),
@@ -455,6 +465,7 @@ impl MirCodeGenerator<'_> {
             value_to_string_index: HashMap::new(),
             function_symbol_map: HashMap::new(),
             symbol_to_function_index: HashMap::new(),
+            capability_dispatch: std::collections::BTreeMap::new(),
             function_signatures: HashMap::new(),
             function_return_types: HashMap::new(),
             value_to_type: HashMap::new(),
@@ -597,6 +608,11 @@ impl MirCodeGenerator<'_> {
             functions = mir_program.functions.len(),
             "MirCodeGenerator::generate called"
         );
+
+        // Copy the capability dispatch table into codegen state so the
+        // per-instruction handler can look up class-id → method mappings
+        // when lowering `MirOperation::CallCapability`.
+        self.capability_dispatch = mir_program.capability_dispatch.clone();
         for (symbol_id, function) in &mir_program.functions {
             tracing::debug!(
                 symbol_id = symbol_id.0,

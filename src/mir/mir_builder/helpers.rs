@@ -209,10 +209,23 @@ impl MirBuilder {
         total_fields
     }
 
-    /// Calculate the total byte size of all fields in a class hierarchy
+    /// Size in bytes of the per-instance object header prepended to every
+    /// class instance. Currently holds a single `i32` class-id used by
+    /// dynamic dispatch on capability-typed receivers (`shape.draw()` where
+    /// `shape: Drawable`). The class-id is written by the constructor
+    /// immediately after allocation and read by the `CallCapability`
+    /// codegen path to index into the per-class vtable.
+    ///
+    /// All field offsets and instance sizes account for this header — see
+    /// `calculate_field_byte_offset` and `calculate_instance_byte_size`.
+    pub(super) const OBJECT_HEADER_SIZE: usize = 4;
+
+    /// Calculate the total byte size of all fields in a class hierarchy,
+    /// **including the per-instance object header** (class-id).
     ///
     /// This traverses the class hierarchy and sums up the byte sizes of all fields,
-    /// accounting for different type sizes (i32=4, i64/f64=8, etc.)
+    /// accounting for different type sizes (i32=4, i64/f64=8, etc.), then adds
+    /// `OBJECT_HEADER_SIZE` bytes for the header.
     pub(super) fn calculate_instance_byte_size(
         &self,
         context: &FunctionBuildContext,
@@ -248,8 +261,8 @@ impl MirBuilder {
         // Reverse to get root-to-leaf order
         hierarchy.reverse();
 
-        // Sum up byte sizes for all fields
-        let mut total_bytes = 0usize;
+        // Sum up byte sizes for all fields, plus the per-instance object header.
+        let mut total_bytes = Self::OBJECT_HEADER_SIZE;
         for class in &hierarchy {
             for field in &class.fields {
                 total_bytes += self.get_type_byte_size(&field.field_type);
@@ -257,9 +270,10 @@ impl MirBuilder {
         }
 
         tracing::debug!(
-            "calculate_instance_byte_size: class {:?} needs {} bytes",
+            "calculate_instance_byte_size: class {:?} needs {} bytes (incl. {}-byte header)",
             class_symbol,
-            total_bytes
+            total_bytes,
+            Self::OBJECT_HEADER_SIZE
         );
         total_bytes
     }
@@ -338,16 +352,18 @@ impl MirBuilder {
         // Reverse to get root-to-leaf order
         hierarchy.reverse();
 
-        // Calculate byte offset
-        let mut byte_offset = 0usize;
+        // Calculate byte offset — every field is shifted by OBJECT_HEADER_SIZE
+        // to leave room for the class-id at the start of the instance.
+        let mut byte_offset = Self::OBJECT_HEADER_SIZE;
 
         for class in &hierarchy {
             for field in &class.fields {
                 if field.symbol_id == *property_symbol {
                     tracing::debug!(
-                        "calculate_field_byte_offset: field {:?} at byte offset {}",
+                        "calculate_field_byte_offset: field {:?} at byte offset {} (past {}-byte header)",
                         property_symbol,
-                        byte_offset
+                        byte_offset,
+                        Self::OBJECT_HEADER_SIZE
                     );
                     return Some(byte_offset);
                 }

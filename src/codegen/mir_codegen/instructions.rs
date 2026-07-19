@@ -278,6 +278,21 @@ impl MirCodeGenerator<'_> {
                 self.generate_call_instruction(instruction, function, arguments)?;
             }
 
+            MirOperation::CallCapability {
+                receiver,
+                capability_symbol,
+                slot_index,
+                arguments,
+            } => {
+                self.generate_call_capability(
+                    instruction,
+                    receiver,
+                    *capability_symbol,
+                    *slot_index,
+                    arguments,
+                )?;
+            }
+
             MirOperation::GetElementPtr {
                 base,
                 indices,
@@ -2325,6 +2340,165 @@ impl MirCodeGenerator<'_> {
         }
 
         debug_mir!("DEBUG MIR: Call operation processing completed");
+        Ok(())
+    }
+
+    /// Lower a `MirOperation::CallCapability` into a runtime class-id switch
+    /// that dispatches to the correct concrete method implementation.
+    ///
+    /// Emits, for each class that conforms to the target capability:
+    ///
+    /// ```text
+    /// receiver.class_id == class_N
+    ///     ? call class_N::method(receiver, args...)
+    ///     : (continue to next arm)
+    /// ```
+    ///
+    /// The final arm falls through to `unreachable` — the type checker
+    /// guarantees the receiver's runtime class is one of the conforming
+    /// classes, so this trap is defensive rather than reachable.
+    fn generate_call_capability(
+        &mut self,
+        instruction: &MirInstruction,
+        receiver: &MirOperand,
+        capability_symbol: SymbolId,
+        slot_index: usize,
+        arguments: &[MirOperand],
+    ) -> Result<(), CompilerError> {
+        // Look up conforming classes for this capability method slot.
+        let entries = self
+            .capability_dispatch
+            .get(&(capability_symbol, slot_index))
+            .cloned()
+            .unwrap_or_default();
+
+        if entries.is_empty() {
+            return Err(CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    format!(
+                        "CallCapability: no class conforms to capability #{} slot {} — resolver should have prevented this",
+                        capability_symbol.0, slot_index
+                    ),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    Some(instruction.location.clone()),
+                )),
+            });
+        }
+
+        // Determine WASM result type from destination local, if any. Used to
+        // pick the right `BlockType` for each `if` branch so the WASM stack
+        // shape validates.
+        let result_val_type = instruction.dest.and_then(|d| {
+            self.value_to_type.get(&d).and_then(|mir_ty| match mir_ty {
+                MirType::I32 | MirType::Ptr(_) => Some(ValType::I32),
+                MirType::F64 => Some(ValType::F64),
+                MirType::I64 | MirType::U64 => Some(ValType::I64),
+                MirType::Void => None,
+                _ => Some(ValType::I32),
+            })
+        });
+        let block_type = match result_val_type {
+            Some(vt) => wasm_encoder::BlockType::Result(vt),
+            None => wasm_encoder::BlockType::Empty,
+        };
+
+        // Stash receiver in a local so we can load it once per arm without
+        // re-evaluating side effects.
+        self.load_operand(receiver)?;
+        let receiver_local = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(receiver_local, ValType::I32);
+        self.current_instructions
+            .push(Instruction::LocalSet(receiver_local));
+
+        // Emit an if/else-if chain over class_ids.
+        // Structure per arm:
+        //   load receiver.class_id
+        //   i32.const <class_id>
+        //   i32.eq
+        //   if <blocktype>
+        //     load receiver
+        //     load each arg
+        //     call <method_symbol_index>
+        //   else
+        //     ... next arm ...
+        //   end
+        //
+        // The final else emits `unreachable` for the "should never happen"
+        // case where a class not in the conformance set somehow reached here.
+        let n_arms = entries.len();
+        for (class_id, method_sym) in &entries {
+            // Load receiver.class_id (i32 at offset 0 of instance header).
+            self.current_instructions
+                .push(Instruction::LocalGet(receiver_local));
+            self.current_instructions
+                .push(Instruction::I32Load(wasm_encoder::MemArg {
+                    offset: 0,
+                    align: 2, // 4-byte aligned
+                    memory_index: 0,
+                }));
+            self.current_instructions
+                .push(Instruction::I32Const(*class_id as i32));
+            self.current_instructions.push(Instruction::I32Eq);
+            self.current_instructions.push(Instruction::If(block_type));
+
+            // Then branch: call the concrete method.
+            self.current_instructions
+                .push(Instruction::LocalGet(receiver_local));
+            for arg in arguments {
+                self.load_operand(arg)?;
+            }
+            let Some(&fn_idx) = self.symbol_to_function_index.get(method_sym) else {
+                return Err(CompilerError::Codegen {
+                    context: Box::new(crate::error::ErrorContext::new(
+                        format!(
+                            "CallCapability: method SymbolId({}) has no WASM function index",
+                            method_sym.0
+                        ),
+                        None,
+                        crate::error::ErrorType::Codegen,
+                        Some(instruction.location.clone()),
+                    )),
+                });
+            };
+            self.current_instructions.push(Instruction::Call(fn_idx));
+            // Concrete-class methods have an implicit `return this` even
+            // when the source method is void — the constructor/method
+            // convention pushes `this` (i32) as the return value. When our
+            // dispatch block type is Empty (the capability method is void),
+            // drop that pushed value to keep the block balanced. When the
+            // block type has a Result, we assume the callee left the right
+            // value on the stack for the caller to consume.
+            if matches!(block_type, wasm_encoder::BlockType::Empty) {
+                // Look up the callee's declared return type. Non-void return
+                // means the callee left something on the stack we need to drop.
+                let callee_returns_something = self
+                    .function_signatures
+                    .get(method_sym)
+                    .map(|f| !matches!(f.return_type, MirType::Void))
+                    .unwrap_or(true); // Assume yes when unknown; safer to drop.
+                if callee_returns_something {
+                    self.current_instructions.push(Instruction::Drop);
+                }
+            }
+            self.current_instructions.push(Instruction::Else);
+        }
+
+        // Innermost else: unreachable. Stack shape must match block_type,
+        // but `unreachable` is stack-polymorphic in WASM, so no fixup needed.
+        self.current_instructions.push(Instruction::Unreachable);
+
+        // Close all the `if` blocks (one End per If we opened).
+        for _ in 0..n_arms {
+            self.current_instructions.push(Instruction::End);
+        }
+
+        // Store the result into the destination local, if any.
+        if let Some(dest) = instruction.dest {
+            self.store_to_local(dest)?;
+        }
+
         Ok(())
     }
 

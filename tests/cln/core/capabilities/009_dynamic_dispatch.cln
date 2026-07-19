@@ -1,0 +1,31 @@
+// Test: core/capabilities — dynamic dispatch on a capability-typed receiver
+// Grammar: method_call on a receiver whose static type is a capability
+// Semantic: runtime class-id in the instance header selects the concrete method
+// Expected output:
+//   circle
+//   square
+
+start:
+	Circle c = Circle()
+	Square s = Square()
+	render(c)
+	render(s)
+
+can Drawable:
+	draw()
+
+class Circle can Drawable
+	functions:
+		public:
+			draw()
+				print("circle")
+
+class Square can Drawable
+	functions:
+		public:
+			draw()
+				print("square")
+
+functions:
+	render(Drawable shape)
+		shape.draw()

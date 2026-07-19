@@ -136,6 +136,20 @@ pub struct MirBuilder {
     /// Counter for synthetic SymbolIds for class serializer functions (starts at 5000).
     pub(super) next_serializer_symbol_id: usize,
 
+    /// Runtime class-id assigned to each user class. Written into every
+    /// instance's object header at construction, and used by dynamic
+    /// dispatch on capability-typed receivers to look up the correct
+    /// method implementation via the per-class vtable.
+    ///
+    /// Numbering starts at 1 (0 is reserved for "unset / not a class
+    /// instance") and increments in the order classes are seen by the
+    /// MIR builder's Phase 0. See `foundation/docs/Clean Language
+    /// Specification.md` §Capabilities.
+    pub(super) class_ids: HashMap<SymbolId, u32>,
+
+    /// Counter for the next available runtime class-id.
+    pub(super) next_class_id: u32,
+
     /// Class always: condition expressions to be injected before every return in the
     /// currently-being-built class method.  Set by `build_class` before calling
     /// `build_function_with_class_context` and cleared afterwards.
@@ -248,6 +262,8 @@ impl MirBuilder {
             next_computed_symbol_id: SYM_COMPUTED_GETTER_BASE,
             class_serializer_ids: HashMap::new(),
             next_serializer_symbol_id: SYM_CLASS_SERIALIZER_BASE,
+            class_ids: HashMap::new(),
+            next_class_id: 1, // 0 reserved for "unset"
             pending_class_invariants: Vec::new(),
             release_mode: false,
         }
@@ -268,14 +284,21 @@ impl MirBuilder {
 
         // Phase 0: Pre-register class serializer SymbolIds so forward references work when
         // a nested class field is serialized before its own serializer is built.
+        // Also assign each class a runtime class-id used by dynamic dispatch on
+        // capability-typed receivers.
         for class in &tast.classes {
             let sym_id = SymbolId(self.next_serializer_symbol_id);
             self.next_serializer_symbol_id += 1;
             self.class_serializer_ids.insert(class.name.clone(), sym_id);
+
+            let class_id = self.next_class_id;
+            self.next_class_id += 1;
+            self.class_ids.insert(class.symbol_id, class_id);
             debug!(
                 class_name = %class.name,
                 symbol_id = sym_id.0,
-                "Pre-registered class serializer SymbolId"
+                class_id = class_id,
+                "Pre-registered class serializer SymbolId + runtime class-id"
             );
         }
 
@@ -394,7 +417,38 @@ impl MirBuilder {
             state_guards: Vec::new(),
             externals: Vec::new(),
             test_functions: Vec::new(),
+            class_ids: self
+                .class_ids
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect::<BTreeMap<_, _>>(),
+            // Built from tast.vtable_descriptors below.
+            capability_dispatch: BTreeMap::new(),
         };
+
+        // Build the runtime capability dispatch table from the resolver's
+        // per-(class, capability) vtable descriptors. Grouped by (capability,
+        // slot) so that a `CallCapability` at codegen time can look up all
+        // conforming classes in one pass.
+        for ((class_sym, cap_sym), slots) in &tast.vtable_descriptors {
+            let Some(&class_id) = self.class_ids.get(class_sym) else {
+                continue;
+            };
+            for (slot_index, method_opt) in slots.iter().enumerate() {
+                if let Some(method_sym) = method_opt {
+                    mir_program
+                        .capability_dispatch
+                        .entry((*cap_sym, slot_index))
+                        .or_default()
+                        .push((class_id, *method_sym));
+                }
+            }
+        }
+        // Sort each entry by class_id so codegen emits the switch in a
+        // deterministic order.
+        for entries in mir_program.capability_dispatch.values_mut() {
+            entries.sort_by_key(|(cid, _)| *cid);
+        }
 
         // NOTE: Populate symbol_name_map from SymbolTable for dynamic resolution
         // This captures ALL symbols: builtins (print, math.*, string.*, etc.) AND user-defined

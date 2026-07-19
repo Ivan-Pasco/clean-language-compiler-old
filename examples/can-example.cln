@@ -1,0 +1,41 @@
+// Example — Clean Language `can` (capabilities) with runtime dispatch
+//
+// Demonstrates: capability declaration with a default body, two classes
+// claiming it, and dynamic dispatch through a capability-typed parameter.
+
+start:
+	Circle c = Circle()
+	Square s = Square()
+
+	// Direct calls on concrete classes.
+	c.draw()
+	s.draw()
+
+	// Capability-typed dispatch — runtime class-id picks the right draw().
+	render(c)
+	render(s)
+
+	print("done")
+
+can Draw:
+	draw()
+	string label()
+		return "shape"
+
+class Circle can Draw
+	functions:
+		public:
+			draw()
+				print("○ circle")
+			string label()
+				return "circle"
+
+class Square can Draw
+	functions:
+		public:
+			draw()
+				print("□ square")
+
+functions:
+	render(Draw shape)
+		shape.draw()
