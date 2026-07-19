@@ -10,10 +10,10 @@ start:
 can Draw:
 	draw()
 
-can Describable:
+can Describe:
 	string describe()
 
-class Circle can Draw, Describable
+class Circle can Draw, Describe
 	functions:
 		public:
 			draw()

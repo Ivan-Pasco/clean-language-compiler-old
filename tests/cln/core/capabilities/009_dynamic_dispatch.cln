@@ -11,21 +11,21 @@ start:
 	render(c)
 	render(s)
 
-can Drawable:
+can Draw:
 	draw()
 
-class Circle can Drawable
+class Circle can Draw
 	functions:
 		public:
 			draw()
 				print("circle")
 
-class Square can Drawable
+class Square can Draw
 	functions:
 		public:
 			draw()
 				print("square")
 
 functions:
-	render(Drawable shape)
+	render(Draw shape)
 		shape.draw()

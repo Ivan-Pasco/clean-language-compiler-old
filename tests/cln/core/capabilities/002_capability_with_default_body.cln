@@ -7,7 +7,7 @@
 start:
 	print("ok")
 
-can Describable:
+can Describe:
 	string describe()
 	string tag()
 		return "[default]"
