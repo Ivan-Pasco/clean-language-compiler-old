@@ -1,0 +1,26 @@
+// Test: core/capabilities — passing a non-conforming class to a capability-typed
+//                            parameter through a STATIC method call must be rejected
+// Grammar: type unification (Class -> Interface / Capability) at static method call sites
+// Semantic: nominal conformance is required for static method call arguments too
+// Expected compile error: "does not conform to capability"
+// Regression: fingerprint #838c14541ba7 — before the fix, this file compiled
+//             `cln check` clean and only failed at codegen with
+//             `CallCapability: no class conforms to capability #N slot 0`.
+
+start:
+	Session s = Session()
+	boolean ok = Registry.save(s)
+	print(ok)
+
+can Persist:
+	boolean save()
+	boolean delete()
+
+class Registry
+	functions:
+		public:
+			boolean save(Persist target)
+				return target.save()
+
+class Session
+	string token

@@ -3853,6 +3853,31 @@ impl<'a> TypeInference<'a> {
         let return_type =
             self.infer_static_method_return_type(&full_class_name, method, &tast_arguments)?;
 
+        // Emit argument-vs-parameter type constraints for user-defined static
+        // methods so the constraint solver can reject non-conforming classes
+        // when a parameter is capability-typed (SEM011) and enforce ordinary
+        // type equality on all other parameters. Without this, invalid calls
+        // like `Registry.save(NonPersist())` compiled and only trapped at
+        // codegen with "no class conforms to capability" — see fingerprint
+        // #838c14541ba7 (0.33.86).
+        if method_symbol_id.0 != 0 {
+            if let Some(sym) = self.symbol_table.get_symbol(*method_symbol_id) {
+                if let SymbolKind::Method { parameters, .. } = &sym.kind {
+                    let param_types: Vec<ConcreteType> = parameters
+                        .iter()
+                        .map(|p| self.hir_type_to_concrete(p))
+                        .collect();
+                    for (param_type, arg) in param_types.iter().zip(tast_arguments.iter()) {
+                        self.add_constraint(TypeConstraint::Equality {
+                            left: arg.expr_type.clone(),
+                            right: param_type.clone(),
+                            location: location.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
         // NOTE: Use SymbolId(0) for built-in namespace methods
         // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
         // For user-defined static methods, keep the actual method_symbol_id

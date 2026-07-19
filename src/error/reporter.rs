@@ -459,9 +459,15 @@ impl ErrorReporter {
 
                         // Show inline error message
                         if !context.message.is_empty() {
-                            // Truncate message if too long
-                            let inline_msg = if context.message.len() > 50 {
-                                format!("{}...", &context.message[..47])
+                            // Truncate message if too long. Slice on a char
+                            // boundary — messages contain UTF-8 punctuation
+                            // like `—` that panic on raw byte indexing.
+                            let inline_msg = if context.message.chars().count() > 50 {
+                                let mut end = 47;
+                                while end > 0 && !context.message.is_char_boundary(end) {
+                                    end -= 1;
+                                }
+                                format!("{}...", &context.message[..end])
                             } else {
                                 context.message.clone()
                             };
