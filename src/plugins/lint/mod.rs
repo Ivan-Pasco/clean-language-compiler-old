@@ -4,18 +4,16 @@
 /// `foundation/spec/framework/contracts/lint-extension.md`.
 ///
 /// Layout:
-///   - `arena`    — single-call `LintArena` holding a snapshot of the
-///                  pre-expansion `Program`, the monotonic `handle`, and the
-///                  4 accessor methods that produce the JSON payloads
-///                  described in §4.
-///   - `bridges`  — 4 WASM host functions (`_ast_list_classes`,
-///                  `_ast_class_fields`, `_ast_list_functions`,
-///                  `_ast_list_blocks`) registered onto a dedicated lint
-///                  linker in `wasm_adapter.rs`.
-///   - `pass`     — `run_lint_pass` orchestrates one lint pass over all
-///                  plugins in the registry that declare `[exports].lint`,
-///                  parses their JSON output into `LintDiagnostic`s, and
-///                  enforces cross-plugin diagnostic code uniqueness.
+///   - `arena` — single-call `LintArena` holding a snapshot of the
+///     pre-expansion `Program`, the monotonic `handle`, and the 4 accessor
+///     methods that produce the JSON payloads described in §4.
+///   - `bridges` — 4 WASM host functions (`_ast_list_classes`,
+///     `_ast_class_fields`, `_ast_list_functions`, `_ast_list_blocks`)
+///     registered onto a dedicated lint linker in `wasm_adapter.rs`.
+///   - `pass` — `run_lint_pass` orchestrates one lint pass over all plugins
+///     in the registry that declare `[exports].lint`, parses their JSON
+///     output into `LintDiagnostic`s, and enforces cross-plugin diagnostic
+///     code uniqueness.
 pub(crate) mod arena;
 pub(crate) mod bridges;
 
