@@ -22,13 +22,13 @@ The MCP server is configured in `.mcp.json` at the project root.
 
 The **single source of truth** for the Clean Language is:
 - **[Language Specification](./documentation/Clean_Language_Specification.md)** — prose specification
-- **[`foundation/spec/grammar.ebnf`](../foundation/spec/grammar.ebnf)** — formal EBNF grammar (authoritative for syntax)
+- **[`foundation/spec/grammar/grammar.ebnf`](../foundation/spec/grammar/grammar.ebnf)** — formal EBNF grammar (authoritative for syntax)
 - **[`foundation/spec/semantic-rules.md`](../foundation/spec/semantic-rules.md)** — numbered semantic rules
 - **[`foundation/spec/type-system.md`](../foundation/spec/type-system.md)** — type hierarchy and compatibility
 - **[`foundation/spec/stdlib-reference.md`](../foundation/spec/stdlib-reference.md)** — built-in function signatures
 - **[`foundation/spec/plugins/`](../foundation/spec/plugins/)** — plugin grammar extensions (EBNF)
 
-When resolving syntax ambiguity, `foundation/spec/grammar.ebnf` takes precedence. If something is not in the spec, propose a spec change before implementing it. When something is added, update both the prose spec and the formal EBNF.
+When resolving syntax ambiguity, `foundation/spec/grammar/grammar.ebnf` takes precedence. If something is not in the spec, propose a spec change before implementing it. When something is added, update both the prose spec and the formal EBNF.
 
 See also: **[KNOWLEDGE.md](./KNOWLEDGE.md)** — known fragile areas in compiler code.
 
@@ -36,10 +36,10 @@ See also: **[KNOWLEDGE.md](./KNOWLEDGE.md)** — known fragile areas in compiler
 
 The compiler generates WASM imports — it does NOT implement runtime functions.
 
-- **[Execution Layers](../foundation/platform-architecture/EXECUTION_LAYERS.md)** — read FIRST before implementing any function
-- **[Host Bridge](../foundation/platform-architecture/HOST_BRIDGE.md)** — Layer 2 portable functions
-- **[Memory Model](../foundation/platform-architecture/MEMORY_MODEL.md)** — WASM memory layout
-- **[Server Extensions](../foundation/platform-architecture/SERVER_EXTENSIONS.md)** — Layer 3 HTTP functions
+- **[Execution Layers](../foundation/spec/platform/EXECUTION_LAYERS.md)** — read FIRST before implementing any function
+- **[Host Bridge](../foundation/spec/platform/HOST_BRIDGE.md)** — Layer 2 portable functions
+- **[Memory Model](../foundation/spec/platform/MEMORY_MODEL.md)** — WASM memory layout
+- **[Server Extensions](../foundation/spec/platform/SERVER_EXTENSIONS.md)** — Layer 3 HTTP functions
 - **[Architecture Boundaries](../foundation/management/ARCHITECTURE_BOUNDARIES.md)** — component responsibilities
 
 **Rule of thumb:** If a function needs I/O, network, or database, it belongs in a plugin declaration, NOT in the compiler registry.
@@ -56,7 +56,7 @@ Everything else comes from plugin `[bridge]` declarations in `plugin.toml`.
 
 ### Bridge Function Call-Site Resolution
 
-Bridge function call sites (e.g. `db.query(...)`) are syntactic sugar resolved during compilation to the canonical import name defined in `foundation/platform-architecture/function-registry.toml`. The compiler emits exactly **one** WASM import per bridge function — the canonical `_namespace_fn` name. Hosts register only canonical names.
+Bridge function call sites (e.g. `db.query(...)`) are syntactic sugar resolved during compilation to the canonical import name defined in `foundation/spec/platform/function-registry.toml`. The compiler emits exactly **one** WASM import per bridge function — the canonical `_namespace_fn` name. Hosts register only canonical names.
 
 Dual emission of both `_namespace_fn` and `namespace.fn` as separate WASM imports is a **bug**, not a feature. The test in `tests/test_dual_naming_imports.rs` guards against this regression.
 
@@ -152,20 +152,20 @@ If in doubt: it's a bug → `report_error`.
 
 ## Documentation Sync Protocol
 
-Facts about the language live in `foundation/spec/` (at the project root). Facts about the platform live in `foundation/platform-architecture/`. Do not duplicate them here — link to them instead.
+Facts about the language live in `foundation/spec/` (at the project root). Facts about the platform live in `foundation/spec/platform/`. Do not duplicate them here — link to them instead.
 
 **When you make a change in this component, update the corresponding spec file in the same commit:**
 
 | Change type | Update required |
 |-------------|-----------------|
-| New language syntax | `foundation/spec/grammar.ebnf` |
+| New language syntax | `foundation/spec/grammar/grammar.ebnf` |
 | New semantic rule or error code | `foundation/spec/semantic-rules.md` + `foundation/spec/error-codes.md` |
 | New or changed type rule | `foundation/spec/type-system.md` |
 | New or changed built-in function | `foundation/spec/stdlib-reference.md` |
 | New or changed AST node | `foundation/spec/ast.md` |
-| New or changed plugin contract | `foundation/spec/plugins/plugin-contract.md` |
-| New or changed host bridge function | `foundation/platform-architecture/HOST_BRIDGE.md` |
-| New or changed execution layer | `foundation/platform-architecture/EXECUTION_LAYERS.md` |
+| New or changed plugin contract | `foundation/spec/framework/plugin-contract.md` |
+| New or changed host bridge function | `foundation/spec/platform/HOST_BRIDGE.md` |
+| New or changed execution layer | `foundation/spec/platform/EXECUTION_LAYERS.md` |
 
 The spec files are the single source of truth. Component documentation explains implementation — it does not redefine language rules.
 
