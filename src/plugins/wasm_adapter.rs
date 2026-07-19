@@ -120,6 +120,63 @@ fn validate_assemble_export_signature(
     ))
 }
 
+/// Verify at load time that a plugin's declared `exports.lint` export
+/// matches the Contract 5 §2 signature `(i32) -> i32`:
+///   - Parameter: LP-string pointer to the project-context JSON
+///   - Return: LP-string pointer to the diagnostic-array (or error-object) JSON
+///
+/// Any other shape — missing export, non-function, arity mismatch, non-i32
+/// params/return — is rejected here so plugin authors get a precise failure
+/// at load time (surfaced as PLUGIN001) instead of a generic "does not
+/// export lint_project" error on first invocation. Mirrors the assemble
+/// validator above.
+fn validate_lint_export_signature(
+    module: &Module,
+    plugin_name: &str,
+    export_name: &str,
+) -> Result<()> {
+    let export = module.get_export(export_name).ok_or_else(|| {
+        anyhow!(
+            "plugin `{}`: manifest declares `exports.lint = \"{}\"` but the WASM module has \
+             no export by that name. See foundation/spec/framework/contracts/lint-extension.md §2.",
+            plugin_name,
+            export_name
+        )
+    })?;
+
+    let func_ty = match export {
+        ExternType::Func(ft) => ft,
+        other => {
+            return Err(anyhow!(
+                "plugin `{}`: export `{}` is a {:?}, not a function. The lint hook must be a \
+                 function with signature `(i32) -> i32`. See \
+                 foundation/spec/framework/contracts/lint-extension.md §2.",
+                plugin_name,
+                export_name,
+                other
+            ));
+        }
+    };
+
+    let params: Vec<ValType> = func_ty.params().collect();
+    let results: Vec<ValType> = func_ty.results().collect();
+    let all_i32 = |ts: &[ValType]| ts.iter().all(|t| matches!(t, ValType::I32));
+
+    if params.len() == 1 && all_i32(&params) && results.len() == 1 && all_i32(&results) {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "plugin `{}`: export `{}` has signature ({} params, {} results) which does not match \
+         the Contract 5 lint signature `(i32) -> i32`. See \
+         foundation/spec/framework/contracts/lint-extension.md §2.",
+        plugin_name,
+        export_name,
+        params.len(),
+        results.len()
+    ))
+}
+
 impl WasmPluginAdapter {
     /// Create a new WASM plugin adapter
     pub fn new(
@@ -165,6 +222,19 @@ impl WasmPluginAdapter {
         // and failing later with a generic "does not export assemble" error.
         if let Some(export_name) = manifest.exports.assemble.as_deref() {
             validate_assemble_export_signature(&module, &name, export_name)?;
+        }
+
+        // Lint hook signature validation (Contract 5 Phase B).
+        //
+        // `foundation/spec/framework/contracts/lint-extension.md` §2 requires
+        // the compiler to reject a `[exports].lint` that names an export the
+        // plugin doesn't actually provide (dangling export) or whose signature
+        // isn't `(i32) -> i32`. Doing the check here surfaces PLUGIN001 at
+        // load time with a precise message pointing at the contract spec,
+        // rather than a generic "does not export lint_project" error on first
+        // `cln lint` invocation (which is the entry point wired in Cycle 2).
+        if let Some(export_name) = manifest.exports.lint.as_deref() {
+            validate_lint_export_signature(&module, &name, export_name)?;
         }
 
         let mut adapter = Self {
@@ -286,6 +356,55 @@ impl WasmPluginAdapter {
     ) -> Store<PluginState> {
         let mut state = PluginState::new();
         state.emit_arena = Some(arena);
+        let mut store = Store::new(&self.engine, state);
+        let timeout = super::wasm_loader::plugin_timeout_secs();
+        if timeout > 0 {
+            let ticks = (timeout * 1000) / super::wasm_loader::EPOCH_TICK_MS;
+            store.set_epoch_deadline(ticks.max(1));
+            store.epoch_deadline_trap();
+        }
+        store
+    }
+
+    /// Build a fresh lint linker for a single Contract 5 `lint_project` call.
+    ///
+    /// Mirrors `build_typed_emission_linker` but registers the 4 read-only
+    /// AST accessor bridges (see `foundation/spec/framework/contracts/lint-extension.md`
+    /// §4) on top of the plugin stdlib. Kept separate from the v1 and
+    /// typed-emission linkers so a lint call gets exactly the lint surface —
+    /// no expand bridges, no typed-emission constructors — matching the
+    /// spec's "fresh WASM instance per lint call" execution model.
+    ///
+    /// Dormant in Cycle 1: nothing calls this yet. Cycle 2 adds the
+    /// `call_lint_project` entry point that owns the arena lifecycle.
+    #[allow(dead_code)]
+    pub(crate) fn build_lint_linker(&self) -> Result<Linker<PluginState>> {
+        let mut linker = Linker::new(&self.engine);
+        // Plugins that write their `lint_project` in Clean Language will
+        // reference stdlib functions (string ops, json helpers, math) the
+        // same way expand-block bodies do. Register the full stdlib first
+        // so any such import resolves at instantiation time — matching the
+        // fix that landed for the typed-emission linker (fp f4b7d6977f05).
+        self.register_plugin_stdlib_functions(&mut linker)?;
+        crate::plugins::lint::register_lint_bridges(&mut linker)?;
+        Ok(linker)
+    }
+
+    /// Create a store with a lint arena pre-installed.
+    ///
+    /// Dormant in Cycle 1: nothing calls this yet. Cycle 2 uses it from
+    /// the `call_lint_project` path. The store shares the same epoch-based
+    /// timeout enforcement as every other plugin call — a plugin whose
+    /// lint runs past `CLN_PLUGIN_TIMEOUT_SECS` (default 30 s per Contract 5
+    /// §5) traps with `wasm trap: interrupt` and the caller emits LINT001
+    /// without blocking the build.
+    #[allow(dead_code)]
+    pub(crate) fn create_store_with_lint_arena(
+        &self,
+        arena: crate::plugins::lint::LintArena,
+    ) -> Store<PluginState> {
+        let mut state = PluginState::new();
+        state.lint_arena = Some(arena);
         let mut store = Store::new(&self.engine, state);
         let timeout = super::wasm_loader::plugin_timeout_secs();
         if timeout > 0 {
@@ -4968,6 +5087,12 @@ pub(crate) struct PluginState {
     /// `call_expand_typed` before instantiation and taken after the expand
     /// call returns. The `Option<>` is `None` on all v1 call paths.
     pub(crate) emit_arena: Option<crate::plugins::typed_emission::EmitArena>,
+    /// Plugin Contract 5 (Phase B) lint arena. Installed by the
+    /// `call_lint_project` path (Cycle 2) before instantiation and taken
+    /// after the lint call returns. The `Option<>` is `None` on every
+    /// call path other than lint — the 4 `_ast_*` accessor bridges refuse
+    /// (returning a `NOT-IN-LINT-CALL` JSON error) when this field is None.
+    pub(crate) lint_arena: Option<crate::plugins::lint::LintArena>,
 }
 
 /// Emit arena telemetry on every store drop — including trap/error paths.
@@ -5029,6 +5154,7 @@ impl PluginState {
             cached_empty_lp_ptr: None,
             oom_during_call: None,
             emit_arena: None,
+            lint_arena: None,
         }
     }
 
@@ -5054,7 +5180,7 @@ impl PluginState {
     ///
     /// See `system-documents/diagnostics/COMPILER-PLUGIN-STRING-COMPARE-PANIC-DIAGNOSIS.md`
     /// for the full root cause analysis.
-    fn allocate(&mut self, size: usize) -> usize {
+    pub(crate) fn allocate(&mut self, size: usize) -> usize {
         let aligned = (size + 7) & !7;
         // Use `checked_add` so a malicious / runaway plugin can't wrap
         // `usize` itself with a huge `size` argument.

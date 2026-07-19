@@ -80,6 +80,7 @@ pub mod enforcement;
 pub mod expander;
 pub mod host_conformance;
 pub mod language_registry;
+pub(crate) mod lint;
 pub mod plugin_abi;
 mod registry;
 pub mod registry_loader;
