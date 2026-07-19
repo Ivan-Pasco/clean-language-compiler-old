@@ -331,6 +331,55 @@ fn prepend_to_start(program: &mut Program, statements: Vec<Statement>) {
     }
 }
 
+/// Merge one capability into `target` with name-based dedup. Returns
+/// `Err(existing_name)` when a signature mismatch (`PLUGIN002`) is detected —
+/// the caller emits a `CompilerError` referencing the pushed name.
+///
+/// Signature comparison ignores `location` and `default_body` — a capability
+/// declares a contract of method names, parameter names/types, and return
+/// types; two plugins may emit the same contract from different source spans
+/// and should silently coalesce.
+fn capability_signature_matches(a: &crate::ast::Capability, b: &crate::ast::Capability) -> bool {
+    if a.methods.len() != b.methods.len() {
+        return false;
+    }
+    for (am, bm) in a.methods.iter().zip(b.methods.iter()) {
+        if am.name != bm.name {
+            return false;
+        }
+        if am.return_type != bm.return_type {
+            return false;
+        }
+        if am.parameters.len() != bm.parameters.len() {
+            return false;
+        }
+        for (ap, bp) in am.parameters.iter().zip(bm.parameters.iter()) {
+            if ap.name != bp.name || ap.type_ != bp.type_ {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Merge `incoming` capability into `program.capabilities`. Silent no-op when
+/// an entry with the same name and matching signature already exists.
+/// Returns `Err(name)` on signature conflict; caller emits PLUGIN002.
+fn merge_capability(program: &mut Program, incoming: crate::ast::Capability) -> Result<(), String> {
+    if let Some(existing) = program
+        .capabilities
+        .iter()
+        .find(|c| c.name == incoming.name)
+    {
+        if capability_signature_matches(existing, &incoming) {
+            return Ok(());
+        }
+        return Err(incoming.name);
+    }
+    program.capabilities.push(incoming);
+    Ok(())
+}
+
 /// AST expander that transforms framework blocks into Clean Language code
 pub struct PluginExpander<'a> {
     registry: &'a PluginRegistry,
@@ -343,6 +392,11 @@ pub struct PluginExpander<'a> {
     pending_functions: Vec<Function>,
     /// Pending class definitions from plugin expansion (e.g., ORM models)
     pending_classes: Vec<crate::ast::Class>,
+    /// Pending top-level `can` capability declarations from plugin expansion
+    /// via `_emit_capability` (typed-emission §3.18 / Amendment 13). Merged
+    /// into `program.capabilities` with name-based dedup: identical entries
+    /// silently coalesce; signature mismatches raise PLUGIN002.
+    pending_capabilities: Vec<crate::ast::Capability>,
     /// Pending external functions from plugin expansion
     pending_externals: Vec<ExternalFunction>,
     /// Pending top-level `state:` block contributed by plugin expansion.
@@ -379,6 +433,7 @@ impl<'a> PluginExpander<'a> {
             pending_start: None,
             pending_functions: Vec::new(),
             pending_classes: Vec::new(),
+            pending_capabilities: Vec::new(),
             pending_externals: Vec::new(),
             pending_state: None,
             permission_errors: Vec::new(),
@@ -484,6 +539,23 @@ impl<'a> PluginExpander<'a> {
         // Merge pending classes into program (e.g., ORM models from frame.data)
         program.classes.append(&mut self.pending_classes);
 
+        // Merge pending capabilities into program with dedup. Identical
+        // signatures across plugins/files are silently coalesced; a name
+        // clash with a different signature raises PLUGIN002.
+        // See foundation/spec/plugins/contracts/typed-emission.md §3.18.
+        for cap in self.pending_capabilities.drain(..) {
+            if let Err(name) = merge_capability(&mut program, cap) {
+                return Err(PluginError::ValidationFailed {
+                    plugin_name: "(plugin-emitted capability)".to_string(),
+                    message: format!(
+                        "PLUGIN002: capability `{}` was emitted by a plugin with a signature that conflicts with the existing declaration (same name, different method set or types).",
+                        name
+                    ),
+                    location: None,
+                });
+            }
+        }
+
         // Merge pending externals into program (deduplicate by name)
         for ext in self.pending_externals.drain(..) {
             if !program.externals.iter().any(|e| e.name == ext.name) {
@@ -524,7 +596,7 @@ impl<'a> PluginExpander<'a> {
         // into the start function. To preserve declaration order across
         // multiple slots, we accumulate their outputs first, then prepend
         // the assembled block to the existing start body in a single splice.
-        self.merge_module_helpers(&mut program);
+        self.merge_module_helpers(&mut program)?;
         let mut slot_prelude: Vec<Statement> = Vec::new();
         self.collect_slot_statements(&mut slot_prelude, "program_init");
         if self.is_server_build {
@@ -570,7 +642,7 @@ impl<'a> PluginExpander<'a> {
     /// program's top-level functions/classes/externals. See `lifecycle.md`
     /// §3.1. Duplicate-name entries are silently skipped per the v1 preamble
     /// merge semantics.
-    fn merge_module_helpers(&self, program: &mut Program) {
+    fn merge_module_helpers(&self, program: &mut Program) -> Result<(), PluginError> {
         for expansion in self
             .registry
             .invoke_lifecycle_slot("module_helpers", &self.build_context)
@@ -585,6 +657,22 @@ impl<'a> PluginExpander<'a> {
                     program.classes.push(class);
                 }
             }
+            // Plugin-emitted `can` capabilities from the module_helpers slot
+            // merge with the same dedup rule as classes: identical signatures
+            // silently coalesce; a name clash with a different signature
+            // raises PLUGIN002. See typed-emission.md §3.18.
+            for cap in expansion.capabilities {
+                if let Err(name) = merge_capability(program, cap) {
+                    return Err(PluginError::ValidationFailed {
+                        plugin_name: "(plugin-emitted capability)".to_string(),
+                        message: format!(
+                            "PLUGIN002: capability `{}` was emitted by a plugin with a signature that conflicts with the existing declaration (same name, different method set or types).",
+                            name
+                        ),
+                        location: None,
+                    });
+                }
+            }
             for ext in expansion.externals {
                 if !program.externals.iter().any(|e| e.name == ext.name) {
                     program.externals.push(ext);
@@ -593,6 +681,7 @@ impl<'a> PluginExpander<'a> {
             // Statements at module scope are rare for module_helpers; if
             // present, they accumulate into the slot prelude later.
         }
+        Ok(())
     }
 
     /// Plugin Contracts v2 — collect a single slot's contributed statements
@@ -663,6 +752,21 @@ impl<'a> PluginExpander<'a> {
 
         program.functions.append(&mut self.pending_functions);
         program.classes.append(&mut self.pending_classes);
+
+        // Mirror expand_program's PLUGIN002 dedup for plugin-emitted `can`
+        // capabilities. See merge_capability + §3.18 of typed-emission.md.
+        for cap in self.pending_capabilities.drain(..) {
+            if let Err(name) = merge_capability(&mut program, cap) {
+                return Err(PluginError::ValidationFailed {
+                    plugin_name: "(plugin-emitted capability)".to_string(),
+                    message: format!(
+                        "PLUGIN002: capability `{}` was emitted by a plugin with a signature that conflicts with the existing declaration (same name, different method set or types).",
+                        name
+                    ),
+                    location: None,
+                });
+            }
+        }
 
         for ext in self.pending_externals.drain(..) {
             if !program.externals.iter().any(|e| e.name == ext.name) {
@@ -768,6 +872,7 @@ impl<'a> PluginExpander<'a> {
 
                         // Capture class definitions (e.g., ORM models from frame.data)
                         self.pending_classes.extend(expansion.classes);
+                        self.pending_capabilities.extend(expansion.capabilities);
 
                         // Capture external functions
                         self.pending_externals.extend(expansion.externals);
@@ -1026,6 +1131,7 @@ impl<'a> PluginExpander<'a> {
                         }
                         self.pending_functions.extend(expansion.functions);
                         self.pending_classes.extend(expansion.classes);
+                        self.pending_capabilities.extend(expansion.capabilities);
                         self.pending_externals.extend(expansion.externals);
                         merge_state_block(&mut self.pending_state, expansion.state);
                         self.blocks_expanded += 1;
@@ -1092,6 +1198,7 @@ impl<'a> PluginExpander<'a> {
                         }
                         self.pending_functions.extend(expansion.functions);
                         self.pending_classes.extend(expansion.classes);
+                        self.pending_capabilities.extend(expansion.capabilities);
                         self.pending_externals.extend(expansion.externals);
                         merge_state_block(&mut self.pending_state, expansion.state);
                         self.blocks_expanded += 1;
@@ -1170,6 +1277,7 @@ impl<'a> PluginExpander<'a> {
                         }
                         self.pending_functions.extend(expansion.functions);
                         self.pending_classes.extend(expansion.classes);
+                        self.pending_capabilities.extend(expansion.capabilities);
                         self.pending_externals.extend(expansion.externals);
                         merge_state_block(&mut self.pending_state, expansion.state);
                         self.blocks_expanded += 1;
@@ -1937,5 +2045,71 @@ mod tests {
         merge_state_block(&mut target, Some(incoming));
         assert!(target.is_some());
         assert_eq!(target.unwrap().declarations[0].name, "from_incoming");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Amendment 13 §3.18 — capability merge / dedup
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn make_capability(name: &str, methods: &[(&str, Type)]) -> crate::ast::Capability {
+        let mut cap = crate::ast::Capability::new(name.to_string(), None);
+        for (mname, ret) in methods {
+            cap.methods.push(crate::ast::CapabilityMethod {
+                name: (*mname).to_string(),
+                parameters: Vec::new(),
+                return_type: ret.clone(),
+                default_body: None,
+                location: None,
+            });
+        }
+        cap
+    }
+
+    fn empty_program() -> Program {
+        Program::new(None)
+    }
+
+    #[test]
+    fn merge_capability_first_time_pushes() {
+        let mut program = empty_program();
+        let cap = make_capability(
+            "Persist",
+            &[("save", Type::Boolean), ("delete", Type::Boolean)],
+        );
+        merge_capability(&mut program, cap).unwrap();
+        assert_eq!(program.capabilities.len(), 1);
+        assert_eq!(program.capabilities[0].name, "Persist");
+    }
+
+    #[test]
+    fn merge_capability_identical_dedups_silently() {
+        let mut program = empty_program();
+        let cap1 = make_capability("Persist", &[("save", Type::Boolean)]);
+        let cap2 = make_capability("Persist", &[("save", Type::Boolean)]);
+        merge_capability(&mut program, cap1).unwrap();
+        merge_capability(&mut program, cap2).unwrap();
+        assert_eq!(program.capabilities.len(), 1);
+    }
+
+    #[test]
+    fn merge_capability_signature_conflict_returns_err() {
+        let mut program = empty_program();
+        let cap1 = make_capability("Persist", &[("save", Type::Boolean)]);
+        let cap2 = make_capability("Persist", &[("save", Type::Integer)]);
+        merge_capability(&mut program, cap1).unwrap();
+        let err = merge_capability(&mut program, cap2).unwrap_err();
+        assert_eq!(err, "Persist");
+    }
+
+    #[test]
+    fn merge_capability_different_method_sets_conflict() {
+        let mut program = empty_program();
+        let cap1 = make_capability("Persist", &[("save", Type::Boolean)]);
+        let cap2 = make_capability(
+            "Persist",
+            &[("save", Type::Boolean), ("delete", Type::Boolean)],
+        );
+        merge_capability(&mut program, cap1).unwrap();
+        assert!(merge_capability(&mut program, cap2).is_err());
     }
 }

@@ -1011,6 +1011,75 @@ pub fn function_to_ast_with_body(
 /// choice. This separation is what lets the bridge consume `_emit_stmt_from_source`
 /// handles from the arena without this pure conversion layer having to know
 /// about arenas.
+// ─────────────────────────────────────────────────────────────────────────────
+// Capability schema (§3.18 / Amendment 13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A top-level `can Name:` capability declaration emitted by the
+/// `_emit_capability` bridge. v1 of the bridge is contract-only — the JSON
+/// spec has no `body` field. Future amendments may add default-body support
+/// mirroring the `can` grammar (`foundation/spec/grammar.ebnf` §6.4a), which
+/// already allows both required signatures and defaulted methods.
+#[derive(Debug, Deserialize)]
+pub struct CapabilitySpec {
+    pub name: String,
+    #[serde(default)]
+    pub methods: Vec<CapabilityMethodSpec>,
+}
+
+/// One method entry in a `CapabilitySpec`. Mirrors the class-method spec
+/// (`BatchMethod`) but has no `body` / `body_handle` — capability methods in
+/// v1 are contract signatures only.
+#[derive(Debug, Deserialize)]
+pub struct CapabilityMethodSpec {
+    pub name: String,
+    #[serde(default)]
+    pub params: Vec<BatchParam>,
+    pub return_type: String,
+}
+
+/// Parse a JSON capability spec (per typed-emission.md §3.18).
+/// Errors are lifted into `BatchSchemaError::Json` with the underlying
+/// serde message + byte offset so `emit_plugin013` can produce the same
+/// diagnostic shape as class/function specs.
+pub fn parse_capability_spec(json: &str) -> Result<CapabilitySpec, BatchSchemaError> {
+    serde_json::from_str(json).map_err(|e| BatchSchemaError::Json {
+        message: e.to_string(),
+        byte_offset: Some(e.column().saturating_sub(1)),
+    })
+}
+
+/// Convert a parsed `CapabilitySpec` to an `ast::Capability` node. Validates
+/// that no method name is duplicated within the capability — the compiler's
+/// resolver would flag a duplicate later, but catching it here produces a
+/// better plugin-attributed diagnostic (PLUGIN013).
+pub fn capability_to_ast(spec: CapabilitySpec) -> Result<crate::ast::Capability, BatchSchemaError> {
+    let mut cap = crate::ast::Capability::new(spec.name, None);
+    let mut seen: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(spec.methods.len());
+    for m in spec.methods {
+        if !seen.insert(m.name.clone()) {
+            return Err(BatchSchemaError::Json {
+                message: format!("capability method `{}` appears more than once", m.name),
+                byte_offset: None,
+            });
+        }
+        let return_type = resolve_type(&m.return_type)?;
+        let mut params = Vec::with_capacity(m.params.len());
+        for p in m.params {
+            params.push(Parameter::new(p.name, resolve_type(&p.ty)?));
+        }
+        cap.methods.push(crate::ast::CapabilityMethod {
+            name: m.name,
+            parameters: params,
+            return_type,
+            default_body: None,
+            location: None,
+        });
+    }
+    Ok(cap)
+}
+
 pub fn class_to_ast(
     spec: ClassSpec,
     method_bodies: Vec<Vec<Statement>>,
@@ -1520,5 +1589,86 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Amendment 13 §3.18 — `_emit_capability`
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_capability_spec_minimal() {
+        let json = r#"{
+            "name": "Persist",
+            "methods": [
+                {"name": "save",   "params": [], "return_type": "boolean"},
+                {"name": "delete", "params": [], "return_type": "boolean"}
+            ]
+        }"#;
+        let spec = parse_capability_spec(json).unwrap();
+        assert_eq!(spec.name, "Persist");
+        assert_eq!(spec.methods.len(), 2);
+        assert_eq!(spec.methods[0].name, "save");
+        assert_eq!(spec.methods[1].name, "delete");
+    }
+
+    #[test]
+    fn capability_to_ast_resolves_types() {
+        let spec = parse_capability_spec(
+            r#"{
+                "name": "Renderable",
+                "methods": [
+                    {"name":"draw","params":[{"name":"n","type":"integer"}],"return_type":"void"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let cap = capability_to_ast(spec).unwrap();
+        assert_eq!(cap.name, "Renderable");
+        assert_eq!(cap.methods.len(), 1);
+        assert_eq!(cap.methods[0].name, "draw");
+        assert!(matches!(cap.methods[0].return_type, Type::Void));
+        assert_eq!(cap.methods[0].parameters.len(), 1);
+        assert_eq!(cap.methods[0].parameters[0].name, "n");
+        assert!(matches!(cap.methods[0].parameters[0].type_, Type::Integer));
+        // v1 is contract-only.
+        assert!(cap.methods[0].default_body.is_none());
+    }
+
+    #[test]
+    fn capability_duplicate_method_rejected() {
+        let spec = parse_capability_spec(
+            r#"{
+                "name": "Persist",
+                "methods": [
+                    {"name":"save","params":[],"return_type":"boolean"},
+                    {"name":"save","params":[],"return_type":"boolean"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let err = capability_to_ast(spec).unwrap_err();
+        match err {
+            BatchSchemaError::Json { message, .. } => {
+                assert!(message.contains("save"), "message: {}", message);
+                assert!(message.contains("more than once"), "message: {}", message);
+            }
+            other => panic!("expected Json error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn capability_malformed_json_lifts_to_json_error() {
+        let err = parse_capability_spec("not json").unwrap_err();
+        assert!(matches!(err, BatchSchemaError::Json { .. }));
+    }
+
+    #[test]
+    fn capability_unresolvable_return_type() {
+        let spec = parse_capability_spec(
+            r#"{"name":"X","methods":[{"name":"f","params":[],"return_type":"bogus_lowercase"}]}"#,
+        )
+        .unwrap();
+        let err = capability_to_ast(spec).unwrap_err();
+        assert!(matches!(err, BatchSchemaError::UnresolvableType(_)));
     }
 }

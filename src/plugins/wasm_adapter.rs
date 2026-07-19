@@ -3803,6 +3803,7 @@ impl WasmPluginAdapter {
                     start_function: program.start_function,
                     functions: program.functions,
                     classes: program.classes,
+                    capabilities: program.capabilities,
                     externals: program.externals,
                     state: program.state,
                 });
@@ -3893,6 +3894,7 @@ impl WasmPluginAdapter {
                 start_function: program.start_function,
                 functions: program.functions,
                 classes: program.classes,
+                capabilities: program.capabilities,
                 externals: program.externals,
                 state: program.state,
             });
@@ -3942,6 +3944,7 @@ impl WasmPluginAdapter {
             start_function: program.start_function,
             functions: program.functions,
             classes: program.classes,
+            capabilities: program.capabilities,
             externals: program.externals,
             state: program.state,
         })
@@ -4251,6 +4254,7 @@ impl WasmPluginAdapter {
             start_function: None,
             functions: parsed.functions,
             classes: parsed.classes,
+            capabilities: parsed.capabilities,
             externals: parsed.externals,
             state: parsed.state,
         })

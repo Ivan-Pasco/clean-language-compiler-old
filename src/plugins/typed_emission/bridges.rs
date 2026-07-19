@@ -11,8 +11,9 @@ use wasmtime::{Caller, Linker};
 
 use super::arena::BATCH_TAG;
 use super::batch_schema::{
-    self, class_to_ast, expand_from_spec, parse_batch_spec, parse_class_spec_with_entries,
-    stmt_to_ast, BatchMethodEntry, BatchSchemaError, ClassSpec, BATCH_FUNCTION_LIMIT,
+    self, capability_to_ast, class_to_ast, expand_from_spec, parse_batch_spec,
+    parse_capability_spec, parse_class_spec_with_entries, stmt_to_ast, BatchMethodEntry,
+    BatchSchemaError, ClassSpec, BATCH_FUNCTION_LIMIT,
 };
 use super::error::{EmitDiagnostic, EmitError};
 use super::json::{
@@ -2055,6 +2056,73 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                     path,
                     content: new_content,
                 });
+            0
+        },
+    )?;
+
+    // _emit_capability(ctx, spec_lp) -> err
+    //
+    // Amendment 13 / typed-emission.md §3.18. Plugins may declare top-level
+    // `can Name:` capability contracts. `spec_lp` is an LP-string pointer to
+    // JSON with the shape
+    //   { "name": "<Cap>",
+    //     "methods": [ {"name":..., "params":[{name,type}], "return_type":...}, ... ] }
+    //
+    // v1 is contract-only: method entries carry no `body`. The compiler
+    // dedups capability declarations with the same name and matching
+    // signature; a name collision with a different signature raises PLUGIN002
+    // during the expander's merge (see `merge_capability` in expander.rs).
+    // Structural bridge — refuses in the `assemble_typed` slot with PLUGIN018.
+    linker.func_wrap(
+        "env",
+        "_emit_capability",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, spec_lp: i32| -> i32 {
+            refuse_if_assemble_typed!(caller, "_emit_capability", 1);
+            let json = match read_lp_string(&mut caller, spec_lp) {
+                Some(s) => s,
+                None => {
+                    let a = arena!(caller);
+                    a.emit_diagnostic(EmitDiagnostic {
+                        severity: 2,
+                        code: "PLUGIN017".to_string(),
+                        message: format!(
+                            "_emit_capability: spec_lp={} points to unreadable memory (expected LP-string capability spec).",
+                            spec_lp
+                        ),
+                        span_json: String::new(),
+                    });
+                    return 1;
+                }
+            };
+            let a = arena!(caller);
+            if let Err(e) = a.check_ctx(ctx) {
+                a.emit_diagnostic(EmitDiagnostic {
+                    severity: 2,
+                    code: "PLUGIN017".to_string(),
+                    message: format!(
+                        "_emit_capability: invalid arena ctx ({:?}). Plugin must call this from an active expand/assemble slot.",
+                        e
+                    ),
+                    span_json: String::new(),
+                });
+                return 1;
+            }
+            let spec_len = json.len();
+            let spec = match parse_capability_spec(&json) {
+                Ok(s) => s,
+                Err(e) => {
+                    emit_plugin013(a, &e, spec_len);
+                    return 1;
+                }
+            };
+            let cap = match capability_to_ast(spec) {
+                Ok(c) => c,
+                Err(e) => {
+                    emit_plugin013(a, &e, spec_len);
+                    return 1;
+                }
+            };
+            a.expansion.capabilities.push(cap);
             0
         },
     )?;
