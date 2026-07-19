@@ -459,6 +459,27 @@ impl PluginRegistry {
         &self.registered_plugins
     }
 
+    /// Iterate every plugin in the registry, once per plugin, in an
+    /// implementation-defined order.
+    ///
+    /// The internal `handlers` map keys plugins by block name so a plugin
+    /// registered for multiple blocks appears multiple times. This helper
+    /// dedupes by plugin name so callers walking side-effect-carrying trait
+    /// methods (lint, lifecycle slots, etc.) don't invoke a plugin twice
+    /// per pass. See `plugins::lint::run_lint_pass` for the primary caller.
+    pub fn iter_unique_plugins(
+        &self,
+    ) -> impl Iterator<Item = &std::sync::Arc<dyn FrameworkPlugin>> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for plugin in self.handlers.values() {
+            if seen.insert(plugin.name()) {
+                out.push(plugin);
+            }
+        }
+        out.into_iter()
+    }
+
     /// Get list of handled block types
     pub fn handled_block_types(&self) -> Vec<&str> {
         self.handlers.keys().map(|s| s.as_str()).collect()

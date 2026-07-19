@@ -901,6 +901,77 @@ pub fn type_check_with_external_plugins(
     type_check_with_plugins(source, file_path, &registry)
 }
 
+/// Run the Contract 5 lint pass over the source's declared plugins.
+///
+/// This is the compiler-side entry point invoked by `cln lint` and (after
+/// the type-check step succeeds) by `cln check`. It:
+///   1. Extracts plugin names from the source's `plugins:` block.
+///   2. Loads those plugins (identical mechanism as `type_check_with_external_plugins`).
+///   3. Parses the source into a `Program`.
+///   4. Runs `plugins::lint::run_lint_pass` against that pre-expansion AST.
+///
+/// **Phase B deviation from spec §6:** the specification requires lint to
+/// run after parse + resolve + typecheck. The current compiler pipeline
+/// expands plugin blocks *before* typecheck, so a naive "typecheck then
+/// lint the pre-expansion AST" ordering would require either reordering
+/// the whole pipeline (large blast radius) or typechecking twice.
+/// For Phase B we run lint after parse only — the residual 4 diagnostics
+/// (E026, I002, canvas save/restore, UI-C005) do not require resolved
+/// types, so this is safe for the current scope. When a future
+/// diagnostic requires typecheck output, we revisit the ordering.
+///
+/// Returns the raw `PluginLintReport` vec so the CLI can render each
+/// entry (Cycle 2 prints raw JSON; Cycle 3 parses and routes through the
+/// compiler diagnostic pipeline).
+pub fn lint_source(
+    source: &str,
+    file_path: &str,
+    config_level: &str,
+) -> Result<Vec<plugins::lint::PluginLintReport>, Vec<CompilerError>> {
+    let plugin_names = extract_plugins(source);
+
+    // No plugins declared — lint has nothing to do; return an empty vec.
+    if plugin_names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
+        vec![CompilerError::PluginError {
+            message: format!("Failed to create plugin loader: {}", e),
+            location: None,
+        }]
+    })?;
+
+    let registry = loader.load_plugins(&plugin_names).map_err(|e| {
+        vec![CompilerError::PluginError {
+            message: format!("[PLUGIN001] Failed to load plugins: {}", e),
+            location: None,
+        }]
+    })?;
+
+    // Parse the source to a Program. The parser needs the plugin block
+    // keywords so it can recognise DSL blocks as `FrameworkBlock` statements
+    // rather than syntax errors — same as `type_check_with_plugins` stage 2.
+    use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+    use crate::parser::SpecificationParser;
+
+    let source_code = SourceCode::new(source.to_string(), file_path.to_string());
+    let mut lexer = SpecificationLexer::new(&source_code);
+    let tokens = lexer
+        .tokenize()
+        .map_err(|e| vec![CompilerError::LexError(e)])?;
+
+    let plugin_keywords = registry.get_all_block_keywords();
+    let mut parser =
+        SpecificationParser::with_plugin_keywords(tokens, file_path.to_string(), plugin_keywords);
+    let program = parser.parse_program().map_err(|e| vec![e])?;
+
+    // The pre-expansion snapshot IS the just-parsed program — we run lint
+    // before ever calling `PluginExpander::expand_program`.
+    let reports = plugins::lint::run_lint_pass(&registry, &program, config_level);
+    Ok(reports)
+}
+
 /// Compiles Clean Language source code with NO plugins (pure language)
 ///
 /// This is for compiling pure Clean Language code without framework extensions.

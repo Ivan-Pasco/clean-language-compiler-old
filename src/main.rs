@@ -218,6 +218,13 @@ enum Commands {
         /// cost). Wired for the node-server heap-observability probe.
         #[arg(long)]
         emit_heap_probes: bool,
+
+        /// Contract 5 Phase B: accept `--no-lint` so scripts written for the
+        /// eventual Phase D flip already work. Lint is OFF by default in
+        /// `cln compile` throughout Phase B — this flag is a no-op until the
+        /// default flips. See `foundation/spec/framework/contracts/lint-extension.md` §9.
+        #[arg(long)]
+        no_lint: bool,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -514,6 +521,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             strict_hosts,
             strict_emission_ops,
             emit_heap_probes,
+            // Contract 5 Phase B: `no_lint` is accepted on the CLI but not
+            // yet plumbed to the compile pipeline — lint is OFF by default
+            // in Phase B, so the flag has nothing to disable. Wired
+            // through the dispatch site to keep the clap-derive struct and
+            // the handler call site in sync; wired to `handle_compile`
+            // when the default flips in Phase D.
+            no_lint: _,
         } => {
             handle_compile(
                 input,
@@ -961,6 +975,13 @@ async fn handle_check(
                     result.type_count,
                     duration.as_millis()
                 );
+            }
+
+            // Contract 5 Phase B: after typecheck succeeds, run the plugin
+            // lint pass. Non-blocking per spec §5 — lint diagnostics are
+            // printed but do not cause `handle_check` to fail.
+            if !output_config.json_mode {
+                run_contract5_lint(&source, &input);
             }
         }
         Err(errors) => {
@@ -1886,6 +1907,12 @@ async fn handle_lint(
         if !errors_only {
             println!("  ⚠️  Style validation not yet implemented in 7-stage pipeline");
         }
+
+        // Contract 5 Phase B: run the plugin lint pass on this file.
+        // Cycle 2 prints raw JSON per plugin; Cycle 3 parses + renders
+        // through the compiler diagnostic pipeline.
+        // Non-blocking per spec §5.
+        run_contract5_lint(&source, file_path);
     }
 
     println!("\n=== Lint Summary ===");
@@ -1896,6 +1923,52 @@ async fn handle_lint(
         println!("Note: Automatic fixing is not yet implemented");
     }
     Ok(())
+}
+
+/// Contract 5 Phase B lint pass.
+///
+/// Called from `handle_lint` and (after a successful typecheck) from
+/// `handle_check`. Prints each plugin's raw JSON report to stdout for Ok,
+/// stderr for LINT001 failures. Cycle 3 replaces the raw-JSON prints with
+/// structured diagnostic renderering through `output_config.report_errors`.
+///
+/// See `foundation/spec/framework/contracts/lint-extension.md` §5:
+/// lint plugin failures never block the build.
+fn run_contract5_lint(source: &str, file_path: &str) {
+    // Phase B default: config_level = "warning". Cycle 3 adds a
+    // `--lint-level` flag that surfaces the choice on the CLI.
+    match clean_language_compiler::lint_source(source, file_path, "warning") {
+        Ok(reports) if reports.is_empty() => {
+            // No plugins declared, or none had a lint hook — silent success.
+        }
+        Ok(reports) => {
+            for report in &reports {
+                match report {
+                    clean_language_compiler::plugins::lint::PluginLintReport::Ok {
+                        plugin_name,
+                        raw_json,
+                    } => {
+                        println!("── lint: {} ──", plugin_name);
+                        println!("{}", raw_json);
+                    }
+                    clean_language_compiler::plugins::lint::PluginLintReport::Failed {
+                        plugin_name,
+                        message,
+                    } => {
+                        eprintln!("[LINT001] {}: {}", plugin_name, message);
+                    }
+                }
+            }
+        }
+        Err(errors) => {
+            // Plugin loader / parser failed — surface as LINT001 so callers
+            // see a plugin-scoped message. The primary compile/check pass
+            // above has already surfaced typecheck errors on the same source.
+            for e in &errors {
+                eprintln!("[LINT001] plugin-lint pass could not run: {}", e.message());
+            }
+        }
+    }
 }
 
 async fn handle_ast_json(

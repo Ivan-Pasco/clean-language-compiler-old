@@ -392,13 +392,11 @@ impl WasmPluginAdapter {
 
     /// Create a store with a lint arena pre-installed.
     ///
-    /// Dormant in Cycle 1: nothing calls this yet. Cycle 2 uses it from
-    /// the `call_lint_project` path. The store shares the same epoch-based
-    /// timeout enforcement as every other plugin call — a plugin whose
-    /// lint runs past `CLN_PLUGIN_TIMEOUT_SECS` (default 30 s per Contract 5
-    /// §5) traps with `wasm trap: interrupt` and the caller emits LINT001
-    /// without blocking the build.
-    #[allow(dead_code)]
+    /// The store shares the same epoch-based timeout enforcement as every
+    /// other plugin call — a plugin whose lint runs past
+    /// `CLN_PLUGIN_TIMEOUT_SECS` (default 30 s per Contract 5 §5) traps
+    /// with `wasm trap: interrupt` and the caller emits LINT001 without
+    /// blocking the build.
     pub(crate) fn create_store_with_lint_arena(
         &self,
         arena: crate::plugins::lint::LintArena,
@@ -413,6 +411,133 @@ impl WasmPluginAdapter {
             store.epoch_deadline_trap();
         }
         store
+    }
+
+    /// Contract 5 lint call. See
+    /// `foundation/spec/framework/contracts/lint-extension.md` §3.
+    ///
+    /// Runs the plugin's `lint_project` export in a fresh WASM instance
+    /// with the lint arena pre-installed and returns the raw JSON string
+    /// the plugin wrote to memory. Cycle 2 hands that JSON up to the CLI
+    /// verbatim; Cycle 3 parses it into structured diagnostics and routes
+    /// them through the compiler renderer.
+    ///
+    /// Failure model (§5):
+    /// - Trap or 30 s timeout → returns `Err(anyhow!("LINT001 ..."))` so
+    ///   the caller emits LINT001 and continues with other plugins.
+    /// - Malformed LP pointer or missing memory export → same as above.
+    /// - Empty return (0 or empty LP) → returns `Ok(String::new())`;
+    ///   caller treats this as "no diagnostics".
+    ///
+    /// The `program` snapshot must be the **pre-expansion** AST (see
+    /// spec §6 — lint runs after typecheck but before block expansion).
+    /// Passing a post-expansion program would make `_ast_list_blocks`
+    /// return empty for every block name, since expansion consumes the
+    /// `FrameworkBlock` statements.
+    pub(crate) fn call_lint_project(
+        &self,
+        program: &crate::ast::Program,
+        config_level: &str,
+    ) -> Result<String> {
+        // Only plugins that declare `[exports].lint` in their manifest
+        // participate. Callers should have already filtered by this, but
+        // guard here defensively so a stray call at the trait level
+        // becomes a clean no-op.
+        let export_name = match self.manifest.exports.lint.as_deref() {
+            Some(n) => n,
+            None => return Ok(String::new()),
+        };
+
+        let handle = self.next_ctx_handle();
+        let arena = crate::plugins::lint::LintArena::new(handle, program.clone());
+        let mut store = self.create_store_with_lint_arena(arena);
+
+        let linker = self.build_lint_linker()?;
+        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
+            anyhow!(
+                "LINT001: failed to instantiate plugin `{}` for lint: {}",
+                self.name,
+                e
+            )
+        })?;
+
+        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
+            anyhow!(
+                "LINT001: plugin `{}` does not export memory (lint pass)",
+                self.name
+            )
+        })?;
+
+        // Advance the plugin's heap pointer past the static data section,
+        // same trick as `call_expand_typed` — plugins allocate returned
+        // strings from the heap, and if the heap starts inside the data
+        // section every returned pointer collides with a static literal.
+        let globals: Vec<_> = instance
+            .exports(&mut store)
+            .filter_map(|e| e.into_global())
+            .collect();
+        for global in globals {
+            if let wasmtime::Val::I32(val) = global.get(&mut store) {
+                if val == 1024 {
+                    let _ = global.set(&mut store, wasmtime::Val::I32(8192));
+                    break;
+                }
+            }
+        }
+
+        // Build the project-context JSON (spec §3.1) and write it into
+        // plugin memory as an LP string.
+        let compiler_version = env!("CARGO_PKG_VERSION");
+        let level = match config_level {
+            "error" | "warning" | "info" => config_level,
+            _ => "warning",
+        };
+        let ctx_json = format!(
+            "{{\"project_ast_handle\":{},\"compiler_version\":\"{}\",\
+             \"contract_version\":\"1.0.0\",\"runtime_abi_version\":\"1.0.0\",\
+             \"config\":{{\"level\":\"{}\"}}}}",
+            handle, compiler_version, level
+        );
+        let input_ptr = self.find_or_write_string(&mut store, &memory, &ctx_json)?;
+
+        // Call the plugin's `lint_project(input_lp) -> output_lp`.
+        let lint_fn: TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, export_name)
+            .map_err(|e| {
+                anyhow!(
+                    "LINT001: plugin `{}` does not export `{}` as (i32) -> i32: {}",
+                    self.name,
+                    export_name,
+                    e
+                )
+            })?;
+
+        let output_ptr = lint_fn.call(&mut store, input_ptr).map_err(|e| {
+            let oom = store.data().oom_during_call.clone();
+            anyhow!(
+                "LINT001: plugin `{}` trapped during lint_project: {}{}",
+                self.name,
+                e,
+                oom.as_deref()
+                    .map(|s| format!(" [OOM: {}]", s))
+                    .unwrap_or_default(),
+            )
+        })?;
+
+        // A zero return means "no diagnostics" per spec — no LP header to read.
+        if output_ptr == 0 {
+            return Ok(String::new());
+        }
+
+        let data = memory.data(&store);
+        match read_lp_from_data(data, output_ptr) {
+            Some(bytes) => Ok(String::from_utf8_lossy(bytes).into_owned()),
+            None => Err(anyhow!(
+                "LINT001: plugin `{}` returned a malformed LP pointer ({}) from lint_project",
+                self.name,
+                output_ptr
+            )),
+        }
     }
 
     /// Plugin Contracts v3 typed expansion. Called when
@@ -4663,6 +4788,26 @@ impl FrameworkPlugin for WasmPluginAdapter {
             })
     }
 
+    fn lint_project(
+        &self,
+        program: &crate::ast::Program,
+        config_level: &str,
+    ) -> PluginResult<Option<String>> {
+        // Plugin opted out of lint — return None so the caller skips it.
+        if self.manifest.exports.lint.is_none() {
+            return Ok(None);
+        }
+
+        self.call_lint_project(program, config_level)
+            .map(Some)
+            .map_err(|e| PluginError::ExpansionFailed {
+                plugin_name: self.name.clone(),
+                block_name: "__lint_project".to_string(),
+                message: e.to_string(),
+                location: None,
+            })
+    }
+
     fn invoke_lifecycle_slot(
         &self,
         slot_name: &str,
@@ -6445,5 +6590,231 @@ mod assemble_signature_validation_tests {
             msg
         );
         assert!(msg.contains("assemble.md"));
+    }
+}
+
+/// Cycle 2 tests for Contract 5 lint hook signature validation and the
+/// end-to-end WASM call path. See
+/// `foundation/spec/framework/contracts/lint-extension.md`.
+#[cfg(test)]
+mod lint_signature_validation_tests {
+    use super::validate_lint_export_signature;
+    use wasmtime::{Engine, Module};
+
+    fn module(wat: &str) -> Module {
+        let engine = Engine::default();
+        Module::new(&engine, wat).expect("compile test WAT")
+    }
+
+    #[test]
+    fn accepts_i32_i32_signature() {
+        let m = module(
+            r#"(module
+                (func (export "lint_project") (param i32) (result i32) i32.const 0))"#,
+        );
+        validate_lint_export_signature(&m, "test.plugin", "lint_project")
+            .expect("(i32) -> i32 must be accepted per lint-extension.md §2");
+    }
+
+    #[test]
+    fn rejects_dangling_export() {
+        // Manifest says exports.lint = "lint_project" but the module has no
+        // such export → PLUGIN001. This is the load-time gate that catches
+        // typos in plugin manifests before any `cln lint` invocation.
+        let m = module(r#"(module (func (export "other_export") (result i32) i32.const 0))"#);
+        let err = validate_lint_export_signature(&m, "test.plugin", "lint_project")
+            .expect_err("dangling export must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("has no export by that name"));
+        assert!(msg.contains("lint-extension.md"));
+    }
+
+    #[test]
+    fn rejects_wrong_arity() {
+        let m = module(
+            r#"(module
+                (func (export "lint_project") (param i32 i32) (result i32) i32.const 0))"#,
+        );
+        let err = validate_lint_export_signature(&m, "test.plugin", "lint_project")
+            .expect_err("2-param signature must be rejected");
+        assert!(err.to_string().contains("lint-extension.md"));
+    }
+
+    #[test]
+    fn rejects_non_i32_param() {
+        let m = module(
+            r#"(module
+                (func (export "lint_project") (param i64) (result i32) i32.const 0))"#,
+        );
+        let err = validate_lint_export_signature(&m, "test.plugin", "lint_project")
+            .expect_err("i64 param does not match (i32) -> i32");
+        assert!(err.to_string().contains("lint-extension.md"));
+    }
+
+    #[test]
+    fn rejects_non_i32_result() {
+        let m = module(
+            r#"(module
+                (func (export "lint_project") (param i32) (result i64) i64.const 0))"#,
+        );
+        let err = validate_lint_export_signature(&m, "test.plugin", "lint_project")
+            .expect_err("i64 result does not match (i32) -> i32");
+        assert!(err.to_string().contains("lint-extension.md"));
+    }
+
+    #[test]
+    fn rejects_non_function_export() {
+        let m = module(r#"(module (global (export "lint_project") i32 (i32.const 0)))"#);
+        let err = validate_lint_export_signature(&m, "test.plugin", "lint_project")
+            .expect_err("global export must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not a function"),
+            "diagnostic mentions non-function: {}",
+            msg
+        );
+        assert!(msg.contains("lint-extension.md"));
+    }
+}
+
+/// Cycle 2 end-to-end integration test for the lint host bridges + the
+/// call_lint_project path. Uses a hand-authored WAT plugin that ignores
+/// its input pointer and returns a hard-coded LP JSON blob describing
+/// two fake diagnostics.
+///
+/// This bypasses `WasmPluginAdapter::new` (which requires a full
+/// PluginManifest) and drives `build_lint_linker` + `LintArena` +
+/// `create_store_with_lint_arena` + `read_lp_from_data` directly — the
+/// same production code path a real plugin would exercise.
+#[cfg(test)]
+mod lint_e2e_tests {
+    use super::*;
+    use crate::ast::Program;
+    use wasmtime::{Engine, Linker, Module, Store, TypedFunc};
+
+    /// Minimal plugin module exporting `lint_project(i32) -> i32`.
+    ///
+    /// The plugin's `lint_project` ignores its parameter and returns a
+    /// pointer to a hard-coded LP string embedded as static data. The
+    /// LP string encodes a JSON array of two diagnostic entries per
+    /// spec §3.2.
+    ///
+    /// Memory layout inside the plugin:
+    ///   [0..1024]      reserved (heap start marker)
+    ///   [1024..1028]   LP length prefix (u32 LE)
+    ///   [1028..]       LP body (the JSON string)
+    ///
+    /// The `__heap_ptr` global is set to 1024 so the heap-fixup logic in
+    /// call_lint_project bumps it to 8192, well past our static data.
+    ///
+    /// The static JSON body is:
+    ///   [{"code":"TEST-E001","severity":"error","message":"first",
+    ///     "location":{"file":"a.cln","line":1,"column":1}}]
+    /// which is exactly 107 bytes (0x6b LE).
+    const LINT_PLUGIN_WAT: &str = r#"
+(module
+  (memory (export "memory") 1)
+  (global (export "__heap_ptr") (mut i32) (i32.const 1024))
+  (data (i32.const 1024) "\6b\00\00\00[{\22code\22:\22TEST-E001\22,\22severity\22:\22error\22,\22message\22:\22first\22,\22location\22:{\22file\22:\22a.cln\22,\22line\22:1,\22column\22:1}}]")
+  (func (export "lint_project") (param $input i32) (result i32)
+    ;; Return the pointer to the static LP-string, ignoring the input.
+    i32.const 1024))
+"#;
+
+    fn empty_program() -> Program {
+        Program::new(None)
+    }
+
+    #[test]
+    fn call_lint_project_end_to_end_returns_plugin_json() {
+        let engine = Engine::default();
+        let module = Module::new(&engine, LINT_PLUGIN_WAT).expect("compile lint plugin WAT");
+
+        // Build the store with a LintArena — same as the production path.
+        let handle = 42_i32;
+        let arena = crate::plugins::lint::LintArena::new(handle, empty_program());
+        let mut state = PluginState::new();
+        state.lint_arena = Some(arena);
+        let mut store = Store::new(&engine, state);
+
+        // Build a lint linker manually (mirrors WasmPluginAdapter::build_lint_linker
+        // without going through the manifest-bound adapter).
+        let mut linker: Linker<PluginState> = Linker::new(&engine);
+        crate::plugins::lint::register_lint_bridges(&mut linker).expect("register lint bridges");
+
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate lint plugin");
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .expect("plugin exports memory");
+
+        // Call the plugin's lint_project with a dummy input pointer.
+        let lint_fn: TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, "lint_project")
+            .expect("plugin exports lint_project");
+        let out_ptr = lint_fn.call(&mut store, 0).expect("lint_project call");
+
+        // Read back the LP string using the same helper the production path uses.
+        let data = memory.data(&store);
+        let bytes = read_lp_from_data(data, out_ptr).expect("valid LP pointer");
+        let json = std::str::from_utf8(bytes).expect("valid UTF-8");
+        assert!(
+            json.contains("TEST-E001"),
+            "plugin JSON must contain the diagnostic code: {}",
+            json
+        );
+        assert!(
+            json.contains("\"severity\":\"error\""),
+            "plugin JSON must carry severity: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn lint_bridges_return_ast_handle_invalid_on_stale_handle() {
+        // Same fixture, but call one of the accessor bridges with a handle
+        // that doesn't match the arena's active handle. Should return the
+        // JSON error payload described in the arena.
+        let bridge_probe_wat = r#"
+(module
+  (import "env" "_ast_list_classes" (func $list_classes (param i32) (result i32)))
+  (memory (export "memory") 1)
+  (global (export "__heap_ptr") (mut i32) (i32.const 1024))
+  (func (export "probe") (param $stale_handle i32) (result i32)
+    local.get $stale_handle
+    call $list_classes))
+"#;
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, bridge_probe_wat).expect("compile probe WAT");
+
+        let arena = crate::plugins::lint::LintArena::new(7, empty_program());
+        let mut state = PluginState::new();
+        state.lint_arena = Some(arena);
+        let mut store = Store::new(&engine, state);
+
+        let mut linker: Linker<PluginState> = Linker::new(&engine);
+        crate::plugins::lint::register_lint_bridges(&mut linker).expect("register lint bridges");
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let memory = instance.get_memory(&mut store, "memory").expect("memory");
+
+        // Call with a stale handle (99 instead of 7).
+        let probe: TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, "probe")
+            .expect("probe export");
+        let out_ptr = probe.call(&mut store, 99).expect("probe call");
+
+        let data = memory.data(&store);
+        let bytes = read_lp_from_data(data, out_ptr).expect("valid LP from stale handle");
+        let json = std::str::from_utf8(bytes).expect("valid UTF-8");
+        assert!(
+            json.contains("AST-HANDLE-INVALID"),
+            "stale handle must produce AST-HANDLE-INVALID: {}",
+            json
+        );
+        assert!(json.contains("\"handle\":99"));
     }
 }

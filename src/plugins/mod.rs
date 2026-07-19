@@ -80,7 +80,7 @@ pub mod enforcement;
 pub mod expander;
 pub mod host_conformance;
 pub mod language_registry;
-pub(crate) mod lint;
+pub mod lint;
 pub mod plugin_abi;
 mod registry;
 pub mod registry_loader;
@@ -502,6 +502,43 @@ pub trait FrameworkPlugin: Send + Sync {
     /// Plugins loaded from WASM manifests override this via `[handles] expressions`.
     fn expression_patterns(&self) -> &[String] {
         &[]
+    }
+
+    /// Contract 5 lint hook.
+    ///
+    /// Called by `cln lint` / `cln check` (and Phase D+, `cln compile`) once
+    /// per plugin per project, after parse + resolve + typecheck and before
+    /// block expansion. See
+    /// `foundation/spec/framework/contracts/lint-extension.md` §6 for the
+    /// full contract.
+    ///
+    /// - `program` — the fully-parsed AST before plugin block expansion.
+    ///   `_ast_list_blocks` reads this snapshot; typecheck is not required
+    ///   for the current 4-diagnostic scope, but a future accessor may add
+    ///   resolved types.
+    /// - `config_level` — `"error"`, `"warning"`, or `"info"`. Plugins may
+    ///   skip generating below-threshold diagnostics as an optimisation;
+    ///   the compiler filters again on the return path.
+    ///
+    /// Return semantics:
+    /// - `Ok(None)` — this plugin declares no `[exports].lint`; skip.
+    /// - `Ok(Some(json))` — plugin ran; JSON string is either the diagnostic
+    ///   array (§3.2) or the plugin-error object (§3.3). The caller parses
+    ///   and routes.
+    /// - `Err(PluginError)` — a WASM-side failure (trap, timeout, memory
+    ///   grow refusal). The caller emits LINT001 naming the plugin and
+    ///   continues with other plugins — the build is never blocked.
+    ///
+    /// The default implementation returns `Ok(None)` — plugins without a
+    /// lint hook contribute no diagnostics, matching the "opt-in" stance
+    /// of the contract's §2.
+    fn lint_project(
+        &self,
+        program: &crate::ast::Program,
+        config_level: &str,
+    ) -> PluginResult<Option<String>> {
+        let _ = (program, config_level);
+        Ok(None)
     }
 
     /// Compile-time source assembly hook.
