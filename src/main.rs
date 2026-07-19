@@ -1928,15 +1928,15 @@ async fn handle_lint(
 /// Contract 5 Phase B lint pass.
 ///
 /// Called from `handle_lint` and (after a successful typecheck) from
-/// `handle_check`. Prints each plugin's raw JSON report to stdout for Ok,
-/// stderr for LINT001 failures. Cycle 3 replaces the raw-JSON prints with
-/// structured diagnostic renderering through `output_config.report_errors`.
-///
-/// See `foundation/spec/framework/contracts/lint-extension.md` §5:
-/// lint plugin failures never block the build.
+/// `handle_check`. Renders structured diagnostics from every participating
+/// plugin, plus any LINT001/LINT002/LINT003 diagnostics that arose during
+/// the pass. Non-blocking per spec §5 — no matter what plugins report,
+/// this function does not fail the caller.
 fn run_contract5_lint(source: &str, file_path: &str) {
-    // Phase B default: config_level = "warning". Cycle 3 adds a
-    // `--lint-level` flag that surfaces the choice on the CLI.
+    use clean_language_compiler::plugins::lint::{LintSeverity, PluginLintReport};
+
+    // Phase B default: config_level = "warning". A `--lint-level` flag
+    // that surfaces the choice on the CLI is a Phase D+ addition.
     match clean_language_compiler::lint_source(source, file_path, "warning") {
         Ok(reports) if reports.is_empty() => {
             // No plugins declared, or none had a lint hook — silent success.
@@ -1944,18 +1944,53 @@ fn run_contract5_lint(source: &str, file_path: &str) {
         Ok(reports) => {
             for report in &reports {
                 match report {
-                    clean_language_compiler::plugins::lint::PluginLintReport::Ok {
+                    PluginLintReport::Ok {
                         plugin_name,
-                        raw_json,
+                        diagnostics,
+                        invalid_summary,
+                        raw_json: _,
                     } => {
-                        println!("── lint: {} ──", plugin_name);
-                        println!("{}", raw_json);
+                        for d in diagnostics {
+                            render_lint_diagnostic(plugin_name, d);
+                        }
+                        if !invalid_summary.is_empty() {
+                            // LINT002 per spec §5: some entries were dropped
+                            // during parsing. Render as one warning-level line
+                            // per dropped entry so plugin authors can see what
+                            // was wrong.
+                            eprintln!(
+                                "[LINT002] {}: {} diagnostic entr{} dropped during parsing",
+                                plugin_name,
+                                invalid_summary.len(),
+                                if invalid_summary.len() == 1 {
+                                    "y"
+                                } else {
+                                    "ies"
+                                }
+                            );
+                            for reason in invalid_summary {
+                                eprintln!("    · {}", reason);
+                            }
+                        }
                     }
-                    clean_language_compiler::plugins::lint::PluginLintReport::Failed {
+                    PluginLintReport::Failed {
                         plugin_name,
                         message,
                     } => {
                         eprintln!("[LINT001] {}: {}", plugin_name, message);
+                    }
+                    PluginLintReport::CodeCollision {
+                        plugin_name,
+                        conflicting_code,
+                        first_seen_from,
+                    } => {
+                        // LINT003 per spec §5: emitted against the SECOND
+                        // plugin only. The first plugin's diagnostic is
+                        // still rendered normally above.
+                        eprintln!(
+                            "[LINT003] {}: diagnostic code `{}` already claimed by plugin `{}`",
+                            plugin_name, conflicting_code, first_seen_from
+                        );
                     }
                 }
             }
@@ -1966,6 +2001,44 @@ fn run_contract5_lint(source: &str, file_path: &str) {
             // above has already surfaced typecheck errors on the same source.
             for e in &errors {
                 eprintln!("[LINT001] plugin-lint pass could not run: {}", e.message());
+            }
+        }
+    }
+
+    // Local helper — kept inside run_contract5_lint so the LintSeverity
+    // import stays scoped. Renders in a compiler-diagnostic-alike format:
+    //   [SOURCE][CODE] file:line:col — message
+    //       hint: <optional hint>
+    // Errors go to stderr; warnings and info to stdout so the CLI is
+    // pipe-friendly for the common "run and grep errors" pattern.
+    fn render_lint_diagnostic(
+        source: &str,
+        d: &clean_language_compiler::plugins::lint::LintDiagnostic,
+    ) {
+        let severity = match d.severity {
+            LintSeverity::Error => "error",
+            LintSeverity::Warning => "warning",
+            LintSeverity::Info => "info",
+        };
+        // Format: `[plugin][severity][CODE] file:line:col — message`
+        let line = format!(
+            "[{}][{}][{}] {}:{}:{} — {}",
+            source,
+            severity,
+            d.code,
+            d.location.file,
+            d.location.line,
+            d.location.column,
+            d.message
+        );
+        match d.severity {
+            LintSeverity::Error => eprintln!("{}", line),
+            _ => println!("{}", line),
+        }
+        if let Some(hint) = &d.hint {
+            match d.severity {
+                LintSeverity::Error => eprintln!("    hint: {}", hint),
+                _ => println!("    hint: {}", hint),
             }
         }
     }
