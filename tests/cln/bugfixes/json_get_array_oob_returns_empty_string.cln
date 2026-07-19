@@ -1,4 +1,8 @@
 // Test: bugfixes/json_get_array_oob_returns_empty_string
+// Semantic: stdlib-reference.md §8 — json.get returns an empty string
+//   (not null) when the path does not resolve, so the canonical iteration
+//   shape `while item != "": item = json.get(arr, i.toString())` can
+//   terminate portably across all hosts.
 // Regression: WASM-TRAP-JSON-ARRAY-ITER fingerprint 156e745b63d9
 //   (first seen 0.33.85). Iterating a top-level JSON array with the
 //   canonical `while item != ""` termination shape trapped or looped
