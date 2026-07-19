@@ -124,6 +124,10 @@ fn get_spec_path() -> Option<String> {
         "documentation/Clean_Language_Specification.md",
         "../documentation/Clean_Language_Specification.md",
         "docs/language/Clean_Language_Specification.md",
+        // Foundation is the single source of truth as of the 2026 doc consolidation.
+        "foundation/docs/Clean Language Specification.md",
+        "../foundation/docs/Clean Language Specification.md",
+        "../../foundation/docs/Clean Language Specification.md",
     ];
 
     for path in &paths {
@@ -293,6 +297,38 @@ fn get_error_catalog() -> Vec<ErrorCodeEntry> {
             description: "Type specification is invalid or malformed.",
             example: "start:\n\tUnknownType x = 5",
             fix: "Use a valid type name (integer, string, boolean, number, or defined class).",
+        },
+        ErrorCodeEntry {
+            code: "SEM011",
+            category: "semantic",
+            title: "Missing capability method",
+            description: "A class claims a capability via `can Name` but does not implement one of the capability's required (non-default) methods.",
+            example: "can Draw:\n\tdraw()\n\nclass Circle can Draw\n\t// ERROR: draw() not implemented",
+            fix: "Add the missing method to the class's `functions: public:` block, or remove the capability from the `can` clause.",
+        },
+        ErrorCodeEntry {
+            code: "SEM012",
+            category: "semantic",
+            title: "Undefined capability",
+            description: "A `can` clause on a class, or a type reference in a parameter or return position, names a capability that has not been declared.",
+            example: "class Circle can Fly    // ERROR: capability Fly not defined",
+            fix: "Declare the capability with a `can Fly:` block, or correct the spelling.",
+        },
+        ErrorCodeEntry {
+            code: "SEM013",
+            category: "semantic",
+            title: "Capability method signature mismatch",
+            description: "A class implements a capability method whose parameter types or return type do not match the capability's declared signature.",
+            example: "can Save:\n\tsave(string path)\n\nclass File can Save\n\tfunctions:\n\t\tpublic:\n\t\t\tsave(integer path)    // ERROR: expected string, got integer",
+            fix: "Change the class's method signature to match the capability's exactly.",
+        },
+        ErrorCodeEntry {
+            code: "SEM014",
+            category: "semantic",
+            title: "Capability default calls undefined method",
+            description: "A default method body inside a `can:` block calls `this.otherMethod()`, but `otherMethod` is not declared in the same capability, so it is not guaranteed to exist on every claiming class.",
+            example: "can Describe:\n\ttag() -> string\n\t\treturn this.color    // ERROR: color is not part of Describe",
+            fix: "Default bodies may only call methods declared in the same capability.",
         },
 
         // Compilation Errors (COM)
@@ -3074,6 +3110,59 @@ class Dog is Animal
 			string speak()
 				return name + " barks"
 ```
+
+## Capabilities (can)
+Capabilities are named method contracts that unrelated classes can claim. Use `can` when the relationship is "can-do" rather than "is-a". A class must explicitly declare `can Name` — nominal, not structural.
+
+**Naming convention: bare verbs.** `can Draw`, `can Print`, `can Close`, `can Serialize`, `can Compare`. Adjective forms like `Drawable` read awkwardly against the `can` keyword. Every capability in the standard library and every example in this reference follows the verb convention.
+
+```
+can Draw:
+	draw()
+
+can Describe:
+	string describe()
+	string tag()
+		return "[" + this.describe() + "]"   // default body — classes that don't override inherit this
+
+class Circle is Shape can Draw, Describe
+	public:
+		number radius
+
+	functions:
+		public:
+			draw()
+				print("circle")
+			string describe()
+				return "circle"
+			// tag() not written — Circle inherits Describe's default
+
+class Square can Draw
+	functions:
+		public:
+			draw()
+				print("square")
+```
+
+Capability values are usable as parameter/return/variable types. Runtime dispatch is dynamic — the actual class of the value at runtime determines which method runs.
+
+```
+functions:
+	render(Draw shape)
+		shape.draw()                          // dispatches via runtime class-id
+
+start:
+	render(Circle())                          // prints "circle"
+	render(Square())                          // prints "square"
+```
+
+Header order when both are present: `class Name [is Parent] [can C1, C2, ...]`.
+
+**Compile-time enforcement:**
+- `SEM011` — class claims a capability but doesn't implement one of its required (non-default) methods.
+- `SEM012` — class claims a capability that was never declared.
+- `SEM013` — class implements a capability method with the wrong signature.
+- `SEM014` — a capability default body calls a method that isn't part of the same capability.
 
 ## Event Handlers (events: class section)
 Classes can declare an `events:` block sibling to `functions:` for UI event handlers (frame.ui components, etc.). Event-handler methods use a distinct signature: bare `name(params):` form — NO return type, trailing colon required. Parameters use `name [: type]` form.
