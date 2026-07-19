@@ -1,0 +1,45 @@
+// Test: bugfixes/json_get_array_oob_returns_empty_string
+// Regression: WASM-TRAP-JSON-ARRAY-ITER fingerprint 156e745b63d9
+//   (first seen 0.33.85). Iterating a top-level JSON array with the
+//   canonical `while item != ""` termination shape trapped or looped
+//   forever on clean-server and clean-node-server, while the exact same
+//   compiled WASM ran to completion on the standalone wasmtime_runner.
+//
+// Root cause: `json.get` (src/stdlib/json_class.rs :244-352) returned
+//   raw pointer 0 (null) when the path didn't resolve — both the outer
+//   null-guard and the `__json_get_path` miss path. Callers store the
+//   result into a `string` variable and compare with `""`. The host's
+//   `string_compare` bridge reads the string length from `mem[ptr]` with
+//   no null guard. On the standalone runner memory[0..4] is zero, so
+//   null reads as an empty string and the comparison happens to work.
+//   On real hosts memory near address 0 contains data-segment bytes
+//   (WASM data initializers), so length reads as garbage — either a
+//   huge unsigned value that walks off memory and traps, or a random
+//   non-zero value that makes `item != ""` always evaluate true, causing
+//   an infinite loop that eventually OOMs / traps on stack exhaustion.
+//
+// Fix: json.get now wraps its return so any 0/null result is replaced
+//   with a pointer to a valid Clean Language empty string (4 bytes of
+//   `[0,0,0,0]` on the bump heap). The compiler owns the WASM contract
+//   with hosts: string-returning bridge exports must never return null.
+//   The alternative — patching each host's string_compare to null-guard —
+//   would leave the same latent hazard in string_concat, string_length,
+//   substring, and every other host string function.
+//
+// Fixed in: compiler 0.33.99
+//
+// Expected output:
+//   {"title":"A"}
+//   {"title":"B"}
+//   {"title":"C"}
+//   done
+
+start:
+	string arr = "[{\"title\":\"A\"},{\"title\":\"B\"},{\"title\":\"C\"}]"
+	integer i = 0
+	string item = json.get(arr, "0")
+	while item != ""
+		print(item)
+		i = i + 1
+		item = json.get(arr, i.toString())
+	print("done")

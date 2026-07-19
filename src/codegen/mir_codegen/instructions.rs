@@ -3366,15 +3366,56 @@ impl MirCodeGenerator<'_> {
         self.current_instructions
             .push(Instruction::LocalSet(ptr_local));
 
-        // Read the tag
-        self.current_instructions
-            .push(Instruction::LocalGet(ptr_local));
-        self.emit_read_any_tag()?;
-
         // Create a result local
         let result_local = self.next_local_index;
         self.next_local_index += 1;
         self.temp_local_types.insert(result_local, ValType::I32);
+
+        // Null-guard the boxed pointer BEFORE reading the tag. `json.get`,
+        // `__json_get_path`, and other Any-returning bridges return 0 on
+        // miss/OOB. `emit_read_any_tag` would then load memory[0], which is
+        // zeroed on the standalone runner but contains WASM data-segment
+        // bytes on real hosts (clean-server, clean-node-server). A non-zero
+        // byte there gets misinterpreted as a valid tag (e.g. 4 = String),
+        // routing execution into the String branch which reads mem[ptr+4]
+        // at address 4 — garbage. The reporter's `while item != ""` loop
+        // then compares against garbage-length strings and either loops
+        // forever (OOM/stack trap) or terminates non-deterministically.
+        // See WASM-TRAP-JSON-ARRAY-ITER fp 156e745b63d9.
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions.push(Instruction::I32Eqz);
+        self.current_instructions
+            .push(Instruction::If(BlockType::Empty));
+        {
+            // Allocate a fresh 4-byte length-prefixed empty string.
+            if let Some(&malloc_idx) = self.wasm_generator.function_map.get("malloc") {
+                self.current_instructions.push(Instruction::I32Const(4));
+                self.current_instructions
+                    .push(Instruction::Call(malloc_idx));
+                self.current_instructions
+                    .push(Instruction::LocalTee(result_local));
+                self.current_instructions.push(Instruction::I32Const(0));
+                self.current_instructions
+                    .push(Instruction::I32Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+            } else {
+                // No malloc registered — extremely unlikely; leave 0 and
+                // let the caller trip its own null-guard.
+                self.current_instructions.push(Instruction::I32Const(0));
+                self.current_instructions
+                    .push(Instruction::LocalSet(result_local));
+            }
+        }
+        self.current_instructions.push(Instruction::Else);
+
+        // Read the tag (non-null path)
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.emit_read_any_tag()?;
 
         // Dispatch based on tag using if-else chain
         // if tag == 1 (Integer) -> int_to_string
@@ -3581,6 +3622,7 @@ impl MirCodeGenerator<'_> {
             self.current_instructions.push(Instruction::End); // End Boolean if
         }
         self.current_instructions.push(Instruction::End); // End Integer if
+        self.current_instructions.push(Instruction::End); // End null-guard if
 
         // Push the result onto the stack
         self.current_instructions
