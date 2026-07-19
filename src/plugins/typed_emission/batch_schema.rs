@@ -1011,6 +1011,41 @@ pub fn function_to_ast_with_body(
 /// choice. This separation is what lets the bridge consume `_emit_stmt_from_source`
 /// handles from the arena without this pure conversion layer having to know
 /// about arenas.
+pub fn class_to_ast(
+    spec: ClassSpec,
+    method_bodies: Vec<Vec<Statement>>,
+    exported: bool,
+) -> Result<Class, BatchSchemaError> {
+    if spec.methods.len() != method_bodies.len() {
+        return Err(BatchSchemaError::UnresolvedBodyHandle {
+            handle: 0,
+            reason: "internal: method_bodies length mismatch".to_string(),
+        });
+    }
+    let mut class = Class::new(spec.name, None);
+    class.base_class = spec.parent;
+
+    for field in spec.fields {
+        let ty = resolve_type(&field.ty)?;
+        class.fields.push(Field::new(field.name, ty));
+    }
+
+    for (m, body) in spec.methods.into_iter().zip(method_bodies) {
+        let mut params = Vec::with_capacity(m.params.len());
+        for p in m.params {
+            params.push(Parameter::new(p.name, resolve_type(&p.ty)?));
+        }
+        let return_type = resolve_type(&m.return_type)?;
+        let mut func = Function::new(m.name, params, return_type, body, None);
+        if exported {
+            func.visibility = Visibility::Public;
+        }
+        class.methods.push(func);
+    }
+
+    Ok(class)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Capability schema (§3.18 / Amendment 13)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1078,41 +1113,6 @@ pub fn capability_to_ast(spec: CapabilitySpec) -> Result<crate::ast::Capability,
         });
     }
     Ok(cap)
-}
-
-pub fn class_to_ast(
-    spec: ClassSpec,
-    method_bodies: Vec<Vec<Statement>>,
-    exported: bool,
-) -> Result<Class, BatchSchemaError> {
-    if spec.methods.len() != method_bodies.len() {
-        return Err(BatchSchemaError::UnresolvedBodyHandle {
-            handle: 0,
-            reason: "internal: method_bodies length mismatch".to_string(),
-        });
-    }
-    let mut class = Class::new(spec.name, None);
-    class.base_class = spec.parent;
-
-    for field in spec.fields {
-        let ty = resolve_type(&field.ty)?;
-        class.fields.push(Field::new(field.name, ty));
-    }
-
-    for (m, body) in spec.methods.into_iter().zip(method_bodies) {
-        let mut params = Vec::with_capacity(m.params.len());
-        for p in m.params {
-            params.push(Parameter::new(p.name, resolve_type(&p.ty)?));
-        }
-        let return_type = resolve_type(&m.return_type)?;
-        let mut func = Function::new(m.name, params, return_type, body, None);
-        if exported {
-            func.visibility = Visibility::Public;
-        }
-        class.methods.push(func);
-    }
-
-    Ok(class)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
