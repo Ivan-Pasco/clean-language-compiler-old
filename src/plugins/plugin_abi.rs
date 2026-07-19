@@ -288,6 +288,18 @@ pub struct PluginExports {
     /// pointer is a length-prefixed Clean source string.
     #[serde(default)]
     pub process_html: Option<String>,
+    /// WASM export name for the plugin lint hook (Contract 5).
+    /// Invoked once per plugin during `cln lint` and (unless `--no-lint`)
+    /// during `cln compile`. Runs after parse/resolve/typecheck and before
+    /// block expansion.
+    ///
+    /// Signature: `(input_ptr: i32) -> i32` where `input_ptr` is a
+    /// length-prefixed JSON string describing the project context and the
+    /// returned pointer is a length-prefixed JSON string containing an array
+    /// of diagnostic entries. See
+    /// foundation/spec/plugins/contracts/lint-extension.md.
+    #[serde(default)]
+    pub lint: Option<String>,
 }
 
 impl Default for PluginExports {
@@ -305,6 +317,7 @@ impl Default for PluginExports {
             register_build: None,
             assemble: None,
             process_html: None,
+            lint: None,
         }
     }
 }
