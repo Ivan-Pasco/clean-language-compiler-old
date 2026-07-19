@@ -219,6 +219,22 @@ enum Commands {
         #[arg(long)]
         emit_heap_probes: bool,
 
+        /// Emit bridge-probe instrumentation for STATE-A hunt.
+        ///
+        /// Superset of `--emit-heap-probes` for cross-bridge tracking. When set,
+        /// injects `call $_probe_ptr(before_id, 0)` *before* and
+        /// `call $_probe_ptr(after_id, result_ptr)` *after* every WASM `call`
+        /// to a host-imported bridge function declared via `plugin.toml`
+        /// `[bridge]` entries. The "after" probe is skipped for void-returning
+        /// bridges and for non-i32 returns (only heap-pointer returns are
+        /// probeable). Callsite entries land in the same `<output>.probes.json`
+        /// sidecar with `function` = `"bridge_before:<name>"` or
+        /// `"bridge_after:<name>"`. Off by default. Reuses the same three env
+        /// imports (`_probe_ptr`, `_probe_ptr_dump`, `_probe_ptr_reset`) so a
+        /// module built with both flags carries a single import set.
+        #[arg(long)]
+        emit_bridge_probes: bool,
+
         /// Contract 5 Phase B: accept `--no-lint` so scripts written for the
         /// eventual Phase D flip already work. Lint is OFF by default in
         /// `cln compile` throughout Phase B — this flag is a no-op until the
@@ -521,6 +537,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             strict_hosts,
             strict_emission_ops,
             emit_heap_probes,
+            emit_bridge_probes,
             // Contract 5 Phase B: `no_lint` is accepted on the CLI but not
             // yet plumbed to the compile pipeline — lint is OFF by default
             // in Phase B, so the flag has nothing to disable. Wired
@@ -542,6 +559,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 strict_hosts,
                 strict_emission_ops,
                 emit_heap_probes,
+                emit_bridge_probes,
                 &output_config,
             )
             .await?
@@ -738,6 +756,7 @@ async fn handle_serve(
         false,                // strict_hosts off for serve
         false,                // strict_emission_ops off for serve
         false,                // emit_heap_probes off for serve
+        false,                // emit_bridge_probes off for serve
         output_config,
     )
     .await;
@@ -1340,6 +1359,7 @@ async fn handle_compile(
     strict_hosts: bool,
     strict_emission_ops: bool,
     emit_heap_probes: bool,
+    emit_bridge_probes: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Plugin Contracts v2 — thread `--target` and `--strict-hosts` into the
@@ -1356,8 +1376,11 @@ async fn handle_compile(
     clean_language_compiler::set_strict_hosts_override(strict_hosts);
     // Plugin Contracts v3 Layer D step 2 — thread --strict-emission-ops.
     clean_language_compiler::set_strict_emission_ops_override(strict_emission_ops);
-    // STATE-A heap-probe hunt — thread --emit-heap-probes.
+    // STATE-A heap-probe hunt — thread --emit-heap-probes and its
+    // bridge-scoped superset --emit-bridge-probes. Both feed the same
+    // callsite table + `.probes.json` sidecar.
     clean_language_compiler::set_emit_heap_probes_override(emit_heap_probes);
+    clean_language_compiler::set_emit_bridge_probes_override(emit_bridge_probes);
 
     // Plugin Contracts v2 Phase B — when building a plugin, resolve the
     // Clean Runtime ABI version from the sibling plugin.toml's
@@ -1470,7 +1493,7 @@ async fn handle_compile(
     // caller + source location so node-server's `_probe_ptr_dump` output
     // can be correlated with the source `.cln` that produced it. See ack
     // in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
-    if emit_heap_probes {
+    if emit_heap_probes || emit_bridge_probes {
         let callsites = clean_language_compiler::take_heap_probe_callsites();
         let module_name = Path::new(&output)
             .file_name()

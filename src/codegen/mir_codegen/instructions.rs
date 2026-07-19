@@ -1668,9 +1668,18 @@ impl MirCodeGenerator<'_> {
                             index = function_index,
                             "Calling function at WASM index (direct lookup)"
                         );
+                        let bridge_after_id = self.maybe_emit_probe_before_bridge_call(
+                            function_index,
+                            &instruction.location,
+                        );
                         self.current_instructions
                             .push(Instruction::Call(function_index));
                         self.maybe_emit_probe_after_call(function_index, &instruction.location);
+                        self.maybe_emit_probe_after_bridge_call(
+                            bridge_after_id,
+                            function_index,
+                            &instruction.location,
+                        );
                     } else if let Some(function_name) = self.get_function_name_by_symbol(*symbol_id)
                     {
                         // Fallback to name-based lookup for built-in functions
@@ -1777,9 +1786,18 @@ impl MirCodeGenerator<'_> {
                                 index = function_index,
                                 "Calling function at WASM index"
                             );
+                            let bridge_after_id = self.maybe_emit_probe_before_bridge_call(
+                                function_index,
+                                &instruction.location,
+                            );
                             self.current_instructions
                                 .push(Instruction::Call(function_index));
                             self.maybe_emit_probe_after_call(function_index, &instruction.location);
+                            self.maybe_emit_probe_after_bridge_call(
+                                bridge_after_id,
+                                function_index,
+                                &instruction.location,
+                            );
                         } else {
                             // NOTE: No more silent fallbacks to index 0
                             // Return a proper error when function is not found in function_map
@@ -1895,8 +1913,15 @@ impl MirCodeGenerator<'_> {
                             index = idx,
                             "Calling named function at WASM index"
                         );
+                        let bridge_after_id =
+                            self.maybe_emit_probe_before_bridge_call(idx, &instruction.location);
                         self.current_instructions.push(Instruction::Call(idx));
                         self.maybe_emit_probe_after_call(idx, &instruction.location);
+                        self.maybe_emit_probe_after_bridge_call(
+                            bridge_after_id,
+                            idx,
+                            &instruction.location,
+                        );
                     } else {
                         // NOTE: Return a proper error when named function is not found
                         debug_mir!(
@@ -2443,6 +2468,178 @@ impl MirCodeGenerator<'_> {
             caller: caller_name,
             source,
         });
+    }
+
+    /// STATE-A bridge-probe hunt — if the callee at `function_index` is a
+    /// host-imported bridge function AND `--emit-bridge-probes` is set, emit
+    /// `call $_probe_ptr(before_id, 0)` immediately BEFORE the pending
+    /// `Instruction::Call(function_index)`. Returns `Some(after_id)` that the
+    /// caller passes to `maybe_emit_probe_after_bridge_call` right after the
+    /// call is pushed; returns `None` when no after-probe should fire.
+    ///
+    /// A callee is considered a bridge iff any of these hold:
+    /// - the function name at `function_index` appears as a value in
+    ///   `language_to_bridge_map` (e.g. `_db_query`), OR
+    /// - its name appears as a key in `bridge_param_types`
+    ///   (the plugin-bridge wrapper table).
+    ///
+    /// No-op when the flag is off. Also records a `ProbeCallsite` entry with
+    /// `function` = `"bridge_before:<name>"` in the sidecar.
+    pub(super) fn maybe_emit_probe_before_bridge_call(
+        &mut self,
+        function_index: u32,
+        instruction_loc: &crate::ast::SourceLocation,
+    ) -> Option<u32> {
+        if !crate::emit_bridge_probes_override() {
+            return None;
+        }
+
+        let bridge_name = self.bridge_name_for_index(function_index)?;
+
+        let probe_ptr_idx = self
+            .wasm_generator
+            .function_map
+            .get("_probe_ptr")
+            .copied()?;
+
+        // BEFORE probe — no payload to probe yet, use 0 as the ptr argument.
+        // (The interesting datum is the callsite id + implicit __heap_ptr the
+        // host-side probe captures in its bridge.)
+        let before_id: u32 = (self.probe_callsites.len() as u32) + 1;
+        self.current_instructions
+            .push(Instruction::I32Const(before_id as i32));
+        self.current_instructions.push(Instruction::I32Const(0));
+        self.current_instructions
+            .push(Instruction::Call(probe_ptr_idx));
+
+        let caller_name = self
+            .current_function
+            .as_ref()
+            .map(|f| f.name.clone())
+            .unwrap_or_default();
+        let source = if instruction_loc.file.is_empty() {
+            format!("<unknown>:{}", instruction_loc.line)
+        } else {
+            format!("{}:{}", instruction_loc.file, instruction_loc.line)
+        };
+        self.probe_callsites.push(super::ProbeCallsite {
+            id: before_id,
+            function: format!("bridge_before:{}", bridge_name),
+            caller: caller_name,
+            source,
+        });
+
+        // Reserve the after_id up front so both sides of the pair are
+        // sequentially numbered. Returning it also acts as an "emit after
+        // probe" flag — None means the caller must NOT emit an after probe
+        // (bridge unprobeable, or flag off).
+        let after_id: u32 = (self.probe_callsites.len() as u32) + 1;
+        Some(after_id)
+    }
+
+    /// STATE-A bridge-probe hunt — emit `call $_probe_ptr(after_id, ptr)`
+    /// AFTER a bridge call whose BEFORE probe returned `Some(after_id)`.
+    /// When the callee returns i32, tees the returned pointer so the caller
+    /// still consumes it. When the callee returns non-i32 (i64/f32/f64) OR
+    /// void, emits `_probe_ptr(after_id, 0)` — the fact that control returned
+    /// is itself the observable event.
+    ///
+    /// The pending call must already be pushed onto `current_instructions`.
+    pub(super) fn maybe_emit_probe_after_bridge_call(
+        &mut self,
+        after_id: Option<u32>,
+        function_index: u32,
+        instruction_loc: &crate::ast::SourceLocation,
+    ) {
+        let Some(after_id) = after_id else {
+            return;
+        };
+
+        let Some(bridge_name) = self.bridge_name_for_index(function_index) else {
+            return;
+        };
+
+        let probe_ptr_idx = match self.wasm_generator.function_map.get("_probe_ptr").copied() {
+            Some(idx) => idx,
+            None => return,
+        };
+
+        let return_type = self
+            .wasm_generator
+            .wasm_function_return_types
+            .get(&bridge_name)
+            .copied()
+            .flatten();
+
+        match return_type {
+            Some(crate::types::WasmType::I32) => {
+                // Tee the returned pointer so it stays on the stack for the
+                // caller, and pass a copy to the probe.
+                let scratch = self.next_local_index;
+                self.next_local_index += 1;
+                self.temp_local_types.insert(scratch, ValType::I32);
+                self.current_instructions
+                    .push(Instruction::LocalTee(scratch));
+                self.current_instructions
+                    .push(Instruction::I32Const(after_id as i32));
+                self.current_instructions
+                    .push(Instruction::LocalGet(scratch));
+                self.current_instructions
+                    .push(Instruction::Call(probe_ptr_idx));
+            }
+            _ => {
+                // Void / non-i32 return — the ptr slot has no meaningful
+                // value; use 0. The call already left nothing (void) or a
+                // value the caller consumes (i64/f32/f64), so we do NOT tee.
+                self.current_instructions
+                    .push(Instruction::I32Const(after_id as i32));
+                self.current_instructions.push(Instruction::I32Const(0));
+                self.current_instructions
+                    .push(Instruction::Call(probe_ptr_idx));
+            }
+        }
+
+        let caller_name = self
+            .current_function
+            .as_ref()
+            .map(|f| f.name.clone())
+            .unwrap_or_default();
+        let source = if instruction_loc.file.is_empty() {
+            format!("<unknown>:{}", instruction_loc.line)
+        } else {
+            format!("{}:{}", instruction_loc.file, instruction_loc.line)
+        };
+        self.probe_callsites.push(super::ProbeCallsite {
+            id: after_id,
+            function: format!("bridge_after:{}", bridge_name),
+            caller: caller_name,
+            source,
+        });
+    }
+
+    /// Reverse-lookup: given a WASM function index, return the bridge's raw
+    /// name if the index refers to a known bridge function, else `None`.
+    ///
+    /// Consulted only when a probe flag is set; the O(n) scans are gated
+    /// behind that check by callers.
+    fn bridge_name_for_index(&self, function_index: u32) -> Option<String> {
+        // First look through language_to_bridge_map values.
+        for bridge_name in self.language_to_bridge_map.values() {
+            if let Some(&idx) = self.wasm_generator.function_map.get(bridge_name) {
+                if idx == function_index {
+                    return Some(bridge_name.clone());
+                }
+            }
+        }
+        // Then look through bridge_param_types keys (plugin bridge wrappers).
+        for name in self.bridge_param_types.keys() {
+            if let Some(&idx) = self.wasm_generator.function_map.get(name) {
+                if idx == function_index {
+                    return Some(name.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Lower a `MirOperation::CallCapability` into a runtime class-id switch

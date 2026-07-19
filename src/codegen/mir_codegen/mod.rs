@@ -716,8 +716,10 @@ impl MirCodeGenerator<'_> {
             // any local functions get their indices). Only emitted when the
             // `--emit-heap-probes` CLI flag is set — zero cost when off.
             // Ack'd in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
-            if crate::emit_heap_probes_override() {
-                debug_mir!("DEBUG MIR: Registering heap-probe imports (--emit-heap-probes)");
+            if crate::any_probe_flag_active() {
+                debug_mir!(
+                    "DEBUG MIR: Registering _probe_ptr* imports (--emit-heap-probes and/or --emit-bridge-probes)"
+                );
                 self.wasm_generator
                     .register_heap_probe_imports()
                     .map_err(|e| vec![e])?;

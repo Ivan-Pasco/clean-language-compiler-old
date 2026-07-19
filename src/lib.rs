@@ -365,6 +365,16 @@ thread_local! {
     /// Off by default: zero production cost. Set by `--emit-heap-probes`.
     /// Contract acked to node-server in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
     static EMIT_HEAP_PROBES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// STATE-A heap-probe hunt — bridge-scoped superset of
+    /// `EMIT_HEAP_PROBES`. When true, codegen emits `call $_probe_ptr(...)`
+    /// *before* and *after* every WASM `call` to a host-imported bridge
+    /// function (declared via `plugin.toml [bridge]` or the built-in Layer
+    /// 2 host bridge). Reuses the same three `_probe_ptr*` imports; either
+    /// flag turns them on. The "after" probe is skipped when the bridge
+    /// returns non-i32 (only heap-pointer returns are probeable). Off by
+    /// default. Set by `--emit-bridge-probes`. Acked to node-server in the
+    /// STATE A V2 response prompt.
+    static EMIT_BRIDGE_PROBES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// STATE-A heap-probe hunt — callsite metadata captured from the last
     /// `MirCodegenResult`. Written by the codegen pipeline; drained by the
     /// CLI when writing the `.probes.json` sidecar. Empty when
@@ -458,6 +468,31 @@ pub fn set_emit_heap_probes_override(enable: bool) {
 /// Read the active `--emit-heap-probes` override for the current thread.
 pub fn emit_heap_probes_override() -> bool {
     EMIT_HEAP_PROBES.with(|cell| cell.get())
+}
+
+/// Set the `--emit-bridge-probes` flag for the current thread.
+///
+/// Superset of `--emit-heap-probes` — when true, codegen emits `_probe_ptr`
+/// calls *before* and *after* every WASM `call` to a host-imported bridge
+/// function. Reuses the same three `_probe_ptr*` imports as the heap-probes
+/// flag; either flag turns them on. Off by default.
+///
+/// Ack'd to node-server in the STATE A V2 response prompt.
+pub fn set_emit_bridge_probes_override(enable: bool) {
+    EMIT_BRIDGE_PROBES.with(|cell| cell.set(enable));
+}
+
+/// Read the active `--emit-bridge-probes` override for the current thread.
+pub fn emit_bridge_probes_override() -> bool {
+    EMIT_BRIDGE_PROBES.with(|cell| cell.get())
+}
+
+/// True when either `--emit-heap-probes` or `--emit-bridge-probes` is set —
+/// i.e. when the codegen should register the `_probe_ptr*` imports and reserve
+/// callsite IDs. Used to gate the import block once for both flags so a module
+/// built with both carries a single import set.
+pub fn any_probe_flag_active() -> bool {
+    emit_heap_probes_override() || emit_bridge_probes_override()
 }
 
 /// Replace the heap-probe callsite list for the current thread.
