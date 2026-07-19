@@ -117,17 +117,12 @@ impl LintArena {
     /// to typed_emission's ctx_handle) so that plugins cannot accidentally
     /// reuse a stale value from a prior call, even if the wasmtime Store
     /// were somehow shared across calls.
-    ///
-    /// `dead_code` is expected in Cycle 1: nothing calls this yet. Cycle 2
-    /// adds the `call_lint_project` path that owns the arena lifecycle.
-    #[allow(dead_code)]
     pub fn new(handle: i32, program: Program) -> Self {
         Self { handle, program }
     }
 
     /// The monotonic handle for this call. Bridges validate the caller-
     /// supplied handle against this before returning any data.
-    #[allow(dead_code)]
     pub fn handle(&self) -> i32 {
         self.handle
     }
@@ -307,6 +302,64 @@ mod tests {
 
     fn empty_program() -> Program {
         Program::new(None)
+    }
+
+    // ── constructor + handle getter ──────────────────────────────────────────
+
+    #[test]
+    fn arena_handle_is_stable() {
+        // Handle must survive round-trip through .handle() and stay stable
+        // across repeated reads. `0` is reserved for future invalid-sentinel
+        // use, so we pick a positive value.
+        let arena = LintArena::new(17, empty_program());
+        assert_ne!(arena.handle(), 0, "0 is reserved as invalid sentinel");
+        assert_eq!(arena.handle(), 17);
+        assert_eq!(
+            arena.handle(),
+            arena.handle(),
+            "handle must not mutate on read"
+        );
+    }
+
+    #[test]
+    fn arena_validates_own_handle() {
+        // The arena accepts its own handle on every accessor and rejects a
+        // near-neighbour bogus handle. This locks down the check_handle
+        // contract even though production code paths don't call .handle()
+        // directly yet (they will once Phase C plugin work lands).
+        let arena = LintArena::new(31, empty_program());
+        let good = arena.handle();
+        let bad = good.wrapping_add(1);
+
+        assert_eq!(arena.list_classes_json(good), "[]");
+        assert_eq!(arena.list_functions_json(good), "[]");
+        assert_eq!(arena.class_fields_json(good, "X"), "[]");
+        assert_eq!(arena.list_blocks_json(good, "data"), "[]");
+
+        assert!(arena.list_classes_json(bad).contains("AST-HANDLE-INVALID"));
+        assert!(arena
+            .list_functions_json(bad)
+            .contains("AST-HANDLE-INVALID"));
+        assert!(arena
+            .class_fields_json(bad, "X")
+            .contains("AST-HANDLE-INVALID"));
+        assert!(arena
+            .list_blocks_json(bad, "data")
+            .contains("AST-HANDLE-INVALID"));
+    }
+
+    #[test]
+    fn arena_preserves_program_snapshot() {
+        // Constructor invariant: the arena holds the program it was given,
+        // not an empty one — regression guard for a future refactor that
+        // might accidentally drop the snapshot.
+        let mut prog = empty_program();
+        prog.classes.push(Class::new(
+            "Sentinel".to_string(),
+            Some(loc(1, "sentinel.cln")),
+        ));
+        let arena = LintArena::new(2, prog);
+        assert!(arena.list_classes_json(2).contains("\"name\":\"Sentinel\""));
     }
 
     // ── stale-handle detection ───────────────────────────────────────────────

@@ -450,6 +450,11 @@ impl WasmPluginAdapter {
 
         let handle = self.next_ctx_handle();
         let arena = crate::plugins::lint::LintArena::new(handle, program.clone());
+        debug_assert_eq!(
+            arena.handle(),
+            handle,
+            "LintArena must carry the ctx handle it was constructed with"
+        );
         let mut store = self.create_store_with_lint_arena(arena);
 
         let linker = self.build_lint_linker()?;
