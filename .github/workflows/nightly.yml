@@ -461,7 +461,7 @@ jobs:
           declare -A HOSTS=(
             ["server"]="Ivan-Pasco/clean-server"
             ["node-server"]="Ivan-Pasco/clean-node-server"
-            ["browser"]="Ivan-Pasco/cleen-framework"
+            ["browser"]="Ivan-Pasco/clean-framework"
           )
 
           for host in "${!HOSTS[@]}"; do
@@ -511,7 +511,7 @@ jobs:
             case "$host" in
               server)      repo="Ivan-Pasco/clean-server" ;;
               node-server) repo="Ivan-Pasco/clean-node-server" ;;
-              browser)     repo="Ivan-Pasco/cleen-framework" ;;
+              browser)     repo="Ivan-Pasco/clean-framework" ;;
             esac
 
             status_file="matrix-inputs/${host}-status.txt"
@@ -558,7 +558,7 @@ jobs:
             case "$host" in
               server)      repo="Ivan-Pasco/clean-server" ;;
               node-server) repo="Ivan-Pasco/clean-node-server" ;;
-              browser)     repo="Ivan-Pasco/cleen-framework" ;;
+              browser)     repo="Ivan-Pasco/clean-framework" ;;
             esac
             run_id_file="matrix-inputs/${host}-run-id.txt"
             [ -f "$run_id_file" ] || continue
