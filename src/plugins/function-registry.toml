@@ -1082,9 +1082,42 @@ category    = "file_io"
 module      = "env"
 params      = ["string", "ptr"]
 returns     = "i32"
-aliases     = ["fs.write_bytes"]
+aliases     = ["fs.write_bytes", "storage.write"]
 hosts       = ["server"]
-description = "Write an opaque byte sequence to path. First param is the destination path (ptr+len). Second param is a pointer to a length-prefixed byte buffer ([4-byte LE length][bytes]) — the identical layout produced by _req_body_bytes, so bytes read from a request body flow through verbatim without any UTF-8 detour. Host implementations MUST: (1) reject paths containing '..', null bytes, or paths outside the host-configured allowlist (default: none — hosts SHOULD document a tarball-root env var); (2) write atomically via 'path.tmp' + rename so a partial write never leaves a corrupt file at path; (3) mkdir -p on the parent directory; (4) overwrite existing files (repeat calls to the same path replace prior contents). Returns 0 on success; non-zero error code on failure — 1 = permission denied, 2 = disk full, 3 = invalid path (allowlist violation, '..', null byte), 4 = parent path exists but is not a directory, 5 = generic I/O error. Additive to file_write (UTF-8 string surface) — this bridge is binary-safe. Bridge implementations ship in clean-server (Rust std::fs) and clean-node-server (Node fs.writeFileSync + rename). Motivation: the errors dashboard's POST /api/v1/reports/tarball-upload endpoint hashes _req_body_bytes and writes the exact wire bytes to disk; a UTF-8 detour would corrupt gzip payloads and break SHA-256 integrity checks."
+description = "Write an opaque byte sequence to path. First param is the destination path (ptr+len). Second param is a pointer to a length-prefixed byte buffer ([4-byte LE length][bytes]) — the identical layout produced by _req_body_bytes, so bytes read from a request body flow through verbatim without any UTF-8 detour. Host implementations MUST: (1) reject paths containing '..', null bytes, or paths outside the host-configured allowlist (default: none — hosts SHOULD document a tarball-root env var); (2) write atomically via 'path.tmp' + rename so a partial write never leaves a corrupt file at path; (3) mkdir -p on the parent directory; (4) overwrite existing files (repeat calls to the same path replace prior contents). Returns 0 on success; non-zero error code on failure — 1 = permission denied, 2 = disk full, 3 = invalid path (allowlist violation, '..', null byte), 4 = parent path exists but is not a directory, 5 = generic I/O error. Additive to file_write (UTF-8 string surface) — this bridge is binary-safe. Bridge implementations ship in clean-server (Rust std::fs) and clean-node-server (Node fs.writeFileSync + rename). Motivation: the errors dashboard's POST /api/v1/reports/tarball-upload endpoint hashes _req_body_bytes and writes the exact wire bytes to disk; a UTF-8 detour would corrupt gzip payloads and break SHA-256 integrity checks. Public surface exported by frame.storage plugin (aliased as storage.write)."
+
+[[functions]]
+name        = "_fs_read_bytes"
+layer       = 2
+category    = "file_io"
+module      = "env"
+params      = ["string"]
+returns     = "ptr"
+aliases     = ["fs.read_bytes", "storage.read"]
+hosts       = ["server"]
+description = "Read raw bytes from path under the host storage root. Returns a length-prefixed byte buffer ([4-byte LE length][bytes]) — same layout as _fs_write_bytes accepts and as _crypto_sha256_bytes returns, so read bytes can be hashed or re-written without conversion. Host implementations MUST: (1) reject paths containing '..', null bytes, or paths outside the host-configured storage root (same rules as _fs_write_bytes); (2) return an empty buffer (length 0) when the file does not exist — do not distinguish 'missing' from 'empty' at the return value (callers use _fs_exists to disambiguate); (3) return an empty buffer on any read failure. Bridge implementations ship in clean-server (Rust std::fs::read) and clean-node-server (Node fs.readFileSync). Public surface exported by frame.storage plugin (aliased as storage.read)."
+
+[[functions]]
+name        = "_fs_exists"
+layer       = 2
+category    = "file_io"
+module      = "env"
+params      = ["string"]
+returns     = "boolean"
+aliases     = ["fs.exists", "storage.exists"]
+hosts       = ["server"]
+description = "Return true if the file at path (relative to the host storage root) exists and is a regular file. Directories and symlinks resolving outside the storage root return false. Host implementations MUST apply the same path-safety checks as _fs_write_bytes (reject '..', null bytes, allowlist violations). Result is a point-in-time observation — a concurrent delete may invalidate it before the next call; callers using this for optimistic dedup on content-addressed writes are safe because identical bytes written to the same hashed path are idempotent. Bridge implementations ship in clean-server (Rust std::fs::metadata + is_file) and clean-node-server (Node fs.statSync + isFile). Public surface exported by frame.storage plugin (aliased as storage.exists)."
+
+[[functions]]
+name        = "_fs_delete"
+layer       = 2
+category    = "file_io"
+module      = "env"
+params      = ["string"]
+returns     = "boolean"
+aliases     = ["fs.delete", "storage.delete"]
+hosts       = ["server"]
+description = "Delete the file at path (relative to the host storage root). Returns true on successful removal, false when the file did not exist or removal failed for any reason (permission, I/O). The two failure modes are collapsed at the boolean return — hosts SHOULD log the underlying reason so operators can distinguish 'already gone' from 'permission denied'. Host implementations MUST apply the same path-safety checks as _fs_write_bytes. Bridge implementations ship in clean-server (Rust std::fs::remove_file) and clean-node-server (Node fs.unlinkSync). Public surface exported by frame.storage plugin (aliased as storage.delete)."
 
 # ============================================================
 # LAYER 2 - HTTP CLIENT (22 functions, all canonical)
