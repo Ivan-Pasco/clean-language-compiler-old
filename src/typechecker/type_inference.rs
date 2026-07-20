@@ -1633,11 +1633,7 @@ impl<'a> TypeInference<'a> {
         //   Methods are static. This preserves the earlier fix for the
         //   body_uses_this() false-positive on sibling calls
         //   (CODEGEN_STACK_REMAINING fp df5b8c9b1021).
-        let is_static = if has_parent || has_fields || has_capabilities {
-            false
-        } else {
-            true
-        };
+        let is_static = !(has_parent || has_fields || has_capabilities);
 
         Ok(TastFunction {
             symbol_id: method.symbol_id,
