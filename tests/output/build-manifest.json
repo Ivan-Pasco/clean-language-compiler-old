@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.33.114",
+  "compiler_version": "0.33.115",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1784531540,
+  "generated_at_epoch_seconds": 1784551533,
   "artifacts": [
     {
-      "name": "009_dynamic_dispatch.wasm",
-      "path_relative": "009_dynamic_dispatch.wasm",
+      "name": "always_invariant_enforced.wasm",
+      "path_relative": "always_invariant_enforced.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 20103,
-      "sha256": "0d7ea57cf50a5db7d468ed6192207949401323438134466a727b50b9a67b328f",
+      "size_bytes": 24504,
+      "sha256": "f038ceba8a11cc6868d93b3ab2c8515e5d7ee18aab679de65b51c5da856ab8a7",
       "source_plugin": null
     }
   ],

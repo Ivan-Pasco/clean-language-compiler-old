@@ -235,4 +235,17 @@ jobs:
           
           For more information, visit: https://www.cleanlanguage.dev
         draft: false
-        prerelease: false 
+        prerelease: false
+
+    - name: Notify clean-errors to rebuild verifier image
+      if: success() && env.DISPATCH_PAT != ''
+      env:
+        DISPATCH_PAT: ${{ secrets.CLEAN_ERRORS_DISPATCH_PAT }}
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        curl -fsSL -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${DISPATCH_PAT}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          https://api.github.com/repos/Ivan-Pasco/clean-errors/dispatches \
+          -d "{\"event_type\":\"compiler-released\",\"client_payload\":{\"version\":\"${VERSION}\"}}"
