@@ -6,7 +6,7 @@
 //! prompt 410a2312-836c-11f1-9d55-da25a95a496b (heap probes)
 //! prompt 52a89f4b-82b6-11f1-9d55-da25a95a496b (bridge probes — this file's ack).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn repo_root() -> PathBuf {
@@ -21,17 +21,17 @@ fn tmp_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("probe_emission_{}_{}", std::process::id(), name))
 }
 
-fn write_source(path: &PathBuf, body: &str) {
+fn write_source(path: &Path, body: &str) {
     std::fs::write(path, body).expect("write source");
 }
 
-fn read_sidecar(wasm_path: &PathBuf) -> serde_json::Value {
+fn read_sidecar(wasm_path: &Path) -> serde_json::Value {
     let sidecar_path = format!("{}.probes.json", wasm_path.display());
     let bytes = std::fs::read(sidecar_path).expect("read sidecar");
     serde_json::from_slice(&bytes).expect("parse sidecar JSON")
 }
 
-fn compile(src: &PathBuf, out: &PathBuf, extra_flags: &[&str]) {
+fn compile(src: &Path, out: &Path, extra_flags: &[&str]) {
     let cln = cln_binary();
     if !cln.exists() {
         eprintln!("cln binary not built at {} — skipping", cln.display());
