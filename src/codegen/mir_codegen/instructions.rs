@@ -2672,17 +2672,30 @@ impl MirCodeGenerator<'_> {
             .unwrap_or_default();
 
         if entries.is_empty() {
-            return Err(CompilerError::Codegen {
-                context: Box::new(crate::error::ErrorContext::new(
-                    format!(
-                        "CallCapability: no class conforms to capability #{} slot {} — resolver should have prevented this",
-                        capability_symbol.0, slot_index
-                    ),
-                    None,
-                    crate::error::ErrorType::Codegen,
-                    Some(instruction.location.clone()),
-                )),
-            });
+            // No class in this build declares `can <Cap>`. The dispatch site
+            // is provably unreachable at runtime (there is no receiver value
+            // whose class-id would match any arm), so emit `unreachable`
+            // rather than failing compilation. This matches the WASM spec's
+            // stack-polymorphic semantics for `unreachable` and unblocks
+            // callers that declare a capability-typed API without a concrete
+            // implementer in-scope — a common shape for plugin-emitted
+            // helpers (frame.data v3.0.12+ `Database.save(Persist target)`,
+            // team-prompt d227e2be) and for library-style capabilities that
+            // downstream code will conform to later.
+            //
+            // If the destination local exists, drop it from any preceding
+            // load — `unreachable` is stack-polymorphic so no fixup is
+            // needed for stack shape. The dest local stays unwritten;
+            // subsequent reads of it will use whatever the local's default
+            // is (0 for i32, 0.0 for f64), but they are also unreachable
+            // per the same argument.
+            //
+            // Users get no compile-time warning today. A future Contract 5
+            // Phase B `lint` bridge can flag empty-vtable dispatch as
+            // FRAME-DATA-style informational so the friction stays low
+            // while surfacing the issue at the call site.
+            self.current_instructions.push(Instruction::Unreachable);
+            return Ok(());
         }
 
         // Determine WASM result type from destination local, if any. Used to

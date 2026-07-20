@@ -1,0 +1,52 @@
+// Test: bugfixes/callcapability_empty_vtable_emits_unreachable
+// Grammar: capability_decl · method_call on capability-typed param
+// Semantic: An in-scope `can Cap:` declaration + a function that accepts
+//   a Cap-typed parameter and dispatches to a Cap method (via
+//   `param.method()`) MUST compile even when no class in the current
+//   build claims `can Cap`. The generated dispatch site is provably
+//   unreachable — there is no receiver value whose runtime class-id
+//   would match any arm — so codegen emits WASM `unreachable`. The
+//   receiver-typed argument site is separately blocked by the resolver's
+//   SEM011 conformance check whenever a caller actually tries to pass a
+//   class-typed value to a Cap-typed parameter of a non-conforming class.
+//
+// Before 0.33.113 the compiler failed with the internal assertion
+//   "CallCapability: no class conforms to capability #N slot 0 —
+//    resolver should have prevented this"
+//   which fired at codegen time. The assertion was correct in spirit
+//   (an unreachable code path snuck through codegen) but wrong in
+//   response — the correct emission is `unreachable`, not an assertion.
+//
+// Reported context: frame.data v3.0.12 emits
+//   `class Database` with `save(Persist target)` whose body dispatches
+//   to `target.save()`. When user code declares `data Widget:` but not
+//   `class Widget can Persist`, the vtable for Persist is empty. Every
+//   Database.save/delete/deleteAll body then trips this codegen path.
+//   Team-prompt d227e2be asks frame.data v3.0.13 to emit the class-side
+//   `cans:["Persist"]` claim so the vtable is populated for user code
+//   that actually calls those methods.
+//
+// This pin covers the WORST case: capability declared, capability-typed
+//   helper method exists, NO conforming class. Verifies:
+//   (a) compilation succeeds
+//   (b) start: runs to completion without ever reaching the dead branch
+//   (c) the runtime does NOT trap (proves the unreachable arm is truly
+//       unreachable in this specific execution)
+//
+// Fixed in: compiler 0.33.113
+//
+// Expected output:
+//   compiled
+
+start:
+	// Deliberately do NOT construct any Persist-conforming value.
+	// The `helper` function body compiles to an unreachable-arm
+	// dispatch, but start: never invokes helper, so no trap fires.
+	print("compiled")
+
+can Persist:
+	boolean save()
+
+functions:
+	boolean helper(Persist target)
+		return target.save()
