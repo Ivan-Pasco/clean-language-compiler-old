@@ -31,11 +31,17 @@ fn read_sidecar(wasm_path: &Path) -> serde_json::Value {
     serde_json::from_slice(&bytes).expect("parse sidecar JSON")
 }
 
-fn compile(src: &Path, out: &Path, extra_flags: &[&str]) {
+/// Returns `true` when `cln` ran and produced `out`. Returns `false` when the
+/// release binary isn't present (e.g. CI job that only builds debug artifacts —
+/// this suite is meaningful only when the release binary was pre-built by the
+/// coverage / integration matrix). Callers MUST early-return on `false`;
+/// downstream steps such as `read_sidecar` would otherwise panic on a missing
+/// output file (this pattern predates the &Path clippy fix — see 0.33.112).
+fn compile(src: &Path, out: &Path, extra_flags: &[&str]) -> bool {
     let cln = cln_binary();
     if !cln.exists() {
         eprintln!("cln binary not built at {} — skipping", cln.display());
-        return;
+        return false;
     }
     let mut cmd = Command::new(&cln);
     cmd.arg("compile")
@@ -51,6 +57,7 @@ fn compile(src: &Path, out: &Path, extra_flags: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(out.exists(), "wasm output missing at {}", out.display());
+    true
 }
 
 #[test]
@@ -68,7 +75,9 @@ fn heap_probes_produce_sidecar_entries_for_sb_ops() {
          \tprint(html)\n",
     );
 
-    compile(&src, &out, &["--emit-heap-probes"]);
+    if !compile(&src, &out, &["--emit-heap-probes"]) {
+        return;
+    }
 
     let sidecar = read_sidecar(&out);
     assert_eq!(sidecar["version"], serde_json::json!(1));
@@ -112,7 +121,9 @@ fn bridge_probes_produce_before_after_pairs() {
         return;
     }
     let out = tmp_path("bridge.wasm");
-    compile(&src, &out, &["--emit-bridge-probes"]);
+    if !compile(&src, &out, &["--emit-bridge-probes"]) {
+        return;
+    }
 
     let sidecar = read_sidecar(&out);
     let callsites = sidecar["callsites"]
@@ -165,7 +176,9 @@ fn no_probe_flags_produces_no_sidecar_and_no_extra_imports() {
         "start:\n\
          \tprint(\"hi\")\n",
     );
-    compile(&src, &out, &[]);
+    if !compile(&src, &out, &[]) {
+        return;
+    }
 
     // With no probe flags, the sidecar file must NOT be created.
     let sidecar_path = format!("{}.probes.json", out.display());
