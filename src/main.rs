@@ -2797,27 +2797,34 @@ fn get_error_explanation(code: &str) -> ErrorExplanation {
                   - Use try/onError for safe conversion",
         },
         "RUN004" => ErrorExplanation {
-            title: "Assertion failed",
-            description: "An assertion check failed during program execution.\n\
-                         Assertions verify expected conditions in the code.",
-            example: "validateAge(age: integer)\n\
-                      \tassert age >= 0  // Fails if age is negative",
-            fix: "Fix the condition that caused the assertion to fail:\n\
-                  - Ensure input data is valid\n\
-                  - Check for edge cases in your logic\n\
-                  - Validate data at system boundaries",
+            title: "Reference error",
+            description: "A null or invalid reference was accessed at runtime.\n\
+                         Raised by the `expr!` unwrap operator when applied to a null value.",
+            example: "start:\n\
+                      \tmaybe = getUser()  // returns null\n\
+                      \tuser = maybe!      // traps: null unwrap",
+            fix: "Check for null before unwrapping, or handle the null case explicitly:\n\
+                  - Use `if maybe is not empty` to guard the unwrap\n\
+                  - Return a default value instead of unwrapping\n\
+                  - Validate input at system boundaries",
         },
         "RUN005" => ErrorExplanation {
-            title: "Timeout exceeded",
-            description: "An operation took longer than the allowed time limit.\n\
-                         This prevents infinite loops from hanging the program.",
-            example: "start:\n\
-                      \twhile true\n\
-                      \t\t// Infinite loop",
-            fix: "Ensure operations complete in reasonable time:\n\
-                  - Add proper termination conditions to loops\n\
-                  - Break large operations into smaller chunks\n\
-                  - Add progress checks in long-running code",
+            title: "Assertion failure",
+            description: "A runtime assertion evaluated to false.\n\
+                         Raised by `require:` preconditions and `always:` class invariants when the\n\
+                         checked condition is not satisfied.",
+            example: "class Counter\n\
+                      \tinteger value\n\
+                      \talways:\n\
+                      \t\tvalue >= 0\n\
+                      \tfunctions:\n\
+                      \t\tpublic:\n\
+                      \t\t\tvoid decrementBy(integer n)\n\
+                      \t\t\t\tvalue = value - n  // traps on return if value < 0",
+            fix: "Repair the caller so the checked condition holds, or relax the condition:\n\
+                  - Validate arguments before calling the method\n\
+                  - Adjust the `require:` / `always:` expression to match the intended contract\n\
+                  - Compile with `--release` to strip class invariants when perf is critical",
         },
 
         // Default for unknown codes

@@ -1,0 +1,68 @@
+// Test: bugfixes/always_invariant_enforced_at_method_return
+// Grammar: class_body · always_block
+// Semantic: A class `always:` block declares invariant expressions that MUST
+//   hold immediately before every user-authored method returns. On the
+//   happy path — every method leaves the object in a state that satisfies
+//   the invariant — execution proceeds normally with no observable
+//   difference from a class that has no `always:` block. On invariant
+//   violation the method traps (WASM unreachable) instead of returning;
+//   this pin covers the happy path so a regression that silently drops the
+//   invariant-check emission would still show green here but the sibling
+//   violation-trap pin (see below) would catch it.
+//
+// Enforcement wiring lives in the MIR builder:
+//   src/mir/mir_builder/functions.rs:220,238-243 — per-method, seeds
+//     `pending_class_invariants` from the class's TAST invariants (empty
+//     in `--release` mode so checks are stripped from optimized builds).
+//   src/mir/mir_builder/functions.rs:55-70 — the function build context
+//     picks them up as `initial_ensure_conditions`.
+//   src/mir/mir_builder/statements.rs:749-819 — every method's return
+//     iterates `context.ensure_conditions`, emits a Branch on each, and
+//     routes false → `MirTerminator::Trap` (WASM `unreachable`).
+//
+// The prompt on the errors dashboard (f501c337-836d-11f1-9d55-da25a95a496b)
+//   claimed no codegen consumer existed for HirClass.invariants. That was
+//   true when the prompt was filed but the ensure/invariant lowering had
+//   landed in the MIR builder by 0.33.115. This pin locks the current
+//   working behavior in so a future refactor of the MIR ensure-conditions
+//   pathway cannot silently un-enforce class invariants.
+//
+// Fixed in: compiler 0.33.115
+//
+// Expected output:
+//   Initial: 5
+//   After increment: 6
+//   After add 3: 9
+//   Always block test passed
+
+start:
+	Counter c = Counter(5)
+	print("Initial: " + c.getValue().toString())
+
+	c.increment()
+	print("After increment: " + c.getValue().toString())
+
+	c.add(3)
+	print("After add 3: " + c.getValue().toString())
+
+	print("Always block test passed")
+
+class Counter
+	integer value
+
+	constructor(integer initial)
+		value = initial
+
+	always:
+		value >= 0
+
+	functions:
+		public:
+			integer getValue()
+				return value
+
+			void increment()
+				value = value + 1
+
+			void add(integer n)
+				value = value + n
