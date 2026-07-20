@@ -1,0 +1,55 @@
+// Test: bugfixes/sem011_capability_conformance_named_message
+// Grammar: capability_decl · class_decl.can_clause · function_call
+// Semantic: SEM011 (fingerprint 838c14541ba7) — capability conformance is
+//   checked at call time. A class value passed to a capability-typed
+//   parameter must have declared `can C` (or inherited it). This test
+//   pins the POSITIVE case: adding `can Persist` to Session makes the
+//   exact call shape from the reporter's minimal_repro compile and run.
+//
+// Original bug (0.33.86): the reporter noted that Registry.save(Session())
+//   without `can Persist` on Session compiled and only trapped at codegen
+//   with "no class conforms to capability #268 slot 0 — resolver should
+//   have prevented this". That gap was closed in a later patch, but the
+//   emitted diagnostic used raw internal SymbolId numbers ("Class#266 does
+//   not conform to capability#268") and error code SEM001.
+//
+// Fix (0.33.109+): src/typechecker/constraint_solver.rs Class→Interface
+//   unification looks up class_id and cap_id in the symbol table and
+//   emits a SEM011-tagged CompilerError via `semantic_error_with_code`.
+//   The message names the class and capability with their declared
+//   identifiers and tells the user exactly what to add to the class
+//   header.
+//
+// What this pin protects (both directions):
+//   (a) The positive path (this file) compiles and runs — proves the fix
+//       did NOT over-reject legitimate `can`-declaring classes.
+//   (b) The negative path (removing `can Persist` from Session) MUST
+//       still be rejected with SEM011 at check-time; verified manually
+//       against the reporter's minimal_repro (see fingerprint 838c14541ba7
+//       on the errors dashboard for the exact source).
+//
+// Fixed in: compiler 0.33.109
+//
+// Expected output:
+//   true
+
+start:
+	Session s = Session()
+	boolean ok = Registry.save(s)
+	print(ok.toString())
+
+can Persist:
+	boolean save()
+	boolean delete()
+
+class Registry
+	functions:
+		boolean save(Persist target)
+			return target.save()
+
+class Session can Persist
+	functions:
+		boolean save()
+			return true
+		boolean delete()
+			return true

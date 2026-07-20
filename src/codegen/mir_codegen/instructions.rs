@@ -2772,10 +2772,22 @@ impl MirCodeGenerator<'_> {
             if matches!(block_type, wasm_encoder::BlockType::Empty) {
                 // Look up the callee's declared return type. Non-void return
                 // means the callee left something on the stack we need to drop.
+                // Void functions encode as either MirType::Void or the legacy
+                // MirType::Ptr(Box::new(MirType::Void)) — both mean "no
+                // WASM-level return value". See blocks.rs:288-289 for the
+                // same pattern in the function-signature builder. Missing this
+                // second form caused a Drop to be emitted after `void draw()`
+                // in capability dispatch, tripping `expected a type but
+                // nothing on stack` on tests/cln/core/capabilities/009_*.cln
+                // (COM001 fp 58bb119efe2e, surfaced when class-method
+                // is_static was corrected to include has_capabilities).
                 let callee_returns_something = self
                     .function_signatures
                     .get(method_sym)
-                    .map(|f| !matches!(f.return_type, MirType::Void))
+                    .map(|f| {
+                        !matches!(f.return_type, MirType::Void)
+                            && !matches!(&f.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void))
+                    })
                     .unwrap_or(true); // Assume yes when unknown; safer to drop.
                 if callee_returns_something {
                     self.current_instructions.push(Instruction::Drop);

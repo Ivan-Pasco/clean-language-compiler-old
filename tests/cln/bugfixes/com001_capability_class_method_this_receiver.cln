@@ -1,0 +1,53 @@
+// Test: bugfixes/com001_capability_class_method_this_receiver
+// Grammar: capability_decl · class_decl.can_clause · method_call on capability-typed param
+// Semantic: COM001 (fingerprints 93df7710de8f / 40d63810 / f9b020dc / 8d4f74b1
+//   / 58bb119efe2e, all 2026-07-19). CallCapability dispatch through a
+//   bridge function that takes a capability-typed parameter.
+//
+// Root cause: type_inference.rs::infer_method marked any method on a class
+//   with no parent and no fields as `is_static=true`. That was correct for
+//   pure utility classes (avoided the body_uses_this() false-positive from
+//   fp df5b8c9b1021) but wrong for classes that declare `can C` — their
+//   methods MUST accept `this` because CallCapability dispatch pushes the
+//   receiver as the first argument. Marking Session.save static dropped
+//   `this` from the WASM signature; the dispatcher then left `this`
+//   unconsumed on the stack, breaking the `if (Result T)` block's stack
+//   invariant and tripping wasmparser with "values remaining on stack at
+//   end of block".
+//
+// Fix (0.33.109+): src/typechecker/type_inference.rs adds
+//   `has_capabilities` to the non-static condition:
+//     is_static = !(has_parent || has_fields || has_capabilities)
+//   A class that declares `can C` has instance methods regardless of its
+//   field/parent state.
+//
+// This pin covers the non-void return case: `boolean save()` on a class
+//   that declares `can Persist`, invoked via `Registry.save(target)` where
+//   `target: Persist`. The whole chain — Registry.save is a static method,
+//   its body does `return target.save()` which is a CallCapability with
+//   `Result(I32)` block type, one arm (Session), Session.save now correctly
+//   has `this` as its first param.
+//
+// Fixed in: compiler 0.33.109
+//
+// Expected output:
+//   true
+
+start:
+	Session s = Session()
+	boolean ok = Registry.save(s)
+	print(ok.toString())
+
+can Persist:
+	boolean save()
+
+class Registry
+	functions:
+		boolean save(Persist target)
+			return target.save()
+
+class Session can Persist
+	functions:
+		public:
+			boolean save()
+				return true

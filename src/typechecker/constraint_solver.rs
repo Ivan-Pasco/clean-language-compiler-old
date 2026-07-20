@@ -376,13 +376,40 @@ impl<'a> ConstraintSolver<'a> {
                 if conforms {
                     Ok(())
                 } else {
-                    Err(CompilerError::type_error(
+                    // Resolve internal SymbolIds to declared names so the diagnostic
+                    // matches the spec's SEM011 shape ("Class 'X' does not implement
+                    // capability 'Y'; add `class X can Y` ...") rather than exposing
+                    // raw #ID numbers to the user. Falls back to `#N` if the symbol
+                    // table is unavailable (unit tests that construct the solver
+                    // without `with_symbol_table`).
+                    let (class_name, cap_name) = if let Some(st) = self.symbol_table {
+                        (
+                            st.get_symbol(*class_id).map(|s| s.name.clone()),
+                            st.get_symbol(*cap_id).map(|s| s.name.clone()),
+                        )
+                    } else {
+                        (None, None)
+                    };
+                    let class_label = class_name
+                        .clone()
+                        .unwrap_or_else(|| format!("#{}", class_id.0));
+                    let cap_label = cap_name.clone().unwrap_or_else(|| format!("#{}", cap_id.0));
+                    let message = if class_name.is_some() && cap_name.is_some() {
                         format!(
-                            "Class#{} does not conform to capability#{} — add `can <capability>` to the class header",
-                            class_id.0, cap_id.0
-                        ),
+                            "Class '{}' does not implement capability '{}' — add `can {}` to the class header and implement its required methods",
+                            class_label, cap_label, cap_label
+                        )
+                    } else {
+                        format!(
+                            "Class {} does not conform to capability {} — add `can <capability>` to the class header",
+                            class_label, cap_label
+                        )
+                    };
+                    Err(CompilerError::semantic_error_with_code(
+                        message,
                         None,
                         Some(location.clone()),
+                        "SEM011",
                     ))
                 }
             }

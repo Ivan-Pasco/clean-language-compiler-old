@@ -1,0 +1,61 @@
+// Test: bugfixes/com001_capability_class_void_method_no_drop
+// Grammar: capability_decl · class_decl.can_clause · dynamic dispatch on void method
+// Semantic: COM001 (fingerprint 58bb119efe2e, surfaced 2026-07-19 while
+//   verifying the primary COM001 fix via
+//   tests/cln/core/capabilities/009_dynamic_dispatch.cln).
+//
+// Root cause: src/codegen/mir_codegen/instructions.rs::generate_call_capability
+//   decides whether to emit a `Drop` after each dispatched Call based on
+//   whether the callee "returns something". The check was
+//     !matches!(f.return_type, MirType::Void)
+//   which missed the legacy `MirType::Ptr(Box::new(MirType::Void))` encoding
+//   that void class methods actually carry (see blocks.rs:288-289 for the
+//   same pattern in the function-signature builder). Result: a spurious
+//   Drop after a void `draw()` call in capability dispatch, which then
+//   tripped wasmparser with "expected a type but nothing on stack" because
+//   the Drop had no value to pop.
+//
+// This regression surfaced ONLY after the `has_capabilities` fix landed —
+//   before that, capability class methods were static (no `this` param),
+//   there was no dispatch to draw at all through CallCapability, and the
+//   Drop path was never taken.
+//
+// Fix (0.33.109+): callee_returns_something now recognises both
+//   MirType::Void AND MirType::Ptr(Void) as "no WASM return value".
+//   Matches the void-detection pattern already in blocks.rs.
+//
+// This pin covers the void return case with multiple conforming classes
+//   (2+ arms in the dispatch switch). If either the void detection or the
+//   has_capabilities fix regresses, this test's output will fail (either
+//   codegen error or wrong output).
+//
+// Fixed in: compiler 0.33.109
+//
+// Expected output:
+//   circle
+//   square
+
+start:
+	Circle c = Circle()
+	Square s = Square()
+	render(c)
+	render(s)
+
+can Draw:
+	draw()
+
+class Circle can Draw
+	functions:
+		public:
+			draw()
+				print("circle")
+
+class Square can Draw
+	functions:
+		public:
+			draw()
+				print("square")
+
+functions:
+	render(Draw shape)
+		shape.draw()

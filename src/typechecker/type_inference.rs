@@ -1590,6 +1590,7 @@ impl<'a> TypeInference<'a> {
         method: &ResolvedHirMethod,
         has_parent: bool,
         has_fields: bool,
+        has_capabilities: bool,
     ) -> Result<TastFunction, CompilerError> {
         self.current_function = Some(method.symbol_id);
         self.current_return_type = Some(self.hir_type_to_concrete(&method.return_type));
@@ -1616,24 +1617,25 @@ impl<'a> TypeInference<'a> {
         let declared_return_type = self.hir_type_to_concrete(&method.return_type);
 
         // Determine if method should be static based on class context.
-        // For classes with inheritance OR instance fields: Always use instance methods
-        // - Method signatures must match across inheritance hierarchy for polymorphism
-        // - Example: Vehicle.getMaxSpeed() returns 60 (no 'this'), but Car.getMaxSpeed() uses this.isElectric
-        // For utility classes (no parent, no fields): All methods are static.
-        // - There is no state for `this` to point at.
-        // - The body_uses_this() heuristic mistakenly returned true for methods
-        //   whose only `this` reference was the implicit receiver of a sibling
-        //   method call (e.g. `compute(a, b)` inside another method of the same
-        //   class lowers to MethodCall { receiver: this, ... }). Marking such a
-        //   method non-static gave it an implicit `this` parameter in the WASM
-        //   signature, which then mismatched static call sites (ClassName.method)
-        //   that push only the user-visible args. See CODEGEN_STACK_REMAINING
-        //   (fingerprint df5b8c9b1021).
-        let is_static = if has_parent || has_fields {
-            // Class has inheritance or state - all methods must be instance methods
+        // For classes with inheritance OR instance fields OR declared capabilities:
+        //   Always use instance methods.
+        // - Inheritance: method signatures must match across the hierarchy.
+        // - Fields: there is state for `this` to point at.
+        // - Capabilities: `CallCapability` dispatch always passes a receiver as
+        //   the first argument, so any method that might participate in a
+        //   capability vtable slot must accept `this`. Marking such a method
+        //   static drops the `this` parameter from the WASM signature; the
+        //   dispatcher then leaves `this` unconsumed on the stack, breaking
+        //   the `if (Result T)` block's stack invariant (COM001 fingerprints
+        //   93df7710de8f / 40d63810 / f9b020dc / 8d4f74b1, 2026-07-19).
+        //
+        // For utility classes with no state and no capability role:
+        //   Methods are static. This preserves the earlier fix for the
+        //   body_uses_this() false-positive on sibling calls
+        //   (CODEGEN_STACK_REMAINING fp df5b8c9b1021).
+        let is_static = if has_parent || has_fields || has_capabilities {
             false
         } else {
-            // Stateless utility class — all methods are static.
             true
         };
 
@@ -1718,8 +1720,9 @@ impl<'a> TypeInference<'a> {
         let mut tast_methods = Vec::new();
         let has_parent = class.parent.is_some();
         let has_fields = !class.fields.is_empty();
+        let has_capabilities = !class.capabilities.is_empty();
         for method in &class.methods {
-            match self.infer_method(method, has_parent, has_fields) {
+            match self.infer_method(method, has_parent, has_fields, has_capabilities) {
                 Ok(tast_method) => tast_methods.push(tast_method),
                 Err(e) => {
                     tracing::warn!(
