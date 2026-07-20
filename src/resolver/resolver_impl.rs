@@ -301,7 +301,9 @@ impl NameResolver {
     /// signature matches the capability slot. When exactly one field
     /// qualifies, synthesize:
     ///
-    ///     R m(args...) return D.m(this, args...)
+    /// ```text
+    /// R m(args...) return D.m(this, args...)
+    /// ```
     ///
     /// on the class, add the method symbol to the class's method list, and
     /// let Stage 5b treat it like a user-authored method.
