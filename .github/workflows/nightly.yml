@@ -338,6 +338,23 @@ jobs:
       - name: Build release cln
         run: cargo build --release --bin cln
 
+      # 1a. Install framework plugins so `cln compile --plugins` can find
+      #     them. Canaries reference frame.client / frame.ui / frame.server /
+      #     etc.; without their plugin.wasm on disk every canary that lists
+      #     `plugins:` would fail with "Plugin 'frame.X' not found". We use
+      #     `cleen frame install latest` (not `cleen install`) because we
+      #     want THIS commit's cln (already built above) against the latest
+      #     released plugin set — plugins version independently and their
+      #     bridge contracts are what the canaries are actually testing.
+      - name: Install cleen (Clean Language version manager)
+        run: |
+          curl -fsSL https://github.com/Ivan-Pasco/clean-language-manager/releases/latest/download/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cleen/bin" >> "$GITHUB_PATH"
+
+      - name: Install latest Frame plugins
+        run: cleen frame install latest
+
       # 2. Compile every canary to tests/output/canaries/<ns>.wasm.
       - name: Compile canaries
         run: |
