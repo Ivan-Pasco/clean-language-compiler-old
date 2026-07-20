@@ -317,7 +317,7 @@ impl NameResolver {
     /// the user makes the choice explicitly.
     fn synthesize_capability_forwarding_methods(
         &mut self,
-        classes: &mut Vec<ResolvedHirClass>,
+        classes: &mut [ResolvedHirClass],
         hir_capabilities: &[crate::hir::HirCapability],
     ) {
         use std::collections::HashMap;
