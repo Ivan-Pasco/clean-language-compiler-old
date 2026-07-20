@@ -202,6 +202,22 @@ impl NameResolver {
             });
         }
 
+        // Stage 5a1 — Auto-forwarding synthesis for capability methods.
+        // Before conformance validation runs, look for classes that claim a
+        // capability but are missing a method whose implementation is trivially
+        // derivable from a field's type. When class E has a field `<D> f` and
+        // D provides `m(E, ...) -> R` matching the missing capability slot's
+        // signature, synthesize `R m(...) return D.m(this, ...)` on E.
+        //
+        // Explicit override wins: if E already defines `m`, no synthesis fires
+        // (find_class_method returns the user's version first).
+        //
+        // General over any capability — not hard-coded to `Persist`. Any
+        // capability whose method shape lines up with a static forwarder on a
+        // field's type qualifies.
+        let mut resolved_classes = resolved_classes;
+        self.synthesize_capability_forwarding_methods(&mut resolved_classes, &hir.capabilities);
+
         // Stage 5b — Capability conformance validation.
         // For every class that claims one or more capabilities, verify that each
         // capability method is implemented on the class (or has a default) with
@@ -272,6 +288,305 @@ impl NameResolver {
             externals: resolved_externals,
             capabilities: resolved_capabilities,
             vtable_descriptors,
+        })
+    }
+
+    /// Stage 5a1 — Auto-forwarding synthesis for capability methods.
+    ///
+    /// For each class that claims a capability, look for capability methods
+    /// that (a) the class does not implement and (b) have no default body,
+    /// then check whether the class has a field whose type is another class
+    /// providing a matching forwarder — a method with the same name whose
+    /// first parameter accepts the current class and whose remaining
+    /// signature matches the capability slot. When exactly one field
+    /// qualifies, synthesize:
+    ///
+    ///     R m(args...) return D.m(this, args...)
+    ///
+    /// on the class, add the method symbol to the class's method list, and
+    /// let Stage 5b treat it like a user-authored method.
+    ///
+    /// Explicit override wins: `find_class_method` returns any user-written
+    /// implementation first, so synthesis only runs when the slot would
+    /// otherwise raise SEM011.
+    ///
+    /// General across capabilities: the pattern is not hard-coded to
+    /// `Persist` — any capability where a field's class provides a matching
+    /// static-style forwarder qualifies. Ambiguous cases (multiple fields
+    /// match, or the signature doesn't line up) fall through to SEM011 so
+    /// the user makes the choice explicitly.
+    fn synthesize_capability_forwarding_methods(
+        &mut self,
+        classes: &mut Vec<ResolvedHirClass>,
+        hir_capabilities: &[crate::hir::HirCapability],
+    ) {
+        use std::collections::HashMap;
+
+        // Fast index: class name → symbol id, for resolving field type names
+        // to class symbols so we can look up their methods on the symbol
+        // table.
+        let class_id_by_name: HashMap<String, SymbolId> = classes
+            .iter()
+            .map(|c| (c.name.clone(), c.symbol_id))
+            .collect();
+
+        // Capability declarations by name for slot enumeration.
+        let cap_by_name: HashMap<&str, &crate::hir::HirCapability> = hir_capabilities
+            .iter()
+            .map(|c| (c.name.as_str(), c))
+            .collect();
+
+        // Collected synthesis actions: (class_symbol_id, ResolvedHirMethod).
+        let mut synthesized: Vec<(SymbolId, ResolvedHirMethod)> = Vec::new();
+
+        for class in classes.iter() {
+            // Only classes that claim at least one capability need synthesis.
+            if class.capabilities.is_empty() {
+                continue;
+            }
+
+            // Transitive capability closure: own + ancestors'.
+            let mut transitive: Vec<SymbolId> = class.capabilities.clone();
+            let mut cursor = class.parent;
+            while let Some(parent_id) = cursor {
+                if let Some(parent_class) = classes.iter().find(|c| c.symbol_id == parent_id) {
+                    for pc in &parent_class.capabilities {
+                        if !transitive.contains(pc) {
+                            transitive.push(*pc);
+                        }
+                    }
+                    cursor = parent_class.parent;
+                } else {
+                    break;
+                }
+            }
+
+            for cap_sym_id in &transitive {
+                // Resolve capability name → HirCapability.
+                let Some(cap_name) = self
+                    .symbol_table
+                    .get_symbol(*cap_sym_id)
+                    .map(|s| s.name.clone())
+                else {
+                    continue;
+                };
+                let Some(cap_decl) = cap_by_name.get(cap_name.as_str()) else {
+                    continue;
+                };
+
+                for cap_method in &cap_decl.methods {
+                    // Skip if class or an ancestor already defines this method.
+                    if self
+                        .find_class_method(class, classes, &cap_method.name)
+                        .is_some()
+                    {
+                        continue;
+                    }
+                    // Skip if capability provides a default (Stage 8 handles it).
+                    if cap_method.default_body.is_some() {
+                        continue;
+                    }
+
+                    // Try to find a field of a user-class type whose class
+                    // provides a matching forwarder `m(class_type, args...) -> R`.
+                    let synthesized_method =
+                        self.try_synthesize_forwarder(class, cap_method, &class_id_by_name);
+
+                    if let Some(method) = synthesized_method {
+                        synthesized.push((class.symbol_id, method));
+                    }
+                }
+            }
+        }
+
+        // Apply synthesis: append to class.methods and update class symbol's
+        // method list so downstream lookup_class_member sees them.
+        for (class_id, method) in synthesized {
+            let method_sym_id = method.symbol_id;
+            if let Some(class) = classes.iter_mut().find(|c| c.symbol_id == class_id) {
+                class.methods.push(method);
+            }
+            // Wire the method into the class symbol's method list.
+            if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_id) {
+                if let SymbolKind::Class { methods, .. } = &mut class_symbol.kind {
+                    methods.push(method_sym_id);
+                }
+            }
+        }
+    }
+
+    /// Attempt to synthesize a forwarding method for capability `cap_method`
+    /// on `class`. Returns `Some(ResolvedHirMethod)` when exactly one field
+    /// on the class qualifies, otherwise `None`.
+    ///
+    /// A field `<D> f` qualifies when D is a user-defined class that
+    /// provides a method `m` (same name as `cap_method`) with:
+    ///   - first parameter type = `class` (accepts an instance of E), and
+    ///   - remaining parameter types = `cap_method.parameters`, and
+    ///   - return type = `cap_method.return_type`.
+    ///
+    /// If multiple fields qualify, returns `None` (ambiguous — user must
+    /// implement explicitly).
+    fn try_synthesize_forwarder(
+        &mut self,
+        class: &ResolvedHirClass,
+        cap_method: &crate::hir::HirCapabilityMethod,
+        class_id_by_name: &std::collections::HashMap<String, SymbolId>,
+    ) -> Option<ResolvedHirMethod> {
+        // Enumerate candidate fields: only those whose type is a Named class.
+        let cap_param_types: Vec<HirType> = cap_method
+            .parameters
+            .iter()
+            .map(|p| p.param_type.clone())
+            .collect();
+
+        let mut candidates: Vec<(String, SymbolId, String)> = Vec::new(); // (field_name, field_class_id, field_class_name)
+        for field in &class.fields {
+            let field_class_name = match &field.field_type {
+                HirType::Named { name, .. } => name.clone(),
+                _ => continue,
+            };
+            let Some(&field_class_id) = class_id_by_name.get(&field_class_name) else {
+                continue;
+            };
+            // Look up the forwarder method on the field's class via symbol table.
+            let Some(forwarder_sym_id) = self
+                .symbol_table
+                .lookup_class_member(field_class_id, &cap_method.name)
+            else {
+                continue;
+            };
+            let Some(forwarder_sym) = self.symbol_table.get_symbol(forwarder_sym_id) else {
+                continue;
+            };
+            let SymbolKind::Method {
+                parameters: fwd_params,
+                return_type: fwd_return,
+                ..
+            } = &forwarder_sym.kind
+            else {
+                continue;
+            };
+            // First param must accept `class`.
+            let Some(first_param) = fwd_params.first() else {
+                continue;
+            };
+            let first_param_ok = match first_param {
+                HirType::Named { name, .. } => *name == class.name,
+                _ => false,
+            };
+            if !first_param_ok {
+                continue;
+            }
+            // Remaining params must match the capability method's params.
+            if fwd_params.len() != cap_param_types.len() + 1 {
+                continue;
+            }
+            let remaining_match = fwd_params[1..]
+                .iter()
+                .zip(cap_param_types.iter())
+                .all(|(a, b)| a == b);
+            if !remaining_match {
+                continue;
+            }
+            // Return type must match.
+            if fwd_return != &cap_method.return_type {
+                continue;
+            }
+            candidates.push((field.name.clone(), field_class_id, field_class_name));
+        }
+
+        // Only synthesize when exactly one field qualifies.
+        if candidates.len() != 1 {
+            return None;
+        }
+        let (_field_name, field_class_id, field_class_name) =
+            candidates.into_iter().next().unwrap();
+
+        // Look up the forwarder method's symbol id (we know it exists from above).
+        let Some(forwarder_sym_id) = self
+            .symbol_table
+            .lookup_class_member(field_class_id, &cap_method.name)
+        else {
+            return None;
+        };
+
+        // Register a new method symbol on the class.
+        let synth_scope = self.symbol_table.current_scope_id();
+        let method_symbol_id = self.symbol_table.create_symbol(
+            cap_method.name.clone(),
+            SymbolKind::Method {
+                class_id: class.symbol_id,
+                parameters: cap_param_types.clone(),
+                return_type: cap_method.return_type.clone(),
+            },
+            synth_scope,
+            class.location.clone(),
+        );
+
+        // Build the synthesized parameter list with fresh symbol ids.
+        let mut resolved_parameters: Vec<ResolvedHirParameter> = Vec::new();
+        let mut argument_exprs: Vec<ResolvedHirExpression> = Vec::new();
+        for cap_param in &cap_method.parameters {
+            let param_symbol_id = self.symbol_table.create_symbol(
+                cap_param.name.clone(),
+                SymbolKind::Parameter {
+                    param_type: cap_param.param_type.clone(),
+                },
+                synth_scope,
+                cap_param.location.clone(),
+            );
+            resolved_parameters.push(ResolvedHirParameter {
+                name: cap_param.name.clone(),
+                symbol_id: param_symbol_id,
+                param_type: cap_param.param_type.clone(),
+                default_value: None,
+                is_variadic: false,
+                location: cap_param.location.clone(),
+            });
+            argument_exprs.push(ResolvedHirExpression::Variable {
+                name: cap_param.name.clone(),
+                symbol_id: param_symbol_id,
+                location: cap_param.location.clone(),
+            });
+        }
+
+        // First argument to the forwarder is `this`.
+        let mut forwarder_args: Vec<ResolvedHirExpression> =
+            Vec::with_capacity(argument_exprs.len() + 1);
+        forwarder_args.push(ResolvedHirExpression::This {
+            class_symbol_id: class.symbol_id,
+            location: class.location.clone(),
+        });
+        forwarder_args.extend(argument_exprs);
+
+        let call_expr = ResolvedHirExpression::StaticMethodCall {
+            namespace: Vec::new(),
+            class_name: field_class_name,
+            class_symbol_id: field_class_id,
+            method: cap_method.name.clone(),
+            method_symbol_id: forwarder_sym_id,
+            arguments: forwarder_args,
+            location: class.location.clone(),
+        };
+
+        let return_stmt = ResolvedHirStatement::Return {
+            value: Some(call_expr),
+            location: class.location.clone(),
+        };
+
+        let body = ResolvedHirBlock {
+            statements: vec![return_stmt],
+            location: class.location.clone(),
+        };
+
+        Some(ResolvedHirMethod {
+            name: cap_method.name.clone(),
+            symbol_id: method_symbol_id,
+            parameters: resolved_parameters,
+            return_type: cap_method.return_type.clone(),
+            body,
+            location: class.location.clone(),
         })
     }
 

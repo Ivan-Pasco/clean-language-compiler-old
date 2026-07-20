@@ -1,0 +1,31 @@
+// Test: core/capabilities — auto-implement forwarding methods for a capability
+// Grammar: class_declaration with can_clause; field of a class type providing static-style forwarders
+// Semantic: when a class claims `can C` but does not implement C's method, the
+//   resolver synthesizes a forwarding body `return D.m(this, args...)` when
+//   exactly one field's type provides a matching `m(self_class, args...) -> R`.
+//   Frame.data v2.1.5 DAT-S013 boilerplate collapse — the general case.
+// Fixed in: compiler 0.33.115
+// Expected output:
+//   saved user
+//   deleted user
+
+start:
+	User u = User()
+	boolean ok = u.save()
+	boolean gone = u.delete()
+
+can Persist:
+	boolean save()
+	boolean delete()
+
+class UserData
+	functions:
+		boolean save(User target)
+			print("saved user")
+			return true
+		boolean delete(User target)
+			print("deleted user")
+			return true
+
+class User can Persist
+	UserData data

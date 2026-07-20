@@ -1,0 +1,23 @@
+// Test: core/capabilities — auto-forwarding is NOT hard-coded to `Persist`
+// Grammar: class_declaration with can_clause
+// Semantic: same forwarding synthesis applies to any capability whose method
+//   shape is `m(SelfClass, args...) -> R` on a field's type. Confirms the
+//   feature is general (Option B) rather than a Persist-specific special case.
+// Fixed in: compiler 0.33.115
+// Expected output:
+//   rendered
+
+start:
+	Widget w = Widget()
+	w.render()
+
+can Renderable:
+	render()
+
+class Renderer
+	functions:
+		render(Widget target)
+			print("rendered")
+
+class Widget can Renderable
+	Renderer renderer

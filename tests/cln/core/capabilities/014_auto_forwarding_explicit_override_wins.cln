@@ -1,0 +1,29 @@
+// Test: core/capabilities — explicit implementation wins over synthesis
+// Grammar: class_declaration with can_clause and an explicit method definition
+// Semantic: when both a synthesizable forwarder AND a user-authored method
+//   exist, the user's implementation is used (find_class_method returns the
+//   class-declared method first, so try_synthesize_forwarder never runs).
+// Fixed in: compiler 0.33.115
+// Expected output:
+//   custom save
+
+start:
+	Report r = Report()
+	boolean ok = r.save()
+
+can Persist:
+	boolean save()
+
+class ReportData
+	functions:
+		boolean save(Report target)
+			print("via data class")
+			return true
+
+class Report can Persist
+	ReportData data
+	functions:
+		public:
+			boolean save()
+				print("custom save")
+				return true
