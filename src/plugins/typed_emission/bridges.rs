@@ -2503,11 +2503,16 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                     };
                     // Convert BatchBuilderClass to ClassSpec (same field layout).
                     // Builder path pre-dates Amendment 10; no from_spec entries.
+                    // `cans` is only reachable via the LP-string JSON path today
+                    // (no builder-side accessor); the builder-constructed class
+                    // stays empty. Frame.data uses the LP-string path per
+                    // main.cln:2824.
                     ClassSpec {
                         name: builder_class.name,
                         parent: builder_class.parent,
                         fields: builder_class.fields,
                         methods: builder_class.methods,
+                        cans: Vec::new(),
                         table_name: None,
                         method_entries: None,
                     }

@@ -1,0 +1,47 @@
+// Test: bugfixes/plugin_class_spec_cans_wiring
+// Grammar: class_decl.can_clause · capability_decl · field_decl
+// Semantic: This pin is the compiler-side companion to the ClassSpec `cans`
+//   field added to typed_emission/batch_schema.rs in 0.33.111. Plugins
+//   (frame.data v3.0.13+) will emit class specs with a `cans: ["Persist"]`
+//   entry to declare that their model classes conform to capabilities they
+//   also emit via `_emit_capability` (typed-emission §3.18). The compiler
+//   converts that into `Class::capabilities` via class_to_ast, and the
+//   resolver's Stage 5c populates vtable_descriptors from it.
+//
+// This pin exercises the equivalent HAND-WRITTEN shape: a class that has
+//   both fields (making it non-utility, so has_fields=true) AND declares
+//   `can Cap`, with a same-named method that satisfies the capability.
+//   The combination previously wasn't well-covered by regression tests —
+//   the SEM011 fix in 0.33.109 covered field-less capability classes; the
+//   COM001 fix covered fielded-class + can-clause dispatch through a
+//   capability-typed method receiver. This pin covers the direct
+//   instance-method call path on a fielded class that also claims a
+//   capability, which is the shape frame.data emits.
+//
+// If this ever regresses, plugin-emitted `data Widget:` bodies (which
+//   frame.data v3.0.13+ will produce) will silently break end-to-end
+//   even though the compiler accepts the `cans` field. The failure mode
+//   is not a compile error — it's a runtime trap in the CallCapability
+//   dispatch switch when no arm matches.
+//
+// Fixed in: compiler 0.33.111
+//
+// Expected output:
+//   true
+
+start:
+	Widget w = Widget()
+	print(w.save().toString())
+
+can Persist:
+	boolean save()
+
+class Widget can Persist
+	public:
+		integer id
+	constructor()
+		id = 7
+	functions:
+		public:
+			boolean save()
+				return true

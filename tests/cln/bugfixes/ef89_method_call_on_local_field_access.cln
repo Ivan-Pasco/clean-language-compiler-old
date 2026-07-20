@@ -1,0 +1,51 @@
+// Test: bugfixes/ef89_method_call_on_local_field_access
+// Grammar: three_level_method_call vs. method_call on property_access (§method_chains)
+// Semantic: CODEGEN-METHOD-CALL-ON-PLUGIN-EMITTED-BODY-CONCRETE-FIELD-ACCESS
+//   (fingerprint ef89ed7c4daa, 0.33.108). Pest grammar rule
+//   `three_level_method_call = identifier "." identifier "." method_name "(" ...`
+//   at src/parser/grammar.pest:314 eagerly matches `entity.id.toString()`
+//   as a namespace-class-method call (the shape intended for
+//   `compare.integer.greaterThan(a, b)`) because the parser has no scope
+//   information to distinguish a local variable from a namespace. The
+//   resolver then routed it as a StaticMethodCall which the codegen
+//   couldn't resolve to a real function, producing
+//   `Function 'entity.id.toString' not found in function map`.
+//
+// The bug was reported against the frame.data v3.0.12 plugin path where
+//   `_emit_stmt_from_source` on `"[" + entity.id.toString() + "]"` (in
+//   Widget.delete's body) tripped the wrong pest rule. Hand-written source
+//   of the same expression compiled cleanly because the surrounding
+//   statements led pest to a different alternative — but that was luck,
+//   not a real fix.
+//
+// Fix (0.33.111+): src/resolver/resolver_impl.rs::resolve_static_method_call_expression
+//   now looks up `namespace[0]` in the symbol table before trusting the
+//   parser's static-call classification. If the first segment binds to a
+//   local variable or parameter (SymbolKind::Variable / Parameter), the
+//   whole call is rewritten as
+//     MethodCall(FieldAccess(local, field_name), method, args)
+//   and resolution recurses. Legitimate namespace calls
+//   (`compare.integer.greaterThan(a, b)`) are unaffected because `compare`
+//   doesn't resolve to a local variable.
+//
+// This pin exercises the exact shape from the plugin-emitted delete body:
+//   an instance-method call chained off a field access on a local
+//   variable, embedded in a string concat. If the resolver ever regresses
+//   to trusting three_level_method_call blindly, the compile fails with
+//   "Function 'w.id.toString' not found in function map".
+//
+// Fixed in: compiler 0.33.111
+//
+// Expected output:
+//   [42]
+
+start:
+	Widget w = Widget()
+	string params = "[" + w.id.toString() + "]"
+	print(params)
+
+class Widget
+	public:
+		integer id
+	constructor()
+		id = 42

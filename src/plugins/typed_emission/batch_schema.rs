@@ -127,6 +127,20 @@ pub struct ClassSpec {
     pub fields: Vec<BatchField>,
     #[serde(default)]
     pub methods: Vec<BatchMethod>,
+    /// Capability names this class claims to conform to (`class Foo can Cap1, Cap2`).
+    /// Each name must match a capability declared elsewhere in the program (either
+    /// user-authored `can Cap:` block or plugin-emitted via `_emit_capability`).
+    /// The resolver validates conformance (SEM011/SEM012/SEM013) and populates
+    /// `vtable_descriptors`; codegen's `CallCapability` dispatch consults that map.
+    ///
+    /// Added 2026-07-19 to close the frame.data v3.0.12 gap where the plugin's
+    /// `Database.save(Persist target)` failed at codegen with "no class conforms
+    /// to capability #N slot 0 — resolver should have prevented this" because
+    /// the plugin had no way to declare that its emitted `Widget` model claims
+    /// `can Persist`. Companion fix to Amendment 13 `_emit_capability` (which
+    /// only declares capabilities; this field is how classes claim them).
+    #[serde(default)]
+    pub cans: Vec<String>,
     /// Table name for `{table_name}` substitution in Amendment 10 templates.
     /// Optional; unused unless a `from_spec` method references it.
     #[serde(default)]
@@ -542,6 +556,8 @@ pub fn parse_class_spec_with_entries(json: &str) -> Result<ClassSpec, BatchSchem
         #[serde(default)]
         methods: Vec<BatchMethodEntry>,
         #[serde(default)]
+        cans: Vec<String>,
+        #[serde(default)]
         table_name: Option<String>,
     }
     let raw: Raw = serde_json::from_str(json).map_err(|e| json_err(&e, json))?;
@@ -550,6 +566,7 @@ pub fn parse_class_spec_with_entries(json: &str) -> Result<ClassSpec, BatchSchem
         parent: raw.parent,
         fields: raw.fields,
         methods: Vec::new(),
+        cans: raw.cans,
         table_name: raw.table_name,
         method_entries: Some(raw.methods),
     })
@@ -1024,6 +1041,7 @@ pub fn class_to_ast(
     }
     let mut class = Class::new(spec.name, None);
     class.base_class = spec.parent;
+    class.capabilities = spec.cans;
 
     for field in spec.fields {
         let ty = resolve_type(&field.ty)?;

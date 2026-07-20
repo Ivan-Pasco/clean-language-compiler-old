@@ -3133,6 +3133,61 @@ impl NameResolver {
         arguments: &[HirExpression],
         location: &SourceLocation,
     ) -> Result<ResolvedHirExpression, ()> {
+        // Instance-method-on-field-access rescue path.
+        //
+        // The pest grammar's `three_level_method_call` rule
+        // (grammar.pest:314) eagerly matches `identifier.identifier.name(...)`
+        // as a namespace-class-method call — the shape intended for
+        // `compare.integer.greaterThan(a, b)`. But the same shape also
+        // matches `entity.id.toString()` where `entity` is a local variable
+        // and `id` is one of its fields. The parser has no scope information
+        // to distinguish these, so it always emits StaticMethodCall.
+        //
+        // When the first namespace segment resolves to a local variable
+        // (or function parameter), we rewrite the whole call as
+        //   MethodCall(FieldAccess(local, field), method, args)
+        // so the typechecker and codegen see the instance-method shape.
+        //
+        // Reported as CODEGEN-METHOD-CALL-ON-PLUGIN-EMITTED-BODY-CONCRETE-
+        // FIELD-ACCESS (fp ef89ed7c4daa, 0.33.108). Surfaced through the
+        // frame.data v3.0.12 typed-emission path where a plugin-generated
+        // method body `return "[" + entity.id.toString() + "]"` failed at
+        // codegen with `Function 'entity.id.toString' not found in function
+        // map`. Hand-written .cln with the same expression worked because
+        // the surrounding lines/context steered pest to `method_call` on
+        // `property_access` instead of `three_level_method_call`; the
+        // plugin-emit path's single-statement wrapper hit the ambiguous
+        // rule directly.
+        if namespace.len() == 1 {
+            if let Some(local_sym) = self.symbol_table.lookup_symbol(&namespace[0]) {
+                if let Some(sym) = self.symbol_table.get_symbol(local_sym) {
+                    let is_local_or_param = matches!(
+                        sym.kind,
+                        SymbolKind::Variable { .. } | SymbolKind::Parameter { .. }
+                    );
+                    if is_local_or_param {
+                        // Build FieldAccess(namespace[0], class_name_here_is_actually_field_name)
+                        // Then MethodCall(that, method, args).
+                        let field_access_hir = HirExpression::FieldAccess {
+                            object: Box::new(HirExpression::Variable {
+                                name: namespace[0].clone(),
+                                location: location.clone(),
+                            }),
+                            field: class_name.to_string(),
+                            location: location.clone(),
+                        };
+                        let method_call_hir = HirExpression::MethodCall {
+                            receiver: Box::new(field_access_hir),
+                            method: method.to_string(),
+                            arguments: arguments.to_vec(),
+                            location: location.clone(),
+                        };
+                        return self.resolve_expression(&method_call_hir);
+                    }
+                }
+            }
+        }
+
         // Handle namespace.class.method() calls (e.g., compare.integer.greaterThan)
         let full_class_name = if !namespace.is_empty() {
             format!("{}.{}", namespace.join("."), class_name)
