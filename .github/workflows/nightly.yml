@@ -356,17 +356,67 @@ jobs:
         run: cleen frame install latest
 
       # 2. Compile every canary to tests/output/canaries/<ns>.wasm.
+      #
+      # We intentionally DO NOT `set -e` around the compile loop. One
+      # canary that fails to compile must not abort the whole matrix —
+      # per the umbrella's design, individual failures are DATA. Compile
+      # failures are captured into matrix-inputs/did-not-compile.json
+      # and rendered as ⊘ cells by scripts/canary_matrix.py, which is a
+      # separate signal from ✗ (host runtime failure). Two failure modes,
+      # two different next actions: ⊘ = fix the compiler, ✗ = figure out
+      # which host contract drifted.
       - name: Compile canaries
+        id: compile
         run: |
-          set -euo pipefail
-          mkdir -p tests/output/canaries
+          set -uo pipefail
+          mkdir -p tests/output/canaries matrix-inputs
           for cln in tests/cln/canaries/*.cln; do
             name=$(basename "$cln" .cln)
-            ./target/release/cln compile "$cln" \
-              --output "tests/output/canaries/${name}.wasm" \
-              --opt-level 2 --strict-hosts --plugins
+            log="tests/output/canaries/${name}.compile.log"
+            if ./target/release/cln compile "$cln" \
+                 --output "tests/output/canaries/${name}.wasm" \
+                 --opt-level 2 --strict-hosts --plugins > "$log" 2>&1; then
+              echo "OK   $name"
+            else
+              reason=$(grep -m1 -v '^[[:space:]]*$' "$log" || echo "compile failed")
+              echo "FAIL $name — $reason"
+            fi
           done
+          # Emit did-not-compile.json for the matrix renderer. Re-scan
+          # the output dir instead of accumulating in bash — associative
+          # arrays don't survive across heredoc shells and this is
+          # trivially cheap.
+          python3 - <<'PY'
+          import json, os
+          out = "tests/output/canaries"
+          failed = {}
+          for fn in sorted(os.listdir(out)):
+              if not fn.endswith(".compile.log"):
+                  continue
+              name = fn[:-len(".compile.log")]
+              if os.path.exists(os.path.join(out, f"{name}.wasm")):
+                  continue
+              reason = ""
+              with open(os.path.join(out, fn)) as fh:
+                  for line in fh:
+                      s = line.strip()
+                      if s:
+                          reason = s
+                          break
+              failed[name] = reason or "compile failed"
+          with open("matrix-inputs/did-not-compile.json", "w") as fh:
+              json.dump({"failed": failed}, fh, indent=2, sort_keys=True)
+              fh.write("\n")
+          print(f"did-not-compile.json: {len(failed)} canary/canaries did not compile")
+          PY
+          cat matrix-inputs/did-not-compile.json
           ls -la tests/output/canaries/
+
+          # Emit the URL of THIS run so the matrix can link ⊘ cells back
+          # to the compile step's log — the operator needs to jump from
+          # the summary to whichever log shows the actual compile error.
+          echo "compile_log_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            >> "$GITHUB_OUTPUT"
 
       # 3. Emit applicability manifest.
       - name: Generate applicability manifest
@@ -537,11 +587,16 @@ jobs:
           done
 
       # 8. Render the matrix into a markdown summary + upload as artifact.
+      #    Pass did-not-compile.json + this run's URL so the renderer can
+      #    mark ⊘ cells for canaries that never produced WASM and link
+      #    those cells back to the compile step's log.
       - name: Render matrix
         run: |
           set -euo pipefail
           python3 scripts/canary_matrix.py \
             --inputs-dir matrix-inputs \
+            --did-not-compile matrix-inputs/did-not-compile.json \
+            --compile-log-url "${{ steps.compile.outputs.compile_log_url }}" \
             --out matrix-inputs/matrix-summary.md
           cat matrix-inputs/matrix-summary.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -552,6 +607,7 @@ jobs:
           path: |
             matrix-inputs/matrix-summary.md
             matrix-inputs/applicability.json
+            matrix-inputs/did-not-compile.json
             matrix-inputs/*-status.txt
             matrix-inputs/*-run-url.txt
             matrix-inputs/*-report.json

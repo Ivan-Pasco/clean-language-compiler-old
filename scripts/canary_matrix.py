@@ -44,6 +44,11 @@ HOSTS: tuple[str, ...] = ("server", "node-server", "browser")
 CELL_PASS = "✓"
 CELL_FAIL = "✗"
 CELL_SKIP = "skip"
+# ⊘ is distinct from ✗ on purpose: ✗ means "the host ran it and got the
+# wrong answer" (a host-contract drift), ⊘ means "no host ever ran it
+# because the compiler couldn't produce WASM" (a compiler bug). Two
+# failure modes, two different next actions.
+CELL_DID_NOT_COMPILE = "⊘"
 
 
 def load_json(path: Path) -> dict:
@@ -74,10 +79,20 @@ def canary_cell(
     report: dict,
     host_status: str,
     run_url: str,
+    did_not_compile: dict[str, str],
+    compile_log_url: str,
 ) -> str:
     """Return the markdown cell for one (canary, host) intersection."""
     if host not in applicable_hosts:
         return CELL_SKIP
+
+    # Compiler failure takes precedence over every other cell state. No
+    # host ran this canary because there was no WASM to run — showing
+    # `success` or `skip` here would be a lie.
+    if canary in did_not_compile:
+        if compile_log_url:
+            return f"[{CELL_DID_NOT_COMPILE}]({compile_log_url})"
+        return CELL_DID_NOT_COMPILE
 
     if host_status in {"timeout", "dispatch_error"}:
         return host_status
@@ -106,13 +121,20 @@ def canary_cell(
     return CELL_FAIL
 
 
-def render(inputs_dir: Path) -> str:
+def render(
+    inputs_dir: Path,
+    did_not_compile_path: Path | None = None,
+    compile_log_url: str = "",
+) -> str:
     """Render the full matrix as a markdown string.
 
     Layout mirrors the umbrella prompt's success criterion:
-    rows = canary, cols = host, cell = ✓ / ✗ / skip. A silent addition of
-    ``_i18n_*`` to clean-server without matching updates elsewhere produces
-    a red cell in the server column of every affected canary.
+    rows = canary, cols = host, cell = ✓ / ✗ / ⊘ / skip. A silent
+    addition of ``_i18n_*`` to clean-server without matching updates
+    elsewhere produces a red cell in the server column of every affected
+    canary. A compiler bug that produces bad WASM for one canary
+    produces ⊘ across every host column for that canary (see
+    ``did-not-compile.json``, written by the compile step).
     """
     applicability_path = inputs_dir / "applicability.json"
     applicability = load_json(applicability_path).get("canaries", {})
@@ -127,6 +149,13 @@ def render(inputs_dir: Path) -> str:
     per_host_run_url = {
         host: load_text(inputs_dir / f"{host}-run-url.txt") for host in HOSTS
     }
+
+    # did-not-compile.json shape: {"failed": {"<name>": "<one-line-reason>"}}
+    # Missing / empty file = no compile failures — normal case for a
+    # green run.
+    did_not_compile: dict[str, str] = {}
+    if did_not_compile_path is not None:
+        did_not_compile = load_json(did_not_compile_path).get("failed", {})
 
     if not applicability:
         return (
@@ -170,9 +199,30 @@ def render(inputs_dir: Path) -> str:
                     per_host_reports[host],
                     per_host_status[host],
                     per_host_run_url[host],
+                    did_not_compile,
+                    compile_log_url,
                 )
             )
         lines.append("| " + " | ".join(row) + " |")
+
+    # If any canaries failed to compile, list them + reasons under the
+    # matrix so the operator doesn't have to hunt through the compile
+    # log to see WHY the ⊘ cells are there. Reasons are the first
+    # non-blank line of each canary's compile stderr, so "Plugin
+    # 'frame.X' not found" and "Type mismatch: …" show up verbatim.
+    if did_not_compile:
+        lines.extend(
+            [
+                "",
+                "### Canaries that did not compile",
+                "",
+                "| Canary | Reason |",
+                "|--------|--------|",
+            ]
+        )
+        for name in sorted(did_not_compile.keys()):
+            reason = did_not_compile[name].replace("|", "\\|")
+            lines.append(f"| `{name}` | {reason} |")
 
     # Legend so a first-time reader knows what each symbol means. Keep it
     # short — the nightly summary is scanned for red cells, not read
@@ -182,6 +232,7 @@ def render(inputs_dir: Path) -> str:
             "",
             "**Legend:** "
             "✓ pass, ✗ fail (linked to host job log), "
+            "⊘ did not compile (linked to compile step log), "
             "`skip` not applicable to this host, "
             "`timeout` host workflow did not complete in the wait window, "
             "`dispatch_error` host workflow could not be started.",
@@ -207,9 +258,30 @@ def main() -> int:
         type=Path,
         help="Write the matrix to this file (default: stdout).",
     )
+    parser.add_argument(
+        "--did-not-compile",
+        type=Path,
+        help=(
+            "Path to did-not-compile.json produced by the compile step. "
+            "Shape: {\"failed\": {\"<canary>\": \"<one-line-reason>\"}}. "
+            "Missing file = no compile failures."
+        ),
+    )
+    parser.add_argument(
+        "--compile-log-url",
+        default="",
+        help=(
+            "URL of the workflow run whose compile step produced "
+            "did-not-compile.json. ⊘ cells link to this URL."
+        ),
+    )
     args = parser.parse_args()
 
-    matrix = render(args.inputs_dir)
+    matrix = render(
+        args.inputs_dir,
+        did_not_compile_path=args.did_not_compile,
+        compile_log_url=args.compile_log_url,
+    )
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
