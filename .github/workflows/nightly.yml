@@ -352,6 +352,15 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cleen/bin" >> "$GITHUB_PATH"
 
+      # cleen requires a cleen-managed compiler in ~/.cleen/versions before
+      # `cleen frame install` will run — it version-matches plugins against
+      # the active compiler. Installing latest is cheap (one HTTP fetch) and
+      # doesn't interfere with the ./target/release/cln we invoke explicitly
+      # for the compile step: plugins land in ~/.cleen/plugins/ and are
+      # loaded by path, not by compiler version.
+      - name: Install latest released compiler (cleen precondition)
+        run: cleen install latest
+
       - name: Install latest Frame plugins
         run: cleen frame install latest
 
