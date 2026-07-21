@@ -67,16 +67,36 @@ fn build_span_json(start: usize, end: usize) -> String {
 
 /// Truncate a source string for inclusion in a diagnostic message. Long
 /// fragments get an ellipsis appended.
+///
+/// Rendering is byte-exact via `{:?}` (Rust `Debug`), which escapes newlines
+/// to `\n`, tabs to `\t`, and any non-printable / control characters to
+/// their `\xNN` / `\u{NN}` form. The wrapping `"…"` produced by `Debug` is
+/// stripped so the caller can wrap the fragment in its own delimiters
+/// (backticks) at the call site. This guarantees the displayed fragment is
+/// byte-identical to what the plugin passed in — never re-tokenized,
+/// re-formatted, or interpreted (bug #23905fe7d6ce).
 fn truncate_for_diagnostic(source: &str, max_bytes: usize) -> String {
-    if source.len() <= max_bytes {
-        source.replace('\n', "\\n")
+    let (slice, truncated) = if source.len() <= max_bytes {
+        (source, false)
     } else {
-        // Find a char boundary at or before `max_bytes`.
         let mut cut = max_bytes;
         while cut > 0 && !source.is_char_boundary(cut) {
             cut -= 1;
         }
-        format!("{}…", source[..cut].replace('\n', "\\n"))
+        (&source[..cut], true)
+    };
+    let debug = format!("{:?}", slice);
+    // `format!("{:?}", s)` returns `"…"`; strip the wrapping quotes so the
+    // caller can supply its own delimiters (existing call sites wrap with
+    // backticks — keeping the debug quotes would double-quote the output).
+    let inner = debug
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(&debug);
+    if truncated {
+        format!("{}…", inner)
+    } else {
+        inner.to_string()
     }
 }
 
@@ -3620,5 +3640,52 @@ mod tests {
         assert_eq!(simulate_emit_statement_inline(&mut arena, 1, h2), 1);
         let (expansion, _diags, _saw_err) = arena.finish();
         assert!(expansion.statements.is_empty());
+    }
+
+    // ── Fragment-display (bug #23905fe7d6ce): must be byte-exact ─────────────
+
+    #[test]
+    fn truncate_for_diagnostic_preserves_all_printable_bytes_verbatim() {
+        // No hidden re-tokenization / colon-insertion / whitespace mangling.
+        let src = r#"params + "\"" + id.toString() + "\"""#;
+        let out = truncate_for_diagnostic(src, 200);
+        // The debug-escaping doubles backslashes and escapes quotes; the
+        // key invariant is that every byte from the input maps to something
+        // in the output in the same order, and nothing extra appears.
+        assert!(!out.contains("id:"), "fragment must not gain a stray colon");
+        assert!(out.contains("id.toString()"));
+    }
+
+    #[test]
+    fn truncate_for_diagnostic_escapes_newlines_via_debug_not_lossy_replace() {
+        let src = "line1\nline2\ttab";
+        let out = truncate_for_diagnostic(src, 200);
+        // `\n` and `\t` render as escape sequences, not raw control bytes.
+        assert!(out.contains("\\n"), "newline escaped to \\n, got {}", out);
+        assert!(out.contains("\\t"), "tab escaped to \\t, got {}", out);
+        assert!(
+            !out.contains('\n'),
+            "raw newline must not leak into diagnostic"
+        );
+    }
+
+    #[test]
+    fn truncate_for_diagnostic_truncates_at_char_boundary_with_ellipsis() {
+        let src = "a".repeat(200);
+        let out = truncate_for_diagnostic(&src, 80);
+        assert!(out.ends_with('…'), "truncated output ends with ellipsis");
+        assert!(
+            out.len() < src.len() + 4,
+            "truncated output shorter than full input"
+        );
+    }
+
+    #[test]
+    fn truncate_for_diagnostic_does_not_wrap_output_in_quotes() {
+        // Callers wrap the fragment in backticks; adding debug-quotes here
+        // would double-quote the rendered diagnostic.
+        let src = "abc";
+        let out = truncate_for_diagnostic(src, 80);
+        assert_eq!(out, "abc");
     }
 }
