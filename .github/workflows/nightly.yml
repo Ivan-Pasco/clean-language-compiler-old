@@ -483,7 +483,7 @@ jobs:
             echo "::error::Provision a PAT with 'repo' scope on"
             echo "::error::  Ivan-Pasco/clean-server"
             echo "::error::  Ivan-Pasco/clean-node-server"
-            echo "::error::  Ivan-Pasco/clean-framework"
+            echo "::error::  Ivan-Pasco/cleen-framework"
             echo "::error::and add it as repository secret CANARY_MATRIX_PAT."
             exit 1
           fi
@@ -493,15 +493,22 @@ jobs:
           declare -A HOSTS=(
             ["server"]="Ivan-Pasco/clean-server"
             ["node-server"]="Ivan-Pasco/clean-node-server"
-            ["browser"]="Ivan-Pasco/clean-framework"
+            ["browser"]="Ivan-Pasco/cleen-framework"
           )
 
           for host in "${!HOSTS[@]}"; do
             repo="${HOSTS[$host]}"
             echo "=== dispatching $host ($repo) ==="
+            # Resolve each host's default branch instead of hard-coding
+            # --ref main. clean-server's default is `master`, the others
+            # are `main`. Hard-coding meant server always got HTTP 422
+            # "No ref found for: main" and silently dropped out of the
+            # matrix.
+            default_branch=$(gh api "repos/$repo" --jq '.default_branch' 2>/dev/null || echo "main")
+            echo "  default branch: $default_branch"
             if gh workflow run nightly-canaries.yml \
                  --repo "$repo" \
-                 --ref main \
+                 --ref "$default_branch" \
                  -f compiler_ref="$COMPILER_REF" 2>&1 | tee "matrix-inputs/${host}-dispatch.log"; then
               echo "dispatched" > "matrix-inputs/${host}-status.txt"
             else
@@ -543,7 +550,7 @@ jobs:
             case "$host" in
               server)      repo="Ivan-Pasco/clean-server" ;;
               node-server) repo="Ivan-Pasco/clean-node-server" ;;
-              browser)     repo="Ivan-Pasco/clean-framework" ;;
+              browser)     repo="Ivan-Pasco/cleen-framework" ;;
             esac
 
             status_file="matrix-inputs/${host}-status.txt"
@@ -590,7 +597,7 @@ jobs:
             case "$host" in
               server)      repo="Ivan-Pasco/clean-server" ;;
               node-server) repo="Ivan-Pasco/clean-node-server" ;;
-              browser)     repo="Ivan-Pasco/clean-framework" ;;
+              browser)     repo="Ivan-Pasco/cleen-framework" ;;
             esac
             run_id_file="matrix-inputs/${host}-run-id.txt"
             [ -f "$run_id_file" ] || continue
