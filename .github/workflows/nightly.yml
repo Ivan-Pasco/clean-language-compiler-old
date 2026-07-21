@@ -354,12 +354,18 @@ jobs:
 
       # cleen requires a cleen-managed compiler in ~/.cleen/versions before
       # `cleen frame install` will run — it version-matches plugins against
-      # the active compiler. Installing latest is cheap (one HTTP fetch) and
-      # doesn't interfere with the ./target/release/cln we invoke explicitly
-      # for the compile step: plugins land in ~/.cleen/plugins/ and are
-      # loaded by path, not by compiler version.
+      # the ACTIVE compiler (marked by ~/.cleen/versions/.active-version).
+      # `cleen install latest` downloads the release but does NOT flip the
+      # active pointer; we have to `cleen use` explicitly. This is cheap
+      # (one HTTP fetch) and doesn't interfere with the ./target/release/cln
+      # we invoke explicitly for the compile step: plugins land in
+      # ~/.cleen/plugins/ and are loaded by path, not by compiler version.
       - name: Install latest released compiler (cleen precondition)
-        run: cleen install latest
+        run: |
+          cleen install latest
+          ver="$(ls -1 "$HOME/.cleen/versions" | sort -V | tail -n1)"
+          echo "Activating cleen-managed compiler $ver"
+          cleen use "$ver"
 
       - name: Install latest Frame plugins
         run: cleen frame install latest
