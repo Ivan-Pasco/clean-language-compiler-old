@@ -65,6 +65,69 @@ def load_json(path: Path) -> dict:
         return {}
 
 
+def normalize_report(raw: dict) -> dict:
+    """Coerce a host's canary report to the canonical shape.
+
+    Canonical shape:
+        {"results": {"<canary>": {"passed": bool, "reason": "<str>"?}}}
+
+    In practice hosts ship two different shapes:
+
+    - clean-server writes ``results`` as a dict keyed by canary name
+      (its normalize step in nightly-canaries.yml emits exactly the
+      canonical shape).
+    - clean-node-server writes ``results`` as a LIST of records shaped
+      ``{"canary": "<name>.cln", "namespace": "<ns>", "status":
+      "pass" | "compile_error" | "diff" | ..., "error"?: "<multi-line>"}``.
+      Namespace is what our applicability manifest keys on; ``canary``
+      still carries the ``.cln`` extension.
+
+    Rather than teach ``canary_cell`` about both shapes, normalize once
+    at load time. Unknown shapes fall through as ``{"results": {}}`` and
+    every applicable cell will render ✗ (the "host was supposed to run
+    this but no record" branch below), which is the honest signal.
+    """
+    if not isinstance(raw, dict):
+        return {"results": {}}
+    results = raw.get("results")
+
+    if isinstance(results, dict):
+        return raw
+
+    if isinstance(results, list):
+        normalized: dict[str, dict] = {}
+        for rec in results:
+            if not isinstance(rec, dict):
+                continue
+            # Prefer explicit `namespace` — matches applicability keys.
+            # Fall back to `canary` with `.cln` stripped for older
+            # runners that don't emit namespace separately.
+            name = rec.get("namespace") or rec.get("canary") or ""
+            if name.endswith(".cln"):
+                name = name[:-4]
+            if not name:
+                continue
+            status = rec.get("status", "")
+            passed = status == "pass"
+            entry: dict = {"passed": passed}
+            if not passed:
+                # Surface a one-line reason so the matrix isn't just ✗.
+                # node-server's ``error`` field is a multi-line stderr
+                # dump — take the first non-blank line for the tooltip.
+                err = rec.get("error") or rec.get("reason") or status
+                first_line = ""
+                for line in str(err).splitlines():
+                    s = line.strip()
+                    if s:
+                        first_line = s
+                        break
+                entry["reason"] = first_line or status or "fail"
+            normalized[name] = entry
+        return {"results": normalized}
+
+    return {"results": {}}
+
+
 def load_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8").strip()
@@ -140,7 +203,8 @@ def render(
     applicability = load_json(applicability_path).get("canaries", {})
 
     per_host_reports = {
-        host: load_json(inputs_dir / f"{host}-report.json") for host in HOSTS
+        host: normalize_report(load_json(inputs_dir / f"{host}-report.json"))
+        for host in HOSTS
     }
     per_host_status = {
         host: load_text(inputs_dir / f"{host}-status.txt") or "success"
