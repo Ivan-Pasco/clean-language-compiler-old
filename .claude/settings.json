@@ -47,7 +47,10 @@
       "Bash(mkdir -p /tmp/bugcheck && cd /tmp/bugcheck && ls)",
       "Skill(team-prompts-list)",
       "Skill(team-prompts-list:*)",
-      "Bash(git -C \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler\" log -20 --format='%h %s')"
+      "Bash(git -C \"/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler\" log -20 --format='%h %s')",
+      "Bash(mkdir -p /tmp/canary-artifact)",
+      "Bash(rm -rf /tmp/canary-artifact/*)",
+      "Bash(gh run *)"
     ],
     "additionalDirectories": [
       "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"

@@ -443,6 +443,51 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
+    // _expr_method_call(ctx, recv_handle, method_lp, args_json_lp) -> handle
+    // Constructs a MethodCall expression (receiver.method(args...)).
+    // Complements _expr_call (free function) — needed by plugin-emitted
+    // helpers whose bodies invoke string/array/etc. methods on a value
+    // (e.g. frame.server's __json_escape calling s.replace(...)).
+    linker.func_wrap(
+        "env",
+        "_expr_method_call",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         recv_handle: i32,
+         method_lp: i32,
+         args_json_lp: i32|
+         -> i32 {
+            let method = match read_lp_string(&mut caller, method_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let args_json = match read_lp_string(&mut caller, args_json_lp) {
+                Some(s) => s,
+                None => return 0,
+            };
+            let handles = match decode_handle_array(&args_json) {
+                Ok(h) => h,
+                Err(_) => return 0,
+            };
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+            let receiver = take_or_return!(a, a.take_expr(ctx, recv_handle));
+            let mut args = Vec::with_capacity(handles.len());
+            for h in handles {
+                let e = take_or_return!(a, a.take_expr(ctx, h));
+                args.push(e);
+            }
+            a.alloc_expr(Expression::MethodCall {
+                object: Box::new(receiver),
+                method,
+                arguments: args,
+                location: SourceLocation::new(0, 0, "plugin"),
+            })
+        },
+    )?;
+
     // _expr_binop(ctx, op_lp, lhs_handle, rhs_handle) -> handle
     linker.func_wrap(
         "env",
@@ -2929,6 +2974,40 @@ mod tests {
         let h = arena.alloc_expr(Expression::Literal(Value::Boolean(false)));
         let e = arena.take_expr(1, h).unwrap();
         assert_eq!(e, Expression::Literal(Value::Boolean(false)));
+    }
+
+    #[test]
+    fn expr_method_call_builds_method_call() {
+        // Mirrors the _expr_method_call bridge: allocate a receiver expression
+        // and an argument expression, then build a MethodCall on top.
+        let mut arena = make_arena(1);
+        let recv_h = arena.alloc_expr(Expression::Variable("s".to_string()));
+        let arg_h = arena.alloc_expr(Expression::Literal(Value::String("x".to_string())));
+        let recv = arena.take_expr(1, recv_h).unwrap();
+        let arg = arena.take_expr(1, arg_h).unwrap();
+        let method_h = arena.alloc_expr(Expression::MethodCall {
+            object: Box::new(recv),
+            method: "replace".to_string(),
+            arguments: vec![arg],
+            location: SourceLocation::new(0, 0, "plugin"),
+        });
+        let e = arena.take_expr(1, method_h).unwrap();
+        match e {
+            Expression::MethodCall {
+                object,
+                method,
+                arguments,
+                ..
+            } => {
+                assert_eq!(method, "replace");
+                assert_eq!(arguments.len(), 1);
+                assert!(matches!(*object, Expression::Variable(ref n) if n == "s"));
+                assert!(
+                    matches!(arguments[0], Expression::Literal(Value::String(ref v)) if v == "x")
+                );
+            }
+            other => panic!("unexpected expr: {:?}", other),
+        }
     }
 
     // ── Statement constructors ─────────────────────────────────────────────────
