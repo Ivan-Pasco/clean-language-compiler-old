@@ -470,6 +470,23 @@ jobs:
           COMPILER_REF: ${{ github.sha }}
         run: |
           set -uo pipefail
+          # Fail LOUDLY if the PAT is missing. Without this preflight the
+          # bash-per-host `if gh workflow run …; then dispatched; else
+          # dispatch_error; fi` swallows the empty-token error, the job
+          # renders a matrix where every cell is `dispatch_error`, and
+          # the job itself exits 0. That reads as "green with no data,"
+          # which is worse than red — it looks like the L3 pipeline is
+          # working when it never dispatched anything. Cheap preflight,
+          # clear signal.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::secrets.CANARY_MATRIX_PAT is not set on this repo."
+            echo "::error::Provision a PAT with 'repo' scope on"
+            echo "::error::  Ivan-Pasco/clean-server"
+            echo "::error::  Ivan-Pasco/clean-node-server"
+            echo "::error::  Ivan-Pasco/clean-framework"
+            echo "::error::and add it as repository secret CANARY_MATRIX_PAT."
+            exit 1
+          fi
           mkdir -p matrix-inputs
           cp tests/output/canaries/applicability.json matrix-inputs/
 
