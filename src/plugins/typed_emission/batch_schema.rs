@@ -335,6 +335,14 @@ pub fn substitute_stmt(
             target: substitute_placeholders(target, ctx)?,
             expr: substitute_expr(expr, ctx)?,
         },
+        BatchStatement::VarDecl { name, ty, expr } => BatchStatement::VarDecl {
+            name: substitute_placeholders(name, ctx)?,
+            ty: substitute_placeholders(ty, ctx)?,
+            expr: match expr {
+                Some(e) => Some(substitute_expr(e, ctx)?),
+                None => None,
+            },
+        },
         BatchStatement::If { cond, then, else_ } => BatchStatement::If {
             cond: substitute_expr(cond, ctx)?,
             then: then
@@ -610,6 +618,13 @@ pub enum BatchStatement {
     Assign {
         target: String,
         expr: BatchExpr,
+    },
+    VarDecl {
+        name: String,
+        #[serde(rename = "type")]
+        ty: String,
+        #[serde(default)]
+        expr: Option<BatchExpr>,
     },
     If {
         cond: BatchExpr,
@@ -895,6 +910,15 @@ pub fn stmt_to_ast(s: BatchStatement) -> Result<Statement, BatchSchemaError> {
         BatchStatement::Assign { target, expr } => Statement::Assignment {
             target: AssignmentTarget::Variable(target),
             value: expr_to_ast(expr)?,
+            location: None,
+        },
+        BatchStatement::VarDecl { name, ty, expr } => Statement::VariableDecl {
+            name,
+            type_: resolve_type(&ty)?,
+            initializer: match expr {
+                Some(e) => Some(expr_to_ast(e)?),
+                None => None,
+            },
             location: None,
         },
         BatchStatement::If { cond, then, else_ } => {

@@ -197,9 +197,10 @@ fn register_underscore_aliases(linker: &mut Linker<PluginState>) -> Result<()> {
         ("batch.index", "_batch_index"),
         ("batch.arrayLit", "_batch_arrayLit"),
         ("batch.objectLit", "_batch_objectLit"),
-        // Statement builders (7)
+        // Statement builders (8 — batch.stmtVarDecl added for plugin function-body scope)
         ("batch.stmtCall", "_batch_stmtCall"),
         ("batch.stmtAssign", "_batch_stmtAssign"),
+        ("batch.stmtVarDecl", "_batch_stmtVarDecl"),
         ("batch.stmtIf", "_batch_stmtIf"),
         ("batch.stmtWhile", "_batch_stmtWhile"),
         ("batch.stmtFor", "_batch_stmtFor"),
@@ -758,6 +759,47 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
             refuse_if_assemble_typed_batch!(a, "batch.stmtAssign", 0);
             let expr = handle_batch_err!(a, a.take_batch_expr(expr_handle));
             a.alloc_batch(BatchNode::Stmt(BatchStatement::Assign { target, expr }))
+        },
+    )?;
+
+    // batch.stmtVarDecl(ctx, name_lp, type_lp, expr_handle_or_0) -> batch_stmt_handle
+    //
+    // Produces `Statement::VariableDecl { name, type_, initializer }` — a real
+    // let-declaration, not an assignment. Function-body scope requires prior
+    // declaration; `batch.stmtAssign` produces `Statement::Assignment` which
+    // the semantic checker treats as "undefined variable" outside `start:`.
+    // Plugins emitting locals inside handlers / class methods / _frame_callback
+    // etc. must use this bridge instead of stmtAssign.
+    //
+    // `expr_handle_or_0 == 0` means "no initializer" (declaration only).
+    linker.func_wrap(
+        "env",
+        "batch.stmtVarDecl",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         name_lp: i32,
+         type_lp: i32,
+         expr_handle: i32|
+         -> i32 {
+            let name = match read_lp_string(&mut caller, name_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let ty = match read_lp_string(&mut caller, type_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtVarDecl", 0);
+            let expr = if expr_handle == 0 {
+                None
+            } else {
+                Some(handle_batch_err!(a, a.take_batch_expr(expr_handle)))
+            };
+            a.alloc_batch(BatchNode::Stmt(BatchStatement::VarDecl { name, ty, expr }))
         },
     )?;
 
@@ -2111,6 +2153,61 @@ mod tests {
                 assert_eq!(args.len(), 2);
             }
             other => panic!("expected Call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stmt_var_decl_lowers_to_variable_decl_ast() {
+        use super::super::batch_schema::stmt_to_ast;
+        use crate::ast::{Statement, Type};
+
+        let init = BatchExpr::StringLit {
+            value: "hello".to_string(),
+        };
+        let stmt = BatchStatement::VarDecl {
+            name: "greeting".to_string(),
+            ty: "string".to_string(),
+            expr: Some(init),
+        };
+        let ast_stmt = stmt_to_ast(stmt).unwrap();
+        match ast_stmt {
+            Statement::VariableDecl {
+                name,
+                type_,
+                initializer,
+                ..
+            } => {
+                assert_eq!(name, "greeting");
+                assert!(matches!(type_, Type::String));
+                assert!(initializer.is_some(), "initializer preserved");
+            }
+            other => panic!("expected VariableDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stmt_var_decl_without_initializer_lowers_correctly() {
+        use super::super::batch_schema::stmt_to_ast;
+        use crate::ast::{Statement, Type};
+
+        let stmt = BatchStatement::VarDecl {
+            name: "counter".to_string(),
+            ty: "integer".to_string(),
+            expr: None,
+        };
+        let ast_stmt = stmt_to_ast(stmt).unwrap();
+        match ast_stmt {
+            Statement::VariableDecl {
+                name,
+                type_,
+                initializer,
+                ..
+            } => {
+                assert_eq!(name, "counter");
+                assert!(matches!(type_, Type::Integer));
+                assert!(initializer.is_none(), "no initializer");
+            }
+            other => panic!("expected VariableDecl, got {:?}", other),
         }
     }
 }
