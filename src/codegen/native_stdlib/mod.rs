@@ -82,16 +82,25 @@ pub const LIST_ELEMENT_SIZE_F64: u32 = 8;
 ///
 /// Layout (compiler-owned; user state globals start at `RESERVED_GLOBAL_COUNT`):
 /// - 0: `HEAP_PTR_GLOBAL` — main bump heap pointer
-/// - 1-3: `__json_get` parse-result cache (src ptr, parsed ptr, heap floor).
-///   See `mir_codegen/utilities.rs` and the json.get shim in
-///   `src/stdlib/json_class.rs`.
-/// - 4-5: transient arena (`TRANSIENT_BASE_GLOBAL`, `TRANSIENT_PTR_GLOBAL`).
+/// - 1-12: `__json_get` parse-result cache — 4-entry round-robin LRU.
+///   Each entry is 3 slots: (src ptr, parsed ptr, heap floor). Widened
+///   from a single-entry cache in fingerprint `#19cd8092` — the single-
+///   entry cache thrashed when a page rendered rows via two interleaved
+///   JSON sources (outer `list_result` + inner per-row `components_json`),
+///   causing every outer-loop iteration to re-parse the large source.
+///   Entries are keyed by source ptr and validated against the heap floor
+///   (same invariant as before). Eviction is round-robin via the insert
+///   cursor in global 13. See `mir_codegen/utilities.rs` and the json.get
+///   shim in `src/stdlib/json_class.rs`.
+/// - 13: `__json_get` LRU insert cursor (values 0..3). Advances mod 4 on
+///   every cache miss so a run of >4 distinct sources evicts oldest.
+/// - 14-15: transient arena (`TRANSIENT_BASE_GLOBAL`, `TRANSIENT_PTR_GLOBAL`).
 ///   See `transient_arena.rs`. The matching `__transient_scope_enter` /
 ///   `__transient_scope_exit` pair saves and restores `TRANSIENT_PTR_GLOBAL`
 ///   to release per-iteration intermediates without touching the main bump
 ///   heap (and therefore without risking the "free a live pointer" failure
 ///   mode that bit `CMP-SSR-RECLAIM-FREES-LIVE-POINTER`).
-/// - 6-7: carryover slot pools (`CARRYOVER_A_BASE_GLOBAL`,
+/// - 16-17: carryover slot pools (`CARRYOVER_A_BASE_GLOBAL`,
 ///   `CARRYOVER_B_BASE_GLOBAL`). See `carryover.rs`. Two independent
 ///   fixed-position pools used to ping-pong an outer-scope string
 ///   variable that is reassigned once per iteration inside an
@@ -99,15 +108,21 @@ pub const LIST_ELEMENT_SIZE_F64: u32 = 8;
 ///   fingerprint `88dc6aeb0f8e`). Each pool is single-tenanted per
 ///   iteration; lazy `__malloc`-allocated on first write.
 pub const HEAP_PTR_GLOBAL: u32 = 0;
-pub const TRANSIENT_BASE_GLOBAL: u32 = 4;
-pub const TRANSIENT_PTR_GLOBAL: u32 = 5;
-pub const CARRYOVER_A_BASE_GLOBAL: u32 = 6;
-pub const CARRYOVER_B_BASE_GLOBAL: u32 = 7;
+/// Base of the `__json_get` 4-entry LRU. Entry N occupies globals
+/// (JSON_CACHE_BASE + 3*N .. JSON_CACHE_BASE + 3*N + 2).
+pub const JSON_CACHE_BASE_GLOBAL: u32 = 1;
+pub const JSON_CACHE_ENTRIES: u32 = 4;
+/// Round-robin insert cursor for the `__json_get` LRU.
+pub const JSON_CACHE_CURSOR_GLOBAL: u32 = 13;
+pub const TRANSIENT_BASE_GLOBAL: u32 = 14;
+pub const TRANSIENT_PTR_GLOBAL: u32 = 15;
+pub const CARRYOVER_A_BASE_GLOBAL: u32 = 16;
+pub const CARRYOVER_B_BASE_GLOBAL: u32 = 17;
 
 /// Number of reserved compiler-owned globals (heap ptr + json cache +
 /// transient arena + carryover pool bases). User-level state globals
 /// are assigned indices starting at `RESERVED_GLOBAL_COUNT`.
-pub const RESERVED_GLOBAL_COUNT: u32 = 8;
+pub const RESERVED_GLOBAL_COUNT: u32 = 18;
 
 /// Generate instructions for reading string length
 pub fn gen_string_length() -> Vec<Instruction<'static>> {

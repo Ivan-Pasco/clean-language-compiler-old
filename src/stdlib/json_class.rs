@@ -245,6 +245,188 @@ impl JsonClass {
             codegen.get_function_index("__json_get_path"),
             codegen.get_function_index("json.textToData"),
         ) {
+            // 4-entry round-robin LRU for the parse cache. Widened from a
+            // single entry in fingerprint #19cd8092. Two-source interleaving
+            // (e.g. `json.get(list_result, ...)` + inner
+            // `json.get(components_json, ...)` per row) evicted the outer
+            // source on every inner call, forcing a full re-parse of the
+            // large outer source on every outer iteration and blowing the
+            // module's declared memory cap. Four entries cover the depth-2
+            // interleaved SSR shape plus reasonable overhead for helper
+            // fragments that reference a third or fourth JSON string.
+            //
+            // Layout: globals JSON_CACHE_BASE_GLOBAL..JSON_CACHE_BASE_GLOBAL+11
+            // hold 4 entries of 3 words each (src, parsed, floor). Global
+            // JSON_CACHE_CURSOR_GLOBAL holds the round-robin insert cursor
+            // (0..3, wrapping). Lookup is a linear scan of all 4 entries;
+            // miss path writes into the cursor's slot and advances it.
+            //
+            // Same per-entry invariant as before: cached parsed pointer is
+            // valid iff cached_src == str_ptr AND cached_src != 0 AND
+            // __heap_ptr >= cached_floor (catches mem_scope_pop reclamation).
+            let cache_base = crate::codegen::native_stdlib::JSON_CACHE_BASE_GLOBAL;
+            let cache_cursor = crate::codegen::native_stdlib::JSON_CACHE_CURSOR_GLOBAL;
+            let heap_ptr_global = crate::codegen::native_stdlib::HEAP_PTR_GLOBAL;
+            let n_entries = crate::codegen::native_stdlib::JSON_CACHE_ENTRIES;
+
+            // Build a nested If-chain that scans entries 0..N-1. The
+            // innermost Else is the miss path (parse + memoize into
+            // cursor's slot). We assemble bottom-up so each If's Else
+            // wraps the next entry's check.
+            let mut cache_scan: Vec<Instruction<'static>> = Vec::new();
+
+            // Miss path (deepest Else):
+            //   parsed_ptr = json.textToData(str_ptr)
+            //   slot_index = cache_cursor
+            //   entry_base = JSON_CACHE_BASE + slot_index * 3
+            //   globals[entry_base + 0] = str_ptr
+            //   globals[entry_base + 1] = parsed_ptr
+            //   globals[entry_base + 2] = __heap_ptr
+            //   cache_cursor = (slot_index + 1) mod N
+            //   return parsed_ptr
+            //
+            // We can't use dynamic global indexing in WASM (GlobalSet takes
+            // an immediate index), so the miss path unrolls a small
+            // if-ladder over the cursor value to pick which entry slot to
+            // write. Same shape as the hit-path scan, mirrored.
+            let mut miss_body: Vec<Instruction<'static>> = Vec::new();
+            miss_body.push(Instruction::LocalGet(4));
+            miss_body.push(Instruction::Call(text_to_data_idx));
+            miss_body.push(Instruction::LocalSet(5)); // parsed_ptr
+
+            // Build the cursor-dispatch write ladder bottom-up.
+            let mut write_ladder: Vec<Instruction<'static>> = Vec::new();
+            // Final fallthrough (should never happen — cursor is always
+            // 0..N-1): write to slot 0 as a safety net. This keeps the
+            // shape well-typed without emitting a trap.
+            for slot_write in [(0u32, 0u32)] {
+                let (_, entry_base) = (slot_write.0, cache_base + 3 * slot_write.1);
+                write_ladder.push(Instruction::LocalGet(4));
+                write_ladder.push(Instruction::GlobalSet(entry_base));
+                write_ladder.push(Instruction::LocalGet(5));
+                write_ladder.push(Instruction::GlobalSet(entry_base + 1));
+                write_ladder.push(Instruction::GlobalGet(heap_ptr_global));
+                write_ladder.push(Instruction::GlobalSet(entry_base + 2));
+            }
+            // Wrap for each slot idx = N-1 .. 1 (slot 0 is the fallthrough).
+            for slot in (1..n_entries).rev() {
+                let entry_base = cache_base + 3 * slot;
+                let mut branch: Vec<Instruction<'static>> = vec![
+                    Instruction::GlobalGet(cache_cursor),
+                    Instruction::I32Const(slot as i32),
+                    Instruction::I32Eq,
+                    Instruction::If(wasm_encoder::BlockType::Empty),
+                    Instruction::LocalGet(4),
+                    Instruction::GlobalSet(entry_base),
+                    Instruction::LocalGet(5),
+                    Instruction::GlobalSet(entry_base + 1),
+                    Instruction::GlobalGet(heap_ptr_global),
+                    Instruction::GlobalSet(entry_base + 2),
+                    Instruction::Else,
+                ];
+                branch.append(&mut write_ladder);
+                branch.push(Instruction::End);
+                write_ladder = branch;
+            }
+            miss_body.append(&mut write_ladder);
+
+            // Advance cursor: cache_cursor = (cache_cursor + 1) mod N
+            miss_body.push(Instruction::GlobalGet(cache_cursor));
+            miss_body.push(Instruction::I32Const(1));
+            miss_body.push(Instruction::I32Add);
+            miss_body.push(Instruction::I32Const(n_entries as i32));
+            miss_body.push(Instruction::I32RemU);
+            miss_body.push(Instruction::GlobalSet(cache_cursor));
+
+            miss_body.push(Instruction::LocalGet(5)); // yield parsed_ptr
+
+            cache_scan.append(&mut miss_body);
+
+            // Wrap the miss body inside N hit-checks (entry N-1 first, ...,
+            // entry 0 outermost). Each If yields I32 (the parsed_ptr on hit,
+            // else falls through to the next check / miss path).
+            for slot in (0..n_entries).rev() {
+                let entry_base = cache_base + 3 * slot;
+                let mut wrapped: Vec<Instruction<'static>> = vec![
+                    // Hit predicate for entry `slot`:
+                    //   str_ptr == entry.src  &&  entry.src != 0  &&
+                    //   __heap_ptr >= entry.floor
+                    Instruction::LocalGet(4),
+                    Instruction::GlobalGet(entry_base),
+                    Instruction::I32Eq,
+                    Instruction::GlobalGet(entry_base),
+                    Instruction::I32Const(0),
+                    Instruction::I32Ne,
+                    Instruction::I32And,
+                    Instruction::GlobalGet(heap_ptr_global),
+                    Instruction::GlobalGet(entry_base + 2),
+                    Instruction::I32GeU,
+                    Instruction::I32And,
+                    Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+                    Instruction::GlobalGet(entry_base + 1), // hit: yield parsed
+                    Instruction::Else,
+                ];
+                wrapped.append(&mut cache_scan);
+                wrapped.push(Instruction::End);
+                cache_scan = wrapped;
+            }
+
+            let mut shim: Vec<Instruction<'static>> = vec![
+                // null guard
+                Instruction::LocalGet(0),
+                Instruction::I32Eqz,
+                Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+                Instruction::I32Const(0),
+                Instruction::Else,
+                // read type tag at offset 0 of the boxed Any
+                Instruction::LocalGet(0),
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+                Instruction::LocalSet(2), // type_tag
+                // If type_tag == 4 (String): extract str_ptr and scan the LRU
+                // before parsing. Same rationale as before, just widened —
+                // see comment on the 4-entry layout above.
+                Instruction::LocalGet(2),
+                Instruction::I32Const(JSON_TAG_STRING),
+                Instruction::I32Eq,
+                Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+                // str_ptr = memory[json_ptr + 4]
+                Instruction::LocalGet(0),
+                Instruction::I32Load(MemArg {
+                    offset: 4,
+                    align: 2,
+                    memory_index: 0,
+                }),
+                Instruction::LocalSet(4),
+            ];
+            shim.append(&mut cache_scan);
+            shim.extend_from_slice(&[
+                Instruction::Else,
+                Instruction::LocalGet(0), // already a boxed Any object or other type
+                Instruction::End,         // closes tag==String check
+                Instruction::LocalSet(3), // obj_boxed_ptr
+                // __json_get_path expects the boxed Any directly (not the raw inner
+                // pointer) because it must re-read the tag for every segment to
+                // decide between field vs index dispatch.
+                Instruction::LocalGet(3),
+                // path content ptr = path_ptr + 4
+                Instruction::LocalGet(1),
+                Instruction::I32Const(4),
+                Instruction::I32Add,
+                // path length = mem[path_ptr]
+                Instruction::LocalGet(1),
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+                Instruction::Call(path_idx),
+                Instruction::End, // closes null check
+            ]);
+
             register_stdlib_function_with_locals(
                 codegen,
                 "json.get",
@@ -255,99 +437,7 @@ impl JsonClass {
                 // Local 4: str_ptr (cache key — the inner JSON source string ptr)
                 // Local 5: parsed_ptr (cache miss path stages the result here)
                 &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
-                vec![
-                    // null guard
-                    Instruction::LocalGet(0),
-                    Instruction::I32Eqz,
-                    Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-                    Instruction::I32Const(0),
-                    Instruction::Else,
-                    // read type tag at offset 0 of the boxed Any
-                    Instruction::LocalGet(0),
-                    Instruction::I32Load(MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::LocalSet(2), // type_tag
-                    // if type_tag == 4 (String): extract str_ptr and check cache before parsing.
-                    //
-                    // The SSR shape `while c != "": c = json.get(j, i.toString())` calls into
-                    // json.get N times per loop with the same `j` source. Without this cache
-                    // every call re-runs the recursive-descent JSON parser, allocating a fresh
-                    // tree on the bump heap. With a 1000-element source the per-iter tree is
-                    // ~24 KB, blowing the 32 MB default WASM memory cap in <1500 iters
-                    // (CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER, fp e4c682d19d00).
-                    //
-                    // Cache invariant (validated below): the cached parsed pointer is still
-                    // intact in heap memory iff (a) the cached source ptr matches the one we
-                    // just loaded AND (b) __heap_ptr (global 0) is still >= the heap floor we
-                    // recorded when we landed the tree (global 3). Condition (b) catches
-                    // mem_scope_pop reclamation between calls — when the bump pointer rolls
-                    // back below our tree, the bytes are unsafe to read and we must re-parse.
-                    Instruction::LocalGet(2),
-                    Instruction::I32Const(JSON_TAG_STRING),
-                    Instruction::I32Eq,
-                    Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-                    // str_ptr = memory[json_ptr + 4]
-                    Instruction::LocalGet(0),
-                    Instruction::I32Load(MemArg {
-                        offset: 4,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::LocalSet(4),
-                    // Cache hit predicate:
-                    //   str_ptr == cache_src  &&  cache_src != 0  &&  __heap_ptr >= cache_floor
-                    Instruction::LocalGet(4),
-                    Instruction::GlobalGet(1), // cache_src
-                    Instruction::I32Eq,
-                    Instruction::GlobalGet(1),
-                    Instruction::I32Const(0),
-                    Instruction::I32Ne, // cache_src != 0
-                    Instruction::I32And,
-                    Instruction::GlobalGet(0), // __heap_ptr
-                    Instruction::GlobalGet(3), // cache_floor
-                    Instruction::I32GeU,
-                    Instruction::I32And,
-                    Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
-                    // hit — reuse cached parsed tree
-                    Instruction::GlobalGet(2),
-                    Instruction::Else,
-                    // miss — parse, then memoize (source ptr, parsed ptr, floor)
-                    Instruction::LocalGet(4),
-                    Instruction::Call(text_to_data_idx),
-                    Instruction::LocalSet(5), // parsed_ptr
-                    Instruction::LocalGet(4),
-                    Instruction::GlobalSet(1), // cache_src := str_ptr
-                    Instruction::LocalGet(5),
-                    Instruction::GlobalSet(2), // cache_parsed := parsed_ptr
-                    Instruction::GlobalGet(0),
-                    Instruction::GlobalSet(3), // cache_floor := __heap_ptr (post-parse)
-                    Instruction::LocalGet(5),
-                    Instruction::End, // closes cache hit/miss
-                    Instruction::Else,
-                    Instruction::LocalGet(0), // already a boxed Any object or other type
-                    Instruction::End,         // closes tag==String check
-                    Instruction::LocalSet(3), // obj_boxed_ptr
-                    // __json_get_path expects the boxed Any directly (not the raw inner
-                    // pointer) because it must re-read the tag for every segment to
-                    // decide between field vs index dispatch.
-                    Instruction::LocalGet(3),
-                    // path content ptr = path_ptr + 4
-                    Instruction::LocalGet(1),
-                    Instruction::I32Const(4),
-                    Instruction::I32Add,
-                    // path length = mem[path_ptr]
-                    Instruction::LocalGet(1),
-                    Instruction::I32Load(MemArg {
-                        offset: 0,
-                        align: 2,
-                        memory_index: 0,
-                    }),
-                    Instruction::Call(path_idx),
-                    Instruction::End, // closes null check
-                ],
+                shim,
             )?;
         }
 

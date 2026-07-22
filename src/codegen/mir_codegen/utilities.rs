@@ -1098,32 +1098,35 @@ impl MirCodeGenerator<'_> {
             &wasm_encoder::ConstExpr::i32_const(heap_start as i32),
         );
 
-        // Globals 1-3: __json_get parse-result cache. Avoids re-parsing the
-        // same source string when the SSR shape calls json.get(j, path) in a
-        // loop with a stable `j`. Without this each iteration re-runs the
-        // recursive descent parser, allocating a fresh tree on the bump
-        // heap — drives O(n × tree_size) cumulative leak that hit
-        // CMP-SSR-MALLOC-OOM-CONDITIONAL-HELPER (e4c682d19d00) for n≈30
-        // with large items. See json.get shim in src/stdlib/json_class.rs.
+        // Globals 1-12: __json_get parse-result cache — 4-entry round-robin
+        // LRU. Widened from a single entry in fingerprint #19cd8092 — the
+        // single-entry cache thrashed when a page rendered rows via two
+        // interleaved JSON sources (outer `list_result` +
+        // inner per-row `components_json`), causing every outer-loop
+        // iteration to re-parse the large source and blow the module's
+        // declared memory cap. Each entry is 3 slots (src, parsed, floor);
+        // eviction is round-robin via the cursor in global 13. Layout
+        // constants live in `native_stdlib::JSON_CACHE_BASE_GLOBAL` /
+        // `JSON_CACHE_CURSOR_GLOBAL`. See json.get shim in
+        // src/stdlib/json_class.rs.
         //
-        // Global 1: cached source string ptr (the `str_ptr` extracted from
-        //           the boxed Any wrapper passed to json.get). 0 = empty.
-        // Global 2: cached parsed-tree boxed Any ptr.
-        // Global 3: heap floor — the __heap_ptr value immediately after the
-        //           parse landed the tree. On subsequent json.get calls we
-        //           require __heap_ptr >= Global 3, otherwise some
-        //           mem_scope_pop has reclaimed the tree and we must re-parse.
+        // Per-entry: source ptr / parsed-tree boxed Any ptr / heap floor
+        // (the __heap_ptr value immediately after the parse). On lookup
+        // we require __heap_ptr >= entry.floor, otherwise some
+        // mem_scope_pop has reclaimed the tree and we must re-parse.
         //
-        // Globals 4-5: transient arena (see native_stdlib::transient_arena).
-        // Global 4 = TRANSIENT_BASE_GLOBAL (pool base ptr; 0 = uninit).
-        // Global 5 = TRANSIENT_PTR_GLOBAL  (bump pointer within the pool).
+        // Global 13: LRU insert cursor (values 0..3, wraps).
+        //
+        // Globals 14-15: transient arena (see native_stdlib::transient_arena).
+        // Global 14 = TRANSIENT_BASE_GLOBAL (pool base ptr; 0 = uninit).
+        // Global 15 = TRANSIENT_PTR_GLOBAL  (bump pointer within the pool).
         // Both start at 0; the pool is lazily __malloc-allocated on the
         // first __transient_scope_enter call. The matching scope_exit
         // restores TRANSIENT_PTR — the mechanism that replaces the
         // rolled-back string_builder_reclaim (see ARCHITECTURE in
         // transient_arena.rs).
         //
-        // Globals 6-7: carryover slot pools
+        // Globals 16-17: carryover slot pools
         // (see native_stdlib::carryover). Two independent single-tenanted
         // pools used to ping-pong an outer-scope string variable that is
         // reassigned once per iteration inside an accumulator-rewritten
