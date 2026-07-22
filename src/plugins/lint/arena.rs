@@ -262,8 +262,8 @@ impl LintArena {
             if let Statement::FrameworkBlock {
                 name,
                 content,
+                attributes,
                 location,
-                ..
             } = stmt
             {
                 if name == block_name {
@@ -273,11 +273,24 @@ impl LintArena {
                     first = false;
                     let (line, _col) = loc_line(location);
                     let file = loc_file(location);
+                    let mut attrs_json = String::from("{");
+                    for (ai, attr) in attributes.iter().enumerate() {
+                        if ai > 0 {
+                            attrs_json.push(',');
+                        }
+                        attrs_json.push_str(&format!(
+                            "\"{}\":\"{}\"",
+                            json_escape(&attr.name),
+                            json_escape(attr.value.as_deref().unwrap_or(""))
+                        ));
+                    }
+                    attrs_json.push('}');
                     out.push_str(&format!(
-                        "{{\"file\":\"{}\",\"line\":{},\"content\":\"{}\"}}",
+                        "{{\"file\":\"{}\",\"line\":{},\"content\":\"{}\",\"attributes\":{}}}",
                         json_escape(&file),
                         line,
-                        json_escape(content)
+                        json_escape(content),
+                        attrs_json
                     ));
                 }
             }
@@ -525,6 +538,71 @@ mod tests {
         assert!(out.contains("\\\"foo\\\""));
         assert!(out.contains("\\n"));
         assert!(out.contains("\\t"));
+    }
+
+    #[test]
+    fn list_blocks_exposes_model_name_attribute() {
+        let mut prog = empty_program();
+        prog.statements.push(Statement::FrameworkBlock {
+            name: "data".to_string(),
+            content: "    name string\n    age integer\n".to_string(),
+            attributes: vec![FrameworkAttribute {
+                name: "model_name".to_string(),
+                value: Some("Todo".to_string()),
+                location: None,
+            }],
+            location: Some(loc(12, "app/data/models/todo.cln")),
+        });
+
+        let arena = LintArena::new(13, prog);
+        let out = arena.list_blocks_json(13, "data");
+        assert!(
+            out.contains("\"attributes\":{\"model_name\":\"Todo\"}"),
+            "expected model_name attribute in JSON, got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn list_blocks_empty_attributes_serializes_empty_object() {
+        let mut prog = empty_program();
+        prog.statements.push(Statement::FrameworkBlock {
+            name: "data".to_string(),
+            content: "field integer\n".to_string(),
+            attributes: Vec::<FrameworkAttribute>::new(),
+            location: Some(loc(1, "app/x.cln")),
+        });
+
+        let arena = LintArena::new(14, prog);
+        let out = arena.list_blocks_json(14, "data");
+        assert!(
+            out.contains("\"attributes\":{}"),
+            "expected empty attributes object, got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn list_blocks_flag_attribute_serializes_empty_value() {
+        let mut prog = empty_program();
+        prog.statements.push(Statement::FrameworkBlock {
+            name: "data".to_string(),
+            content: String::new(),
+            attributes: vec![FrameworkAttribute {
+                name: "readonly".to_string(),
+                value: None,
+                location: None,
+            }],
+            location: Some(loc(2, "app/y.cln")),
+        });
+
+        let arena = LintArena::new(15, prog);
+        let out = arena.list_blocks_json(15, "data");
+        assert!(
+            out.contains("\"attributes\":{\"readonly\":\"\"}"),
+            "flag attribute should serialize with empty-string value, got: {}",
+            out
+        );
     }
 
     #[test]
