@@ -74,6 +74,7 @@
  */
 
 mod app_config;
+mod bridge_stubs;
 pub mod builtin_assemblers;
 mod discovery;
 pub mod enforcement;

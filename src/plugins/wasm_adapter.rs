@@ -341,6 +341,11 @@ impl WasmPluginAdapter {
         // Then overlay the 30 typed-emission bridge functions on top of the stdlib.
         // These are the v3-specific handles: _emit_function, _stmt_block, _stmt_return, etc.
         crate::plugins::typed_emission::register_typed_emission_bridges(&mut linker)?;
+        // Contract 5 Phase C: a plugin that exports both expand_block_typed
+        // and lint_project imports the union of both surfaces. Stub the lint
+        // bridges so instantiation succeeds; a wrong-context call traps with
+        // a `BRIDGE-WRONG-CONTEXT` diagnostic. Prompt f9ee2728-8597-11f1-9d55-da25a95a496b.
+        crate::plugins::bridge_stubs::register_lint_stubs(&mut linker)?;
         Ok(linker)
     }
 
@@ -387,6 +392,8 @@ impl WasmPluginAdapter {
         // fix that landed for the typed-emission linker (fp f4b7d6977f05).
         self.register_plugin_stdlib_functions(&mut linker)?;
         crate::plugins::lint::register_lint_bridges(&mut linker)?;
+        // Contract 5 Phase C: see build_typed_emission_linker for rationale.
+        crate::plugins::bridge_stubs::register_typed_emission_stubs(&mut linker)?;
         Ok(linker)
     }
 
