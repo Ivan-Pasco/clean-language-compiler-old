@@ -299,8 +299,8 @@ impl JsonClass {
             // Final fallthrough (should never happen — cursor is always
             // 0..N-1): write to slot 0 as a safety net. This keeps the
             // shape well-typed without emitting a trap.
-            for slot_write in [(0u32, 0u32)] {
-                let (_, entry_base) = (slot_write.0, cache_base + 3 * slot_write.1);
+            {
+                let entry_base = cache_base;
                 write_ladder.push(Instruction::LocalGet(4));
                 write_ladder.push(Instruction::GlobalSet(entry_base));
                 write_ladder.push(Instruction::LocalGet(5));
