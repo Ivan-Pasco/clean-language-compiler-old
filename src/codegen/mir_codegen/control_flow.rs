@@ -247,9 +247,22 @@ impl MirCodeGenerator<'_> {
         // another candidate `u` (u != t), then `t` is an intermediate merge that
         // must be dropped. Iterate to fixed point so chains of arbitrary depth
         // collapse cleanly. Bounded by the function's block count, so terminates.
+        //
+        // Snapshot ordering: HashSet iteration order is randomised per process,
+        // and the removals below depend on which candidate is inspected first.
+        // Without a deterministic order, two runs against identical source can
+        // produce different final continuation sets — an intermediate merge
+        // survives on one run but not the other, and the caller emits either
+        // a full merge body or a `br` short-circuit accordingly. This is the
+        // root cause of CODEGEN-NONDET-001 (fp 44ab9e9a1486): frame.data's
+        // parse_join_clause emits a full ~50-instruction concat chain on some
+        // runs and just `br 0` on others, ~50/50 depending on the process's
+        // HashSet seed. Sort by BasicBlockId (a wrapper around u32) so the
+        // reduction is reproducible across processes.
         loop {
             let mut changed = false;
-            let snapshot: Vec<_> = continuations.iter().copied().collect();
+            let mut snapshot: Vec<_> = continuations.iter().copied().collect();
+            snapshot.sort();
             for t in snapshot {
                 // Walk the Jump chain from t until we hit a non-Jump terminator,
                 // a block already visited, or a block that is itself a candidate.
