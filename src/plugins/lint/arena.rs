@@ -67,6 +67,16 @@ fn type_to_display(t: &Type) -> String {
         Type::Void => "void".to_string(),
         Type::Any => "any".to_string(),
         Type::Object(name) => name.clone(),
+        Type::Class { name, type_args } if type_args.is_empty() => name.clone(),
+        Type::Class { name, type_args } => format!(
+            "{}<{}>",
+            name,
+            type_args
+                .iter()
+                .map(type_to_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Type::List(inner, _) => format!("list<{}>", type_to_display(inner)),
         other => format!("{:?}", other),
     }
@@ -613,5 +623,33 @@ mod tests {
         assert_eq!(json_escape("a\rb"), "a\\rb");
         assert_eq!(json_escape("a\tb"), "a\\tb");
         assert_eq!(json_escape("a\x01b"), "a\\u0001b");
+    }
+
+    #[test]
+    fn type_to_display_renders_class_as_bare_name() {
+        // Regression guard: framework hit false-positive FRAME-DATA-I002 on
+        // v2.12.180 because Type::Class fell through to the `{:?}` fallback,
+        // producing `"Class { name: \"UserData\", type_args: [] }"` instead
+        // of the bare name. Prompt 4e60be0f-86c8-11f1-9d55-da25a95a496b.
+        let t = Type::Class {
+            name: "UserData".to_string(),
+            type_args: vec![],
+        };
+        assert_eq!(type_to_display(&t), "UserData");
+    }
+
+    #[test]
+    fn type_to_display_renders_generic_class_with_angle_brackets() {
+        let t = Type::Class {
+            name: "Box".to_string(),
+            type_args: vec![Type::String],
+        };
+        assert_eq!(type_to_display(&t), "Box<string>");
+
+        let t = Type::Class {
+            name: "Map".to_string(),
+            type_args: vec![Type::String, Type::Integer],
+        };
+        assert_eq!(type_to_display(&t), "Map<string, integer>");
     }
 }
