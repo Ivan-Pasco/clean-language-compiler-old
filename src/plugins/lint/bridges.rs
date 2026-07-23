@@ -129,22 +129,20 @@ pub fn register_lint_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
-    // _ast_class_fields(handle, name_ptr, name_len) -> lp_ptr
+    // _ast_class_fields(handle, name_lp) -> lp_ptr
     //
-    // The spec §4 table lists this as taking (name_ptr, name_len) as
-    // separate params. In our LP convention the pointer alone carries the
-    // length in its 4-byte header — `name_len` is redundant but preserved
-    // in the signature for spec conformance and future-proofing (e.g. if
-    // plugins ever pass non-LP raw pointers). We accept both, prefer the
-    // LP header when available.
+    // String param uses the plugin LP-pointer ABI: one i32 pointing at
+    // `[4-byte length header || content]` in plugin memory. This matches
+    // every other bridge across typed-emission, host-bridge, and server
+    // extensions. Spec §4 (post-2026-07-23 alignment) declares 2 i32s.
     linker.func_wrap(
         "env",
         "_ast_class_fields",
-        |mut caller: Caller<'_, PluginState>, handle: i32, name_ptr: i32, _name_len: i32| -> i32 {
+        |mut caller: Caller<'_, PluginState>, handle: i32, name_lp: i32| -> i32 {
             if let Err(ptr) = arena_or_error(&mut caller) {
                 return ptr;
             }
-            let name = read_lp_string(&mut caller, name_ptr).unwrap_or_default();
+            let name = read_lp_string(&mut caller, name_lp).unwrap_or_default();
             let json = caller
                 .data()
                 .lint_arena
@@ -173,15 +171,15 @@ pub fn register_lint_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
-    // _ast_list_blocks(handle, name_ptr, name_len) -> lp_ptr
+    // _ast_list_blocks(handle, name_lp) -> lp_ptr (LP-pointer ABI, see above)
     linker.func_wrap(
         "env",
         "_ast_list_blocks",
-        |mut caller: Caller<'_, PluginState>, handle: i32, name_ptr: i32, _name_len: i32| -> i32 {
+        |mut caller: Caller<'_, PluginState>, handle: i32, name_lp: i32| -> i32 {
             if let Err(ptr) = arena_or_error(&mut caller) {
                 return ptr;
             }
-            let name = read_lp_string(&mut caller, name_ptr).unwrap_or_default();
+            let name = read_lp_string(&mut caller, name_lp).unwrap_or_default();
             let json = caller
                 .data()
                 .lint_arena

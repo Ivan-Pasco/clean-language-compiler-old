@@ -123,9 +123,9 @@ fn trap(name: &'static str, context: &'static str) -> i32 {
 
 const LINT_BRIDGES: &[(&str, usize)] = &[
     ("_ast_list_classes", 1),
-    ("_ast_class_fields", 3),
+    ("_ast_class_fields", 2),
     ("_ast_list_functions", 1),
-    ("_ast_list_blocks", 3),
+    ("_ast_list_blocks", 2),
 ];
 
 const TYPED_EMISSION_BRIDGES: &[(&str, usize)] = &[
