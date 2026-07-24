@@ -299,6 +299,59 @@ impl std::fmt::Display for MemoryTier {
     }
 }
 
+/// Compile-time options bundle.
+///
+/// Introduced in 0.33.135 by the JSON stdlib migration ([P2-cont]) as the
+/// preferred way to pass compilation knobs. The existing
+/// `compile_multi_file_with_memory_tier` remains a thin wrapper for callers
+/// that already thread the older positional arguments — new call sites and
+/// features should prefer [`compile_multi_file`] with this struct.
+///
+/// Fields align with the existing thread-local knobs; setting a field here
+/// updates the corresponding thread-local for the duration of the call.
+#[derive(Debug, Clone, Copy)]
+pub struct CompileOptions {
+    /// Memory tier for the produced WASM. Corresponds to the `--memory-tier`
+    /// CLI flag when supplied; otherwise the target-derived default.
+    pub memory_tier: MemoryTier,
+    /// When `true`, drop server-only modules and blank the entry `start:`
+    /// body so the produced WASM is safe for browser hydration.
+    pub client_mode: bool,
+    /// When `true`, dispatch the four spec'd JSON functions
+    /// (json.textToData / json.tryTextToData / json.dataToText /
+    /// json.prettyDataToText) through the legacy pure-WASM parser in
+    /// `src/stdlib/json_class.rs` instead of the Layer 2 host bridge
+    /// (`_json_decode` / `_json_encode` / `_json_encode_pretty`).
+    ///
+    /// Default is `false` (new bridge path). One-release escape hatch during
+    /// the JSON stdlib migration — see
+    /// `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
+    pub enable_legacy_json_wasm: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self {
+            memory_tier: MemoryTier::Standard,
+            client_mode: false,
+            enable_legacy_json_wasm: false,
+        }
+    }
+}
+
+impl CompileOptions {
+    /// Construct a `CompileOptions` matching the positional args accepted by
+    /// [`compile_multi_file_with_memory_tier`]. Used by the wrapper to keep
+    /// the existing entry point functional.
+    pub fn from_positional(memory_tier: MemoryTier, client_mode: bool) -> Self {
+        Self {
+            memory_tier,
+            client_mode,
+            enable_legacy_json_wasm: false,
+        }
+    }
+}
+
 /// Minimum compatible compiler version for plugins
 /// Plugins should check compatibility using semver rules
 pub const MIN_PLUGIN_VERSION: &str = "0.14.0";
@@ -389,6 +442,17 @@ thread_local! {
     /// Enables local plugin verification without a comita round-trip.
     static PLUGIN_OVERRIDES: std::cell::RefCell<std::collections::HashMap<String, std::path::PathBuf>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// `--enable-legacy-json-wasm` flag — when true, the compiler dispatches
+    /// the four spec'd JSON functions (json.textToData / json.tryTextToData /
+    /// json.dataToText / json.prettyDataToText) through the legacy pure-WASM
+    /// path in `src/stdlib/json_class.rs`. When false (the default), those
+    /// functions dispatch through the Layer 2 host bridge (`_json_decode`,
+    /// `_json_encode`, `_json_encode_pretty`) declared in
+    /// `foundation/spec/platform/runtime-abi/v1.toml`. Escape hatch for the
+    /// JSON stdlib migration (Option B); slated for deletion in the release
+    /// after the 1-2 week soak window per
+    /// `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
+    static ENABLE_LEGACY_JSON_WASM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Plugin Contracts v2 Phase B — set the Clean Runtime ABI version to stamp
@@ -500,6 +564,27 @@ pub fn emit_bridge_probes_override() -> bool {
 /// built with both carries a single import set.
 pub fn any_probe_flag_active() -> bool {
     emit_heap_probes_override() || emit_bridge_probes_override()
+}
+
+/// Set the `--enable-legacy-json-wasm` flag for the current thread.
+///
+/// When true, the four spec'd JSON functions (json.textToData /
+/// json.tryTextToData / json.dataToText / json.prettyDataToText) dispatch
+/// through the legacy pure-WASM parser in `src/stdlib/json_class.rs`. When
+/// false (the default), they dispatch through the Layer 2 host bridge
+/// (`_json_decode`, `_json_encode`, `_json_encode_pretty`).
+///
+/// This is a one-release escape hatch during the JSON stdlib migration
+/// (Option B, [P2-cont]). See
+/// `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md` — the flag AND
+/// the legacy parser are slated for deletion in [P9] after a 1-2 week soak.
+pub fn set_enable_legacy_json_wasm_override(enable: bool) {
+    ENABLE_LEGACY_JSON_WASM.with(|cell| cell.set(enable));
+}
+
+/// Read the active `--enable-legacy-json-wasm` override for the current thread.
+pub fn enable_legacy_json_wasm_override() -> bool {
+    ENABLE_LEGACY_JSON_WASM.with(|cell| cell.get())
 }
 
 /// Replace the heap-probe callsite list for the current thread.
@@ -2974,6 +3059,59 @@ fn is_server_only_module(module_name: &str, file_path: &std::path::Path) -> bool
         || path_str.contains("/api/")
         || path_str.contains("/pages/")
         || file_stem == "routes"
+}
+
+/// Compile a Clean Language source tree with a bundled [`CompileOptions`]
+/// configuration. Preferred entry point for new callers (0.33.135+); the
+/// older positional-argument [`compile_multi_file_with_memory_tier`] remains
+/// available and is now implemented on top of this function.
+///
+/// This entry point centralises how compile-time flags (including the
+/// JSON stdlib dispatch mode, [`CompileOptions::enable_legacy_json_wasm`])
+/// reach the code generator without every intermediate function having to
+/// grow another positional parameter.
+pub fn compile_multi_file_with_options<P: AsRef<std::path::Path>>(
+    entry_path: P,
+    search_paths: Vec<std::path::PathBuf>,
+    opt_level: u8,
+    explicit_tier: Option<MemoryTier>,
+    options: CompileOptions,
+) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
+    // Publish the JSON-dispatch flag on the current thread so
+    // `mir_builder::expressions::build_call` and the codegen bridge
+    // resolver both see the same choice for the duration of this compile.
+    // Restored to its previous value on drop.
+    let _json_guard = ScopedEnableLegacyJsonWasm::set(options.enable_legacy_json_wasm);
+
+    compile_multi_file_with_memory_tier(
+        entry_path,
+        search_paths,
+        opt_level,
+        explicit_tier,
+        options.memory_tier,
+        options.client_mode,
+    )
+}
+
+/// RAII guard restoring the `ENABLE_LEGACY_JSON_WASM` thread-local when
+/// dropped. Used by [`compile_multi_file`] so that a compile invoked with
+/// `enable_legacy_json_wasm = true` doesn't leak that state into unrelated
+/// downstream compiles on the same thread (test harnesses in particular
+/// share threads across many compiles).
+struct ScopedEnableLegacyJsonWasm(bool);
+
+impl ScopedEnableLegacyJsonWasm {
+    fn set(new_value: bool) -> Self {
+        let previous = enable_legacy_json_wasm_override();
+        set_enable_legacy_json_wasm_override(new_value);
+        Self(previous)
+    }
+}
+
+impl Drop for ScopedEnableLegacyJsonWasm {
+    fn drop(&mut self) {
+        set_enable_legacy_json_wasm_override(self.0);
+    }
 }
 
 /// Compiles Clean Language with multi-file support and a specific memory tier.

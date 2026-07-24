@@ -218,12 +218,29 @@ impl JsonClass {
         //   json.encode  ≡  json.dataToText
         //   json.decode  ≡  json.textToData
         //   json.get     ≡  __json_get_field (key-based access)
-        // The old names remain valid for backward compatibility.
-        if let Some(idx) = codegen.get_function_index("json.dataToText") {
-            codegen.add_function_alias("json.encode", idx);
-        }
-        if let Some(idx) = codegen.get_function_index("json.textToData") {
-            codegen.add_function_alias("json.decode", idx);
+        //
+        // Under the JSON stdlib migration (Option B, [P2-cont]) the encode/
+        // decode aliases are ONLY wired to the pure-WASM path when the
+        // `--enable-legacy-json-wasm` flag is set. Under the new default,
+        // `json.encode` / `json.decode` resolve to the host bridges
+        // `_json_encode` / `_json_decode` via the plugin registry's
+        // `language_to_bridge_map` phase — see `src/plugins/registry.rs`
+        // GEN004 for the conditional-suppression rule.
+        //
+        // We still register the pure-WASM `json.textToData` / `json.dataToText`
+        // / `json.prettyDataToText` names themselves (they are declared by the
+        // resolver in `symbol_table.rs`), because the legacy path needs them
+        // and because the new dispatch site in
+        // `src/mir/mir_builder/expressions.rs` inspects them by name. The
+        // MIR builder redirects the four spec'd names to bridge calls when
+        // the flag is off — see the dispatch code there for the branching.
+        if crate::enable_legacy_json_wasm_override() {
+            if let Some(idx) = codegen.get_function_index("json.dataToText") {
+                codegen.add_function_alias("json.encode", idx);
+            }
+            if let Some(idx) = codegen.get_function_index("json.textToData") {
+                codegen.add_function_alias("json.decode", idx);
+            }
         }
         // json.get(json_ptr: i32, path_ptr: i32) -> i32
         // Adapts the 2-arg language calling convention to the 3-arg internal

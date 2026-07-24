@@ -251,6 +251,17 @@ enum Commands {
         /// See `foundation/spec/plugins/plugin-contract.md` §11.
         #[arg(long = "plugin-override", value_name = "NAME=PATH")]
         plugin_override: Vec<String>,
+
+        /// Dispatch the four spec'd JSON functions (json.textToData /
+        /// json.tryTextToData / json.dataToText / json.prettyDataToText)
+        /// through the legacy pure-WASM parser in `src/stdlib/json_class.rs`
+        /// instead of the Layer 2 host bridge (_json_decode / _json_encode /
+        /// _json_encode_pretty). Off by default (the new bridge path).
+        /// One-release escape hatch during the JSON stdlib migration;
+        /// slated for deletion in [P9] after a 1-2 week soak window.
+        /// See `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
+        #[arg(long)]
+        enable_legacy_json_wasm: bool,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -564,8 +575,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // when the default flips in Phase D.
             no_lint: _,
             plugin_override,
+            enable_legacy_json_wasm,
         } => {
-            handle_compile(
+            // Publish the JSON legacy-dispatch flag on the current thread so
+            // the MIR builder and codegen bridge resolver both see it during
+            // compilation. Default is false — the new Layer 2 host-bridge
+            // path. Reset after the call so the flag doesn't leak into
+            // downstream compiles sharing this thread. See
+            // foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
+            clean_language_compiler::set_enable_legacy_json_wasm_override(enable_legacy_json_wasm);
+            let compile_result = handle_compile(
                 input,
                 output,
                 opt_level,
@@ -582,7 +601,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 plugin_override,
                 &output_config,
             )
-            .await?
+            .await;
+            clean_language_compiler::set_enable_legacy_json_wasm_override(false);
+            compile_result?
         }
         Commands::Test { dirs, files } => handle_test(args.verbose > 0, dirs, files).await?,
         Commands::SimpleTest {} => handle_simple_test(args.verbose > 0).await?,

@@ -58,7 +58,7 @@
 #   entry uses "string" without expand_strings, and both sides emit the
 #   same WASM. The validator agrees.
 #
-#   Full design and rationale: foundation/management/cross-component-prompts/
+#   Full design and rationale: foundation/archive/cross-component-prompts/
 #   foundation-bridge-string-type-semantics.md (Resolution section).
 #
 # ============================================================
@@ -90,7 +90,7 @@
 #   Contract tests filter probes by host: every server-class host runs the
 #   same probe set (entries where hosts is empty, contains "server", or
 #   contains "all"); browser hosts run their own equivalent contract tests
-#   against their linkers. See foundation/management/scripts/
+#   against their linkers. See foundation/scripts/
 #   check_host_parity.py for the parity gate.
 #
 # ============================================================
@@ -1858,6 +1858,17 @@ hosts       = ["server"]
 description = "Get the raw request body as an opaque byte sequence — no UTF-8 decoding, no normalization, no encoding assumption. Returns a length-prefixed buffer laid out identically to a length-prefixed string ([4-byte LE length][bytes]); Clean code holds the pointer and passes it verbatim to any bridge that consumes bytes (SHA-256 hashers, _fs_write_bytes, HTTP forwarders). When Content-Length is set on the request, the returned length equals it. Additive to _req_body — the string surface stays untouched. Motivation: application/octet-stream request bodies (e.g. .tar.gz uploads for the errors dashboard's tarball-upload endpoint) cannot survive a UTF-8 decode; the receiver needs the exact wire bytes to verify integrity."
 
 [[functions]]
+name        = "_req_body_sha256_hex"
+layer       = 3
+category    = "request"
+module      = "env"
+params      = []
+returns     = "string"
+aliases     = ["req.body_sha256_hex"]
+hosts       = ["server"]
+description = "Server-computed SHA-256 (lowercase hex, 64 chars) of the raw pre-parse request body — no UTF-8 decoding, no normalization. Returns a length-prefixed string. Byte source matches _req_body_bytes (ctx.bodyBytes when raw middleware buffered them, else the UTF-8 encoding of ctx.body). One-shot Option B: obviates the two-step _req_body_bytes → _crypto_sha256_bytes path when the handler only needs to compare against a client-supplied X-Tarball-SHA256 (or similar integrity header) and never needs to persist or forward the raw bytes. Additive to _req_body / _req_body_bytes — invoking the hash does not consume the request context. Motivation: application/octet-stream integrity checks (e.g. the errors dashboard's POST /api/v1/reports/tarball-upload) need a server-computed SHA over raw wire bytes without materializing the body in linear memory."
+
+[[functions]]
 name        = "_req_body_field"
 layer       = 3
 category    = "request"
@@ -2729,34 +2740,53 @@ hosts       = ["server"]
 description = "Return the error message from the last failed _email_send call; returns LP empty string when the last send succeeded."
 
 # ============================================================
-# LAYER 3 - JSON UTILITIES (3 functions)
+# LAYER 2 - JSON UTILITIES (4 functions)
 # ============================================================
+# JSON parsing and serialization is delegated to the host runtime. The
+# compiler does NOT embed a JSON parser. Grammar: RFC 8259 (normative).
+# Number precision: IEEE-754 double (D1). Duplicate object keys: last-wins
+# silently (D2). Serialize key order: insertion order (D3). Boxed-Any layout:
+# see foundation/spec/platform/BOXED_ANY_ABI.md (D4). Error semantics: D5.
+# Compact vs pretty serialization is exposed as two named entrypoints
+# (_json_encode / _json_encode_pretty), not a boolean flag — matches
+# serde_json::to_string vs to_string_pretty and JSON.stringify variants.
 
 [[functions]]
 name        = "_json_encode"
-layer       = 3
+layer       = 2
 category    = "json"
 module      = "env"
-params      = ["string"]
+params      = ["any"]
 returns     = "ptr"
 aliases     = ["json.encode"]
 hosts       = ["all"]
-description = "Validate and re-serialize JSON from ptr+len pair; non-JSON strings are encoded as JSON string values"
+description = "Serialize a boxed-Any value to compact JSON per RFC 8259 (serde_json::to_string / JSON.stringify(value)). Input is a boxed-Any pointer (see BOXED_ANY_ABI.md); output is an LP string pointer. The null-tag serializes to the literal 'null' — this is correct RFC 8259 output, not a fallback. The bridge MUST raise on invalid or unrecognized boxed-Any input rather than silently returning 'null'. Key order is insertion order (D3)."
+
+[[functions]]
+name        = "_json_encode_pretty"
+layer       = 2
+category    = "json"
+module      = "env"
+params      = ["any"]
+returns     = "ptr"
+aliases     = ["json.encodePretty"]
+hosts       = ["all"]
+description = "Serialize a boxed-Any value to indented JSON per RFC 8259 with 2-space indentation and newlines (serde_json::to_string_pretty / JSON.stringify(value, null, 2)). Same input/output shape and error semantics as _json_encode — see that entry for boxed-Any and null-tag rules. Key order is insertion order (D3)."
 
 [[functions]]
 name        = "_json_decode"
-layer       = 3
+layer       = 2
 category    = "json"
 module      = "env"
 params      = ["string"]
-returns     = "ptr"
+returns     = "any"
 aliases     = ["json.decode"]
 hosts       = ["all"]
-description = "Parse JSON string from ptr+len pair; returns parsed JSON or an error JSON object on parse failure"
+description = "Parse a JSON string per RFC 8259 and return a boxed-Any pointer. Numbers use IEEE-754 double precision (D1). Duplicate object keys are resolved last-wins silently (D2). On invalid input the bridge MUST raise a runtime error (D5) — the compiler wraps this call in an implicit onError handler when emitting json.tryTextToData (see stdlib-reference.md §8)."
 
 [[functions]]
 name        = "_json_get"
-layer       = 3
+layer       = 2
 category    = "json"
 module      = "env"
 # Match the canonical plugin declaration (frame.server 2.8.4+ /
@@ -3224,7 +3254,7 @@ description = "Browser-only. Returns LP string '{}' on the server. §FEXT-1"
 # handler and the errors dashboard's retest sandbox. Gated on the
 # CLEAN_DEV=1 environment variable at the bridge level: returns an
 # empty length-prefixed string in production. See
-# foundation/platform-architecture/SERVER_EXTENSIONS.md §Dev-mode
+# foundation/spec/platform/SERVER_EXTENSIONS.md §Dev-mode
 # Capture for the payload contract.
 # ============================================================
 

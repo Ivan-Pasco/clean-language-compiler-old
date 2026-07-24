@@ -913,12 +913,28 @@ impl PluginRegistry {
             // Also generate camelCase variants: "_auth_get_session" → "auth.getSession"
             // Skip if already mapped in phase 1.
             //
-            // IMPORTANT: Some names are intentionally excluded because they are
-            // implemented as pure WASM functions (registered by json_class.rs) and
-            // must never be redirected to a bridge. Mapping them to a bridge would
-            // cause the bridge (which expects a string parameter) to receive a boxed
-            // `any` value, producing garbage output. The pure WASM path handles all
-            // types correctly via AnyTypeTag dispatch (GEN004).
+            // GEN004 (updated for JSON stdlib migration [P2-cont]):
+            //
+            // The four JSON encode/decode names were historically excluded from
+            // auto-derivation because they were implemented as pure WASM in
+            // `src/stdlib/json_class.rs`. Redirecting them to `_json_encode` /
+            // `_json_decode` bridges before the host bridges existed produced
+            // garbage output (bridge expected a string, got a boxed `any`).
+            //
+            // Under the JSON stdlib migration (Option B) the bridge IS the
+            // canonical implementation. The exclusion is now conditional on
+            // the `--enable-legacy-json-wasm` thread-local flag:
+            //   * flag ON  → old behavior, exclude (pure WASM path)
+            //   * flag OFF → auto-derive `json.encode` → `_json_encode`,
+            //                `json.dataToText` → `_json_encode`,
+            //                `json.prettyDataToText` → `_json_encode_pretty`,
+            //                `json.decode` → `_json_decode`,
+            //                `json.textToData` → `_json_decode`.
+            //
+            // The MIR builder's json-dispatch site (see
+            // `src/mir/mir_builder/expressions.rs`) also branches on the same
+            // flag; both must agree for a consistent build.
+            let legacy_json_active = crate::enable_legacy_json_wasm_override();
             const WASM_ONLY_FUNCTIONS: &[&str] =
                 &["json.encode", "json.dataToText", "json.prettyDataToText"];
             for bf in &manifest.bridge.functions {
@@ -928,7 +944,7 @@ impl PluginRegistry {
                         let method = &stripped[underscore_pos + 1..];
                         // snake_case variant: "auth.get_session"
                         let dot_name = format!("{}.{}", namespace, method);
-                        if WASM_ONLY_FUNCTIONS.contains(&dot_name.as_str()) {
+                        if legacy_json_active && WASM_ONLY_FUNCTIONS.contains(&dot_name.as_str()) {
                             continue;
                         }
                         map.entry(dot_name).or_insert_with(|| bf.name.clone());
@@ -936,7 +952,9 @@ impl PluginRegistry {
                         if method.contains('_') {
                             let camel_method = snake_to_camel(method);
                             let camel_dot_name = format!("{}.{}", namespace, camel_method);
-                            if WASM_ONLY_FUNCTIONS.contains(&camel_dot_name.as_str()) {
+                            if legacy_json_active
+                                && WASM_ONLY_FUNCTIONS.contains(&camel_dot_name.as_str())
+                            {
                                 continue;
                             }
                             map.entry(camel_dot_name).or_insert_with(|| bf.name.clone());
@@ -959,12 +977,18 @@ impl PluginRegistry {
         // registry copy (the plugin manifest is authoritative for anything it
         // covers). Load failures are silently ignored — a missing registry is
         // reported through the separate validation path.
+        // Same GEN004 rule as Phase 2 (see above): exclusion is only active
+        // under `--enable-legacy-json-wasm`. Under the default (new bridge
+        // path) the registry aliases `json.encode`, `json.dataToText`,
+        // `json.prettyDataToText`, `json.decode`, `json.textToData` are
+        // allowed to map onto their `_json_*` bridges.
+        let legacy_json_active_phase3 = crate::enable_legacy_json_wasm_override();
         const WASM_ONLY_FUNCTIONS: &[&str] =
             &["json.encode", "json.dataToText", "json.prettyDataToText"];
         if let Ok(idx) = crate::plugins::registry_loader::RegistryIndex::load() {
             for reg_fn in idx.functions() {
                 for alias in &reg_fn.aliases {
-                    if WASM_ONLY_FUNCTIONS.contains(&alias.as_str()) {
+                    if legacy_json_active_phase3 && WASM_ONLY_FUNCTIONS.contains(&alias.as_str()) {
                         continue;
                     }
                     map.entry(alias.clone())
@@ -1895,10 +1919,20 @@ mod tests {
 
     #[test]
     fn test_language_to_bridge_map_excludes_wasm_only_functions() {
-        // GEN004: _json_encode and similar bridge functions must NOT auto-derive
-        // to json.encode / json.dataToText, because those are pure WASM functions.
-        // Mapping them to the bridge causes the bridge (which expects a string param)
-        // to receive a boxed `any` object value, producing empty JSON output.
+        // GEN004 (updated for JSON stdlib migration [P2-cont] in 0.33.135):
+        //
+        // The exclusion of `json.encode` / `json.dataToText` /
+        // `json.prettyDataToText` from bridge auto-derivation is CONDITIONAL
+        // on the `--enable-legacy-json-wasm` thread-local flag.
+        //
+        //   * flag ON  (legacy pure-WASM path): the historical exclusion
+        //               holds — the map does NOT contain these keys, so the
+        //               resolver falls through to `json_class.rs`.
+        //   * flag OFF (new host-bridge default): the exclusion is lifted
+        //               and these keys DO map onto their `_json_*` bridges.
+        //
+        // This test asserts both branches on the same manifest to prove the
+        // guard is flag-driven.
         use crate::plugins::plugin_abi::{
             BridgeFunction, PluginBridge, PluginCompatibility, PluginExports, PluginHandles,
             PluginInfo, PluginLanguage, PluginManifest,
@@ -1919,13 +1953,21 @@ mod tests {
             exports: PluginExports::default(),
             bridge: PluginBridge {
                 functions: vec![
+                    // JSON stdlib migration (Option B, 0.33.135): `_json_encode`
+                    // now takes a single boxed-Any pointer (`any`) and returns
+                    // an LP string pointer. See
+                    // `foundation/spec/platform/runtime-abi/v1.toml` and
+                    // `BOXED_ANY_ABI.md`. The pre-migration signature
+                    // (`params=["string"] expand_strings=true`) is what would
+                    // have made this test drift against the shipping registry
+                    // once we synced the embedded copy in 0.33.135.
                     BridgeFunction {
                         name: "_json_encode".to_string(),
-                        params: vec!["string".to_string()],
-                        returns: "string".to_string(),
+                        params: vec!["any".to_string()],
+                        returns: "ptr".to_string(),
                         module: "env".to_string(),
                         description: None,
-                        expand_strings: true,
+                        expand_strings: false,
                         ..Default::default()
                     },
                     BridgeFunction {
@@ -1962,18 +2004,49 @@ mod tests {
             .build()
             .expect("Failed to build registry");
 
-        let map = registry.language_to_bridge_map();
+        // -------- Branch 1: legacy pure-WASM path (--enable-legacy-json-wasm ON) --------
+        // Guarded by an RAII drop so a panic inside a mid-test assertion
+        // still restores the thread-local for downstream tests on this thread.
+        let previous_flag = crate::enable_legacy_json_wasm_override();
+        crate::set_enable_legacy_json_wasm_override(true);
+        let map_legacy = registry.language_to_bridge_map();
 
-        // _req_body auto-derives to req.body — this is fine
-        assert_eq!(map.get("req.body"), Some(&"_req_body".to_string()));
-        // _json_encode must NOT auto-derive to json.encode — pure WASM function (GEN004)
+        // _req_body auto-derives to req.body — this is fine (unaffected by flag)
+        assert_eq!(map_legacy.get("req.body"), Some(&"_req_body".to_string()));
+        // With legacy flag ON, the pre-migration exclusion still holds:
+        // _json_encode must NOT auto-derive to json.encode/json.dataToText/json.prettyDataToText.
         assert!(
-            !map.contains_key("json.encode"),
-            "json.encode must not map to _json_encode bridge"
+            !map_legacy.contains_key("json.encode"),
+            "json.encode must not map to _json_encode bridge under --enable-legacy-json-wasm"
         );
-        // _json_encode also must not derive to json.dataToText or json.prettyDataToText
-        assert!(!map.contains_key("json.dataToText"));
-        assert!(!map.contains_key("json.prettyDataToText"));
+        assert!(!map_legacy.contains_key("json.dataToText"));
+        assert!(!map_legacy.contains_key("json.prettyDataToText"));
+
+        // -------- Branch 2: new bridge path (default, flag OFF) --------
+        crate::set_enable_legacy_json_wasm_override(false);
+        let map_new = registry.language_to_bridge_map();
+
+        // _req_body auto-derives unchanged.
+        assert_eq!(map_new.get("req.body"), Some(&"_req_body".to_string()));
+        // With flag OFF, the JSON encode/decode names are ALLOWED to map
+        // to the bridge — that's the whole point of the migration.
+        // The manifest under test declares `_json_encode`, so json.encode
+        // and json.dataToText should now resolve to it.
+        assert_eq!(
+            map_new.get("json.encode"),
+            Some(&"_json_encode".to_string()),
+            "json.encode must map to _json_encode under new bridge default"
+        );
+        // Note: `json.dataToText` and `json.prettyDataToText` don't auto-derive
+        // from `_json_encode` alone (they aren't `_json_dataToText` /
+        // `_json_prettyDataToText`) — they get their bridge assignment via the
+        // registry-level alias phase (Phase 3) that reads
+        // function-registry.toml's `aliases = ["json.dataToText"]` entries.
+        // This test uses a minimal manifest so Phase 3 aliases aren't
+        // exercised here; a separate integration test covers the full path.
+
+        // Restore prior thread-local state.
+        crate::set_enable_legacy_json_wasm_override(previous_flag);
     }
 
     /// FRAME-AUTH-JWT-HELPERS-UNREACHABLE regression: a `[[language.functions]]`

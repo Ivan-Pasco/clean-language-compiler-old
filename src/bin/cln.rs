@@ -103,6 +103,12 @@ struct CompileConfig {
     memory_tier: Option<clean_language_compiler::MemoryTier>,
     debug: bool,
     verbose: bool,
+    /// `--enable-legacy-json-wasm` — dispatch the four spec'd JSON functions
+    /// through the legacy pure-WASM parser in `src/stdlib/json_class.rs`
+    /// instead of the Layer 2 host bridge. Escape hatch for the JSON stdlib
+    /// migration (Option B); slated for deletion in the release after the
+    /// 1-2 week soak window per JSON_MIGRATION_DELIVERY2.md.
+    enable_legacy_json_wasm: bool,
 }
 
 /// Configuration for run command
@@ -278,6 +284,7 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
         memory_tier: None,
         debug: false,
         verbose: false,
+        enable_legacy_json_wasm: false,
     };
 
     // Generate output filename if not specified
@@ -408,6 +415,18 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
             }
             "--verbose" | "-v" => {
                 config.verbose = true;
+                i += 1;
+            }
+            "--enable-legacy-json-wasm" => {
+                // Escape hatch for the JSON stdlib migration (Option B).
+                // Dispatches json.textToData / json.tryTextToData /
+                // json.dataToText / json.prettyDataToText through the legacy
+                // pure-WASM parser in src/stdlib/json_class.rs instead of the
+                // Layer 2 host bridge (_json_decode / _json_encode /
+                // _json_encode_pretty). Slated for deletion in [P9] after
+                // the soak window per
+                // foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
+                config.enable_legacy_json_wasm = true;
                 i += 1;
             }
             _ => {
@@ -586,6 +605,12 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
         OptimizationLevel::SpeedAndSize => 3,
     };
 
+    // Publish the JSON legacy-dispatch flag on the current thread so the MIR
+    // builder and codegen bridge resolver see it during compilation. Default
+    // is false — the new Layer 2 host-bridge path. See
+    // foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
+    clean_language_compiler::set_enable_legacy_json_wasm_override(config.enable_legacy_json_wasm);
+
     // Perform compilation with external plugin support
     compile_file_with_opt_and_tier(
         &config.input_file,
@@ -593,6 +618,10 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
         opt_level,
         memory_tier,
     )?;
+
+    // Reset the flag so it doesn't leak into subsequent compiles sharing
+    // this thread (relevant when the CLI is embedded in test harnesses).
+    clean_language_compiler::set_enable_legacy_json_wasm_override(false);
 
     // Generate bridge files based on target
     let bridge_target = match config.target.to_lowercase().as_str() {
@@ -908,6 +937,10 @@ fn print_usage() {
     println!("    --runtime, -r <runtime>     WebAssembly runtime (wasmtime, wasmer, auto)");
     println!("    --debug, -d                 Include debug information");
     println!("    --verbose, -v               Verbose output");
+    println!("    --enable-legacy-json-wasm   Use the pre-0.33.135 pure-WASM JSON parser instead of");
+    println!("                                the Layer 2 host bridge (_json_decode/_json_encode/");
+    println!("                                _json_encode_pretty). Escape hatch during the JSON stdlib");
+    println!("                                migration; slated for removal after the soak window.");
     println!();
     println!("OPTIMIZATION FLAGS:");
     println!("    -O0                         No optimization (fastest compilation)");
