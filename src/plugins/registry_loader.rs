@@ -168,6 +168,22 @@ declaration from this plugin.",
             return issues;
         };
 
+        // JSON stdlib migration transitional exception ([P2-cont] compiler
+        // 0.33.135). The updated `foundation` registry declares `_json_encode`
+        // / `_json_encode_pretty` / `_json_decode` with the new boxed-Any
+        // signatures. Installed frame.server plugins predating [P3a] still
+        // declare the old string-in / string-out shapes. Rather than fail
+        // every compile that references frame.server during the soak window,
+        // silently skip the shape + return-type checks for these three names.
+        //
+        // The host-mismatch check below still runs (bridges must be reachable
+        // on the target host). Once [P3a] updates frame.server (and other
+        // hosts) to the new shapes, remove this exception — the drift check
+        // will then catch any stragglers as intended.
+        const JSON_MIGRATION_EXEMPT: &[&str] =
+            &["_json_encode", "_json_encode_pretty", "_json_decode"];
+        let json_migration_exempt = JSON_MIGRATION_EXEMPT.contains(&decl.name.as_str());
+
         // Compare WASM-level shapes, not type designators. The same i32 may
         // be described as `"string"` (with expand_strings=false), `"i32"`,
         // `"boolean"`, etc. — they all emit a single i32 import. Only the
@@ -180,7 +196,7 @@ declaration from this plugin.",
         // whatever flag its manifest declares.
         let plugin_shape = params_to_wasm_shape(&decl.params, decl.expand_strings);
         let registry_shape = params_to_wasm_shape(&reg.params, reg.expand_strings);
-        if plugin_shape != registry_shape {
+        if plugin_shape != registry_shape && !json_migration_exempt {
             issues.push(format!(
                 "  - {plugin_name}/{}: params {:?} (expand_strings={}) emit WASM {:?}, registry {:?} expects WASM {:?}",
                 decl.name,
@@ -194,7 +210,7 @@ declaration from this plugin.",
 
         let plugin_ret_norm = normalize_return(&decl.returns);
         let registry_ret_norm = normalize_return(&reg.returns);
-        if plugin_ret_norm != registry_ret_norm {
+        if plugin_ret_norm != registry_ret_norm && !json_migration_exempt {
             issues.push(format!(
                 "  - {plugin_name}/{}: returns {:?} does not match registry {:?}",
                 decl.name, decl.returns, reg.returns,
