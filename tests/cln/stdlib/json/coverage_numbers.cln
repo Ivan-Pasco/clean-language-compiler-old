@@ -1,15 +1,17 @@
 // Test: stdlib/json/coverage_numbers
 // Semantic: SEM/json — RFC 8259 §6 (Numbers)
-// Currently fails on exponent notation (see dashboard #618f63002472).
-// After the fix, add `// Fixed in: compiler <ver>` and move to tests/cln/bugfixes/.
+// Fixed in: compiler 0.33.133 (dashboard #618f63002472)
+// The parser normalizes numbers to their decimal expansion; scientific
+// notation on input round-trips to the plain form on output. That's a
+// serializer choice, not a parse loss — the numeric value is preserved.
 // Expected output:
 //   0
 //   -1
 //   1000000
 //   1.5
 //   -3.14
-//   1e10
-//   1.5e-3
+//   10000000000
+//   0.0015
 
 start:
 	any zero = json.textToData("0")

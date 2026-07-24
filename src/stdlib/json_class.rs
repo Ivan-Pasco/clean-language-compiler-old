@@ -5290,6 +5290,189 @@ impl JsonClass {
             Instruction::End,   // End fractional block
             Instruction::End,   // End decimal point check
             Instruction::End,   // End parse_pos < position check
+            // --- BEGIN: exponent parsing (RFC 8259 §6 — [eE][+-]?[0-9]+) ---
+            // Local 9  = exp_value (I32)
+            // Local 10 = exp_sign  (I32, 1 = negative)
+            // Guard: parse_pos < position AND (char == 'e' || char == 'E')
+            Instruction::LocalGet(7), // parse_pos
+            Instruction::LocalGet(3), // position (end of number)
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Load current character
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // char == 'e' (101) or 'E' (69)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(101),
+            Instruction::I32Eq,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(69),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Skip the 'e'/'E'
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            // Initialize exponent state
+            Instruction::I32Const(0),
+            Instruction::LocalSet(9), // exp_value = 0
+            Instruction::I32Const(0),
+            Instruction::LocalSet(10), // exp_sign = 0 (positive)
+            // Optional '+' or '-' sign
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(3),
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // ch == '-' (45)?
+            Instruction::LocalGet(4),
+            Instruction::I32Const(45),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(1),
+            Instruction::LocalSet(10), // exp_sign = 1
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            Instruction::Else,
+            // ch == '+' (43)?
+            Instruction::LocalGet(4),
+            Instruction::I32Const(43),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            Instruction::End, // end '+' check
+            Instruction::End, // end '-' / else
+            Instruction::End, // end bounds check for sign char
+            // Accumulate exponent digits: exp_value = exp_value*10 + (ch - '0')
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(3),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(7),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4),
+            // is digit?
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32GeU,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(57),
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::I32Eqz,
+            Instruction::BrIf(1), // exit if not a digit
+            // exp_value = exp_value*10 + (ch-'0')
+            Instruction::LocalGet(9),
+            Instruction::I32Const(10),
+            Instruction::I32Mul,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            // parse_pos++
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            Instruction::Br(0),
+            Instruction::End, // end exp-digit loop
+            Instruction::End, // end exp-digit block
+            // Apply exponent: multiply/divide accumulator by 10^exp_value.
+            // Loop exp_value times, multiplying (or dividing if exp_sign) by 10.0.
+            // For exp_value == 0 this becomes a no-op (loop body skipped).
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(9),
+            Instruction::I32Eqz,
+            Instruction::BrIf(1),
+            // acc = acc * 10.0  or  acc = acc / 10.0
+            // Compute the branch result and store to local 13 (F64 temp).
+            // Both branches independently load acc, then multiply or divide.
+            Instruction::LocalGet(10), // exp_sign
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // Negative exponent: acc /= 10
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::F64Const(10.0),
+            Instruction::F64Div,
+            Instruction::LocalSet(13),
+            Instruction::Else,
+            // Positive exponent: acc *= 10
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::F64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::F64Const(10.0),
+            Instruction::F64Mul,
+            Instruction::LocalSet(13),
+            Instruction::End,
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(13),
+            Instruction::F64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            // exp_value--
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(9),
+            Instruction::Br(0),
+            Instruction::End, // end apply-exp loop
+            Instruction::End, // end apply-exp block
+            Instruction::End, // end 'e'/'E' check
+            Instruction::End, // end parse_pos < position check for exponent
+            // --- END: exponent parsing ---
             // Apply negative sign if needed
             Instruction::LocalGet(8), // is_negative
             Instruction::If(wasm_encoder::BlockType::Empty),
