@@ -494,6 +494,8 @@ impl JsonClass {
                 WasmType::I32, // Local 5: out_ptr (output buffer)
                 WasmType::I32, // Local 6: out_write_pos
                 WasmType::I32, // Local 7: next_char (escape processing)
+                WasmType::I32, // Local 8: codepoint (\uXXXX decoded)
+                WasmType::I32, // Local 9: hex_digit (temp for \u parsing)
             ],
             self.generate_parse_string_instructions(malloc_index),
         )?;
@@ -4659,17 +4661,212 @@ impl JsonClass {
             Instruction::I32Const(12),
             Instruction::LocalSet(4),
             Instruction::Else,
-            // 'u' (117) → \uXXXX: skip 4 hex digits, emit '?' (63)
+            // 'u' (117) → \uXXXX: decode 4 hex digits to codepoint, UTF-8 encode.
+            // BMP-only Stage 1 (fingerprint #92b5824161aa). Supplementary-plane
+            // surrogate pair handling deferred; lone or paired high/low surrogates
+            // are emitted as U+FFFD (0xEF 0xBF 0xBD).
+            //
+            // Locals used: 8 = codepoint (I32), 9 = hex_digit temp (I32).
+            // On exit from the '\u' branch, local 4 holds the LAST byte to emit,
+            // and out_write_pos (local 6) has already been advanced by any
+            // preceding bytes. The fall-through byte-writer at the end of the
+            // switch then writes local 4 (the last byte) and does out_write_pos++.
             Instruction::LocalGet(7),
             Instruction::I32Const(117),
             Instruction::I32Eq,
             Instruction::If(wasm_encoder::BlockType::Empty),
+            // Decode 4 hex digits into local 8 (codepoint)
+            Instruction::I32Const(0),
+            Instruction::LocalSet(8),
+            // Loop 4 iterations. Uses local 9 as loop counter.
+            Instruction::I32Const(0),
+            Instruction::LocalSet(9),
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(9),
+            Instruction::I32Const(4),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // Read hex char at position + counter
+            Instruction::LocalGet(0),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(3),
+            Instruction::I32Add,
+            Instruction::LocalGet(9),
+            Instruction::I32Add,
+            Instruction::I32Load8U(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(4), // reuse local 4 as scratch for hex char
+            // Convert hex char to 0-15:
+            //   '0'..='9' (48..=57): ch - 48
+            //   'A'..='F' (65..=70): ch - 55
+            //   'a'..='f' (97..=102): ch - 87
+            //   anything else: 0 (defensive; malformed hex just becomes 0)
+            Instruction::LocalGet(4),
+            Instruction::I32Const(58), // '9' + 1
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // ch <= '9', assume digit → ch - '0'
+            Instruction::LocalGet(4),
+            Instruction::I32Const(48),
+            Instruction::I32Sub,
+            Instruction::Else,
+            Instruction::LocalGet(4),
+            Instruction::I32Const(97), // 'a'
+            Instruction::I32GeU,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            // ch >= 'a' → lowercase hex, ch - 87
+            Instruction::LocalGet(4),
+            Instruction::I32Const(87),
+            Instruction::I32Sub,
+            Instruction::Else,
+            // uppercase hex, ch - 55
+            Instruction::LocalGet(4),
+            Instruction::I32Const(55),
+            Instruction::I32Sub,
+            Instruction::End,
+            Instruction::End,
+            // Now the hex value 0..15 is on the stack; shift codepoint and add.
+            // codepoint = (codepoint << 4) | hex_value
+            Instruction::LocalSet(4), // stash hex value in local 4
+            Instruction::LocalGet(8),
+            Instruction::I32Const(4),
+            Instruction::I32Shl,
+            Instruction::LocalGet(4),
+            Instruction::I32Or,
+            Instruction::LocalSet(8),
+            // counter++
+            Instruction::LocalGet(9),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(9),
+            Instruction::Br(0),
+            Instruction::End, // end hex loop
+            Instruction::End, // end hex block
+            // Advance position past the 4 hex digits
             Instruction::LocalGet(3),
             Instruction::I32Const(4),
             Instruction::I32Add,
-            Instruction::LocalSet(3), // skip 4 hex digits
-            Instruction::I32Const(63),
-            Instruction::LocalSet(4), // '?'
+            Instruction::LocalSet(3),
+            // Surrogate detection: if codepoint is in 0xD800..=0xDFFF, replace
+            // with U+FFFD (0xEF 0xBF 0xBD). Supplementary-plane pair combining
+            // is a Stage 2 follow-up.
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0xD800),
+            Instruction::I32GeU,
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0xE000),
+            Instruction::I32LtU,
+            Instruction::I32And,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(0xFFFD),
+            Instruction::LocalSet(8),
+            Instruction::End,
+            // UTF-8 encode local 8 → 1, 2, or 3 bytes into the out buffer.
+            // The fall-through writer at the end of the switch writes local 4
+            // as the LAST byte and does out_write_pos++. So we write all
+            // preceding bytes here (advancing out_write_pos as we go) and set
+            // local 4 to the final byte.
+            //
+            //   cp < 0x80    → 1 byte:  cp
+            //   cp < 0x800   → 2 bytes: 0xC0|(cp>>6),  0x80|(cp&0x3F)
+            //   cp < 0x10000 → 3 bytes: 0xE0|(cp>>12), 0x80|((cp>>6)&0x3F), 0x80|(cp&0x3F)
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0x80),
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // 1-byte: local 4 = codepoint
+            Instruction::LocalGet(8),
+            Instruction::LocalSet(4),
+            Instruction::Else,
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0x800),
+            Instruction::I32LtU,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            // 2-byte: write byte0 = 0xC0 | (cp >> 6), then set local 4 = 0x80 | (cp & 0x3F)
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(6),
+            Instruction::I32Add,
+            Instruction::LocalGet(8),
+            Instruction::I32Const(6),
+            Instruction::I32ShrU,
+            Instruction::I32Const(0xC0),
+            Instruction::I32Or,
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(6),
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0x3F),
+            Instruction::I32And,
+            Instruction::I32Const(0x80),
+            Instruction::I32Or,
+            Instruction::LocalSet(4),
+            Instruction::Else,
+            // 3-byte: write byte0 = 0xE0 | (cp >> 12), byte1 = 0x80 | ((cp >> 6) & 0x3F),
+            //         then set local 4 = 0x80 | (cp & 0x3F)
+            // byte 0
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(6),
+            Instruction::I32Add,
+            Instruction::LocalGet(8),
+            Instruction::I32Const(12),
+            Instruction::I32ShrU,
+            Instruction::I32Const(0xE0),
+            Instruction::I32Or,
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(6),
+            // byte 1
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::LocalGet(6),
+            Instruction::I32Add,
+            Instruction::LocalGet(8),
+            Instruction::I32Const(6),
+            Instruction::I32ShrU,
+            Instruction::I32Const(0x3F),
+            Instruction::I32And,
+            Instruction::I32Const(0x80),
+            Instruction::I32Or,
+            Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(6),
+            // trailing byte for local 4
+            Instruction::LocalGet(8),
+            Instruction::I32Const(0x3F),
+            Instruction::I32And,
+            Instruction::I32Const(0x80),
+            Instruction::I32Or,
+            Instruction::LocalSet(4),
+            Instruction::End, // end If (cp < 0x800) — closes 2-byte vs 3-byte
+            Instruction::End, // end If (cp < 0x80)   — closes 1-byte vs (2/3-byte)
             Instruction::Else,
             // unknown escape: pass next_char through unchanged
             Instruction::LocalGet(7),

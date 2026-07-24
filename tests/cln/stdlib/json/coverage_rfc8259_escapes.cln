@@ -1,7 +1,8 @@
 // Test: stdlib/json/coverage_rfc8259_escapes
 // Semantic: SEM/json — RFC 8259 §7 (String) escape sequences must survive round-trip
-// Currently fails on \uXXXX unicode escapes (see dashboard #92b5824161aa).
-// After the fix, add `// Fixed in: compiler <ver>` and move to tests/cln/bugfixes/.
+// Fixed in: compiler 0.33.134 (dashboard #92b5824161aa — Stage 1: BMP)
+// Supplementary-plane surrogate pairs (e.g. 😀 for U+1F600 😀)
+// currently emit two U+FFFD replacement characters; that is a Stage 2 follow-up.
 // Expected output:
 //   "line1\nline2"
 //   "tab\there"
