@@ -252,16 +252,20 @@ enum Commands {
         #[arg(long = "plugin-override", value_name = "NAME=PATH")]
         plugin_override: Vec<String>,
 
-        /// Dispatch the four spec'd JSON functions (json.textToData /
-        /// json.tryTextToData / json.dataToText / json.prettyDataToText)
-        /// through the legacy pure-WASM parser in `src/stdlib/json_class.rs`
-        /// instead of the Layer 2 host bridge (_json_decode / _json_encode /
-        /// _json_encode_pretty). Off by default (the new bridge path).
-        /// One-release escape hatch during the JSON stdlib migration;
-        /// slated for deletion in [P9] after a 1-2 week soak window.
-        /// See `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
+        /// Opt into the Delivery-2 host-bridge JSON dispatch. Requires
+        /// clean-server 2.9.6+ or clean-framework 3.x with `_json_encode` /
+        /// `_json_encode_pretty` / `_json_decode` host implementations;
+        /// without a compatible host the produced WASM will trap at
+        /// instantiation with "unknown import env._json_*".
+        ///
+        /// Default is OFF (legacy pure-WASM path in
+        /// `src/stdlib/json_class.rs` — same behavior as 0.33.134 and
+        /// earlier). Renamed from `--enable-legacy-json-wasm` in 0.33.137
+        /// with inverted semantics after 0.33.135's premature-default
+        /// regression. See
+        /// `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
         #[arg(long)]
-        enable_legacy_json_wasm: bool,
+        enable_json_bridge: bool,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -575,15 +579,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // when the default flips in Phase D.
             no_lint: _,
             plugin_override,
-            enable_legacy_json_wasm,
+            enable_json_bridge,
         } => {
-            // Publish the JSON legacy-dispatch flag on the current thread so
-            // the MIR builder and codegen bridge resolver both see it during
-            // compilation. Default is false — the new Layer 2 host-bridge
-            // path. Reset after the call so the flag doesn't leak into
-            // downstream compiles sharing this thread. See
+            // Publish the JSON bridge-dispatch opt-in on the current thread
+            // so the MIR builder and codegen bridge resolver both see it
+            // during compilation. Default is false — the pre-0.33.135
+            // legacy pure-WASM path in src/stdlib/json_class.rs. Reset
+            // after the call so the flag doesn't leak into downstream
+            // compiles sharing this thread. See
             // foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
-            clean_language_compiler::set_enable_legacy_json_wasm_override(enable_legacy_json_wasm);
+            clean_language_compiler::set_enable_json_bridge_override(enable_json_bridge);
             let compile_result = handle_compile(
                 input,
                 output,
@@ -602,7 +607,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &output_config,
             )
             .await;
-            clean_language_compiler::set_enable_legacy_json_wasm_override(false);
+            clean_language_compiler::set_enable_json_bridge_override(false);
             compile_result?
         }
         Commands::Test { dirs, files } => handle_test(args.verbose > 0, dirs, files).await?,

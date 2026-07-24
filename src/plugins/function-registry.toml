@@ -2751,16 +2751,35 @@ description = "Return the error message from the last failed _email_send call; r
 # (_json_encode / _json_encode_pretty), not a boolean flag — matches
 # serde_json::to_string vs to_string_pretty and JSON.stringify variants.
 
+# JSON stdlib migration ([P2-cont-2a], 0.33.137). The `_json_encode` and
+# `_json_decode` entries are TEMPORARILY reverted to the pre-migration
+# `params=["string"]` shape to match the currently deployed frame.server
+# 2.9.5 plugin.toml declaration. This is what the drift check compares
+# against — if the embedded registry lists the target boxed-Any shape
+# while every installed host still declares the old string shape, every
+# compile referencing frame.server hard-fails at plugin load time.
+#
+# The authoritative registry in `foundation/spec/platform/function-registry.toml`
+# lists the target boxed-Any shape (`params=["any"]`, `returns="ptr"`). When
+# [P3a] updates frame.server (and other hosts) to declare the boxed-Any
+# shape, this embedded copy re-syncs to match foundation and the migration
+# proceeds. Until then, the shapes here match installed reality.
+#
+# The `_json_encode_pretty` entry below IS new-shape (params=["any"],
+# returns="ptr"): no installed host declares it yet, so no drift check
+# fires. Users who opt into `--enable-json-bridge` and call
+# `json.prettyDataToText` will produce WASM that traps at instantiation
+# until a compatible host ships — that's the expected soak behavior.
 [[functions]]
 name        = "_json_encode"
 layer       = 2
 category    = "json"
 module      = "env"
-params      = ["any"]
+params      = ["string"]
 returns     = "ptr"
 aliases     = ["json.encode"]
 hosts       = ["all"]
-description = "Serialize a boxed-Any value to compact JSON per RFC 8259 (serde_json::to_string / JSON.stringify(value)). Input is a boxed-Any pointer (see BOXED_ANY_ABI.md); output is an LP string pointer. The null-tag serializes to the literal 'null' — this is correct RFC 8259 output, not a fallback. The bridge MUST raise on invalid or unrecognized boxed-Any input rather than silently returning 'null'. Key order is insertion order (D3)."
+description = "Serialize a value to JSON string. NOTE: Transitionally uses the pre-migration string-in shape to match deployed frame.server 2.9.5; the target boxed-Any shape lives in foundation's authoritative registry and re-syncs here once [P3a] updates the host plugins. See BOXED_ANY_ABI.md."
 
 [[functions]]
 name        = "_json_encode_pretty"
@@ -2779,10 +2798,10 @@ layer       = 2
 category    = "json"
 module      = "env"
 params      = ["string"]
-returns     = "any"
+returns     = "ptr"
 aliases     = ["json.decode"]
 hosts       = ["all"]
-description = "Parse a JSON string per RFC 8259 and return a boxed-Any pointer. Numbers use IEEE-754 double precision (D1). Duplicate object keys are resolved last-wins silently (D2). On invalid input the bridge MUST raise a runtime error (D5) — the compiler wraps this call in an implicit onError handler when emitting json.tryTextToData (see stdlib-reference.md §8)."
+description = "Parse JSON string; returns parsed JSON. NOTE: Transitionally uses the pre-migration string-in / string-out shape to match deployed frame.server 2.9.5; the target boxed-Any-out shape lives in foundation's authoritative registry and re-syncs here once [P3a] updates the host plugins. See BOXED_ANY_ABI.md."
 
 [[functions]]
 name        = "_json_get"

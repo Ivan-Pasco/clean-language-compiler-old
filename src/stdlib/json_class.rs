@@ -219,22 +219,22 @@ impl JsonClass {
         //   json.decode  ≡  json.textToData
         //   json.get     ≡  __json_get_field (key-based access)
         //
-        // Under the JSON stdlib migration (Option B, [P2-cont]) the encode/
-        // decode aliases are ONLY wired to the pure-WASM path when the
-        // `--enable-legacy-json-wasm` flag is set. Under the new default,
-        // `json.encode` / `json.decode` resolve to the host bridges
-        // `_json_encode` / `_json_decode` via the plugin registry's
-        // `language_to_bridge_map` phase — see `src/plugins/registry.rs`
-        // GEN004 for the conditional-suppression rule.
+        // JSON stdlib migration ([P2-cont-2a], 0.33.137+). Semantics inverted
+        // from the 0.33.135-0.33.136 variant:
+        //   * default (--enable-json-bridge NOT set): register the pure-WASM
+        //     aliases so `json.encode` / `json.decode` resolve to the
+        //     json_class.rs implementation — same as 0.33.134 and earlier.
+        //   * --enable-json-bridge ON: SKIP alias registration so those names
+        //     fall through to the plugin registry's `language_to_bridge_map`
+        //     and resolve to the `_json_encode` / `_json_decode` host bridges.
+        //     See `src/plugins/registry.rs` GEN004 for the paired conditional.
         //
         // We still register the pure-WASM `json.textToData` / `json.dataToText`
         // / `json.prettyDataToText` names themselves (they are declared by the
-        // resolver in `symbol_table.rs`), because the legacy path needs them
-        // and because the new dispatch site in
-        // `src/mir/mir_builder/expressions.rs` inspects them by name. The
-        // MIR builder redirects the four spec'd names to bridge calls when
-        // the flag is off — see the dispatch code there for the branching.
-        if crate::enable_legacy_json_wasm_override() {
+        // resolver in `symbol_table.rs`), because both paths need them. The
+        // MIR builder redirects those names to bridge calls only when the
+        // opt-in flag is set — see `src/mir/mir_builder/expressions.rs`.
+        if !crate::enable_json_bridge_override() {
             if let Some(idx) = codegen.get_function_index("json.dataToText") {
                 codegen.add_function_alias("json.encode", idx);
             }

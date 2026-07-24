@@ -103,12 +103,13 @@ struct CompileConfig {
     memory_tier: Option<clean_language_compiler::MemoryTier>,
     debug: bool,
     verbose: bool,
-    /// `--enable-legacy-json-wasm` — dispatch the four spec'd JSON functions
-    /// through the legacy pure-WASM parser in `src/stdlib/json_class.rs`
-    /// instead of the Layer 2 host bridge. Escape hatch for the JSON stdlib
-    /// migration (Option B); slated for deletion in the release after the
-    /// 1-2 week soak window per JSON_MIGRATION_DELIVERY2.md.
-    enable_legacy_json_wasm: bool,
+    /// `--enable-json-bridge` — dispatch the four spec'd JSON functions
+    /// through the Layer 2 host bridge (`_json_decode` / `_json_encode` /
+    /// `_json_encode_pretty`) instead of the pure-WASM parser in
+    /// `src/stdlib/json_class.rs`. Opt-in during the migration soak — the
+    /// default is the pre-0.33.135 legacy path. See
+    /// JSON_MIGRATION_DELIVERY2.md.
+    enable_json_bridge: bool,
 }
 
 /// Configuration for run command
@@ -284,7 +285,7 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
         memory_tier: None,
         debug: false,
         verbose: false,
-        enable_legacy_json_wasm: false,
+        enable_json_bridge: false,
     };
 
     // Generate output filename if not specified
@@ -417,16 +418,31 @@ fn parse_compile_args(args: &[String]) -> Result<CompileConfig, CompilerError> {
                 config.verbose = true;
                 i += 1;
             }
-            "--enable-legacy-json-wasm" => {
-                // Escape hatch for the JSON stdlib migration (Option B).
-                // Dispatches json.textToData / json.tryTextToData /
-                // json.dataToText / json.prettyDataToText through the legacy
-                // pure-WASM parser in src/stdlib/json_class.rs instead of the
-                // Layer 2 host bridge (_json_decode / _json_encode /
-                // _json_encode_pretty). Slated for deletion in [P9] after
-                // the soak window per
+            "--enable-json-bridge" => {
+                // Opt into the Delivery-2 host-bridge JSON dispatch (Option B).
+                // Requires clean-server 2.9.6+ or clean-framework 3.x with
+                // _json_encode / _json_encode_pretty / _json_decode
+                // implementations — without a compatible host the produced
+                // WASM will trap at instantiation ("unknown import env._json_*").
+                //
+                // Default is OFF (legacy pure-WASM path in
+                // src/stdlib/json_class.rs) during the migration soak. Once
+                // [P3a] and [P3b] ship, [P4c] flips this back on and removes
+                // the flag entirely. See
                 // foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
-                config.enable_legacy_json_wasm = true;
+                config.enable_json_bridge = true;
+                i += 1;
+            }
+            // Accept the pre-0.33.137 spelling as a deprecated no-op alias so
+            // scripts written against 0.33.135 / 0.33.136 don't hard-error.
+            // The semantics were inverted in 0.33.137 — the old flag opted
+            // INTO the (now-default) legacy path. Under the new default the
+            // legacy path is already active, so `--enable-legacy-json-wasm`
+            // becomes a no-op rather than silently opting into the bridge.
+            "--enable-legacy-json-wasm" => {
+                eprintln!(
+                    "warning: --enable-legacy-json-wasm was renamed to --enable-json-bridge (semantics inverted) in 0.33.137. The legacy pure-WASM path is now the default; this flag is a no-op. See JSON_MIGRATION_DELIVERY2.md."
+                );
                 i += 1;
             }
             _ => {
@@ -605,11 +621,13 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
         OptimizationLevel::SpeedAndSize => 3,
     };
 
-    // Publish the JSON legacy-dispatch flag on the current thread so the MIR
-    // builder and codegen bridge resolver see it during compilation. Default
-    // is false — the new Layer 2 host-bridge path. See
-    // foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
-    clean_language_compiler::set_enable_legacy_json_wasm_override(config.enable_legacy_json_wasm);
+    // Publish the JSON bridge-dispatch opt-in on the current thread so the
+    // MIR builder and codegen bridge resolver see it during compilation.
+    // Default is false — the pre-0.33.135 legacy pure-WASM path in
+    // src/stdlib/json_class.rs. Users opt into the Delivery-2 host bridge
+    // via --enable-json-bridge; the flag will disappear once [P4c] flips
+    // the default. See foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
+    clean_language_compiler::set_enable_json_bridge_override(config.enable_json_bridge);
 
     // Perform compilation with external plugin support
     compile_file_with_opt_and_tier(
@@ -621,7 +639,7 @@ fn compile_with_config(config: &CompileConfig) -> Result<(), CompilerError> {
 
     // Reset the flag so it doesn't leak into subsequent compiles sharing
     // this thread (relevant when the CLI is embedded in test harnesses).
-    clean_language_compiler::set_enable_legacy_json_wasm_override(false);
+    clean_language_compiler::set_enable_json_bridge_override(false);
 
     // Generate bridge files based on target
     let bridge_target = match config.target.to_lowercase().as_str() {
@@ -937,10 +955,12 @@ fn print_usage() {
     println!("    --runtime, -r <runtime>     WebAssembly runtime (wasmtime, wasmer, auto)");
     println!("    --debug, -d                 Include debug information");
     println!("    --verbose, -v               Verbose output");
-    println!("    --enable-legacy-json-wasm   Use the pre-0.33.135 pure-WASM JSON parser instead of");
-    println!("                                the Layer 2 host bridge (_json_decode/_json_encode/");
-    println!("                                _json_encode_pretty). Escape hatch during the JSON stdlib");
-    println!("                                migration; slated for removal after the soak window.");
+    println!("    --enable-json-bridge        Opt into the Delivery-2 host-bridge JSON dispatch");
+    println!("                                (requires clean-server 2.9.6+ or clean-framework 3.x with");
+    println!("                                _json_encode/_json_encode_pretty/_json_decode host");
+    println!("                                implementations; without a compatible host the produced");
+    println!("                                WASM will trap at instantiation). Default is OFF —");
+    println!("                                the pre-0.33.135 pure-WASM JSON parser is used.");
     println!();
     println!("OPTIMIZATION FLAGS:");
     println!("    -O0                         No optimization (fastest compilation)");

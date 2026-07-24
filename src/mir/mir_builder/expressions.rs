@@ -965,11 +965,19 @@ impl MirBuilder {
                 // dispatch order below (bridge check first, then typed-collection
                 // fallback, then class fallback).
                 //
-                // Under --enable-legacy-json-wasm ON, none of the bridge branches
-                // fire and the historical typed-collection / class-serializer
-                // dispatch (below) is unchanged.
-                let legacy_json = crate::enable_legacy_json_wasm_override();
-                if !legacy_json
+                // Default (--enable-json-bridge NOT set): none of the bridge
+                // branches fire and the historical typed-collection /
+                // class-serializer dispatch (below) is unchanged. This is
+                // the 0.33.134-and-earlier behavior — pure-WASM parser in
+                // src/stdlib/json_class.rs handles everything.
+                //
+                // Under --enable-json-bridge: emit direct bridge calls for
+                // the six spec'd JSON entry points. See [P2-cont-2a] in
+                // JSON_MIGRATION_DELIVERY2.md. Renamed from
+                // `enable_legacy_json_wasm_override` in 0.33.137 with
+                // inverted semantics.
+                let json_bridge_enabled = crate::enable_json_bridge_override();
+                if json_bridge_enabled
                     && arguments.len() == 1
                     && matches!(
                         function_name_opt.as_deref(),
