@@ -1,5 +1,7 @@
 // Test: stdlib/json/coverage_tryTextToData_null_on_error
 // Semantic: SEM/json.tryTextToData — must return null (not halt) on invalid JSON
+// Currently fails on truncated arrays (see dashboard #1514950e124c and umbrella #8fbe7c518a0c).
+// After the fix, add `// Fixed in: compiler <ver>` and move to tests/cln/bugfixes/.
 // Expected output:
 //   42
 //   null

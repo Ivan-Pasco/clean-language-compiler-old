@@ -3000,6 +3000,21 @@ string trimmed = s.trim()
 integer idx = s.indexOf("world")
 ```
 
+## String Interpolation
+Regular double-quoted string literals support `{expr}` interpolation — the expression is evaluated, coerced to string via `.toString()`, and substituted in place. Use `\{` and `\}` to include literal braces.
+```
+string name = "world"
+string greeting = "hello {name}"          // "hello world"
+integer n = 42
+string msg = "answer: {n}"                // "answer: 42"
+string method = "len: {name.length()}"    // "len: 5" — any logical expression works
+string literal = "\{not a var\}"          // "{not a var}" — escaped braces
+string jsonLike = "{\"a\":1}"             // "{\"a\":1}" — `{"` doesn't start an ident, so no interpolation
+```
+If you write `"{ident}"` where `ident` is not a variable in scope, you get error `SEM007: Undefined variable 'ident'` — that's interpolation at work, not a bug. Use `\{ident\}` for a literal.
+
+The same `{var}` and `{!var}` (raw HTML) syntax is used inside `html:` blocks — see §"HTML Generation".
+
 ## Math Operations
 ```
 number result = math.sqrt(16.0)
@@ -3026,11 +3041,12 @@ number fparsed = "3.14".toNumber()
 
 ## Print Output
 ```
-print("text")              // print without newline
+print("text")              // print with newline (default)
+printl("text")             // alias for print(x) — also prints with newline
 print("value: " + x.toString())  // string concatenation
-print(x.toString()) +      // print with newline (note the '+' after the closing paren)
-printl("text")             // print with newline (alternate form)
+print("no newline here") + // trailing '+' means CONTINUATION: stays on same line (rare)
 ```
+The trailing `+` continuation form is the opposite of what older code assumed: `print(x)` adds the newline; `print(x) +` suppresses it. Semantics flipped 2026-05-13 (compiler commit 6700d4b9). Prefer plain `print(x)` for line-per-value output.
 
 ## Lists
 ```

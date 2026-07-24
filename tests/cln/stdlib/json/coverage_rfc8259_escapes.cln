@@ -1,5 +1,7 @@
 // Test: stdlib/json/coverage_rfc8259_escapes
 // Semantic: SEM/json — RFC 8259 §7 (String) escape sequences must survive round-trip
+// Currently fails on \uXXXX unicode escapes (see dashboard #92b5824161aa).
+// After the fix, add `// Fixed in: compiler <ver>` and move to tests/cln/bugfixes/.
 // Expected output:
 //   "line1\nline2"
 //   "tab\there"

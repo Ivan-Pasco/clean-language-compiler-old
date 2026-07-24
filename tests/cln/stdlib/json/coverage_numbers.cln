@@ -1,5 +1,7 @@
 // Test: stdlib/json/coverage_numbers
 // Semantic: SEM/json — RFC 8259 §6 (Numbers)
+// Currently fails on exponent notation (see dashboard #618f63002472).
+// After the fix, add `// Fixed in: compiler <ver>` and move to tests/cln/bugfixes/.
 // Expected output:
 //   0
 //   -1
