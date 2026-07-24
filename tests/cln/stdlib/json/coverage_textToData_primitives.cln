@@ -1,0 +1,23 @@
+// Test: stdlib/json/coverage_textToData_primitives
+// Semantic: SEM/json.textToData
+// Expected output:
+//   null
+//   true
+//   false
+//   42
+//   3.14
+//   "hello"
+
+start:
+	any n = json.textToData("null")
+	printl(json.dataToText(n))
+	any t = json.textToData("true")
+	printl(json.dataToText(t))
+	any f = json.textToData("false")
+	printl(json.dataToText(f))
+	any i = json.textToData("42")
+	printl(json.dataToText(i))
+	any d = json.textToData("3.14")
+	printl(json.dataToText(d))
+	any s = json.textToData("\"hello\"")
+	printl(json.dataToText(s))

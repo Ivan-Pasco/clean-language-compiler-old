@@ -1,0 +1,26 @@
+// Test: stdlib/json/coverage_numbers
+// Semantic: SEM/json — RFC 8259 §6 (Numbers)
+// Expected output:
+//   0
+//   -1
+//   1000000
+//   1.5
+//   -3.14
+//   1e10
+//   1.5e-3
+
+start:
+	any zero = json.textToData("0")
+	printl(json.dataToText(zero))
+	any neg = json.textToData("-1")
+	printl(json.dataToText(neg))
+	any big = json.textToData("1000000")
+	printl(json.dataToText(big))
+	any frac = json.textToData("1.5")
+	printl(json.dataToText(frac))
+	any negfrac = json.textToData("-3.14")
+	printl(json.dataToText(negfrac))
+	any exp = json.textToData("1e10")
+	printl(json.dataToText(exp))
+	any negexp = json.textToData("1.5e-3")
+	printl(json.dataToText(negexp))

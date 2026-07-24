@@ -1,0 +1,11 @@
+// Test: stdlib/json/coverage_deep_nesting
+// Semantic: SEM/json — nested arrays and objects round-trip
+// Expected output:
+//   [[[[[1]]]]]
+//   {"a":{"b":{"c":{"d":"deep"}}}}
+
+start:
+	any deepArr = json.textToData("[[[[[1]]]]]")
+	printl(json.dataToText(deepArr))
+	any deepObj = json.textToData("{\"a\":{\"b\":{\"c\":{\"d\":\"deep\"}}}}")
+	printl(json.dataToText(deepObj))

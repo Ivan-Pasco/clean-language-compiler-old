@@ -1,0 +1,21 @@
+// Test: stdlib/json/coverage_tryTextToData_null_on_error
+// Semantic: SEM/json.tryTextToData — must return null (not halt) on invalid JSON
+// Expected output:
+//   42
+//   null
+//   null
+//   null
+
+start:
+	// Valid JSON parses normally
+	any ok = json.tryTextToData("42")
+	printl(json.dataToText(ok))
+	// Invalid JSON — bare word
+	any bad1 = json.tryTextToData("not json")
+	printl(json.dataToText(bad1))
+	// Empty string
+	any empty = json.tryTextToData("")
+	printl(json.dataToText(empty))
+	// Truncated array — starts valid, ends invalid
+	any bad2 = json.tryTextToData("[1,2,")
+	printl(json.dataToText(bad2))

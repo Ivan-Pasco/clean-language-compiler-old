@@ -1,0 +1,14 @@
+// Test: stdlib/json/coverage_dataToText_roundtrip
+// Semantic: SEM/json.dataToText
+// Expected output:
+//   {"a":1,"b":"two","c":true,"d":null,"e":[1,2,3]}
+//   [1,2,3]
+//   {"nested":{"key":"value"}}
+
+start:
+	any obj = json.textToData("{\"a\":1,\"b\":\"two\",\"c\":true,\"d\":null,\"e\":[1,2,3]}")
+	printl(json.dataToText(obj))
+	any arr = json.textToData("[1,2,3]")
+	printl(json.dataToText(arr))
+	any nested = json.textToData("{\"nested\":{\"key\":\"value\"}}")
+	printl(json.dataToText(nested))

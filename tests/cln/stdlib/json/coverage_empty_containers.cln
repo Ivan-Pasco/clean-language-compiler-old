@@ -1,0 +1,17 @@
+// Test: stdlib/json/coverage_empty_containers
+// Semantic: SEM/json — empty object and empty array round-trip
+// Expected output:
+//   {}
+//   []
+//   [{}]
+//   {"a":[]}
+
+start:
+	any emptyObj = json.textToData("{}")
+	printl(json.dataToText(emptyObj))
+	any emptyArr = json.textToData("[]")
+	printl(json.dataToText(emptyArr))
+	any arrOfObj = json.textToData("[{}]")
+	printl(json.dataToText(arrOfObj))
+	any objWithArr = json.textToData("{\"a\":[]}")
+	printl(json.dataToText(objWithArr))

@@ -1,0 +1,25 @@
+// Test: stdlib/json/coverage_rfc8259_escapes
+// Semantic: SEM/json — RFC 8259 §7 (String) escape sequences must survive round-trip
+// Expected output:
+//   "line1\nline2"
+//   "tab\there"
+//   "quote\"inside"
+//   "backslash\\here"
+//   "unicode:é"
+
+start:
+	// Newline escape
+	any nl = json.textToData("\"line1\\nline2\"")
+	printl(json.dataToText(nl))
+	// Tab escape
+	any tab = json.textToData("\"tab\\there\"")
+	printl(json.dataToText(tab))
+	// Escaped quote
+	any q = json.textToData("\"quote\\\"inside\"")
+	printl(json.dataToText(q))
+	// Escaped backslash
+	any bs = json.textToData("\"backslash\\\\here\"")
+	printl(json.dataToText(bs))
+	// Unicode escape (é = U+00E9) — serializer may output as literal char or as \u
+	any u = json.textToData("\"unicode:\\u00e9\"")
+	printl(json.dataToText(u))
