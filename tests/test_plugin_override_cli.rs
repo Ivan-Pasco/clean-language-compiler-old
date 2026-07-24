@@ -42,7 +42,7 @@ fn write_stub_plugin(dir: &TempDir, name: &str, version: &str) -> PathBuf {
     )
     .unwrap();
     // Any bytes — validation only checks existence, not that the WASM parses.
-    std::fs::write(plugin_dir.join("plugin.wasm"), &[0x00, 0x61, 0x73, 0x6d]).unwrap();
+    std::fs::write(plugin_dir.join("plugin.wasm"), [0x00, 0x61, 0x73, 0x6d]).unwrap();
     plugin_dir
 }
 
@@ -148,7 +148,7 @@ fn missing_sibling_plugin_toml_hard_errors() {
     let dir = TempDir::new().unwrap();
     let src = write_source(&dir, "main.cln", SOURCE_WITH_ONE_PLUGIN);
     let wasm_path = dir.path().join("bare-plugin.wasm");
-    std::fs::write(&wasm_path, &[0x00, 0x61, 0x73, 0x6d]).unwrap();
+    std::fs::write(&wasm_path, [0x00, 0x61, 0x73, 0x6d]).unwrap();
 
     let out = Command::new(cln_binary())
         .args([
@@ -177,7 +177,7 @@ fn malformed_plugin_toml_hard_errors() {
     let src = write_source(&dir, "main.cln", SOURCE_WITH_ONE_PLUGIN);
     let plugin_dir = dir.path().join("frame.data");
     std::fs::create_dir_all(&plugin_dir).unwrap();
-    std::fs::write(plugin_dir.join("plugin.wasm"), &[0x00, 0x61, 0x73, 0x6d]).unwrap();
+    std::fs::write(plugin_dir.join("plugin.wasm"), [0x00, 0x61, 0x73, 0x6d]).unwrap();
     std::fs::write(plugin_dir.join("plugin.toml"), "this is not = valid [ toml").unwrap();
 
     let out = Command::new(cln_binary())
@@ -232,7 +232,7 @@ fn banner_reads_version_from_plugin_section() {
     let src = write_source(&dir, "main.cln", SOURCE_WITH_ONE_PLUGIN);
     let plugin_dir = dir.path().join("frame.data");
     std::fs::create_dir_all(&plugin_dir).unwrap();
-    std::fs::write(plugin_dir.join("plugin.wasm"), &[0x00, 0x61, 0x73, 0x6d]).unwrap();
+    std::fs::write(plugin_dir.join("plugin.wasm"), [0x00, 0x61, 0x73, 0x6d]).unwrap();
     std::fs::write(
         plugin_dir.join("plugin.toml"),
         "[plugin]\nname = \"frame.data\"\nversion = \"5.5.5\"\n",
