@@ -241,6 +241,16 @@ enum Commands {
         /// default flips. See `foundation/spec/framework/contracts/lint-extension.md` §9.
         #[arg(long)]
         no_lint: bool,
+
+        /// Override plugin resolution: `<name>=<path>`. Repeatable. Path may
+        /// point at a directory containing `plugin.wasm` + `plugin.toml`, or
+        /// at the `plugin.wasm` file itself (sibling `plugin.toml` must exist).
+        /// Relative paths resolve against `$PWD`. Wins over
+        /// `~/.cleen/plugins/<name>/`. Fast-fails when the override doesn't
+        /// name a plugin loaded by this compilation, or when the path is bad.
+        /// See `foundation/spec/plugins/plugin-contract.md` §11.
+        #[arg(long = "plugin-override", value_name = "NAME=PATH")]
+        plugin_override: Vec<String>,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -282,6 +292,10 @@ enum Commands {
         /// Show only errors (suppress warnings)
         #[arg(long)]
         errors_only: bool,
+
+        /// Override plugin resolution: `<name>=<path>`. See `cln compile --help`.
+        #[arg(long = "plugin-override", value_name = "NAME=PATH")]
+        plugin_override: Vec<String>,
     },
     /// Parse a file and show detailed parsing information
     Parse {
@@ -359,6 +373,10 @@ enum Commands {
     Check {
         /// Input file to type-check
         input: String,
+
+        /// Override plugin resolution: `<name>=<path>`. See `cln compile --help`.
+        #[arg(long = "plugin-override", value_name = "NAME=PATH")]
+        plugin_override: Vec<String>,
     },
     /// Watch a directory for .cln file changes and type-check on save
     Watch {
@@ -545,6 +563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // the handler call site in sync; wired to `handle_compile`
             // when the default flips in Phase D.
             no_lint: _,
+            plugin_override,
         } => {
             handle_compile(
                 input,
@@ -560,6 +579,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 strict_emission_ops,
                 emit_heap_probes,
                 emit_bridge_probes,
+                plugin_override,
                 &output_config,
             )
             .await?
@@ -576,7 +596,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             fix,
             errors_only,
-        } => handle_lint(input, fix, errors_only, &output_config).await?,
+            plugin_override,
+        } => handle_lint(input, fix, errors_only, plugin_override, &output_config).await?,
         Commands::Parse {
             input,
             show_tree,
@@ -611,7 +632,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             debug,
             watch,
         } => handle_serve(input, port, host, debug, watch, &output_config).await?,
-        Commands::Check { input } => handle_check(input, &output_config).await?,
+        Commands::Check {
+            input,
+            plugin_override,
+        } => handle_check(input, plugin_override, &output_config).await?,
         Commands::Watch { path, json_stream } => {
             handle_watch(path, json_stream, &output_config).await?
         }
@@ -757,6 +781,7 @@ async fn handle_serve(
         false,                // strict_emission_ops off for serve
         false,                // emit_heap_probes off for serve
         false,                // emit_bridge_probes off for serve
+        Vec::new(),           // plugin_override — none for serve
         output_config,
     )
     .await;
@@ -948,12 +973,215 @@ async fn handle_watch(
     }
 }
 
+/// Parsed `--plugin-override <name>=<path>` entry with the on-disk directory
+/// already resolved (relative to `$PWD`, dir-or-.wasm handled) and validated.
+struct ResolvedPluginOverride {
+    name: String,
+    dir: PathBuf,
+    /// `[package].version` from the override's sibling `plugin.toml`.
+    /// Cached so the banner doesn't re-read the file.
+    version: Option<String>,
+}
+
+/// Parse a single `<name>=<path>` argument. Returns `Err(String)` with the
+/// full user-facing message when the shape is wrong or the target is bad.
+///
+/// Validates:
+///   - `<name>=<path>` shape.
+///   - If `<path>` is a directory, `plugin.wasm` + `plugin.toml` exist inside.
+///   - If `<path>` is a `.wasm` file, sibling `plugin.toml` exists.
+///   - `plugin.toml` parses.
+///
+/// Does NOT check that `<name>` matches a plugin in the compilation — that
+/// check happens in `apply_plugin_overrides` after all overrides are parsed.
+fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
+    let Some((name, raw_path)) = arg.split_once('=') else {
+        return Err(format!(
+            "error: --plugin-override expects `<name>=<path>`, got `{}`",
+            arg
+        ));
+    };
+    let name = name.trim();
+    let raw_path = raw_path.trim();
+    if name.is_empty() || raw_path.is_empty() {
+        return Err(format!(
+            "error: --plugin-override expects `<name>=<path>`, got `{}`",
+            arg
+        ));
+    }
+
+    let path = PathBuf::from(raw_path);
+    let (dir, wasm_path) = if path.is_dir() {
+        (path.clone(), path.join("plugin.wasm"))
+    } else if raw_path.ends_with(".wasm") || path.is_file() {
+        let dir = path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        (dir, path.clone())
+    } else {
+        return Err(format!(
+            "error: --plugin-override {}={} — path is neither a directory nor a .wasm file",
+            name, raw_path
+        ));
+    };
+
+    if !wasm_path.exists() {
+        return Err(format!(
+            "error: --plugin-override {}={} — plugin.wasm not found at {}",
+            name,
+            raw_path,
+            wasm_path.display()
+        ));
+    }
+
+    let toml_path = dir.join("plugin.toml");
+    if !toml_path.exists() {
+        return Err(format!(
+            "error: --plugin-override {}={} — sibling plugin.toml not found at {}",
+            name,
+            raw_path,
+            toml_path.display()
+        ));
+    }
+
+    // Parse plugin.toml to catch malformed manifests before compile starts and
+    // to extract the version for the banner. We deliberately don't verify the
+    // manifest's [package].name matches `<name>` — the CLI override is the
+    // authoritative binding; a mismatch would only surface as a downstream
+    // load error and we prefer the direct hard-error path there.
+    let toml_text = std::fs::read_to_string(&toml_path).map_err(|e| {
+        format!(
+            "error: --plugin-override {}={} — failed to read {}: {}",
+            name,
+            raw_path,
+            toml_path.display(),
+            e
+        )
+    })?;
+    let parsed: toml::Value = toml::from_str(&toml_text).map_err(|e| {
+        format!(
+            "error: --plugin-override {}={} — malformed plugin.toml at {}: {}",
+            name,
+            raw_path,
+            toml_path.display(),
+            e
+        )
+    })?;
+    // Version key: Clean plugins use `[plugin].version`. `[package].version`
+    // is checked as a fallback for parity with the Cargo convention that
+    // occasionally appears in scaffolding tools.
+    let version = parsed
+        .get("plugin")
+        .or_else(|| parsed.get("package"))
+        .and_then(|t| t.get("version"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    Ok(ResolvedPluginOverride {
+        name: name.to_string(),
+        dir,
+        version,
+    })
+}
+
+/// Parse every `--plugin-override` arg, verify each one names a plugin loaded
+/// by the compilation, install them into the thread-local override map, and
+/// print the one-line banner per override.
+///
+/// The `sources` slice contains `(file_path, source_text)` pairs for every
+/// entry point the caller will feed the compiler — `handle_lint` may pass
+/// several `.cln` files, `handle_check` and `handle_compile` pass one. The
+/// union of plugins declared across all sources is the "loaded set" checked
+/// against the override names.
+///
+/// Returns `Err` with a fully-formatted message on any failure (shape, bad
+/// path, unmatched name). Caller should print and exit with non-zero.
+fn apply_plugin_overrides(
+    raw_args: &[String],
+    sources: &[(String, String)],
+    quiet: bool,
+) -> Result<(), String> {
+    if raw_args.is_empty() {
+        clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
+        return Ok(());
+    }
+
+    // Parse every override up-front so we surface every bad arg, not just the
+    // first. The banner is only printed once all validations pass.
+    let mut parsed = Vec::with_capacity(raw_args.len());
+    for a in raw_args {
+        parsed.push(parse_plugin_override(a)?);
+    }
+
+    // Discover the union of plugins loaded across every source. If a source
+    // fails to read, the compile stage will fail with its own error — we
+    // just skip it for override matching. If no source declares plugins at
+    // all, an override cannot possibly match and we surface the whole
+    // known set (empty) so the user sees the actual state.
+    let mut loaded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (_, src) in sources {
+        for p in clean_language_compiler::extract_plugins(src) {
+            loaded.insert(p);
+        }
+    }
+
+    for r in &parsed {
+        if !loaded.contains(&r.name) {
+            let loaded_list = if loaded.is_empty() {
+                "<none>".to_string()
+            } else {
+                loaded.iter().cloned().collect::<Vec<_>>().join(", ")
+            };
+            return Err(format!(
+                "error: --plugin-override {}=... but no file loads plugin '{}'. \
+                 Plugins loaded by this project: {}.",
+                r.name, r.name, loaded_list
+            ));
+        }
+    }
+
+    let mut map = std::collections::HashMap::with_capacity(parsed.len());
+    for r in &parsed {
+        map.insert(r.name.clone(), r.dir.clone());
+    }
+    clean_language_compiler::set_plugin_overrides(map);
+
+    if !quiet {
+        for r in &parsed {
+            let version = r
+                .version
+                .as_deref()
+                .map(|v| format!(" (v{})", v))
+                .unwrap_or_default();
+            println!(
+                "Plugin override: {} → {}{}",
+                r.name,
+                r.dir.display(),
+                version
+            );
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_check(
     input: String,
+    plugin_override: Vec<String>,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = std::fs::read_to_string(&input)
         .map_err(|e| format!("Failed to read '{}': {}", input, e))?;
+
+    if let Err(msg) = apply_plugin_overrides(
+        &plugin_override,
+        &[(input.clone(), source.clone())],
+        output_config.quiet,
+    ) {
+        eprintln!("{}", msg);
+        return Err(msg.into());
+    }
 
     let start_time = std::time::Instant::now();
 
@@ -1360,8 +1588,30 @@ async fn handle_compile(
     strict_emission_ops: bool,
     emit_heap_probes: bool,
     emit_bridge_probes: bool,
+    plugin_override: Vec<String>,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // --plugin-override validation runs before any codegen setup so a bad flag
+    // fails fast without side effects on the compile pipeline overrides below.
+    if !plugin_override.is_empty() {
+        let source_for_check = std::fs::read_to_string(&input).map_err(|e| {
+            format!(
+                "Failed to read '{}' for --plugin-override validation: {}",
+                input, e
+            )
+        })?;
+        if let Err(msg) = apply_plugin_overrides(
+            &plugin_override,
+            &[(input.clone(), source_for_check)],
+            output_config.quiet,
+        ) {
+            eprintln!("{}", msg);
+            return Err(msg.into());
+        }
+    } else {
+        clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
+    }
+
     // Plugin Contracts v2 — thread `--target` and `--strict-hosts` into the
     // compile pipeline via thread-local overrides so the codegen bridge-host
     // validator uses the right host class (browser/server). Without this the
@@ -1869,6 +2119,7 @@ async fn handle_lint(
     input: String,
     fix: bool,
     errors_only: bool,
+    plugin_override: Vec<String>,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("🧹 Linting: {input}");
@@ -1898,6 +2149,26 @@ async fn handle_lint(
     if files_to_lint.is_empty() {
         println!("No Clean Language files found to lint");
         return Ok(());
+    }
+
+    // Read every file up-front so --plugin-override validation sees the union
+    // of `plugins:` blocks across the whole lint set. A read error here is
+    // treated as an empty source for override matching — the individual file
+    // lint step below will surface the read error with its own message.
+    if !plugin_override.is_empty() {
+        let sources: Vec<(String, String)> = files_to_lint
+            .iter()
+            .map(|f| {
+                let src = fs::read_to_string(f).unwrap_or_default();
+                (f.clone(), src)
+            })
+            .collect();
+        if let Err(msg) = apply_plugin_overrides(&plugin_override, &sources, output_config.quiet) {
+            eprintln!("{}", msg);
+            return Err(msg.into());
+        }
+    } else {
+        clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
     }
 
     let mut total_errors = 0;

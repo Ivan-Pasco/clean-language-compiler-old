@@ -382,6 +382,13 @@ thread_local! {
     /// `compile_multi_file_*` entry points don't need signature changes.
     static HEAP_PROBE_CALLSITES: std::cell::RefCell<Vec<crate::codegen::mir_codegen::ProbeCallsite>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// `--plugin-override <name>=<path>` overrides for the current thread.
+    /// Maps plugin name → directory containing the override's `plugin.wasm`
+    /// and `plugin.toml`. Consumed by `WasmPluginLoader::find_plugin_dir`
+    /// which prefers the override over `~/.cleen/plugins/<name>/`.
+    /// Enables local plugin verification without a comita round-trip.
+    static PLUGIN_OVERRIDES: std::cell::RefCell<std::collections::HashMap<String, std::path::PathBuf>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// Plugin Contracts v2 Phase B — set the Clean Runtime ABI version to stamp
@@ -511,6 +518,36 @@ pub fn set_heap_probe_callsites(callsites: Vec<crate::codegen::mir_codegen::Prob
 /// writer right after a successful compile.
 pub fn take_heap_probe_callsites() -> Vec<crate::codegen::mir_codegen::ProbeCallsite> {
     HEAP_PROBE_CALLSITES.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
+/// Replace the `--plugin-override` map for the current thread.
+///
+/// Each entry maps a plugin name (as declared in a `plugins:` block, e.g.
+/// `frame.data`) to a directory containing that plugin's `plugin.wasm` and
+/// sibling `plugin.toml`. `WasmPluginLoader::find_plugin_dir` prefers the
+/// override over `~/.cleen/plugins/<name>/` when both exist.
+///
+/// Set by `cln lint`, `cln check`, and `cln compile` when the user passes
+/// `--plugin-override name=path`; empty otherwise. Enables local plugin
+/// verification without a comita round-trip.
+pub fn set_plugin_overrides(overrides: std::collections::HashMap<String, std::path::PathBuf>) {
+    PLUGIN_OVERRIDES.with(|cell| {
+        *cell.borrow_mut() = overrides;
+    });
+}
+
+/// Return the `--plugin-override` directory for `name` on the current thread,
+/// if any. Used by `WasmPluginLoader::find_plugin_dir` to short-circuit the
+/// default `~/.cleen/plugins/<name>/` resolution.
+pub fn plugin_override_dir(name: &str) -> Option<std::path::PathBuf> {
+    PLUGIN_OVERRIDES.with(|cell| cell.borrow().get(name).cloned())
+}
+
+/// Snapshot of every active `--plugin-override` on the current thread.
+/// Used by the CLI's up-front validation to check every override maps to a
+/// plugin actually loaded by the compilation.
+pub fn plugin_overrides_snapshot() -> std::collections::HashMap<String, std::path::PathBuf> {
+    PLUGIN_OVERRIDES.with(|cell| cell.borrow().clone())
 }
 
 /// Translate a CLI `--target` value into the bridge host class it implies.
@@ -1942,7 +1979,7 @@ fn extract_manifest_entry(
     None
 }
 
-fn extract_plugins(source: &str) -> Vec<String> {
+pub fn extract_plugins(source: &str) -> Vec<String> {
     let mut plugins = Vec::new();
     let mut in_plugins_block = false;
     let mut plugins_indent: usize = 0;

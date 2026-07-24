@@ -317,8 +317,25 @@ impl WasmPluginLoader {
         self.find_plugin_dir(name)
     }
 
-    /// Find the plugin directory, respecting .active-version pin if present
+    /// Find the plugin directory, respecting .active-version pin if present.
+    ///
+    /// Precedence:
+    ///   1. `--plugin-override <name>=<path>` from the CLI (thread-local).
+    ///   2. `~/.cleen/plugins/<name>/.active-version` pin.
+    ///   3. Highest semver subdirectory under `~/.cleen/plugins/<name>/`.
+    ///
+    /// The override wins over both installed paths and is validated up-front
+    /// by the CLI (missing plugin.wasm / missing sibling plugin.toml both
+    /// hard-error before compile starts). See
+    /// `foundation/spec/plugins/plugin-contract.md` §11.
     fn find_plugin_dir(&self, name: &str) -> Result<PathBuf> {
+        // Precedence 1: --plugin-override <name>=<path>. The CLI validated
+        // path shape and presence of plugin.wasm/plugin.toml before dispatch;
+        // here we just short-circuit the default lookup.
+        if let Some(override_dir) = crate::plugin_override_dir(name) {
+            return Ok(override_dir);
+        }
+
         let plugin_base = self.plugins_dir.join(name);
 
         if !plugin_base.exists() {
