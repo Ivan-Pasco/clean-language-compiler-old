@@ -1,0 +1,45 @@
+// Test: bugfixes/type_bare_generic_shorthand
+// Grammar: list_type ::= "list" , [ "<" , type , ">" ] ...
+//          matrix_type ::= "matrix" , [ "<" , type , ">" ]
+//          pairs_type ::= "pairs" , [ "<" , type , "," , type , ">" ]
+// Regression: dashboard #015b38a7 (SEM007 "Undefined type 'pairs'" when
+//   `pairs` is used bare). Grammar rejected bare forms; parser fell through
+//   to Type::Object("pairs") which then failed semantic validation with
+//   SEM007. Same class of bug for bare `list` and bare `matrix` (never
+//   filed but reproduced during triage).
+//
+// Fix: root spec 04-type-system.md §"Bare Generic Type Shorthand" adds
+//   `list` = `list<any>`, `matrix` = `matrix<any>`, `pairs` = `pairs<string, any>`.
+//   grammar.ebnf makes the `<...>` block optional on all three.
+//   grammar.pest matches with `!(ASCII_ALPHANUMERIC | "_")` guard so
+//   `listFoo` / `pairsBar` still parse as identifiers.
+//   token_parser/declarations.rs constructs the parameterized type directly
+//   instead of falling through to Type::Object.
+//
+// Fixed in: compiler 0.33.144
+//
+// Expected output:
+//   list_bare_ok
+//   pairs_bare_ok
+//   matrix_bare_ok
+//   list_explicit_ok
+//   pairs_explicit_ok
+
+start:
+	list xs = [1, 2, 3]
+	xs.add(4)
+	printl("list_bare_ok")
+
+	pairs row = json.textToData("{\"a\":1}")
+	printl("pairs_bare_ok")
+
+	matrix m = [[1, 2], [3, 4]]
+	printl("matrix_bare_ok")
+
+	// Explicit forms must still work (backward-compat guard)
+	list<integer> ys = [10, 20, 30]
+	ys.add(40)
+	printl("list_explicit_ok")
+
+	pairs<string, integer> counts = {"a": 1, "b": 2}
+	printl("pairs_explicit_ok")

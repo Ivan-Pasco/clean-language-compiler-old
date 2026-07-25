@@ -1807,12 +1807,17 @@ impl TokenParser {
                     };
                     Type::List(Box::new(inner_type), behavior)
                 } else {
-                    // list without generic parameter - treat as Object
-                    Type::Object("list".to_string())
+                    // Bare `list` = `list<any>` per root spec 04-type-system.md
+                    // §"Bare Generic Type Shorthand". Previously fell through
+                    // to Type::Object("list") which then failed SEM007 as an
+                    // undefined type (dashboard #015b38a7 for the pairs
+                    // variant; same class of bug for list).
+                    Type::List(Box::new(Type::Any), ListBehavior::Default)
                 }
             }
             "matrix" => {
-                // Expect matrix<Type>
+                // Expect matrix<Type> — or bare `matrix` = `matrix<any>` per
+                // root spec 04-type-system.md §"Bare Generic Type Shorthand".
                 self.skip_whitespace();
                 if matches!(self.current_kind(), TokenKind::Less) {
                     self.bump(); // consume '<'
@@ -1822,12 +1827,12 @@ impl TokenParser {
                     self.expect(&TokenKind::Greater)?; // expect '>'
                     Type::Matrix(Box::new(inner_type))
                 } else {
-                    // matrix without generic parameter - treat as Object
-                    Type::Object("matrix".to_string())
+                    Type::Matrix(Box::new(Type::Any))
                 }
             }
             "pairs" => {
-                // Expect pairs<Type, Type>
+                // Expect pairs<Type, Type> — or bare `pairs` = `pairs<string, any>`
+                // per root spec 04-type-system.md §"Bare Generic Type Shorthand".
                 self.skip_whitespace();
                 if matches!(self.current_kind(), TokenKind::Less) {
                     self.bump(); // consume '<'
@@ -1841,8 +1846,7 @@ impl TokenParser {
                     self.expect(&TokenKind::Greater)?; // expect '>'
                     Type::Pairs(Box::new(first_type), Box::new(second_type))
                 } else {
-                    // pairs without generic parameters - treat as Object
-                    Type::Object("pairs".to_string())
+                    Type::Pairs(Box::new(Type::String), Box::new(Type::Any))
                 }
             }
             // handler — first-class function reference (WASM i32 table index)

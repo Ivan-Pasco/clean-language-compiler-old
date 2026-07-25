@@ -121,11 +121,16 @@ core_type = {
 sized_type = @{ core_type ~ size_specifier }
 
 // Composite types
-matrix_type = { "matrix" ~ "<" ~ " "* ~ type_ ~ " "* ~ ">" }
+// Bare-generic shorthand: `list` = `list<any>`, `matrix` = `matrix<any>`,
+// `pairs` = `pairs<string, any>`. See root spec 04-type-system.md §"Bare
+// Generic Type Shorthand" and foundation/spec/grammar/grammar.ebnf.
+// The `!identifier_tail` guard prevents `listX` / `pairsFoo` from binding
+// as `list` + `X` — bare forms must be followed by non-identifier chars.
+matrix_type = { "matrix" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
 // list_behavior suffix: .line | .pile | .unique (spec grammar.ebnf §list_behavior)
 list_behavior = { "." ~ ("line" | "pile" | "unique") }
-list_type = { "list" ~ "<" ~ " "* ~ type_ ~ " "* ~ ">" ~ list_behavior? }
-pairs_type = { "pairs" ~ "<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">" }
+list_type = { "list" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") ~ list_behavior? }
+pairs_type = { "pairs" ~ ("<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Generic types
 generic_type = { identifier ~ "<" ~ type_arguments ~ ">" }

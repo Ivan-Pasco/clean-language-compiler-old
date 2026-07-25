@@ -182,34 +182,29 @@ fn parse_basic_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
 }
 
 fn parse_matrix_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
-    let parser_location = get_location(&pair);
-    let ast_location = convert_to_ast_location(&parser_location);
-
-    let element_type = pair.into_inner().next().ok_or_else(|| {
-        CompilerError::parse_error(
-            "Matrix type must specify element type".to_string(),
-            Some(ast_location),
-            Some("Matrix types must be in the form matrix<T>".to_string()),
-        )
-    })?;
-
-    let element_type = parse_type(element_type)?;
+    // Bare `matrix` is shorthand for `matrix<any>` per root spec
+    // 04-type-system.md §"Bare Generic Type Shorthand". When the grammar
+    // matches `matrix` without a `<T>` type argument, `into_inner()` yields
+    // no children — fall through to the Any default.
+    let element_type = match pair.into_inner().next() {
+        Some(inner) => parse_type(inner)?,
+        None => Type::Any,
+    };
     Ok(Type::Matrix(Box::new(element_type)))
 }
 
 fn parse_list_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
-    let parser_location = get_location(&pair);
-    let ast_location = convert_to_ast_location(&parser_location);
-
-    let element_type = pair.into_inner().next().ok_or_else(|| {
-        CompilerError::parse_error(
-            "List type must specify element type".to_string(),
-            Some(ast_location),
-            Some("List types must be in the form list<T>".to_string()),
-        )
-    })?;
-
-    let element_type = parse_type(element_type)?;
+    // Bare `list` is shorthand for `list<any>` per root spec
+    // 04-type-system.md §"Bare Generic Type Shorthand". The list_behavior
+    // rule (if present) is not a `type_`, so we only take the first `type_`
+    // child if any exists.
+    let mut element_type = Type::Any;
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::type_ {
+            element_type = parse_type(inner)?;
+            break;
+        }
+    }
     // Legacy parser path: no behaviour modifier handled here.
     // The token-based parser (declarations.rs) is the production path and
     // captures `.line` / `.pile` / `.unique` from the source.
@@ -217,9 +212,12 @@ fn parse_list_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
 }
 
 fn parse_pairs_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
-    let parser_location = get_location(&pair);
-    let ast_location = convert_to_ast_location(&parser_location);
-
+    // Bare `pairs` is shorthand for `pairs<string, any>` per root spec
+    // 04-type-system.md §"Bare Generic Type Shorthand". The grammar rule
+    // `pairs_type = "pairs" ~ ("<" ... ">")? ...` guarantees the `<K,V>`
+    // block is atomic — either both types are present (explicit form) or
+    // both are absent (bare form). A single-typed `pairs<T>` is a grammar
+    // failure, not something this function needs to defend against.
     let mut key_type = None;
     let mut value_type = None;
 
@@ -233,21 +231,10 @@ fn parse_pairs_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
         }
     }
 
-    let key_type = key_type.ok_or_else(|| {
-        CompilerError::parse_error(
-            "pairs type must specify key type".to_string(),
-            Some(ast_location.clone()),
-            Some("pairs types must be in the form pairs<K, V>".to_string()),
-        )
-    })?;
-
-    let value_type = value_type.ok_or_else(|| {
-        CompilerError::parse_error(
-            "pairs type must specify value type".to_string(),
-            Some(ast_location),
-            Some("pairs types must be in the form pairs<K, V>".to_string()),
-        )
-    })?;
+    let (key_type, value_type) = match (key_type, value_type) {
+        (Some(k), Some(v)) => (k, v),
+        _ => (Type::String, Type::Any),
+    };
 
     Ok(Type::Pairs(Box::new(key_type), Box::new(value_type)))
 }
