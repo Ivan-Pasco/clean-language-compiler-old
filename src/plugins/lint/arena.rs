@@ -252,61 +252,204 @@ impl LintArena {
     // ─────────────────────────────────────────────────────────────────────
 
     /// Return the JSON array of `FrameworkBlock` occurrences whose `name`
-    /// matches the requested block kind:
-    /// `[{ "file": "...", "line": N, "content": "..." }, ...]`
+    /// matches the requested block kind, walking the WHOLE program: top-level
+    /// statements, top-level function bodies, class methods, class
+    /// constructors, and any control-flow-nested statements within those.
     ///
-    /// Blocks live in `Program.statements` (top-level) as
-    /// `Statement::FrameworkBlock`. Inside classes/functions is possible
-    /// via nested blocks; for Phase B we scan top-level statements only —
-    /// the 4 residual diagnostics (frame.canvas save/restore matching,
-    /// FRAME-UI-C005 onclick handler check) all trigger on top-level DSL
-    /// blocks. Nested-block visibility can be added additively without a
-    /// contract change.
+    /// Each entry carries a `parent_context` field so plugins can anchor
+    /// diagnostics to the enclosing function/method:
+    ///
+    /// ```json
+    /// {
+    ///   "file": "...",
+    ///   "line": N,
+    ///   "content": "...",
+    ///   "attributes": {...},
+    ///   "parent_context": {"kind": "top-level", "name": null, "class": null}
+    ///     // OR {"kind": "function", "name": "render", "class": null}
+    ///     // OR {"kind": "method", "name": "render", "class": "HomePage"}
+    ///     // OR {"kind": "constructor", "name": null, "class": "HomePage"}
+    /// }
+    /// ```
+    ///
+    /// **Contract 5 §4 amendment (prompt 5258173d).** Prior versions walked
+    /// `Program.statements` only, which returned `[]` for every realistic
+    /// frame.ui project because `html:` blocks live inside function bodies
+    /// (frame.ui: "html: block at the end of a function is the implicit
+    /// return value" — primary usage pattern). FRAME-UI-C005 (onclick handler
+    /// resolution) is the motivating diagnostic. Full recursion + parent
+    /// context is additive: plugins that ignore `parent_context` continue to
+    /// work, plugins that need it can anchor accurately.
     pub fn list_blocks_json(&self, caller_handle: i32, block_name: &str) -> String {
         if !self.check_handle(caller_handle) {
             return ast_handle_invalid(caller_handle);
         }
         let mut out = String::from("[");
         let mut first = true;
-        for stmt in &self.program.statements {
-            if let Statement::FrameworkBlock {
-                name,
-                content,
-                attributes,
-                location,
-            } = stmt
-            {
-                if name == block_name {
-                    if !first {
-                        out.push(',');
-                    }
-                    first = false;
-                    let (line, _col) = loc_line(location);
-                    let file = loc_file(location);
-                    let mut attrs_json = String::from("{");
-                    for (ai, attr) in attributes.iter().enumerate() {
-                        if ai > 0 {
-                            attrs_json.push(',');
-                        }
-                        attrs_json.push_str(&format!(
-                            "\"{}\":\"{}\"",
-                            json_escape(&attr.name),
-                            json_escape(attr.value.as_deref().unwrap_or(""))
-                        ));
-                    }
-                    attrs_json.push('}');
-                    out.push_str(&format!(
-                        "{{\"file\":\"{}\",\"line\":{},\"content\":\"{}\",\"attributes\":{}}}",
-                        json_escape(&file),
-                        line,
-                        json_escape(content),
-                        attrs_json
-                    ));
-                }
+
+        // Top-level statements — parent_context = top-level.
+        collect_framework_blocks(
+            &self.program.statements,
+            block_name,
+            &BlockContext::TopLevel,
+            &mut out,
+            &mut first,
+        );
+
+        // Top-level (free) functions — parent_context = function:name.
+        for func in &self.program.functions {
+            let ctx = BlockContext::Function {
+                name: func.name.clone(),
+            };
+            collect_framework_blocks(&func.body, block_name, &ctx, &mut out, &mut first);
+        }
+
+        // Classes — walk constructor + every method body.
+        for class in &self.program.classes {
+            if let Some(ctor) = &class.constructor {
+                let ctx = BlockContext::Constructor {
+                    class: class.name.clone(),
+                };
+                collect_framework_blocks(&ctor.body, block_name, &ctx, &mut out, &mut first);
+            }
+            for method in &class.methods {
+                let ctx = BlockContext::Method {
+                    class: class.name.clone(),
+                    name: method.name.clone(),
+                };
+                collect_framework_blocks(&method.body, block_name, &ctx, &mut out, &mut first);
             }
         }
+
         out.push(']');
         out
+    }
+}
+
+/// Parent-context tag emitted alongside each `_ast_list_blocks` entry.
+///
+/// Rendered into the JSON payload's `parent_context` field. Plugins that
+/// need to anchor a diagnostic to the enclosing function (e.g. FRAME-UI-C005
+/// reporting the line of the `render()` that contains a bad-onclick html
+/// block) read the `name`/`class` fields; plugins that don't care can
+/// ignore the whole `parent_context` object.
+enum BlockContext {
+    TopLevel,
+    Function { name: String },
+    Method { class: String, name: String },
+    Constructor { class: String },
+}
+
+impl BlockContext {
+    fn to_json(&self) -> String {
+        match self {
+            BlockContext::TopLevel => {
+                "{\"kind\":\"top-level\",\"name\":null,\"class\":null}".to_string()
+            }
+            BlockContext::Function { name } => format!(
+                "{{\"kind\":\"function\",\"name\":\"{}\",\"class\":null}}",
+                json_escape(name)
+            ),
+            BlockContext::Method { class, name } => format!(
+                "{{\"kind\":\"method\",\"name\":\"{}\",\"class\":\"{}\"}}",
+                json_escape(name),
+                json_escape(class)
+            ),
+            BlockContext::Constructor { class } => format!(
+                "{{\"kind\":\"constructor\",\"name\":null,\"class\":\"{}\"}}",
+                json_escape(class)
+            ),
+        }
+    }
+}
+
+/// Recursively walk a `Vec<Statement>` and append every `FrameworkBlock`
+/// whose `name == block_name` to `out` as a JSON object. Descends into
+/// every statement variant that owns a `Vec<Statement>` (if/else, while,
+/// iterate, for-range, onError, background) so a plugin-visible block
+/// buried inside a loop or branch is still discovered.
+///
+/// `first` is a running "have we emitted anything yet?" flag so the caller
+/// can chain multiple walks (top-level → function bodies → class methods)
+/// into one JSON array with correct comma separation.
+fn collect_framework_blocks(
+    stmts: &[Statement],
+    block_name: &str,
+    parent: &BlockContext,
+    out: &mut String,
+    first: &mut bool,
+) {
+    for stmt in stmts {
+        collect_framework_blocks_in_stmt(stmt, block_name, parent, out, first);
+    }
+}
+
+fn collect_framework_blocks_in_stmt(
+    stmt: &Statement,
+    block_name: &str,
+    parent: &BlockContext,
+    out: &mut String,
+    first: &mut bool,
+) {
+    match stmt {
+        Statement::FrameworkBlock {
+            name,
+            content,
+            attributes,
+            location,
+        } => {
+            if name == block_name {
+                if !*first {
+                    out.push(',');
+                }
+                *first = false;
+                let (line, _col) = loc_line(location);
+                let file = loc_file(location);
+                let mut attrs_json = String::from("{");
+                for (ai, attr) in attributes.iter().enumerate() {
+                    if ai > 0 {
+                        attrs_json.push(',');
+                    }
+                    attrs_json.push_str(&format!(
+                        "\"{}\":\"{}\"",
+                        json_escape(&attr.name),
+                        json_escape(attr.value.as_deref().unwrap_or(""))
+                    ));
+                }
+                attrs_json.push('}');
+                out.push_str(&format!(
+                    "{{\"file\":\"{}\",\"line\":{},\"content\":\"{}\",\"attributes\":{},\"parent_context\":{}}}",
+                    json_escape(&file),
+                    line,
+                    json_escape(content),
+                    attrs_json,
+                    parent.to_json(),
+                ));
+            }
+        }
+        Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_framework_blocks(then_branch, block_name, parent, out, first);
+            if let Some(else_b) = else_branch {
+                collect_framework_blocks(else_b, block_name, parent, out, first);
+            }
+        }
+        Statement::While { body, .. } => {
+            collect_framework_blocks(body, block_name, parent, out, first);
+        }
+        Statement::Iterate { body, .. } => {
+            collect_framework_blocks(body, block_name, parent, out, first);
+        }
+        Statement::RangeIterate { body, .. } => {
+            collect_framework_blocks(body, block_name, parent, out, first);
+        }
+        Statement::StandaloneErrorHandler { body, .. } => {
+            collect_framework_blocks(body, block_name, parent, out, first);
+        }
+        _ => {}
     }
 }
 
@@ -651,5 +794,151 @@ mod tests {
             type_args: vec![Type::String, Type::Integer],
         };
         assert_eq!(type_to_display(&t), "Map<string, integer>");
+    }
+
+    // ── list_blocks recursion + parent_context (prompt 5258173d) ─────────────
+
+    fn html_block(line: u32, content: &str) -> Statement {
+        Statement::FrameworkBlock {
+            name: "html".to_string(),
+            content: content.to_string(),
+            attributes: Vec::<FrameworkAttribute>::new(),
+            location: Some(loc(line, "app/pages/home.cln")),
+        }
+    }
+
+    fn empty_function(name: &str, body: Vec<Statement>) -> Function {
+        Function {
+            name: name.to_string(),
+            type_parameters: vec![],
+            type_constraints: vec![],
+            parameters: vec![],
+            return_type: Type::Void,
+            body,
+            description: None,
+            syntax: crate::ast::FunctionSyntax::Simple,
+            visibility: crate::ast::Visibility::Public,
+            modifier: crate::ast::FunctionModifier::None,
+            location: Some(loc(1, "app/pages/home.cln")),
+        }
+    }
+
+    #[test]
+    fn list_blocks_top_level_still_reports_parent_context_top_level() {
+        // Backward-compat: a top-level block gets the new parent_context
+        // tag set to top-level, so existing plugins still see their block
+        // AND now can ignore/read parent_context.
+        let mut prog = empty_program();
+        prog.statements.push(html_block(3, "<h1>hello</h1>"));
+
+        let arena = LintArena::new(20, prog);
+        let out = arena.list_blocks_json(20, "html");
+        assert!(out.contains("\"content\":\"<h1>hello</h1>\""));
+        assert!(
+            out.contains(
+                "\"parent_context\":{\"kind\":\"top-level\",\"name\":null,\"class\":null}"
+            ),
+            "top-level block missing/wrong parent_context: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn list_blocks_recurses_into_top_level_function_bodies() {
+        // FRAME-UI-C005 motivating case: html: block lives inside render(),
+        // not at the top level. Prior versions returned []. Must now return
+        // the block with parent_context.kind = "function".
+        let mut prog = empty_program();
+        prog.functions.push(empty_function(
+            "render",
+            vec![html_block(47, "<button onclick=\"greet\">Hi</button>")],
+        ));
+
+        let arena = LintArena::new(21, prog);
+        let out = arena.list_blocks_json(21, "html");
+        assert!(
+            out.contains("greet"),
+            "html block inside function body was not enumerated: {}",
+            out
+        );
+        assert!(
+            out.contains(
+                "\"parent_context\":{\"kind\":\"function\",\"name\":\"render\",\"class\":null}"
+            ),
+            "wrong parent_context for function-body block: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn list_blocks_recurses_into_class_methods_and_constructor() {
+        // Class methods and constructor bodies are the second-most common
+        // location for framework blocks in real projects (component: renders,
+        // etc.). Ensure both are walked and get distinct parent_context tags.
+        let mut prog = empty_program();
+        let mut cls = Class::new("HomePage".to_string(), Some(loc(10, "app/pages/home.cln")));
+        cls.methods.push(empty_function(
+            "render",
+            vec![html_block(15, "<div>method-body</div>")],
+        ));
+        cls.constructor = Some(crate::ast::Constructor::new(
+            vec![],
+            vec![html_block(20, "<div>ctor-body</div>")],
+            Some(loc(18, "app/pages/home.cln")),
+        ));
+        prog.classes.push(cls);
+
+        let arena = LintArena::new(22, prog);
+        let out = arena.list_blocks_json(22, "html");
+        assert!(
+            out.contains("method-body"),
+            "missed class method body: {}",
+            out
+        );
+        assert!(
+            out.contains("ctor-body"),
+            "missed constructor body: {}",
+            out
+        );
+        assert!(
+            out.contains("\"parent_context\":{\"kind\":\"method\",\"name\":\"render\",\"class\":\"HomePage\"}"),
+            "wrong parent_context for method body: {}", out
+        );
+        assert!(
+            out.contains("\"parent_context\":{\"kind\":\"constructor\",\"name\":null,\"class\":\"HomePage\"}"),
+            "wrong parent_context for constructor body: {}", out
+        );
+    }
+
+    #[test]
+    fn list_blocks_recurses_through_control_flow_nesting() {
+        // A block inside `if` inside `while` inside a function body still
+        // gets enumerated with the correct parent_context. This is not the
+        // common case but the recursion cost is trivial, and dropping it
+        // would silently miss valid diagnostics.
+        let mut prog = empty_program();
+        let nested = Statement::While {
+            condition: crate::ast::Expression::Literal(crate::ast::Value::Boolean(true)),
+            body: vec![Statement::If {
+                condition: crate::ast::Expression::Literal(crate::ast::Value::Boolean(true)),
+                then_branch: vec![html_block(50, "<span>nested</span>")],
+                else_branch: None,
+                location: None,
+            }],
+            location: None,
+        };
+        prog.functions.push(empty_function("draw", vec![nested]));
+
+        let arena = LintArena::new(23, prog);
+        let out = arena.list_blocks_json(23, "html");
+        assert!(
+            out.contains("nested"),
+            "control-flow-nested block was not enumerated: {}",
+            out
+        );
+        assert!(
+            out.contains("\"parent_context\":{\"kind\":\"function\",\"name\":\"draw\",\"class\":null}"),
+            "parent context should point at the enclosing function, not the intermediate if/while: {}", out
+        );
     }
 }
