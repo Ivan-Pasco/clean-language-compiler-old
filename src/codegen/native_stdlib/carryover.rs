@@ -82,6 +82,12 @@
 //! reads — only the space-bound optimization is lost. `POOL_SIZE` is
 //! chosen large enough (32 KB) to cover realistic per-item JSON payload
 //! sizes without spill.
+//!
+//! ## See also
+//!
+//! `src/hir/hir_builder.rs` (module doc) — pipeline map. The carryover
+//! arena is consumed by pass 5 (`apply_outer_string_carryover_rewrite`),
+//! which pass 2 (`rewrite_string_accumulator_loops`) invokes on match.
 
 use wasm_encoder::{BlockType, Instruction, MemArg};
 

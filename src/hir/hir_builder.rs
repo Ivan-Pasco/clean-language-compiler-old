@@ -5,6 +5,55 @@
 //! - Validating semantic consistency (but not type checking)
 //! - Converting implicit operations to explicit ones
 //! - Maintaining source location information for error reporting
+//!
+//! # String-accumulator rewrite pipeline
+//!
+//! `build_block` runs five HIR-level rewrites on every lowered block, all
+//! guarding the same underlying failure: the compiler's bump allocator has
+//! no per-block reclaim, so repeated `string.concat` calls on the same
+//! variable strand O(N²) bytes on the main heap and trip
+//! `CMP-SSR-MALLOC-OOM-PAGE-RENDER`. Each rewrite converts a specific
+//! syntactic shape into `string_builder_*` calls (see
+//! `codegen/native_stdlib/string_builder.rs`) that grow geometrically.
+//!
+//! Pipeline order is fixed and load-bearing — see `build_block` for the
+//! call site and the note explaining why dual must run before single.
+//!
+//! | # | Pass                                                    | Shape                                                    | Fingerprint |
+//! |---|---------------------------------------------------------|----------------------------------------------------------|-------------|
+//! | 1 | `rewrite_dual_accumulator_loops`                        | Two accumulators appended in the same loop               | `b80c2f907c71` |
+//! | 2 | `rewrite_string_accumulator_loops`                      | Canonical `string a = ""; while … a = a + …`             | (main SSR)  |
+//! | 3 | `rewrite_string_accumulator_singleshot`                 | Loop-free chained self-appends inside a helper           | `6fca1073d4bd` |
+//! | 4 | `rewrite_return_concat_chain_to_singleshot_builder`     | `return e1 + e2 + … + eN`  (N ≥ 3, ≥1 literal leaf)      | `1f824643b07b` |
+//! | 5 | `apply_outer_string_carryover_rewrite` (called by #2)   | `string x = call()` reassigned once per iter             | `88dc6aeb0f8e` |
+//!
+//! # Supporting arenas
+//!
+//! * `native_stdlib::memory` — main bump heap (`__malloc`, no reclaim).
+//! * `native_stdlib::transient_arena` — per-iter helper concats. Enter/exit
+//!   the pool at the boundaries of a rewritten loop body; per-iter concats
+//!   are freed in one `TRANSIENT_PTR` reset.
+//! * `native_stdlib::carryover` — two-slot ping-pong for a single outer
+//!   string reassigned per iter (`json.get(...)` shape). Writes alternate
+//!   slots so the previous iter's value stays live until the next read.
+//!
+//! # Rolled-back reclaim
+//!
+//! `string_builder_reclaim` (0.30.373) tried to end-of-body punch a hole
+//! at `max(init_mark, builder_end)`. It corrupted any live pointer above
+//! the new `HEAP_PTR` (surfaced as `CMP-SSR-RECLAIM-FREES-LIVE-POINTER`,
+//! fingerprint `7fc4f890aab9…`) and was removed in 0.30.375. The helper
+//! stays registered as a harmless stub in case body-escape tracking ever
+//! gates re-enablement. The transient arena is the replacement mechanism.
+//! See `native_stdlib::transient_arena` for the Cyclone-region invariant
+//! that makes it safe where end-of-body reclaim was not, and
+//! `native_stdlib::carryover` for the failure mode that ruled out routing
+//! outer-scope reassigns through the transient pool.
+//!
+//! Regression tests pinning each rewrite live in `tests/cln/bugfixes/`:
+//! `ssr_reclaim_no_live_pointer_corruption.cln`,
+//! `codegen_string_accum_non_empty_init_leak.cln`,
+//! `loop_outer_string_reassign_no_leak.cln`, and siblings.
 
 use crate::ast::SourceLocation;
 use crate::ast::{
@@ -47,6 +96,16 @@ impl AccumulatorAnalysis {
 /// `try_match_accumulator_pair` and consumed by
 /// `rewrite_string_accumulator_loops` to splice the rewrite into the
 /// caller's statement vector.
+///
+/// Historical note: an earlier revision carried a `mark_decl: Option<HirStatement>`
+/// that captured `HEAP_PTR` right after builder construction so a per-iter
+/// `string_builder_reclaim(__sb, __mark)` call could reset the bump pointer
+/// at end-of-body. That mechanism shipped in 0.30.373, corrupted any live
+/// pointer sitting above the post-reclaim mark (surfaced as
+/// CMP-SSR-RECLAIM-FREES-LIVE-POINTER, fingerprint `7fc4f890aab9…`), and was
+/// removed in 0.30.375. The transient arena (`transient_arena.rs`) is the
+/// replacement for per-iter reclamation; the reclaim helper remains registered
+/// as a harmless stub in case body-escape tracking ever gates re-enablement.
 struct AccumulatorRewrite {
     /// Replaces the original `string acc = "..."` decl with the builder init.
     decl_replacement: HirStatement,
@@ -58,29 +117,14 @@ struct AccumulatorRewrite {
     /// empty and no seed is needed. Resolves
     /// CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK (fingerprint 6fca1073d4bd).
     seed_append: Option<HirStatement>,
-    /// Captures HEAP_PTR right after the builder is constructed. Inserted
-    /// between `decl_replacement` and the loop ONLY when a paired
-    /// per-iter `string_builder_reclaim` call is also emitted into the
-    /// body. The two are emitted together — emitting the mark without
-    /// a consumer just wastes an integer local. `None` means the
-    /// rewrite skipped reclaim emission (because escape analysis flagged
-    /// the body) and the mark is not needed.
-    mark_decl: Option<HirStatement>,
     /// Replaces the original `while`/`for` with the same loop whose body
-    /// has the self-append rewritten to `string_builder_append` and
-    /// whose tail emits `string_builder_reclaim(__sb, __mark)`.
+    /// has the self-append rewritten to `string_builder_append` and whose
+    /// body is wrapped in `__transient_scope_enter` / `__transient_scope_exit`
+    /// so per-iter helper string concats route through the transient pool.
     replacement_loop: HirStatement,
     /// Inserted immediately after the loop: rebinds `acc` to the
     /// finalized string so any downstream reader sees a normal string.
     finalize_decl: HirStatement,
-}
-
-/// Internal marker used during accumulator-pattern detection to remember
-/// which kind of loop we matched (so we reconstruct the same variant
-/// after rewriting the body).
-enum LoopKind {
-    While,
-    For,
 }
 
 /// HIR Builder - constructs HIR from AST
@@ -1281,59 +1325,24 @@ impl HirBuilder {
         let mut result = self.build_block_inner(statements);
         self.scope_depth -= 1;
 
-        // Post-pass: detect the `string acc = ""; while … { acc = acc + … }`
-        // pattern and rewrite it to use a doubling-capacity string builder.
-        // Resolves CMP-SSR-MALLOC-OOM-PAGE-RENDER by converting the O(n²)
-        // accumulator pattern (each iteration strands the old `acc`) into
-        // an O(n) one.
+        // String-accumulator rewrite pipeline. See the module-level doc for
+        // the full catalogue and rationale.
         //
-        // Runs on every lowered block. Because `build_block` recurses for
-        // function bodies, method bodies, loop bodies, and if branches,
-        // inner blocks are rewritten before their enclosing ones — so an
-        // outer accumulator loop containing an inner accumulator loop
-        // (e.g. the SSR repro) gets both rewritten.
+        // Order is load-bearing: dual MUST run before single. When one of
+        // the two accumulators has an empty-string initializer, the single-
+        // acc pass would eagerly rewrite it into `__sb_N_*` before the dual
+        // matcher can see the paired pattern. Running dual first gives it
+        // first pick; any remaining lone accumulator is then handled by
+        // the single pass. Ordering of singleshot and return-concat is
+        // independent — they match disjoint syntactic shapes.
+        //
+        // Recurses via `build_block` for function bodies, method bodies,
+        // loop bodies, and if branches — so an outer accumulator loop
+        // containing an inner accumulator loop gets both rewritten.
         if let Ok(block) = &mut result {
-            // Dual-accumulator rewrite (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE,
-            // fp b80c2f907c71). Detects the `expand_endpoints`-style pattern
-            // where two string accumulators (`result` and `route_calls`) are
-            // both appended in a loop, causing O(N²) host-arena growth.
-            // Wraps each loop iteration in `_arena_scope_push/_arena_scope_pop`
-            // so per-iteration intermediate strings are reclaimed in O(1).
-            // MUST run BEFORE the single-accumulator rewrite: when one of the
-            // two accumulators has an empty-string initializer, the single-acc
-            // pass would eagerly consume it (rewriting to `__sb_N_*`) before the
-            // dual matcher can see the paired pattern.  Running dual first gives
-            // it first pick; any remaining lone accumulator is then handled by
-            // the single pass.
             self.rewrite_dual_accumulator_loops(&mut block.statements);
             self.rewrite_string_accumulator_loops(&mut block.statements);
-            // Single-shot (loop-free) accumulator rewrite — Step 4.
-            // Catches plugin-emitted html: block helpers like:
-            //   string __html = ""
-            //   __html = __html + e1 + e2 + ... + eN
-            //   return __html
-            // and user-written render helpers with the same shape. These
-            // are called from inside SSR loops in the caller; each call
-            // would otherwise allocate N intermediate strings on the main
-            // heap. The single-shot rewrite turns N concat calls into one
-            // string_builder_new + N string_builder_append + one
-            // string_builder_finalize, mirroring what javac/Kotlin/Go
-            // do for chained concatenation regardless of loop context.
             self.rewrite_string_accumulator_singleshot(&mut block.statements);
-            // Return-concat rewrite — Step 5.
-            // Catches helper functions whose body ends with an inline
-            // return of a chained concat, WITHOUT an explicit accumulator
-            // variable:
-            //   return ("<tr>" + "<td>#" + r_id + "</td>" + ... + "</tr>")
-            // These strand O(N) intermediate strings on the main heap per
-            // call. Called from inside SSR loops in the caller, they blow
-            // past the 32 MB Standard tier cap and trap.
-            //
-            // Same treatment as the accumulator-decl singleshot: rewrite
-            // to string_builder_new + N append + finalize + return-of-
-            // finalize. See rewrite_return_concat_chain_to_singleshot_builder
-            // for the safety argument. Fingerprint: CODEGEN-CONCAT-CHAIN-
-            // IN-RETURN-NOT-REWRITTEN (#1f824643b07b).
             self.rewrite_return_concat_chain_to_singleshot_builder(&mut block.statements);
         }
         result
@@ -2874,22 +2883,13 @@ impl HirBuilder {
             //   - optionally insert seed_append at i + 1 (seeds the builder
             //     with the accumulator's initial non-empty literal; resolves
             //     CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK),
-            //   - optionally insert mark_decl next (captures HEAP_PTR
-            //     right after the builder is constructed; only emitted
-            //     when the body is reclaim-safe and a reclaim call is
-            //     also emitted into the body),
             //   - replace the (now-shifted) loop with replacement_loop,
             //   - insert finalize_decl after the loop.
             stmts[i] = rewrite.decl_replacement;
             let mut shifted_loop_idx = loop_idx;
-            let mut insert_at = i + 1;
+            let insert_at = i + 1;
             if let Some(seed_append) = rewrite.seed_append {
                 stmts.insert(insert_at, seed_append);
-                shifted_loop_idx += 1;
-                insert_at += 1;
-            }
-            if let Some(mark_decl) = rewrite.mark_decl {
-                stmts.insert(insert_at, mark_decl);
                 shifted_loop_idx += 1;
             }
             stmts[shifted_loop_idx] = rewrite.replacement_loop;
@@ -4032,9 +4032,8 @@ impl HirBuilder {
 
         // -- Step 2: loop_stmt must be a While or For; clone its body so we
         // can decide whether to commit before mutating the caller's slice.
-        let (mut new_body, loop_kind) = match loop_stmt {
-            HirStatement::While { body, .. } => (body.clone(), LoopKind::While),
-            HirStatement::For { body, .. } => (body.clone(), LoopKind::For),
+        let mut new_body = match loop_stmt {
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => body.clone(),
             _ => return None,
         };
 
@@ -4049,7 +4048,6 @@ impl HirBuilder {
         // -- Step 4: commit. Allocate a fresh builder name and mutate the
         // body in place, replacing the self-append.
         let sb_name = format!("__sb_{}", self.string_builder_counter);
-        let mark_name = format!("__sb_{}_mark", self.string_builder_counter);
         let tmark_name = format!("__sb_{}_tmark", self.string_builder_counter);
         self.string_builder_counter += 1;
 
@@ -4092,52 +4090,15 @@ impl HirBuilder {
         }
         Self::rewrite_body_local_helpers_to_transient(&mut new_body, &body_local_string_names);
 
-        // Step 4a: the per-iter `string_builder_reclaim(__sb_N, __mark_N)`
-        // mechanism stays disabled.
-        //
-        // The end-of-body reclaim added in 0.30.373 corrupts any
-        // cross-iter live pointer above the post-reclaim HEAP_PTR —
-        // surfaced as CMP-SSR-RECLAIM-FREES-LIVE-POINTER (7fc4f890aab9...)
-        // within hours of 0.30.374 shipping. The rollback in 0.30.375
-        // removed the emission. The reclaim helper stays registered
-        // (it's harmless if uncalled) so re-enabling is a single-line
-        // change once full body-escape tracking lands.
-        //
-        // The replacement mechanism is a Cyclone-style nested region:
-        // outer-scope values stay on the main heap, per-iteration
-        // intermediates flow through a separate transient pool. Step
-        // 4a' below wraps the body in `__transient_scope_enter` /
-        // `__transient_scope_exit`. Routing intra-body string.concat
-        // results through `__transient_alloc` happens in a follow-up
-        // commit — this revision only sets up the scope so that
-        // routing can be enabled incrementally without re-introducing
-        // the dangling-pointer failure mode.
-        let _ = &mark_name; // mark_name reserved for the future re-enable.
-
-        // Step 4a': wrap the body with transient-arena enter / exit.
+        // Step 4a: wrap the body with transient-arena enter / exit.
         //
         //   __sb_N_tmark = __transient_scope_enter()
         //   <body>
         //   __transient_scope_exit(__sb_N_tmark)
         //
-        // `__transient_scope_enter` returns the current transient bump
-        // pointer (the save mark). Lazy-init of the pool happens inside
-        // the helper on first call. `__transient_scope_exit` writes
-        // that mark back, releasing every allocation made via
-        // `__transient_alloc` during the iteration without touching the
-        // main heap. Because outer-scope assignments (the
-        // `head = json.get(...)` shape from CMP-SSR-RECLAIM-FREES-LIVE-
-        // POINTER) continue to use `__malloc`, they live on the main
-        // heap and are *not* in the region that gets reset — the
-        // failure mode that motivated the reclaim rollback cannot
-        // recur from this scope mechanism alone.
-        //
-        // Until Step 3 wires `string.concat` routing into the
-        // transient pool, this enter/exit pair is a no-op: the helper
-        // is registered, the scope is established, but no allocations
-        // currently route through it. Shipping the scope first lets
-        // us validate the bookkeeping in isolation before turning on
-        // the routing.
+        // See `src/codegen/native_stdlib/transient_arena.rs` for the pool
+        // layout and Cyclone-region invariant. Body-local concat routing
+        // is wired above via `rewrite_body_local_helpers_to_transient`.
         let tmark_init = HirExpression::Call {
             function: "transient_scope_enter".to_string(),
             arguments: vec![],
@@ -4186,9 +4147,8 @@ impl HirBuilder {
                 body: new_body,
                 location: location.clone(),
             },
-            _ => unreachable!("loop_kind matched above"),
+            _ => unreachable!("Step 2 above narrows loop_stmt to While or For"),
         };
-        let _ = loop_kind; // kept for clarity; both arms produce the right variant.
 
         // Step 4b: emit the builder-init decl. At the WASM level the
         // builder handle is an i32 pointer, but we declare it as
@@ -4199,9 +4159,7 @@ impl HirBuilder {
         // pair. Without that suppression, scope_pop reclaims the heap
         // region the builder lives in and the next iter's appends
         // overwrite it. The String shape is purely a marker; the WASM
-        // representation (i32 ptr) is unchanged. Per-iter reclamation
-        // is handled selectively by the explicit `string_builder_reclaim`
-        // call appended to the body above.
+        // representation (i32 ptr) is unchanged.
         let decl_replacement = HirStatement::VariableDeclaration {
             name: sb_name.clone(),
             var_type: HirType::String,
@@ -4248,16 +4206,6 @@ impl HirBuilder {
             })
         };
 
-        // Step 4b': capture HEAP_PTR right after the builder is built.
-        // This becomes the `init_mark` argument to every per-iter
-        // `string_builder_reclaim` call. Only emitted when the body is
-        // reclaim-safe and the rewrite ALSO appended a reclaim call
-        // (Step 4a). When the rewrite skipped reclaim emission (e.g.
-        // body escapes — CMP-SSR-RECLAIM-FREES-LIVE-POINTER), the mark
-        // is not needed and we return `None` to avoid an unused integer
-        // local.
-        let mark_decl = None;
-
         // Step 4c: emit the post-loop finalize decl. This re-binds the
         // original `acc` name to a real Clean string for any downstream
         // reader. The original decl was `is_mutable: true` by spec for
@@ -4283,7 +4231,6 @@ impl HirBuilder {
         Some(AccumulatorRewrite {
             decl_replacement,
             seed_append,
-            mark_decl,
             finalize_decl,
             replacement_loop: new_loop,
         })
@@ -5962,7 +5909,7 @@ impl HirBuilder {
     /// expressions. The result is allocated through `__transient_alloc`
     /// (see `src/codegen/native_stdlib/transient_arena.rs`) and is
     /// reclaimed at the end of the iteration by the
-    /// `__transient_scope_exit` call appended in Step 4a' of
+    /// `__transient_scope_exit` call appended in Step 4a of
     /// `try_match_accumulator_pair`.
     ///
     /// Caller invariant: `block` MUST already be wrapped by a matching
@@ -7298,5 +7245,279 @@ mod tests {
             msg.contains("No plugin loaded handles block 'canvasScene:'"),
             "expected generic message for non-alias block, got: {msg}"
         );
+    }
+
+    // ========================================================================
+    // String-accumulator shape predicates
+    //
+    // These tests pin the invariants of the five HIR-level rewrite passes
+    // documented at the top of this file. A failure here means the
+    // shape-detection has drifted and one of the SSR rewrites is either
+    // over-firing (semantic bug) or under-firing (perf regression).
+    // ========================================================================
+
+    fn loc() -> SourceLocation {
+        SourceLocation::default()
+    }
+
+    fn lit_str(s: &str) -> HirExpression {
+        HirExpression::Literal {
+            value: Value::String(s.to_string()),
+            location: loc(),
+        }
+    }
+
+    fn lit_int(n: i64) -> HirExpression {
+        HirExpression::Literal {
+            value: Value::Integer(n),
+            location: loc(),
+        }
+    }
+
+    fn var(name: &str) -> HirExpression {
+        HirExpression::Variable {
+            name: name.to_string(),
+            location: loc(),
+        }
+    }
+
+    fn add(left: HirExpression, right: HirExpression) -> HirExpression {
+        HirExpression::BinaryOp {
+            left: Box::new(left),
+            op: HirBinaryOp::Add,
+            right: Box::new(right),
+            location: loc(),
+        }
+    }
+
+    fn concat(left: HirExpression, right: HirExpression) -> HirExpression {
+        HirExpression::BinaryOp {
+            left: Box::new(left),
+            op: HirBinaryOp::StringConcat,
+            right: Box::new(right),
+            location: loc(),
+        }
+    }
+
+    fn string_decl(name: &str, init: &str) -> HirStatement {
+        HirStatement::VariableDeclaration {
+            name: name.to_string(),
+            var_type: HirType::String,
+            initializer: Some(lit_str(init)),
+            is_mutable: true,
+            location: loc(),
+        }
+    }
+
+    // ---- accumulator_decl_name --------------------------------------------
+
+    #[test]
+    fn accumulator_decl_name_matches_empty_string_init() {
+        let stmt = string_decl("acc", "");
+        assert_eq!(
+            HirBuilder::accumulator_decl_name(&stmt).as_deref(),
+            Some("acc")
+        );
+    }
+
+    /// Non-empty initializers are accepted (relaxation from
+    /// `CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK`, fingerprint 6fca1073d4bd);
+    /// pass 2's seed_append handles the leading literal.
+    #[test]
+    fn accumulator_decl_name_matches_non_empty_string_init() {
+        let stmt = string_decl("result", "[");
+        assert_eq!(
+            HirBuilder::accumulator_decl_name(&stmt).as_deref(),
+            Some("result")
+        );
+    }
+
+    #[test]
+    fn accumulator_decl_name_rejects_non_string_type() {
+        let stmt = HirStatement::VariableDeclaration {
+            name: "n".to_string(),
+            var_type: HirType::Integer,
+            initializer: Some(lit_int(0)),
+            is_mutable: true,
+            location: loc(),
+        };
+        assert!(HirBuilder::accumulator_decl_name(&stmt).is_none());
+    }
+
+    #[test]
+    fn accumulator_decl_name_rejects_non_literal_initializer() {
+        let stmt = HirStatement::VariableDeclaration {
+            name: "s".to_string(),
+            var_type: HirType::String,
+            initializer: Some(HirExpression::Call {
+                function: "foo".to_string(),
+                arguments: vec![],
+                location: loc(),
+            }),
+            is_mutable: true,
+            location: loc(),
+        };
+        assert!(HirBuilder::accumulator_decl_name(&stmt).is_none());
+    }
+
+    #[test]
+    fn accumulator_decl_name_rejects_missing_initializer() {
+        let stmt = HirStatement::VariableDeclaration {
+            name: "s".to_string(),
+            var_type: HirType::String,
+            initializer: None,
+            is_mutable: true,
+            location: loc(),
+        };
+        assert!(HirBuilder::accumulator_decl_name(&stmt).is_none());
+    }
+
+    // ---- is_string_concat_chain --------------------------------------------
+
+    #[test]
+    fn is_string_concat_chain_accepts_plus_and_string_concat_variants() {
+        assert!(HirBuilder::is_string_concat_chain(&add(
+            lit_str("a"),
+            lit_str("b")
+        )));
+        assert!(HirBuilder::is_string_concat_chain(&concat(
+            lit_str("a"),
+            lit_str("b")
+        )));
+    }
+
+    #[test]
+    fn is_string_concat_chain_rejects_non_chain_leaves() {
+        assert!(!HirBuilder::is_string_concat_chain(&lit_str("hello")));
+        assert!(!HirBuilder::is_string_concat_chain(&var("x")));
+    }
+
+    // ---- chain_contains_string_literal_leaf --------------------------------
+
+    /// The literal-leaf gate is the *safety* invariant that keeps the
+    /// return-concat rewrite from rewriting an integer addition chain
+    /// (which would produce SEM001 type errors downstream).
+    #[test]
+    fn chain_contains_string_literal_leaf_finds_deep_leaf() {
+        // (((var + var) + "x") + var) — literal buried at depth 2.
+        let chain = add(add(add(var("a"), var("b")), lit_str("x")), var("c"));
+        assert!(HirBuilder::chain_contains_string_literal_leaf(&chain));
+    }
+
+    #[test]
+    fn chain_contains_string_literal_leaf_rejects_all_variable_chain() {
+        let chain = add(add(var("a"), var("b")), var("c"));
+        assert!(!HirBuilder::chain_contains_string_literal_leaf(&chain));
+    }
+
+    // ---- count_chain_operands ----------------------------------------------
+
+    #[test]
+    fn count_chain_operands_counts_left_folded_chain() {
+        // ((a + b) + c) + d  →  4 operands
+        let chain = add(add(add(var("a"), var("b")), var("c")), var("d"));
+        assert_eq!(HirBuilder::count_chain_operands(&chain), 4);
+    }
+
+    #[test]
+    fn count_chain_operands_counts_single_leaf_as_one() {
+        assert_eq!(HirBuilder::count_chain_operands(&var("a")), 1);
+        assert_eq!(HirBuilder::count_chain_operands(&lit_str("hi")), 1);
+    }
+
+    // ---- flatten_concat_chain_fragments ------------------------------------
+
+    #[test]
+    fn flatten_concat_chain_fragments_preserves_source_order() {
+        // ((a + b) + c) + d  →  [a, b, c, d]
+        let chain = add(add(add(var("a"), var("b")), var("c")), var("d"));
+        let frags = HirBuilder::flatten_concat_chain_fragments(chain);
+        let names: Vec<&str> = frags
+            .iter()
+            .map(|f| match f {
+                HirExpression::Variable { name, .. } => name.as_str(),
+                _ => panic!("expected variable leaf"),
+            })
+            .collect();
+        assert_eq!(names, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn flatten_concat_chain_fragments_of_leaf_is_single_element() {
+        let frags = HirBuilder::flatten_concat_chain_fragments(var("only"));
+        assert_eq!(frags.len(), 1);
+    }
+
+    // ---- should_rewrite_return_chain ---------------------------------------
+
+    /// Composite gate: pass 4 fires iff the return expression is a
+    /// concat chain, has a string-literal leaf, AND has ≥ 3 operands.
+    /// At length 2 the naive `string.concat` path is already optimal;
+    /// rewriting would pessimize.
+    #[test]
+    fn should_rewrite_return_chain_fires_at_three_operands_with_literal() {
+        let expr = add(add(lit_str("a"), var("b")), var("c"));
+        assert!(HirBuilder::should_rewrite_return_chain(&expr));
+    }
+
+    #[test]
+    fn should_rewrite_return_chain_declines_at_two_operands() {
+        let expr = add(lit_str("a"), var("b"));
+        assert!(!HirBuilder::should_rewrite_return_chain(&expr));
+    }
+
+    #[test]
+    fn should_rewrite_return_chain_declines_without_string_literal_leaf() {
+        // Three operands, but no literal leaf — could be integer chain.
+        let expr = add(add(var("a"), var("b")), var("c"));
+        assert!(!HirBuilder::should_rewrite_return_chain(&expr));
+    }
+
+    #[test]
+    fn should_rewrite_return_chain_declines_bare_leaf() {
+        assert!(!HirBuilder::should_rewrite_return_chain(&lit_str("hi")));
+    }
+
+    // ---- stmt_is_chained_self_append ---------------------------------------
+
+    /// Pass 3's window scanner: `acc = acc + ...` is a chained self-append.
+    #[test]
+    fn stmt_is_chained_self_append_matches_acc_plus_expr() {
+        let stmt = HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: "acc".to_string(),
+                location: loc(),
+            },
+            value: add(var("acc"), lit_str("x")),
+            location: loc(),
+        };
+        assert!(HirBuilder::stmt_is_chained_self_append(&stmt, "acc"));
+    }
+
+    #[test]
+    fn stmt_is_chained_self_append_rejects_assignment_to_other_variable() {
+        let stmt = HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: "other".to_string(),
+                location: loc(),
+            },
+            value: add(var("acc"), lit_str("x")),
+            location: loc(),
+        };
+        assert!(!HirBuilder::stmt_is_chained_self_append(&stmt, "acc"));
+    }
+
+    #[test]
+    fn stmt_is_chained_self_append_rejects_non_self_rhs() {
+        // `acc = "other" + ...` — RHS doesn't start with `acc`.
+        let stmt = HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: "acc".to_string(),
+                location: loc(),
+            },
+            value: add(lit_str("other"), lit_str("x")),
+            location: loc(),
+        };
+        assert!(!HirBuilder::stmt_is_chained_self_append(&stmt, "acc"));
     }
 }

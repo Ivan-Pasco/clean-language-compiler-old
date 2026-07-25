@@ -55,6 +55,14 @@
 //!     __sb_0 = __string_builder_append(__sb_0, <expr>)
 //! acc = __string_builder_finalize(__sb_0)
 //! ```
+//!
+//! ## See also
+//!
+//! `src/hir/hir_builder.rs` (module doc) — pipeline map for the five
+//! string-accumulator rewrite passes that emit calls into this module.
+//! `__string_builder_reclaim` and `__heap_ptr_snapshot` stay registered
+//! as harmless stubs after the 0.30.375 reclaim rollback; see the module
+//! doc for the failure mode that removed the emission.
 
 use wasm_encoder::{BlockType, Instruction, MemArg};
 

@@ -57,6 +57,12 @@
 //! freed at end-of-iter via the bump pattern of the pool), it just
 //! means the leak from that iter survives on the main heap until the
 //! next host-driven scope_pop.
+//!
+//! ## See also
+//!
+//! `src/hir/hir_builder.rs` (module doc) — pipeline map for the five
+//! string-accumulator rewrite passes and the reclaim rollback that
+//! motivated this arena.
 
 use wasm_encoder::{BlockType, Instruction};
 
