@@ -4071,6 +4071,36 @@ impl NameResolver {
             Some(HirType::String),
             builtin_location.clone(),
         );
+        // Transient-arena variants of the string_builder trio. Used by the
+        // HIR singleshot accumulator rewrite (`rewrite_string_accumulator_
+        // singleshot`) to route every-call helper's builder growth stages
+        // through the transient pool instead of the main bump heap. The
+        // finalize_to_main variant memcpys the final bytes into a fresh
+        // main-heap allocation so the returned pointer survives the
+        // matching `transient_scope_exit`. Closes SSR-LOOP-CLASS-METHOD-
+        // HTMLBLOCK-TRAP (fp `5f77eb36`) and SSR-TUTORIALS-WASM-TRAP-PARTIAL-
+        // FIX-334 (fp `4c06a901`) which shared a root cause: every call to
+        // a helper matching the singleshot shape stranded ~500 bytes of
+        // doubling growth stages on the main heap, so N calls per request
+        // leaked N × 500 bytes.
+        self.register_builtin_fn(
+            "string_builder_new_transient",
+            vec![],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "string_builder_append_transient",
+            vec![HirType::String, HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "string_builder_finalize_to_main",
+            vec![HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
         // Carryover slot copy (see native_stdlib::carryover). Two-slot
         // ping-pong pool used by the HIR accumulator-loop rewrite to
         // stop O(N) main-heap growth for an outer-scope string variable

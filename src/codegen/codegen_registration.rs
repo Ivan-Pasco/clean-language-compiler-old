@@ -356,6 +356,77 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("string_concat_transient", concat_transient_idx);
 
+        // NATIVE: string_builder_new_transient / _append_transient / _finalize_to_main
+        // — parallel builder trio that lives in the transient arena, used by
+        // the HIR singleshot accumulator rewrite (`rewrite_string_accumulator_
+        // singleshot` in `src/hir/hir_builder.rs`) to close the
+        // SSR-LOOP-CLASS-METHOD-HTMLBLOCK-TRAP family (dashboard fingerprints
+        // `5f77eb36` and `4c06a901`).
+        //
+        // Before this trio, the singleshot rewrite unconditionally called
+        // `string_builder_new/_append/_finalize`, which allocate + grow on
+        // the main bump heap. Every invocation of a helper matching the
+        // singleshot shape (e.g. `render()` returning an `html:` block)
+        // stranded ~500 bytes of doubling growth stages on the main heap
+        // per call. In an SSR loop calling that helper N times per request,
+        // the leak became N × ~500 bytes and eventually tripped
+        // memory.grow. See `rewrite_string_accumulator_singleshot`'s
+        // comment block at ~line 3421 for the historical justification of
+        // main-heap allocation (correct for one-shot use, wrong when the
+        // helper is called from a loop).
+        //
+        // The transient variants use the same body as the main variants
+        // (gen_string_builder_new/_append are allocator-agnostic and take
+        // an `alloc_func` index), so they can be registered by re-calling
+        // the generator with `transient_alloc_idx` instead of `malloc_idx`.
+        // `finalize_to_main` is the escape hatch: it memcpys the finalized
+        // string into a fresh `__malloc`-allocated main-heap region so the
+        // caller can hold the returned pointer past `__transient_scope_exit`.
+        let sb_new_transient_instructions =
+            native_stdlib::string_builder::gen_string_builder_new(transient_alloc_idx);
+        let sb_new_transient_idx = self.register_function_with_locals(
+            "__string_builder_new_transient",
+            &[],
+            Some(WasmType::I32),
+            &[WasmType::I32],
+            &sb_new_transient_instructions,
+        )?;
+        self.add_function_alias("string_builder_new_transient", sb_new_transient_idx);
+
+        let sb_append_transient_instructions =
+            native_stdlib::string_builder::gen_string_builder_append(transient_alloc_idx);
+        let sb_append_transient_idx = self.register_function_with_locals(
+            "__string_builder_append_transient",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // local 2: capacity
+                WasmType::I32, // local 3: length
+                WasmType::I32, // local 4: str_len
+                WasmType::I32, // local 5: needed
+                WasmType::I32, // local 6: new_capacity
+                WasmType::I32, // local 7: new_builder_ptr
+                WasmType::I32, // local 8: i
+            ],
+            &sb_append_transient_instructions,
+        )?;
+        self.add_function_alias("string_builder_append_transient", sb_append_transient_idx);
+
+        let sb_finalize_to_main_instructions =
+            native_stdlib::string_builder::gen_string_builder_finalize_to_main(malloc_idx);
+        let sb_finalize_to_main_idx = self.register_function_with_locals(
+            "__string_builder_finalize_to_main",
+            &[WasmType::I32], // builder_ptr
+            Some(WasmType::I32),
+            &[
+                WasmType::I32, // local 1: length
+                WasmType::I32, // local 2: new_ptr
+                WasmType::I32, // local 3: i
+            ],
+            &sb_finalize_to_main_instructions,
+        )?;
+        self.add_function_alias("string_builder_finalize_to_main", sb_finalize_to_main_idx);
+
         // NATIVE: string_index_of - finds substring in string
         // Parameters: str_ptr (i32), search_ptr (i32)
         // Returns: index (i32) or -1 if not found

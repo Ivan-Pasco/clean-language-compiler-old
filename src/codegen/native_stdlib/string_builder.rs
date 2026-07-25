@@ -370,6 +370,130 @@ pub fn gen_string_builder_finalize() -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for `__string_builder_finalize_to_main`.
+///
+/// Parameters:
+///   - local 0: builder_ptr (i32) — pointer to a builder region that may
+///     live in the transient arena (or any region that will be reclaimed
+///     before the returned string is next consumed).
+///
+/// Returns: i32 — a pointer to a length-prefixed Clean string whose bytes
+/// live on the MAIN heap. Callers can hold the returned pointer past a
+/// `__transient_scope_exit` or any main-heap reclaim of the source
+/// builder's region.
+///
+/// This is the "escape hatch" variant of `__string_builder_finalize`.
+/// The plain finalize does `return builder_ptr + 4` — the returned string
+/// aliases into the builder's own bytes, so it dies whenever the
+/// builder's region is reclaimed. When the builder lives in the transient
+/// arena (see `native_stdlib::transient_arena`), the caller is about to
+/// call `__transient_scope_exit`, which would invalidate the alias.
+///
+/// This variant instead:
+///   1. Reads the builder's length (at offset 4).
+///   2. `__malloc`s exactly `4 + length` bytes on the main heap.
+///   3. Writes the length prefix to the new main-heap region.
+///   4. memcpys `length` bytes from `builder_ptr + 8` (past the header) to
+///      `new_ptr + 4` (past the length prefix).
+///   5. Returns the new main-heap pointer.
+///
+/// This is what closes the SSR-LOOP-CLASS-METHOD-HTMLBLOCK-TRAP family
+/// (dashboard fingerprints `5f77eb36` and `4c06a901`): the singleshot
+/// accumulator rewrite (see `hir/hir_builder.rs::rewrite_string_
+/// accumulator_singleshot`) can now safely route its builder through the
+/// transient arena, dropping the ~500-byte-per-call main-heap footprint
+/// of stranded growth stages down to just `4 + final_length` for the
+/// survivor string.
+///
+/// Locals:
+///   - local 0: builder_ptr (parameter)
+///   - local 1: length (loaded from builder_ptr + 4)
+///   - local 2: new_ptr (return value, from __malloc)
+///   - local 3: i (byte-copy loop counter)
+pub fn gen_string_builder_finalize_to_main(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Null-builder guard: if builder_ptr is 0 (upstream OOM), return 0.
+        // The plain finalize returns 0+4=4, which is a bogus pointer inside
+        // the reserved header area — this variant refuses to construct a
+        // garbage main-heap string from a null builder.
+        Instruction::LocalGet(0),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        // length = load(builder_ptr + BUILDER_LENGTH_OFFSET) -> local 1
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: BUILDER_LENGTH_OFFSET,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1),
+        // new_ptr = __malloc(4 + length) -> local 2
+        Instruction::LocalGet(1),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::Call(malloc_func),
+        Instruction::LocalTee(2),
+        // If __malloc failed, propagate 0.
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        // Write length prefix at new_ptr + 0.
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Store(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Copy loop: for i in 0..length: new_ptr[4+i] = builder_ptr[8+i]
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        // Destination address: new_ptr + 4 + i
+        Instruction::LocalGet(2),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        // Source byte: load8u from builder_ptr + BUILDER_HEADER_SIZE + i
+        Instruction::LocalGet(0),
+        Instruction::I32Const(BUILDER_HEADER_SIZE),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        // i++
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Return new main-heap pointer.
+        Instruction::LocalGet(2),
+    ]
+}
+
 /// Generate instructions for `__string_builder_reclaim`.
 ///
 /// Parameters:

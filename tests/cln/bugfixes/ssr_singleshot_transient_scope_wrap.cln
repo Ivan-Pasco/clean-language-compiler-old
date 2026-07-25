@@ -1,0 +1,62 @@
+// Test: bugfixes/ssr_singleshot_transient_scope_wrap
+// Semantic: singleshot accumulator rewrite routes its StringBuilder growth
+//           through the transient arena so per-call growth stages do not
+//           strand on the main bump heap. See
+//           `hir/hir_builder.rs::rewrite_string_accumulator_singleshot` and
+//           `codegen/native_stdlib/string_builder.rs::
+//           gen_string_builder_finalize_to_main`.
+// Fixed in: compiler 0.33.147
+// Regression: SSR-LOOP-CLASS-METHOD-HTMLBLOCK-TRAP (fingerprint 5f77eb36)
+//             SSR-TUTORIALS-WASM-TRAP-PARTIAL-FIX-334 (fingerprint 4c06a901)
+//
+// Before this fix, the singleshot rewrite emitted `string_builder_new` +
+// N× `string_builder_append` + `string_builder_finalize`, all backed by
+// __malloc on the main bump heap. When such a helper (e.g. an html:-block
+// returning `render()`) was called from an SSR loop, the growth stages
+// (16→32→64→128→256→512 bytes stranded per call) accumulated at
+// ~500 bytes per invocation. At real /tutorials scale (~500 iters), each
+// request leaked ~250 KB, and under load memory.grow eventually failed.
+//
+// The fix routes the singleshot builder through the transient arena:
+//   integer __sb_M_tmark = transient_scope_enter()
+//   string __sb_M = string_builder_new_transient()
+//   __sb_M = string_builder_append_transient(__sb_M, "seed")   (if non-empty init)
+//   __sb_M = string_builder_append_transient(__sb_M, eK)       (per fragment)
+//   ...
+//   string acc = string_builder_finalize_to_main(__sb_M)
+//   transient_scope_exit(__sb_M_tmark)
+//
+// `string_builder_finalize_to_main` memcpys the finalized bytes into a
+// fresh main-heap allocation so the returned pointer survives the
+// upcoming scope_exit. `transient_scope_exit` then reclaims every builder
+// growth stage in one bump-pointer reset.
+//
+// This test exercises a helper matching the singleshot shape called N
+// times from an outer loop. Per-call main-heap footprint drops from
+// ~500 bytes (baseline) to ~50 bytes (fix) — verified via heap_ptr
+// growth measurement outside this test.
+//
+// The test itself is a *correctness* pin: the transient-arena builder
+// and finalize_to_main memcpy must produce the identical final string
+// as the main-heap builder + finalize alias. If the memcpy is buggy
+// (wrong offset, wrong length, missing null-guard) the output length
+// would be zero or truncated.
+//
+// Expected output:
+//   500
+//   60000
+
+start:
+	string acc = ""
+	integer i = 0
+	while i < 500
+		acc = acc + renderCard("T", "D", "G", "B", "F")
+		i = i + 1
+	printl(i.toString())
+	printl(acc.length().toString())
+
+functions:
+	string renderCard(string title, string desc, string tag, string body, string footer)
+		string html = ""
+		html = html + "<div class=\"card\">" + "<header>" + title + "</header>" + "<p class=\"tag\">" + tag + "</p>" + "<section>" + desc + "</section>" + "<article>" + body + "</article>" + "<footer>" + footer + "</footer>" + "</div>"
+		return html

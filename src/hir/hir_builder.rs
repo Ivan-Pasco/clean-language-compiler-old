@@ -3514,6 +3514,7 @@ impl HirBuilder {
 
             // Commit. Allocate a fresh builder name.
             let sb_name = format!("__sb_{}", self.string_builder_counter);
+            let tmark_name = format!("__sb_{}_tmark", self.string_builder_counter);
             self.string_builder_counter += 1;
             // Extract the initial literal from the decl. `accumulator_decl_name`
             // already verified `stmts[i]` is `string <acc> = <string literal>`, so
@@ -3533,32 +3534,50 @@ impl HirBuilder {
                 }
             };
 
-            // Build the replacement statements:
-            //   - decl_replacement: `string __sb_M = string_builder_new()`
-            //   - seed_append (optional): `__sb_M = string_builder_append(__sb_M, "<init_literal>")`
+            // Build the replacement statements. The singleshot rewrite routes
+            // the builder through the transient arena (via the `_transient`
+            // variants of new/append and the `_to_main` finalize) so that per-
+            // call helpers matching this shape (e.g. `render()` returning an
+            // html:-block) don't strand their ~500 bytes of doubling growth
+            // stages on the main heap on every invocation. Closes
+            // SSR-LOOP-CLASS-METHOD-HTMLBLOCK-TRAP (fp `5f77eb36`) and
+            // SSR-TUTORIALS-WASM-TRAP-PARTIAL-FIX-334 (fp `4c06a901`).
+            //
+            //   - tmark_decl:       `integer __sb_M_tmark = transient_scope_enter()`
+            //   - decl_replacement: `string __sb_M = string_builder_new_transient()`
+            //   - seed_append (optional): `__sb_M = string_builder_append_transient(__sb_M, "<init_literal>")`
             //     emitted only when the original decl had a non-empty literal
             //     initializer (e.g. `string src = "L0\n"`). Without this seed
-            //     the initial content is silently dropped — the same class of
-            //     bug the loop-version fix (CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK,
-            //     fingerprint 6fca1073d4bd) addressed for the loop rewrite, but
-            //     the single-shot path was never updated in parallel. That gap
-            //     miscompiled every plugin helper that starts with
-            //     `string src = "..."` and repeatedly appends more source lines
-            //     (frame.data `emit_json_rows_function`, `build_to_params_body`,
-            //     `build_delete_body`, etc.), producing plugin-emitted function
-            //     bodies missing their first declaration and cascading into
-            //     380+ SEM007 errors downstream. Resolves
-            //     SEM007-PLUGIN-EMITTED-FSTR-PARAMS-UNRESOLVED (fingerprint
-            //     da29eb806cc8).
+            //     the initial content is silently dropped — same shape as
+            //     the loop-version fix (CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK,
+            //     fingerprint 6fca1073d4bd). Also resolves
+            //     SEM007-PLUGIN-EMITTED-FSTR-PARAMS-UNRESOLVED (fp da29eb806cc8).
             //   - flattened appends:   one statement per fragment, replacing
             //                          the N chained self-append statements
-            //   - finalize_decl:    `string acc = string_builder_finalize(__sb_M)`
-            //                       inserted after the last append
+            //   - finalize_decl:    `string acc = string_builder_finalize_to_main(__sb_M)`
+            //                       — memcpys the finalized bytes into a fresh
+            //                       main-heap alloc so the returned pointer
+            //                       survives the upcoming scope_exit.
+            //   - tmark_exit:       `transient_scope_exit(__sb_M_tmark)` —
+            //                       reclaims every builder growth stage +
+            //                       any transient body-local strings allocated
+            //                       during append-fragment evaluation.
+            let tmark_decl = HirStatement::VariableDeclaration {
+                name: tmark_name.clone(),
+                var_type: HirType::Integer,
+                initializer: Some(HirExpression::Call {
+                    function: "transient_scope_enter".to_string(),
+                    arguments: vec![],
+                    location: decl_loc.clone(),
+                }),
+                is_mutable: false,
+                location: decl_loc.clone(),
+            };
             let decl_replacement = HirStatement::VariableDeclaration {
                 name: sb_name.clone(),
                 var_type: HirType::String,
                 initializer: Some(HirExpression::Call {
-                    function: "string_builder_new".to_string(),
+                    function: "string_builder_new_transient".to_string(),
                     arguments: vec![],
                     location: decl_loc.clone(),
                 }),
@@ -3574,7 +3593,7 @@ impl HirBuilder {
                         location: decl_loc.clone(),
                     },
                     value: HirExpression::Call {
-                        function: "string_builder_append".to_string(),
+                        function: "string_builder_append_transient".to_string(),
                         arguments: vec![
                             HirExpression::Variable {
                                 name: sb_name.clone(),
@@ -3594,7 +3613,7 @@ impl HirBuilder {
                 name: acc_name.clone(),
                 var_type: HirType::String,
                 initializer: Some(HirExpression::Call {
-                    function: "string_builder_finalize".to_string(),
+                    function: "string_builder_finalize_to_main".to_string(),
                     arguments: vec![HirExpression::Variable {
                         name: sb_name.clone(),
                         location: decl_loc.clone(),
@@ -3604,10 +3623,22 @@ impl HirBuilder {
                 is_mutable: true,
                 location: decl_loc.clone(),
             };
+            let tmark_exit = HirStatement::Expression {
+                expression: HirExpression::Call {
+                    function: "transient_scope_exit".to_string(),
+                    arguments: vec![HirExpression::Variable {
+                        name: tmark_name.clone(),
+                        location: decl_loc.clone(),
+                    }],
+                    location: decl_loc.clone(),
+                },
+                location: decl_loc.clone(),
+            };
 
             // Drain the chained self-append window (i+1..=last_append) and
-            // flatten each into per-fragment `__sb = string_builder_append(__sb, eK)`
-            // statements via the existing `rewrite_self_append_collect` machinery.
+            // flatten each into per-fragment
+            // `__sb = string_builder_append_transient(__sb, eK)` statements
+            // via the existing `rewrite_self_append_collect` machinery.
             let mut flattened_appends: Vec<HirStatement> = Vec::new();
             let drained: Vec<HirStatement> = stmts.drain(i + 1..=last_append).collect();
             for stmt in drained {
@@ -3615,24 +3646,28 @@ impl HirBuilder {
                     stmt,
                     &acc_name,
                     &sb_name,
+                    "string_builder_append_transient",
                     &mut flattened_appends,
                 );
             }
 
             // Splice in the rewrite output:
-            //   - replace stmts[i] with decl_replacement
-            //   - insert (seed_append?) + flattened_appends + finalize_decl right after it
-            stmts[i] = decl_replacement;
+            //   - replace stmts[i] with tmark_decl (the enter)
+            //   - insert decl_replacement + (seed_append?) + flattened_appends
+            //     + finalize_decl + tmark_exit right after it
+            stmts[i] = tmark_decl;
             let mut to_insert: Vec<HirStatement> = Vec::new();
+            to_insert.push(decl_replacement);
             if let Some(seed) = seed_append {
                 to_insert.push(seed);
             }
             to_insert.extend(flattened_appends);
             to_insert.push(finalize_decl);
+            to_insert.push(tmark_exit);
             let new_segment_len = to_insert.len();
             stmts.splice(i + 1..i + 1, to_insert);
-            // Resume scanning after the newly inserted finalize.
-            // i (decl) + 1 + new_segment_len (optional seed + appends + finalize) = next index
+            // Resume scanning after the newly inserted scope_exit.
+            // i (tmark_decl) + 1 + new_segment_len = next index
             i = i + 1 + new_segment_len;
         }
     }
@@ -4051,7 +4086,12 @@ impl HirBuilder {
         let tmark_name = format!("__sb_{}_tmark", self.string_builder_counter);
         self.string_builder_counter += 1;
 
-        Self::rewrite_self_append_in_block(&mut new_body, &acc_name, &sb_name);
+        Self::rewrite_self_append_in_block(
+            &mut new_body,
+            &acc_name,
+            &sb_name,
+            "string_builder_append",
+        );
 
         // Step 4a-pre: route body-local string-concat results through the
         // transient arena. After `rewrite_self_append_in_block` has
@@ -5522,14 +5562,29 @@ impl HirBuilder {
 
     /// After analysis confirms the body is rewritable, walk it again to
     /// replace the single canonical self-append statement.
-    fn rewrite_self_append_in_block(block: &mut HirBlock, acc_name: &str, sb_name: &str) {
+    ///
+    /// `append_fn` selects the builder-append helper to emit:
+    ///   * `"string_builder_append"` — main-heap builder, used by the loop
+    ///     rewrite where the builder must survive across iterations.
+    ///   * `"string_builder_append_transient"` — transient-arena builder,
+    ///     used by the singleshot rewrite where the builder is bracketed
+    ///     by a `__transient_scope_enter` / `__transient_scope_exit` pair
+    ///     inside a single function body. The final string is memcpy'd to
+    ///     the main heap via `__string_builder_finalize_to_main` before
+    ///     the scope exit.
+    fn rewrite_self_append_in_block(
+        block: &mut HirBlock,
+        acc_name: &str,
+        sb_name: &str,
+        append_fn: &str,
+    ) {
         // Two-pass walk because chained-RHS rewrites turn a single
         // assignment into N sequential statements. Pass 1 transforms each
         // statement *in place* into a possibly-Vec-valued replacement;
         // Pass 2 flattens the Vec back into the block.
         let mut new_stmts: Vec<HirStatement> = Vec::with_capacity(block.statements.len());
         for stmt in std::mem::take(&mut block.statements).into_iter() {
-            Self::rewrite_self_append_collect(stmt, acc_name, sb_name, &mut new_stmts);
+            Self::rewrite_self_append_collect(stmt, acc_name, sb_name, append_fn, &mut new_stmts);
         }
         block.statements = new_stmts;
     }
@@ -5537,11 +5592,14 @@ impl HirBuilder {
     /// Lower one input statement into 1+ output statements, appending them
     /// to `out`. The chained-RHS case is the only one that produces more
     /// than one output: `acc = acc + e1 + e2 + e3` becomes three
-    /// `sb = string_builder_append(sb, eK)` statements in source order.
+    /// `sb = <append_fn>(sb, eK)` statements in source order.
+    ///
+    /// See `rewrite_self_append_in_block` for the meaning of `append_fn`.
     fn rewrite_self_append_collect(
         stmt: HirStatement,
         acc_name: &str,
         sb_name: &str,
+        append_fn: &str,
         out: &mut Vec<HirStatement>,
     ) {
         match stmt {
@@ -5575,7 +5633,7 @@ impl HirBuilder {
                             location: location.clone(),
                         },
                         value: HirExpression::Call {
-                            function: "string_builder_append".to_string(),
+                            function: append_fn.to_string(),
                             arguments: vec![
                                 HirExpression::Variable {
                                     name: sb_name.to_string(),
@@ -5601,9 +5659,9 @@ impl HirBuilder {
                 mut else_branch,
                 location,
             } => {
-                Self::rewrite_self_append_in_block(&mut then_branch, acc_name, sb_name);
+                Self::rewrite_self_append_in_block(&mut then_branch, acc_name, sb_name, append_fn);
                 if let Some(eb) = else_branch.as_mut() {
-                    Self::rewrite_self_append_in_block(eb, acc_name, sb_name);
+                    Self::rewrite_self_append_in_block(eb, acc_name, sb_name, append_fn);
                 }
                 out.push(HirStatement::If {
                     condition,
@@ -5617,7 +5675,7 @@ impl HirBuilder {
                 mut body,
                 location,
             } => {
-                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name);
+                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name, append_fn);
                 out.push(HirStatement::While {
                     condition,
                     body,
@@ -5630,7 +5688,7 @@ impl HirBuilder {
                 mut body,
                 location,
             } => {
-                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name);
+                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name, append_fn);
                 out.push(HirStatement::For {
                     variable,
                     iterable,

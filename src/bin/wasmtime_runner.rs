@@ -320,6 +320,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // State reset stubs (runtime resets are no-ops in standalone test runner)
     linker.func_wrap("env", "_state_reset_all", || {})?;
     linker.func_wrap("env", "_state_reset_named", |_: i32| {})?;
+    // frame.ui bridge stubs — never fire when html: blocks are inlined at HIR time;
+    // present only so re-exported wrappers link. Returning 0 is safe because these
+    // never appear on a live call path in the SSR-TRAP investigation shape.
+    linker.func_wrap(
+        "env",
+        "_ui_render_page",
+        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+    )?;
+    linker.func_wrap("env", "_html_escape", |_: i32, _: i32| -> i32 { 0 })?;
+    // Heap-probe stubs for --emit-heap-probes / --emit-bridge-probes instrumentation.
+    // Real impl lives in the errors-dashboard capture harness; standalone runner
+    // prints callsite_id + resulting heap ptr when CLN_WASMTIME_PROBE=1 is set,
+    // so leak investigations can eyeball per-callsite growth without cluttering
+    // normal test output. Silent no-op by default.
+    linker.func_wrap("env", "_probe_ptr", |id: i32, ptr: i32| {
+        if std::env::var("CLN_WASMTIME_PROBE").is_ok() {
+            eprintln!("[probe] id={id} ptr={ptr}");
+        }
+    })?;
+    linker.func_wrap("env", "_probe_ptr_dump", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_probe_ptr_reset", || {})?;
+    // _json_get bridge stub: returns 0 (null string pointer) — unblocks link.
+    // Emitted by json.get bridge path when boxed-any coercion needs raw json access.
+    linker.func_wrap("env", "_json_get", |_: i32, _: i32| -> i32 { 0 })?;
 
     // Server sleep stub
     linker.func_wrap("env", "_server_sleep", |_: i64| {})?;
@@ -1786,6 +1810,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect();
         func.call(&mut store, &[], &mut results)?;
         println!("--- End Output ---");
+        // Post-run heap footprint report — opt-in via CLN_WASMTIME_HEAP_REPORT=1.
+        // Handy for SSR-style leak investigations where you want to compare
+        // final __heap_ptr and memory.pages across N-scaled runs of the same
+        // module. Off by default so normal test output stays clean.
+        if std::env::var("CLN_WASMTIME_HEAP_REPORT").is_ok() {
+            if let Some(Extern::Global(heap_global)) = instance.get_export(&mut store, "__heap_ptr")
+            {
+                let final_heap = heap_global.get(&mut store).i32().unwrap_or(0);
+                let pages = instance
+                    .get_memory(&mut store, "memory")
+                    .map(|m| m.size(&store))
+                    .unwrap_or(0);
+                println!("📊 __heap_ptr={final_heap} memory_pages={pages}");
+            }
+        }
         println!("✅ Execution completed successfully!");
     } else {
         println!("⚠️  No start function found. Available exports:");
