@@ -246,6 +246,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "http_head", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "http_options", |_: i32, _: i32| -> i32 { 0 })?;
 
+    // Delivery-2 JSON bridges (BOXED_ANY_ABI.md, [P2-cont-2b]). Stub with a
+    // serde_json-backed implementation so JSON coverage tests can execute
+    // end-to-end under `--enable-json-bridge` without needing a real
+    // clean-server host. The bridges read and write the boxed-Any layout
+    // per BOXED_ANY_ABI §3 via `wasmtime_runner_json_bridge` helpers.
+    //
+    // See tests/common/json_stub_host.rs for the reference implementation
+    // — the runner mirrors it but adapts to the runner's `Store<()>` type.
+    register_json_v2_bridges(&mut linker)?;
+
     // Add additional required imports
     linker.func_wrap("env", "input", |_: i32| -> i32 { 0 })?;
     linker.func_wrap("env", "input_integer", |_: i32| -> i32 { 0 })?;
@@ -1806,4 +1816,305 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Delivery-2 JSON bridge stubs (BOXED_ANY_ABI.md)
+// ---------------------------------------------------------------------------
+//
+// Minimal in-process implementation of `_json_encode_v2` /
+// `_json_encode_pretty_v2` / `_json_decode_v2` for standalone JSON coverage
+// testing. Reads and writes the boxed-Any tree layout defined in
+// foundation/spec/platform/BOXED_ANY_ABI.md §3, using the module's own
+// `malloc` export so heap allocations stay coherent with WASM-side memory
+// bookkeeping.
+//
+// This is a runner-only stub. Production hosts (clean-server 1.9.98+,
+// clean-framework 2.12.187+) provide the real implementations — see
+// clean-server/src/bridge.rs and clean-framework/plugins/frame.server.
+
+fn register_json_v2_bridges(linker: &mut Linker<()>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "_json_encode_v2",
+        |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            let value = match json_v2::read_boxed_any(&mut caller, ptr) {
+                Ok(v) => v,
+                Err(_) => return 0,
+            };
+            json_v2::alloc_lp_string(&mut caller, &value.to_string()).unwrap_or(0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "_json_encode_pretty_v2",
+        |mut caller: Caller<'_, ()>, ptr: i32| -> i32 {
+            let value = match json_v2::read_boxed_any(&mut caller, ptr) {
+                Ok(v) => v,
+                Err(_) => return 0,
+            };
+            let s = serde_json::to_string_pretty(&value).unwrap_or_default();
+            json_v2::alloc_lp_string(&mut caller, &s).unwrap_or(0)
+        },
+    )?;
+    // NOTE: The compiler emits `_json_decode_v2` as an (i32, i32) → i32 WASM
+    // import because the registry declares `params=["string"]` with default
+    // `expand_strings=true`, which unpacks strings as (ptr, len) pairs at the
+    // WASM boundary. The runner mirrors that shape. Real hosts
+    // (clean-server 1.9.98+) do the same.
+    linker.func_wrap(
+        "env",
+        "_json_decode_v2",
+        |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> i32 {
+            let text = match json_v2::read_utf8_bytes(&mut caller, ptr, len) {
+                Ok(t) => t,
+                Err(_) => return 0,
+            };
+            let value: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(_) => return 0, // D5 sentinel
+            };
+            json_v2::write_boxed_any(&mut caller, &value).unwrap_or(0)
+        },
+    )?;
+    Ok(())
+}
+
+mod json_v2 {
+    use super::*;
+    use serde_json::Value;
+
+    fn memory(caller: &mut Caller<'_, ()>) -> Option<Memory> {
+        match caller.get_export("memory") {
+            Some(Extern::Memory(m)) => Some(m),
+            _ => None,
+        }
+    }
+
+    fn malloc(caller: &mut Caller<'_, ()>, size: i32) -> Result<i32, String> {
+        let f = caller
+            .get_export("malloc")
+            .and_then(|e| {
+                if let Extern::Func(f) = e {
+                    Some(f)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| "no malloc export".to_string())?;
+        let typed = f
+            .typed::<i32, i32>(&caller)
+            .map_err(|e| format!("malloc typed: {e}"))?;
+        typed
+            .call(&mut *caller, size)
+            .map_err(|e| format!("malloc call: {e}"))
+    }
+
+    fn read_i32(caller: &mut Caller<'_, ()>, ptr: i32) -> Result<i32, String> {
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data(&caller);
+        let p = ptr as usize;
+        if p + 4 > d.len() {
+            return Err(format!("read_i32 OOB at {p}"));
+        }
+        Ok(i32::from_le_bytes([d[p], d[p + 1], d[p + 2], d[p + 3]]))
+    }
+
+    fn read_i64(caller: &mut Caller<'_, ()>, ptr: i32) -> Result<i64, String> {
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data(&caller);
+        let p = ptr as usize;
+        if p + 8 > d.len() {
+            return Err(format!("read_i64 OOB at {p}"));
+        }
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&d[p..p + 8]);
+        Ok(i64::from_le_bytes(b))
+    }
+
+    fn read_f64(caller: &mut Caller<'_, ()>, ptr: i32) -> Result<f64, String> {
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data(&caller);
+        let p = ptr as usize;
+        if p + 8 > d.len() {
+            return Err(format!("read_f64 OOB at {p}"));
+        }
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&d[p..p + 8]);
+        Ok(f64::from_le_bytes(b))
+    }
+
+    fn write_i32(caller: &mut Caller<'_, ()>, ptr: i32, v: i32) -> Result<(), String> {
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data_mut(&mut *caller);
+        let p = ptr as usize;
+        if p + 4 > d.len() {
+            return Err(format!("write_i32 OOB at {p}"));
+        }
+        d[p..p + 4].copy_from_slice(&v.to_le_bytes());
+        Ok(())
+    }
+
+    fn write_f64(caller: &mut Caller<'_, ()>, ptr: i32, v: f64) -> Result<(), String> {
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data_mut(&mut *caller);
+        let p = ptr as usize;
+        if p + 8 > d.len() {
+            return Err(format!("write_f64 OOB at {p}"));
+        }
+        d[p..p + 8].copy_from_slice(&v.to_le_bytes());
+        Ok(())
+    }
+
+    /// Read `len` UTF-8 bytes starting at `ptr`. Unlike `read_lp_string`,
+    /// this is a raw byte range — the compiler passes decoded strings as
+    /// (ptr, len) pairs when the plugin declares `expand_strings=true`.
+    pub fn read_utf8_bytes(
+        caller: &mut Caller<'_, ()>,
+        ptr: i32,
+        len: i32,
+    ) -> Result<String, String> {
+        if len < 0 {
+            return Err(format!("negative length {len}"));
+        }
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data(&caller);
+        let s = ptr as usize;
+        let e = s + len as usize;
+        if e > d.len() {
+            return Err(format!("read_utf8_bytes OOB {s}..{e}"));
+        }
+        String::from_utf8(d[s..e].to_vec()).map_err(|e| format!("bad UTF-8: {e}"))
+    }
+
+    pub fn read_lp_string(caller: &mut Caller<'_, ()>, ptr: i32) -> Result<String, String> {
+        let len = read_i32(caller, ptr)?;
+        if len < 0 {
+            return Err(format!("negative LP length {len}"));
+        }
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data(&caller);
+        let s = (ptr as usize) + 4;
+        let e = s + len as usize;
+        if e > d.len() {
+            return Err(format!("read_lp_string OOB {s}..{e}"));
+        }
+        String::from_utf8(d[s..e].to_vec()).map_err(|e| format!("bad UTF-8: {e}"))
+    }
+
+    pub fn alloc_lp_string(caller: &mut Caller<'_, ()>, s: &str) -> Result<i32, String> {
+        let b = s.as_bytes();
+        let ptr = malloc(caller, 4 + b.len() as i32)?;
+        write_i32(caller, ptr, b.len() as i32)?;
+        let mem = memory(caller).ok_or("no memory")?;
+        let d = mem.data_mut(&mut *caller);
+        let start = (ptr as usize) + 4;
+        let end = start + b.len();
+        if end > d.len() {
+            return Err(format!("alloc_lp_string OOB {start}..{end}"));
+        }
+        d[start..end].copy_from_slice(b);
+        Ok(ptr)
+    }
+
+    pub fn read_boxed_any(caller: &mut Caller<'_, ()>, ptr: i32) -> Result<Value, String> {
+        if ptr == 0 {
+            return Err("null boxed-Any pointer".into());
+        }
+        let tag = read_i32(caller, ptr)?;
+        match tag {
+            0 => Ok(Value::Null),
+            1 => Ok(Value::from(read_i64(caller, ptr + 4)?)),
+            2 => Ok(Value::Bool(read_i32(caller, ptr + 4)? != 0)),
+            3 => {
+                let f = read_f64(caller, ptr + 4)?;
+                serde_json::Number::from_f64(f)
+                    .map(Value::Number)
+                    .ok_or_else(|| format!("non-finite {f}"))
+            }
+            4 => {
+                let sp = read_i32(caller, ptr + 4)?;
+                Ok(Value::String(read_lp_string(caller, sp)?))
+            }
+            5 => {
+                let ap = read_i32(caller, ptr + 4)?;
+                let count = read_i32(caller, ap)?;
+                let mut out = Vec::with_capacity(count as usize);
+                for i in 0..count {
+                    let cp = read_i32(caller, ap + 4 + i * 4)?;
+                    out.push(read_boxed_any(caller, cp)?);
+                }
+                Ok(Value::Array(out))
+            }
+            6 => {
+                let op = read_i32(caller, ptr + 4)?;
+                let count = read_i32(caller, op)?;
+                let mut out = serde_json::Map::with_capacity(count as usize);
+                for i in 0..count {
+                    let kp = read_i32(caller, op + 4 + i * 8)?;
+                    let vp = read_i32(caller, op + 4 + i * 8 + 4)?;
+                    out.insert(read_lp_string(caller, kp)?, read_boxed_any(caller, vp)?);
+                }
+                Ok(Value::Object(out))
+            }
+            _ => Err(format!("invalid tag {tag} at {ptr}")),
+        }
+    }
+
+    pub fn write_boxed_any(caller: &mut Caller<'_, ()>, v: &Value) -> Result<i32, String> {
+        let ptr = malloc(caller, 12)?;
+        write_i32(caller, ptr + 4, 0)?;
+        write_i32(caller, ptr + 8, 0)?;
+        match v {
+            Value::Null => write_i32(caller, ptr, 0)?,
+            Value::Bool(b) => {
+                write_i32(caller, ptr, 2)?;
+                write_i32(caller, ptr + 4, if *b { 1 } else { 0 })?;
+            }
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    write_i32(caller, ptr, 1)?;
+                    let lo = (i & 0xFFFF_FFFF) as i32;
+                    let hi = ((i >> 32) & 0xFFFF_FFFF) as i32;
+                    write_i32(caller, ptr + 4, lo)?;
+                    write_i32(caller, ptr + 8, hi)?;
+                } else if let Some(f) = n.as_f64() {
+                    write_i32(caller, ptr, 3)?;
+                    write_f64(caller, ptr + 4, f)?;
+                } else {
+                    return Err(format!("unrepresentable {n}"));
+                }
+            }
+            Value::String(s) => {
+                write_i32(caller, ptr, 4)?;
+                let sp = alloc_lp_string(caller, s)?;
+                write_i32(caller, ptr + 4, sp)?;
+            }
+            Value::Array(items) => {
+                let count = items.len() as i32;
+                let ap = malloc(caller, 4 + count * 4)?;
+                write_i32(caller, ap, count)?;
+                for (i, item) in items.iter().enumerate() {
+                    let cp = write_boxed_any(caller, item)?;
+                    write_i32(caller, ap + 4 + (i as i32) * 4, cp)?;
+                }
+                write_i32(caller, ptr, 5)?;
+                write_i32(caller, ptr + 4, ap)?;
+            }
+            Value::Object(entries) => {
+                let count = entries.len() as i32;
+                let op = malloc(caller, 4 + count * 8)?;
+                write_i32(caller, op, count)?;
+                for (i, (k, val)) in entries.iter().enumerate() {
+                    let kp = alloc_lp_string(caller, k)?;
+                    let vp = write_boxed_any(caller, val)?;
+                    write_i32(caller, op + 4 + (i as i32) * 8, kp)?;
+                    write_i32(caller, op + 4 + (i as i32) * 8 + 4, vp)?;
+                }
+                write_i32(caller, ptr, 6)?;
+                write_i32(caller, ptr + 4, op)?;
+            }
+        }
+        Ok(ptr)
+    }
 }

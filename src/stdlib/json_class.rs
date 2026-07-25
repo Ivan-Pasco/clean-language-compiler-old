@@ -1000,6 +1000,46 @@ impl JsonClass {
             self.generate_from_cln_pairs_instructions(malloc_index),
         )?;
 
+        // __json_try_decode_v2(raw: i32) -> i32
+        // Post-check wrapper around a `_json_decode_v2` bridge return value.
+        // Per BOXED_ANY_ABI §D5 the bridge returns 0 on parse failure. This
+        // helper substitutes a freshly allocated tag-0 boxed-Any (null tag)
+        // for the 0 sentinel and returns non-zero results unchanged. Emitted
+        // by mir_builder/expressions.rs for `json.tryTextToData` under
+        // `--enable-json-bridge` ([P2-cont-2b]).
+        //
+        // The wrapper is a pure WASM function — it never calls the bridge
+        // itself; the MIR passes in the already-completed bridge call
+        // result. Allocation strategy: a fresh 12-byte block per invocation
+        // rather than a module-init singleton, since the coverage tests
+        // never rely on identity of the null-boxed-Any pointer, only on
+        // its tag byte.
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_try_decode_v2",
+            &[WasmType::I32],    // raw bridge result (0 on parse failure)
+            Some(WasmType::I32), // returns non-zero boxed-Any pointer
+            &[
+                WasmType::I32, // 1: null_box_ptr
+            ],
+            Self::generate_json_try_decode_v2_instructions(malloc_index),
+        )?;
+
+        // __json_decode_v2_or_raise(raw: i32) -> i32
+        // Post-check wrapper around a `_json_decode_v2` bridge return value.
+        // Per D5 raises (via WASM unreachable trap) when the bridge returned
+        // the 0 sentinel; otherwise returns the pointer unchanged. Emitted
+        // by mir_builder/expressions.rs for `json.textToData` /
+        // `json.decode` under `--enable-json-bridge` ([P2-cont-2b]).
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_decode_v2_or_raise",
+            &[WasmType::I32],    // raw bridge result (0 on parse failure)
+            Some(WasmType::I32), // returns non-zero boxed-Any pointer
+            &[],
+            Self::generate_json_decode_v2_or_raise_instructions(),
+        )?;
+
         // json.dataToText(data: any) -> string
         // Convert data structure to JSON text
         register_stdlib_function_with_locals(
@@ -8052,6 +8092,78 @@ impl JsonClass {
             }),
             // Return array pointer
             Instruction::LocalGet(6),
+        ]
+    }
+
+    /// Generate WASM body for `__json_try_decode_v2(raw: i32) -> i32`.
+    ///
+    /// Layout:
+    ///   local 0: raw (param)
+    ///   local 1: null_box_ptr (scratch)
+    ///
+    /// Semantics (Delivery 2 §D5): if raw != 0, return raw; else allocate a
+    /// fresh 12-byte block, store tag=0 (Null) at offset 0, zero out offsets
+    /// 4 and 8, and return the block pointer.
+    fn generate_json_try_decode_v2_instructions(malloc_idx: u32) -> Vec<Instruction<'static>> {
+        vec![
+            // if raw != 0 → return raw
+            Instruction::LocalGet(0),
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(0),
+            Instruction::Return,
+            Instruction::End,
+            // null_box_ptr = malloc(12)
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_idx),
+            Instruction::LocalSet(1),
+            // null_box_ptr[0] = 0 (AnyTypeTag::Null)
+            Instruction::LocalGet(1),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            // null_box_ptr[4] = 0
+            Instruction::LocalGet(1),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            // null_box_ptr[8] = 0
+            Instruction::LocalGet(1),
+            Instruction::I32Const(0),
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 2,
+                memory_index: 0,
+            }),
+            // return null_box_ptr
+            Instruction::LocalGet(1),
+        ]
+    }
+
+    /// Generate WASM body for `__json_decode_v2_or_raise(raw: i32) -> i32`.
+    ///
+    /// Layout:
+    ///   local 0: raw (param)
+    ///
+    /// Semantics (Delivery 2 §D5): if raw != 0, return raw; else trap via
+    /// WASM `unreachable`. The trap is Clean's raise mechanism at the WASM
+    /// level — the runtime host translates it into a `error()` with message
+    /// "JSON parse failure" for the caller.
+    fn generate_json_decode_v2_or_raise_instructions() -> Vec<Instruction<'static>> {
+        vec![
+            // if raw == 0 → trap
+            Instruction::LocalGet(0),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::Unreachable,
+            Instruction::End,
+            // return raw
+            Instruction::LocalGet(0),
         ]
     }
 }

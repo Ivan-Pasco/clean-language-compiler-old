@@ -989,73 +989,96 @@ impl MirBuilder {
                             | Some("json.decode")
                     )
                 {
-                    // Only take the bridge path for scalar-ish argument types.
-                    // Class / List / Pairs still hit the specialized helpers below
-                    // until the marshalling landing.
+                    // [P2-cont-2b] Under --enable-json-bridge the four spec'd
+                    // JSON entry points dispatch to the Delivery-2 host bridges
+                    // (`_json_encode_v2` / `_json_encode_pretty_v2` /
+                    // `_json_decode_v2`) declared in the corrected function
+                    // registry (see foundation/spec/platform/function-registry.toml
+                    // and BOXED_ANY_ABI.md §3.2/§3.3).
+                    //
+                    // Class-typed arguments still hit `__serialize_ClassName`
+                    // (kept per orchestrator A4 until [P5]/[P6]) — skip the
+                    // bridge for those. List<T> and Pairs<K,V> now GO through
+                    // the bridge: we reuse `emit_box_any` (which already
+                    // routes typed collections through `__json_from_cln_list`
+                    // / `__json_from_cln_pairs`) to normalize them into the
+                    // JSON-tree layout that `_json_encode_v2` expects.
                     let arg_ty = &arguments[0].expr_type;
                     let is_class = matches!(arg_ty, ConcreteType::Class { .. });
-                    let is_list = matches!(arg_ty, ConcreteType::Array(_));
-                    let is_pairs = matches!(arg_ty, ConcreteType::Pairs(_, _));
 
-                    // For encode-shaped names (dataToText/prettyDataToText/encode)
-                    // the class / list / pairs cases keep the legacy dispatch —
-                    // the bridge can't consume a raw Clean typed collection today.
-                    // Skip to the fallback branches for those; scalars (Any,
-                    // String, Number, Integer, Boolean, Null) go through the
-                    // bridge because they already round-trip as boxed-Any values.
                     let encode_shaped = matches!(
                         function_name_opt.as_deref(),
                         Some("json.dataToText")
                             | Some("json.prettyDataToText")
                             | Some("json.encode")
                     );
-                    let skip_bridge_for_shape = encode_shaped && (is_class || is_list || is_pairs);
+                    let skip_bridge_for_shape = encode_shaped && is_class;
 
                     if !skip_bridge_for_shape {
+                        let is_try =
+                            matches!(function_name_opt.as_deref(), Some("json.tryTextToData"));
+                        let is_decode_variant = matches!(
+                            function_name_opt.as_deref(),
+                            Some("json.textToData")
+                                | Some("json.tryTextToData")
+                                | Some("json.decode")
+                        );
+
                         let bridge_name = match function_name_opt.as_deref() {
                             Some("json.textToData")
                             | Some("json.tryTextToData")
-                            | Some("json.decode") => "_json_decode",
-                            Some("json.prettyDataToText") => "_json_encode_pretty",
-                            Some("json.dataToText") | Some("json.encode") => "_json_encode",
+                            | Some("json.decode") => "_json_decode_v2",
+                            Some("json.prettyDataToText") => "_json_encode_pretty_v2",
+                            Some("json.dataToText") | Some("json.encode") => "_json_encode_v2",
                             _ => unreachable!(),
                         };
-                        let is_try =
-                            matches!(function_name_opt.as_deref(), Some("json.tryTextToData"));
 
-                        let arg_id = self.build_expression(context, &arguments[0])?;
+                        // Evaluate the argument.
+                        let raw_arg_id = self.build_expression(context, &arguments[0])?;
 
-                        let result_id = ValueId(context.function.next_value_id);
+                        // For encode variants that receive a typed collection or
+                        // any non-Any scalar, box it to Any first. `emit_box_any`
+                        // already handles the List<T> / Pairs<K,V> marshalling by
+                        // routing through `__json_from_cln_list` /
+                        // `__json_from_cln_pairs`, then wrapping in a 12-byte
+                        // boxed-Any per BOXED_ANY_ABI.md.
+                        let call_arg_id = if !is_decode_variant {
+                            // Encode variants (encode / dataToText / prettyDataToText)
+                            // expect a boxed-Any pointer. If the source is already
+                            // Any (Ptr(U8)/Any MIR type from a prior box), pass it
+                            // through; otherwise box it.
+                            match arg_ty {
+                                // Any already boxed — pass through.
+                                ConcreteType::Any => raw_arg_id,
+                                _ => self.emit_box_any(
+                                    context,
+                                    raw_arg_id,
+                                    arg_ty,
+                                    &expression.location,
+                                ),
+                            }
+                        } else {
+                            // Decode variants take a string pointer as-is.
+                            raw_arg_id
+                        };
+
+                        let call_result_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
-                        // _json_decode returns a boxed-Any pointer; the encode
-                        // bridges return an LP string pointer. Both are `i32`
-                        // at the WASM level, so a Ptr(U8) MIR type covers both.
                         self.register_temp_local(
                             context,
-                            result_id,
+                            call_result_id,
                             MirType::Ptr(Box::new(MirType::U8)),
                             expression.location.clone(),
                         );
 
-                        // Compiler-emitted `onError → null` wrapper for
-                        // json.tryTextToData is scheduled for [P2-cont-2]
-                        // alongside the marshalling helper (both need the
-                        // same MIR try-block plumbing). For now, tryTextToData
-                        // routes directly to `_json_decode` without the
-                        // wrapper — behavior matches parse-on-valid-input;
-                        // parse-on-invalid-input will trap until the wrapper
-                        // lands. Coverage tests exercising invalid-input paths
-                        // stay on the legacy flag for the interim.
-                        let _ = is_try;
-
                         let call_instr = MirInstruction {
-                            dest: Some(result_id),
+                            dest: Some(call_result_id),
                             operation: MirOperation::Call {
                                 function: MirOperand::NamedFunction {
                                     name: bridge_name.to_string(),
                                     symbol_id: SymbolId(0),
                                 },
-                                arguments: vec![MirOperand::Value(arg_id)],
+                                arguments: vec![MirOperand::Value(call_arg_id)],
                             },
                             location: expression.location.clone(),
                         };
@@ -1064,10 +1087,34 @@ impl MirBuilder {
                         trace!(
                             bridge = %bridge_name,
                             fn_name = ?function_name_opt.as_deref(),
-                            "JSON call dispatched to Layer 2 bridge (Option B)"
+                            "JSON call dispatched to Layer 2 bridge (v2, Delivery 2)"
                         );
 
-                        return Ok(result_id);
+                        // Sentinel handling for _json_decode_v2 (D5). The bridge
+                        // returns 0 on parse failure. json.tryTextToData
+                        // substitutes a null_boxed_any singleton; json.textToData
+                        // raises. Both paths go through the compiler-registered
+                        // WASM wrapper (see json_class.rs) that owns the check
+                        // — this keeps the MIR simple and avoids per-call-site
+                        // block-splitting.
+                        if is_decode_variant && is_try {
+                            let wrapped_id = self.emit_json_try_decode_v2_wrapper(
+                                context,
+                                call_result_id,
+                                &expression.location,
+                            );
+                            return Ok(wrapped_id);
+                        }
+                        if is_decode_variant && !is_try {
+                            let wrapped_id = self.emit_json_decode_v2_or_raise_wrapper(
+                                context,
+                                call_result_id,
+                                &expression.location,
+                            );
+                            return Ok(wrapped_id);
+                        }
+
+                        return Ok(call_result_id);
                     }
                 }
 

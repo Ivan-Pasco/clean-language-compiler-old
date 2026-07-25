@@ -3519,7 +3519,14 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, _: i32| -> i32 { 0 },
         )?;
 
-        // JSON stubs
+        // JSON stubs. Both the legacy (`_json_encode` / `_json_decode`) and
+        // the Delivery-2 (`_json_encode_v2` / `_json_encode_pretty_v2` /
+        // `_json_decode_v2`) shapes are stubbed so a plugin compiled with
+        // 0.33.138+ (which emits the _v2 names when the plugin was authored
+        // with --enable-json-bridge) can still load into the in-process
+        // wasmtime adapter for expansion. The stubs return zero-length
+        // allocations — plugin expansion code that actually needs to encode
+        // or decode JSON at build time must not rely on these paths.
         linker.func_wrap(
             "env",
             "_json_encode",
@@ -3531,6 +3538,27 @@ impl WasmPluginAdapter {
             "env",
             "_json_decode",
             |mut caller: Caller<'_, PluginState>, _: i32, _: i32| -> i32 {
+                caller.data_mut().allocate(4) as i32
+            },
+        )?;
+        linker.func_wrap(
+            "env",
+            "_json_encode_v2",
+            |mut caller: Caller<'_, PluginState>, _: i32| -> i32 {
+                caller.data_mut().allocate(4) as i32
+            },
+        )?;
+        linker.func_wrap(
+            "env",
+            "_json_encode_pretty_v2",
+            |mut caller: Caller<'_, PluginState>, _: i32| -> i32 {
+                caller.data_mut().allocate(4) as i32
+            },
+        )?;
+        linker.func_wrap(
+            "env",
+            "_json_decode_v2",
+            |mut caller: Caller<'_, PluginState>, _: i32| -> i32 {
                 caller.data_mut().allocate(4) as i32
             },
         )?;

@@ -1,22 +1,22 @@
-//! Integration test for the JSON stdlib migration (Option B, [P2-cont-2a]).
+//! Integration test for the JSON stdlib migration (Delivery 2, [P2-cont-2b]).
 //!
 //! Verifies that the compiler's dispatch of the four spec'd JSON functions
 //! (json.textToData / json.tryTextToData / json.dataToText /
 //! json.prettyDataToText) is toggled correctly by the `--enable-json-bridge`
 //! flag (exposed as `set_enable_json_bridge_override` on the library API).
 //!
-//! Semantics (0.33.137+, inverted from 0.33.135-0.33.136):
+//! Semantics (0.33.138+):
 //!
 //!   * Default (flag OFF) — the compiler uses the pre-0.33.135 pure-WASM
-//!     parser in `src/stdlib/json_class.rs`. The four `_json_encode` /
-//!     `_json_encode_pretty` / `_json_decode` host-bridge imports must NOT
-//!     appear in the produced WASM.
+//!     parser in `src/stdlib/json_class.rs`. The `_v2` host-bridge imports
+//!     (`_json_encode_v2` / `_json_encode_pretty_v2` / `_json_decode_v2`)
+//!     must NOT appear in the produced WASM.
 //!   * `--enable-json-bridge` ON (opt-in) — calls to json.encode / json.decode
-//!     resolve to the Layer 2 host bridges `_json_encode` and `_json_decode`.
-//!     Those import names must appear in the produced WASM. The user opts in
-//!     only when a compatible host (clean-server 2.9.6+ / clean-framework 3.x
-//!     with the host implementations) is available; without one the produced
-//!     WASM traps at instantiation.
+//!     resolve to the Delivery-2 host bridges `_json_encode_v2` and
+//!     `_json_decode_v2`. Those import names must appear in the produced
+//!     WASM. Requires a Delivery-2-compatible host (clean-server 1.9.98+
+//!     with the host implementations); without one the produced WASM
+//!     traps at instantiation.
 //!
 //! See:
 //!   * `foundation/spec/stdlib-reference.md` §8
@@ -93,18 +93,67 @@ fn collect_imported_func_names(wasm: &[u8]) -> HashSet<String> {
 }
 
 /// Under the default (--enable-json-bridge NOT set), the pure-WASM parser
-/// in `json_class.rs` handles everything and no `_json_encode` /
-/// `_json_decode` / `_json_encode_pretty` bridge imports are emitted.
-/// `_json_get` is unrelated to this migration and remains controlled by
-/// plugin manifests, so we do NOT assert on it here.
+/// in `json_class.rs` handles everything and no Delivery-2 `_v2` bridge
+/// imports are emitted. The legacy `_json_encode` / `_json_decode` names
+/// remain reserved but unused. `_json_get` is unrelated to this migration
+/// and remains controlled by plugin manifests, so we do NOT assert on it.
 #[test]
 fn default_suppresses_json_bridge_imports() {
     let wasm = compile(false);
     let imports = collect_imported_func_names(&wasm);
 
+    for name in [
+        "_json_encode_v2",
+        "_json_encode_pretty_v2",
+        "_json_decode_v2",
+        // Legacy pre-Delivery-2 names must also not appear under the
+        // default (they were never emitted post-0.33.137).
+        "_json_encode",
+        "_json_decode",
+        "_json_encode_pretty",
+    ] {
+        assert!(
+            !imports.contains(name),
+            "default must NOT import `{name}`; got {:?}",
+            imports
+                .iter()
+                .filter(|n| n.starts_with("_json"))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Under `--enable-json-bridge` (opt-in), calls to `json.encode` and
+/// `json.decode` must resolve to the Delivery-2 host bridges
+/// `_json_encode_v2` and `_json_decode_v2`. Those names must therefore
+/// appear in the produced WASM's import section. The legacy `_json_encode`
+/// / `_json_decode` names must NOT appear (they were dropped as the primary
+/// emission target in [P2-cont-2b] and remain only as legacy entries in the
+/// registry for backward-compat drift checking).
+#[test]
+fn bridge_opt_in_emits_json_bridge_imports() {
+    let wasm = compile(true);
+    let imports = collect_imported_func_names(&wasm);
+
+    assert!(
+        imports.contains("_json_encode_v2"),
+        "--enable-json-bridge must import `_json_encode_v2`. Imports: {:?}",
+        imports
+            .iter()
+            .filter(|n| n.starts_with("_json"))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        imports.contains("_json_decode_v2"),
+        "--enable-json-bridge must import `_json_decode_v2`. Imports: {:?}",
+        imports
+            .iter()
+            .filter(|n| n.starts_with("_json"))
+            .collect::<Vec<_>>()
+    );
     assert!(
         !imports.contains("_json_encode"),
-        "default must NOT import `_json_encode`; got {:?}",
+        "--enable-json-bridge must NOT import the legacy `_json_encode`. Imports: {:?}",
         imports
             .iter()
             .filter(|n| n.starts_with("_json"))
@@ -112,42 +161,7 @@ fn default_suppresses_json_bridge_imports() {
     );
     assert!(
         !imports.contains("_json_decode"),
-        "default must NOT import `_json_decode`; got {:?}",
-        imports
-            .iter()
-            .filter(|n| n.starts_with("_json"))
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        !imports.contains("_json_encode_pretty"),
-        "default must NOT import `_json_encode_pretty`; got {:?}",
-        imports
-            .iter()
-            .filter(|n| n.starts_with("_json"))
-            .collect::<Vec<_>>()
-    );
-}
-
-/// Under `--enable-json-bridge` (opt-in), calls to `json.encode` and
-/// `json.decode` must resolve to the Layer 2 host bridges `_json_encode`
-/// and `_json_decode`. Those names must therefore appear in the produced
-/// WASM's import section.
-#[test]
-fn bridge_opt_in_emits_json_bridge_imports() {
-    let wasm = compile(true);
-    let imports = collect_imported_func_names(&wasm);
-
-    assert!(
-        imports.contains("_json_encode"),
-        "--enable-json-bridge must import `_json_encode`. Imports: {:?}",
-        imports
-            .iter()
-            .filter(|n| n.starts_with("_json"))
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        imports.contains("_json_decode"),
-        "--enable-json-bridge must import `_json_decode`. Imports: {:?}",
+        "--enable-json-bridge must NOT import the legacy `_json_decode`. Imports: {:?}",
         imports
             .iter()
             .filter(|n| n.starts_with("_json"))
@@ -191,11 +205,11 @@ fn flag_toggles_only_json_bridge_imports() {
         "default emitted a JSON bridge import that --enable-json-bridge doesn't: {json_only_in_default:?}"
     );
     assert!(
-        json_only_in_bridge.contains(&"_json_encode"),
-        "--enable-json-bridge did not add `_json_encode`; JSON diff was {json_only_in_bridge:?}"
+        json_only_in_bridge.contains(&"_json_encode_v2"),
+        "--enable-json-bridge did not add `_json_encode_v2`; JSON diff was {json_only_in_bridge:?}"
     );
     assert!(
-        json_only_in_bridge.contains(&"_json_decode"),
-        "--enable-json-bridge did not add `_json_decode`; JSON diff was {json_only_in_bridge:?}"
+        json_only_in_bridge.contains(&"_json_decode_v2"),
+        "--enable-json-bridge did not add `_json_decode_v2`; JSON diff was {json_only_in_bridge:?}"
     );
 }

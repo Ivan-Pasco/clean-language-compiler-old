@@ -2751,25 +2751,67 @@ description = "Return the error message from the last failed _email_send call; r
 # (_json_encode / _json_encode_pretty), not a boolean flag — matches
 # serde_json::to_string vs to_string_pretty and JSON.stringify variants.
 
-# JSON stdlib migration ([P2-cont-2a], 0.33.137). The `_json_encode` and
-# `_json_decode` entries are TEMPORARILY reverted to the pre-migration
-# `params=["string"]` shape to match the currently deployed frame.server
-# 2.9.5 plugin.toml declaration. This is what the drift check compares
-# against — if the embedded registry lists the target boxed-Any shape
-# while every installed host still declares the old string shape, every
-# compile referencing frame.server hard-fails at plugin load time.
+# JSON stdlib migration [P2-cont-2b] (compiler 0.33.138). Compiler-embedded
+# registry is now synced with foundation to declare BOTH the target `_v2`
+# boxed-Any bridges (primary emission target under --enable-json-bridge) AND
+# the legacy `_json_encode` / `_json_decode` names for backward compat with
+# frame.server 2.9.5. Rationale (from JSON_MIGRATION_DELIVERY2.md):
+#   * Hosts that ship v2 (clean-server 1.9.98+, clean-framework 2.12.187+,
+#     frame.server plugin 2.9.7+) declare both _v1 and _v2 in their
+#     plugin.toml — drift check sees both and passes.
+#   * Older hosts (frame.server 2.9.5) declare only the _v1 names — drift
+#     check sees only _json_encode/_json_decode and passes (the _v2 names
+#     go unmatched but are only in the compiler's outgoing imports when
+#     the user opts in with --enable-json-bridge).
+#   * Under --enable-json-bridge, the compiler emits `_json_encode_v2` /
+#     `_json_encode_pretty_v2` / `_json_decode_v2` imports. If the active
+#     host is 2.9.5, WASM instantiation fails with "unknown import" —
+#     that's the expected opt-in soak behavior.
+#   * Default (legacy) path remains pure-WASM via json_class.rs — no
+#     imports emitted at all for the json namespace.
 #
-# The authoritative registry in `foundation/spec/platform/function-registry.toml`
-# lists the target boxed-Any shape (`params=["any"]`, `returns="ptr"`). When
-# [P3a] updates frame.server (and other hosts) to declare the boxed-Any
-# shape, this embedded copy re-syncs to match foundation and the migration
-# proceeds. Until then, the shapes here match installed reality.
-#
-# The `_json_encode_pretty` entry below IS new-shape (params=["any"],
-# returns="ptr"): no installed host declares it yet, so no drift check
-# fires. Users who opt into `--enable-json-bridge` and call
-# `json.prettyDataToText` will produce WASM that traps at instantiation
-# until a compatible host ships — that's the expected soak behavior.
+# The transitional drift exemption at registry_loader.rs:170 for
+# `_json_encode` / `_json_encode_pretty` / `_json_decode` stays in place
+# because 2.9.5 hosts still declare _v1 with the pre-migration shape
+# (params=["string"] returns="string") and this registry keeps the entry
+# to make drift succeed rather than fail. Removed in [P5] post-soak.
+
+[[functions]]
+name        = "_json_encode_v2"
+layer       = 2
+category    = "json"
+module      = "env"
+params      = ["any"]
+returns     = "ptr"
+aliases     = ["json.encode"]
+hosts       = ["all"]
+description = "Serialize a boxed-Any value to compact JSON per RFC 8259 (serde_json::to_string / JSON.stringify(value)). Input is a boxed-Any pointer (see BOXED_ANY_ABI.md); output is an LP string pointer. The null-tag serializes to the literal 'null' — this is correct RFC 8259 output, not a fallback. The bridge MUST raise on invalid or unrecognized boxed-Any input rather than silently returning 'null'. Key order is insertion order (D3)."
+
+[[functions]]
+name        = "_json_encode_pretty_v2"
+layer       = 2
+category    = "json"
+module      = "env"
+params      = ["any"]
+returns     = "ptr"
+aliases     = ["json.encodePretty"]
+hosts       = ["all"]
+description = "Serialize a boxed-Any value to indented JSON per RFC 8259 with 2-space indentation and newlines (serde_json::to_string_pretty / JSON.stringify(value, null, 2)). Same input/output shape and error semantics as _json_encode_v2 — see that entry for boxed-Any and null-tag rules. Key order is insertion order (D3)."
+
+[[functions]]
+name        = "_json_decode_v2"
+layer       = 2
+category    = "json"
+module      = "env"
+params      = ["string"]
+returns     = "any"
+aliases     = ["json.decode"]
+hosts       = ["all"]
+description = "Parse a JSON string per RFC 8259 and return a boxed-Any pointer, OR return the null pointer (0) as a sentinel on parse failure. Because a successfully parsed JSON `null` produces a non-zero boxed-Any pointer (tag=0 allocated in linear memory), 0 is unambiguously a failure sentinel. The compiler emits a post-call null-check: json.textToData raises the runtime error() with message 'JSON parse failure'; json.tryTextToData substitutes the singleton null_boxed_any pointer. Numbers use IEEE-754 double precision (D1). Duplicate object keys are resolved last-wins silently (D2). See stdlib-reference.md §8."
+
+# Legacy pre-Delivery-2 shape. Preserved for frame.server 2.9.5 backward
+# compat. Dropped in [P5] post-soak cleanup. See
+# foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md §"Legacy bridges".
 [[functions]]
 name        = "_json_encode"
 layer       = 2
@@ -2777,9 +2819,9 @@ category    = "json"
 module      = "env"
 params      = ["string"]
 returns     = "ptr"
-aliases     = ["json.encode"]
+aliases     = []
 hosts       = ["all"]
-description = "Serialize a value to JSON string. NOTE: Transitionally uses the pre-migration string-in shape to match deployed frame.server 2.9.5; the target boxed-Any shape lives in foundation's authoritative registry and re-syncs here once [P3a] updates the host plugins. See BOXED_ANY_ABI.md."
+description = "LEGACY (pre-Delivery-2). Preserved for frame.server 2.9.5 backward compat. New code MUST use _json_encode_v2. Dropped in [P5] post-soak cleanup."
 
 [[functions]]
 name        = "_json_encode_pretty"
@@ -2788,9 +2830,9 @@ category    = "json"
 module      = "env"
 params      = ["any"]
 returns     = "ptr"
-aliases     = ["json.encodePretty"]
+aliases     = []
 hosts       = ["all"]
-description = "Serialize a boxed-Any value to indented JSON per RFC 8259 with 2-space indentation and newlines (serde_json::to_string_pretty / JSON.stringify(value, null, 2)). Same input/output shape and error semantics as _json_encode — see that entry for boxed-Any and null-tag rules. Key order is insertion order (D3)."
+description = "LEGACY (pre-Delivery-2). Kept for the drift-check exemption transition. New code MUST use _json_encode_pretty_v2. Dropped in [P5] post-soak cleanup."
 
 [[functions]]
 name        = "_json_decode"
@@ -2799,9 +2841,9 @@ category    = "json"
 module      = "env"
 params      = ["string"]
 returns     = "ptr"
-aliases     = ["json.decode"]
+aliases     = []
 hosts       = ["all"]
-description = "Parse JSON string; returns parsed JSON. NOTE: Transitionally uses the pre-migration string-in / string-out shape to match deployed frame.server 2.9.5; the target boxed-Any-out shape lives in foundation's authoritative registry and re-syncs here once [P3a] updates the host plugins. See BOXED_ANY_ABI.md."
+description = "LEGACY (pre-Delivery-2). Preserved for frame.server 2.9.5 backward compat. Raise-on-failure convention (not the sentinel-return convention used by _json_decode_v2). New code MUST use _json_decode_v2. Dropped in [P5] post-soak cleanup."
 
 [[functions]]
 name        = "_json_get"

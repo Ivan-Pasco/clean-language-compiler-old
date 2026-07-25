@@ -127,6 +127,78 @@ impl MirBuilder {
         result_id
     }
 
+    /// Emit a Call to the `__json_try_decode_v2` WASM wrapper. The wrapper
+    /// null-checks its argument and, on 0 (parse failure per D5), substitutes
+    /// a freshly-allocated null-tag boxed-Any pointer; otherwise it returns
+    /// the argument unchanged. Used by `json.tryTextToData` under
+    /// `--enable-json-bridge` to translate the raw sentinel into the null
+    /// tag the surrounding `json.dataToText`/etc. expect.
+    pub(super) fn emit_json_try_decode_v2_wrapper(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        raw_result_id: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(
+            context,
+            result_id,
+            MirType::Ptr(Box::new(MirType::U8)),
+            location.clone(),
+        );
+
+        let instruction = MirInstruction {
+            dest: Some(result_id),
+            operation: MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: "__json_try_decode_v2".to_string(),
+                    symbol_id: SymbolId(0),
+                },
+                arguments: vec![MirOperand::Value(raw_result_id)],
+            },
+            location: location.clone(),
+        };
+        self.add_instruction(context, instruction);
+        result_id
+    }
+
+    /// Emit a Call to the `__json_decode_v2_or_raise` WASM wrapper. The
+    /// wrapper null-checks its argument and, on 0 (parse failure per D5),
+    /// traps with unreachable (the runtime signals a parse error to the
+    /// host); otherwise it returns the argument unchanged. Used by
+    /// `json.textToData` under `--enable-json-bridge` per D5's raise
+    /// semantics.
+    pub(super) fn emit_json_decode_v2_or_raise_wrapper(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        raw_result_id: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(
+            context,
+            result_id,
+            MirType::Ptr(Box::new(MirType::U8)),
+            location.clone(),
+        );
+
+        let instruction = MirInstruction {
+            dest: Some(result_id),
+            operation: MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: "__json_decode_v2_or_raise".to_string(),
+                    symbol_id: SymbolId(0),
+                },
+                arguments: vec![MirOperand::Value(raw_result_id)],
+            },
+            location: location.clone(),
+        };
+        self.add_instruction(context, instruction);
+        result_id
+    }
+
     /// Unbox an any value to a specific type - emits an UnboxAny instruction
     pub(super) fn emit_unbox_any(
         &mut self,
