@@ -1017,7 +1017,11 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
                 emit_batch_plugin013(a, format!("batch.classField: {}", e.message()));
                 return 0;
             }
-            a.alloc_batch(BatchNode::Field(BatchField { name, ty }))
+            a.alloc_batch(BatchNode::Field(BatchField {
+                name,
+                ty,
+                visibility: None,
+            }))
         },
     )?;
 
@@ -1623,6 +1627,7 @@ mod tests {
             fields: vec![BatchField {
                 name: "x".to_string(),
                 ty: "integer".to_string(),
+                visibility: None,
             }],
             methods: Vec::new(),
         }));

@@ -585,6 +585,17 @@ pub struct BatchField {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: String,
+    /// Optional field visibility. Values: `"public"` or `"private"`.
+    /// Absent / any other value → `"private"` (per the 2026-06-25 spec flip
+    /// making fields private by default).
+    ///
+    /// Added for prompt dea4378416b8 (EMIT-CLASS-FULL-FIELD-VISIBILITY-MISSING):
+    /// plugin-emitted data classes had every field private, so external code
+    /// reading `entity.slug` after `Entity.first(...)` hit SEM005. This lets
+    /// plugins mark specific fields (or all fields for entity types) as
+    /// `"public"` without needing extra accessor methods.
+    #[serde(default)]
+    pub visibility: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1070,7 +1081,16 @@ pub fn class_to_ast(
 
     for field in spec.fields {
         let ty = resolve_type(&field.ty)?;
-        class.fields.push(Field::new(field.name, ty));
+        let mut f = Field::new(field.name, ty);
+        // Honor optional `visibility: "public"` on the spec. Everything else
+        // (absent, `"private"`, unknown) keeps the private default set by
+        // Field::new. See BatchField.visibility doc for the motivating case.
+        if let Some(v) = field.visibility.as_deref() {
+            if v.eq_ignore_ascii_case("public") {
+                f.visibility = Visibility::Public;
+            }
+        }
+        class.fields.push(f);
     }
 
     for (m, body) in spec.methods.into_iter().zip(method_bodies) {
@@ -1713,5 +1733,57 @@ mod tests {
         .unwrap();
         let err = capability_to_ast(spec).unwrap_err();
         assert!(matches!(err, BatchSchemaError::UnresolvableType(_)));
+    }
+
+    // ── BatchField.visibility (prompt dea4378416b8) ────────────────────────────
+
+    #[test]
+    fn class_field_visibility_defaults_to_private_when_absent() {
+        // Absent visibility on the field spec must not change behavior — the
+        // Field::new default is Private per the 2026-06-25 spec flip.
+        let spec = parse_class_spec(
+            r#"{"name":"User","fields":[{"name":"id","type":"integer"}],"methods":[]}"#,
+        )
+        .unwrap();
+        let class = class_to_ast(spec, Vec::new(), false).unwrap();
+        assert_eq!(class.fields.len(), 1);
+        assert!(matches!(class.fields[0].visibility, Visibility::Private));
+    }
+
+    #[test]
+    fn class_field_visibility_public_when_spec_says_public() {
+        let spec = parse_class_spec(
+            r#"{"name":"Page","fields":[{"name":"slug","type":"string","visibility":"public"}],"methods":[]}"#,
+        ).unwrap();
+        let class = class_to_ast(spec, Vec::new(), false).unwrap();
+        assert!(matches!(class.fields[0].visibility, Visibility::Public));
+    }
+
+    #[test]
+    fn class_field_visibility_unknown_value_keeps_default_private() {
+        // Guard against typo drift — anything other than "public" (case-
+        // insensitive) stays private rather than silently upgrading.
+        let spec = parse_class_spec(
+            r#"{"name":"X","fields":[{"name":"f","type":"integer","visibility":"pub"}],"methods":[]}"#,
+        ).unwrap();
+        let class = class_to_ast(spec, Vec::new(), false).unwrap();
+        assert!(matches!(class.fields[0].visibility, Visibility::Private));
+    }
+
+    #[test]
+    fn class_field_visibility_mixed_fields_get_independent_visibility() {
+        let spec = parse_class_spec(
+            r#"{"name":"Page","fields":[
+                {"name":"id","type":"integer"},
+                {"name":"slug","type":"string","visibility":"public"},
+                {"name":"internal_flag","type":"boolean","visibility":"private"}
+            ],"methods":[]}"#,
+        )
+        .unwrap();
+        let class = class_to_ast(spec, Vec::new(), false).unwrap();
+        assert_eq!(class.fields.len(), 3);
+        assert!(matches!(class.fields[0].visibility, Visibility::Private));
+        assert!(matches!(class.fields[1].visibility, Visibility::Public));
+        assert!(matches!(class.fields[2].visibility, Visibility::Private));
     }
 }
