@@ -159,6 +159,12 @@ pub enum Type {
     // null-support - None type for representing absence of value
     None,
 
+    // Nullable wrapper: `T?` per root spec 04-type-system.md §"Nullable Types".
+    // Distinct from `None` (which is the type of the `null` literal itself).
+    // Codegen shares the WASM representation of `T` (pointers use 0 as the
+    // null sentinel, matching the `!` (RequiredAssert) operator convention).
+    Nullable(Box<Type>),
+
     // Advanced sized types
     IntegerSized {
         bits: u8,
@@ -1817,6 +1823,7 @@ impl fmt::Display for Type {
             Type::Void => f.write_str("void"),
             // null-support - Display none type
             Type::None => f.write_str("none"),
+            Type::Nullable(inner) => write!(f, "{}?", inner),
             Type::IntegerSized { bits, unsigned } => {
                 if *unsigned {
                     write!(f, "integer:{bits}u")

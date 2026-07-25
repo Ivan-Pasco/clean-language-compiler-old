@@ -116,6 +116,7 @@ pub enum TokenKind {
     Colon,        // :
     Semicolon,    // ;
     Bang,         // ! (used in != operator context)
+    Question,     // ? (nullable-type suffix: T?)
     At,           // @ (framework attribute prefix)
 
     // Range operators (§9.2 - Range expressions)
@@ -246,6 +247,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Colon => write!(f, ":"),
             TokenKind::Semicolon => write!(f, ";"),
             TokenKind::Bang => write!(f, "!"),
+            TokenKind::Question => write!(f, "?"),
             TokenKind::At => write!(f, "@"),
             TokenKind::Range => write!(f, ".."),
             TokenKind::RangeInclusive => write!(f, "..="),

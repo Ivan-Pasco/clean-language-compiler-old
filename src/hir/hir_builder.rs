@@ -1235,6 +1235,22 @@ impl HirBuilder {
                 name: name.clone(),
                 location: SourceLocation::default(),
             }),
+            Type::Nullable(inner) => {
+                // Spec 04-type-system.md §"Nullable Types": T? shares the
+                // WASM representation of T (0 is the null sentinel — same
+                // convention `!` (RequiredAssert) already assumes). At the
+                // HIR level we lower to the inner type; the "or null"
+                // aspect is enforced by the type checker at assignment
+                // sites, and the runtime null-check is emitted by the
+                // existing RequiredAssert operator.
+                self.build_type(inner)
+            }
+            Type::None => {
+                // `none` is the type of the `null` literal. It shares
+                // representation with Any (both are pointer-shaped at
+                // WASM level; the compiler skips full checking).
+                Ok(HirType::Any)
+            }
             Type::Any => {
                 // 'any' is the top type — compatible with all other types.
                 // Map to HirType::Any so the type checker accepts it everywhere,

@@ -1736,6 +1736,13 @@ impl TokenParser {
             "boolean" => Type::Boolean,
             "void" => Type::Void,
             "any" => Type::Any,
+            // `none` is not accepted as a type annotation here: the lexer
+            // maps `none` to TokenKind::None (a value literal, like
+            // `null`), not an identifier, so it can't reach this match.
+            // The type `none` exists in the spec for `null`'s inferred
+            // type — user code should write `T?` for nullable variables,
+            // not declare `none foo`. See spec 04-type-system.md
+            // §"Nullable Types".
             "list" => {
                 // Expect list<Type> [ list_behavior ]
                 // spec/grammar.ebnf: list_type = "list" , "<" , type , ">" , [ list_behavior ] ;
@@ -1859,7 +1866,7 @@ impl TokenParser {
         // Lookahead: only treat colon as precision modifier if followed by an integer literal.
         // Without this guard, `field: type` patterns (where colon is a field separator, not a
         // precision modifier) would be consumed and then fail on the identifier that follows.
-        if self.check(&TokenKind::Colon) {
+        let sized_type = if self.check(&TokenKind::Colon) {
             let saved_cursor = self.cursor;
             self.bump(); // tentatively consume ':'
 
@@ -1881,9 +1888,9 @@ impl TokenParser {
 
                 // Apply precision modifier based on base type
                 match base_type {
-                    Type::Integer => Ok(Type::IntegerSized { bits, unsigned }),
-                    Type::Number => Ok(Type::NumberSized { bits }),
-                    _ => Err(CompilerError::parse_error(
+                    Type::Integer => Type::IntegerSized { bits, unsigned },
+                    Type::Number => Type::NumberSized { bits },
+                    _ => return Err(CompilerError::parse_error(
                         format!("Precision modifiers are only supported for integer and number types, not {:?}", base_type),
                         Some(self.current().location.clone()),
                         Some("Use :bits syntax only with integer or number types".to_string()),
@@ -1892,10 +1899,19 @@ impl TokenParser {
             } else {
                 // Not a precision modifier — restore cursor so the colon stays for the caller
                 self.cursor = saved_cursor;
-                Ok(base_type)
+                base_type
             }
         } else {
-            Ok(base_type)
+            base_type
+        };
+
+        // Nullable-type suffix: trailing `?` wraps in Type::Nullable.
+        // Spec 04-type-system.md §"Nullable Types" and EBNF `type = base_type , [ "?" ]`.
+        if matches!(self.current_kind(), TokenKind::Question) {
+            self.bump(); // consume `?`
+            Ok(Type::Nullable(Box::new(sized_type)))
+        } else {
+            Ok(sized_type)
         }
     }
 

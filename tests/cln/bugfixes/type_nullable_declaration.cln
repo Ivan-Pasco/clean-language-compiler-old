@@ -1,0 +1,23 @@
+// Test: bugfixes/type_nullable_declaration
+// Grammar: type = base_type , [ "?" ] ;  (foundation/spec/grammar/grammar.ebnf)
+// Semantic: spec 04-type-system.md §"Nullable Types" — T? holds T or null;
+//   `!` moves T? → T, trapping on null; `default` provides a fallback.
+//
+// Regression: NULLABLE-TYPE-SPEC-AND-IMPL #08af02a9. The lexer passthrough
+//   added in 0.33.141 stopped LEX001 firing on `T?` but the parser had no
+//   way to actually consume the `?` token, so `string? maybe = "hello"`
+//   fell through to SEM007 "Undefined variable 'maybe'". This lifts the
+//   feature end-to-end: real TokenKind::Question token, Type::Nullable(T)
+//   AST variant, parse_type wraps on trailing `?`, HIR lowers to inner
+//   representation (T? and T share WASM shape — pointers use 0 as null
+//   sentinel, matching `!` (RequiredAssert)).
+//
+// Fixed in: compiler 0.33.145
+//
+// Expected output:
+//   hello
+
+start:
+	string? maybe = "hello"
+	if maybe != null
+		print(maybe)

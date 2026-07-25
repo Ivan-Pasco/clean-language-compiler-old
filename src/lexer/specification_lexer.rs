@@ -216,6 +216,16 @@ impl<'a> SpecificationLexer<'a> {
                     Ok(Token::simple(TokenKind::At, loc))
                 }
 
+                // Nullable-type suffix — spec 04-type-system.md §"Nullable Types".
+                // Byte-range extraction for framework blocks reads raw bytes, so
+                // emitting a real Question token here does not affect html:/component:
+                // block content capture.
+                '?' => {
+                    let loc = start_location.clone();
+                    self.advance();
+                    Ok(Token::simple(TokenKind::Question, loc))
+                }
+
                 // Characters that are not valid Clean Language syntax outside of
                 // framework blocks (html:, component:, etc.) but MUST flow through the
                 // token stream so plugin-owned blocks can capture them via byte-range
@@ -229,18 +239,13 @@ impl<'a> SpecificationLexer<'a> {
                 //   '&'          — html entities like &rarr;, &middot;
                 //   '#'          — html fragment ids like href="#top" and the
                 //                  "#{var}" pattern that precedes an interpolation
-                //   '?'          — nullable-type suffix (frame-data.ebnf: `class_name , "?"`)
-                //                  and framework EBNFs that use `T?` (e.g. `Page?`).
-                //                  Core grammar doesn't yet have a nullable-type
-                //                  production, so unrecognized uses become parser
-                //                  errors rather than lex errors (dashboard #396dfcb027fc).
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
                 //
                 // If any of these appear outside a framework block, the parser will
                 // catch them later as an unexpected-token error in the right context.
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' | '?' => {
+                '\'' | '&' | '#' => {
                     let loc = start_location.clone();
                     let c = self.advance().unwrap();
                     Ok(Token::new(
@@ -480,6 +485,16 @@ impl<'a> SpecificationLexer<'a> {
                     Ok(Token::simple(TokenKind::At, loc))
                 }
 
+                // Nullable-type suffix — spec 04-type-system.md §"Nullable Types".
+                // Byte-range extraction for framework blocks reads raw bytes, so
+                // emitting a real Question token here does not affect html:/component:
+                // block content capture.
+                '?' => {
+                    let loc = start_location.clone();
+                    self.advance();
+                    Ok(Token::simple(TokenKind::Question, loc))
+                }
+
                 // Characters that are not valid Clean Language syntax outside of
                 // framework blocks (html:, component:, etc.) but MUST flow through the
                 // token stream so plugin-owned blocks can capture them via byte-range
@@ -493,18 +508,13 @@ impl<'a> SpecificationLexer<'a> {
                 //   '&'          — html entities like &rarr;, &middot;
                 //   '#'          — html fragment ids like href="#top" and the
                 //                  "#{var}" pattern that precedes an interpolation
-                //   '?'          — nullable-type suffix (frame-data.ebnf: `class_name , "?"`)
-                //                  and framework EBNFs that use `T?` (e.g. `Page?`).
-                //                  Core grammar doesn't yet have a nullable-type
-                //                  production, so unrecognized uses become parser
-                //                  errors rather than lex errors (dashboard #396dfcb027fc).
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
                 //
                 // If any of these appear outside a framework block, the parser will
                 // catch them later as an unexpected-token error in the right context.
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' | '?' => {
+                '\'' | '&' | '#' => {
                     let loc = start_location.clone();
                     let c = self.advance().unwrap();
                     Ok(Token::new(
