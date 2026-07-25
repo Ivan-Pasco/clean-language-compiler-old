@@ -219,14 +219,14 @@ impl JsonClass {
         //   json.decode  ≡  json.textToData
         //   json.get     ≡  __json_get_field (key-based access)
         //
-        // JSON stdlib migration ([P2-cont-2a], 0.33.137+). Semantics inverted
-        // from the 0.33.135-0.33.136 variant:
-        //   * default (--enable-json-bridge NOT set): register the pure-WASM
+        // JSON stdlib migration ([P4c], 0.33.139+):
+        //   * default (bridge ON): SKIP alias registration so `json.encode`
+        //     / `json.decode` fall through to the plugin registry's
+        //     `language_to_bridge_map` and resolve to `_json_encode_v2` /
+        //     `_json_decode_v2` host bridges.
+        //   * --enable-legacy-json-wasm (bridge OFF): register the pure-WASM
         //     aliases so `json.encode` / `json.decode` resolve to the
         //     json_class.rs implementation — same as 0.33.134 and earlier.
-        //   * --enable-json-bridge ON: SKIP alias registration so those names
-        //     fall through to the plugin registry's `language_to_bridge_map`
-        //     and resolve to the `_json_encode` / `_json_decode` host bridges.
         //     See `src/plugins/registry.rs` GEN004 for the paired conditional.
         //
         // We still register the pure-WASM `json.textToData` / `json.dataToText`

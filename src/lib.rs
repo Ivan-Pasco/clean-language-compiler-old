@@ -318,15 +318,16 @@ pub struct CompileOptions {
     /// When `true`, drop server-only modules and blank the entry `start:`
     /// body so the produced WASM is safe for browser hydration.
     pub client_mode: bool,
-    /// When `true`, dispatch the four spec'd JSON functions
-    /// (json.textToData / json.tryTextToData / json.dataToText /
-    /// json.prettyDataToText) through the Layer 2 host bridge
-    /// (`_json_decode` / `_json_encode` / `_json_encode_pretty`) instead of
-    /// the pre-migration pure-WASM parser in `src/stdlib/json_class.rs`.
+    /// When `true` (the default as of 0.33.139 / [P4c]), dispatch the four
+    /// spec'd JSON functions (json.textToData / json.tryTextToData /
+    /// json.dataToText / json.prettyDataToText) through the Layer 2 host
+    /// bridge (`_json_decode_v2` / `_json_encode_v2` / `_json_encode_pretty_v2`).
     ///
-    /// Default is `false` (legacy pure-WASM path — same as 0.33.134 and
-    /// earlier). Renamed from `enable_legacy_json_wasm` in 0.33.137;
-    /// semantics inverted after 0.33.135's premature-default regression.
+    /// When `false`, dispatch through the pre-Delivery-2 pure-WASM parser in
+    /// `src/stdlib/json_class.rs` — same behavior as 0.33.134 and earlier.
+    /// This is the opt-out escape hatch, gated by `--enable-legacy-json-wasm`.
+    /// Kept during the Delivery-2 soak window; removed in [P5].
+    ///
     /// See `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
     pub enable_json_bridge: bool,
 }
@@ -336,7 +337,7 @@ impl Default for CompileOptions {
         Self {
             memory_tier: MemoryTier::Standard,
             client_mode: false,
-            enable_json_bridge: false,
+            enable_json_bridge: true,
         }
     }
 }
@@ -349,7 +350,7 @@ impl CompileOptions {
         Self {
             memory_tier,
             client_mode,
-            enable_json_bridge: false,
+            enable_json_bridge: true,
         }
     }
 }
@@ -444,25 +445,21 @@ thread_local! {
     /// Enables local plugin verification without a comita round-trip.
     static PLUGIN_OVERRIDES: std::cell::RefCell<std::collections::HashMap<String, std::path::PathBuf>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
-    /// `--enable-json-bridge` flag — when true, the compiler dispatches the
-    /// four spec'd JSON functions (json.textToData / json.tryTextToData /
-    /// json.dataToText / json.prettyDataToText) through the Layer 2 host
-    /// bridge (`_json_decode`, `_json_encode`, `_json_encode_pretty`)
-    /// declared in `foundation/spec/platform/runtime-abi/v1.toml`. When
-    /// false (the default), those functions dispatch through the pre-
-    /// migration pure-WASM parser in `src/stdlib/json_class.rs` — same
-    /// behavior as 0.33.134 and earlier.
+    /// JSON stdlib dispatch selector — when true (the default as of 0.33.139
+    /// / [P4c]), the compiler dispatches the four spec'd JSON functions
+    /// (json.textToData / json.tryTextToData / json.dataToText /
+    /// json.prettyDataToText) through the Layer 2 host bridge
+    /// (`_json_decode_v2`, `_json_encode_v2`, `_json_encode_pretty_v2`)
+    /// declared in `foundation/spec/platform/runtime-abi/v1.toml`.
     ///
-    /// The default is OFF (legacy) during the migration soak window. Once
-    /// clean-server 2.9.6+ and clean-framework 3.x ship the host
-    /// implementations of `_json_encode` / `_json_encode_pretty` /
-    /// `_json_decode`, the default flips to ON and this flag is removed —
-    /// see `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md` and
-    /// dashboard fingerprint filed by [P2-cont-2a].
+    /// When false, those functions dispatch through the pre-Delivery-2 pure-
+    /// WASM parser in `src/stdlib/json_class.rs` — same behavior as 0.33.134
+    /// and earlier. The opt-out is exposed via `--enable-legacy-json-wasm`
+    /// and exists as an escape hatch during the Delivery-2 soak window. It
+    /// will be removed in [P5] along with `json_class.rs`.
     ///
-    /// Renamed from `ENABLE_LEGACY_JSON_WASM` in 0.33.137 to invert the
-    /// semantics after 0.33.135's premature-default regression.
-    static ENABLE_JSON_BRIDGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// See `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
+    static ENABLE_JSON_BRIDGE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 /// Plugin Contracts v2 Phase B — set the Clean Runtime ABI version to stamp
@@ -576,29 +573,28 @@ pub fn any_probe_flag_active() -> bool {
     emit_heap_probes_override() || emit_bridge_probes_override()
 }
 
-/// Set the `--enable-json-bridge` flag for the current thread.
+/// Set the JSON stdlib dispatch selector for the current thread.
 ///
-/// When true, the four spec'd JSON functions (json.textToData /
-/// json.tryTextToData / json.dataToText / json.prettyDataToText) dispatch
-/// through the Layer 2 host bridge (`_json_decode`, `_json_encode`,
-/// `_json_encode_pretty`). When false (the default), they dispatch through
-/// the pure-WASM parser in `src/stdlib/json_class.rs` — same behavior as
-/// 0.33.134 and earlier.
+/// When true (the default as of 0.33.139), the four spec'd JSON functions
+/// (json.textToData / json.tryTextToData / json.dataToText /
+/// json.prettyDataToText) dispatch through the Layer 2 host bridge
+/// (`_json_decode_v2`, `_json_encode_v2`, `_json_encode_pretty_v2`). When
+/// false, they dispatch through the pure-WASM parser in
+/// `src/stdlib/json_class.rs` — same behavior as 0.33.134 and earlier.
 ///
-/// The default is OFF (legacy) during the migration soak window. Users who
-/// opt in via `--enable-json-bridge` MUST have a compatible host runtime
-/// (clean-server 2.9.6+ or clean-framework 3.x with `_json_encode` /
-/// `_json_encode_pretty` / `_json_decode` implementations); without one the
-/// produced WASM traps at instantiation with "unknown import env._json_*".
+/// The CLI exposes the OFF direction via `--enable-legacy-json-wasm` as an
+/// opt-out escape hatch during the Delivery-2 soak window. Both branches
+/// require compatible hosts: the bridge branch needs clean-server 1.9.99+
+/// or clean-framework 2.12.187+ registering `_json_*_v2` (or the legacy
+/// `_json_*` shape for backward compat); the pure-WASM branch requires no
+/// bridge registration.
 ///
-/// Renamed from `set_enable_legacy_json_wasm_override` in 0.33.137 to
-/// invert the semantics after 0.33.135's premature-default regression. See
-/// `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
+/// See `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
 pub fn set_enable_json_bridge_override(enable: bool) {
     ENABLE_JSON_BRIDGE.with(|cell| cell.set(enable));
 }
 
-/// Read the active `--enable-json-bridge` override for the current thread.
+/// Read the active JSON bridge dispatch selector for the current thread.
 pub fn enable_json_bridge_override() -> bool {
     ENABLE_JSON_BRIDGE.with(|cell| cell.get())
 }
@@ -3083,7 +3079,7 @@ fn is_server_only_module(module_name: &str, file_path: &std::path::Path) -> bool
 /// available and is now implemented on top of this function.
 ///
 /// This entry point centralises how compile-time flags (including the
-/// JSON stdlib dispatch mode, [`CompileOptions::enable_legacy_json_wasm`])
+/// JSON stdlib dispatch mode, [`CompileOptions::enable_json_bridge`])
 /// reach the code generator without every intermediate function having to
 /// grow another positional parameter.
 pub fn compile_multi_file_with_options<P: AsRef<std::path::Path>>(

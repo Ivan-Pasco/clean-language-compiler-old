@@ -934,48 +934,35 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
-                // JSON stdlib migration (Option B, [P2-cont]) — bridge dispatch.
+                // JSON stdlib migration (Option B, [P2-cont]/[P4c]) — bridge dispatch.
                 //
-                // Under the new default (--enable-legacy-json-wasm OFF), the four
+                // As of 0.33.139 / [P4c], the default is bridge (ON). The four
                 // spec'd JSON functions dispatch to the Layer 2 host bridges
                 // declared in `foundation/spec/platform/runtime-abi/v1.toml`:
                 //
-                //   json.textToData / json.decode    -> _json_decode
-                //   json.tryTextToData               -> _json_decode wrapped in
-                //                                       onError → null (compiler-
-                //                                       emitted try wrapper; see
+                //   json.textToData / json.decode    -> _json_decode_v2
+                //   json.tryTextToData               -> _json_decode_v2 wrapped
+                //                                       in the sentinel-check
+                //                                       null-on-error wrapper
+                //                                       (see [P2-cont-2b] and
                 //                                       stdlib-reference.md §8)
-                //   json.dataToText / json.encode    -> _json_encode
-                //   json.prettyDataToText            -> _json_encode_pretty
+                //   json.dataToText / json.encode    -> _json_encode_v2
+                //   json.prettyDataToText            -> _json_encode_pretty_v2
                 //
                 // Argument-shape exceptions kept on the LEGACY path even under
-                // the new default (per orchestrator A4 and JSON_MIGRATION_DELIVERY2.md):
+                // the bridge default (per orchestrator A4 and JSON_MIGRATION_DELIVERY2.md):
                 //
-                //   * Class-typed arg   -> `__serialize_ClassName` helper. Class
-                //                          serialization involves per-class field
-                //                          walking; migrating it to boxed-Any
-                //                          marshalling is scheduled for a later
-                //                          delivery ([P5]/[P6]).
-                //   * List<T> arg       -> `__json_encode_cln_list`. Needs boxed-Any
-                //   * Pairs<K,V> arg    -> `__json_encode_cln_pairs`. marshalling
-                //                          before it can call `_json_encode`; that
-                //                          marshalling helper ships in [P2-cont-2].
+                //   * Class-typed arg -> `__serialize_ClassName` helper. Class
+                //                       serialization migration is scheduled
+                //                       for a later delivery ([P5]/[P6]).
                 //
-                // This asymmetry is intentional and load-bearing — see the
-                // dispatch order below (bridge check first, then typed-collection
-                // fallback, then class fallback).
+                // List<T> and Pairs<K,V> DO go through the bridge — `emit_box_any`
+                // normalizes them into the JSON-tree layout that _json_encode_v2
+                // expects (per [P2-cont-2b]).
                 //
-                // Default (--enable-json-bridge NOT set): none of the bridge
-                // branches fire and the historical typed-collection /
-                // class-serializer dispatch (below) is unchanged. This is
-                // the 0.33.134-and-earlier behavior — pure-WASM parser in
-                // src/stdlib/json_class.rs handles everything.
-                //
-                // Under --enable-json-bridge: emit direct bridge calls for
-                // the six spec'd JSON entry points. See [P2-cont-2a] in
-                // JSON_MIGRATION_DELIVERY2.md. Renamed from
-                // `enable_legacy_json_wasm_override` in 0.33.137 with
-                // inverted semantics.
+                // `--enable-legacy-json-wasm` opts out to the pre-Delivery-2
+                // pure-WASM parser in src/stdlib/json_class.rs. Escape hatch
+                // during Delivery-2 soak; removed in [P5].
                 let json_bridge_enabled = crate::enable_json_bridge_override();
                 if json_bridge_enabled
                     && arguments.len() == 1

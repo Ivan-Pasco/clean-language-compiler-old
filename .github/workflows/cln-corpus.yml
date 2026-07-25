@@ -126,3 +126,111 @@ jobs:
           name: cln-corpus-failures
           path: /tmp/compile.log
           retention-days: 7
+
+  # [P4c] Delivery-2 soak gate — the same corpus compiled under the
+  # `--enable-legacy-json-wasm` opt-out escape hatch. Guards against
+  # regressions in the pre-Delivery-2 pure-WASM JSON path during the soak
+  # window. Removed alongside the flag itself in [P5].
+  compile-and-run-legacy-json:
+    name: Compile + execute tests/cln/ (--enable-legacy-json-wasm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-corpus-legacy-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build cln + wasmtime_runner
+        run: |
+          cargo build --release --bin cln
+          cargo build --release --bin wasmtime_runner
+
+      - name: Compile every .cln file with --enable-legacy-json-wasm (except future/)
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p tests/output_ci_legacy
+          mapfile -t files < <(find tests/cln -type f -name '*.cln' ! -path '*/future/*' | sort)
+          echo "Found ${#files[@]} .cln files"
+
+          fail_count=0
+          fail_list=()
+          for f in "${files[@]}"; do
+            rel="${f#tests/cln/}"
+            out="tests/output_ci_legacy/${rel%.cln}.wasm"
+            mkdir -p "$(dirname "$out")"
+            if ! timeout 30 ./target/release/cln compile "$f" --output "$out" --enable-legacy-json-wasm >/tmp/compile-legacy.log 2>&1; then
+              fail_count=$((fail_count + 1))
+              fail_list+=("$f")
+              echo "::warning file=$f::compile failed (legacy)"
+              tail -n 20 /tmp/compile-legacy.log | sed 's/^/    /'
+            fi
+          done
+
+          echo ""
+          echo "Compile summary (legacy): ${#files[@]} total, $fail_count failed"
+          if [ "$fail_count" -gt 0 ]; then
+            echo ""
+            echo "Failed files:"
+            printf '  - %s\n' "${fail_list[@]}"
+          fi
+
+          BASELINE_MAX_FAILURES=120
+          if [ "$fail_count" -gt "$BASELINE_MAX_FAILURES" ]; then
+            echo "::error::compile failures ($fail_count) exceed baseline ($BASELINE_MAX_FAILURES)"
+            exit 1
+          fi
+
+      - name: Execute compiled WASM under legacy JSON path (subset that should run)
+        shell: bash
+        run: |
+          set -uo pipefail
+          mapfile -t wasm_files < <(
+            find tests/output_ci_legacy -type f -name '*.wasm' \
+              ! -path '*/fail/*' \
+              ! -path '*/future/*' \
+              ! -path '*/library/*' \
+              ! -path '*/host-extension/*' \
+              | sort
+          )
+          echo "Running ${#wasm_files[@]} WASM modules (legacy)"
+
+          run_fail=0
+          run_fail_list=()
+          for w in "${wasm_files[@]}"; do
+            if ! timeout 15 ./target/release/wasmtime_runner "$w" >/dev/null 2>&1; then
+              run_fail=$((run_fail + 1))
+              run_fail_list+=("$w")
+            fi
+          done
+
+          echo ""
+          echo "Execution summary (legacy): ${#wasm_files[@]} total, $run_fail failed"
+          if [ "$run_fail" -gt 0 ]; then
+            echo "Failed executions (first 30):"
+            printf '  - %s\n' "${run_fail_list[@]:0:30}"
+          fi
+
+          BASELINE_MAX_RUN_FAILURES=80
+          if [ "$run_fail" -gt "$BASELINE_MAX_RUN_FAILURES" ]; then
+            echo "::error::execution failures ($run_fail) exceed baseline ($BASELINE_MAX_RUN_FAILURES)"
+            exit 1
+          fi
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cln-corpus-failures-legacy
+          path: /tmp/compile-legacy.log
+          retention-days: 7
