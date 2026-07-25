@@ -799,6 +799,7 @@ pub fn resolve_type(name: &str) -> Result<Type, BatchSchemaError> {
         "number" => Ok(Type::Number),
         "boolean" => Ok(Type::Boolean),
         "void" => Ok(Type::Void),
+        "any" => Ok(Type::Any),
         _ => {
             // Array<T> and list<T> both → List(resolve(T)).
             //

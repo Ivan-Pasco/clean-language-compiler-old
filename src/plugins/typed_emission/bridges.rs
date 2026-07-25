@@ -794,6 +794,57 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
+    // _stmt_var_decl(ctx, name_lp, type_lp, expr_handle_or_0) -> stmt_handle
+    //
+    // Non-batch counterpart to `batch.stmtVarDecl`. Produces
+    // `Statement::VariableDecl { name, type_, initializer }` — a real
+    // let-declaration, not an assignment. Function-body scope requires prior
+    // declaration; `_stmt_assign` produces `Statement::Assignment` which the
+    // semantic checker treats as "undefined variable" outside `start:`.
+    //
+    // Consumes a typed-emission expression handle (via `take_expr_opt`), not
+    // a batch handle — the two arenas have separate handle spaces and a
+    // batch statement builder cannot consume a typed-emission expression.
+    // Plugins that emit through the non-batch surface (`_stmt_call`,
+    // `_stmt_assign`, `_stmt_if`, ...) MUST use this bridge rather than
+    // `batch.stmtVarDecl` to keep handle kinds aligned.
+    //
+    // `expr_handle_or_0 == 0` means "declaration only, no initializer".
+    // Requested by frame.client (prompt cc970925-870b) to unblock its
+    // load:/form:/send: SEM007 hotspots.
+    linker.func_wrap(
+        "env",
+        "_stmt_var_decl",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         name_lp: i32,
+         type_lp: i32,
+         expr_handle: i32|
+         -> i32 {
+            let name = match read_lp_string(&mut caller, name_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let ty_str = match read_lp_string(&mut caller, type_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let type_ = match batch_schema::resolve_type(&ty_str) {
+                Ok(t) => t,
+                Err(_) => return 0,
+            };
+            let a = arena!(caller);
+            let initializer = take_opt_or_return!(a, a.take_expr_opt(ctx, expr_handle));
+            let stmt = Statement::VariableDecl {
+                name,
+                type_,
+                initializer,
+                location: None,
+            };
+            a.alloc_stmt(stmt)
+        },
+    )?;
+
     // _stmt_if(ctx, cond_handle, then_block_handle, else_block_handle) -> handle
     // else_block_handle == 0 means no else branch.
     linker.func_wrap(
@@ -3687,5 +3738,66 @@ mod tests {
         let src = "abc";
         let out = truncate_for_diagnostic(src, 80);
         assert_eq!(out, "abc");
+    }
+
+    // ── _stmt_var_decl non-batch surface (prompt cc970925) ─────────────────────
+    //
+    // The bridge itself calls into `linker.func_wrap` and needs a WASM caller
+    // to invoke directly. The tests below exercise the arena-side behavior the
+    // bridge relies on — allocating an expression, taking it via take_expr_opt,
+    // and shaping a Statement::VariableDecl from a resolved type string. If any
+    // of these break, the bridge would fall over even though its wrapper looks
+    // correct.
+
+    #[test]
+    fn stmt_var_decl_shape_matches_batch_variant() {
+        // A non-batch expression handle can be consumed via take_expr_opt with
+        // the same "0 means None" convention as _stmt_return uses.
+        let mut arena = make_arena(1);
+        let init_h = arena.alloc_expr(Expression::Literal(Value::String("hello".to_string())));
+        let initializer = arena.take_expr_opt(1, init_h).unwrap();
+        assert!(
+            initializer.is_some(),
+            "non-zero handle must return Some(expr)"
+        );
+        let ty = super::batch_schema::resolve_type("string").unwrap();
+        let stmt = Statement::VariableDecl {
+            name: "greeting".to_string(),
+            type_: ty,
+            initializer,
+            location: None,
+        };
+        match stmt {
+            Statement::VariableDecl {
+                name,
+                type_,
+                initializer,
+                ..
+            } => {
+                assert_eq!(name, "greeting");
+                assert!(matches!(type_, Type::String));
+                assert!(initializer.is_some());
+            }
+            other => panic!("expected VariableDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stmt_var_decl_handle_zero_yields_no_initializer() {
+        // The bridge treats expr_handle == 0 as "no initializer" — verify the
+        // arena helper honors that convention.
+        let mut arena = make_arena(1);
+        let initializer = arena.take_expr_opt(1, 0).unwrap();
+        assert!(initializer.is_none(), "handle=0 must return Ok(None)");
+    }
+
+    #[test]
+    fn resolve_type_accepts_any_for_var_decl() {
+        // frame.client's load: block declares `__res_<var>` as `any` because
+        // the value comes from `_expr_call` on a bridge that returns a JSON
+        // string. Without this, _stmt_var_decl(ctx, name, "any", h) fails
+        // silently and the plugin re-emits SEM007.
+        let t = super::batch_schema::resolve_type("any").unwrap();
+        assert!(matches!(t, Type::Any));
     }
 }
