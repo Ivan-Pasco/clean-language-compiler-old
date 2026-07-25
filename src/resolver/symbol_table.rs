@@ -996,6 +996,20 @@ impl GlobalSymbolTable {
                 vec![HirType::List(Box::new(HirType::Number)), HirType::Number],
                 HirType::Integer,
             ),
+            // Byte-comparing variants for `list<string>` — dispatched from
+            // MIR when the receiver's element type is String. See prompt
+            // baf3ccc5 for why `list.contains` on strings can't share the
+            // pointer-equality body used for numeric lists.
+            (
+                "list.contains.string",
+                vec![HirType::List(Box::new(HirType::String)), HirType::String],
+                HirType::Boolean,
+            ),
+            (
+                "list.indexOf.string",
+                vec![HirType::List(Box::new(HirType::String)), HirType::String],
+                HirType::Integer,
+            ),
             (
                 "list.first",
                 vec![HirType::List(Box::new(HirType::Number))],

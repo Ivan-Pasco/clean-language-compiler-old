@@ -1,0 +1,83 @@
+// Test: bugfixes/stdlib_list_contains_string_pointer_equality
+// Grammar: list_method_call ::= receiver "." method_name "(" arguments ")"
+//   — no grammar change; this is a codegen dispatch fix.
+// Regression: prompt baf3ccc5 (framework, cln 0.33.129). Framework's
+//   frame.data lint hit `list<string>.contains(dname)` returning `false`
+//   for a value that WAS present in the list, with `manual_match` using
+//   `==` on the same strings returning `true`. Instrumented output:
+//     dname=UserData:len=8 ref_entries=[UserData:len=8] contains=false manual_match=true
+//   Framework shipped a workaround helper `lint_string_in_list` in
+//   frame.data v2.12.183.
+//
+// Root cause: `__list_contains_i32` (registered as `list.contains` in
+//   `src/codegen/codegen_registration.rs`) uses `Instruction::I32Eq` on
+//   element slots. For `list<string>` the slots hold LP-string pointers
+//   (heap addresses), so two byte-identical strings allocated at
+//   different offsets — e.g. one literal `"UserData"` and one produced
+//   by `"User" + "Data"` — compare as different pointers and
+//   `contains` returns false. Same bug for `.indexOf` — both go through
+//   `gen_index_of_i32`.
+//
+// Fix: added `__list_contains_string` + `__list_index_of_string`
+//   variants in `src/codegen/native_stdlib/list_ops.rs::gen_index_of_string`
+//   that call `__pairs_str_eq` (byte comparison) on each element.
+//   Registered as `list.contains.string` / `list.indexOf.string` in
+//   `register_pairs_operations` (which runs after `__pairs_str_eq` is
+//   available). MIR dispatch in
+//   `src/mir/mir_builder/expressions.rs` picks the string variant when
+//   the receiver's element type is `ConcreteType::String`; other element
+//   types keep the pointer-equality variant.
+//
+// Non-string variants (`list<integer>`, `list<number>`) are unchanged —
+//   pointer equality is byte equality for those.
+//
+// Fixed in: compiler 0.33.141
+//
+// Expected output:
+//   literal_hit=true
+//   literal_miss=false
+//   dyn_hit=true
+//   dyn_miss=false
+//   framework_scenario=true
+//   idx_hit=1
+//   idx_miss=-1
+//   dyn_idx=0
+//   int_hit=true
+//   int_miss=false
+
+start:
+	list<string> xs = []
+	xs.add("foo")
+	xs.add("bar")
+	print("literal_hit=" + xs.contains("bar").toString())
+	print("literal_miss=" + xs.contains("baz").toString())
+
+	// The failing case: two byte-identical strings from distinct heap
+	// allocations. Concat forces the second to live at a fresh offset.
+	string a = "Us" + "erData"
+	list<string> ys = []
+	ys.add(a)
+	string b = "User" + "Data"
+	print("dyn_hit=" + ys.contains(b).toString())
+	print("dyn_miss=" + ys.contains("nope").toString())
+
+	// Framework's exact scenario: value added via variable, queried via
+	// separate variable with same bytes.
+	list<string> referenced = []
+	string ftype = "UserData"
+	referenced.add(ftype)
+	string dname = "UserData"
+	print("framework_scenario=" + referenced.contains(dname).toString())
+
+	// indexOf shares the same byte-comparison path.
+	print("idx_hit=" + xs.indexOf("bar").toString())
+	print("idx_miss=" + xs.indexOf("baz").toString())
+	print("dyn_idx=" + ys.indexOf(b).toString())
+
+	// Regression guard: non-string lists still use pointer equality.
+	list<integer> ns = []
+	ns.add(1)
+	ns.add(2)
+	ns.add(3)
+	print("int_hit=" + ns.contains(2).toString())
+	print("int_miss=" + ns.contains(99).toString())

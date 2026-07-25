@@ -1271,6 +1271,40 @@ impl super::CodeGenerator {
         self.add_function_alias("pairs.len", pairs_len_idx);
         self.add_function_alias("pairs.size", pairs_len_idx);
 
+        // NATIVE: list_index_of_string / list_contains_string — byte-comparing
+        // variants for `list<string>`. The default `__list_contains_i32`
+        // compares element slots with `I32Eq`, which for string lists compares
+        // LP-pointer values (heap addresses), so byte-identical strings
+        // allocated at different offsets return `contains = false`. These
+        // variants dispatch through `__pairs_str_eq` to compare bytes.
+        //
+        // Registered here (in the pairs block) rather than in
+        // `register_list_operations` because the latter runs before
+        // `__pairs_str_eq` exists. See prompt baf3ccc5.
+        //
+        // MIR dispatch in `mir/mir_builder/expressions.rs` picks these when
+        // the receiver's element type is `ConcreteType::String`; other
+        // element types keep using `list.contains` / `list.indexOf`.
+        let list_index_of_string_instructions =
+            native_stdlib::list_ops::gen_index_of_string(str_eq_idx);
+        let list_index_of_string_idx = self.register_function(
+            "__list_index_of_string",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &list_index_of_string_instructions,
+        )?;
+        self.add_function_alias("list.indexOf.string", list_index_of_string_idx);
+
+        let list_contains_string_instructions =
+            native_stdlib::list_ops::gen_contains_string(list_index_of_string_idx);
+        let list_contains_string_idx = self.register_function(
+            "__list_contains_string",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &list_contains_string_instructions,
+        )?;
+        self.add_function_alias("list.contains.string", list_contains_string_idx);
+
         Ok(())
     }
 

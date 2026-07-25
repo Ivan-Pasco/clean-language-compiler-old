@@ -635,6 +635,102 @@ pub fn gen_reverse_i32(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for `list<string>.indexOf` — parametric over the
+/// string-equality predicate the caller passes in.
+///
+/// Fixes the "byte-identical strings at different heap offsets compare
+/// unequal" bug: the default `gen_index_of_i32` uses `I32Eq` on element
+/// slots, which for a list of strings compares LP-pointer *values*
+/// (memory addresses), not the underlying bytes. Two `"UserData"` literals
+/// allocated at different offsets have different pointers and hence
+/// `contains` returns false even when the strings are equal.
+///
+/// This variant loads each element as a pointer and passes it to
+/// `str_eq_func` alongside the search value. `str_eq_func` must have the
+/// signature `(i32, i32) -> i32` returning 1 for byte-equal, 0 otherwise
+/// (matches `__pairs_str_eq`).
+///
+/// Parameters:
+///   - local 0: list_ptr
+///   - local 1: needle (LP-string pointer)
+///
+/// Locals:
+///   - local 2: len
+///   - local 3: i (loop counter)
+///
+/// Returns: i32 (index of first byte-equal element, or -1 if not found).
+pub fn gen_index_of_string(str_eq_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // Get length -> local 2
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: LIST_LENGTH_OFFSET as u64,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(2),
+        // Initialize i = 0
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Result(ValType::I32)),
+        Instruction::Loop(BlockType::Empty),
+        // If i >= len, not found -> return -1
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2),
+        Instruction::I32GeU,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(-1),
+        Instruction::Br(2),
+        Instruction::End,
+        // Load list[i] (LP-string pointer)
+        Instruction::LocalGet(0),
+        Instruction::I32Const(LIST_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(3),
+        Instruction::I32Const(LIST_ELEMENT_SIZE_I32 as i32),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        // Push needle and call str_eq(list[i], needle) -> 1 if equal
+        Instruction::LocalGet(1),
+        Instruction::Call(str_eq_func),
+        // If equal, return i
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::Br(2),
+        Instruction::End,
+        // i++
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,          // End loop
+        Instruction::I32Const(-1), // Default: not found
+        Instruction::End,          // End block
+    ]
+}
+
+/// Generate instructions for `list<string>.contains` — thin wrapper around
+/// `gen_index_of_string` that maps `>= 0` to `true` / `false`.
+///
+/// Parameters mirror `gen_contains_i32`:
+///   - local 0: list_ptr
+///   - local 1: needle
+pub fn gen_contains_string(index_of_string_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::Call(index_of_string_func),
+        Instruction::I32Const(0),
+        Instruction::I32GeS,
+    ]
+}
+
 /// Get local variables needed for each list function
 pub fn get_locals(func_name: &str) -> Vec<(u32, ValType)> {
     match func_name {

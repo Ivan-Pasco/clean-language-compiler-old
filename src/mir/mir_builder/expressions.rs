@@ -2172,6 +2172,66 @@ impl MirBuilder {
                             self.add_instruction(context, instruction);
                             return Ok(result_id);
                         }
+                        // `list<string>.contains(needle)` / `.indexOf(needle)`
+                        // — dispatch to the byte-comparing variants when the
+                        // element type is String. The default `list.contains`
+                        // symbol routes to a pointer-equality body that
+                        // returns `false` for byte-identical strings living at
+                        // different heap offsets. Handled in the same "first
+                        // pass regardless of method_symbol" block as `add`/
+                        // `push`/`size` because the standard `list.contains`
+                        // symbol IS registered non-zero and would otherwise
+                        // short-circuit before the type-conversion match.
+                        // Fixes prompt baf3ccc5.
+                        "contains" | "indexOf"
+                            if matches!(**element_type, ConcreteType::String) =>
+                        {
+                            let alias = if method_name == "contains" {
+                                "list.contains.string"
+                            } else {
+                                "list.indexOf.string"
+                            };
+                            let str_symbol = match self.symbol_table.lookup_symbol(alias) {
+                                Some(sym) => sym,
+                                None => {
+                                    warn!(
+                                        "{} not registered; falling through to \
+                                         pointer-equality variant (bug baf3ccc5 may surface)",
+                                        alias
+                                    );
+                                    return Err(vec![CompilerError::validation_error(
+                                        format!("stdlib symbol `{}` missing", alias),
+                                        expression.location.clone(),
+                                    )]);
+                                }
+                            };
+
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32, // Boolean or Integer — both are i32
+                                expression.location.clone(),
+                            );
+
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+
+                            let instruction = MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::Function(str_symbol),
+                                    arguments: args,
+                                },
+                                location: expression.location.clone(),
+                            };
+                            self.add_instruction(context, instruction);
+                            return Ok(result_id);
+                        }
                         _ => {} // Fall through for other methods
                     }
                 }
@@ -3006,6 +3066,37 @@ impl MirBuilder {
                                 args.push(MirOperand::Value(arg_id));
                             }
                             (list_get_symbol, args)
+                        }
+                        // `list<string>.contains(needle)` / `.indexOf(needle)` —
+                        // dispatch to the byte-comparing variants when the
+                        // element type is String. The default aliases
+                        // (`list.contains` / `list.indexOf`) route to i32
+                        // pointer-equality, which returns false for byte-
+                        // identical strings allocated at different offsets.
+                        // Fixes prompt baf3ccc5.
+                        (ConcreteType::Array(element_type), "contains" | "indexOf")
+                            if matches!(**element_type, ConcreteType::String) =>
+                        {
+                            let alias = if method_name == "contains" {
+                                "list.contains.string"
+                            } else {
+                                "list.indexOf.string"
+                            };
+                            let str_symbol =
+                                self.symbol_table.lookup_symbol(alias).unwrap_or_else(|| {
+                                    warn!(
+                                        "{} not found in symbol table, falling back to \
+                                         pointer-equality variant (bug baf3ccc5 may surface)",
+                                        alias
+                                    );
+                                    *method_symbol
+                                });
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+                            (str_symbol, args)
                         }
                         // NOTE: Handle Any.get() method for JSON field access
                         // This must generate AnyGetField or AnyGetIndex based on argument type
