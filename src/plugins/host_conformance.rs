@@ -423,7 +423,9 @@ fn param_shapes_match(registry_params: &[String], host_shape: &[String]) -> bool
 fn check_return_type(reg: &Registration, entry: &RegistryFunction, issues: &mut Vec<Issue>) {
     let host_ret = rust_type_to_wasm(&reg.return_type);
     let registry_ret = match entry.returns.as_str() {
-        "i32" | "boolean" | "ptr" | "string" | "handler" => "i32",
+        // `any` = boxed-Any pointer per BOXED_ANY_ABI.md — carried as an i32
+        // at the WASM level.
+        "i32" | "boolean" | "ptr" | "string" | "handler" | "any" => "i32",
         "i64" | "integer" => "i64",
         "f64" | "number" => "f64",
         "void" | "" => "void",
@@ -526,7 +528,9 @@ fn rust_type_to_wasm(t: &str) -> &'static str {
 fn registry_type_to_wasm(t: &str, expand_strings: bool) -> Vec<&'static str> {
     match strip_tag(t) {
         "string" if expand_strings => vec!["i32", "i32"],
-        "string" | "ptr" | "boolean" | "i32" | "u32" | "handler" => vec!["i32"],
+        // `any` = boxed-Any pointer per BOXED_ANY_ABI.md — carried as an i32
+        // at the WASM level.
+        "string" | "ptr" | "boolean" | "i32" | "u32" | "handler" | "any" => vec!["i32"],
         "integer" | "i64" => vec!["i64"],
         "number" | "f64" => vec!["f64"],
         "void" | "" => vec![],
