@@ -229,13 +229,18 @@ impl<'a> SpecificationLexer<'a> {
                 //   '&'          — html entities like &rarr;, &middot;
                 //   '#'          — html fragment ids like href="#top" and the
                 //                  "#{var}" pattern that precedes an interpolation
+                //   '?'          — nullable-type suffix (frame-data.ebnf: `class_name , "?"`)
+                //                  and framework EBNFs that use `T?` (e.g. `Page?`).
+                //                  Core grammar doesn't yet have a nullable-type
+                //                  production, so unrecognized uses become parser
+                //                  errors rather than lex errors (dashboard #396dfcb027fc).
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
                 //
                 // If any of these appear outside a framework block, the parser will
                 // catch them later as an unexpected-token error in the right context.
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' => {
+                '\'' | '&' | '#' | '?' => {
                     let loc = start_location.clone();
                     let c = self.advance().unwrap();
                     Ok(Token::new(
@@ -488,13 +493,18 @@ impl<'a> SpecificationLexer<'a> {
                 //   '&'          — html entities like &rarr;, &middot;
                 //   '#'          — html fragment ids like href="#top" and the
                 //                  "#{var}" pattern that precedes an interpolation
+                //   '?'          — nullable-type suffix (frame-data.ebnf: `class_name , "?"`)
+                //                  and framework EBNFs that use `T?` (e.g. `Page?`).
+                //                  Core grammar doesn't yet have a nullable-type
+                //                  production, so unrecognized uses become parser
+                //                  errors rather than lex errors (dashboard #396dfcb027fc).
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
                 //
                 // If any of these appear outside a framework block, the parser will
                 // catch them later as an unexpected-token error in the right context.
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' => {
+                '\'' | '&' | '#' | '?' => {
                     let loc = start_location.clone();
                     let c = self.advance().unwrap();
                     Ok(Token::new(
@@ -1804,3 +1814,41 @@ impl From<LexError> for CompilerError {
 }
 
 // Tests are in tests/specification_lexer_tests.rs
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    fn tokenize(input: &str) -> Result<Vec<Token>, LexError> {
+        let source = SourceCode::new(input.to_string(), "test.cln".to_string());
+        let mut lexer = SpecificationLexer::new(&source);
+        let mut tokens = Vec::new();
+        loop {
+            let tok = lexer.next_token()?;
+            let is_eof = matches!(tok.kind, TokenKind::Eof);
+            tokens.push(tok);
+            if is_eof {
+                break;
+            }
+        }
+        Ok(tokens)
+    }
+
+    /// Regression: the `?` character must not raise LEX001 (Invalid character).
+    /// Framework EBNFs use `T?` for nullable-type suffixes (frame-data.ebnf
+    /// `class_name , "?"`), so `?` flows through the lexer as a pass-through
+    /// identifier token. Downstream parsing may still reject it until a
+    /// nullable-type production lands in core grammar, but that must be a
+    /// parser error, not a lex error. Dashboard fingerprint #396dfcb027fc.
+    #[test]
+    fn question_mark_passthrough_not_lex_error() {
+        assert!(
+            tokenize("string?").is_ok(),
+            "`?` after type name must not be a lex error",
+        );
+        assert!(
+            tokenize("Page?").is_ok(),
+            "`?` after class name must not be a lex error",
+        );
+    }
+}
