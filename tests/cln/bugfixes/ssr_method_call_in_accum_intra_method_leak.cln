@@ -1,0 +1,64 @@
+// Test: bugfixes/ssr_method_call_in_accum_intra_method_leak
+// Semantic: SEM-loop-acc — accumulator loops that append the return
+//   value of a call (free function or method) must reclaim not only the
+//   per-iteration allocations declared OUTSIDE the call (already handled
+//   by the outer `mem_scope_mark` wrap) but also the intra-call builder
+//   growth stages of the callee.
+//
+// Regression: SSR-METHOD-CALL-IN-ACCUM-LEAKS-INTRA-METHOD-STAGES
+//   (dashboard #0e49479a7e76) — refinement of SSR-STRING-CONCAT-LOOP-OOM-33151
+//   (#8c113611781e). The 0.33.147 outer wrap fixed leaks from
+//   `head = json.get(...)` shape statements sitting BETWEEN the
+//   accumulator decl and the loop, but each `acc = acc + r.render()`
+//   iteration still left the intra-method builder growth stages of
+//   `render()` pinned on the main heap until end-of-loop. On the reported
+//   SSR payload (12 iterations of ~1.7 KB html: blocks) peak main-heap
+//   footprint pushed past the server's 128 MB WASM memory cap.
+//
+// Fix (this test): `rewrite_self_append_in_block` now wraps each
+//   MethodCall / non-builtin Call fragment with a per-call
+//   `scope_push` + `scope_pop_keeping` pair:
+//
+//     integer __mark = scope_push()
+//     string  __tmp  = <call>()
+//     __tmp = scope_pop_keeping(__mark, __tmp)     // pop BEFORE append
+//     __sb_N = string_builder_append(__sb_N, __tmp)
+//
+//   The pop happens BEFORE the append so a builder-doubling reallocation
+//   triggered by the append lands above the pop's final heap_ptr and
+//   stays alive. Every intra-call temporary the callee malloc'd (its own
+//   string_builder growth stages, per-call helper temps) is reclaimed;
+//   only the final Clean string bytes survive to feed the outer builder.
+//
+// This test uses the exact minimal repro from the bug report — 12
+//   iterations of a free-function call whose body walks a 5-stage
+//   concat chain, forcing multiple internal string_builder doublings.
+//   Pre-fix per-iter heap_ptr delta grew by 1416 → 2440 → 4504 bytes
+//   at the doubling boundaries; post-fix it stabilizes at exactly the
+//   final chunk length (~350 bytes). Run under wasmtime_runner it
+//   completes cleanly in both cases (the 64MB runner cap is generous);
+//   the actual 128MB failure only reproduces on the server host. This
+//   test is a functional-correctness proof — the leak's memory-shape
+//   effect is verified separately via __heap_ptr delta instrumentation.
+//
+// Fixed in: compiler 0.33.153
+//
+// Expected output:
+//   done
+
+start:
+	string acc = ""
+	integer i = 0
+	while i < 12
+		acc = acc + buildChunk(i)
+		i = i + 1
+	print("done")
+
+functions:
+	string buildChunk(integer n)
+		string s = "<div class=\"card\" data-slug=\"item-"
+		s = s + n.toString()
+		s = s + "\"><h3>Item "
+		s = s + n.toString()
+		s = s + "</h3><p>Long payload padding to force multiple doubling stages of the internal string_builder. Repeat repeat repeat repeat repeat repeat repeat repeat repeat repeat repeat repeat repeat repeat repeat.</p></div>\n"
+		return s

@@ -3727,6 +3727,7 @@ impl HirBuilder {
             // `__sb = string_builder_append_transient(__sb, eK)` statements
             // via the existing `rewrite_self_append_collect` machinery.
             let mut flattened_appends: Vec<HirStatement> = Vec::new();
+            let mut per_call_wrap_counter: usize = 0;
             let drained: Vec<HirStatement> = stmts.drain(i + 1..=last_append).collect();
             for stmt in drained {
                 Self::rewrite_self_append_collect(
@@ -3734,6 +3735,7 @@ impl HirBuilder {
                     &acc_name,
                     &sb_name,
                     "string_builder_append_transient",
+                    &mut per_call_wrap_counter,
                     &mut flattened_appends,
                 );
             }
@@ -4173,11 +4175,13 @@ impl HirBuilder {
         let tmark_name = format!("__sb_{}_tmark", self.string_builder_counter);
         self.string_builder_counter += 1;
 
+        let mut per_call_wrap_counter: usize = 0;
         Self::rewrite_self_append_in_block(
             &mut new_body,
             &acc_name,
             &sb_name,
             "string_builder_append",
+            &mut per_call_wrap_counter,
         );
 
         // Step 4a-pre: route body-local string-concat results through the
@@ -5690,6 +5694,7 @@ impl HirBuilder {
         acc_name: &str,
         sb_name: &str,
         append_fn: &str,
+        per_call_wrap_counter: &mut usize,
     ) {
         // Two-pass walk because chained-RHS rewrites turn a single
         // assignment into N sequential statements. Pass 1 transforms each
@@ -5697,7 +5702,14 @@ impl HirBuilder {
         // Pass 2 flattens the Vec back into the block.
         let mut new_stmts: Vec<HirStatement> = Vec::with_capacity(block.statements.len());
         for stmt in std::mem::take(&mut block.statements).into_iter() {
-            Self::rewrite_self_append_collect(stmt, acc_name, sb_name, append_fn, &mut new_stmts);
+            Self::rewrite_self_append_collect(
+                stmt,
+                acc_name,
+                sb_name,
+                append_fn,
+                per_call_wrap_counter,
+                &mut new_stmts,
+            );
         }
         block.statements = new_stmts;
     }
@@ -5713,6 +5725,7 @@ impl HirBuilder {
         acc_name: &str,
         sb_name: &str,
         append_fn: &str,
+        per_call_wrap_counter: &mut usize,
         out: &mut Vec<HirStatement>,
     ) {
         match stmt {
@@ -5740,24 +5753,14 @@ impl HirBuilder {
                 fragments.reverse();
 
                 for frag in fragments {
-                    out.push(HirStatement::Assignment {
-                        target: HirLValue::Variable {
-                            name: sb_name.to_string(),
-                            location: location.clone(),
-                        },
-                        value: HirExpression::Call {
-                            function: append_fn.to_string(),
-                            arguments: vec![
-                                HirExpression::Variable {
-                                    name: sb_name.to_string(),
-                                    location: location.clone(),
-                                },
-                                frag,
-                            ],
-                            location: location.clone(),
-                        },
-                        location: location.clone(),
-                    });
+                    Self::emit_append_maybe_wrapped(
+                        frag,
+                        sb_name,
+                        append_fn,
+                        &location,
+                        per_call_wrap_counter,
+                        out,
+                    );
                 }
             }
             HirStatement::Assignment { .. } => {
@@ -5772,9 +5775,21 @@ impl HirBuilder {
                 mut else_branch,
                 location,
             } => {
-                Self::rewrite_self_append_in_block(&mut then_branch, acc_name, sb_name, append_fn);
+                Self::rewrite_self_append_in_block(
+                    &mut then_branch,
+                    acc_name,
+                    sb_name,
+                    append_fn,
+                    per_call_wrap_counter,
+                );
                 if let Some(eb) = else_branch.as_mut() {
-                    Self::rewrite_self_append_in_block(eb, acc_name, sb_name, append_fn);
+                    Self::rewrite_self_append_in_block(
+                        eb,
+                        acc_name,
+                        sb_name,
+                        append_fn,
+                        per_call_wrap_counter,
+                    );
                 }
                 out.push(HirStatement::If {
                     condition,
@@ -5788,7 +5803,13 @@ impl HirBuilder {
                 mut body,
                 location,
             } => {
-                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name, append_fn);
+                Self::rewrite_self_append_in_block(
+                    &mut body,
+                    acc_name,
+                    sb_name,
+                    append_fn,
+                    per_call_wrap_counter,
+                );
                 out.push(HirStatement::While {
                     condition,
                     body,
@@ -5801,7 +5822,13 @@ impl HirBuilder {
                 mut body,
                 location,
             } => {
-                Self::rewrite_self_append_in_block(&mut body, acc_name, sb_name, append_fn);
+                Self::rewrite_self_append_in_block(
+                    &mut body,
+                    acc_name,
+                    sb_name,
+                    append_fn,
+                    per_call_wrap_counter,
+                );
                 out.push(HirStatement::For {
                     variable,
                     iterable,
@@ -5811,6 +5838,212 @@ impl HirBuilder {
             }
             other => out.push(other),
         }
+    }
+
+    /// Emit the `sb = string_builder_append(sb, frag)` statement for one
+    /// fragment of a self-append RHS, optionally wrapping the fragment in a
+    /// per-call `scope_push` / `scope_pop_keeping` pair so any intra-call
+    /// main-heap allocations (typically the callee's own string_builder
+    /// growth stages) are reclaimed before the next iteration runs.
+    ///
+    /// Wrapping is applied when `frag` is a call-like expression that could
+    /// allocate on the main heap while producing a Clean string:
+    ///   - `MethodCall` — e.g. `r.render()`, `x.toString()`
+    ///   - `Call` — e.g. `buildChunk(i)`, EXCEPT for known non-allocating
+    ///     or already-lifetime-managed builtins (`string_builder_*`,
+    ///     `string_concat_transient`, `scope_*`, `__transient_scope_*`,
+    ///     `_arena_scope_*`, `carryover_copy`). Wrapping any of those would
+    ///     be a no-op at best and a double-free / lifetime-collision at
+    ///     worst.
+    ///
+    /// Non-call fragments (`Literal`, `Variable`, `BinaryOp`, etc.) are
+    /// emitted directly with no wrap — they don't allocate a returned
+    /// string that could pin intermediates on the main heap.
+    ///
+    /// The wrap shape emitted:
+    ///   ```clean
+    ///   integer __sb_N_ppmark_K = scope_push()
+    ///   string  __sb_N_ptmp_K   = <frag>
+    ///   __sb_N_ptmp_K = scope_pop_keeping(__sb_N_ppmark_K, __sb_N_ptmp_K)
+    ///   __sb_N = string_builder_append(__sb_N, __sb_N_ptmp_K)
+    ///   ```
+    /// `scope_pop_keeping` copies the returned string below the mark and
+    /// resets `__heap_ptr` past it — every allocation `<frag>` made after
+    /// the push (builder growth stages, per-call helper temps) is
+    /// reclaimed, and only the final string bytes survive. The rebind of
+    /// `__tmp` is required because the original pointer is stale after the
+    /// pop (see `native_stdlib::memory::gen_scope_pop_keeping`).
+    ///
+    /// **Ordering invariant:** the pop MUST happen BEFORE the
+    /// `string_builder_append`. If the append runs first and triggers the
+    /// builder's doubling-and-relocate path, the reallocated builder
+    /// region sits above the mark. The subsequent `scope_pop_keeping`
+    /// would then reset `__heap_ptr` back below that region, leaving
+    /// `__sb_N` pointing at soon-to-be-overwritten memory. Popping first
+    /// puts `__tmp` at the mark; the append then relocates the builder
+    /// (if needed) above the pop's final `__heap_ptr`, which is stable.
+    ///
+    /// Resolves SSR-METHOD-CALL-IN-ACCUM-LEAKS-INTRA-METHOD-STAGES
+    /// (fingerprint 0e49479a7e76) — refinement of #8c113611781e. The outer
+    /// `mem_scope_mark` wrap in `try_match_accumulator_pair` already
+    /// reclaims per-iter allocations declared OUTSIDE any call, but the
+    /// intra-method builder growth stages of `r.render()` remain live on
+    /// the main heap until end-of-loop. On the reported 12-iteration SSR
+    /// payload that pushed peak main-heap past the server's 128 MB cap.
+    fn emit_append_maybe_wrapped(
+        frag: HirExpression,
+        sb_name: &str,
+        append_fn: &str,
+        location: &SourceLocation,
+        per_call_wrap_counter: &mut usize,
+        out: &mut Vec<HirStatement>,
+    ) {
+        if !Self::fragment_should_be_scope_wrapped(&frag) {
+            out.push(HirStatement::Assignment {
+                target: HirLValue::Variable {
+                    name: sb_name.to_string(),
+                    location: location.clone(),
+                },
+                value: HirExpression::Call {
+                    function: append_fn.to_string(),
+                    arguments: vec![
+                        HirExpression::Variable {
+                            name: sb_name.to_string(),
+                            location: location.clone(),
+                        },
+                        frag,
+                    ],
+                    location: location.clone(),
+                },
+                location: location.clone(),
+            });
+            return;
+        }
+
+        let k = *per_call_wrap_counter;
+        *per_call_wrap_counter += 1;
+        let mark_name = format!("{}_ppmark_{}", sb_name, k);
+        let tmp_name = format!("{}_ptmp_{}", sb_name, k);
+
+        // integer <mark> = scope_push()
+        out.push(HirStatement::VariableDeclaration {
+            name: mark_name.clone(),
+            var_type: HirType::Integer,
+            initializer: Some(HirExpression::Call {
+                function: "scope_push".to_string(),
+                arguments: vec![],
+                location: location.clone(),
+            }),
+            is_mutable: false,
+            location: location.clone(),
+        });
+
+        // string <tmp> = <frag>
+        out.push(HirStatement::VariableDeclaration {
+            name: tmp_name.clone(),
+            var_type: HirType::String,
+            initializer: Some(frag),
+            is_mutable: true,
+            location: location.clone(),
+        });
+
+        // <tmp> = scope_pop_keeping(<mark>, <tmp>)
+        //
+        // MUST run before the append. See the ordering-invariant note in
+        // this fn's doc comment.
+        out.push(HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: tmp_name.clone(),
+                location: location.clone(),
+            },
+            value: HirExpression::Call {
+                function: "scope_pop_keeping".to_string(),
+                arguments: vec![
+                    HirExpression::Variable {
+                        name: mark_name.clone(),
+                        location: location.clone(),
+                    },
+                    HirExpression::Variable {
+                        name: tmp_name.clone(),
+                        location: location.clone(),
+                    },
+                ],
+                location: location.clone(),
+            },
+            location: location.clone(),
+        });
+
+        // sb = string_builder_append(sb, <tmp>)
+        out.push(HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: sb_name.to_string(),
+                location: location.clone(),
+            },
+            value: HirExpression::Call {
+                function: append_fn.to_string(),
+                arguments: vec![
+                    HirExpression::Variable {
+                        name: sb_name.to_string(),
+                        location: location.clone(),
+                    },
+                    HirExpression::Variable {
+                        name: tmp_name.clone(),
+                        location: location.clone(),
+                    },
+                ],
+                location: location.clone(),
+            },
+            location: location.clone(),
+        });
+    }
+
+    /// Predicate for `emit_append_maybe_wrapped`: is `frag` a call-like
+    /// expression whose evaluation may leave main-heap allocations behind
+    /// the returned Clean string? Only MethodCall and non-builtin Call
+    /// fragments qualify. Fragments in the internal-lowering namespace
+    /// (`string_builder_*`, `string_concat_transient`, `scope_*`,
+    /// `__transient_scope_*`, `_arena_scope_*`, `carryover_copy`) are
+    /// excluded because their lifetime is either already scoped by an
+    /// outer arena/scope or they don't return a Clean string at all.
+    /// `NamespaceCall` / `StaticMethodCall` fragments are excluded because
+    /// most such builtins (e.g. `Math.abs`) return non-string values whose
+    /// bits do not carry a length prefix — feeding them to
+    /// `scope_pop_keeping` would read a garbage length and corrupt memory.
+    fn fragment_should_be_scope_wrapped(frag: &HirExpression) -> bool {
+        match frag {
+            HirExpression::MethodCall { .. } => true,
+            HirExpression::Call { function, .. } => {
+                !Self::is_non_allocating_or_managed_builtin(function)
+            }
+            _ => false,
+        }
+    }
+
+    /// Function names that must NOT be wrapped by the per-call scope
+    /// (`scope_push` / `scope_pop_keeping`) pair emitted by
+    /// `emit_append_maybe_wrapped`. See `fragment_should_be_scope_wrapped`
+    /// for why.
+    fn is_non_allocating_or_managed_builtin(function: &str) -> bool {
+        // Builder ops — return non-Clean-string builder pointers, or are
+        // themselves the target of the scope wrap.
+        if function.starts_with("string_builder_") {
+            return true;
+        }
+        // Transient / arena scope helpers — already lifetime-managed by
+        // the enclosing `__transient_scope_enter` / `_arena_scope_push`
+        // pair. Wrapping them again is a no-op that just adds locals.
+        if function.starts_with("__transient_scope_")
+            || function.starts_with("transient_scope_")
+            || function.starts_with("_arena_scope_")
+            || function.starts_with("scope_")
+        {
+            return true;
+        }
+        // Explicit blocklist for the transient-arena concat helper and
+        // the carryover ping-pong copy — both return strings whose
+        // lifetime is bounded by an outer scope reset that the per-call
+        // wrap would interfere with.
+        matches!(function, "string_concat_transient" | "carryover_copy")
     }
 
     /// Collect every body-local string-typed local declared anywhere
