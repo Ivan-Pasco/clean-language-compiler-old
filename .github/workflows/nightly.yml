@@ -362,47 +362,56 @@ jobs:
       # ~/.cleen/plugins/ and are loaded by path, not by compiler version.
       - name: Install latest released compiler (cleen precondition)
         run: |
-          set -uo pipefail
-          # `cleen install latest` hits the GitHub API to resolve the tag.
-          # That request can 301/rate-limit on any given run (we caught one
-          # on 2026-07-25: "GitHub API returned HTTP 301: Moved Permanently"
-          # even though the manager itself hadn't changed in 4 days). The
-          # manager prints a warning but exits 0, so without a hard-fail
-          # here `ver` came out empty and `cleen use ""` blew up with an
-          # opaque "Invalid version format: ''". Verify the install
-          # actually landed a version dir before trying to activate.
-          if ! cleen install latest; then
-            echo "::error::cleen install latest failed (exit != 0)"
+          set -euo pipefail
+          # The compiler repo (Ivan-Pasco/clean-language-compiler) redirects
+          # to `-old` at the GitHub API layer (git push confirms the same:
+          # "This repository moved. Please use the new location:
+          # Ivan-Pasco/clean-language-compiler-old.git"). cleen-manager
+          # <= 0.5.27 has the API URL hard-coded and follows redirects
+          # incorrectly — both the tag-resolution path AND the asset
+          # download path hit HTTP 301 and bail without installing
+          # anything (see run 30182366911, 2026-07-26: cleen install
+          # latest AND cleen install 0.33.146 both bounce with the same
+          # 301 message).
+          #
+          # Fix: bypass cleen-manager for the compiler binary. Resolve
+          # the tag via `gh release view` (uses GITHUB_TOKEN, handles the
+          # 301), download the raw cln binary with `gh release download`,
+          # place it in ~/.cleen/versions/<ver>/ ourselves, activate.
+          # cleen use then treats it as a normally-installed version.
+          #
+          # This step needs to be updated the day cleen-manager ships a
+          # release that follows the redirect correctly. Until then this
+          # is the reliable path.
+          latest_tag="$(gh release view \
+            --repo Ivan-Pasco/clean-language-compiler \
+            --json tagName --jq .tagName)"
+          ver="${latest_tag#v}"
+          echo "Latest release: $latest_tag (ver=$ver)"
+
+          install_dir="$HOME/.cleen/versions/$ver"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+
+          # Prefer the raw binary (no untar step). Falls back to the
+          # tarball if for some reason the raw asset isn't present.
+          if ! gh release download "$latest_tag" \
+              --repo Ivan-Pasco/clean-language-compiler \
+              --pattern 'cln-linux-x86_64' \
+              --pattern 'compile-options.json' \
+              --clobber; then
+            echo "::error::gh release download failed for $latest_tag"
             exit 1
           fi
-          ver=""
-          if [ -d "$HOME/.cleen/versions" ]; then
-            ver="$(ls -1 "$HOME/.cleen/versions" 2>/dev/null \
-              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' \
-              | sort -V \
-              | tail -n1 || true)"
-          fi
-          if [ -z "$ver" ]; then
-            echo "::error::cleen install completed but $HOME/.cleen/versions has no version dir."
-            echo "::error::This usually means the GitHub API redirect / rate-limit made"
-            echo "::error::the install silently no-op. Retrying once with an explicit tag."
-            latest_tag="$(gh release view --repo Ivan-Pasco/clean-language-compiler --json tagName --jq .tagName || echo '')"
-            if [ -n "$latest_tag" ]; then
-              tag_ver="${latest_tag#v}"
-              echo "::warning::Retrying with cleen install $tag_ver"
-              cleen install "$tag_ver" || {
-                echo "::error::cleen install $tag_ver also failed"
-                exit 1
-              }
-              ver="$(ls -1 "$HOME/.cleen/versions" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1)"
-            fi
-          fi
-          if [ -z "$ver" ]; then
-            echo "::error::Still no cleen-managed compiler after retry. Aborting."
-            exit 1
-          fi
-          echo "Activating cleen-managed compiler $ver"
+          mv cln-linux-x86_64 cln
+          chmod +x cln
+          ls -la
+          ./cln --version
+
+          # Now the manager will accept `cleen use <ver>` — the version
+          # dir exists and holds a valid cln binary + compile-options.json.
           cleen use "$ver"
+          echo "Activated cleen-managed compiler $ver via direct download"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
