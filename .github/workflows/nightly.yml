@@ -362,10 +362,49 @@ jobs:
       # ~/.cleen/plugins/ and are loaded by path, not by compiler version.
       - name: Install latest released compiler (cleen precondition)
         run: |
-          cleen install latest
-          ver="$(ls -1 "$HOME/.cleen/versions" | sort -V | tail -n1)"
+          set -uo pipefail
+          # `cleen install latest` hits the GitHub API to resolve the tag.
+          # That request can 301/rate-limit on any given run (we caught one
+          # on 2026-07-25: "GitHub API returned HTTP 301: Moved Permanently"
+          # even though the manager itself hadn't changed in 4 days). The
+          # manager prints a warning but exits 0, so without a hard-fail
+          # here `ver` came out empty and `cleen use ""` blew up with an
+          # opaque "Invalid version format: ''". Verify the install
+          # actually landed a version dir before trying to activate.
+          if ! cleen install latest; then
+            echo "::error::cleen install latest failed (exit != 0)"
+            exit 1
+          fi
+          ver=""
+          if [ -d "$HOME/.cleen/versions" ]; then
+            ver="$(ls -1 "$HOME/.cleen/versions" 2>/dev/null \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' \
+              | sort -V \
+              | tail -n1 || true)"
+          fi
+          if [ -z "$ver" ]; then
+            echo "::error::cleen install completed but $HOME/.cleen/versions has no version dir."
+            echo "::error::This usually means the GitHub API redirect / rate-limit made"
+            echo "::error::the install silently no-op. Retrying once with an explicit tag."
+            latest_tag="$(gh release view --repo Ivan-Pasco/clean-language-compiler --json tagName --jq .tagName || echo '')"
+            if [ -n "$latest_tag" ]; then
+              tag_ver="${latest_tag#v}"
+              echo "::warning::Retrying with cleen install $tag_ver"
+              cleen install "$tag_ver" || {
+                echo "::error::cleen install $tag_ver also failed"
+                exit 1
+              }
+              ver="$(ls -1 "$HOME/.cleen/versions" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1)"
+            fi
+          fi
+          if [ -z "$ver" ]; then
+            echo "::error::Still no cleen-managed compiler after retry. Aborting."
+            exit 1
+          fi
           echo "Activating cleen-managed compiler $ver"
           cleen use "$ver"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install latest Frame plugins
         run: cleen frame install latest
