@@ -232,49 +232,6 @@ jobs:
           [ "$failures" -eq 0 ]
 
   # -------------------------------------------------------------------------
-  # 6. Spec-coverage report (informational)
-  # -------------------------------------------------------------------------
-  spec-coverage-nightly:
-    name: Spec-rule coverage (nightly)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: Ivan-Pasco/clean-language-spec
-          ref: main
-          path: foundation-checkout
-      - name: Symlink foundation/
-        run: |
-          set -euxo pipefail
-          if [ -d foundation-checkout/foundation ]; then
-            ln -s "$PWD/foundation-checkout/foundation" ../foundation
-          else
-            ln -s "$PWD/foundation-checkout" ../foundation
-          fi
-
-      - name: Coverage report
-        run: |
-          python3 scripts/spec_coverage.py --json spec-coverage.json 2>&1 | \
-            tee spec-coverage.txt
-          {
-            echo "## Spec-rule coverage (nightly)"
-            echo '```'
-            head -80 spec-coverage.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: spec-coverage-nightly
-          path: |
-            spec-coverage.txt
-            spec-coverage.json
-          retention-days: 30
-
-  # -------------------------------------------------------------------------
   # 7. Cross-component canary matrix (Layer 3 of the canary umbrella)
   #
   # Per umbrella prompt 7fb425cb / L3 prompt 6b6f6f79:

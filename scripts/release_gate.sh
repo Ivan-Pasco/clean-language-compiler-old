@@ -133,16 +133,12 @@ fi
 # ---- 5. Spec-rule coverage ------------------------------------------------
 step "5/6  spec-rule coverage ratchet"
 if [ -x scripts/spec_coverage.py ]; then
-    # Extract the committed baseline from the workflow file so this script
-    # stays in sync with CI without a second source of truth.
-    baseline=""
-    if [ -f .github/workflows/spec-coverage.yml ]; then
-        baseline=$(awk -F'"' '/SPEC_COVERAGE_BASELINE_PCT:/ {print $2; exit}' \
-            .github/workflows/spec-coverage.yml)
-    fi
-    if [ -z "$baseline" ]; then
-        warn "could not find SPEC_COVERAGE_BASELINE_PCT in spec-coverage.yml"
-    else
+    # Baseline % of numbered semantic rules that must be cited by at least
+    # one test under tests/cln/. Raise only when the suite genuinely covers
+    # more rules. Was previously read from spec-coverage.yml; that CI job
+    # was retired 2026-07-25 (external spec repo inaccessible from CI).
+    baseline="54.93"
+    if true; then
         # spec_coverage.py needs foundation/spec/ next to the compiler crate.
         # In dev checkouts this is already true. In CI this is set up in the
         # workflow. If it's missing here, warn but don't fail — the CI job
