@@ -126,11 +126,20 @@ sized_type = @{ core_type ~ size_specifier }
 // Generic Type Shorthand" and foundation/spec/grammar/grammar.ebnf.
 // The `!identifier_tail` guard prevents `listX` / `pairsFoo` from binding
 // as `list` + `X` — bare forms must be followed by non-identifier chars.
-matrix_type = { "matrix" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
+// Atomic (`@{ }`) so pest does NOT insert implicit WHITESPACE between the
+// closing `>` and the `!(ASCII_ALPHANUMERIC | "_")` peek. Without atomic,
+// pest would eat the space after `list<T>` before the guard runs, then
+// the guard sees the following identifier char (e.g. `x` in `list<T> xs`)
+// and REJECTS the type match — causing `variable_decl_with_assignment`
+// to fall through to `variable_decl_without_assignment` which greedily
+// consumes `list<T> xs` and leaves ` = []` unparseable. Reported as
+// SYN001-LIST-GENERIC-REGRESSION (fp 3d5a3082). Internal whitespace
+// (`" "*`) is still explicit inside the rule, so atomic is safe.
+matrix_type = @{ "matrix" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
 // list_behavior suffix: .line | .pile | .unique (spec grammar.ebnf §list_behavior)
 list_behavior = { "." ~ ("line" | "pile" | "unique") }
-list_type = { "list" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") ~ list_behavior? }
-pairs_type = { "pairs" ~ ("<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
+list_type = @{ "list" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") ~ list_behavior? }
+pairs_type = @{ "pairs" ~ ("<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Generic types
 generic_type = { identifier ~ "<" ~ type_arguments ~ ">" }
