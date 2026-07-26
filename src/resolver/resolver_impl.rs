@@ -4114,6 +4114,36 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
+        // Native main-heap scope push / scope_pop_keeping. Used by the HIR
+        // outer accumulator-loop rewrite to bracket the loop with a
+        // main-heap reclaim scope. The `keeping` variant preserves the
+        // accumulator's final string by copying it below the saved mark
+        // before resetting the heap pointer. Together these reclaim per-
+        // iter builder growth stages and any per-iter helper strands
+        // (e.g. `render()`'s `finalize_to_main` allocation) while keeping
+        // the accumulator alive. Closes the residual SSR-LOOP-CLASS-METHOD-
+        // HTMLBLOCK-TRAP leak on outer-scope accumulators (finishes the
+        // fix started in 0.33.147 for singleshot helpers).
+        //
+        // Distinct from `_arena_scope_push` / `_arena_scope_pop` (which
+        // operate on the host bridge's LP-string arena) and from
+        // `transient_scope_enter` / `transient_scope_exit` (which operate
+        // on the per-iter transient pool). `scope_push` reads the main
+        // WASM heap pointer; `scope_pop_keeping` writes it back after
+        // moving one region below the mark.
+        self.register_builtin_fn(
+            "scope_push",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
+        self.register_builtin_fn(
+            "scope_pop_keeping",
+            vec![HirType::Integer, HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
+
         // Host bridge arena scope push/pop — used by the HIR dual-accumulator
         // rewrite (COMPILER-MEM-ALLOC-NO-GROW-RECURRENCE, fp b80c2f907c71).
         // _arena_scope_push() -> integer : saves the current host arena alloc_offset

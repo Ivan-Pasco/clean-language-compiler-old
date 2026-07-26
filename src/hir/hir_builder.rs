@@ -125,6 +125,23 @@ struct AccumulatorRewrite {
     /// Inserted immediately after the loop: rebinds `acc` to the
     /// finalized string so any downstream reader sees a normal string.
     finalize_decl: HirStatement,
+    /// When `Some`, wrap the [decl, seed, loop, finalize] block in a
+    /// main-heap scope: `mem_scope_push()` immediately before the decl,
+    /// and `acc = scope_pop_keeping(mark, acc)` immediately after the
+    /// finalize. Reclaims every per-iteration main-heap allocation
+    /// (builder growth stages and any `finalize_to_main` strands from
+    /// per-iter helper calls) while preserving only the accumulator's
+    /// final content. See `is_body_mem_scope_safe` for the predicate and
+    /// `native_stdlib::memory::gen_scope_pop_keeping` for the runtime
+    /// helper. Resolves SSR-LOOP-CLASS-METHOD-HTMLBLOCK-TRAP
+    /// (fingerprint 5f77eb36) and SSR-TUTORIALS-WASM-TRAP-PARTIAL-FIX-334
+    /// (fingerprint 4c06a901).
+    ///
+    /// The field is the name of the mark local (e.g. `__sb_N_mmark`);
+    /// caller emits `integer <mark_name> = scope_push()` before the decl
+    /// and `<acc_name> = scope_pop_keeping(<mark_name>, <acc_name>)`
+    /// after the finalize.
+    mem_scope_mark: Option<String>,
 }
 
 /// HIR Builder - constructs HIR from AST
@@ -2878,22 +2895,87 @@ impl HirBuilder {
                 continue;
             };
 
+            // Extract acc_name + decl_loc from the ORIGINAL decl before we
+            // replace it — needed if we emit the mem-scope wrap below.
+            let (orig_acc_name, orig_decl_loc) = match &stmts[i] {
+                HirStatement::VariableDeclaration { name, location, .. } => {
+                    (name.clone(), location.clone())
+                }
+                _ => unreachable!("accumulator_decl_name pre-validated shape"),
+            };
+
             // Splice the rewrite:
-            //   - replace decl at i with decl_replacement,
-            //   - optionally insert seed_append at i + 1 (seeds the builder
-            //     with the accumulator's initial non-empty literal; resolves
+            //   - optionally emit mem_scope_push BEFORE the decl (only when
+            //     rewrite.mem_scope_mark is Some — the body-safety predicate
+            //     fired). This shifts every subsequent index by +1.
+            //   - replace decl at i (or i+1 if push was inserted) with
+            //     decl_replacement,
+            //   - optionally insert seed_append (seeds the builder with the
+            //     accumulator's initial non-empty literal; resolves
             //     CODEGEN-STRING-ACCUM-NON-EMPTY-INIT-LEAK),
             //   - replace the (now-shifted) loop with replacement_loop,
-            //   - insert finalize_decl after the loop.
-            stmts[i] = rewrite.decl_replacement;
-            let mut shifted_loop_idx = loop_idx;
-            let insert_at = i + 1;
+            //   - insert finalize_decl after the loop,
+            //   - optionally emit `acc = scope_pop_keeping(mark, acc)`
+            //     immediately after the finalize.
+            let mut cursor = i;
+            let scope_wrap = rewrite.mem_scope_mark.clone();
+            if let Some(mark_name) = &scope_wrap {
+                let push_decl = HirStatement::VariableDeclaration {
+                    name: mark_name.clone(),
+                    var_type: HirType::Integer,
+                    initializer: Some(HirExpression::Call {
+                        function: "scope_push".to_string(),
+                        arguments: vec![],
+                        location: orig_decl_loc.clone(),
+                    }),
+                    is_mutable: false,
+                    location: orig_decl_loc.clone(),
+                };
+                stmts.insert(cursor, push_decl);
+                cursor += 1;
+            }
+            stmts[cursor] = rewrite.decl_replacement;
+            let mut shifted_loop_idx = if scope_wrap.is_some() {
+                loop_idx + 1
+            } else {
+                loop_idx
+            };
+            let insert_at = cursor + 1;
             if let Some(seed_append) = rewrite.seed_append {
                 stmts.insert(insert_at, seed_append);
                 shifted_loop_idx += 1;
             }
             stmts[shifted_loop_idx] = rewrite.replacement_loop;
             stmts.insert(shifted_loop_idx + 1, rewrite.finalize_decl);
+            // Emit `acc = scope_pop_keeping(mark, acc)` after the finalize
+            // if wrapping. Rebinds acc to the moved-below-mark pointer so
+            // downstream readers see a valid string.
+            let mut post_finalize_extra = 0usize;
+            if let Some(mark_name) = &scope_wrap {
+                let pop_assign = HirStatement::Assignment {
+                    target: HirLValue::Variable {
+                        name: orig_acc_name.clone(),
+                        location: orig_decl_loc.clone(),
+                    },
+                    value: HirExpression::Call {
+                        function: "scope_pop_keeping".to_string(),
+                        arguments: vec![
+                            HirExpression::Variable {
+                                name: mark_name.clone(),
+                                location: orig_decl_loc.clone(),
+                            },
+                            HirExpression::Variable {
+                                name: orig_acc_name.clone(),
+                                location: orig_decl_loc.clone(),
+                            },
+                        ],
+                        location: orig_decl_loc.clone(),
+                    },
+                    location: orig_decl_loc.clone(),
+                };
+                stmts.insert(shifted_loop_idx + 2, pop_assign);
+                post_finalize_extra += 1;
+            }
 
             // Post-splice: try the outer-scope-string-reassign carryover
             // rewrite for any string variable declared BETWEEN the
@@ -2911,12 +2993,17 @@ impl HirBuilder {
             // `src/codegen/native_stdlib/carryover.rs` for the pool
             // layout and the ping-pong safety invariant. Resolves
             // CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK (88dc6aeb0f8e).
-            let added = self.apply_outer_string_carryover_rewrite(stmts, i + 1, shifted_loop_idx);
+            // Carryover pass runs on the region between the (post-wrap)
+            // decl and the loop. When we inserted a push_decl, the builder
+            // decl now sits at `cursor` = i + 1, so scan from cursor + 1.
+            let carryover_start = cursor + 1;
+            let added =
+                self.apply_outer_string_carryover_rewrite(stmts, carryover_start, shifted_loop_idx);
 
-            // Resume scanning after the newly inserted finalize (and
-            // any parity decls the carryover pass inserted before the
-            // loop).
-            i = shifted_loop_idx + 2 + added;
+            // Resume scanning after the newly inserted finalize (and any
+            // parity decls the carryover pass inserted before the loop),
+            // plus any post-finalize extras (scope_pop_keeping assignment).
+            i = shifted_loop_idx + 2 + added + post_finalize_extra;
         }
     }
 
@@ -4265,6 +4352,31 @@ impl HirBuilder {
             location: decl_loc.clone(),
         };
 
+        // Compute the mem-scope wrap decision. Fires when the loop body's
+        // main-heap allocations are safe to reclaim wholesale — i.e., no
+        // pointer escapes via list.push/pairs.set, no returns, no throws.
+        // The wrap reclaims per-iter builder growth stages and any
+        // `finalize_to_main` strands from body helper calls, dropping
+        // peak main-heap footprint from O(N × iter_alloc) to O(final_acc).
+        //
+        // Extract the (post-rewrite) body from the replacement loop for
+        // the safety check. new_loop's body has already had the self-append
+        // rewritten and transient scope enter/exit inserted; those helper
+        // stmts are safe under the predicate (transient scope calls don't
+        // escape, and the rewritten self-append targets __sb_N which is
+        // the scope's keeper).
+        let mem_scope_mark = {
+            let body_ref = match &new_loop {
+                HirStatement::While { body, .. } | HirStatement::For { body, .. } => body,
+                _ => unreachable!("new_loop constructed above is While or For"),
+            };
+            if Self::is_body_mem_scope_safe(body_ref) {
+                Some(format!("__sb_{}_mmark", self.string_builder_counter - 1))
+            } else {
+                None
+            }
+        };
+
         // Note: the *loop* in the caller's slice is still the original
         // statement at `stmts[i+1]`. We need to overwrite it. Return the
         // replacement loop in a side channel.
@@ -4273,6 +4385,7 @@ impl HirBuilder {
             seed_append,
             finalize_decl,
             replacement_loop: new_loop,
+            mem_scope_mark,
         })
     }
 
@@ -5786,6 +5899,72 @@ impl HirBuilder {
     ) {
         for stmt in &block.statements {
             Self::collect_escapes_in_statement(stmt, out);
+        }
+    }
+
+    /// Predicate: is the loop body's main-heap allocation set safe to
+    /// reclaim wholesale via `scope_pop_keeping` at end-of-loop?
+    ///
+    /// Safe means: every main-heap allocation made during the loop is
+    /// either (a) the outer accumulator builder itself (preserved by
+    /// scope_pop_keeping's keeper argument), or (b) an intermediate whose
+    /// pointer never escapes the iteration. Unsafe patterns:
+    ///
+    ///   - `Return` inside the body: exits the enclosing function without
+    ///     going through the post-loop scope_pop_keeping, so the returned
+    ///     pointer would live in the still-live scope (fine) but the
+    ///     scope is never popped (leak) — the wrapping's whole point is
+    ///     lost.
+    ///   - Explicit `Throw` / error-propagation that unwinds past the
+    ///     post-loop pop: same concern.
+    ///   - Writes to outer-scope collections (list.push, pairs.set) whose
+    ///     stored pointers would dangle after the pop. This is caught by
+    ///     `collect_escaping_body_local_names` — the escaping set MUST be
+    ///     empty.
+    ///
+    /// The conservative check refuses to wrap when any of these appears.
+    /// A false negative (missing an opportunity) is acceptable; a false
+    /// positive (wrapping unsafe code) corrupts the returned string.
+    ///
+    /// Intentionally does NOT check for calls to unknown functions: a
+    /// standard bridge/library call returns a main-heap string whose
+    /// lifetime is bounded by the caller's next reclaim. Every such
+    /// intermediate is reclaimable by the pop; the accumulator preserves
+    /// only what's been appended into it (which is copied into the
+    /// builder's own region — outside the intermediates).
+    fn is_body_mem_scope_safe(body: &HirBlock) -> bool {
+        let mut escapes = std::collections::HashSet::new();
+        Self::collect_escaping_body_local_names(body, &mut escapes);
+        if !escapes.is_empty() {
+            return false;
+        }
+        !Self::block_contains_return_or_throw(body)
+    }
+
+    fn block_contains_return_or_throw(block: &HirBlock) -> bool {
+        block
+            .statements
+            .iter()
+            .any(Self::stmt_contains_return_or_throw)
+    }
+
+    fn stmt_contains_return_or_throw(stmt: &HirStatement) -> bool {
+        match stmt {
+            HirStatement::Return { .. } => true,
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::block_contains_return_or_throw(then_branch)
+                    || else_branch
+                        .as_ref()
+                        .is_some_and(|eb| Self::block_contains_return_or_throw(eb))
+            }
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                Self::block_contains_return_or_throw(body)
+            }
+            _ => false,
         }
     }
 

@@ -1,0 +1,57 @@
+// Test: bugfixes/ssr_outer_accumulator_mem_scope_wrap
+// Semantic: SEM-loop-acc — outer accumulator loops that call helpers
+//   producing main-heap strings via `string_builder_finalize_to_main`
+//   (e.g. plugin-generated html: blocks, per-iter render() methods)
+//   must reclaim per-iteration builder growth stages and helper strands.
+//
+// Regression: SSR-LOOP-CLASS-METHOD-HTMLBLOCK-TRAP (dashboard #5f77eb36)
+//   and SSR-TUTORIALS-WASM-TRAP-PARTIAL-FIX-334 (#4c06a901). Session-1's
+//   0.33.147 fix routed the singleshot builder through the transient
+//   arena, reducing per-helper-call strand from ~500 bytes to
+//   ~4+final_len. The residual leak was the outer accumulator's own
+//   growth stages plus each helper's `finalize_to_main` allocation —
+//   summed across 12 iterations of a ~915KB payload, this reaches
+//   ~33MB and trips the 32MB standard-tier memory cap.
+//
+// Fix (this test): the outer accumulator-loop rewrite now brackets the
+//   loop with `scope_push` / `scope_pop_keeping(mark, acc)` when the
+//   body's escape set is empty and there are no in-body Return/Throw
+//   statements. `scope_pop_keeping` copies the finalized accumulator
+//   below the saved heap mark and resets the heap pointer past the
+//   copy, reclaiming every per-iter allocation (builder growth stages,
+//   helper `finalize_to_main` strands) in one O(final_size) operation.
+//
+// This test uses 12 outer × 5000 inner iters producing 7.32MB accumulated
+//   output — pre-fix this trapped with `memory.grow failed for 1 pages`
+//   at the 32MB cap on the 8th–9th outer iter. Post-fix it runs cleanly
+//   because per-iter allocations get reclaimed at end-of-loop.
+//
+// Fixed in: compiler 0.33.148
+//
+// Expected output:
+//   bytes: 7320000
+
+start:
+	string acc = ""
+	integer i = 0
+	while i < 12
+		Renderer r = Renderer("item")
+		acc = acc + r.render()
+		i = i + 1
+	print("bytes: " + acc.length().toString())
+
+class Renderer
+	string data
+
+	constructor(string d)
+		data = d
+
+	functions:
+		public:
+			string render()
+				string html = ""
+				integer j = 0
+				while j < 5000
+					html = html + "<div class=\"card\" data-slug=\"" + data + "\"><h3>" + data + "</h3><p>lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua</p></div>"
+					j = j + 1
+				return html

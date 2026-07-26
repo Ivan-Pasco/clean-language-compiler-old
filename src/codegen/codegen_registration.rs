@@ -140,6 +140,21 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("scope_pop", scope_pop_idx);
 
+        // NATIVE: scope_pop_keeping - reclaims the scope but preserves a
+        // specified region by copying it below the mark first. Used by the
+        // outer-loop accumulator rewrite to keep the finalized accumulator
+        // alive while reclaiming all per-iter growth stages. See
+        // `src/codegen/native_stdlib/memory.rs::gen_scope_pop_keeping`.
+        let scope_pop_keeping_instructions = native_stdlib::memory::gen_scope_pop_keeping();
+        let scope_pop_keeping_idx = self.register_function_with_locals(
+            "__scope_pop_keeping",
+            &[WasmType::I32, WasmType::I32], // saved_ptr, keeper_ptr (Clean string)
+            Some(WasmType::I32),             // returns new keeper ptr
+            &[WasmType::I32, WasmType::I32], // local 2: total_len, local 3: i
+            &scope_pop_keeping_instructions,
+        )?;
+        self.add_function_alias("scope_pop_keeping", scope_pop_keeping_idx);
+
         // NATIVE: memcpy - byte-by-byte memory copy
         // Parameters: dest (i32), src (i32), len (i32)
         // Returns: void

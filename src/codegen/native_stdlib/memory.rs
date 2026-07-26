@@ -132,6 +132,123 @@ pub fn gen_scope_pop() -> Vec<Instruction<'static>> {
     ]
 }
 
+/// Generate instructions for native `scope_pop_keeping`.
+///
+/// The `scope_push` / `scope_pop` pair reclaims every main-heap allocation
+/// made after the push. That's too aggressive when the caller wants to
+/// keep ONE Clean string alive across the pop — typically the final
+/// result of a computation whose intermediates should be reclaimed. This
+/// variant copies the string (length prefix + bytes) to just below the
+/// saved mark, then resets the heap pointer to just past the copy.
+///
+/// Motivating use: the outer-loop accumulator rewrite in
+/// `hir_builder::rewrite_string_accumulator_loops`. The rewrite wraps the
+/// loop with `scope_push` / `scope_pop_keeping(mark, acc)` so per-
+/// iteration allocations (builder doubling stages, `render()`'s
+/// `finalize_to_main` strands) get reclaimed while the accumulator's
+/// final content survives. Without this variant, the loop's peak main-
+/// heap footprint would be `sum(builder growth) + sum(finalize_to_main)`
+/// which exceeds the 32MB standard-tier cap on realistic SSR payloads
+/// (SSR-LOOP-CLASS-METHOD-HTMLBLOCK-TRAP, fingerprint 5f77eb36).
+///
+/// The keeper is a Clean string: length at offset 0, bytes at offset 4.
+/// We read the length, copy `4 + length` bytes from `keeper_ptr` down to
+/// `saved_ptr`, reset the heap pointer to `saved_ptr + 4 + length`, and
+/// return `saved_ptr` as the new keeper pointer. Callers MUST rebind
+/// their string variable to the returned value — the original pointer
+/// becomes stale.
+///
+/// Byte-order safety: we copy in ascending order (i = 0..len). This is
+/// safe when `dst <= src`, which the caller guarantees because
+/// `saved_ptr` was captured BEFORE the keeper was allocated.
+///
+/// Parameters:
+///   - local 0: saved_ptr  (i32) — mark previously returned by `scope_push`
+///   - local 1: keeper_ptr (i32) — a Clean string (length at offset 0)
+///
+/// Returns: i32 — new pointer to the preserved string (at `saved_ptr`).
+///
+/// Locals:
+///   - local 2: total_len   (4 + string length in bytes)
+///   - local 3: i           (copy loop counter)
+pub fn gen_scope_pop_keeping() -> Vec<Instruction<'static>> {
+    vec![
+        // Null-keeper guard: if keeper_ptr is 0, just pop the scope and
+        // return 0 unchanged. Prevents a garbage-length read from linear
+        // memory offset 0 corrupting the copy loop.
+        Instruction::LocalGet(1),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::GlobalSet(HEAP_PTR_GLOBAL),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        // total_len = 4 + load(keeper_ptr + 0) -> local 2
+        Instruction::LocalGet(1),
+        Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::LocalSet(2),
+        // If saved_ptr == keeper_ptr, keeper already sits at the mark —
+        // just reset heap_ptr past its tail and return the same pointer.
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::I32Eq,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(2),
+        Instruction::I32Add,
+        Instruction::GlobalSet(HEAP_PTR_GLOBAL),
+        Instruction::LocalGet(0),
+        Instruction::Return,
+        Instruction::End,
+        // Copy total_len bytes ascending: dst[i] = src[i] for i in 0..total_len.
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::I32Store8(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Reset heap pointer to just past the copied string.
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(2),
+        Instruction::I32Add,
+        Instruction::GlobalSet(HEAP_PTR_GLOBAL),
+        // Return the new pointer to the keeper.
+        Instruction::LocalGet(0),
+    ]
+}
+
 /// Generate instructions for native memcpy
 ///
 /// Parameters:
