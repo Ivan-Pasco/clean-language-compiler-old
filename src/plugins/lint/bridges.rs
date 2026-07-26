@@ -190,5 +190,27 @@ pub fn register_lint_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
+    // _ast_block_subblocks(handle, name_lp) -> lp_ptr
+    //
+    // Nested-tree variant of `_ast_list_blocks`. See
+    // `foundation/spec/framework/contracts/lint-extension.md` §4.5.
+    linker.func_wrap(
+        "env",
+        "_ast_block_subblocks",
+        |mut caller: Caller<'_, PluginState>, handle: i32, name_lp: i32| -> i32 {
+            if let Err(ptr) = arena_or_error(&mut caller) {
+                return ptr;
+            }
+            let name = read_lp_string(&mut caller, name_lp).unwrap_or_default();
+            let json = caller
+                .data()
+                .lint_arena
+                .as_ref()
+                .expect("lint_arena present — checked by arena_or_error")
+                .block_subblocks_json(handle, &name);
+            write_lp_string(&mut caller, json.as_bytes())
+        },
+    )?;
+
     Ok(())
 }
