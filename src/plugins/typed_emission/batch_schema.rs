@@ -1907,7 +1907,10 @@ mod tests {
                 assert_eq!(method, "push");
                 assert_eq!(arguments.len(), 1);
             }
-            other => panic!("expected Statement::Expression(MethodCall), got {:?}", other),
+            other => panic!(
+                "expected Statement::Expression(MethodCall), got {:?}",
+                other
+            ),
         }
     }
 

@@ -560,19 +560,38 @@ impl MirCodeGenerator<'_> {
         //
         // The second condition is crucial: the init block (block 0) also jumps to header,
         // but it's not the increment block - it's the entry point.
-        for (block_id, block) in &function.blocks {
-            if let MirTerminator::Jump { target } = &block.terminator {
-                if *target == header_block_id
-                    && block_id.0 > body_block_id.0
-                    && block_id.0 > header_block_id.0
-                {
-                    debug_mir!(
-                        "DEBUG find_loop_increment_block: Found increment block {:?} (label={:?}) that jumps to header {:?}",
-                        block_id, block.label, header_block_id
-                    );
-                    return Some(*block_id);
+        //
+        // Determinism: `function.blocks` is a HashMap with non-deterministic iteration
+        // order. When multiple blocks satisfy the predicate (which happens when the
+        // body contains `continue` inside nested control flow, since `continue` creates
+        // an additional block that also jumps to the header), returning whichever the
+        // iterator sees first produces different WASM across runs. Sort candidates and
+        // return the smallest qualifying id — semantically the closest natural increment
+        // block to the header/body.
+        let mut candidates: Vec<BasicBlockId> = function
+            .blocks
+            .iter()
+            .filter_map(|(block_id, block)| {
+                if let MirTerminator::Jump { target } = &block.terminator {
+                    if *target == header_block_id
+                        && block_id.0 > body_block_id.0
+                        && block_id.0 > header_block_id.0
+                    {
+                        return Some(*block_id);
+                    }
                 }
-            }
+                None
+            })
+            .collect();
+        candidates.sort_by_key(|id| id.0);
+        if let Some(picked) = candidates.first().copied() {
+            debug_mir!(
+                "DEBUG find_loop_increment_block: Picked increment block {:?} from {} candidate(s) for header {:?}",
+                picked,
+                candidates.len(),
+                header_block_id
+            );
+            return Some(picked);
         }
         None
     }

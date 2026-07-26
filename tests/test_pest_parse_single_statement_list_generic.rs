@@ -22,10 +22,13 @@ fn list_generic_var_decl_parses_via_parse_single_statement() {
     let result = CleanParser::parse_single_statement(src);
     match result {
         SingleStatementParse::Statement(_) => {}
-        SingleStatementParse::ExpressionNotStatement => panic!(
-            "expected Statement (list<T> var decl), got ExpressionNotStatement"
-        ),
-        SingleStatementParse::ParseError { message, byte_offset } => panic!(
+        SingleStatementParse::ExpressionNotStatement => {
+            panic!("expected Statement (list<T> var decl), got ExpressionNotStatement")
+        }
+        SingleStatementParse::ParseError {
+            message,
+            byte_offset,
+        } => panic!(
             "regression: list<integer> var decl fails to parse via CleanParser.\n\
              byte_offset={}\nmessage={}",
             byte_offset, message
