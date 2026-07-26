@@ -192,6 +192,7 @@ fn register_underscore_aliases(linker: &mut Linker<PluginState>) -> Result<()> {
         ("batch.ident", "_batch_ident"),
         ("batch.field", "_batch_field"),
         ("batch.call", "_batch_call"),
+        ("batch.methodCall", "_batch_methodCall"),
         ("batch.binop", "_batch_binop"),
         ("batch.unop", "_batch_unop"),
         ("batch.index", "_batch_index"),
@@ -199,6 +200,7 @@ fn register_underscore_aliases(linker: &mut Linker<PluginState>) -> Result<()> {
         ("batch.objectLit", "_batch_objectLit"),
         // Statement builders (8 — batch.stmtVarDecl added for plugin function-body scope)
         ("batch.stmtCall", "_batch_stmtCall"),
+        ("batch.stmtMethodCall", "_batch_stmtMethodCall"),
         ("batch.stmtAssign", "_batch_stmtAssign"),
         ("batch.stmtVarDecl", "_batch_stmtVarDecl"),
         ("batch.stmtIf", "_batch_stmtIf"),
@@ -583,6 +585,49 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
+    // batch.methodCall(ctx, receiver_handle, method_lp, args_array_handle) -> batch_expr_handle
+    //
+    // Sibling to batch.call for receiver.method(args) expressions. Where
+    // batch.call builds Expression::Call (bare function) — the only shape
+    // a plugin could construct until this landing — batch.methodCall builds
+    // Expression::MethodCall { object, method, arguments }. Prompt 17d864a6
+    // (2026-07-25) documented the hole: frame.mcp method-on-local emission
+    // (methcall*) was unrepresentable, forcing a dotted-callee shortcut
+    // that a semantic-analyzer pass tightened up and started rejecting as
+    // "Function 's.replace' not found".
+    linker.func_wrap(
+        "env",
+        "batch.methodCall",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         receiver_handle: i32,
+         method_lp: i32,
+         args_array_handle: i32|
+         -> i32 {
+            let method = match read_lp_string(&mut caller, method_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+            refuse_if_assemble_typed_batch!(a, "batch.methodCall", 0);
+            let receiver = handle_batch_err!(a, a.take_batch_expr(receiver_handle));
+            let args = if args_array_handle == 0 {
+                Vec::new()
+            } else {
+                let (items, _kind) = handle_batch_err!(a, a.take_batch_array(args_array_handle));
+                handle_batch_err!(a, a.drain_batch_exprs(items))
+            };
+            a.alloc_batch(BatchNode::Expr(BatchExpr::MethodCall {
+                receiver: Box::new(receiver),
+                method,
+                args,
+            }))
+        },
+    )?;
+
     // batch.binop(ctx, op_lp, lhs_handle, rhs_handle) -> batch_expr_handle
     linker.func_wrap(
         "env",
@@ -740,6 +785,45 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
                 handle_batch_err!(a, a.drain_batch_exprs(items))
             };
             a.alloc_batch(BatchNode::Stmt(BatchStatement::Call { callee, args }))
+        },
+    )?;
+
+    // batch.stmtMethodCall(ctx, receiver_handle, method_lp, args_array_handle) -> batch_stmt_handle
+    //
+    // Statement wrapper for batch.methodCall — used when the plugin wants a
+    // side-effecting method call (e.g. `list.push(x)`) as a standalone
+    // statement inside a plugin-generated function body. Lowers to
+    // Statement::Expression wrapping Expression::MethodCall.
+    linker.func_wrap(
+        "env",
+        "batch.stmtMethodCall",
+        |mut caller: Caller<'_, PluginState>,
+         ctx: i32,
+         receiver_handle: i32,
+         method_lp: i32,
+         args_array_handle: i32|
+         -> i32 {
+            let method = match read_lp_string(&mut caller, method_lp) {
+                Some(s) if !s.is_empty() => s,
+                _ => return 0,
+            };
+            let a = arena!(caller);
+            if a.check_ctx(ctx).is_err() {
+                return 0;
+            }
+            refuse_if_assemble_typed_batch!(a, "batch.stmtMethodCall", 0);
+            let receiver = handle_batch_err!(a, a.take_batch_expr(receiver_handle));
+            let args = if args_array_handle == 0 {
+                Vec::new()
+            } else {
+                let (items, _kind) = handle_batch_err!(a, a.take_batch_array(args_array_handle));
+                handle_batch_err!(a, a.drain_batch_exprs(items))
+            };
+            a.alloc_batch(BatchNode::Stmt(BatchStatement::MethodCall {
+                receiver,
+                method,
+                args,
+            }))
         },
     )?;
 

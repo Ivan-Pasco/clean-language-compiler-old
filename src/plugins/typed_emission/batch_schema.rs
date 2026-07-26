@@ -331,6 +331,18 @@ pub fn substitute_stmt(
                 .map(|a| substitute_expr(a, ctx))
                 .collect::<Result<Vec<_>, _>>()?,
         },
+        BatchStatement::MethodCall {
+            receiver,
+            method,
+            args,
+        } => BatchStatement::MethodCall {
+            receiver: substitute_expr(receiver, ctx)?,
+            method: substitute_placeholders(method, ctx)?,
+            args: args
+                .iter()
+                .map(|a| substitute_expr(a, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
         BatchStatement::Assign { target, expr } => BatchStatement::Assign {
             target: substitute_placeholders(target, ctx)?,
             expr: substitute_expr(expr, ctx)?,
@@ -410,6 +422,18 @@ pub fn substitute_expr(e: &BatchExpr, ctx: &SubstitutionContext) -> Result<Batch
         },
         BatchExpr::Call { callee, args } => BatchExpr::Call {
             callee: substitute_placeholders(callee, ctx)?,
+            args: args
+                .iter()
+                .map(|a| substitute_expr(a, ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        BatchExpr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => BatchExpr::MethodCall {
+            receiver: Box::new(substitute_expr(receiver, ctx)?),
+            method: substitute_placeholders(method, ctx)?,
             args: args
                 .iter()
                 .map(|a| substitute_expr(a, ctx))
@@ -626,6 +650,17 @@ pub enum BatchStatement {
         #[serde(default)]
         args: Vec<BatchExpr>,
     },
+    /// Statement-form method call: `receiver.method(args)` used for side effects
+    /// (e.g. `list.push(x)`). Lowers to `Statement::Expression { expr:
+    /// Expression::MethodCall { .. } }`. See prompt 17d864a6 / assemble.md
+    /// companion — plugins have no other way to construct receiver-shaped
+    /// method calls on function-body locals.
+    MethodCall {
+        receiver: BatchExpr,
+        method: String,
+        #[serde(default)]
+        args: Vec<BatchExpr>,
+    },
     Assign {
         target: String,
         expr: BatchExpr,
@@ -689,6 +724,17 @@ pub enum BatchExpr {
     },
     Call {
         callee: String,
+        #[serde(default)]
+        args: Vec<BatchExpr>,
+    },
+    /// Expression-form method call: `receiver.method(args)`. Lowers to
+    /// `Expression::MethodCall`. Distinct from `Call` (which builds
+    /// `Expression::Call` — a bare function call). Plugin authors reach for
+    /// this when they need to emit `s.replace(...)` or `list.length()`
+    /// inside a plugin-generated function body.
+    MethodCall {
+        receiver: Box<BatchExpr>,
+        method: String,
         #[serde(default)]
         args: Vec<BatchExpr>,
     },
@@ -868,6 +914,19 @@ pub fn expr_to_ast(e: BatchExpr) -> Result<Expression, BatchSchemaError> {
             let converted: Result<Vec<_>, _> = args.into_iter().map(expr_to_ast).collect();
             Expression::Call(callee, converted?)
         }
+        BatchExpr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
+            let converted: Result<Vec<_>, _> = args.into_iter().map(expr_to_ast).collect();
+            Expression::MethodCall {
+                object: Box::new(expr_to_ast(*receiver)?),
+                method,
+                arguments: converted?,
+                location: crate::ast::SourceLocation::new(0, 0, "plugin"),
+            }
+        }
         BatchExpr::BinOp { op, lhs, rhs } => {
             let op = map_binop(&op)?;
             Expression::Binary(
@@ -916,6 +975,22 @@ pub fn stmt_to_ast(s: BatchStatement) -> Result<Statement, BatchSchemaError> {
             let converted: Result<Vec<_>, _> = args.into_iter().map(expr_to_ast).collect();
             Statement::Expression {
                 expr: Expression::Call(callee, converted?),
+                location: None,
+            }
+        }
+        BatchStatement::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
+            let converted: Result<Vec<_>, _> = args.into_iter().map(expr_to_ast).collect();
+            Statement::Expression {
+                expr: Expression::MethodCall {
+                    object: Box::new(expr_to_ast(receiver)?),
+                    method,
+                    arguments: converted?,
+                    location: crate::ast::SourceLocation::new(0, 0, "plugin"),
+                },
                 location: None,
             }
         }
@@ -1768,6 +1843,108 @@ mod tests {
         ).unwrap();
         let class = class_to_ast(spec, Vec::new(), false).unwrap();
         assert!(matches!(class.fields[0].visibility, Visibility::Private));
+    }
+
+    // Prompt 17d864a6 — batch.methodCall bridges. Regression test that both
+    // expression-form and statement-form MethodCall variants round-trip
+    // through the JSON schema and lower to Expression::MethodCall (not
+    // Expression::Call, which is a bare function call and doesn't type-check
+    // for receiver.method(args) shapes).
+    #[test]
+    fn expr_method_call_lowers_to_expression_method_call() {
+        let e = BatchExpr::MethodCall {
+            receiver: Box::new(BatchExpr::Ident {
+                name: "s".to_string(),
+            }),
+            method: "replace".to_string(),
+            args: vec![
+                BatchExpr::StringLit {
+                    value: "old".to_string(),
+                },
+                BatchExpr::StringLit {
+                    value: "new".to_string(),
+                },
+            ],
+        };
+        let ast = expr_to_ast(e).unwrap();
+        match ast {
+            Expression::MethodCall {
+                object,
+                method,
+                arguments,
+                ..
+            } => {
+                assert!(matches!(*object, Expression::Variable(ref n) if n == "s"));
+                assert_eq!(method, "replace");
+                assert_eq!(arguments.len(), 2);
+            }
+            other => panic!("expected MethodCall, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stmt_method_call_lowers_to_statement_expression_wrapping_method_call() {
+        let s = BatchStatement::MethodCall {
+            receiver: BatchExpr::Ident {
+                name: "xs".to_string(),
+            },
+            method: "push".to_string(),
+            args: vec![BatchExpr::IntLit { value: 42 }],
+        };
+        let ast = stmt_to_ast(s).unwrap();
+        match ast {
+            Statement::Expression {
+                expr:
+                    Expression::MethodCall {
+                        object,
+                        method,
+                        arguments,
+                        ..
+                    },
+                ..
+            } => {
+                assert!(matches!(*object, Expression::Variable(ref n) if n == "xs"));
+                assert_eq!(method, "push");
+                assert_eq!(arguments.len(), 1);
+            }
+            other => panic!("expected Statement::Expression(MethodCall), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn expr_method_call_parses_from_json_via_snake_case() {
+        // Serde is configured with rename_all = "snake_case" on BatchExpr;
+        // the plugin sends {"kind":"method_call", "receiver": ..., "method": ..., "args": [...]}
+        // through the JSON path. Verify the JSON round-trip.
+        let json = r#"{
+            "functions": [{
+                "name": "wrap",
+                "params": [],
+                "return_type": "void",
+                "body": [{
+                    "kind": "method_call",
+                    "receiver": {"kind": "ident", "name": "xs"},
+                    "method": "push",
+                    "args": [{"kind": "int_lit", "value": 1}]
+                }]
+            }]
+        }"#;
+        let spec = parse_batch_spec(json).unwrap();
+        let f = &spec.functions[0];
+        let body = f.body.as_ref().expect("body was provided inline");
+        assert_eq!(body.len(), 1);
+        match &body[0] {
+            BatchStatement::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
+                assert!(matches!(receiver, BatchExpr::Ident { name } if name == "xs"));
+                assert_eq!(method, "push");
+                assert_eq!(args.len(), 1);
+            }
+            other => panic!("expected MethodCall, got {:?}", other),
+        }
     }
 
     #[test]
