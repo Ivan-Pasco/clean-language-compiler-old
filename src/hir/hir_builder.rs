@@ -4184,6 +4184,18 @@ impl HirBuilder {
             &mut per_call_wrap_counter,
         );
 
+        // Step 4-post: hoist the per-call `scope_push` above any body-local
+        // declaration whose RHS is an allocating call (Constructor /
+        // MethodCall) and whose local is used only inside the immediately
+        // following wrap. Reclaims the class-shell + intermediate
+        // allocations of the decl at the same `scope_pop_keeping` that
+        // reclaims the call fragment's own intermediates. Without this
+        // hoist, `Payload p = Payload(); acc = acc + p.tag()` leaks the
+        // `Payload` shell per iter on the main heap and OOMs high-iter
+        // accumulator loops (see codegen-body-local-alloc-leak-in-accum-loop,
+        // fingerprint 69a07166cc59 — refinement of #8c113611781e).
+        Self::hoist_scope_push_above_body_local_alloc_decls(&mut new_body);
+
         // Step 4a-pre: route body-local string-concat results through the
         // transient arena. After `rewrite_self_append_in_block` has
         // converted the accumulator's self-append into
@@ -5995,6 +6007,385 @@ impl HirBuilder {
             },
             location: location.clone(),
         });
+    }
+
+    /// Post-pass that extends the `emit_append_maybe_wrapped` scope wrap
+    /// backwards to subsume a body-local declaration whose RHS is an
+    /// allocating expression (Constructor or MethodCall on a non-string
+    /// receiver), when that local is used only inside the immediately
+    /// following wrap's tmp-decl initializer.
+    ///
+    /// After `rewrite_self_append_in_block` runs, a body-local shape
+    ///
+    /// ```text
+    /// Payload p = Payload()
+    /// acc = acc + p.tag()
+    /// ```
+    ///
+    /// has been lowered to
+    ///
+    /// ```text
+    /// Payload p = Payload()                          (D)
+    /// integer __sb_N_ppmark_K = scope_push()         (M)
+    /// string  __sb_N_ptmp_K   = p.tag()              (T)
+    /// __sb_N_ptmp_K = scope_pop_keeping(M, T)        (POP)
+    /// __sb_N = string_builder_append(__sb_N, T)      (APP)
+    /// ```
+    ///
+    /// `p` was allocated by `Payload()` BEFORE the scope_push in (M), so
+    /// its class shell (plus any fields the constructor allocated) sits
+    /// under the mark and is NOT reclaimed by (POP). Across N iters this
+    /// leaks O(N × instance_size) on the main heap and trips the 128 MB
+    /// WASM cap on high-iter accumulator loops (see
+    /// codegen-body-local-alloc-leak-in-accum-loop, fingerprint
+    /// 69a07166cc59 — refinement of #8c113611781e after commit a4a6ecd2).
+    ///
+    /// This pass detects the (D)(M)(T)(POP)(APP) shape and reorders it to
+    ///
+    /// ```text
+    /// integer __sb_N_ppmark_K = scope_push()         (M)
+    /// Payload p = Payload()                          (D)   -- now above the mark
+    /// string  __sb_N_ptmp_K   = p.tag()              (T)
+    /// __sb_N_ptmp_K = scope_pop_keeping(M, T)        (POP) -- reclaims p + T's intermediates
+    /// __sb_N = string_builder_append(__sb_N, T)      (APP)
+    /// ```
+    ///
+    /// Since `p` was declared inside the loop body and its only reader is
+    /// the tmp-decl initializer (T), reclaiming its memory at (POP) is
+    /// safe — nothing else holds a live pointer once T's returned Clean
+    /// string is copied below the mark.
+    ///
+    /// Safety conditions (all must hold; otherwise leave the shape
+    /// untouched):
+    ///   * (D)'s declared type is NOT `HirType::String`. Strings are
+    ///     already routed through the transient arena by
+    ///     `rewrite_body_local_helpers_to_transient` — hoisting them
+    ///     above a `scope_push` would either double-manage the lifetime
+    ///     or reclaim the wrong region.
+    ///   * (D)'s initializer is a Constructor or MethodCall. Other
+    ///     allocating shapes (NamespaceCall / non-managed Call) are
+    ///     conservatively skipped in this initial pass; false negatives
+    ///     are acceptable.
+    ///   * (M) is `integer <name> = scope_push()` — the marker synthesized
+    ///     by `emit_append_maybe_wrapped`. Matched by the `_ppmark_`
+    ///     substring in the name.
+    ///   * (T) is `string <ptmp> = <expr>` where `<expr>` reads (D)'s
+    ///     name.
+    ///   * (POP) and (APP) match `emit_append_maybe_wrapped`'s canonical
+    ///     shape (assignment to `<ptmp>` from `scope_pop_keeping`, then
+    ///     assignment to some builder from `string_builder_append` with
+    ///     `<ptmp>` as the second argument).
+    ///   * (D)'s local name is NOT read anywhere else in the block after
+    ///     the (APP) statement (single-use invariant). This includes
+    ///     nested statements — we recursively check.
+    ///   * (D)'s local name is NOT in the block's escape set
+    ///     (collect_escaping_body_local_names). Storing the local into an
+    ///     outer collection or returning it would leave a dangling
+    ///     pointer after reclaim.
+    ///   * (D)'s local name is NOT reassigned anywhere in the block.
+    ///
+    /// Only reorders statements — never deletes, never rewrites
+    /// expressions. If any condition fails, the group is left as-is and
+    /// the accumulator's outer `mem_scope_mark` wrap (fired by
+    /// `is_body_mem_scope_safe`) still reclaims (D)'s allocation at
+    /// end-of-loop; the leak just persists intra-loop.
+    fn hoist_scope_push_above_body_local_alloc_decls(block: &mut HirBlock) {
+        // Escape set is computed once for the whole block — we exclude
+        // any local that leaves the iteration.
+        let mut escapes = std::collections::HashSet::new();
+        Self::collect_escaping_body_local_names(block, &mut escapes);
+
+        let stmts = &mut block.statements;
+
+        // Also recurse into nested blocks first so inner opportunities
+        // are captured. Mirrors the walk pattern in
+        // `rewrite_self_append_in_block`.
+        for stmt in stmts.iter_mut() {
+            match stmt {
+                HirStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::hoist_scope_push_above_body_local_alloc_decls(then_branch);
+                    if let Some(eb) = else_branch {
+                        Self::hoist_scope_push_above_body_local_alloc_decls(eb);
+                    }
+                }
+                HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                    Self::hoist_scope_push_above_body_local_alloc_decls(body);
+                }
+                _ => {}
+            }
+        }
+
+        // Sweep the flat statement list. Each match consumes 5
+        // statements (D, M, T, POP, APP) and swaps D with M in place.
+        let mut i = 0;
+        while i + 4 < stmts.len() {
+            let matched_name: Option<String> = Self::match_hoistable_group(&stmts[i..i + 5]);
+            let Some(name) = matched_name else {
+                i += 1;
+                continue;
+            };
+            // Reject if name escapes.
+            if escapes.contains(&name) {
+                i += 1;
+                continue;
+            }
+            // Reject if name is read in any statement AFTER the APP row
+            // (index i + 4), or reassigned anywhere else in the block.
+            let mut violates = false;
+            for (j, other) in stmts.iter().enumerate() {
+                if j >= i && j <= i + 4 {
+                    continue;
+                }
+                if Self::stmt_reads_or_writes_name(other, &name) {
+                    violates = true;
+                    break;
+                }
+            }
+            if violates {
+                i += 1;
+                continue;
+            }
+            // Swap D (at i) with M (at i + 1).
+            stmts.swap(i, i + 1);
+            // Advance past the 5-statement group. Nothing else in this
+            // group can be a hoist candidate.
+            i += 5;
+        }
+    }
+
+    /// If the 5-statement window matches the (D)(M)(T)(POP)(APP) shape
+    /// documented on `hoist_scope_push_above_body_local_alloc_decls`,
+    /// return the name of the body-local declared at (D). Otherwise
+    /// return `None`.
+    fn match_hoistable_group(window: &[HirStatement]) -> Option<String> {
+        if window.len() < 5 {
+            return None;
+        }
+
+        // (D): non-string body-local decl with allocating initializer.
+        let (d_name, _d_type) = match &window[0] {
+            HirStatement::VariableDeclaration {
+                name,
+                var_type,
+                initializer: Some(init),
+                ..
+            } if !matches!(var_type, HirType::String)
+                && Self::is_hoistable_allocating_initializer(init) =>
+            {
+                (name.clone(), var_type.clone())
+            }
+            _ => return None,
+        };
+
+        // (M): integer <m_name> = scope_push() where m_name contains "_ppmark_".
+        let m_name = match &window[1] {
+            HirStatement::VariableDeclaration {
+                name,
+                var_type: HirType::Integer,
+                initializer:
+                    Some(HirExpression::Call {
+                        function,
+                        arguments,
+                        ..
+                    }),
+                ..
+            } if function == "scope_push" && arguments.is_empty() && name.contains("_ppmark_") => {
+                name.clone()
+            }
+            _ => return None,
+        };
+
+        // (T): string <t_name> = <expr reading d_name>, t_name contains "_ptmp_".
+        let t_name = match &window[2] {
+            HirStatement::VariableDeclaration {
+                name,
+                var_type: HirType::String,
+                initializer: Some(init),
+                ..
+            } if name.contains("_ptmp_") && Self::expr_reads_variable(init, &d_name) => {
+                name.clone()
+            }
+            _ => return None,
+        };
+
+        // (POP): <t_name> = scope_pop_keeping(<m_name>, <t_name>).
+        let pop_ok = match &window[3] {
+            HirStatement::Assignment {
+                target: HirLValue::Variable { name: lhs, .. },
+                value:
+                    HirExpression::Call {
+                        function,
+                        arguments,
+                        ..
+                    },
+                ..
+            } => {
+                lhs == &t_name
+                    && function == "scope_pop_keeping"
+                    && arguments.len() == 2
+                    && matches!(
+                        &arguments[0],
+                        HirExpression::Variable { name: n, .. } if n == &m_name
+                    )
+                    && matches!(
+                        &arguments[1],
+                        HirExpression::Variable { name: n, .. } if n == &t_name
+                    )
+            }
+            _ => false,
+        };
+        if !pop_ok {
+            return None;
+        }
+
+        // (APP): <sb> = string_builder_append(<sb>, <t_name>).
+        let app_ok = match &window[4] {
+            HirStatement::Assignment {
+                target: HirLValue::Variable { name: sb_lhs, .. },
+                value:
+                    HirExpression::Call {
+                        function,
+                        arguments,
+                        ..
+                    },
+                ..
+            } => {
+                function == "string_builder_append"
+                    && arguments.len() == 2
+                    && matches!(
+                        &arguments[0],
+                        HirExpression::Variable { name: n, .. } if n == sb_lhs
+                    )
+                    && matches!(
+                        &arguments[1],
+                        HirExpression::Variable { name: n, .. } if n == &t_name
+                    )
+            }
+            _ => false,
+        };
+        if !app_ok {
+            return None;
+        }
+
+        Some(d_name)
+    }
+
+    /// True when `init` is an expression whose evaluation is safe to
+    /// hoist above a `scope_push` — i.e. its allocations belong on the
+    /// main heap and should be reclaimed by the per-call
+    /// `scope_pop_keeping`.
+    ///
+    /// Accepts: Constructor, MethodCall, and plain `Call` (which is
+    /// how the HIR builder currently represents constructor invocations
+    /// like `Payload()` — surfaced as `Call { function: "Payload" }`
+    /// rather than the `Constructor` variant, at least for the shapes
+    /// that reach this pass). Rejects `NamespaceCall` and
+    /// `StaticMethodCall` because their return-value layout might not
+    /// carry the length prefix `scope_pop_keeping`'s keeper argument
+    /// expects — see the comment on `fragment_should_be_scope_wrapped`.
+    ///
+    /// Excludes calls to already-lifetime-managed helpers
+    /// (`string_builder_*`, `scope_*`, `__transient_scope_*`, etc.) via
+    /// `is_non_allocating_or_managed_builtin` — hoisting above a mark
+    /// they participate in would double-manage the lifetime.
+    ///
+    /// False negatives are acceptable (a missed hoist reverts to the
+    /// pre-pass behaviour, where the outer end-of-loop `mem_scope_mark`
+    /// still reclaims the allocation — just later). False positives on
+    /// pure calls are also safe: the surrounding `scope_push` /
+    /// `scope_pop_keeping` pair becomes a no-op wrap around a
+    /// zero-allocation region, at the cost of a few extra WASM locals.
+    fn is_hoistable_allocating_initializer(init: &HirExpression) -> bool {
+        match init {
+            HirExpression::Constructor { .. } | HirExpression::MethodCall { .. } => true,
+            HirExpression::Call { function, .. } => {
+                !Self::is_non_allocating_or_managed_builtin(function)
+            }
+            _ => false,
+        }
+    }
+
+    /// True when `stmt` (or any statement nested inside it) either reads
+    /// `name` in a non-lvalue position, or assigns to a variable named
+    /// `name`. Used to enforce the single-use / no-reassign invariant of
+    /// `hoist_scope_push_above_body_local_alloc_decls`.
+    fn stmt_reads_or_writes_name(stmt: &HirStatement, name: &str) -> bool {
+        match stmt {
+            HirStatement::Expression { expression, .. } => {
+                Self::expr_reads_variable(expression, name)
+            }
+            HirStatement::Assignment { target, value, .. } => {
+                if let HirLValue::Variable { name: lhs, .. } = target {
+                    if lhs == name {
+                        return true;
+                    }
+                }
+                Self::expr_reads_variable(value, name)
+            }
+            HirStatement::VariableDeclaration {
+                name: decl_name,
+                initializer,
+                ..
+            } => {
+                if decl_name == name {
+                    // A redeclaration shadows the outer local; we
+                    // conservatively reject the hoist for the earlier
+                    // decl by treating the shadowing decl as a write.
+                    return true;
+                }
+                initializer
+                    .as_ref()
+                    .is_some_and(|e| Self::expr_reads_variable(e, name))
+            }
+            HirStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if Self::expr_reads_variable(condition, name) {
+                    return true;
+                }
+                if then_branch
+                    .statements
+                    .iter()
+                    .any(|s| Self::stmt_reads_or_writes_name(s, name))
+                {
+                    return true;
+                }
+                if let Some(eb) = else_branch {
+                    if eb
+                        .statements
+                        .iter()
+                        .any(|s| Self::stmt_reads_or_writes_name(s, name))
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            HirStatement::While {
+                condition, body, ..
+            } => {
+                Self::expr_reads_variable(condition, name)
+                    || body
+                        .statements
+                        .iter()
+                        .any(|s| Self::stmt_reads_or_writes_name(s, name))
+            }
+            HirStatement::For { body, .. } => body
+                .statements
+                .iter()
+                .any(|s| Self::stmt_reads_or_writes_name(s, name)),
+            HirStatement::Return {
+                value: Some(expr), ..
+            } => Self::expr_reads_variable(expr, name),
+            _ => false,
+        }
     }
 
     /// Predicate for `emit_append_maybe_wrapped`: is `frag` a call-like

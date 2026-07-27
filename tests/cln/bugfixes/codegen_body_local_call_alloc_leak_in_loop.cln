@@ -1,0 +1,77 @@
+// Test: bugfixes/codegen_body_local_call_alloc_leak_in_loop
+// Grammar: while_statement, variable_declaration, assignment,
+//          class_declaration, method_call, constructor_call
+// Semantic: SEM020 (accumulator pattern), heap-scope invariant
+// Fixed in: compiler 0.33.154
+//
+// Regression target: SSR-STRING-CONCAT-LOOP-OOM-33151 (#8c113611781e),
+// revised leak class documented in
+// codegen-body-local-alloc-leak-in-accum-loop (#69a07166cc59), discovered
+// after commit a4a6ecd2 (v0.33.153).
+//
+// a4a6ecd2 wrapped call fragments in `acc = acc + <call>` self-appends
+// with per-call scope_push/scope_pop_keeping. It did NOT cover
+// loop-body-LOCAL declarations whose initializer is an allocating call —
+// including constructors and methods that return strings.
+//
+// The failing shape (condensed from Companion.buildCategorySections):
+//
+//     while catJson != ""
+//         RenderSyntaxCategorySection sec = RenderSyntaxCategorySection(catJson)
+//         acc = acc + sec.serve()
+//         i = i + 1
+//         catJson = json.get(categoriesJson, i.toString())
+//
+// `catJson` is covered by the carryover pass (declared outside the loop,
+// single reassign inside). `acc` is covered by the accumulator rewrite
+// with per-call wrapping of `sec.serve()`. But `sec` is declared INSIDE
+// the loop body, its RHS (a constructor call) allocates class-instance
+// state on the main heap every iteration, and NOTHING reclaims those
+// allocations until the outer mem_scope_mark pops at end-of-loop.
+//
+// The 0.33.154 fix is a new HIR post-pass
+// (`hoist_scope_push_above_body_local_alloc_decls` in
+// `src/hir/hir_builder.rs`) that detects, right after
+// `rewrite_self_append_in_block`, the sequence
+//
+//   VarDecl D:<non-string> = <allocating call>            (body-local)
+//   VarDecl __sb_N_ppmark_K:Integer = scope_push()
+//   VarDecl __sb_N_ptmp_K:String   = <expr reading D>
+//   Assign  __sb_N_ptmp_K = scope_pop_keeping(mark, tmp)
+//   Assign  __sb_N        = string_builder_append(__sb_N, tmp)
+//
+// and swaps D with the mark decl when D is not read outside the group
+// and doesn't escape. That puts D's allocation ABOVE the mark, so the
+// existing scope_pop_keeping reclaims the shell every iter alongside
+// the intermediates it was already reclaiming.
+//
+// This test reproduces the leak class in isolation: a body-local class
+// instance whose constructor holds a per-iter string field, at an
+// iteration count that traps v0.33.153 (which crashed at ~40k iters
+// with any Payload shape). At 40000 iters, expected length is
+// 40000 * len("row;") = 160000.
+//
+// Expected output:
+//   160000
+
+start:
+	string acc = ""
+	integer i = 0
+	string seed = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	integer iters = 40000
+	while i < iters
+		Payload p = Payload(seed)
+		acc = acc + p.tag()
+		i = i + 1
+	printl(acc.length().toString())
+
+class Payload
+	string body
+
+	constructor(string seed)
+		body = seed
+
+	functions:
+		public:
+			string tag()
+				return "row;"
