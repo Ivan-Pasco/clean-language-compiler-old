@@ -17,10 +17,11 @@ name: Nightly deep tests
 # job logs.
 
 on:
-  schedule:
-    # 03:47 UTC — offset from fuzz.yml (03:17) so the two don't stack on the
-    # runner queue.
-    - cron: '47 3 * * *'
+  # disabled 2026-08-19 — repo retired, see new Clean Language project
+  # schedule:
+  #   # 03:47 UTC — offset from fuzz.yml (03:17) so the two don't stack on the
+  #   # runner queue.
+  #   - cron: '47 3 * * *'
   workflow_dispatch: {}
 
 env:

@@ -1,9 +1,10 @@
 name: Fuzz (nightly)
 
 on:
-  schedule:
-    # 03:17 UTC daily — odd minute to avoid the on-the-hour stampede.
-    - cron: '17 3 * * *'
+  # disabled 2026-08-19 — repo retired, see new Clean Language project
+  # schedule:
+  #   # 03:17 UTC daily — odd minute to avoid the on-the-hour stampede.
+  #   - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       duration_seconds:

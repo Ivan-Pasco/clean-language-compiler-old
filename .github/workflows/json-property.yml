@@ -37,9 +37,10 @@ on:
       - 'tests/cln/stdlib/json/**'
       - 'tests/cln/bugfixes/json_*.cln'
       - '.github/workflows/json-property.yml'
-  schedule:
-    # 04:17 UTC daily — 1h after the fuzz nightly so they don't share a runner pool.
-    - cron: '17 4 * * *'
+  # disabled 2026-08-19 — repo retired, see new Clean Language project
+  # schedule:
+  #   # 04:17 UTC daily — 1h after the fuzz nightly so they don't share a runner pool.
+  #   - cron: '17 4 * * *'
   workflow_dispatch:
 
 env:
