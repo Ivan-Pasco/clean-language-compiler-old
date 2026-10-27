@@ -30,8 +30,15 @@ pub fn gen_malloc() -> Vec<Instruction<'static>> {
         // local 2: aligned_size
         // local 3: new_ptr (used for memory.grow check)
 
-        // Read current heap pointer -> save to local 1
+        // Read current heap pointer, aligned up to ALIGNMENT -> local 1.
+        // MEMORY_MODEL.md requires 8-byte aligned heap allocations; other
+        // code paths can leave __heap_ptr unaligned, so align the start
+        // here rather than trusting the global.
         Instruction::GlobalGet(HEAP_PTR_GLOBAL),
+        Instruction::I32Const((ALIGNMENT - 1) as i32),
+        Instruction::I32Add,
+        Instruction::I32Const(!(ALIGNMENT - 1) as i32),
+        Instruction::I32And,
         Instruction::LocalSet(1),
         // Calculate aligned size: (size + 7) & ~7 -> local 2
         Instruction::LocalGet(0),                      // size
