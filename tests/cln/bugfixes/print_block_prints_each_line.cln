@@ -1,0 +1,17 @@
+// Test: bugfixes/print_block_prints_each_line
+// Grammar: print_block_statement
+// Semantic: stdlib-reference.md print: Block — each indented expression
+//   prints on its own line. Pre-fix the HIR builder had no handler for
+//   PrintBlock and the whole block printed nothing.
+// Fixed in: compiler 0.33.155
+// Expected output:
+//   first
+//   second
+//   3
+
+start:
+	integer total = 3
+	print:
+		"first"
+		"second"
+		total.toString()

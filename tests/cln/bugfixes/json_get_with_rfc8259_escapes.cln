@@ -1,3 +1,5 @@
+// Fixed: was using `print(x) +` for one value per line; grammar.ebnf print_parenthesized_statement
+// prints a newline, while `print(x) +` (print_newline_statement) continues the line.
 // Test: bugfixes/json_get_with_rfc8259_escapes
 // Regression: values containing escape sequences (\", \\, \n, \t) must
 // survive json.get extraction. json_encode_rfc8259_escapes.cln covers
@@ -15,6 +17,6 @@ start:
 	string q = json.get(j, "q")
 	string p = json.get(j, "p")
 	string m = json.get(j, "m")
-	print(q) +
-	print(p) +
-	print(m) +
+	print(q)
+	print(p)
+	print(m)

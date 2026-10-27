@@ -1,3 +1,5 @@
+// Fixed: was using `print(x) +` for one value per line; grammar.ebnf print_parenthesized_statement
+// prints a newline, while `print(x) +` (print_newline_statement) continues the line.
 // Test: codegen/string_compare_ops
 // Grammar: comparison_expr (string equality via string_compare host import)
 // Semantic: SEM-TYPE-STRING
@@ -14,13 +16,13 @@
 //   false
 
 start:
-	print(classifyTag("div")) +
-	print(classifyTag("span")) +
-	print(classifyTag("p")) +
-	print(buildAttr("class", "container")) +
-	print(string.substring("hello world", 2, 5)) +
-	print(string.substring("hello world", 0, 3)) +
-	print(string.startsWith("hello", "h")) +
+	print(classifyTag("div"))
+	print(classifyTag("span"))
+	print(classifyTag("p"))
+	print(buildAttr("class", "container"))
+	print(string.substring("hello world", 2, 5))
+	print(string.substring("hello world", 0, 3))
+	print(string.startsWith("hello", "h"))
 	print(string.startsWith("hello", "z"))
 
 functions:

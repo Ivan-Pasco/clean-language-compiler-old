@@ -16,6 +16,21 @@ use std::time::Duration;
 /// Base URL for the Error Reporting API
 const API_BASE: &str = "https://errors.cleanlanguage.dev/api/v1";
 
+/// Dashboard component name for this compiler. The retired compiler kept in
+/// maintenance use reports as `compiler-old` so its bugs never mix with the
+/// new compiler's queue. Local code keeps the internal name `compiler`; the
+/// rename happens only where data crosses to the dashboard.
+const DASHBOARD_COMPILER_COMPONENT: &str = "compiler-old";
+
+/// Map an internal component name to the name used on the dashboard.
+fn dashboard_component(component: &str) -> &str {
+    if component == "compiler" {
+        DASHBOARD_COMPILER_COMPONENT
+    } else {
+        component
+    }
+}
+
 /// HTTP timeout for submissions (short to avoid blocking)
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -231,6 +246,13 @@ mod tests {
     }
 
     #[test]
+    fn compiler_reports_as_compiler_old_on_dashboard() {
+        assert_eq!(dashboard_component("compiler"), "compiler-old");
+        assert_eq!(dashboard_component("framework"), "framework");
+        assert_eq!(dashboard_component("server"), "server");
+    }
+
+    #[test]
     fn non_rate_limit_reason_returns_none() {
         assert_eq!(parse_rate_limited_reason("HTTP 502 Bad Gateway"), None);
         assert_eq!(parse_rate_limited_reason("Connection refused"), None);
@@ -397,7 +419,9 @@ fn fetch_bugs_inner(component: &str, status: &str) -> Vec<ComponentBug> {
 
     let url = format!(
         "{}/bugs?component={}&status={}",
-        API_BASE, component, status
+        API_BASE,
+        dashboard_component(component),
+        status
     );
     match with_auth(client.get(&url)).send() {
         Ok(response) if response.status().is_success() => {
@@ -583,7 +607,12 @@ fn try_http_submit(report: &ErrorReport) -> Result<SubmitResult, String> {
     let client = build_client().map_err(|e| e.to_string())?;
 
     let url = format!("{}/reports", API_BASE);
-    let body = serde_json::to_string(report).map_err(|e| e.to_string())?;
+    let mut outgoing = report.clone();
+    outgoing.error.component = dashboard_component(&outgoing.error.component).to_string();
+    if let Some(affected) = outgoing.error.affected_component.as_mut() {
+        *affected = dashboard_component(affected).to_string();
+    }
+    let body = serde_json::to_string(&outgoing).map_err(|e| e.to_string())?;
 
     let response = with_auth(
         client

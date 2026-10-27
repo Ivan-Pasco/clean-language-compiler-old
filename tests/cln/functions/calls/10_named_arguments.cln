@@ -1,3 +1,5 @@
+// Fixed: was using `print(x) +` for one value per line; grammar.ebnf print_parenthesized_statement
+// prints a newline, while `print(x) +` (print_newline_statement) continues the line.
 // Test: functions/calls/named_arguments
 // Grammar: argument_list = argument_item ("," argument_item)*
 //          named_argument = identifier ":" expression
@@ -12,19 +14,19 @@
 start:
 	// All named args — canonical order
 	string r1 = greet(name: "Alice", greeting: "Hello")
-	print("greet result: " + r1) +
+	print("greet result: " + r1)
 
 	// All named args — same result
 	integer r2 = add(a: 10, b: 20)
-	print("add result: " + r2.toString()) +
+	print("add result: " + r2.toString())
 
 	// All named args — reverse order (order-independent)
 	integer r3 = add(b: 20, a: 10)
-	print("add reordered: " + r3.toString()) +
+	print("add reordered: " + r3.toString())
 
 	// Mixed: positional first, then named
 	integer r4 = multiply(100, factor: 1)
-	print("mixed: " + r4.toString()) +
+	print("mixed: " + r4.toString())
 
 	// Named args in reverse order
 	integer r5 = multiply(value: 26, factor: 3)

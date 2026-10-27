@@ -1633,6 +1633,25 @@ impl HirBuilder {
                     },
                     location: loc,
                 });
+            } else if let Statement::PrintBlock {
+                expressions,
+                newline,
+                location,
+            } = stmt
+            {
+                // Expand `print:` into one print per indented expression
+                // (stdlib-reference.md §`print:` Block). Pre-fix the variant
+                // fell through the wildcard arm of `build_statement` and the
+                // whole block lowered to a discarded void literal.
+                let loc = location.clone().unwrap_or_default();
+                for expression in expressions {
+                    let hir_expr = self.build_expression(expression)?;
+                    hir_statements.push(HirStatement::Print {
+                        expression: hir_expr,
+                        newline: *newline,
+                        location: loc.clone(),
+                    });
+                }
             } else {
                 // Regular statement processing
                 hir_statements.push(self.build_statement(stmt)?);

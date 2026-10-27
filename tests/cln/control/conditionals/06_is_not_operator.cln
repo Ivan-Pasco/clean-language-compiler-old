@@ -1,3 +1,5 @@
+// Fixed: was using `print(x) +` for one value per line; grammar.ebnf print_parenthesized_statement
+// prints a newline, while `print(x) +` (print_newline_statement) continues the line.
 // Test: control/conditionals/is_not_operator
 // Grammar: comparison_expression → expr 'is' 'not' expr | expr 'is' expr
 // Semantic: SEM001 (tracking: SEM-COMPARE-01 — `is`/`is not` operator typing)
@@ -16,30 +18,30 @@ start:
 	integer a = 42
 	integer b = 42
 	if a is b
-		print("a is b: true") +
+		print("a is b: true")
 	else
-		print("a is b: false") +
+		print("a is b: false")
 
 	// Test `is not` for inequality (different integer values)
 	integer c = 42
 	integer d = 99
 	if c is not d
-		print("c is not d: true") +
+		print("c is not d: true")
 	else
-		print("c is not d: false") +
+		print("c is not d: false")
 
 	// Test unary `not` still works after the parser fix
 	boolean flag = true
 	boolean negated = not flag
 	if negated
-		print("not of true: true") +
+		print("not of true: true")
 	else
-		print("not of true: false") +
+		print("not of true: false")
 
 	// Test that `is not` parses as a single compound operator
 	integer x = 5
 	integer y = 10
 	if x is not y
-		print("x is not y: ok") +
+		print("x is not y: ok")
 	else
-		print("x is not y: fail") +
+		print("x is not y: fail")
