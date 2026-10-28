@@ -5,7 +5,7 @@
 
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
-use super::{ALIGNMENT, HEAP_PTR_GLOBAL};
+use super::{ALIGNMENT, HEAP_PTR_GLOBAL, JSON_CACHE_BASE_GLOBAL, JSON_CACHE_ENTRIES};
 
 /// Generate instructions for native malloc (bump allocator)
 ///
@@ -121,6 +121,54 @@ pub fn gen_scope_push() -> Vec<Instruction<'static>> {
     vec![Instruction::GlobalGet(HEAP_PTR_GLOBAL)]
 }
 
+/// Clear every `json.get` parse-cache entry whose parse tree extends above
+/// `mark_local` (the scope mark being rewound to).
+///
+/// Each entry records `floor`, the heap pointer right after its parse, so
+/// the tree (and any source string parsed in the same scope) lies below
+/// `floor`. If `floor > mark`, the rewind frees part of it. The lookup-side
+/// check (`__heap_ptr >= floor`) is not enough on its own: the next
+/// iteration of a loop allocates past `floor` again and the stale tree,
+/// now overwritten, would be returned.
+fn invalidate_json_cache_above(mark_local: u32) -> Vec<Instruction<'static>> {
+    let mut instructions = Vec::new();
+    for entry in 0..JSON_CACHE_ENTRIES {
+        let src_global = JSON_CACHE_BASE_GLOBAL + 3 * entry;
+        let floor_global = src_global + 2;
+        instructions.extend([
+            Instruction::GlobalGet(floor_global),
+            Instruction::LocalGet(mark_local),
+            Instruction::I32GtU,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::GlobalSet(src_global),
+            Instruction::End,
+        ]);
+    }
+    instructions
+}
+
+/// Clear the `json.get` parse-cache entry (if any) keyed by the string at
+/// `ptr_local`. Used before a string buffer is overwritten in place (the
+/// carryover ping-pong slots): the cache is keyed by source address, so a
+/// stale entry would return the parse tree of the previous contents.
+pub(super) fn invalidate_json_cache_at(ptr_local: u32) -> Vec<Instruction<'static>> {
+    let mut instructions = Vec::new();
+    for entry in 0..JSON_CACHE_ENTRIES {
+        let src_global = JSON_CACHE_BASE_GLOBAL + 3 * entry;
+        instructions.extend([
+            Instruction::GlobalGet(src_global),
+            Instruction::LocalGet(ptr_local),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::GlobalSet(src_global),
+            Instruction::End,
+        ]);
+    }
+    instructions
+}
+
 /// Generate instructions for native scope_pop
 ///
 /// Resets `__heap_ptr` to the supplied save-point. Every allocation made
@@ -133,10 +181,12 @@ pub fn gen_scope_push() -> Vec<Instruction<'static>> {
 ///
 /// Returns: void
 pub fn gen_scope_pop() -> Vec<Instruction<'static>> {
-    vec![
+    let mut instructions = invalidate_json_cache_above(0);
+    instructions.extend([
         Instruction::LocalGet(0),
         Instruction::GlobalSet(HEAP_PTR_GLOBAL),
-    ]
+    ]);
+    instructions
 }
 
 /// Generate instructions for native `scope_pop_keeping`.
@@ -179,7 +229,8 @@ pub fn gen_scope_pop() -> Vec<Instruction<'static>> {
 ///   - local 2: total_len   (4 + string length in bytes)
 ///   - local 3: i           (copy loop counter)
 pub fn gen_scope_pop_keeping() -> Vec<Instruction<'static>> {
-    vec![
+    let mut instructions = invalidate_json_cache_above(0);
+    instructions.extend([
         // Null-keeper guard: if keeper_ptr is 0, just pop the scope and
         // return 0 unchanged. Prevents a garbage-length read from linear
         // memory offset 0 corrupting the copy loop.
@@ -253,7 +304,8 @@ pub fn gen_scope_pop_keeping() -> Vec<Instruction<'static>> {
         Instruction::GlobalSet(HEAP_PTR_GLOBAL),
         // Return the new pointer to the keeper.
         Instruction::LocalGet(0),
-    ]
+    ]);
+    instructions
 }
 
 /// Generate instructions for native memcpy
@@ -444,6 +496,34 @@ mod tests {
             "scope_pop must write HEAP_PTR_GLOBAL — without this the bump \
              pointer never moves back and memory is never reclaimed"
         );
+    }
+
+    /// Scope rewinds must drop json.get cache entries whose parse tree lies
+    /// in the freed region (compared against each entry's floor global),
+    /// or a later json.get returns an overwritten tree.
+    #[test]
+    fn test_scope_pops_invalidate_json_cache() {
+        for (name, instructions) in [
+            ("scope_pop", gen_scope_pop()),
+            ("scope_pop_keeping", gen_scope_pop_keeping()),
+        ] {
+            for entry in 0..JSON_CACHE_ENTRIES {
+                let floor = JSON_CACHE_BASE_GLOBAL + 3 * entry + 2;
+                let src = JSON_CACHE_BASE_GLOBAL + 3 * entry;
+                assert!(
+                    instructions
+                        .iter()
+                        .any(|i| matches!(i, Instruction::GlobalGet(g) if *g == floor)),
+                    "{name} must check json cache entry {entry}'s floor"
+                );
+                assert!(
+                    instructions
+                        .iter()
+                        .any(|i| matches!(i, Instruction::GlobalSet(g) if *g == src)),
+                    "{name} must be able to clear json cache entry {entry}"
+                );
+            }
+        }
     }
 
     #[test]

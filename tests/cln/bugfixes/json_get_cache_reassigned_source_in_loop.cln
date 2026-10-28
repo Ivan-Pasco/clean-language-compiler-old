@@ -1,0 +1,23 @@
+// Test: bugfixes/json_get_cache_reassigned_source_in_loop
+// Grammar: while_statement, assignment
+// Semantic: stdlib-reference.md json.get — must read the current value of its
+//   source string. json.get caches parse trees by source address. An outer
+//   string reassigned inside an accumulator loop is stored in two fixed
+//   slots that alternate, so iterations 1 and 3 reuse the same address; the
+//   cache returned the old, overwritten tree and the program trapped (the
+//   website's /syntax page). Per-iteration scope rewinds also freed trees
+//   that stayed cached (/tutorials).
+// Fixed in: compiler 0.33.157
+// Expected output:
+//   alpha,beta,gamma,delta,omega,
+
+start:
+	string list = "[{\"name\":\"alpha\",\"n\":1},{\"name\":\"beta\",\"n\":2},{\"name\":\"gamma\",\"n\":3},{\"name\":\"delta\",\"n\":4},{\"name\":\"omega\",\"n\":5}]"
+	string acc = ""
+	integer i = 0
+	string item = json.get(list, "0")
+	while item != ""
+		acc = acc + json.get(item, "name") + ","
+		i = i + 1
+		item = json.get(list, i.toString())
+	print(acc)

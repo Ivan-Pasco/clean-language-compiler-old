@@ -221,6 +221,11 @@ pub fn gen_carryover_copy(malloc_func: u32) -> Vec<Instruction<'static>> {
     ins.push(Instruction::End);
     ins.push(Instruction::LocalSet(5));
 
+    // The slot is about to be overwritten in place: drop any json.get cache
+    // entry keyed by its address, or the next json.get on the new contents
+    // would return the previous contents' parse tree.
+    ins.extend(super::memory::invalidate_json_cache_at(5));
+
     // memcpy loop: for (i = 0; i < 4 + len; i += 4) dst[i..i+4] = src[i..i+4]
     // Simpler: byte loop for correctness on non-multiple-of-4 lengths.
     //
@@ -287,6 +292,22 @@ mod tests {
             }) if *offset == STRING_LENGTH_OFFSET as u64)),
             "carryover_copy must read the length prefix at offset 0 of the source string"
         );
+    }
+
+    /// Overwriting a slot in place must drop any json.get cache entry keyed
+    /// by the slot's address (the slots alternate across loop iterations).
+    #[test]
+    fn test_carryover_copy_invalidates_json_cache() {
+        use crate::codegen::native_stdlib::{JSON_CACHE_BASE_GLOBAL, JSON_CACHE_ENTRIES};
+        let ins = gen_carryover_copy(0);
+        for entry in 0..JSON_CACHE_ENTRIES {
+            let src = JSON_CACHE_BASE_GLOBAL + 3 * entry;
+            assert!(
+                ins.iter()
+                    .any(|i| matches!(i, Instruction::GlobalSet(g) if *g == src)),
+                "carryover_copy must clear json cache entry {entry} keyed by the slot"
+            );
+        }
     }
 
     #[test]
