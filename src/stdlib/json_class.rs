@@ -514,7 +514,7 @@ impl JsonClass {
                 WasmType::I32, // Local 8: codepoint (\uXXXX decoded)
                 WasmType::I32, // Local 9: hex_digit (temp for \u parsing)
             ],
-            self.generate_parse_string_instructions(malloc_index),
+            self.generate_parse_string_instructions(malloc_index, skip_string_idx),
         )?;
 
         assert_eq!(
@@ -4569,7 +4569,11 @@ impl JsonClass {
     /// - Local 5: out_ptr (allocated output buffer)
     /// - Local 6: out_write_pos (number of bytes written so far)
     /// - Local 7: next_char (for escape processing)
-    fn generate_parse_string_instructions(&self, malloc_index: u32) -> Vec<Instruction<'static>> {
+    fn generate_parse_string_instructions(
+        &self,
+        malloc_index: u32,
+        skip_string_index: u32,
+    ) -> Vec<Instruction<'static>> {
         vec![
             // Load position from position_ptr
             Instruction::LocalGet(1),
@@ -4584,13 +4588,39 @@ impl JsonClass {
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::LocalSet(3),
-            // Allocate output buffer: 4-byte length header + at most `length` content bytes
-            // The worst case is that every byte of the original JSON maps to one output byte.
-            Instruction::I32Const(4),
+            // Allocate output buffer: 4-byte length header + the string's raw
+            // span. Decoded output is never longer than the raw text (escapes
+            // shrink), so the span is a safe upper bound. Measure it with
+            // __json_skip_string (position_ptr still holds the opening '"'),
+            // then restore position_ptr. Sizing the buffer by the whole JSON
+            // length instead made every string reserve a copy of the entire
+            // document — quadratic memory that exhausted the module's cap.
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
             Instruction::LocalGet(2),
+            Instruction::Call(skip_string_index),
+            Instruction::LocalGet(1),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }), // position after the closing '"'
+            Instruction::LocalGet(3), // first content byte
+            Instruction::I32Sub,      // raw content bytes + closing quote
+            Instruction::I32Const(4),
             Instruction::I32Add,
             Instruction::Call(malloc_index),
             Instruction::LocalSet(5), // out_ptr
+            // Restore position_ptr to the opening '"'.
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
             // out_write_pos = 0
             Instruction::I32Const(0),
             Instruction::LocalSet(6),
