@@ -61,13 +61,19 @@
 //!
 //! ## Layout
 //!
-//! Two independent pools, each lazily `__malloc`-allocated on first
-//! write:
+//! Each rewritten variable gets its own pool pair from
+//! `__carryover_pool_new`, allocated just before its loop and passed to
+//! every `__carryover_copy` call for that variable:
 //!
 //! ```text
-//!     CARRYOVER_A_BASE  ──►  [ ................ POOL_SIZE ................ ]
-//!     CARRYOVER_B_BASE  ──►  [ ................ POOL_SIZE ................ ]
+//!     pool        ──►  [ slot 0 ............ POOL_SIZE ................ ]
+//!     pool + SIZE ──►  [ slot 1 ............ POOL_SIZE ................ ]
 //! ```
+//!
+//! Pools used to be two module-wide globals (`CARRYOVER_A/B_BASE`), which
+//! let a loop inside another loop's iteration overwrite the outer loop's
+//! variable. Those globals are now unused but stay reserved so global
+//! numbering does not shift.
 //!
 //! Each write memcpy's `4 + string_length` bytes from `src_str_ptr` to
 //! the pool base. No allocation bookkeeping — the pool is
@@ -91,7 +97,7 @@
 
 use wasm_encoder::{BlockType, Instruction, MemArg};
 
-use super::{ALIGNMENT, CARRYOVER_A_BASE_GLOBAL, CARRYOVER_B_BASE_GLOBAL, STRING_LENGTH_OFFSET};
+use super::{ALIGNMENT, STRING_LENGTH_OFFSET};
 
 /// Size of each carryover pool in bytes.
 ///
@@ -99,44 +105,51 @@ use super::{ALIGNMENT, CARRYOVER_A_BASE_GLOBAL, CARRYOVER_B_BASE_GLOBAL, STRING_
 /// `__malloc` (one leak per oversize iter, correctness preserved).
 pub const CARRYOVER_POOL_SIZE: i32 = 32_768;
 
+/// Generate instructions for `__carryover_pool_new`.
+///
+/// Allocates one pool pair for a single rewritten loop variable:
+/// `2 * CARRYOVER_POOL_SIZE` bytes, slot 0 then slot 1. Returns the base
+/// pointer, or 0 when memory cannot grow (copies then spill to the main
+/// heap).
+///
+/// Each rewritten variable gets its own pair, allocated just before its
+/// loop. A loop running inside another loop's iteration (for example in a
+/// method called from the outer loop body) therefore never overwrites the
+/// outer loop's slots; the inner pair is reclaimed with the outer
+/// iteration's scope.
+pub fn gen_carryover_pool_new(malloc_func: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::I32Const(2 * CARRYOVER_POOL_SIZE),
+        Instruction::Call(malloc_func),
+    ]
+}
+
 /// Generate instructions for `__carryover_copy`.
 ///
 /// Parameters:
 ///   - local 0: src_str_ptr (i32) — pointer to a Clean string
 ///     `[len:u32 LE][utf8 data:len bytes]`
 ///   - local 1: slot (i32) — 0 or 1
+///   - local 2: pool (i32) — pool pair from `__carryover_pool_new`
 ///
-/// Returns: i32 — pointer to a Clean string in the selected pool base
-/// (or on the main heap on spill). Same layout as the source.
+/// Returns: i32 — pointer to a Clean string in the selected slot (or on
+/// the main heap on spill). Same layout as the source.
 ///
 /// Behavior:
-///   1. Read `len = i32.load(src_str_ptr + STRING_LENGTH_OFFSET)`.
+///   1. `len = i32.load(src_str_ptr + STRING_LENGTH_OFFSET)`.
 ///   2. `total = align_up_8(4 + len)`.
-///   3. Select `pool_base = (slot == 0) ? CARRYOVER_A_BASE : CARRYOVER_B_BASE`.
-///   4. If `pool_base == 0`: lazily `__malloc(CARRYOVER_POOL_SIZE)`,
-///      store into the slot's global. If malloc fails, fall back to
-///      per-call `__malloc(total)`.
-///   5. If `total > CARRYOVER_POOL_SIZE`: fall back to per-call
-///      `__malloc(total)`.
-///   6. `memcpy(pool_base, src_str_ptr, 4 + len)`.
-///   7. Return `pool_base`.
+///   3. `slot_base = pool + slot * CARRYOVER_POOL_SIZE` (0 if `pool == 0`).
+///   4. If `slot_base == 0` or `total > CARRYOVER_POOL_SIZE`: copy into a
+///      fresh `__malloc(total)` instead.
+///   5. Clear any json.get cache entry keyed by the destination.
+///   6. `memcpy(dst, src_str_ptr, 4 + len)`; return `dst`.
 ///
-/// Notes:
-///   * No bump pointer — the pool is single-tenanted per slot.
-///   * The 8-byte alignment on `total` is defensive: subsequent
-///     reads through the pool base still land on well-aligned
-///     addresses. String reads only need 4-byte alignment for the
-///     length prefix, but rounding up costs nothing and future-proofs
-///     the pool against extensions.
-///
-/// Locals (see registration in `codegen_registration.rs`):
-///   - 0: src_str_ptr (param)
-///   - 1: slot (param)
-///   - 2: len (str length in bytes)
-///   - 3: total (4 + len, aligned up)
-///   - 4: pool_base (chosen slot's global value)
-///   - 5: dst_ptr (return value; either pool_base or a fresh __malloc)
-///   - 6: copy_i (memcpy loop counter)
+/// Locals:
+///   - 3: len
+///   - 4: total (4 + len, aligned)
+///   - 5: slot_base
+///   - 6: dst_ptr
+///   - 7: copy_i (memcpy loop counter)
 #[allow(clippy::vec_init_then_push)]
 pub fn gen_carryover_copy(malloc_func: u32) -> Vec<Instruction<'static>> {
     let mut ins: Vec<Instruction<'static>> = Vec::new();
@@ -148,64 +161,36 @@ pub fn gen_carryover_copy(malloc_func: u32) -> Vec<Instruction<'static>> {
         align: 2,
         memory_index: 0,
     }));
-    ins.push(Instruction::LocalSet(2));
+    ins.push(Instruction::LocalSet(3));
 
-    // total = align_up_8(4 + len) = ((len + 4) + 7) & ~7
-    ins.push(Instruction::LocalGet(2));
+    // total = align_up_8(4 + len)
+    ins.push(Instruction::LocalGet(3));
     ins.push(Instruction::I32Const(4 + (ALIGNMENT as i32 - 1)));
     ins.push(Instruction::I32Add);
     ins.push(Instruction::I32Const(!(ALIGNMENT - 1) as i32));
     ins.push(Instruction::I32And);
-    ins.push(Instruction::LocalSet(3));
+    ins.push(Instruction::LocalSet(4));
 
-    // pool_base = (slot == 0) ? CARRYOVER_A_BASE : CARRYOVER_B_BASE
-    ins.push(Instruction::LocalGet(1));
+    // slot_base = pool == 0 ? 0 : pool + slot * CARRYOVER_POOL_SIZE
+    ins.push(Instruction::LocalGet(2));
     ins.push(Instruction::I32Eqz);
     ins.push(Instruction::If(BlockType::Result(
         wasm_encoder::ValType::I32,
     )));
-    ins.push(Instruction::GlobalGet(CARRYOVER_A_BASE_GLOBAL));
+    ins.push(Instruction::I32Const(0));
     ins.push(Instruction::Else);
-    ins.push(Instruction::GlobalGet(CARRYOVER_B_BASE_GLOBAL));
-    ins.push(Instruction::End);
-    ins.push(Instruction::LocalSet(4));
-
-    // If pool_base == 0, lazily allocate the pool.
-    ins.push(Instruction::LocalGet(4));
-    ins.push(Instruction::I32Eqz);
-    ins.push(Instruction::If(BlockType::Empty));
-    // pool_base = __malloc(CARRYOVER_POOL_SIZE)
-    ins.push(Instruction::I32Const(CARRYOVER_POOL_SIZE));
-    ins.push(Instruction::Call(malloc_func));
-    ins.push(Instruction::LocalSet(4));
-    // If lazy malloc failed (returned 0), fall through — the spill path
-    // below detects pool_base == 0 by testing (total > POOL_SIZE) OR
-    // (pool_base == 0). Since we compare pool_base again, a failed lazy
-    // init still routes to per-call malloc for correctness.
-    //
-    // On success, store the pool base into the correct global for reuse.
-    ins.push(Instruction::LocalGet(4));
-    ins.push(Instruction::I32Eqz);
-    ins.push(Instruction::I32Eqz); // negate: skip the store when pool_base is still 0
-    ins.push(Instruction::If(BlockType::Empty));
+    ins.push(Instruction::LocalGet(2));
     ins.push(Instruction::LocalGet(1));
-    ins.push(Instruction::I32Eqz);
-    ins.push(Instruction::If(BlockType::Empty));
-    ins.push(Instruction::LocalGet(4));
-    ins.push(Instruction::GlobalSet(CARRYOVER_A_BASE_GLOBAL));
-    ins.push(Instruction::Else);
-    ins.push(Instruction::LocalGet(4));
-    ins.push(Instruction::GlobalSet(CARRYOVER_B_BASE_GLOBAL));
+    ins.push(Instruction::I32Const(CARRYOVER_POOL_SIZE));
+    ins.push(Instruction::I32Mul);
+    ins.push(Instruction::I32Add);
     ins.push(Instruction::End);
-    ins.push(Instruction::End);
-    ins.push(Instruction::End);
+    ins.push(Instruction::LocalSet(5));
 
-    // Spill decision: dst_ptr = (pool_base == 0 || total > POOL_SIZE)
-    //                          ? __malloc(total)
-    //                          : pool_base
-    ins.push(Instruction::LocalGet(4));
+    // dst_ptr = (slot_base == 0 || total > POOL_SIZE) ? __malloc(total) : slot_base
+    ins.push(Instruction::LocalGet(5));
     ins.push(Instruction::I32Eqz);
-    ins.push(Instruction::LocalGet(3));
+    ins.push(Instruction::LocalGet(4));
     ins.push(Instruction::I32Const(CARRYOVER_POOL_SIZE));
     ins.push(Instruction::I32GtU);
     ins.push(Instruction::I32Or);
@@ -213,44 +198,35 @@ pub fn gen_carryover_copy(malloc_func: u32) -> Vec<Instruction<'static>> {
         wasm_encoder::ValType::I32,
     )));
     // Spill: allocate a fresh main-heap block. Leaks one string per
-    // oversize iter, but preserves correctness.
-    ins.push(Instruction::LocalGet(3));
+    // oversize iteration, but preserves correctness.
+    ins.push(Instruction::LocalGet(4));
     ins.push(Instruction::Call(malloc_func));
     ins.push(Instruction::Else);
-    ins.push(Instruction::LocalGet(4));
+    ins.push(Instruction::LocalGet(5));
     ins.push(Instruction::End);
-    ins.push(Instruction::LocalSet(5));
+    ins.push(Instruction::LocalSet(6));
 
     // The slot is about to be overwritten in place: drop any json.get cache
     // entry keyed by its address, or the next json.get on the new contents
     // would return the previous contents' parse tree.
-    ins.extend(super::memory::invalidate_json_cache_at(5));
+    ins.extend(super::memory::invalidate_json_cache_at(6));
 
-    // memcpy loop: for (i = 0; i < 4 + len; i += 4) dst[i..i+4] = src[i..i+4]
-    // Simpler: byte loop for correctness on non-multiple-of-4 lengths.
-    //
-    // Byte loop:
-    //     copy_i = 0
-    //     while copy_i < (4 + len):
-    //         dst[copy_i] = src[copy_i]
-    //         copy_i += 1
+    // Byte copy: dst[i] = src[i] for i in 0..(4 + len)
     ins.push(Instruction::I32Const(0));
-    ins.push(Instruction::LocalSet(6));
+    ins.push(Instruction::LocalSet(7));
     ins.push(Instruction::Block(BlockType::Empty));
     ins.push(Instruction::Loop(BlockType::Empty));
-    // if copy_i >= (4 + len) break
-    ins.push(Instruction::LocalGet(6));
-    ins.push(Instruction::LocalGet(2));
+    ins.push(Instruction::LocalGet(7));
+    ins.push(Instruction::LocalGet(3));
     ins.push(Instruction::I32Const(4));
     ins.push(Instruction::I32Add);
     ins.push(Instruction::I32GeU);
     ins.push(Instruction::BrIf(1));
-    // dst[copy_i] = src[copy_i]
-    ins.push(Instruction::LocalGet(5));
     ins.push(Instruction::LocalGet(6));
+    ins.push(Instruction::LocalGet(7));
     ins.push(Instruction::I32Add);
     ins.push(Instruction::LocalGet(0));
-    ins.push(Instruction::LocalGet(6));
+    ins.push(Instruction::LocalGet(7));
     ins.push(Instruction::I32Add);
     ins.push(Instruction::I32Load8U(MemArg {
         offset: 0,
@@ -262,24 +238,22 @@ pub fn gen_carryover_copy(malloc_func: u32) -> Vec<Instruction<'static>> {
         align: 0,
         memory_index: 0,
     }));
-    // copy_i += 1
-    ins.push(Instruction::LocalGet(6));
+    ins.push(Instruction::LocalGet(7));
     ins.push(Instruction::I32Const(1));
     ins.push(Instruction::I32Add);
-    ins.push(Instruction::LocalSet(6));
+    ins.push(Instruction::LocalSet(7));
     ins.push(Instruction::Br(0));
     ins.push(Instruction::End);
     ins.push(Instruction::End);
 
-    // Return dst_ptr.
-    ins.push(Instruction::LocalGet(5));
-
+    ins.push(Instruction::LocalGet(6));
     ins
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codegen::native_stdlib::{CARRYOVER_A_BASE_GLOBAL, CARRYOVER_B_BASE_GLOBAL};
 
     #[test]
     fn test_carryover_copy_reads_string_length() {
@@ -310,45 +284,59 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_carryover_copy_touches_both_pool_globals() {
-        let ins = gen_carryover_copy(0);
-        let touches_a = ins
-            .iter()
-            .any(|i| matches!(i, Instruction::GlobalGet(g) if *g == CARRYOVER_A_BASE_GLOBAL));
-        let touches_b = ins
-            .iter()
-            .any(|i| matches!(i, Instruction::GlobalGet(g) if *g == CARRYOVER_B_BASE_GLOBAL));
-        assert!(touches_a, "must read CARRYOVER_A_BASE for slot 0");
-        assert!(touches_b, "must read CARRYOVER_B_BASE for slot 1");
-    }
+    // The former tests here asserted that every copy went through the
+    // global CARRYOVER_A/B pool slots and lazily initialised them. Those
+    // globals were shared by every loop in the program, so a loop running
+    // inside another loop's iteration overwrote the outer loop's variable
+    // (website /syntax rendered one card per category). Pools are now
+    // per-variable; these tests pin that contract instead.
 
+    /// Copies must not touch the shared carryover globals any more.
     #[test]
-    fn test_carryover_copy_lazily_calls_malloc() {
+    fn test_carryover_copy_uses_no_shared_pool_globals() {
         let ins = gen_carryover_copy(0);
-        // At least one Call(0) — either the lazy pool alloc or the spill fallback.
-        let call_count = ins
-            .iter()
-            .filter(|i| matches!(i, Instruction::Call(f) if *f == 0))
-            .count();
+        let touches_globals = ins.iter().any(|i| {
+            matches!(i, Instruction::GlobalGet(g) | Instruction::GlobalSet(g)
+                if *g == CARRYOVER_A_BASE_GLOBAL || *g == CARRYOVER_B_BASE_GLOBAL)
+        });
         assert!(
-            call_count >= 2,
-            "expected both lazy-pool-alloc AND spill-fallback to call __malloc; got {call_count}"
+            !touches_globals,
+            "carryover_copy must use its pool argument, not the shared CARRYOVER_A/B globals"
         );
     }
 
+    /// The slot address is derived from the pool argument (local 2).
     #[test]
-    fn test_carryover_copy_writes_pool_bases_on_lazy_init() {
+    fn test_carryover_copy_reads_pool_argument() {
         let ins = gen_carryover_copy(0);
-        let sets_a = ins
-            .iter()
-            .any(|i| matches!(i, Instruction::GlobalSet(g) if *g == CARRYOVER_A_BASE_GLOBAL));
-        let sets_b = ins
-            .iter()
-            .any(|i| matches!(i, Instruction::GlobalSet(g) if *g == CARRYOVER_B_BASE_GLOBAL));
         assert!(
-            sets_a && sets_b,
-            "lazy init must persist the fresh pool base into the correct global (both slots)"
+            ins.iter().any(|i| matches!(i, Instruction::LocalGet(2))),
+            "carryover_copy must read its pool argument (local 2)"
         );
+        assert!(
+            ins.iter()
+                .any(|i| matches!(i, Instruction::I32Const(c) if *c == CARRYOVER_POOL_SIZE)),
+            "slot 1 must start CARRYOVER_POOL_SIZE bytes after slot 0"
+        );
+    }
+
+    /// Oversize strings and a failed pool allocation spill to __malloc.
+    #[test]
+    fn test_carryover_copy_spills_to_malloc() {
+        let ins = gen_carryover_copy(7);
+        assert!(
+            ins.iter().any(|i| matches!(i, Instruction::Call(7))),
+            "carryover_copy must fall back to __malloc for oversize strings"
+        );
+    }
+
+    /// Each pool pair holds two slots.
+    #[test]
+    fn test_carryover_pool_new_allocates_two_slots() {
+        let ins = gen_carryover_pool_new(9);
+        assert!(ins
+            .iter()
+            .any(|i| matches!(i, Instruction::I32Const(c) if *c == 2 * CARRYOVER_POOL_SIZE)));
+        assert!(ins.iter().any(|i| matches!(i, Instruction::Call(9))));
     }
 }

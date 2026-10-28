@@ -325,20 +325,30 @@ impl super::CodeGenerator {
         // O(N) growth that trips the 32 MB linear-memory cap at
         // ~3000 iterations.
         //
-        // Signature: `(str_ptr: i32, slot: i32) -> i32`
-        // See `native_stdlib/carryover.rs` for the layout and the
-        // invariant that makes the ping-pong safe.
+        // Signature: `(str_ptr: i32, slot: i32, pool: i32) -> i32`; `pool`
+        // comes from `__carryover_pool_new` (one pair per rewritten
+        // variable). See `native_stdlib/carryover.rs`.
+        let carryover_pool_new_instructions =
+            native_stdlib::carryover::gen_carryover_pool_new(malloc_idx);
+        let carryover_pool_new_idx = self.register_function(
+            "__carryover_pool_new",
+            &[],
+            Some(WasmType::I32),
+            &carryover_pool_new_instructions,
+        )?;
+        self.add_function_alias("carryover_pool_new", carryover_pool_new_idx);
+
         let carryover_copy_instructions = native_stdlib::carryover::gen_carryover_copy(malloc_idx);
         let carryover_copy_idx = self.register_function_with_locals(
             "__carryover_copy",
-            &[WasmType::I32, WasmType::I32], // (src_str_ptr, slot)
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // (src_str_ptr, slot, pool)
             Some(WasmType::I32),
             &[
-                WasmType::I32, // local 2: len
-                WasmType::I32, // local 3: total (aligned)
-                WasmType::I32, // local 4: pool_base
-                WasmType::I32, // local 5: dst_ptr
-                WasmType::I32, // local 6: copy_i (memcpy loop counter)
+                WasmType::I32, // local 3: len
+                WasmType::I32, // local 4: total (aligned)
+                WasmType::I32, // local 5: slot_base
+                WasmType::I32, // local 6: dst_ptr
+                WasmType::I32, // local 7: copy_i (memcpy loop counter)
             ],
             &carryover_copy_instructions,
         )?;

@@ -3110,6 +3110,7 @@ impl HirBuilder {
             let carryover_id = self.carryover_counter;
             self.carryover_counter += 1;
             let parity_name = format!("__carryover_{carryover_id}_parity");
+            let pool_name = format!("__carryover_{carryover_id}_pool");
             let loc = decl_loc.clone();
             let loop_loc = loop_loc.clone();
             let _ = x_call; // decl's initializer is left in place.
@@ -3133,6 +3134,7 @@ impl HirBuilder {
                         location: loc.clone(),
                     },
                     0,
+                    &pool_name,
                     &loc,
                 ),
                 location: loc.clone(),
@@ -3147,10 +3149,25 @@ impl HirBuilder {
                 is_mutable: true,
                 location: loc.clone(),
             };
-            stmts.insert(cursor + 1, initial_wrap);
-            stmts.insert(cursor + 2, parity_decl);
-            inserted += 2;
-            let loop_stmt_idx_after = loop_stmt_idx + 2;
+            // This variable's own pool pair. Allocated here, before the
+            // loop, so a loop running inside another loop's iteration gets
+            // a fresh pair instead of overwriting the outer loop's slots.
+            let pool_decl = HirStatement::VariableDeclaration {
+                name: pool_name.clone(),
+                var_type: HirType::Integer,
+                initializer: Some(HirExpression::Call {
+                    function: "carryover_pool_new".to_string(),
+                    arguments: vec![],
+                    location: loc.clone(),
+                }),
+                is_mutable: false,
+                location: loc.clone(),
+            };
+            stmts.insert(cursor + 1, pool_decl);
+            stmts.insert(cursor + 2, initial_wrap);
+            stmts.insert(cursor + 3, parity_decl);
+            inserted += 3;
+            let loop_stmt_idx_after = loop_stmt_idx + 3;
 
             // 3. Inside the loop body, replace the assignment
             //    `X = <call>` with three statements:
@@ -3158,10 +3175,16 @@ impl HirBuilder {
             //       __carryover_N_parity = 1 - __carryover_N_parity
             //       X = carryover_copy(X, __carryover_N_parity)
             if let HirStatement::While { body, .. } = &mut stmts[loop_stmt_idx_after] {
-                Self::rewrite_carryover_reassign_in_block(body, &x_name, &parity_name, &loop_loc);
+                Self::rewrite_carryover_reassign_in_block(
+                    body,
+                    &x_name,
+                    &parity_name,
+                    &pool_name,
+                    &loop_loc,
+                );
             }
 
-            cursor += 3; // advance past decl, initial_wrap, parity_decl.
+            cursor += 4; // advance past decl, pool_decl, initial_wrap, parity_decl.
         }
         inserted
     }
@@ -3318,6 +3341,7 @@ impl HirBuilder {
         block: &mut HirBlock,
         x_name: &str,
         parity_name: &str,
+        pool_name: &str,
         loc: &SourceLocation,
     ) {
         let mut i = 0;
@@ -3369,6 +3393,7 @@ impl HirBuilder {
                             location: assign_loc.clone(),
                         },
                         parity_name,
+                        pool_name,
                         &assign_loc,
                     ),
                     location: assign_loc,
@@ -3385,9 +3410,21 @@ impl HirBuilder {
                 ..
             } = &mut block.statements[i]
             {
-                Self::rewrite_carryover_reassign_in_block(then_branch, x_name, parity_name, loc);
+                Self::rewrite_carryover_reassign_in_block(
+                    then_branch,
+                    x_name,
+                    parity_name,
+                    pool_name,
+                    loc,
+                );
                 if let Some(eb) = else_branch {
-                    Self::rewrite_carryover_reassign_in_block(eb, x_name, parity_name, loc);
+                    Self::rewrite_carryover_reassign_in_block(
+                        eb,
+                        x_name,
+                        parity_name,
+                        pool_name,
+                        loc,
+                    );
                 }
             }
             i += 1;
@@ -3398,6 +3435,7 @@ impl HirBuilder {
     fn make_carryover_copy_call(
         call_expr: HirExpression,
         slot: i64,
+        pool_name: &str,
         loc: &SourceLocation,
     ) -> HirExpression {
         HirExpression::Call {
@@ -3406,6 +3444,10 @@ impl HirBuilder {
                 call_expr,
                 HirExpression::Literal {
                     value: Value::Integer(slot),
+                    location: loc.clone(),
+                },
+                HirExpression::Variable {
+                    name: pool_name.to_string(),
                     location: loc.clone(),
                 },
             ],
@@ -3417,6 +3459,7 @@ impl HirBuilder {
     fn make_carryover_copy_call_with_parity(
         call_expr: HirExpression,
         parity_name: &str,
+        pool_name: &str,
         loc: &SourceLocation,
     ) -> HirExpression {
         HirExpression::Call {
@@ -3425,6 +3468,10 @@ impl HirBuilder {
                 call_expr,
                 HirExpression::Variable {
                     name: parity_name.to_string(),
+                    location: loc.clone(),
+                },
+                HirExpression::Variable {
+                    name: pool_name.to_string(),
                     location: loc.clone(),
                 },
             ],
@@ -6452,8 +6499,13 @@ impl HirBuilder {
         // Explicit blocklist for the transient-arena concat helper and
         // the carryover ping-pong copy — both return strings whose
         // lifetime is bounded by an outer scope reset that the per-call
-        // wrap would interfere with.
-        matches!(function, "string_concat_transient" | "carryover_copy")
+        // wrap would interfere with. The carryover pool allocator returns
+        // a pool that must outlive its loop, so a per-call wrap would free
+        // it immediately.
+        matches!(
+            function,
+            "string_concat_transient" | "carryover_copy" | "carryover_pool_new"
+        )
     }
 
     /// Collect every body-local string-typed local declared anywhere

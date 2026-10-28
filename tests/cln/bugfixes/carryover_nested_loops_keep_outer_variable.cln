@@ -1,0 +1,57 @@
+// Test: bugfixes/carryover_nested_loops_keep_outer_variable
+// Grammar: while_statement, assignment, class_declaration
+// Semantic: an outer string variable reassigned inside an accumulator loop
+//   must keep its value while a loop in a called method runs. Both loop
+//   variables were copied into the same two module-wide carryover slots, so
+//   the inner loop overwrote the outer one: each category rendered only its
+//   first item with an empty description (website /syntax, search for
+//   "print" found nothing). Each rewritten variable now has its own slots.
+// Fixed in: compiler 0.33.158
+// Expected output:
+//   [basics|variables|declare][basics|print|output][basics|comments|notes]
+//   [control|if/else|branch][control|while|repeat]
+
+start:
+	string all = "[{\"title\":\"basics\",\"items\":[{\"title\":\"variables\",\"description\":\"declare\"},{\"title\":\"print\",\"description\":\"output\"},{\"title\":\"comments\",\"description\":\"notes\"}]},{\"title\":\"control\",\"items\":[{\"title\":\"if/else\",\"description\":\"branch\"},{\"title\":\"while\",\"description\":\"repeat\"}]}]"
+	print(buildAll(all))
+
+class Category
+	string sectionJson
+
+	constructor(string sectionJsonParam)
+		sectionJson = sectionJsonParam
+
+	functions:
+		string label()
+			string name = json.get(sectionJson, "title")
+			return name.toLowerCase()
+
+		public:
+			string card(string catName, string itemName, string itemDesc)
+				string lowerName = itemName.toLowerCase()
+				return "[" + catName + "|" + lowerName + "|" + itemDesc + "]"
+
+			string buildCards()
+				string catName = label()
+				string acc = ""
+				integer i = 0
+				string itemName = json.get(sectionJson, "items.0.title")
+				while itemName != ""
+					string idx = i.toString()
+					string itemDesc = json.get(sectionJson, "items." + idx + ".description")
+					acc = acc + card(catName, itemName, itemDesc)
+					i = i + 1
+					itemName = json.get(sectionJson, "items." + i.toString() + ".title")
+				return acc
+
+functions:
+	string buildAll(string categoriesJson)
+		string acc = ""
+		integer i = 0
+		string catJson = json.get(categoriesJson, "0")
+		while catJson != ""
+			Category cat = Category(catJson)
+			acc = acc + cat.buildCards() + "\n"
+			i = i + 1
+			catJson = json.get(categoriesJson, i.toString())
+		return acc

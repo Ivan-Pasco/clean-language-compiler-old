@@ -4106,10 +4106,17 @@ impl NameResolver {
         // stop O(N) main-heap growth for an outer-scope string variable
         // that is reassigned once per iteration inside the loop (the
         // canonical `string item = json.get(arr, i.toString())` shape).
-        // Signature: carryover_copy(str_ptr, slot) -> str_ptr.
+        // Signature: carryover_copy(str_ptr, slot, pool) -> str_ptr, where
+        // pool comes from carryover_pool_new() (one pair per variable).
+        self.register_builtin_fn(
+            "carryover_pool_new",
+            vec![],
+            Some(HirType::Integer),
+            builtin_location.clone(),
+        );
         self.register_builtin_fn(
             "carryover_copy",
-            vec![HirType::String, HirType::Integer],
+            vec![HirType::String, HirType::Integer, HirType::Integer],
             Some(HirType::String),
             builtin_location.clone(),
         );
