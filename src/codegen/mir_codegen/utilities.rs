@@ -1079,15 +1079,60 @@ impl MirCodeGenerator<'_> {
             module.section(&table_section);
         }
 
-        // 4. Memory section
-        let memory_section = self.wasm_generator.memory_section.clone();
-        module.section(&memory_section);
-
-        // 4.5 Global section (heap pointer + state variables)
-        let heap_start = {
+        // Memory layout after the static data:
+        //
+        //   [string_end .. +TRANSIENT_POOL_SIZE)   transient arena pool
+        //   [heap_start ..)                        main bump heap
+        //
+        // The transient pool is reserved here, below the first heap byte,
+        // instead of being `__malloc`-ed lazily on the first
+        // `__transient_scope_enter`. A lazily allocated pool sits on the
+        // main heap, so any rewind of `__heap_ptr` below it (`scope_pop`,
+        // the host's `mem_scope_pop`, a per-request reset) hands its bytes
+        // back to `__malloc` while `TRANSIENT_BASE` still points at them.
+        // The next string built in the pool then overlaps live main-heap
+        // data. That corrupted the source fragments frame.server builds
+        // for its dev-capture helpers, so every `endpoints:` block failed
+        // to compile (clean-language-compiler-old #15). Hosts take the
+        // heap start from the exported `__heap_ptr`, so no rewind can
+        // reach below `heap_start`.
+        let transient_pool_base = {
             let string_end = self.wasm_generator.string_offset_counter;
             (string_end + 7) & !7
         };
+        let heap_start = transient_pool_base
+            + crate::codegen::native_stdlib::transient_arena::TRANSIENT_POOL_SIZE as u32;
+
+        // 4. Memory section — the tier's initial size, grown if needed so
+        // the reserved pool is addressable before the first `memory.grow`.
+        let required_pages = (heap_start as u64).div_ceil(65_536);
+        let initial_pages = self.memory_tier.initial_pages().max(required_pages);
+        let max_pages = self.memory_tier.max_pages();
+        if initial_pages > max_pages {
+            return Err(CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    format!(
+                        "static data and the transient arena need {} memory pages, but the '{}' memory tier allows at most {}",
+                        initial_pages,
+                        self.memory_tier.name(),
+                        max_pages
+                    ),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            });
+        }
+        let mut memory_section = wasm_encoder::MemorySection::new();
+        memory_section.memory(wasm_encoder::MemoryType {
+            minimum: initial_pages,
+            maximum: Some(max_pages),
+            memory64: false,
+            shared: false,
+        });
+        module.section(&memory_section);
+
+        // 4.5 Global section (heap pointer + state variables)
         let mut global_section = wasm_encoder::GlobalSection::new();
         // Global 0: heap pointer
         global_section.global(
@@ -1120,11 +1165,10 @@ impl MirCodeGenerator<'_> {
         // Globals 14-15: transient arena (see native_stdlib::transient_arena).
         // Global 14 = TRANSIENT_BASE_GLOBAL (pool base ptr; 0 = uninit).
         // Global 15 = TRANSIENT_PTR_GLOBAL  (bump pointer within the pool).
-        // Both start at 0; the pool is lazily __malloc-allocated on the
-        // first __transient_scope_enter call. The matching scope_exit
-        // restores TRANSIENT_PTR — the mechanism that replaces the
-        // rolled-back string_builder_reclaim (see ARCHITECTURE in
-        // transient_arena.rs).
+        // Both start at the reserved pool below `heap_start` (see the
+        // memory layout note above). The matching scope_exit restores
+        // TRANSIENT_PTR — the mechanism that replaces the rolled-back
+        // string_builder_reclaim (see ARCHITECTURE in transient_arena.rs).
         //
         // Globals 16-17: carryover slot pools
         // (see native_stdlib::carryover). Two independent single-tenanted
@@ -1134,13 +1178,20 @@ impl MirCodeGenerator<'_> {
         // on the first __carryover_copy call to its slot. Motivation:
         // CODEGEN-LOOP-OUTER-STRING-REASSIGN-LEAK (fingerprint
         // 88dc6aeb0f8e).
-        for _ in 0..(crate::codegen::native_stdlib::RESERVED_GLOBAL_COUNT - 1) {
+        for index in 1..crate::codegen::native_stdlib::RESERVED_GLOBAL_COUNT {
+            let init = if index == crate::codegen::native_stdlib::TRANSIENT_BASE_GLOBAL
+                || index == crate::codegen::native_stdlib::TRANSIENT_PTR_GLOBAL
+            {
+                transient_pool_base as i32
+            } else {
+                0
+            };
             global_section.global(
                 wasm_encoder::GlobalType {
                     val_type: wasm_encoder::ValType::I32,
                     mutable: true,
                 },
-                &wasm_encoder::ConstExpr::i32_const(0),
+                &wasm_encoder::ConstExpr::i32_const(init),
             );
         }
 
