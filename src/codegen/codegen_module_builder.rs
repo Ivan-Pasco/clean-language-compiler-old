@@ -1073,6 +1073,24 @@ impl super::CodeGenerator {
         Ok(())
     }
 
+    /// Resolve the raw host import a built-in wrapper should call.
+    ///
+    /// Returns the import's index when `raw_name` is still a raw import, so
+    /// the caller builds its wrapper around it. When a plugin bridge has
+    /// already registered an expand_strings wrapper under `raw_name`, that
+    /// wrapper already presents the Clean-facing signature: `lang_name`
+    /// becomes an alias for it and `None` is returned. Wrapping it again
+    /// would expand each string argument twice and leave the extra values
+    /// on the stack (invalid WASM, clean-language-compiler-old #12).
+    fn builtin_wrapper_source(&mut self, raw_name: &str, lang_name: &str) -> Option<u32> {
+        let idx = *self.function_map.get(raw_name)?;
+        if idx < self.import_section.len() {
+            return Some(idx);
+        }
+        self.function_map.insert(lang_name.to_string(), idx);
+        None
+    }
+
     /// Create local wrapper functions for the `db` namespace.
     ///
     /// MUST be called AFTER all imports are registered. Wrappers expand Clean
@@ -1083,7 +1101,7 @@ impl super::CodeGenerator {
         // when this no-plugin fallback path runs alongside a partial plugin
         // declaration. Per BUILTIN-NAMESPACE-OVERREACH Sub-A/C consolidation.
         if !self.function_map.contains_key("db.query") {
-            if let Some(&raw_idx) = self.function_map.get("_db_query") {
+            if let Some(raw_idx) = self.builtin_wrapper_source("_db_query", "db.query") {
                 let wrap_idx = self.register_function(
                     "db.query",
                     &[WasmType::I32, WasmType::I32],
@@ -1115,7 +1133,7 @@ impl super::CodeGenerator {
         }
 
         if !self.function_map.contains_key("db.execute") {
-            if let Some(&raw_idx) = self.function_map.get("_db_execute") {
+            if let Some(raw_idx) = self.builtin_wrapper_source("_db_execute", "db.execute") {
                 let wrap_idx = self.register_function(
                     "db.execute",
                     &[WasmType::I32, WasmType::I32],
@@ -1175,7 +1193,7 @@ impl super::CodeGenerator {
         if self.function_map.contains_key("env.get") {
             return Ok(());
         }
-        if let Some(&raw_idx) = self.function_map.get("_env_get") {
+        if let Some(raw_idx) = self.builtin_wrapper_source("_env_get", "env.get") {
             let wrap_idx = self.register_function(
                 "env.get",
                 &[WasmType::I32],
@@ -1214,7 +1232,7 @@ impl super::CodeGenerator {
         if self.function_map.contains_key("time.now") {
             return Ok(());
         }
-        if let Some(&raw_idx) = self.function_map.get("_time_now") {
+        if let Some(raw_idx) = self.builtin_wrapper_source("_time_now", "time.now") {
             let wrap_idx = self.register_function(
                 "time.now",
                 &[],
@@ -1251,7 +1269,7 @@ impl super::CodeGenerator {
     /// Create local wrapper for `server.sleep(ms: i32)`. Extends i32→i64 and calls `_server_sleep`.
     /// Must be called AFTER all imports.
     pub(crate) fn register_server_sleep_wrapper(&mut self) -> Result<(), CompilerError> {
-        if let Some(&raw_idx) = self.function_map.get("_server_sleep") {
+        if let Some(raw_idx) = self.builtin_wrapper_source("_server_sleep", "server.sleep") {
             let wrap_idx = self.register_function(
                 "server.sleep",
                 &[WasmType::I32],
@@ -1334,7 +1352,7 @@ impl super::CodeGenerator {
             if self.function_map.contains_key(*lang_name) {
                 continue;
             }
-            if let Some(&raw_idx) = self.function_map.get(*raw_name) {
+            if let Some(raw_idx) = self.builtin_wrapper_source(*raw_name, lang_name) {
                 let wrap_idx = self.register_function(
                     lang_name,
                     &[WasmType::I32],
@@ -1364,7 +1382,7 @@ impl super::CodeGenerator {
             if self.function_map.contains_key(*lang_name) {
                 continue;
             }
-            if let Some(&raw_idx) = self.function_map.get(*raw_name) {
+            if let Some(raw_idx) = self.builtin_wrapper_source(*raw_name, lang_name) {
                 let wrap_idx = self.register_function(
                     lang_name,
                     &[WasmType::I32],
@@ -1377,7 +1395,7 @@ impl super::CodeGenerator {
 
         // Two-string-param wrapper for verifyPassword
         if !self.function_map.contains_key("crypto.verifyPassword") {
-            if let Some(&raw_idx) = self.function_map.get("_crypto_verify_password") {
+            if let Some(raw_idx) = self.builtin_wrapper_source("_crypto_verify_password", "crypto.verifyPassword") {
                 let wrap_idx = self.register_function(
                     "crypto.verifyPassword",
                     &[WasmType::I32, WasmType::I32],
