@@ -74,6 +74,19 @@ impl ListBehaviorManager {
             self.generate_list_add(),
         )?;
 
+        // `list<number>.add`: same contract as `list.add`, for 8-byte f64
+        // elements (list layout: 16-byte header, elements at +16, stride 8).
+        register_stdlib_function_with_locals(
+            codegen,
+            "list.add_f64",
+            &[WasmType::I32, WasmType::F64], // list_ptr, value
+            Some(WasmType::I32),             // Returns the (possibly moved) list pointer
+            // Local 2: loop_i / copy_index, 3: new_capacity, 4: new_list_ptr,
+            // 5: end of the new block
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+            self.generate_list_add_f64(),
+        )?;
+
         register_stdlib_function_with_locals(
             codegen,
             "list.remove",
@@ -292,6 +305,228 @@ impl ListBehaviorManager {
     }
 
     /// Generate WASM for behavior-aware add operation
+    /// `list.add_f64(list_ptr, value: f64) -> list_ptr`. Mirrors
+    /// `generate_list_add` for `list<number>`: skips duplicates on `.unique`
+    /// lists, moves a full list to a larger block, then appends the value as
+    /// an 8-byte element.
+    ///
+    /// A number list's capacity field counts 4-byte slots, two per element,
+    /// as `list.allocate` and the list-literal builder size it. The list is
+    /// full when `size * 2 + 2 > capacity`; it then moves to a block of
+    /// `max(capacity * 2, 16)` slots.
+    fn generate_list_add_f64(&self) -> Vec<Instruction<'static>> {
+        let size = || Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        });
+        let element_addr = |index_local: u32| {
+            vec![
+                Instruction::LocalGet(0),
+                Instruction::I32Const(16),
+                Instruction::I32Add,
+                Instruction::LocalGet(index_local),
+                Instruction::I32Const(8),
+                Instruction::I32Mul,
+                Instruction::I32Add,
+            ]
+        };
+        let mut code = Vec::new();
+
+        // UNIQUE: return the list unchanged when the value is already present.
+        code.extend([
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 12,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(BEHAVIOR_UNIQUE),
+            Instruction::I32And,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::LocalSet(2),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(0),
+            size(),
+            Instruction::I32GeS,
+            Instruction::BrIf(1),
+        ]);
+        code.extend(element_addr(2));
+        code.extend([
+            Instruction::F64Load(MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(1),
+            Instruction::F64Eq,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(0),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(2),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::End,
+        ]);
+
+        // Grow when the next element does not fit: size * 2 + 2 > capacity.
+        code.extend([
+            Instruction::LocalGet(0),
+            size(),
+            Instruction::I32Const(1),
+            Instruction::I32Shl,
+            Instruction::I32Const(2),
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32GtS,
+            Instruction::If(BlockType::Empty),
+            // new_capacity = max(capacity * 2, 16) slots
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(1),
+            Instruction::I32Shl,
+            Instruction::LocalTee(3),
+            Instruction::I32Const(16),
+            Instruction::I32LtS,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(16),
+            Instruction::LocalSet(3),
+            Instruction::End,
+            // new_list_ptr = __heap_ptr aligned to 8; end = ptr + 16 + slots * 4.
+            // Inline like list.add: __malloc is registered after this.
+            Instruction::GlobalGet(HEAP_PTR_GLOBAL),
+            Instruction::I32Const(7),
+            Instruction::I32Add,
+            Instruction::I32Const(-8),
+            Instruction::I32And,
+            Instruction::LocalTee(4),
+            Instruction::LocalGet(3),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            Instruction::I32Add,
+            Instruction::LocalTee(5),
+            Instruction::MemorySize(0),
+            Instruction::I32Const(16),
+            Instruction::I32Shl,
+            Instruction::I32GtU,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(5),
+            Instruction::I32Const(16),
+            Instruction::I32ShrU,
+            Instruction::MemorySize(0),
+            Instruction::I32Sub,
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::MemoryGrow(0),
+            Instruction::I32Const(-1),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+            Instruction::Unreachable,
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(5),
+            Instruction::GlobalSet(HEAP_PTR_GLOBAL),
+            // Copy the header (4 words) and size * 2 element words.
+            Instruction::I32Const(0),
+            Instruction::LocalSet(2),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(0),
+            size(),
+            Instruction::I32Const(1),
+            Instruction::I32Shl,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(2),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // Record the new capacity and continue with the moved list.
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(3),
+            Instruction::I32Store(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(4),
+            Instruction::LocalSet(0),
+            Instruction::End,
+        ]);
+
+        // Append: element[size] = value; size += 1; return list_ptr.
+        code.extend([
+            Instruction::LocalGet(0),
+            size(),
+            Instruction::LocalSet(2),
+        ]);
+        code.extend(element_addr(2));
+        code.extend([
+            Instruction::LocalGet(1),
+            Instruction::F64Store(MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(0),
+        ]);
+        code
+    }
+
     /// Adds element to the end of the list, respecting unique behavior.
     /// List layout: [size:i32, capacity:i32, type_id:i32, behavior:i32, elements...]
     fn generate_list_add(&self) -> Vec<Instruction> {

@@ -1,0 +1,45 @@
+// Test: bugfixes/list_number_add_grows
+// Grammar: list_type, method_call (list.add)
+// Semantic: list<number>.add appends in place and grows the list
+// Fixed in: compiler 0.33.159
+// Regression: dev-queue fingerprint 5acd3f494063fe67. `add` on a
+//   list<number> lowered to `list.add_f64`, which was never registered,
+//   so it failed with COD000 "Function 'list.add_f64' not found". The
+//   function now exists; number-list capacity counts 4-byte slots (two per
+//   element), as list literals and list.allocate size it.
+// Expected output:
+//   3
+//   3.25
+//   2.5
+//   20
+//   105
+//   10
+//   n20
+//   2
+
+start:
+	list<number> literal = [1.5, 2.5]
+	literal.add(3.25)
+	string pad = "pad"
+	print(literal.length().toString())
+	print(literal[2].toString())
+	print(literal[1].toString())
+
+	list<number> halves = []
+	list<string> names = []
+	iterate i in 1 to 20
+		halves.add(i.toNumber() / 2.0)
+		names.add("n" + i.toString())
+	number total = 0.0
+	iterate x in halves
+		total = total + x
+	print(halves.length().toString())
+	print(total.toString())
+	print(halves[19].toString())
+	print(names[19])
+
+	list<number>.unique distinct = []
+	distinct.add(1.5)
+	distinct.add(1.5)
+	distinct.add(2.0)
+	print(distinct.length().toString())
