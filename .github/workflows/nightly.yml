@@ -321,7 +321,8 @@ jobs:
       - name: Install latest released compiler (cleen precondition)
         run: |
           set -euo pipefail
-          # The compiler repo (Ivan-Pasco/clean-language-compiler) redirects
+          # The old compiler lives at Ivan-Pasco/clean-language-compiler-old; the
+          # original name now belongs to the new project. It used to redirect
           # to `-old` at the GitHub API layer (git push confirms the same:
           # "This repository moved. Please use the new location:
           # Ivan-Pasco/clean-language-compiler-old.git"). cleen-manager
@@ -342,7 +343,7 @@ jobs:
           # release that follows the redirect correctly. Until then this
           # is the reliable path.
           latest_tag="$(gh release view \
-            --repo Ivan-Pasco/clean-language-compiler \
+            --repo Ivan-Pasco/clean-language-compiler-old \
             --json tagName --jq .tagName)"
           ver="${latest_tag#v}"
           echo "Latest release: $latest_tag (ver=$ver)"
@@ -354,7 +355,7 @@ jobs:
           # Prefer the raw binary (no untar step). Falls back to the
           # tarball if for some reason the raw asset isn't present.
           if ! gh release download "$latest_tag" \
-              --repo Ivan-Pasco/clean-language-compiler \
+              --repo Ivan-Pasco/clean-language-compiler-old \
               --pattern 'cln-linux-x86_64' \
               --pattern 'compile-options.json' \
               --clobber; then
@@ -487,7 +488,7 @@ jobs:
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::secrets.CANARY_MATRIX_PAT is not set on this repo."
             echo "::error::Provision a PAT with 'repo' scope on"
-            echo "::error::  Ivan-Pasco/clean-server"
+            echo "::error::  Ivan-Pasco/clean-server-old"
             echo "::error::  Ivan-Pasco/clean-node-server"
             echo "::error::  Ivan-Pasco/cleen-framework"
             echo "::error::and add it as repository secret CANARY_MATRIX_PAT."
@@ -497,7 +498,7 @@ jobs:
           cp tests/output/canaries/applicability.json matrix-inputs/
 
           declare -A HOSTS=(
-            ["server"]="Ivan-Pasco/clean-server"
+            ["server"]="Ivan-Pasco/clean-server-old"
             ["node-server"]="Ivan-Pasco/clean-node-server"
             ["browser"]="Ivan-Pasco/cleen-framework"
           )
@@ -554,7 +555,7 @@ jobs:
           set -uo pipefail
           for host in server node-server browser; do
             case "$host" in
-              server)      repo="Ivan-Pasco/clean-server" ;;
+              server)      repo="Ivan-Pasco/clean-server-old" ;;
               node-server) repo="Ivan-Pasco/clean-node-server" ;;
               browser)     repo="Ivan-Pasco/cleen-framework" ;;
             esac
@@ -601,7 +602,7 @@ jobs:
           set -uo pipefail
           for host in server node-server browser; do
             case "$host" in
-              server)      repo="Ivan-Pasco/clean-server" ;;
+              server)      repo="Ivan-Pasco/clean-server-old" ;;
               node-server) repo="Ivan-Pasco/clean-node-server" ;;
               browser)     repo="Ivan-Pasco/cleen-framework" ;;
             esac
