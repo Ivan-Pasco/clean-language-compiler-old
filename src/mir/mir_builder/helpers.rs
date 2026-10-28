@@ -314,6 +314,115 @@ impl MirBuilder {
         }
     }
 
+    /// Store the list pointer returned by `list.add` back into the receiver.
+    ///
+    /// `list.add` moves a full list to a larger block and returns the new
+    /// address. Writing it back keeps the variable or field pointing at the
+    /// live list. Supported receivers: local variables, state variables and
+    /// fields of a variable (`this.items`, `obj.items`). Other receivers
+    /// (e.g. a list returned by a call) are temporaries, so there is nothing
+    /// to update.
+    pub(super) fn write_back_list_receiver(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        receiver: &TastExpression,
+        new_list_id: ValueId,
+        location: &SourceLocation,
+    ) -> Result<(), Vec<CompilerError>> {
+        match &receiver.kind {
+            TastExpressionKind::Variable { name, .. } => {
+                if let Some((symbol_id, mir_type)) = self.state_variables.get(name).cloned() {
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: None,
+                            operation: MirOperation::GlobalStore {
+                                global_id: symbol_id,
+                                value: MirOperand::Value(new_list_id),
+                                global_type: mir_type,
+                            },
+                            location: location.clone(),
+                        },
+                    );
+                } else if let Some(orig_id) = context
+                    .scope_stack
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(name).copied())
+                {
+                    if orig_id != new_list_id {
+                        self.add_instruction(
+                            context,
+                            MirInstruction {
+                                dest: Some(orig_id),
+                                operation: MirOperation::Copy {
+                                    source: MirOperand::Value(new_list_id),
+                                },
+                                location: location.clone(),
+                            },
+                        );
+                    }
+                }
+                Ok(())
+            }
+            TastExpressionKind::PropertyAccess {
+                object,
+                property_symbol,
+                ..
+            } if matches!(object.kind, TastExpressionKind::Variable { .. }) => {
+                let class_symbol = match &object.expr_type {
+                    ConcreteType::Class { symbol_id, .. } => *symbol_id,
+                    _ => return Ok(()),
+                };
+                let Some(field_byte_offset) =
+                    self.calculate_field_byte_offset(context, class_symbol, property_symbol)
+                else {
+                    return Ok(());
+                };
+                let object_id = self.build_expression(context, object)?;
+
+                let field_ptr_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                context.function.locals.insert(
+                    field_ptr_id,
+                    MirLocal {
+                        name: None,
+                        local_type: MirType::I32,
+                        is_mutable: false,
+                        location: location.clone(),
+                    },
+                );
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: Some(field_ptr_id),
+                        operation: MirOperation::GetElementPtr {
+                            base: MirOperand::Value(object_id),
+                            indices: vec![MirOperand::Constant(MirConstant::Integer(
+                                field_byte_offset as i64,
+                            ))],
+                            is_array: false,
+                        },
+                        location: location.clone(),
+                    },
+                );
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: None,
+                        operation: MirOperation::Store {
+                            destination: MirOperand::Value(field_ptr_id),
+                            value: MirOperand::Value(new_list_id),
+                        },
+                        location: location.clone(),
+                    },
+                );
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Calculate the byte offset of a field within a class hierarchy
     ///
     /// This returns the byte offset from the start of the object to the field,

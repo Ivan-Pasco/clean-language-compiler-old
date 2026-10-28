@@ -1,4 +1,5 @@
 use crate::ast::ListBehavior;
+use crate::codegen::native_stdlib::HEAP_PTR_GLOBAL;
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
 use crate::stdlib::memory::MemoryManager;
@@ -54,13 +55,22 @@ impl ListBehaviorManager {
             self.generate_get_type(),
         )?;
 
-        // Behavior-aware operations
+        // Behavior-aware operations.
         register_stdlib_function_with_locals(
             codegen,
             "list.add",
             &[WasmType::I32, WasmType::I32], // list_ptr, value
-            Some(WasmType::I32),             // Returns modified list pointer
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // Local 2: behavior_flags, 3: loop_i, 4: elem
+            Some(WasmType::I32),             // Returns the (possibly moved) list pointer
+            // Local 2: behavior_flags, 3: loop_i, 4: elem,
+            // 5: new_capacity, 6: new_list_ptr, 7: copy_index
+            &[
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::I32,
+            ],
             self.generate_list_add(),
         )?;
 
@@ -350,6 +360,133 @@ impl ListBehaviorManager {
             Instruction::End,   // end loop
             Instruction::End,   // end outer block
             Instruction::End,   // end UNIQUE if
+            // Grow when full: move the list to a block with double the
+            // capacity (minimum 8) and continue with the new pointer. The
+            // caller stores the returned pointer back into the receiver.
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }), // size
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }), // capacity
+            Instruction::I32GeS,
+            Instruction::If(BlockType::Empty),
+            // new_capacity = max(capacity * 2, 8)
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(1),
+            Instruction::I32Shl,
+            Instruction::LocalTee(5),
+            Instruction::I32Const(8),
+            Instruction::I32LtS,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(8),
+            Instruction::LocalSet(5),
+            Instruction::End,
+            // new_list_ptr = bump-allocate 16 + new_capacity * 4 bytes from
+            // __heap_ptr, aligned to 8 (MEMORY_MODEL.md), growing memory when
+            // needed. Inline like list.allocate: list.add is registered
+            // before __malloc exists.
+            Instruction::GlobalGet(HEAP_PTR_GLOBAL),
+            Instruction::I32Const(7),
+            Instruction::I32Add,
+            Instruction::I32Const(-8),
+            Instruction::I32And,
+            Instruction::LocalTee(6), // new_list_ptr
+            Instruction::LocalGet(5),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Const(16),
+            Instruction::I32Add,
+            Instruction::I32Add,      // end of the new block
+            Instruction::LocalTee(7), // reuse copy_index as end until the copy
+            Instruction::MemorySize(0),
+            Instruction::I32Const(16),
+            Instruction::I32Shl, // current memory size in bytes
+            Instruction::I32GtU,
+            Instruction::If(BlockType::Empty),
+            // pages = (end >> 16) - memory.size + 1
+            Instruction::LocalGet(7),
+            Instruction::I32Const(16),
+            Instruction::I32ShrU,
+            Instruction::MemorySize(0),
+            Instruction::I32Sub,
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::MemoryGrow(0),
+            // Memory cannot grow: trap instead of writing out of bounds.
+            Instruction::I32Const(-1),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+            Instruction::Unreachable,
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(7),
+            Instruction::GlobalSet(HEAP_PTR_GLOBAL),
+            // Copy the 16-byte header and `size` elements, one word at a time.
+            Instruction::I32Const(0),
+            Instruction::LocalSet(7),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(7),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }), // size
+            Instruction::I32Const(4), // header words
+            Instruction::I32Add,
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add, // destination word
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }), // source word
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(7),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(7),
+            Instruction::Br(0),
+            Instruction::End, // end copy loop
+            Instruction::End, // end copy block
+            // Record the new capacity and continue with the moved list.
+            Instruction::LocalGet(6),
+            Instruction::LocalGet(5),
+            Instruction::I32Store(MemArg {
+                offset: 4,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(6),
+            Instruction::LocalSet(0),
+            Instruction::End, // end grow
             // Add element to end of list
             // Calculate element position: list_ptr + 16 + (size * 4)
             Instruction::LocalGet(0),  // list_ptr

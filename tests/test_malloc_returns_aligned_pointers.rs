@@ -45,7 +45,9 @@ fn malloc_aligns_the_returned_pointer() {
         .define_unknown_imports_as_traps(&module)
         .expect("stub imports");
     let mut store = Store::new(&engine, ());
-    let instance = linker.instantiate(&mut store, &module).expect("instantiate");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("instantiate");
 
     let heap_ptr = instance
         .get_global(&mut store, "__heap_ptr")
@@ -64,7 +66,10 @@ fn malloc_aligns_the_returned_pointer() {
             0,
             "malloc({size}) with __heap_ptr={start} returned unaligned pointer {ptr}"
         );
-        assert!(ptr >= start, "malloc must not hand out memory below __heap_ptr");
+        assert!(
+            ptr >= start,
+            "malloc must not hand out memory below __heap_ptr"
+        );
         let after = heap_ptr.get(&mut store).i32().expect("i32 heap ptr");
         assert!(
             after >= ptr + size && after % 8 == 0,

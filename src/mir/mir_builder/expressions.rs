@@ -2113,6 +2113,12 @@ impl MirBuilder {
                                 location: expression.location.clone(),
                             };
                             self.add_instruction(context, instruction);
+                            self.write_back_list_receiver(
+                                context,
+                                receiver,
+                                result_id,
+                                &expression.location,
+                            )?;
                             return Ok(result_id);
                         }
                         "push" => {
@@ -2148,6 +2154,12 @@ impl MirBuilder {
                                 location: expression.location.clone(),
                             };
                             self.add_instruction(context, instruction);
+                            self.write_back_list_receiver(
+                                context,
+                                receiver,
+                                result_id,
+                                &expression.location,
+                            )?;
                             return Ok(result_id);
                         }
                         "size" | "length" => {
@@ -3517,6 +3529,17 @@ impl MirBuilder {
                     "Method call type check"
                 );
 
+                // list.add may move a full list to a larger block and returns the
+                // list's (possibly new) address, which is written back into the
+                // receiver after the call — so its result is never discarded.
+                let writes_back_list = function_symbol == SYM_BUILTIN_LIST_ADD
+                    || function_symbol == SYM_BUILTIN_LIST_ADD_F64;
+                let (is_void, result_type) = if writes_back_list {
+                    (false, MirType::I32)
+                } else {
+                    (is_void, result_type)
+                };
+
                 // ALWAYS register the local to maintain SSA invariant (learned from Context7)
                 // This ensures every ValueId has a corresponding entry in the locals map
                 self.register_temp_local(
@@ -3576,6 +3599,14 @@ impl MirBuilder {
                 };
 
                 self.add_instruction(context, instruction);
+                if writes_back_list {
+                    self.write_back_list_receiver(
+                        context,
+                        receiver,
+                        result_id,
+                        &expression.location,
+                    )?;
+                }
                 Ok(result_id)
             }
 
