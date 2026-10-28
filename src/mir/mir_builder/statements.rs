@@ -108,7 +108,11 @@ impl MirBuilder {
                         // Check if types differ and we need conversion
                         let needs_type_conversion = matches!(
                             (&init_mir_type, &declared_mir_type),
-                            (MirType::F64, MirType::I32) | (MirType::I32, MirType::F64)
+                            (MirType::F64, MirType::I32)
+                                | (MirType::I32, MirType::F64)
+                                | (MirType::I32 | MirType::Bool, MirType::I64 | MirType::U64)
+                                | (MirType::I64 | MirType::U64, MirType::I32 | MirType::F64)
+                                | (MirType::F64, MirType::I64 | MirType::U64)
                         );
 
                         if needs_type_conversion {

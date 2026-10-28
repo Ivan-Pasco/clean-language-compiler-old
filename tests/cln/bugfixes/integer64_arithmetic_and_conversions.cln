@@ -1,0 +1,50 @@
+// Test: bugfixes/integer64_arithmetic_and_conversions
+// Grammar: type_ (integer:64), binary_expression, variable_declaration
+// Semantic: SEM001 — integer widening in mixed arithmetic and assignment
+// Fixed in: compiler 0.33.159
+// Regression: clean-language-compiler-old #11. The MIR codegen emitted only
+//   i32 integer arithmetic, typed i64 results as i32, and never converted
+//   between i32 and i64 on assignment or .toNumber(), so any program that
+//   did arithmetic on integer:64 failed validation ("expected i32, found i64").
+// Expected output:
+//   3
+//   3000
+//   6000000000
+//   true
+//   5
+//   1234567890
+//   9876543210
+//   9876543210
+
+start:
+	integer:64 a = 1
+	integer:64 b = 2
+	integer:64 sum = a + b
+	print(sum.toString())
+
+	integer:32 small = 1000
+	integer:64 large = 2000
+	integer:64 mixed = small + large
+	print(mixed.toString())
+
+	integer:64 big = 3000000000
+	integer:64 doubled = big * 2
+	print(doubled.toString())
+
+	integer x = 3
+	if big > x
+		print("true")
+
+	integer:32 five = 5
+	integer:64 widened = five
+	print(widened.toString())
+
+	integer:64 wide = 1234567890
+	integer unsized = wide
+	print(unsized.toString())
+
+	integer:64 bigInt = 9876543210
+	number asNumber = bigInt.toNumber()
+	print(asNumber.toString())
+	number assigned = bigInt
+	print(assigned.toString())

@@ -62,23 +62,51 @@ impl MirCodeGenerator<'_> {
                 // NOTE: Type-aware binary operations with automatic conversions
                 let left_is_float = self.is_float_operand(left);
                 let right_is_float = self.is_float_operand(right);
+                // `integer:64` operands are i64 in WASM. When either side is
+                // i64 (and neither is a float), the operation runs in i64 and
+                // the i32 side is sign-extended (integer widening, SEM001).
+                let left_is_i64 = self.is_i64_operand(left);
+                let right_is_i64 = self.is_i64_operand(right);
+                let use_i64 = !left_is_float
+                    && !right_is_float
+                    && (left_is_i64 || right_is_i64)
+                    && !self.is_string_operand(left)
+                    && !self.is_string_operand(right);
 
                 // Load left operand
                 self.load_operand(left)?;
                 // Convert left to f64 if right is float and left is not
                 if !left_is_float && right_is_float {
-                    self.current_instructions.push(Instruction::F64ConvertI32S);
+                    self.current_instructions.push(if left_is_i64 {
+                        Instruction::F64ConvertI64S
+                    } else {
+                        Instruction::F64ConvertI32S
+                    });
+                }
+                if use_i64 && !left_is_i64 {
+                    self.current_instructions.push(Instruction::I64ExtendI32S);
                 }
 
                 // Load right operand
                 self.load_operand(right)?;
                 // Convert right to f64 if left is float and right is not
                 if left_is_float && !right_is_float {
-                    self.current_instructions.push(Instruction::F64ConvertI32S);
+                    self.current_instructions.push(if right_is_i64 {
+                        Instruction::F64ConvertI64S
+                    } else {
+                        Instruction::F64ConvertI32S
+                    });
+                }
+                if use_i64 && !right_is_i64 {
+                    self.current_instructions.push(Instruction::I64ExtendI32S);
                 }
 
                 // Generate the operation
-                self.generate_binary_operation(op, left, right)?;
+                if use_i64 {
+                    self.generate_i64_binary_operation(op);
+                } else {
+                    self.generate_binary_operation(op, left, right)?;
+                }
                 if let Some(dest) = instruction.dest {
                     self.store_to_local(dest)?;
                 } else {
@@ -803,6 +831,21 @@ impl MirCodeGenerator<'_> {
                         debug_mir!("Cast: F64 -> I32 using I32TruncF64S");
                     }
 
+                    // `integer:64` conversions (type-system.md §5: integer
+                    // widening, sized→unsized, integer→number).
+                    (Some(MirType::I32 | MirType::Bool), MirType::I64 | MirType::U64) => {
+                        self.current_instructions.push(Instruction::I64ExtendI32S);
+                    }
+                    (Some(MirType::I64 | MirType::U64), MirType::I32) => {
+                        self.current_instructions.push(Instruction::I32WrapI64);
+                    }
+                    (Some(MirType::I64 | MirType::U64), MirType::F64) => {
+                        self.current_instructions.push(Instruction::F64ConvertI64S);
+                    }
+                    (Some(MirType::F64), MirType::I64 | MirType::U64) => {
+                        self.current_instructions.push(Instruction::I64TruncF64S);
+                    }
+
                     // Same type - no conversion needed
                     (Some(MirType::I32), MirType::I32) | (Some(MirType::F64), MirType::F64) => {
                         debug_mir!("Cast: Same type, no conversion needed");
@@ -1426,6 +1469,8 @@ impl MirCodeGenerator<'_> {
                                     | MirType::U32
                             ) {
                                 self.current_instructions.push(Instruction::F64ConvertI32S);
+                            } else if matches!(mir_type, MirType::I64 | MirType::U64) {
+                                self.current_instructions.push(Instruction::F64ConvertI64S);
                             }
                         }
                     }
@@ -1457,6 +1502,8 @@ impl MirCodeGenerator<'_> {
                                     | MirType::U32
                             ) {
                                 self.current_instructions.push(Instruction::F64ConvertI32S);
+                            } else if matches!(mir_type, MirType::I64 | MirType::U64) {
+                                self.current_instructions.push(Instruction::F64ConvertI64S);
                             }
                         }
                     }
@@ -3145,6 +3192,39 @@ impl MirCodeGenerator<'_> {
 
         self.current_instructions.push(instruction);
         Ok(())
+    }
+
+    /// Emit the i64 form of an integer binary operation. Both operands are
+    /// already on the stack as i64. Arithmetic and bitwise results are i64;
+    /// comparisons produce an i32 boolean, as in the i32 path.
+    pub(super) fn generate_i64_binary_operation(&mut self, op: &MirBinaryOp) {
+        let instruction = match op {
+            MirBinaryOp::Add => Instruction::I64Add,
+            MirBinaryOp::Sub => Instruction::I64Sub,
+            MirBinaryOp::Mul => Instruction::I64Mul,
+            MirBinaryOp::Div => Instruction::I64DivS,
+            MirBinaryOp::Rem => Instruction::I64RemS,
+            MirBinaryOp::Eq => Instruction::I64Eq,
+            MirBinaryOp::Ne => Instruction::I64Ne,
+            MirBinaryOp::Lt => Instruction::I64LtS,
+            MirBinaryOp::Le => Instruction::I64LeS,
+            MirBinaryOp::Gt => Instruction::I64GtS,
+            MirBinaryOp::Ge => Instruction::I64GeS,
+            MirBinaryOp::And => Instruction::I64And,
+            MirBinaryOp::Or => Instruction::I64Or,
+            MirBinaryOp::Xor => Instruction::I64Xor,
+            MirBinaryOp::Shl => Instruction::I64Shl,
+            MirBinaryOp::Shr => Instruction::I64ShrS,
+        };
+        self.current_instructions.push(instruction);
+    }
+
+    /// Helper: Check if an operand is a 64-bit integer (`integer:64`).
+    pub(super) fn is_i64_operand(&self, operand: &MirOperand) -> bool {
+        matches!(
+            self.get_operand_mir_type(operand),
+            Some(MirType::I64 | MirType::U64)
+        )
     }
 
     /// Helper: Check if an operand is a floating-point type.

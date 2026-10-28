@@ -681,6 +681,23 @@ impl MirCodeGenerator<'_> {
                             );
                             self.current_instructions.push(Instruction::F64ConvertI32S);
                         }
+                        // `integer:64` ↔ 32-bit integer and number. The
+                        // spec allows sized→unsized and widening integer
+                        // assignment (type-system.md §5); i64 values need an
+                        // explicit WASM conversion to land in an i32/f64
+                        // local and vice versa.
+                        (MirType::I32 | MirType::Bool, MirType::I64 | MirType::U64) => {
+                            self.current_instructions.push(Instruction::I64ExtendI32S);
+                        }
+                        (MirType::I64 | MirType::U64, MirType::I32) => {
+                            self.current_instructions.push(Instruction::I32WrapI64);
+                        }
+                        (MirType::I64 | MirType::U64, MirType::F64) => {
+                            self.current_instructions.push(Instruction::F64ConvertI64S);
+                        }
+                        (MirType::F64, MirType::I64 | MirType::U64) => {
+                            self.current_instructions.push(Instruction::I64TruncF64S);
+                        }
                         // Same types or pointer types - no conversion needed
                         _ => {}
                     }

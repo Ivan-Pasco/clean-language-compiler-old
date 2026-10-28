@@ -737,8 +737,31 @@ impl MirBuilder {
                     let left_concrete = Self::mir_type_to_concrete(&left_mir_type);
                     let right_concrete = Self::mir_type_to_concrete(&right_mir_type);
 
-                    let result_type =
+                    let mut result_type =
                         self.infer_binary_operation_type(&left_concrete, &right_concrete, operator);
+                    // `integer:64` operands: arithmetic and bitwise results are
+                    // i64 (the i32 side widens, SEM001). ConcreteType has no
+                    // integer width, so the inference above cannot see this.
+                    let is_int64 = |t: &MirType| matches!(t, MirType::I64 | MirType::U64);
+                    let is_float = |t: &MirType| matches!(t, MirType::F32 | MirType::F64);
+                    let is_comparison_or_logical = matches!(
+                        operator,
+                        BinaryOperator::Equal
+                            | BinaryOperator::NotEqual
+                            | BinaryOperator::LessThan
+                            | BinaryOperator::GreaterThan
+                            | BinaryOperator::LessThanOrEqual
+                            | BinaryOperator::GreaterThanOrEqual
+                            | BinaryOperator::And
+                            | BinaryOperator::Or
+                    );
+                    if !is_comparison_or_logical
+                        && (is_int64(&left_mir_type) || is_int64(&right_mir_type))
+                        && !is_float(&left_mir_type)
+                        && !is_float(&right_mir_type)
+                    {
+                        result_type = MirType::I64;
+                    }
                     self.register_temp_local(
                         context,
                         result_id,
@@ -2700,8 +2723,9 @@ impl MirBuilder {
 
                             return Ok(result_id);
                         }
-                        // Integer to Number conversion (i32 -> f64)
-                        (ConcreteType::Integer, "toNumber") => {
+                        // Integer to Number conversion (i32/i64 -> f64). The Cast
+                        // picks the instruction from the receiver's MIR width.
+                        (ConcreteType::Integer | ConcreteType::IntegerSized { .. }, "toNumber") => {
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
 
