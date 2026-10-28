@@ -29,20 +29,27 @@ start:
 	// Test loops with complex operations
 	iterate item in processed
 		if item > 10
-			print("Large item: " + item.toString())class Calculator
+			print("Large item: " + item.toString())
+
+// Fixed: `calculate` was declared without `public:` and `class Calculator`
+// was glued to the end of the previous line. Spec requires methods called
+// from outside the class to sit in the class's `public:` block (SEM005,
+// semantic-rules.md §Visibility) and each top-level item on its own line.
+class Calculator
 	string name
 
 	constructor(string name)
 		name = name
 
 	functions:
-		integer calculate(integer a, integer b, string operation)
-			if operation == "add"
-				return a + b
-			else if operation == "multiply"
-				return a * b
-			else
-				return 0
+		public:
+			integer calculate(integer a, integer b, string operation)
+				if operation == "add"
+					return a + b
+				else if operation == "multiply"
+					return a * b
+				else
+					return 0
 
 // Test Description: Comprehensive integration of multiple language features
 // Category: integration

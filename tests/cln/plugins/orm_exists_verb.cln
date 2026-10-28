@@ -9,6 +9,9 @@
 //
 // Note: this file requires frame.data plugin.
 // Expected output: (compilation succeeds — runtime needs a server)
+//
+// Fixed: was assigning `Item.exists:` to `integer`, spec requires `boolean`
+// (frame-data-semantics.md DAT-Q003: `Model.exists:` returns boolean).
 
 plugins:
 	frame.data
@@ -18,14 +21,14 @@ data Item
 	name: string
 
 start:
-	integer found = Item.exists:
+	boolean found = Item.exists:
 		where:
 			id == 1
-	print(found)
+	print(found.toString())
 
 functions:
-	integer check_item_exists(integer item_id)
-		integer result = Item.exists:
+	boolean check_item_exists(integer item_id)
+		boolean result = Item.exists:
 			where:
 				id == item_id
 		return result

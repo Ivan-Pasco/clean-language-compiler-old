@@ -1,14 +1,22 @@
+// Fixed: `getInfo` was declared without `public:` and `class Vehicle` was
+// glued to the end of the `test(car)` line. Spec requires methods called
+// from outside the class to sit in the class's `public:` block (SEM005,
+// semantic-rules.md §Visibility) and each top-level item on its own line.
+
 start:
 	Vehicle car = Vehicle("Toyota")
-	test(car)class Vehicle
+	test(car)
+
+class Vehicle
 	string make
 
 	constructor(string vehicleMake)
 		make = vehicleMake
 
 	functions:
-		string getInfo()
-			return make
+		public:
+			string getInfo()
+				return make
 
 functions:
 	void test(Vehicle vehicle)
