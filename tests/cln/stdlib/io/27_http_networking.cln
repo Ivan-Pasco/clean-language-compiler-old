@@ -1,5 +1,10 @@
+// Fixed: a `functions:` / `class` declaration was glued to the end of the
+// previous statement line; grammar.ebnf requires each top-level item on its
+// own line (rejected since compiler 0.33.160, #19).
 start:
-	testHttpRequests()functions:
+	testHttpRequests()
+
+functions:
 	void testHttpRequests()
 		string response = http.get("https://example.com") onError "Failed"
 		print("Response: " + response)

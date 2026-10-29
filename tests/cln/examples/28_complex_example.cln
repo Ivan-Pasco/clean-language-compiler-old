@@ -1,3 +1,6 @@
+// Fixed: a `functions:` / `class` declaration was glued to the end of the
+// previous statement line; grammar.ebnf requires each top-level item on its
+// own line (rejected since compiler 0.33.160, #19).
 start:
 	string task1 = formatTask()
 	string task2 = "○ Write tests"
@@ -10,7 +13,9 @@ start:
 
 	integer completedCount = 2
 	integer totalCount = 3
-	print("Completed: " + completedCount.toString() + "/" + totalCount.toString())functions:
+	print("Completed: " + completedCount.toString() + "/" + totalCount.toString())
+
+functions:
 	string formatTask()
 		string status = "✓"
 		return status + " Learn Clean Language"

@@ -1,3 +1,6 @@
+// Fixed: a `functions:` / `class` declaration was glued to the end of the
+// previous statement line; grammar.ebnf requires each top-level item on its
+// own line (rejected since compiler 0.33.160, #19).
 start:
 	print("Comprehensive Standard Library Test")
 	print("====================================")
@@ -9,7 +12,9 @@ start:
 	print("")
 	testFileOperations()
 	print("")
-	print("Standard library test completed!")functions:
+	print("Standard library test completed!")
+
+functions:
 	void testMathOperations()
 		print("=== Math Operations - Specification Compliant ===")
 		// Basic arithmetic - use operators per Clean Language "one way to do things"

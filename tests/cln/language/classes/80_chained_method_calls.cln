@@ -1,5 +1,10 @@
+// Fixed: a `functions:` / `class` declaration was glued to the end of the
+// previous statement line; grammar.ebnf requires each top-level item on its
+// own line (rejected since compiler 0.33.160, #19).
 start:
-	testChainedMethodCalls()functions:
+	testChainedMethodCalls()
+
+functions:
 	void testChainedMethodCalls()
 		print("=== Testing Chained Method Calls ===") +
 

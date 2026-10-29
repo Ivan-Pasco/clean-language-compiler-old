@@ -1972,6 +1972,24 @@ impl TokenParser {
                 self.current_kind(),
                 TokenKind::Function | TokenKind::Class | TokenKind::Functions
             ) {
+                // A declaration must start its own line. `test(car)class V`
+                // used to end the block silently and start a class.
+                let keyword = self.current().clone();
+                let previous_on_same_line = self.tokens[..self.cursor.min(self.tokens.len())]
+                    .iter()
+                    .rev()
+                    .next()
+                    .is_some_and(|t| {
+                        !matches!(t.kind, TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_))
+                            && t.location.line == keyword.location.line
+                    });
+                if previous_on_same_line {
+                    return Err(CompilerError::parse_error(
+                        format!("'{}' must start on its own line", keyword.text),
+                        Some(keyword.location.clone()),
+                        Some("Put a line break before the declaration.".to_string()),
+                    ));
+                }
                 break;
             }
 

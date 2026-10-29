@@ -1,3 +1,6 @@
+// Fixed: a `functions:` / `class` declaration was glued to the end of the
+// previous statement line; grammar.ebnf requires each top-level item on its
+// own line (rejected since compiler 0.33.160, #19).
 start:
 	print("Testing framework demonstration")
 	print("Run with --test flag to execute all tests")
@@ -10,7 +13,9 @@ start:
 	print("Formatted name: " + fullName)
 
 	boolean evenCheck = isEven(result)
-	print("Is " + result.toString() + " even? " + evenCheck.toString())functions:
+	print("Is " + result.toString() + " even? " + evenCheck.toString())
+
+functions:
 	integer add(integer a, integer b)
 		return a + b
 
