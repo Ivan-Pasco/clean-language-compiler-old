@@ -237,8 +237,10 @@ apply_block_start = { (sized_type | core_type | matrix_type | list_type | pairs_
 
 // Framework blocks for DSL plugins (endpoints:, data, component, screen, etc.)
 // Captures raw content without parsing - plugins handle their own DSL syntax
-// Supports: "identifier:", "identifier string:", "identifier identifier:"
-framework_block = { !keyword ~ !("constant" | "functions" | "tests" | "private") ~ identifier ~ (WHITESPACE* ~ (string | identifier))? ~ ":" ~ framework_block_content }
+// Supports: "identifier:", "identifier string:", "identifier identifier:",
+// and attribute pairs such as `html var="page":` (frame-ui.ebnf html_var_attribute).
+framework_block = { !keyword ~ !("constant" | "functions" | "tests" | "private") ~ identifier ~ (WHITESPACE* ~ (framework_block_attr | string | identifier))* ~ ":" ~ framework_block_content }
+framework_block_attr = { identifier ~ "=" ~ string }
 framework_block_content = @{
     NEWLINE ~ (empty_line)* ~
     (INDENT+ ~ (!NEWLINE ~ ANY)* ~ (NEWLINE | EOI))+

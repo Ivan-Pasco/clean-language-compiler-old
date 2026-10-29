@@ -533,8 +533,26 @@ impl<'a> PluginExpander<'a> {
             }
         }
 
-        // Merge pending functions into program
-        program.functions.append(&mut self.pending_functions);
+        // Merge pending functions into program. Plugin-emitted functions
+        // (endpoint handlers, helpers) can contain framework blocks of their
+        // own — an `html:` page inside a route handler — so they are expanded
+        // before merging. Expanding can emit further functions; repeat until
+        // none are left, with a bound against a plugin that never converges.
+        let mut rounds = 0;
+        while !self.pending_functions.is_empty() {
+            rounds += 1;
+            if rounds > 16 {
+                return Err(PluginError::ExpansionFailed {
+                    plugin_name: "expander".to_string(),
+                    block_name: String::new(),
+                    message: "plugin-emitted functions kept emitting new functions after 16 expansion rounds".to_string(),
+                    location: None,
+                });
+            }
+            let pending = std::mem::take(&mut self.pending_functions);
+            let expanded = self.expand_functions(pending)?;
+            program.functions.extend(expanded);
+        }
 
         // Merge pending classes into program (e.g., ORM models from frame.data)
         program.classes.append(&mut self.pending_classes);

@@ -237,6 +237,7 @@ impl<'a> SpecificationLexer<'a> {
                 // Pass-through set:
                 //   '\''         — html attribute values like alt='Photo'
                 //   '&'          — html entities like &rarr;, &middot;
+                //   '\\'         — escaped braces `\{` `\}` in html: text (CSS rules)
                 //   '#'          — html fragment ids like href="#top" and the
                 //                  "#{var}" pattern that precedes an interpolation
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
@@ -245,7 +246,7 @@ impl<'a> SpecificationLexer<'a> {
                 // catch them later as an unexpected-token error in the right context.
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' => {
+                '\'' | '&' | '#' | '\\' => {
                     let loc = start_location.clone();
                     let c = self.advance().unwrap();
                     Ok(Token::new(
@@ -506,6 +507,7 @@ impl<'a> SpecificationLexer<'a> {
                 // Pass-through set:
                 //   '\''         — html attribute values like alt='Photo'
                 //   '&'          — html entities like &rarr;, &middot;
+                //   '\\'         — escaped braces `\{` `\}` in html: text (CSS rules)
                 //   '#'          — html fragment ids like href="#top" and the
                 //                  "#{var}" pattern that precedes an interpolation
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
@@ -514,7 +516,7 @@ impl<'a> SpecificationLexer<'a> {
                 // catch them later as an unexpected-token error in the right context.
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' => {
+                '\'' | '&' | '#' | '\\' => {
                     let loc = start_location.clone();
                     let c = self.advance().unwrap();
                     Ok(Token::new(

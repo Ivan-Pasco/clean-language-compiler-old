@@ -1265,8 +1265,23 @@ impl EmitArena {
     /// which writes to `expansion.start_function.body`. Use this bridge when
     /// the statement should splice into the block's caller position, not the
     /// program's start. See Amendment 11 / §3.5.1.
+    ///
+    /// A multi-statement fragment from `_emit_stmt_from_source` arrives
+    /// wrapped in a synthetic `if true` (no location; see
+    /// `CleanParser::parse_single_statement`). Splicing the wrapper would
+    /// scope its declarations to it, so `html var="page":` could never define
+    /// `page` for the code after it. The wrapper is unwrapped here; a
+    /// user-written `if true` always carries a location and is kept.
     pub fn push_inline_stmt(&mut self, s: Statement) {
-        self.expansion.statements.push(s);
+        match s {
+            Statement::If {
+                condition: crate::ast::Expression::Literal(crate::ast::Value::Boolean(true)),
+                then_branch,
+                else_branch: None,
+                location: None,
+            } => self.expansion.statements.extend(then_branch),
+            other => self.expansion.statements.push(other),
+        }
     }
 }
 

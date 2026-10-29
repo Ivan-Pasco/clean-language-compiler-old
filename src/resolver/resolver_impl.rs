@@ -2604,12 +2604,26 @@ impl NameResolver {
                         .lookup_symbol("json.encode")
                         .or_else(|| self.symbol_table.lookup_symbol("json"));
                     let resolved_id = json_encode_id.unwrap_or(function_symbol_id);
-                    return Ok(ResolvedHirExpression::Call {
+                    let encoded = ResolvedHirExpression::Call {
                         function: "json.encode".to_string(),
                         function_symbol_id: resolved_id,
                         arguments: resolved_arguments,
                         location: location.clone(),
-                    });
+                    };
+                    // In a frame.server app `json(data)` is the response helper
+                    // (frame-server-semantics.md SRV-R003, SRV-B…): encode the
+                    // data and send it as application/json, the way `html(x)`
+                    // becomes `htmlResponse(x)` below. Without frame.server it
+                    // stays plain `json.encode`.
+                    if let Some(json_response_id) = self.symbol_table.lookup_symbol("jsonResponse") {
+                        return Ok(ResolvedHirExpression::Call {
+                            function: "jsonResponse".to_string(),
+                            function_symbol_id: json_response_id,
+                            arguments: vec![encoded],
+                            location: location.clone(),
+                        });
+                    }
+                    return Ok(encoded);
                 }
                 if function == "html" {
                     // Rewrite `html(content)` → `htmlResponse(content)`

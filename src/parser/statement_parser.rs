@@ -1051,8 +1051,30 @@ fn parse_framework_block_statement(
     })?;
     let name = name_pair.as_str().to_string();
 
-    // Second part is the content (raw text captured by framework_block_content)
-    let content_pair = parts.next().ok_or_else(|| {
+    // Header pairs (`var="page"`) become attributes; a bare word or string
+    // argument is skipped as before. The last part is the raw content.
+    let mut attributes = Vec::new();
+    let mut content_pair = None;
+    for part in parts {
+        match part.as_rule() {
+            Rule::framework_block_attr => {
+                let mut kv = part.into_inner();
+                let key = kv.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+                let value = kv.next().map(|p| {
+                    let raw = p.as_str();
+                    raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')).unwrap_or(raw).to_string()
+                });
+                attributes.push(crate::ast::FrameworkAttribute {
+                    name: key,
+                    value,
+                    location: Some(ast_location.clone()),
+                });
+            }
+            Rule::framework_block_content => content_pair = Some(part),
+            _ => {}
+        }
+    }
+    let content_pair = content_pair.ok_or_else(|| {
         CompilerError::parse_error(
             format!("Missing content in framework block '{}'", name),
             Some(ast_location.clone()),
@@ -1073,7 +1095,7 @@ fn parse_framework_block_statement(
     Ok(Statement::FrameworkBlock {
         name,
         content,
-        attributes: vec![], // Attributes parsed separately when using @decorator syntax
+        attributes,
         location: Some(ast_location),
     })
 }
