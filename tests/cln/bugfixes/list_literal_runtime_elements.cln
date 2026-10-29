@@ -1,5 +1,5 @@
 // Test: bugfixes/list_literal_runtime_elements
-// Grammar: list_literal (elements are expressions)
+// Grammar: list_literal, list_element (name or parenthesized expression)
 // Semantic: a list literal may contain variables, calls and arithmetic
 // Fixed in: compiler 0.33.160
 // Regression: clean-language-compiler-old #22. `[title]` failed with
@@ -20,11 +20,11 @@ start:
 	print(pair[0] + pair[1])
 
 	integer a = 2
-	list<integer> nums = [a, a * 3, 7]
+	list<integer> nums = [a, (a * 3), 7]
 	print(nums[1].toString())
 
 	string s = "abc"
-	list<string> upper = [s.toUpperCase(), "z"]
+	list<string> upper = [(s.toUpperCase()), "z"]
 	print(upper[0])
 
 	list<integer> constants = [1, 2, 3]

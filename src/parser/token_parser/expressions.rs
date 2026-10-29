@@ -603,9 +603,23 @@ impl TokenParser {
                 // Parse array elements. A list of constants stays a literal
                 // value; any other element makes it a ListLiteral whose
                 // elements are evaluated at runtime.
+                // grammar.ebnf list_element: a literal, a name, or a
+                // parenthesized expression.
                 let mut exprs = Vec::new();
                 loop {
-                    exprs.push(self.parse_expression()?);
+                    let starts_parenthesized = matches!(self.current_kind(), TokenKind::LeftParen);
+                    let element_location = self.current().location.clone();
+                    let element = self.parse_expression()?;
+                    if !starts_parenthesized
+                        && !matches!(element, Expression::Literal(_) | Expression::Variable(_))
+                    {
+                        return Err(CompilerError::parse_error(
+                            "A list element must be a literal, a name, or an expression in parentheses".to_string(),
+                            Some(element_location),
+                            Some("Wrap the element in parentheses, e.g. [a, (a * 3)].".to_string()),
+                        ));
+                    }
+                    exprs.push(element);
                     self.skip_whitespace();
 
                     if matches!(self.current_kind(), TokenKind::Comma) {
