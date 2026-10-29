@@ -2464,10 +2464,29 @@ impl MirCodeGenerator<'_> {
             .get("__string_builder_finalize")
             .copied();
 
+        // The singleshot accumulator rewrite builds through the transient
+        // arena (`__string_builder_append_transient` and
+        // `__string_builder_finalize_to_main`); those are probed too, or a
+        // program whose strings all go through the arena records nothing.
+        let append_transient_idx = self
+            .wasm_generator
+            .function_map
+            .get("__string_builder_append_transient")
+            .copied();
+        let finalize_to_main_idx = self
+            .wasm_generator
+            .function_map
+            .get("__string_builder_finalize_to_main")
+            .copied();
+
         let callee_label: &str = if Some(function_index) == append_idx {
             "string_builder_append"
         } else if Some(function_index) == finalize_idx {
             "string_builder_finalize"
+        } else if Some(function_index) == append_transient_idx {
+            "string_builder_append_transient"
+        } else if Some(function_index) == finalize_to_main_idx {
+            "string_builder_finalize_to_main"
         } else {
             return;
         };

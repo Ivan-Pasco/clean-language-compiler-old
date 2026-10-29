@@ -142,8 +142,16 @@ fn flag_on_emits_three_probe_imports() {
         "flag on with string interpolations must record at least one callsite"
     );
     for cs in &callsites {
+        // Updated: the singleshot rewrite builds through the transient arena
+        // since 35abf88b, so its two entry points are probed too.
         assert!(
-            cs.function == "string_builder_append" || cs.function == "string_builder_finalize",
+            matches!(
+                cs.function.as_str(),
+                "string_builder_append"
+                    | "string_builder_finalize"
+                    | "string_builder_append_transient"
+                    | "string_builder_finalize_to_main"
+            ),
             "unexpected callsite function: {:?}",
             cs
         );
@@ -167,8 +175,9 @@ fn flag_on_emits_probe_call_after_each_string_builder_call() {
     // Exports are the language-facing bridge names — the internal aliases
     // (__string_builder_append / __string_builder_finalize) point at the
     // same indices as the codegen `add_function_alias` registrations.
-    let mut sb_append_idx: Option<u32> = None;
-    let mut sb_finalize_idx: Option<u32> = None;
+    // Updated: the transient-arena entry points (35abf88b) are string-builder
+    // calls too and must carry the probe.
+    let mut sb_indices: Vec<u32> = Vec::new();
     for payload in WasmParser::new(0).parse_all(&wasm) {
         if let Ok(Payload::ExportSection(reader)) = payload {
             for export in reader {
@@ -176,20 +185,24 @@ fn flag_on_emits_probe_call_after_each_string_builder_call() {
                 if !matches!(export.kind, wasmparser::ExternalKind::Func) {
                     continue;
                 }
-                match export.name {
-                    "__string_builder_append" | "string_builder_append" => {
-                        sb_append_idx = Some(export.index);
-                    }
-                    "__string_builder_finalize" | "string_builder_finalize" => {
-                        sb_finalize_idx = Some(export.index);
-                    }
-                    _ => {}
+                if matches!(
+                    export.name,
+                    "__string_builder_append"
+                        | "string_builder_append"
+                        | "__string_builder_finalize"
+                        | "string_builder_finalize"
+                        | "__string_builder_append_transient"
+                        | "string_builder_append_transient"
+                        | "__string_builder_finalize_to_main"
+                        | "string_builder_finalize_to_main"
+                ) && !sb_indices.contains(&export.index)
+                {
+                    sb_indices.push(export.index);
                 }
             }
         }
     }
-    let sb_append_idx = sb_append_idx.expect("__string_builder_append must be exported");
-    let sb_finalize_idx = sb_finalize_idx.expect("__string_builder_finalize must be exported");
+    assert!(!sb_indices.is_empty(), "string_builder functions must be exported");
 
     // Walk every code body and count how many times we see a
     // `Call(sb_append|sb_finalize)` and how many of those are immediately
@@ -207,7 +220,7 @@ fn flag_on_emits_probe_call_after_each_string_builder_call() {
                 let is_sb_call = matches!(
                     &ops[i],
                     Operator::Call { function_index }
-                        if *function_index == sb_append_idx || *function_index == sb_finalize_idx
+                        if sb_indices.contains(function_index)
                 );
                 if !is_sb_call {
                     continue;
