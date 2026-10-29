@@ -2952,6 +2952,18 @@ impl NameResolver {
             // `Page().render()`: the receiver is a freshly constructed
             // instance, so its class is known directly.
             HirExpression::Constructor { class_name, .. } => class_name.clone(),
+            // `Page()` before constructor resolution is a call named after
+            // the class.
+            HirExpression::Call { function, .. }
+                if self.class_method_names.contains_key(function.as_str())
+                    || self
+                        .symbol_table
+                        .lookup_symbol(function)
+                        .and_then(|id| self.symbol_table.get_symbol(id))
+                        .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. })) =>
+            {
+                function.clone()
+            }
             _ => return false,
         };
 
