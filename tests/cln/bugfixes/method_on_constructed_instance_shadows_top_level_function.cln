@@ -1,0 +1,29 @@
+// Test: bugfixes/method_on_constructed_instance_shadows_top_level_function
+// Grammar: method_call, constructor_call
+// Semantic: FUNC012 — `instance.method()` binds to the instance's class
+//   method before a top-level function of the same name
+// Fixed in: compiler 0.33.160
+// Regression: clean-language-compiler-old #23. `Page().render()` was rejected
+//   as "render is a standalone function" whenever a top-level `render` existed
+//   (frame.ui emits one); only variable receivers were checked for a class
+//   method, not a constructor call.
+// Expected output:
+//   page
+//   page
+//   top x
+
+start:
+	print(Page().render())
+	Page p = Page()
+	print(p.render())
+	print(render("x"))
+
+class Page
+	functions:
+		public:
+			string render()
+				return "page"
+
+functions:
+	string render(string v)
+		return "top " + v

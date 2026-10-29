@@ -2916,7 +2916,8 @@ impl NameResolver {
 
     /// Return true when `receiver` is a variable or parameter whose declared
     /// type is a class that declares a method (inherited or own) named
-    /// `method_name`. Used by the FUNC012 guard so that a top-level function
+    /// `method_name` (or a constructor call of such a class). Used by the
+    /// FUNC012 guard so that a top-level function
     /// with the same name as a class method does NOT shadow the method when
     /// called on a typed receiver. Receivers that aren't simple identifiers,
     /// or whose type isn't a `Named` class reference, return false — those
@@ -2948,6 +2949,9 @@ impl NameResolver {
                     _ => return false,
                 }
             }
+            // `Page().render()`: the receiver is a freshly constructed
+            // instance, so its class is known directly.
+            HirExpression::Constructor { class_name, .. } => class_name.clone(),
             _ => return false,
         };
 
