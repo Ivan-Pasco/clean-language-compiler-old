@@ -110,6 +110,12 @@ def run_one(cln_path: Path) -> tuple[bool, str]:
         )
         actual = extract_runner_stdout(run_proc.stdout)
 
+    # The Expected-output header cannot express trailing blank lines (a blank
+    # comment line ends the block, and parse_expected drops trailing blanks),
+    # so trailing blank lines are not compared on the actual side either.
+    while actual and actual[-1] == "":
+        actual.pop()
+
     if actual == expected:
         return True, f"OK ({len(expected)} lines)"
     return False, (
