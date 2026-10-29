@@ -1214,8 +1214,15 @@ impl MultiFileCompiler {
     fn parse_all_modules(&self, unit: &mut CompilationUnit) -> Result<(), Vec<CompilerError>> {
         let mut errors = Vec::new();
 
-        // Parse in compilation order (dependencies first)
-        let order = unit.compilation_order.clone();
+        // Parse in compilation order (dependencies first), with the entry
+        // module last. Modules with no import edge between them (component
+        // files, page companions) come out of the topological sort in hash
+        // order, and the entry's lifecycle slots (client_init, server_init)
+        // read the build_state those modules write during their own
+        // expansion — so every other module must be expanded first.
+        // Nothing imports the entry, so moving it last keeps the order valid.
+        let mut order = unit.compilation_order.clone();
+        order.sort_by_key(|id| unit.get_module(*id).is_some_and(|m| m.is_entry));
         for module_id in order {
             if let Some(module) = unit.get_module_mut(module_id) {
                 let is_entry = module.is_entry;

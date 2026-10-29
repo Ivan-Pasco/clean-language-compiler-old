@@ -1,0 +1,16 @@
+// Test: canaries/dev_capture
+// Namespace: dev_capture (Layer 3, server + node-server)
+// Registry entries covered: _dev_snapshot
+// Grammar: 5.3 function calls
+// Semantic: FUNC-001 bridge function resolution
+// Notes: dev.snapshot returns the dev-mode capture payload. It is gated on
+//   CLEAN_DEV=1 at the bridge and returns an empty string otherwise, so the
+//   canary runs without the variable set and the output is deterministic.
+// Expected output:
+//   len:0
+//   ok
+
+start:
+	string s = dev.snapshot()
+	printl("len:" + s.length().toString())
+	printl("ok")

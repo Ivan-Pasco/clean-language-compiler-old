@@ -2174,7 +2174,11 @@ impl MirCodeGenerator<'_> {
                                 // the host-mismatch stubbing path handles those
                                 // separately, so adding the name to `names` is a
                                 // no-op for import registration.
-                                if !is_preamble && server_only_bridge_names.contains(&name) {
+                                // In client builds a kept preamble is no exception:
+                                // its server-only bridges are stubbed, never imported.
+                                if (!is_preamble || self.client_mode)
+                                    && server_only_bridge_names.contains(&name)
+                                {
                                     continue;
                                 }
                                 let is_pa = preamble_names_in_mir.contains(&name);

@@ -66,6 +66,8 @@ const CANARIES: &[&str] = &[
     "tests/cln/canaries/storage.cln",
     "tests/cln/canaries/email.cln",
     "tests/cln/canaries/api.cln",
+    // Layer 3 dev-mode capture.
+    "tests/cln/canaries/dev_capture.cln",
 ];
 
 /// Registry categories (`[[functions]] category = "..."`) that are pure-WASM

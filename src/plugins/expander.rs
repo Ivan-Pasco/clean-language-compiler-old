@@ -665,8 +665,27 @@ impl<'a> PluginExpander<'a> {
             .registry
             .invoke_lifecycle_slot("module_helpers", &self.build_context)
         {
-            for func in expansion.functions {
+            for mut func in expansion.functions {
                 if !program.functions.iter().any(|f| f.name == func.name) {
+                    // Typed-emission helpers arrive without a source file.
+                    // Tag them as plugin output so the GEN003 DCE pass drops
+                    // the ones user code never reaches, and with them their
+                    // bridge imports (Import Minimality Rule).
+                    let untagged = func.location.as_ref().is_none_or(|l| l.file.is_empty());
+                    if untagged {
+                        let (line, column) = func
+                            .location
+                            .as_ref()
+                            .map(|l| (l.line, l.column))
+                            .unwrap_or((0, 0));
+                        func.location = Some(crate::ast::SourceLocation {
+                            file: crate::ast::PLUGIN_OUTPUT_MARKER.to_string(),
+                            line,
+                            column,
+                            byte_start: None,
+                            byte_end: None,
+                        });
+                    }
                     program.functions.push(func);
                 }
             }

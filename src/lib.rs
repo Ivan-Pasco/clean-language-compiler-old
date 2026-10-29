@@ -1428,6 +1428,10 @@ pub fn compile_with_plugins_and_opt_level(
     // recognised by the semantic analyser and resolver.
     let mut bridge_functions: Vec<plugins::BridgeFunction> = registry.bridge_functions().to_vec();
     extend_with_registry_bridges(&mut bridge_functions);
+    // The code generator needs the same registry-extended list so imports
+    // carry their registry signature (e.g. `_time_now` returns i64), as in
+    // the multi-file pipeline.
+    let codegen_bridges = bridge_functions.clone();
     let lang_to_bridge = registry.language_to_bridge_map();
     let lang_to_helper = registry.language_to_helper_map();
     if !bridge_functions.is_empty() {
@@ -1655,7 +1659,7 @@ pub fn compile_with_plugins_and_opt_level(
             bridge_function_count = bridge_functions.len(),
             "Passing bridge functions to MIR code generator"
         );
-        mir_codegen.set_bridge_functions(bridge_functions.to_vec());
+        mir_codegen.set_bridge_functions(codegen_bridges);
     }
 
     // Pass language-to-bridge mapping so the codegen can recognise dot-notation

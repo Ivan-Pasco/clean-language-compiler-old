@@ -1,18 +1,18 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.33.153",
+  "compiler_version": "0.33.161",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1785125796,
+  "generated_at_epoch_seconds": 1793307635,
   "artifacts": [
     {
-      "name": "codegen_body_local_call_alloc_leak_in_loop.wasm",
-      "path_relative": "codegen_body_local_call_alloc_leak_in_loop.wasm",
+      "name": "dashboard_shape.wasm",
+      "path_relative": "dashboard_shape.wasm",
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 25792,
-      "sha256": "271b2c8ccdc505832af262c9dffa38dc64a8e2cbb1ebd35908ef23f5f549af29",
+      "size_bytes": 30753,
+      "sha256": "78c7af03bccfcfc9ed1dba47aaeb36bc3cc52e406b55006810510f562d2a89c7",
       "source_plugin": null
     }
   ],

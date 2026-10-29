@@ -253,24 +253,24 @@ fn count_calls(body: &str, target: u32) -> usize {
     body.matches(&needle).count() + body.matches(&needle2).count()
 }
 
-/// Check whether a body contains the "BoxAny 12-byte" allocation pattern.
-///
-/// The pattern emitted by `emit_box_value` (see
-/// `codegen/mir_codegen/instructions.rs`) is:
-///
-///     i32.const 0     ;; type_id
-///     i32.const 12    ;; size (tag + i32 payload + i32 payload)
-///     call <mem_alloc>
-///
-/// We look for the `i32.const 12` immediately preceded by `i32.const 0`
-/// and followed by `call <mem_alloc>`. wasm2wat normalizes the newlines
-/// so a simple substring search over the compact form is reliable.
-fn count_box_any_pattern(body: &str, mem_alloc_idx: u32) -> usize {
-    // wasm2wat inserts newlines between each instruction; the pattern
-    // is three consecutive lines. We normalize whitespace and search.
-    let compact: String = body.lines().map(str::trim).collect::<Vec<_>>().join("\n");
-    let pattern = format!("i32.const 0\ni32.const 12\ncall {}", mem_alloc_idx);
-    compact.matches(&pattern).count()
+/// Count BoxAny allocations whose boxed value is consumed by a call to
+/// `target`: for each box pattern, the next `call N` after the allocation
+/// decides which function receives it.
+fn count_boxes_feeding(body: &str, mem_alloc_idx: u32, target: u32) -> usize {
+    let compact: Vec<&str> = body.lines().map(str::trim).collect();
+    let alloc_call = format!("call {}", mem_alloc_idx);
+    let target_call = format!("call {}", target);
+    let mut count = 0;
+    for i in 2..compact.len() {
+        if compact[i] == alloc_call && compact[i - 1] == "i32.const 12" && compact[i - 2] == "i32.const 0" {
+            if let Some(next) = compact[i + 1..].iter().find(|l| l.starts_with("call ")) {
+                if *next == target_call {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
 }
 
 #[test]
@@ -304,18 +304,27 @@ fn dashboard_page_does_not_box_expand_strings_wrapper_args() {
     // In the working 0.33.45+ codegen, `dashboard_page` has ZERO 12-byte
     // BoxAny mallocs — arguments flow straight to the wrapper as raw
     // string pointers.
+    //
+    // Fixed: this used to count every BoxAny in the body. Since compiler
+    // 0.33.54 `_json_get` is declared `params = ["any", "string"]`,
+    // `expand_strings = false` (function-registry.toml, frame.server
+    // plugin.toml), so boxing json.get's first argument is the specified
+    // ABI, not the regression. The 0.33.44 failure class is a box flowing
+    // into an `expand_strings = true` wrapper — db.query in this canary —
+    // so only boxes whose next call is db.query are counted.
     let wat = wasm_to_wat(&wasm);
 
     let dashboard_idx =
         export_index(&wat, "dashboard_page").expect("dashboard_page must be exported");
     let mem_alloc_idx = export_index(&wat, "mem_alloc").expect("mem_alloc must be exported");
+    let db_query_idx = export_index(&wat, "db.query").expect("db.query must be exported");
 
     let body = function_body_by_index(&wat, dashboard_idx);
-    let box_count = count_box_any_pattern(&body, mem_alloc_idx);
+    let box_count = count_boxes_feeding(&body, mem_alloc_idx, db_query_idx);
 
     assert_eq!(
         box_count, 0,
-        "dashboard_page emitted {} BoxAny(12) allocations. \
+        "dashboard_page boxed {} argument(s) passed to db.query. \
          Any non-zero count means a codegen change re-introduced call-site \
          boxing before an expand_strings=true bridge wrapper — the same \
          class of failure that shipped as 0.33.44 fingerprint #54887260abf6 \
