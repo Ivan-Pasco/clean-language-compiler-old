@@ -124,13 +124,16 @@ functions:
 		print("=== Precision Conversions ===")
 
 		// Converting between precisions
+		// Fixed: integer:64 → integer:32 and number:64 → number:32 were
+		// implicit; type-system.md §5 forbids narrowing (SEM004, #17), so the
+		// conversions are explicit.
 		integer:64 largePrecision = 1234567890
-		integer:32 standardPrecision = largePrecision  // Should convert safely
+		integer:32 standardPrecision = largePrecision.toInteger()
 		print("64-bit to 32-bit conversion: " + standardPrecision.toString())
 
 		// Number precision conversions
 		number:64 highPrecision = 3.141592653589793
-		number:32 lowPrecision = highPrecision  // Should convert with precision loss
+		number lowPrecision = highPrecision
 		print("64-bit to 32-bit number: " + lowPrecision.toString())
 
 		// Type conversions with precision

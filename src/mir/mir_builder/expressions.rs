@@ -2813,6 +2813,31 @@ impl MirBuilder {
                         | (ConcreteType::Number, "toNumber") => {
                             return Ok(receiver_id);
                         }
+                        // `integer:64` → `integer`: the explicit narrowing
+                        // conversion (type-system.md §7). The Cast wraps i64
+                        // to i32; 8–32-bit sized integers are already i32.
+                        (ConcreteType::IntegerSized { .. }, "toInteger") => {
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                MirType::I32,
+                                expression.location.clone(),
+                            );
+                            self.add_instruction(
+                                context,
+                                MirInstruction {
+                                    dest: Some(result_id),
+                                    operation: MirOperation::Cast {
+                                        value: MirOperand::Value(receiver_id),
+                                        target_type: MirType::I32,
+                                    },
+                                    location: expression.location.clone(),
+                                },
+                            );
+                            return Ok(result_id);
+                        }
                         _ => {
                             // Not a type conversion method, continue to built-in method handling
                         }

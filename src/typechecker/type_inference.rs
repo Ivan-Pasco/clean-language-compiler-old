@@ -2405,6 +2405,21 @@ impl<'a> TypeInference<'a> {
                 location,
             } => {
                 let declared_type = self.hir_type_to_concrete(var_type);
+                if let Some(init) = initializer {
+                    if let Some(message) = self.sized_narrowing(var_type, init) {
+                        self.errors.push(CompilerError::Validation {
+                            context: Box::new(
+                                crate::error::ErrorContext::new(
+                                    format!("{} for variable '{}'", message, name),
+                                    Some("Declare the variable with the wider type, or convert the value explicitly.".to_string()),
+                                    crate::error::ErrorType::Validation,
+                                    Some(location.clone()),
+                                )
+                                .with_error_code("SEM004"),
+                            ),
+                        });
+                    }
+                }
 
                 let tast_initializer = if let Some(init_expr) = initializer {
                     // NOTE: null/none is valid as a variable initializer per type-system.md §5
@@ -5925,6 +5940,50 @@ impl<'a> TypeInference<'a> {
             // This handles cases where field access is used on non-class types
             _ => Ok(ConcreteType::Unknown),
         }
+    }
+
+    /// Explicit precision of a sized HIR type: (is_number, bits, unsigned).
+    /// Unsized `integer` / `number` return None.
+    fn explicit_precision(hir_type: &HirType) -> Option<(bool, u8, bool)> {
+        match hir_type {
+            HirType::Integer8 => Some((false, 8, false)),
+            HirType::Integer8u => Some((false, 8, true)),
+            HirType::Integer16 => Some((false, 16, false)),
+            HirType::Integer16u => Some((false, 16, true)),
+            HirType::Integer32 => Some((false, 32, false)),
+            HirType::Integer32u => Some((false, 32, true)),
+            HirType::Integer64 => Some((false, 64, false)),
+            HirType::Integer64u => Some((false, 64, true)),
+            HirType::Number32 => Some((true, 32, false)),
+            HirType::Number64 => Some((true, 64, false)),
+            _ => None,
+        }
+    }
+
+    /// type-system.md §5: `integer:N → integer:M` only when M >= N, and
+    /// `number:64 → number:32` is precision loss. 8–32-bit integers and both
+    /// number widths share one concrete type after inference, so the check
+    /// compares the declared types: a variable or parameter declared with a
+    /// wider explicit precision, assigned to a narrower explicit one.
+    fn sized_narrowing(&self, target: &HirType, init: &ResolvedHirExpression) -> Option<String> {
+        let (target_is_number, target_bits, _) = Self::explicit_precision(target)?;
+        let ResolvedHirExpression::Variable { symbol_id, .. } = init else {
+            return None;
+        };
+        let source_type = match &self.symbol_table.get_symbol(*symbol_id)?.kind {
+            SymbolKind::Variable { var_type, .. } => var_type.clone(),
+            SymbolKind::Parameter { param_type } => param_type.clone(),
+            _ => return None,
+        };
+        let (source_is_number, source_bits, source_unsigned) = Self::explicit_precision(&source_type)?;
+        if source_is_number != target_is_number || source_bits <= target_bits {
+            return None;
+        }
+        let kind = if source_is_number { "number" } else { "integer" };
+        let suffix = if source_unsigned { "u" } else { "" };
+        Some(format!(
+            "Narrowing assignment: {kind}:{source_bits}{suffix} cannot be assigned to {kind}:{target_bits} (precision loss)"
+        ))
     }
 
     /// Convert HIR type to concrete type
