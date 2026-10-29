@@ -4004,12 +4004,16 @@ impl<'a> TypeInference<'a> {
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
         let mut tast_elements = Vec::new();
-        let concrete_element_type = self.hir_type_to_concrete(element_type);
-
         for element in elements {
             let tast_element = self.infer_expression(element)?;
             tast_elements.push(tast_element);
         }
+        // A list literal with runtime elements (`[title]`) has no element type
+        // from the HIR; it is the first element's type.
+        let concrete_element_type = match (element_type, tast_elements.first()) {
+            (HirType::Void, Some(first)) => first.expr_type.clone(),
+            _ => self.hir_type_to_concrete(element_type),
+        };
 
         let array_type = ConcreteType::Array(Box::new(concrete_element_type.clone()));
 

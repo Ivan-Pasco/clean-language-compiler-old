@@ -292,6 +292,9 @@ impl Parameter {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Expression {
     Literal(Value),
+    /// List literal whose elements are not all constants: `[title, "x"]`.
+    /// Constant-only lists stay `Literal(Value::List(..))`.
+    ListLiteral(Vec<Expression>),
     Variable(String),
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),

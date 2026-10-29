@@ -2013,6 +2013,19 @@ impl HirBuilder {
     /// Convert AST expression to HIR expression
     fn build_expression(&mut self, expr: &Expression) -> Result<HirExpression, CompilerError> {
         match expr {
+            Expression::ListLiteral(elements) => {
+                // `[title, "x"]`: elements evaluated at runtime. The element
+                // type is taken from the first element by the type checker.
+                let mut hir_elements = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    hir_elements.push(self.build_expression(elem)?);
+                }
+                Ok(HirExpression::Array {
+                    elements: hir_elements,
+                    element_type: HirType::Void,
+                    location: SourceLocation::default(),
+                })
+            }
             Expression::Literal(value) => {
                 // NOTE: Array literals must be converted to HirExpression::Array
                 // not HirExpression::Literal, otherwise they get converted to Null in type inference

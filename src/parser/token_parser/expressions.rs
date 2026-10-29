@@ -600,27 +600,12 @@ impl TokenParser {
                     return Ok(Expression::Literal(Value::List(elements)));
                 }
 
-                // Parse array elements (as expressions, will be converted to values)
+                // Parse array elements. A list of constants stays a literal
+                // value; any other element makes it a ListLiteral whose
+                // elements are evaluated at runtime.
+                let mut exprs = Vec::new();
                 loop {
-                    let elem_expr = self.parse_expression()?;
-
-                    // Convert expression to Value if it's a literal
-                    // For now, we support literal values and will handle variables/expressions later in MIR
-                    let value = match elem_expr {
-                        Expression::Literal(val) => val,
-                        _ => {
-                            // For now, allow non-literal expressions by wrapping them
-                            // This will be handled properly during lowering to MIR
-                            // Temporarily store as a placeholder - this needs proper handling in semantic analysis
-                            return Err(CompilerError::parse_error(
-                                "Array literals currently only support constant literal values".to_string(),
-                                Some(self.current().location.clone()),
-                                Some("Variables and expressions in arrays will be supported in MIR lowering".to_string()),
-                            ));
-                        }
-                    };
-
-                    elements.push(value);
+                    exprs.push(self.parse_expression()?);
                     self.skip_whitespace();
 
                     if matches!(self.current_kind(), TokenKind::Comma) {
@@ -632,7 +617,16 @@ impl TokenParser {
                 }
 
                 self.expect(&TokenKind::RightBracket)?;
-                Ok(Expression::Literal(Value::List(elements)))
+                if exprs.iter().all(|e| matches!(e, Expression::Literal(_))) {
+                    for e in exprs {
+                        if let Expression::Literal(v) = e {
+                            elements.push(v);
+                        }
+                    }
+                    Ok(Expression::Literal(Value::List(elements)))
+                } else {
+                    Ok(Expression::ListLiteral(exprs))
+                }
             }
             TokenKind::If => {
                 // Parse conditional expression: if condition then value else value

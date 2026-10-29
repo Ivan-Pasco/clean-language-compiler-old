@@ -1052,28 +1052,19 @@ pub fn parse_list_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError>
         }
     }
 
-    // Convert to array values
-    let values: Result<Vec<Value>, _> = elements
-        .into_iter()
-        .map(|expr| match expr {
-            Expression::Literal(value) => Ok(value),
-            Expression::Variable(name) => {
-                // Variables in list literals require runtime evaluation
-                Err(CompilerError::parse_error(
-                    format!("Variable '{}' cannot be used in list literal", name),
-                    None,
-                    Some("List literals must contain constant values only".to_string()),
-                ))
-            }
-            _ => Err(CompilerError::parse_error(
-                "List literals can only contain literal values".to_string(),
-                None,
-                Some("Use variables or function calls outside of list literals".to_string()),
-            )),
-        })
-        .collect();
-
-    Ok(Expression::Literal(Value::List(values?)))
+    // A list of constants stays a literal value; any other element makes it
+    // a ListLiteral whose elements are evaluated at runtime.
+    if elements.iter().all(|e| matches!(e, Expression::Literal(_))) {
+        let values = elements
+            .into_iter()
+            .filter_map(|e| match e {
+                Expression::Literal(v) => Some(v),
+                _ => None,
+            })
+            .collect();
+        return Ok(Expression::Literal(Value::List(values)));
+    }
+    Ok(Expression::ListLiteral(elements))
 }
 
 pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
