@@ -1114,7 +1114,7 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
             let identifier = inner.as_str();
             Ok(Expression::Variable(identifier.to_string()))
         }
-        Rule::expression => {
+        Rule::expression | Rule::single_line_expression => {
             // Parenthesized expression: (expression)
             parse_expression(inner)
         }
