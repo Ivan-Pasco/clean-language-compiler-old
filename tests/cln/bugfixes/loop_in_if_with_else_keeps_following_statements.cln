@@ -1,0 +1,66 @@
+// Test: bugfixes/loop_in_if_with_else_keeps_following_statements
+// Grammar: grammar.ebnf if_statement, iterate_statement, while_statement
+// Fixed in: compiler 0.33.164
+// A loop inside the then-branch of an if/else made the code generator lose
+// every statement after the if/else: the search for the if's merge block
+// stopped at the jump into the loop and never followed the loop to its exit.
+// In a method ending with an html: block the page was never built and the
+// method trapped on `unreachable`.
+// Expected output:
+//   after: xii
+//   after: neg
+//   page: [ab]
+//   while: x+
+//   nested: 3
+
+start:
+	printl(withLoop(2))
+	printl(withLoop(0))
+	printl(page(2))
+	printl(withWhile(1))
+	printl("nested: " + nested(3).toString())
+
+functions:
+	string withLoop(integer n)
+		string a = "x"
+		if n > 0
+			iterate i in 0 to n - 1
+				a = a + "i"
+		else
+			a = "neg"
+		return "after: " + a
+
+	string page(integer n)
+		string items = ""
+		if n > 0
+			iterate i in 0 to n - 1
+				if i == 0
+					items = items + "a"
+				else
+					items = items + "b"
+		else
+			items = "none"
+		return "page: [" + items + "]"
+
+	string withWhile(integer n)
+		string a = "x"
+		integer k = 0
+		if n > 0
+			while k < n
+				a = a + "+"
+				k = k + 1
+		else
+			a = "neg"
+		return "while: " + a
+
+	integer nested(integer n)
+		integer total = 0
+		if n > 0
+			if n > 1
+				iterate i in 1 to n
+					total = total + 1
+			else
+				total = 100
+		else
+			total = 200
+		return total

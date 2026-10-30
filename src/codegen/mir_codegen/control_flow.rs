@@ -360,6 +360,22 @@ impl MirCodeGenerator<'_> {
 
         match &block.terminator {
             MirTerminator::Jump { target } => {
+                // A jump into a loop is not a continuation: the loop is part
+                // of this path, which continues where the loop exits (the
+                // header's false branch, as generate_structured_blocks lays
+                // loops out). Stopping at the header made an if/else whose
+                // then-branch holds a loop report the header as its merge,
+                // and the real merge — every statement after the if/else —
+                // was never emitted.
+                if self.is_loop_header(function, *target) {
+                    if let Some(MirTerminator::Branch { false_block, .. }) =
+                        function.blocks.get(target).map(|b| &b.terminator)
+                    {
+                        visited.insert(*target);
+                        self.collect_jump_targets(function, *false_block, visited, targets);
+                        return;
+                    }
+                }
                 targets.insert(self.chase_jump_chain(function, *target));
             }
             MirTerminator::Branch {
