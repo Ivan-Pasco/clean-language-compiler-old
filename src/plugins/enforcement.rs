@@ -250,6 +250,13 @@ fn collect_call_names_from_statement(stmt: &Statement, names: &mut Vec<String>) 
 /// * `plugin_name`          - The name of the plugin whose expanded code is being checked.
 /// * `expanded_statements`  - The AST statements produced by the plugin's expansion.
 ///
+/// Only calls to *bridge functions* are checked: names some plugin declares
+/// in its `[bridge]` section or that the canonical function registry
+/// defines. Other underscore-prefixed names are ordinary functions — e.g.
+/// the `__Model_count` helpers a plugin emits for an ORM model, possibly in
+/// a different module of the build — and name resolution reports them if
+/// they do not exist.
+///
 /// # Returns
 /// A (possibly empty) list of `CompilerError::Validation` errors.  Callers should
 /// collect these and emit them as compilation diagnostics rather than aborting
@@ -275,7 +282,7 @@ pub fn validate_plugin_permissions(
 
     for name in call_names {
         // Only check names that look like bridge functions (leading underscore).
-        if !name.starts_with('_') {
+        if !name.starts_with('_') || !is_bridge_function(registry, &name) {
             continue;
         }
 
@@ -303,6 +310,18 @@ pub fn validate_plugin_permissions(
     }
 
     errors
+}
+
+/// True when `name` is a bridge function: declared by some loaded plugin's
+/// `[bridge]` section or defined by the canonical function registry.
+fn is_bridge_function(registry: &PluginRegistry, name: &str) -> bool {
+    static CANONICAL: std::sync::OnceLock<Option<crate::plugins::registry_loader::RegistryIndex>> =
+        std::sync::OnceLock::new();
+    registry.bridge_function_owner(name).is_some()
+        || CANONICAL
+            .get_or_init(|| crate::plugins::registry_loader::RegistryIndex::load().ok())
+            .as_ref()
+            .is_some_and(|idx| idx.lookup(name).is_some())
 }
 
 /// Collect function call names from an expression
@@ -366,7 +385,6 @@ mod tests {
             classes: vec![],
             start_function: None,
             tests: vec![],
-            screens: vec![],
             state: None,
             watch_blocks: vec![],
             screen_blocks: vec![],

@@ -16,13 +16,9 @@ use crate::ast::SourceLocation;
 use crate::error::CompilerError;
 use crate::hir::*;
 
-pub mod module_resolver;
 pub mod resolver_impl;
 pub mod symbol_table;
-// pub mod passthrough_resolver;
-// pub mod passthrough_resolver; // Temporarily disabled due to compilation errors
 
-pub use module_resolver::*;
 pub use resolver_impl::*;
 pub use symbol_table::*;
 
@@ -551,49 +547,4 @@ pub enum ResolvedHirLValue {
 pub struct ResolutionResult {
     pub resolved_hir: ResolvedHirProgram,
     pub warnings: Vec<CompilerError>,
-}
-
-/// Name resolution errors
-#[derive(Debug, Clone)]
-pub enum ResolutionError {
-    /// Symbol not found
-    SymbolNotFound {
-        name: String,
-        location: SourceLocation,
-    },
-
-    /// Ambiguous symbol reference
-    AmbiguousSymbol {
-        name: String,
-        candidates: Vec<SymbolId>,
-        location: SourceLocation,
-    },
-
-    /// Circular dependency detected
-    CircularDependency {
-        symbols: Vec<SymbolId>,
-        location: SourceLocation,
-    },
-
-    /// Invalid symbol usage (e.g., using function as variable)
-    InvalidUsage {
-        name: String,
-        symbol_id: SymbolId,
-        expected_kind: SymbolKind,
-        actual_kind: SymbolKind,
-        location: SourceLocation,
-    },
-
-    /// Module not found
-    ModuleNotFound {
-        module_name: String,
-        location: SourceLocation,
-    },
-
-    /// Import item not found in module
-    ImportItemNotFound {
-        item_name: String,
-        module_name: String,
-        location: SourceLocation,
-    },
 }

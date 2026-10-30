@@ -1,9 +1,6 @@
 //! Module for WebAssembly code generation.
 
-use wasm_encoder::{
-    CodeSection, ConstExpr, EntityType, ExportSection, FunctionSection, GlobalSection, GlobalType,
-    ImportSection, MemorySection, ValType,
-};
+use wasm_encoder::{CodeSection, EntityType, ExportSection, FunctionSection, ImportSection};
 
 use crate::error::CompilerError;
 
@@ -20,7 +17,6 @@ pub mod mir_codegen;
 pub mod native_stdlib;
 mod type_manager;
 pub mod validate;
-mod wasm_module_builder;
 
 #[cfg(test)]
 mod tests;
@@ -29,7 +25,6 @@ mod tests;
 use self::memory::MemoryUtils;
 pub use mir_codegen::{MirCodeGenerator, MirCodegenResult};
 use type_manager::TypeManager;
-use wasm_module_builder::WasmModuleBuilder;
 
 // Add these constants for memory type IDs
 pub const INTEGER_TYPE_ID: u32 = 1;
@@ -62,8 +57,6 @@ pub struct CodeGenerator {
     function_section: FunctionSection,
     export_section: ExportSection,
     code_section: CodeSection,
-    memory_section: MemorySection,
-    global_section: GlobalSection,
 
     import_section: ImportSection,
     type_manager: TypeManager,
@@ -108,13 +101,6 @@ pub struct CodeGenerator {
 
     // Track imported function names to avoid exporting them
     imported_functions: HashSet<String>,
-
-    // WASM module builder for assembling final module
-    module_builder: WasmModuleBuilder,
-
-    // Serialised plugin registrations to embed in the WASM custom section.
-    // Set via `set_plugin_registrations` before calling `generate`.
-    plugin_registrations: Option<crate::plugins::PluginRegistrations>,
 }
 
 impl Default for CodeGenerator {
@@ -138,44 +124,10 @@ impl CodeGenerator {
     fn new_with_config(include_runtime_imports: bool) -> Self {
         let type_manager = TypeManager::new();
 
-        // Create global section with the compiler-owned reserved globals
-        // laid out at fixed indices:
-        //   global 0     = __heap_ptr (HEAP_PTR_GLOBAL)
-        //   globals 1-3  = __json_get parse-result cache (src ptr, parsed
-        //                  ptr, heap floor) — see utilities.rs's MIR-path
-        //                  emission and the json.get shim in
-        //                  src/stdlib/json_class.rs.
-        //   global 4     = transient arena pool base
-        //                  (TRANSIENT_BASE_GLOBAL) — 0 = uninitialized
-        //   global 5     = transient arena bump pointer
-        //                  (TRANSIENT_PTR_GLOBAL) — 0 = uninitialized
-        // User-level state globals start at RESERVED_GLOBAL_COUNT (6).
-        // The MIR codegen path mirrors this layout in
-        // `mir_codegen/utilities.rs`.
-        let mut global_section = GlobalSection::new();
-        global_section.global(
-            GlobalType {
-                val_type: ValType::I32,
-                mutable: true,
-            },
-            &ConstExpr::i32_const(native_stdlib::HEAP_START as i32),
-        );
-        for _ in 0..(native_stdlib::RESERVED_GLOBAL_COUNT - 1) {
-            global_section.global(
-                GlobalType {
-                    val_type: ValType::I32,
-                    mutable: true,
-                },
-                &ConstExpr::i32_const(0),
-            );
-        }
-
         Self {
             function_section: FunctionSection::new(),
             export_section: ExportSection::new(),
             code_section: CodeSection::new(),
-            memory_section: MemorySection::new(),
-            global_section,
 
             import_section: ImportSection::new(),
             type_manager,
@@ -199,153 +151,7 @@ impl CodeGenerator {
 
             // Track imported function names to avoid exporting them
             imported_functions: HashSet::new(),
-            module_builder: WasmModuleBuilder::new(include_runtime_imports),
-            plugin_registrations: None,
         }
-    }
-
-    /// Attach plugin lifecycle registrations so they are embedded as a custom
-    /// section in the generated WASM binary.
-    ///
-    /// Call this before invoking `generate` / `assemble_module`.  The section
-    /// is only written when there is at least one non-empty registration list,
-    /// so calling this with an all-default `PluginRegistrations` is a no-op.
-    pub fn set_plugin_registrations(&mut self, registrations: crate::plugins::PluginRegistrations) {
-        self.plugin_registrations = Some(registrations);
-    }
-
-    /// Create a new CodeGenerator with imports registered for testing
-    #[cfg(test)]
-    pub fn new_for_testing() -> Result<Self, CompilerError> {
-        let mut codegen = Self::new();
-
-        // Register imports needed for testing.
-        // ALL import-only registrations must come before register_memory_operations
-        // (which creates defined/native WASM functions).  WASM requires imports to
-        // precede local functions in the function index space.
-        codegen.register_print_imports()?;
-        codegen.register_console_imports()?;
-        codegen.register_file_imports()?;
-        codegen.register_http_imports(&HashSet::new(), false)?;
-        codegen.register_type_conversion_imports()?;
-        codegen.register_method_style_imports()?;
-        // Register native memory operations (includes native int_to_string, bool_to_string, etc.)
-        // Note: arena_scope_imports are reachability-gated and only registered in the
-        // full generate pipeline when the dual-accumulator rewrite has fired.
-        codegen.register_memory_operations()?;
-
-        Ok(codegen)
-    }
-
-    /// Configure the memory section with standard tier defaults.
-    fn setup_memory_section(&mut self) {
-        self.memory_section.memory(wasm_encoder::MemoryType {
-            minimum: 32, // 32 pages = 2MB initial memory (1MB data section + 1MB heap)
-            maximum: Some(DEFAULT_MAX_MEMORY_PAGES), // standard tier: 512 pages = 32 MB
-            memory64: false,
-            shared: false,
-        });
-    }
-
-    /// Helper method for tests to set up memory and exports
-    pub fn setup_for_testing(&mut self) -> Result<(), CompilerError> {
-        // Register imports FIRST (they get indices 0-13) - just like in generate()
-        self.register_print_imports()?;
-        // File and HTTP imports temporarily disabled for debugging stack validation issues
-        // self.register_file_imports()?;
-        // self.register_http_imports()?;
-        // Enable type conversion imports - CRITICAL for runtime functionality
-        self.register_type_conversion_imports()?;
-        // Enable method-style function imports - CRITICAL for method calls
-        self.register_method_style_imports()?;
-
-        // Set up memory section
-        self.setup_memory_section();
-
-        // Export all registered functions.
-        //
-        // Sort by name for deterministic export ordering — see the same
-        // sort in `mir_codegen/utilities.rs::finalize_module` for the
-        // motivating incident (nondeterministic HashMap iteration caused
-        // WASM bytes to differ across recompiles, which cascaded into
-        // memory-layout roulette on real apps).
-        let mut sorted: Vec<(&String, &u32)> = self.function_map.iter().collect();
-        sorted.sort_by(|a, b| a.0.cmp(b.0));
-        for (func_name, &func_index) in sorted {
-            self.export_section
-                .export(func_name, wasm_encoder::ExportKind::Func, func_index);
-        }
-        self.export_section
-            .export("memory", wasm_encoder::ExportKind::Memory, 0);
-
-        Ok(())
-    }
-
-    /// Helper method for tests to generate complete WASM module
-    pub fn generate_test_module(&mut self) -> Result<Vec<u8>, CompilerError> {
-        self.setup_for_testing()?;
-        self.assemble_module()
-    }
-
-    /// Assemble the final WebAssembly module
-    fn assemble_module(&mut self) -> Result<Vec<u8>, CompilerError> {
-        // Use the extracted WasmModuleBuilder to assemble the module
-        let base_wasm = self.module_builder.assemble_module(
-            &self.type_manager,
-            &self.import_section,
-            &self.function_section,
-            &self.memory_section,
-            &self.global_section,
-            &self.export_section,
-            &self.code_section,
-            self.memory_utils.get_data_section(),
-            self.function_count,
-        )?;
-
-        let mut wasm = base_wasm;
-
-        // Append a `clean_plugin_registrations` custom section when there are
-        // lifecycle registrations to embed.  Custom sections are ignored by all
-        // WASM runtimes (they never affect execution) but can be read by tools
-        // and frameworks that need to know which lifecycle hooks are active.
-        if let Some(ref registrations) = self.plugin_registrations {
-            let has_any = !registrations.server.is_empty()
-                || !registrations.cli.is_empty()
-                || !registrations.data.is_empty()
-                || !registrations.build.is_empty();
-
-            if has_any {
-                match serde_json::to_vec(registrations) {
-                    Ok(json_bytes) => {
-                        // Encode the custom section using wasm_encoder and append
-                        // the raw bytes to the assembled module.
-                        let custom = wasm_encoder::CustomSection {
-                            name: std::borrow::Cow::Borrowed("clean_plugin_registrations"),
-                            data: std::borrow::Cow::Borrowed(&json_bytes),
-                        };
-                        use wasm_encoder::Encode;
-                        // Section ID 0 (custom) must be written first, then the
-                        // encoded payload produced by CustomSection::encode().
-                        let mut section_bytes: Vec<u8> = Vec::new();
-                        section_bytes.push(0u8); // custom section ID
-                        custom.encode(&mut section_bytes);
-                        wasm.extend_from_slice(&section_bytes);
-                        log::debug!(
-                            "Embedded clean_plugin_registrations custom section ({} bytes)",
-                            json_bytes.len()
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to serialise plugin registrations for WASM custom section: {}",
-                            e
-                        );
-                    }
-                }
-            }
-        }
-
-        Ok(wasm)
     }
 
     fn add_function_type(
@@ -580,30 +386,4 @@ pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
     }
 
     false
-}
-
-/// Generate WebAssembly from MIR with minimal runtime (for testing)
-pub fn generate_wasm_from_mir_minimal(
-    mir_program: crate::mir::MirProgram,
-) -> Result<Vec<u8>, CompilerError> {
-    let mut mir_codegen = MirCodeGenerator::new_minimal();
-
-    match mir_codegen.generate(mir_program) {
-        Ok(result) => Ok(result.wasm_bytes),
-        Err(errors) => {
-            // Return the first error for now
-            if let Some(error) = errors.into_iter().next() {
-                Err(error)
-            } else {
-                Err(CompilerError::Codegen {
-                    context: Box::new(crate::error::ErrorContext::new(
-                        "Unknown error during MIR code generation",
-                        None,
-                        crate::error::ErrorType::Codegen,
-                        Some(crate::ast::SourceLocation::default()),
-                    )),
-                })
-            }
-        }
-    }
 }

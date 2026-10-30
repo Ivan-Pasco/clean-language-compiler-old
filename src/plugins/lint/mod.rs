@@ -155,8 +155,6 @@ struct RawLocation {
 #[derive(Debug, Deserialize)]
 struct RawPluginError {
     error: String,
-    #[allow(dead_code)]
-    plugin: Option<String>,
 }
 
 /// Result of parsing a plugin's `lint_project` JSON output.

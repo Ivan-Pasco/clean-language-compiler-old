@@ -1,0 +1,28 @@
+// Test: bugfixes/mir_constant_folding_matches_runtime
+// Semantic: type-system.md integer (32-bit, wrapping) and number (IEEE-754 f64)
+// Regression: the MIR constant-folding pass (enabled at the default -O2)
+//   computed integer arithmetic in 64 bits and compared floats with an
+//   epsilon, so folded results disagreed with the unoptimized WASM
+//   (i32 wrapping arithmetic, exact f64.eq). Chained multiplication that
+//   overflowed i64 panicked the compiler in debug builds.
+// Fixed in: compiler 0.33.165
+// Expected output:
+//   false
+//   true
+//   false
+//   -2147483648
+//   2147483647
+//   -2147483648
+//   2
+
+start:
+	printl(0.1 + 0.2 == 0.3)
+	printl(0.1 + 0.2 != 0.3)
+	printl(2147483647 + 1 > 0)
+	integer wrapped = 2147483647 + 1
+	printl(wrapped)
+	integer m = 2147483647 * 2147483647 * 2147483647
+	printl(m)
+	integer neg = -(0 - 2147483647 - 1)
+	printl(neg)
+	printl(-7 % 3 + 3)

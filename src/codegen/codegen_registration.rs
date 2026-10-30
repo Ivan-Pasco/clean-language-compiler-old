@@ -23,20 +23,14 @@ impl super::CodeGenerator {
 
     /// Register validator operation functions (validator.create, validator.ok, validator.isOk, etc.)
     pub fn register_validator_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::memory::MemoryManager;
         use crate::stdlib::validator::ValidatorManager;
-        use std::cell::RefCell;
-        use std::rc::Rc;
 
-        // Create a MemoryManager and ValidatorManager instance.
         // Resolve mem_alloc index dynamically so the validator is resilient to
         // import ordering changes (e.g. when input_* imports are gated out).
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
         let mem_alloc_idx = self
             .get_function_index("mem_alloc")
             .unwrap_or(crate::stdlib::validator::DEFAULT_MEM_ALLOC_CALL_INDEX);
-        let validator_manager =
-            ValidatorManager::new_with_mem_alloc_idx(memory_manager, mem_alloc_idx);
+        let validator_manager = ValidatorManager::new_with_mem_alloc_idx(mem_alloc_idx);
         validator_manager.register_functions(self)?;
 
         Ok(())
@@ -637,8 +631,8 @@ impl super::CodeGenerator {
         // NATIVE: bool_to_string - returns pointer to pre-allocated "true" or "false" string
         // Parameters: bool_value (i32, 0 or non-zero)
         // Returns: pointer (i32) to "true" or "false" string
-        let true_ptr = self.add_string_to_pool("true");
-        let false_ptr = self.add_string_to_pool("false");
+        let true_ptr = self.get_or_create_string_offset("true")?;
+        let false_ptr = self.get_or_create_string_offset("false")?;
         let bool_to_string_instructions =
             native_stdlib::type_conversions::gen_bool_to_string(true_ptr, false_ptr);
         self.register_function(
@@ -767,19 +761,13 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Register list operation functions using WASM instructions from ListManager
+    /// Register list operation functions using WASM instructions from ListManager.
+    /// Runs after the native memory operations so heap-backed list and string
+    /// methods can call `__malloc`.
     pub(crate) fn register_list_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::list_ops::ListManager;
-        use crate::stdlib::memory::MemoryManager;
-        use std::cell::RefCell;
-        use std::rc::Rc;
 
-        // Create a MemoryManager and ListManager instance
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(16))));
-        let list_manager = ListManager::new(memory_manager);
-        list_manager.register_functions(self)?;
-
-        Ok(())
+        ListManager::new().register_functions(self)
     }
 
     /// Register HTTP operation functions using HttpClass
@@ -1237,21 +1225,6 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Register list class operation functions using ListClass
-    pub(crate) fn register_list_class_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::list_class::ListClass;
-
-        // Create a ListClass instance with the dynamically resolved mem_alloc index
-        // so list operations are resilient to import ordering changes.
-        let mem_alloc_idx = self
-            .get_function_index("mem_alloc")
-            .unwrap_or(crate::stdlib::list_class::DEFAULT_MEM_ALLOC_CALL_INDEX_PUB);
-        let list_class = ListClass::new_with_mem_alloc_idx(mem_alloc_idx);
-        list_class.register_functions(self)?;
-
-        Ok(())
-    }
-
     /// Register method-style and list-behavior operations (isEmpty, isDefined, list.size, etc.)
     /// Register async host bridge imports: _async_fire and _async_await.
     ///
@@ -1405,19 +1378,11 @@ impl super::CodeGenerator {
     }
 
     pub(crate) fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::memory::MemoryManager;
-        use std::cell::RefCell;
-        use std::rc::Rc;
-
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(16))));
-
-        use crate::stdlib::method_style::MethodStyleManager;
-        let method_style_manager = MethodStyleManager::new(memory_manager.clone());
-        method_style_manager.register_functions(self)?;
-
         use crate::stdlib::list_behavior::ListBehaviorManager;
-        let list_behavior_manager = ListBehaviorManager::new(memory_manager.clone());
-        list_behavior_manager.register_functions(self)?;
+        use crate::stdlib::method_style::MethodStyleManager;
+
+        MethodStyleManager::new().register_functions(self)?;
+        ListBehaviorManager::new().register_functions(self)?;
 
         Ok(())
     }

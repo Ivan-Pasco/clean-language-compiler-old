@@ -621,11 +621,6 @@ impl GlobalSymbolTable {
         self.symbols.get_mut(&id)
     }
 
-    /// Get scope by ID
-    pub fn get_scope(&self, id: ScopeId) -> Option<&Scope> {
-        self.scopes.get(&id)
-    }
-
     /// Check if a symbol is a built-in
     pub fn is_builtin(&self, symbol_id: SymbolId) -> bool {
         self.builtins.contains(&symbol_id)
@@ -647,28 +642,6 @@ impl GlobalSymbolTable {
         }
     }
 
-    /// Return `true` if the symbol is private and the access is from outside `owner_scope_name`.
-    ///
-    /// `access_context_name` is the name of the current class or `"<module>"` for module scope.
-    /// Returns `false` (no violation) when the symbol is public or when the context matches the owner.
-    pub fn is_private_access_violation(
-        &self,
-        symbol_id: SymbolId,
-        access_context_name: &str,
-    ) -> bool {
-        if let Some(symbol) = self.symbols.get(&symbol_id) {
-            if !symbol.is_private {
-                return false;
-            }
-            match &symbol.owner_scope_name {
-                Some(owner) => owner != access_context_name,
-                None => false, // No owner stored — treat as non-private for safety.
-            }
-        } else {
-            false
-        }
-    }
-
     /// Create a new module
     pub fn create_module(&mut self, name: String, file_path: String) -> ModuleId {
         let module_id = self.next_module_id();
@@ -684,48 +657,9 @@ impl GlobalSymbolTable {
         module_id
     }
 
-    /// Set current module
-    pub fn set_current_module(&mut self, module_id: ModuleId) {
-        self.current_module = Some(module_id);
-    }
-
     /// Get module by ID
     pub fn get_module(&self, id: ModuleId) -> Option<&Module> {
         self.modules.get(&id)
-    }
-
-    /// Export a symbol from a module
-    pub fn export_symbol(&mut self, module_id: ModuleId, name: String, symbol_id: SymbolId) {
-        if let Some(module) = self.modules.get_mut(&module_id) {
-            module.exported_symbols.insert(name, symbol_id);
-        }
-
-        if let Some(symbol) = self.symbols.get_mut(&symbol_id) {
-            symbol.is_exported = true;
-        }
-    }
-
-    /// Import a symbol from a module
-    pub fn import_symbol(&mut self, from_module: ModuleId, symbol_name: &str) -> Option<SymbolId> {
-        if let Some(module) = self.modules.get(&from_module) {
-            if let Some(&symbol_id) = module.exported_symbols.get(symbol_name) {
-                // Mark symbol as imported
-                if let Some(symbol) = self.symbols.get_mut(&symbol_id) {
-                    symbol.is_imported = true;
-                }
-                return Some(symbol_id);
-            }
-        }
-        None
-    }
-
-    /// Get all symbols in current scope
-    pub fn current_scope_symbols(&self) -> Vec<SymbolId> {
-        if let Some(scope) = self.scopes.get(&self.current_scope) {
-            scope.symbols.values().copied().collect()
-        } else {
-            Vec::new()
-        }
     }
 
     /// Get current scope ID

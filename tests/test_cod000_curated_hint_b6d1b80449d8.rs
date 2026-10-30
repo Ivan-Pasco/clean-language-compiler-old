@@ -15,12 +15,14 @@ use clean_language_compiler::{compile_multi_file_with_memory_tier, MemoryTier};
 use std::io::Write;
 
 fn compile_expect_error(source: &str) -> String {
+    // Process id + per-process counter: timestamp-only names collide when
+    // parallel tests start within the same clock tick.
+    static TEMP_DIR_COUNTER: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
     let temp_dir = std::env::temp_dir().join(format!(
-        "clean_cod000_hint_test_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        "clean_cod000_hint_test_{}_{}",
+        std::process::id(),
+        TEMP_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     ));
     std::fs::create_dir_all(&temp_dir).expect("mkdir tmp");
     let path = temp_dir.join("entry.cln");

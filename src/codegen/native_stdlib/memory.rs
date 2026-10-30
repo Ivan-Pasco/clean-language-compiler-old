@@ -3,7 +3,7 @@
 //! Provides a simple bump allocator and memory copy operations
 //! that run entirely in WASM without host imports.
 
-use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
+use wasm_encoder::{BlockType, Instruction, MemArg};
 
 use super::{ALIGNMENT, HEAP_PTR_GLOBAL, JSON_CACHE_BASE_GLOBAL, JSON_CACHE_ENTRIES};
 
@@ -367,22 +367,6 @@ pub fn gen_memcpy() -> Vec<Instruction<'static>> {
         Instruction::Br(0),
         Instruction::End, // End loop
         Instruction::End, // End block
-    ]
-}
-
-/// Get the local variables needed for malloc
-pub fn malloc_locals() -> Vec<(u32, ValType)> {
-    vec![
-        (1, ValType::I32), // current_ptr
-        (1, ValType::I32), // aligned_size
-        (1, ValType::I32), // new_ptr (for memory.grow check)
-    ]
-}
-
-/// Get the local variables needed for memcpy
-pub fn memcpy_locals() -> Vec<(u32, ValType)> {
-    vec![
-        (1, ValType::I32), // i (loop counter)
     ]
 }
 

@@ -1,14 +1,14 @@
 use super::expression_parser::{parse_expression, parse_start_expression};
+use super::get_location;
 use super::parser_impl::parse_validate_check_stmt;
 use super::type_parser::parse_type;
 use super::Rule;
-use super::{convert_to_ast_location, get_location};
 use crate::ast::{AssignmentTarget, Expression, ResetTarget, Statement};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
 
 pub fn parse_statement(pair: Pair<Rule>) -> Result<Statement, CompilerError> {
-    let ast_location = convert_to_ast_location(&get_location(&pair));
+    let ast_location = get_location(&pair);
     let inner = pair
         .into_inner()
         .next()
@@ -283,7 +283,7 @@ fn parse_else_block_recursive(else_block: Pair<Rule>) -> Result<Vec<Statement>, 
         match part.as_rule() {
             Rule::expression => {
                 // This is an "else if" - we have: "else" "if" expression indented_block else_block?
-                let ast_location = convert_to_ast_location(&get_location(&part));
+                let ast_location = get_location(&part);
                 let condition = parse_expression(part)?;
 
                 // Get the indented block for this else if
@@ -1059,10 +1059,16 @@ fn parse_framework_block_statement(
         match part.as_rule() {
             Rule::framework_block_attr => {
                 let mut kv = part.into_inner();
-                let key = kv.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+                let key = kv
+                    .next()
+                    .map(|p| p.as_str().to_string())
+                    .unwrap_or_default();
                 let value = kv.next().map(|p| {
                     let raw = p.as_str();
-                    raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')).unwrap_or(raw).to_string()
+                    raw.strip_prefix('"')
+                        .and_then(|r| r.strip_suffix('"'))
+                        .unwrap_or(raw)
+                        .to_string()
                 });
                 attributes.push(crate::ast::FrameworkAttribute {
                     name: key,

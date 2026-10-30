@@ -36,13 +36,6 @@ impl super::CodeGenerator {
         true
     }
 
-    /// Add a string to the string pool and return its pointer
-    pub fn add_string_to_pool(&mut self, string: &str) -> u32 {
-        self.memory_utils
-            .allocate_string(string)
-            .unwrap_or_default() as u32
-    }
-
     pub(crate) fn get_or_create_string_offset(&mut self, s: &str) -> Result<u32, CompilerError> {
         // Check if string already exists in pool
         if let Some(&existing_offset) = self.string_pool.get(s) {
@@ -1352,7 +1345,7 @@ impl super::CodeGenerator {
             if self.function_map.contains_key(*lang_name) {
                 continue;
             }
-            if let Some(raw_idx) = self.builtin_wrapper_source(*raw_name, lang_name) {
+            if let Some(raw_idx) = self.builtin_wrapper_source(raw_name, lang_name) {
                 let wrap_idx = self.register_function(
                     lang_name,
                     &[WasmType::I32],
@@ -1382,7 +1375,7 @@ impl super::CodeGenerator {
             if self.function_map.contains_key(*lang_name) {
                 continue;
             }
-            if let Some(raw_idx) = self.builtin_wrapper_source(*raw_name, lang_name) {
+            if let Some(raw_idx) = self.builtin_wrapper_source(raw_name, lang_name) {
                 let wrap_idx = self.register_function(
                     lang_name,
                     &[WasmType::I32],
@@ -1395,7 +1388,9 @@ impl super::CodeGenerator {
 
         // Two-string-param wrapper for verifyPassword
         if !self.function_map.contains_key("crypto.verifyPassword") {
-            if let Some(raw_idx) = self.builtin_wrapper_source("_crypto_verify_password", "crypto.verifyPassword") {
+            if let Some(raw_idx) =
+                self.builtin_wrapper_source("_crypto_verify_password", "crypto.verifyPassword")
+            {
                 let wrap_idx = self.register_function(
                     "crypto.verifyPassword",
                     &[WasmType::I32, WasmType::I32],
@@ -1770,111 +1765,35 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Register method-style functions as imports from the env module
-    pub(crate) fn register_method_style_imports(&mut self) -> Result<(), CompilerError> {
-        // Register type-specific method functions that match the semantic analyzer's function_table
-        // These are the method-style functions like string.length, integer.toString, etc.
-
-        let types = ["integer", "number", "string", "boolean"];
-
-        for type_name in &types {
-            // Type conversion methods - object is first parameter
-            self.register_import_function(
-                "env",
-                &format!("{}.toString", type_name),
-                match *type_name {
-                    "integer" => &[WasmType::I32],
-                    "number" => &[WasmType::F64],
-                    "string" => &[WasmType::I32],
-                    "boolean" => &[WasmType::I32],
-                    _ => &[WasmType::I32],
-                },
-                Some(WasmType::I32), // Returns string pointer
-            )?;
-
-            self.register_import_function(
-                "env",
-                &format!("{}.toInteger", type_name),
-                match *type_name {
-                    "integer" => &[WasmType::I32],
-                    "number" => &[WasmType::F64],
-                    "string" => &[WasmType::I32],
-                    "boolean" => &[WasmType::I32],
-                    _ => &[WasmType::I32],
-                },
-                Some(WasmType::I32), // Returns integer
-            )?;
-
-            self.register_import_function(
-                "env",
-                &format!("{}.toNumber", type_name),
-                match *type_name {
-                    "integer" => &[WasmType::I32],
-                    "number" => &[WasmType::F64],
-                    "string" => &[WasmType::I32],
-                    "boolean" => &[WasmType::I32],
-                    _ => &[WasmType::I32],
-                },
-                Some(WasmType::F64), // Returns number
-            )?;
-
-            self.register_import_function(
-                "env",
-                &format!("{}.toBoolean", type_name),
-                match *type_name {
-                    "integer" => &[WasmType::I32],
-                    "number" => &[WasmType::F64],
-                    "string" => &[WasmType::I32],
-                    "boolean" => &[WasmType::I32],
-                    _ => &[WasmType::I32],
-                },
-                Some(WasmType::I32), // Returns boolean (as i32)
-            )?;
-
-            // Utility methods
-            self.register_import_function(
-                "env",
-                &format!("{}.length", type_name),
-                match *type_name {
-                    "integer" => &[WasmType::I32],
-                    "number" => &[WasmType::F64],
-                    "string" => &[WasmType::I32],
-                    "boolean" => &[WasmType::I32],
-                    _ => &[WasmType::I32],
-                },
-                Some(WasmType::I32), // Returns length
-            )?;
-        }
-
-        // Register string-specific methods
-        self.register_import_function(
-            "env",
-            "string.toUpperCase",
-            &[WasmType::I32],    // string pointer
-            Some(WasmType::I32), // returns string pointer
-        )?;
-
-        self.register_import_function(
-            "env",
-            "string.toLowerCase",
-            &[WasmType::I32],    // string pointer
-            Some(WasmType::I32), // returns string pointer
-        )?;
-
-        self.register_import_function(
-            "env",
-            "string.concat",
-            &[WasmType::I32, WasmType::I32], // string1 pointer, string2 pointer
-            Some(WasmType::I32),             // returns concatenated string pointer
-        )?;
-
-        Ok(())
-    }
-
-    /// Helper method for tests to generate complete WASM module without imports
+    /// Assemble the registered functions into a standalone WASM module with
+    /// every function exported. Test-only: production modules are assembled
+    /// by `MirCodeGenerator::finalize_module`.
+    #[cfg(test)]
     pub fn generate_test_module_without_imports(&mut self) -> Result<Vec<u8>, CompilerError> {
-        // Set up memory section
-        self.setup_memory_section();
+        use wasm_encoder::{ConstExpr, GlobalSection, GlobalType, MemorySection, Module, ValType};
+
+        let mut memory_section = MemorySection::new();
+        memory_section.memory(wasm_encoder::MemoryType {
+            minimum: 32,
+            maximum: Some(super::DEFAULT_MAX_MEMORY_PAGES),
+            memory64: false,
+            shared: false,
+        });
+
+        // Reserved globals: __heap_ptr followed by the zero-initialised
+        // compiler-owned globals (see native_stdlib::RESERVED_GLOBAL_COUNT).
+        let mut global_section = GlobalSection::new();
+        let global_type = GlobalType {
+            val_type: ValType::I32,
+            mutable: true,
+        };
+        global_section.global(
+            global_type,
+            &ConstExpr::i32_const(super::native_stdlib::HEAP_START as i32),
+        );
+        for _ in 1..super::native_stdlib::RESERVED_GLOBAL_COUNT {
+            global_section.global(global_type, &ConstExpr::i32_const(0));
+        }
 
         // Export all registered functions.
         // Sort by name for deterministic export ordering (matches the fix
@@ -1888,7 +1807,22 @@ impl super::CodeGenerator {
         self.export_section
             .export("memory", wasm_encoder::ExportKind::Memory, 0);
 
-        self.assemble_module()
+        let mut module = Module::new();
+        module.section(&self.type_manager.clone_type_section());
+        if self.include_runtime_imports {
+            module.section(&self.import_section);
+        }
+        if self.function_count > 0 {
+            module.section(&self.function_section);
+        }
+        module.section(&memory_section);
+        module.section(&global_section);
+        module.section(&self.export_section);
+        if self.function_count > 0 {
+            module.section(&self.code_section);
+        }
+        module.section(self.memory_utils.get_data_section());
+        Ok(module.finish())
     }
 
     pub fn register_function_with_locals(

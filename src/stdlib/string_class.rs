@@ -1,3 +1,18 @@
+//! String methods implemented as native WASM functions.
+//!
+//! Strings are length-prefixed: `[length: i32][bytes...]`, content at +4.
+//!
+//! Registration happens in two phases because the active pipeline registers
+//! `StringClass::register_functions` before the native allocator exists:
+//! - [`StringClass::register_functions`] — functions that never allocate.
+//! - [`StringClass::register_heap_operations`] — functions that call
+//!   `__malloc`, invoked from `ListManager::register_functions` after the
+//!   memory operations are registered.
+//!
+//! Other string methods (substring, indexOf, trim, case conversion, split,
+//! replace, concat, …) are registered in `codegen_registration.rs`.
+//! `string.join` is an alias of `list.join` (see `list_class.rs`).
+
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
 use crate::stdlib::register_stdlib_function;
@@ -5,7 +20,6 @@ use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 /// String class implementation for Clean Language
-/// Provides comprehensive text manipulation capabilities as static methods
 pub struct StringClass;
 
 impl Default for StringClass {
@@ -19,153 +33,32 @@ impl StringClass {
         Self
     }
 
-    /// Register all String class methods as static functions
+    /// Register the string functions that never allocate.
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Basic operations (length, size only — substring is a native alias in codegen_registration.rs)
-        self.register_basic_operations(codegen)?;
-
-        // NOTE: register_case_operations() is intentionally NOT called here.
-        // string.toUpperCase and string.toLowerCase are native WASM functions registered
-        // by mod.rs::register_string_trim_imports() with proper ASCII case conversion.
-        // Calling register_case_operations() would overwrite those real implementations
-        // with stub functions that just return the original string unchanged.
-
-        // NOTE: register_search_operations() is intentionally NOT called here.
-        // string.contains, string.indexOf, string.lastIndexOf, string.startsWith, string.endsWith
-        // are registered by codegen_registration.rs with proper implementations.
-        // self.register_search_operations(codegen)?;
-
-        // NOTE: register_formatting_operations() is intentionally NOT called.
-        // Trim functions are provided by native WASM in codegen_registration.rs.
-
-        // NOTE: register_advanced_operations() registers only string.join, which has no real
-        // implementation elsewhere. Keep it.
-        self.register_advanced_operations(codegen)?;
-
-        // NOTE: register_character_operations() is intentionally NOT called here.
-        // string.charAt is already registered in register_basic_operations() below.
-        // Calling this method again would register it a second time under the same name,
-        // causing the last (stub) registration to win. charCodeAt has a real implementation
-        // but needs to be registered once.
-        self.register_character_operations(codegen)?;
-
-        // Validation helpers
-        self.register_validation_operations(codegen)?;
-
-        // Padding operations
-        self.register_padding_operations(codegen)?;
-
-        Ok(())
-    }
-
-    fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // String.length(string text) -> integer
+        let length = vec![
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+        ];
         register_stdlib_function(
             codegen,
             "string.length",
             &[WasmType::I32],
             Some(WasmType::I32),
-            vec![
-                // Get string pointer
-                Instruction::LocalGet(0),
-                // Load string length (first 4 bytes)
-                Instruction::I32Load(MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }),
-            ],
+            length.clone(),
         )?;
-
-        // String.size(string text) -> integer (alias for string.length)
-        // Returns the number of characters in the string
         register_stdlib_function(
             codegen,
             "string.size",
             &[WasmType::I32],
             Some(WasmType::I32),
-            vec![
-                // Get string pointer
-                Instruction::LocalGet(0),
-                // Load string length (first 4 bytes)
-                Instruction::I32Load(MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }),
-            ],
+            length,
         )?;
 
-        // NOTE: String.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
-        // Each pointer points to a length-prefixed string: [4-byte len][content]
-        // It's registered in codegen_registration.rs, NOT here as a stdlib function.
-
-        // NOTE: String.substring is NOT registered here.
-        // The real native WASM implementation is registered in codegen_registration.rs
-        // as "string_substring" with an alias "string.substring".
-        // Registering it here would overwrite the correct implementation with a stub
-        // that returns the original string unchanged.
-
-        // String.charAt(string text, integer index) -> string
-        // Returns a single-character string at the specified index
-        register_stdlib_function(
-            codegen,
-            "string.charAt",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_char_at(),
-        )?;
-
-        Ok(())
-    }
-
-    // NOTE: register_case_operations() is NOT defined or called here.
-    // string.toUpperCase and string.toLowerCase are native WASM functions registered
-    // by mod.rs::register_string_trim_imports() (aliased from "__string_to_upper"
-    // and "__string_to_lower"). Any registration here would shadow those real implementations.
-
-    // NOTE: register_search_operations() is NOT defined or called here.
-    // string.contains, string.indexOf, string.lastIndexOf, string.startsWith, string.endsWith
-    // are all registered by codegen_registration.rs with proper native WASM implementations.
-
-    // NOTE: register_formatting_operations() is NOT defined or called here.
-    // string.trim, string.trimStart, string.trimEnd are provided by native WASM
-    // implementations in codegen_registration.rs / mod.rs.
-
-    fn register_advanced_operations(
-        &self,
-        codegen: &mut CodeGenerator,
-    ) -> Result<(), CompilerError> {
-        // NOTE: string.replace is registered as an import in mod.rs via register_string_replace_import()
-        // Do NOT register a stdlib function for it here.
-
-        // NOTE: string.replaceAll also uses the host import (same function as string.replace
-        // since the host implementation replaces all occurrences by default).
-        // Do NOT register a stdlib function for it here.
-
-        // NOTE: string.split is registered as an import in codegen_registration.rs.
-        // Do NOT register a stdlib function for it here.
-
-        // String.join(array<string> parts, string separator) -> string
-        register_stdlib_function(
-            codegen,
-            "string.join",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_join(),
-        )?;
-
-        Ok(())
-    }
-
-    fn register_character_operations(
-        &self,
-        codegen: &mut CodeGenerator,
-    ) -> Result<(), CompilerError> {
-        // NOTE: string.charAt is already registered in register_basic_operations().
-        // We only register charCodeAt here, which has no real implementation elsewhere.
-
-        // String.charCodeAt(string text, integer index) -> integer
+        // string.charCodeAt(text, index) -> integer
         register_stdlib_function(
             codegen,
             "string.charCodeAt",
@@ -174,141 +67,124 @@ impl StringClass {
             self.generate_char_code_at(),
         )?;
 
-        Ok(())
-    }
-
-    fn register_validation_operations(
-        &self,
-        codegen: &mut CodeGenerator,
-    ) -> Result<(), CompilerError> {
-        // String.isEmpty(string text) -> boolean
+        // string.isEmpty(text) -> boolean
         register_stdlib_function(
             codegen,
             "string.isEmpty",
             &[WasmType::I32],
             Some(WasmType::I32),
             vec![
-                // Get string pointer
                 Instruction::LocalGet(0),
-                // Load string length
                 Instruction::I32Load(MemArg {
                     offset: 0,
                     align: 2,
                     memory_index: 0,
                 }),
-                // Check if length == 0
-                Instruction::I32Const(0),
-                Instruction::I32Eq,
+                Instruction::I32Eqz,
             ],
         )?;
 
-        // String.isBlank(string text) -> boolean
+        // string.isBlank(text) -> boolean
         register_stdlib_function(
             codegen,
             "string.isBlank",
             &[WasmType::I32],
             Some(WasmType::I32),
-            self.generate_is_blank(),
+            Self::gen_is_blank(),
         )?;
 
         Ok(())
     }
 
-    fn register_padding_operations(
+    /// Register the string functions that allocate their result with
+    /// `__malloc`. Must run after the native memory operations.
+    pub fn register_heap_operations(
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // Resolve malloc index. Padding requires heap allocation; if malloc is not yet
-        // registered (e.g. when StringClass is called early in the pipeline before memory
-        // operations), fall back to identity implementations so the function slot is
-        // reserved with the correct signature. The full implementation is available when
-        // the normal compilation pipeline registers memory operations before this call.
-        let malloc_opt = codegen
-            .get_function_index("__malloc")
-            .or_else(|| codegen.get_function_index("malloc"));
+        let malloc = codegen.get_function_index("__malloc").ok_or_else(|| {
+            CompilerError::codegen_error(
+                "string stdlib registration requires `__malloc` to be registered first".to_string(),
+                None,
+                None,
+            )
+        })?;
 
-        // String.padStart(str_ptr: i32, width: i32, pad_ptr: i32) -> i32
-        // Prepends pad characters (cycling through pad string) until str.length() == width.
-        // If str.length() >= width, returns the original string pointer unchanged.
-        let pad_start_instrs = if let Some(malloc_idx) = malloc_opt {
-            Self::gen_pad_start(malloc_idx)
-        } else {
-            // Fallback: return original string unchanged (no allocation possible without malloc).
-            vec![
-                Instruction::LocalGet(1),
-                Instruction::Drop,
-                Instruction::LocalGet(2),
-                Instruction::Drop,
-                Instruction::LocalGet(0),
-            ]
-        };
+        // string.charAt(text, index) -> string
+        register_stdlib_function(
+            codegen,
+            "string.charAt",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            Self::gen_char_at(malloc),
+        )?;
+
+        // string.padStart(text, width, pad) -> string
         register_stdlib_function(
             codegen,
             "string.padStart",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            pad_start_instrs,
+            Self::gen_pad_start(malloc),
         )?;
 
-        // String.padEnd(str_ptr: i32, width: i32, pad_ptr: i32) -> i32
-        // Appends pad characters (cycling through pad string) until str.length() == width.
-        // If str.length() >= width, returns the original string pointer unchanged.
-        let pad_end_instrs = if let Some(malloc_idx) = malloc_opt {
-            Self::gen_pad_end(malloc_idx)
-        } else {
-            vec![
-                Instruction::LocalGet(1),
-                Instruction::Drop,
-                Instruction::LocalGet(2),
-                Instruction::Drop,
-                Instruction::LocalGet(0),
-            ]
-        };
+        // string.padEnd(text, width, pad) -> string
         register_stdlib_function(
             codegen,
             "string.padEnd",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            pad_end_instrs,
+            Self::gen_pad_end(malloc),
         )?;
 
         Ok(())
     }
 
-    // Implementation methods for string operations
-
-    // NOTE: string.concat is an IMPORTED runtime function (2 params: ptr1, ptr2)
-    // Each pointer points to a length-prefixed string: [4-byte len][content]
-    // It's registered in codegen_registration.rs and implemented in wasmtime_runner.rs, NOT here.
-
-    fn generate_join(&self) -> Vec<Instruction<'static>> {
-        // Simplified string.join implementation to maintain spec compliance
-        // According to spec: Joins array elements into a string with separator
-        // Parameters: array_ptr, separator_ptr
-        // Returns: string pointer (simplified to return separator to maintain valid stack)
-        // In a full implementation, this would properly join array elements with separator
+    /// `string.charAt(text, index)`: a new one-byte string holding the byte at
+    /// `index`. Halts when `index` is out of bounds (stdlib-reference.md §4).
+    /// params (text, index); local 2 = new string pointer.
+    fn gen_char_at(malloc_func: u32) -> Vec<Instruction<'static>> {
         vec![
-            // Return the separator string to maintain proper stack behavior
-            // This is a valid minimal implementation that satisfies the return type
-            Instruction::LocalGet(1), // return separator string ptr
-        ]
-    }
-
-    fn generate_char_at(&self) -> Vec<Instruction<'static>> {
-        // Simplified string.charAt implementation to maintain spec compliance
-        // According to spec: Returns character at specified index as single character string
-        // Parameters: text string, index
-        // Returns: single character string (simplified to return fixed memory pointer)
-        // In a full implementation, this would extract the character at the specified index
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // text_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // index
-            Instruction::Drop,        // drop it
-            // Return a simple fixed memory allocation for a single character string
-            // This maintains the expected return type (string) for spec compliance
-            Instruction::I32Const(8), // allocate 8 bytes for simple string (4 length + 4 data)
+            Instruction::LocalGet(1),
+            Instruction::I32Const(0),
+            Instruction::I32LtS,
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32GeS,
+            Instruction::I32Or,
+            Instruction::If(BlockType::Empty),
+            Instruction::Unreachable,
+            Instruction::End,
+            Instruction::I32Const(5),
+            Instruction::Call(malloc_func),
+            Instruction::LocalSet(2),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Store(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::I32Store8(MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalGet(2),
         ]
     }
 
@@ -358,21 +234,57 @@ impl StringClass {
         ]
     }
 
-    fn generate_is_blank(&self) -> Vec<Instruction<'static>> {
-        // Simplified string.isBlank implementation to maintain spec compliance
-        // According to spec: Checks if string contains only whitespace
-        // Parameters: text string
-        // Returns: boolean (simplified to always return false)
-        // In a full implementation, this would properly check for whitespace characters
+    /// `string.isBlank(text)`: true when every byte is ASCII whitespace
+    /// (space, tab, LF, VT, FF, CR); the empty string is blank.
+    /// params (text); locals 1 = i, 2 = byte.
+    fn gen_is_blank() -> Vec<Instruction<'static>> {
         vec![
-            // Consume the parameter to avoid stack mismatch
-            Instruction::LocalGet(0), // text_ptr
-            Instruction::Drop,        // drop it
-            // Return false (simplified — full implementation would check for whitespace)
             Instruction::I32Const(0),
+            Instruction::LocalSet(1),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalTee(2),
+            Instruction::I32Const(32),
+            Instruction::I32Eq,
+            // 9..=13 is \t \n \v \f \r
+            Instruction::LocalGet(2),
+            Instruction::I32Const(9),
+            Instruction::I32Sub,
+            Instruction::I32Const(4),
+            Instruction::I32LeU,
+            Instruction::I32Or,
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(1),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(1),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::I32Const(1),
         ]
     }
-
     /// Generate WASM instructions for string.padStart.
     ///
     /// String memory layout: [4-byte length][content bytes]

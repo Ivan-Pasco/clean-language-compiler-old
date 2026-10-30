@@ -14,8 +14,8 @@
 //!    `src/plugins/plugin_abi.rs`. When the foundation copy is absent (CI
 //!    without the spec workspace), the hash of the vendored fallback copy at
 //!    `src/plugins/typed-emission-ops.toml` is used. If neither exists the
-//!    hash is the all-zeros sentinel ("0000…0000") and the loader treats the
-//!    field as absent (warn-only until --strict-emission-ops is set).
+//!    hash is the all-zeros sentinel ("0000…0000") and the loader skips the
+//!    check for plugins that omit the field.
 //!
 //! See:
 //!   - foundation/spec/plugins/contracts/typed-emission.md §3.10

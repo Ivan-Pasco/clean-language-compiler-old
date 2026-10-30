@@ -488,77 +488,6 @@ impl MirCodeGenerator<'_> {
         })
     }
 
-    #[allow(dead_code)] // CFG analysis helper — available for future optimizer passes
-    pub(super) fn block_always_returns(
-        &self,
-        function: &MirFunction,
-        block_id: BasicBlockId,
-    ) -> bool {
-        let mut visited = std::collections::HashSet::new();
-        let mut on_stack = std::collections::HashSet::new();
-        self.block_always_returns_recursive(function, block_id, &mut visited, &mut on_stack)
-    }
-
-    #[allow(dead_code)] // Recursive impl for block_always_returns — not yet called externally
-    fn block_always_returns_recursive(
-        &self,
-        function: &MirFunction,
-        block_id: BasicBlockId,
-        visited: &mut std::collections::HashSet<BasicBlockId>,
-        on_stack: &mut std::collections::HashSet<BasicBlockId>,
-    ) -> bool {
-        // If we encounter a block on the recursion stack, it's a back-edge (loop)
-        // Treat loop back-edges as "okay" - the exit path must return
-        if on_stack.contains(&block_id) {
-            return true;
-        }
-
-        // If already fully analyzed, return cached result
-        if visited.contains(&block_id) {
-            return false;
-        }
-
-        // Mark this block as being on the recursion stack
-        on_stack.insert(block_id);
-
-        let Some(block) = function.blocks.get(&block_id) else {
-            on_stack.remove(&block_id);
-            return false;
-        };
-
-        let result = match &block.terminator {
-            MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => true,
-            MirTerminator::Branch {
-                true_block,
-                false_block,
-                ..
-            } => {
-                // Both branches must return (back-edges return true automatically)
-                self.block_always_returns_recursive(function, *true_block, visited, on_stack)
-                    && self.block_always_returns_recursive(
-                        function,
-                        *false_block,
-                        visited,
-                        on_stack,
-                    )
-            }
-            MirTerminator::Jump { target } => {
-                // Follow the jump
-                self.block_always_returns_recursive(function, *target, visited, on_stack)
-            }
-        };
-
-        // Remove from recursion stack
-        on_stack.remove(&block_id);
-
-        // If this block doesn't return, cache it
-        if !result {
-            visited.insert(block_id);
-        }
-
-        result
-    }
-
     /// Find the block that eventually leads to the loop's increment/backedge.
     ///
     /// Handles cases where the body contains nested control flow (if statements)
@@ -610,44 +539,5 @@ impl MirCodeGenerator<'_> {
             return Some(picked);
         }
         None
-    }
-
-    /// Check if a path from start_block eventually reaches target_block.
-    #[allow(dead_code)] // CFG reachability helper — available for future optimizer passes
-    pub(super) fn path_reaches_block(
-        &self,
-        function: &MirFunction,
-        start_block: BasicBlockId,
-        target_block: BasicBlockId,
-        visited: &mut std::collections::HashSet<BasicBlockId>,
-    ) -> bool {
-        if start_block == target_block {
-            return true;
-        }
-        if visited.contains(&start_block) {
-            return false;
-        }
-        visited.insert(start_block);
-
-        if let Some(block) = function.blocks.get(&start_block) {
-            match &block.terminator {
-                MirTerminator::Jump { target } => {
-                    self.path_reaches_block(function, *target, target_block, visited)
-                }
-                MirTerminator::Branch {
-                    true_block,
-                    false_block,
-                    ..
-                } => {
-                    self.path_reaches_block(function, *true_block, target_block, visited)
-                        || self.path_reaches_block(function, *false_block, target_block, visited)
-                }
-                MirTerminator::Return { .. } | MirTerminator::Unreachable | MirTerminator::Trap => {
-                    false
-                }
-            }
-        } else {
-            false
-        }
     }
 }

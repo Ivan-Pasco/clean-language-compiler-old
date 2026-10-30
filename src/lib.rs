@@ -91,8 +91,6 @@ pub mod lexer;
 pub mod mcp;
 /// Medium-level Intermediate Representation — Stage 6 (TAST to MIR with optimizations)
 pub mod mir;
-/// Module system — multi-file resolution and dependency management
-pub mod module;
 /// Parser — Stage 2 (tokens to AST via recursive descent)
 pub mod parser;
 /// Plugin artifact orchestration (Plugin Contracts v2 — contracts/artifacts.md)
@@ -105,8 +103,6 @@ pub mod resolver;
 pub mod runtime;
 /// Standard library — built-in function implementations for the old codegen path
 pub mod stdlib;
-/// Compilation targets — server, client, and platform-specific codegen
-pub mod targets;
 /// Telemetry — compilation metrics and performance tracking
 pub mod telemetry;
 /// Type checker — Stage 5 (type inference, constraint solving, TAST generation)
@@ -299,66 +295,6 @@ impl std::fmt::Display for MemoryTier {
     }
 }
 
-/// Compile-time options bundle.
-///
-/// Introduced in 0.33.135 by the JSON stdlib migration ([P2-cont]) as the
-/// preferred way to pass compilation knobs. The existing
-/// `compile_multi_file_with_memory_tier` remains a thin wrapper for callers
-/// that already thread the older positional arguments — new call sites and
-/// features should prefer [`compile_multi_file_with_options`] with this
-/// struct.
-///
-/// Fields align with the existing thread-local knobs; setting a field here
-/// updates the corresponding thread-local for the duration of the call.
-#[derive(Debug, Clone, Copy)]
-pub struct CompileOptions {
-    /// Memory tier for the produced WASM. Corresponds to the `--memory-tier`
-    /// CLI flag when supplied; otherwise the target-derived default.
-    pub memory_tier: MemoryTier,
-    /// When `true`, drop server-only modules and blank the entry `start:`
-    /// body so the produced WASM is safe for browser hydration.
-    pub client_mode: bool,
-    /// When `true` (the default as of 0.33.139 / [P4c]), dispatch the four
-    /// spec'd JSON functions (json.textToData / json.tryTextToData /
-    /// json.dataToText / json.prettyDataToText) through the Layer 2 host
-    /// bridge (`_json_decode_v2` / `_json_encode_v2` / `_json_encode_pretty_v2`).
-    ///
-    /// When `false`, dispatch through the pre-Delivery-2 pure-WASM parser in
-    /// `src/stdlib/json_class.rs` — same behavior as 0.33.134 and earlier.
-    /// This is the opt-out escape hatch, gated by `--enable-legacy-json-wasm`.
-    /// Kept during the Delivery-2 soak window; removed in [P5].
-    ///
-    /// See `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
-    pub enable_json_bridge: bool,
-}
-
-impl Default for CompileOptions {
-    fn default() -> Self {
-        Self {
-            memory_tier: MemoryTier::Standard,
-            client_mode: false,
-            enable_json_bridge: true,
-        }
-    }
-}
-
-impl CompileOptions {
-    /// Construct a `CompileOptions` matching the positional args accepted by
-    /// [`compile_multi_file_with_memory_tier`]. Used by the wrapper to keep
-    /// the existing entry point functional.
-    pub fn from_positional(memory_tier: MemoryTier, client_mode: bool) -> Self {
-        Self {
-            memory_tier,
-            client_mode,
-            enable_json_bridge: true,
-        }
-    }
-}
-
-/// Minimum compatible compiler version for plugins
-/// Plugins should check compatibility using semver rules
-pub const MIN_PLUGIN_VERSION: &str = "0.14.0";
-
 /// Initialize structured logging with the specified level
 ///
 /// This should be called once at application startup. Valid levels are:
@@ -403,11 +339,6 @@ pub fn init_logging(level: &str) {
 thread_local! {
     static TARGET_HOST_CLASS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static STRICT_HOSTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Plugin Contracts v3 Layer D step 2 — when true, a plugin that omits
-    /// `[compatibility].emission_ops_hash` is refused instead of warned.
-    /// Set by `--strict-emission-ops` CLI flag.
-    /// See foundation/spec/plugins/contracts/typed-emission.md §3.10.
-    static STRICT_EMISSION_OPS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Plugin Contracts v2 Phase B — when set, `compile_multi_file_with_memory_tier`
     /// stamps the produced WASM with this Clean Runtime ABI version as a
     /// `clean.abi_version` custom section. Set by `handle_compile` when the CLI
@@ -511,23 +442,6 @@ pub fn set_strict_hosts_override(strict: bool) {
 /// Read the active `--strict-hosts` override for the current thread.
 pub fn strict_hosts_override() -> bool {
     STRICT_HOSTS.with(|cell| cell.get())
-}
-
-/// Set the `--strict-emission-ops` flag for the current thread.
-///
-/// When true, a plugin that omits `[compatibility].emission_ops_hash` is refused
-/// with PLUGIN006 instead of loading with a warning. Absent hash means the plugin
-/// was compiled without typed-op bridge support; the flag enforces that all loaded
-/// plugins are up-to-date.
-///
-/// See foundation/spec/plugins/contracts/typed-emission.md §3.10.
-pub fn set_strict_emission_ops_override(strict: bool) {
-    STRICT_EMISSION_OPS.with(|cell| cell.set(strict));
-}
-
-/// Read the active `--strict-emission-ops` override for the current thread.
-pub fn strict_emission_ops_override() -> bool {
-    STRICT_EMISSION_OPS.with(|cell| cell.get())
 }
 
 /// Set the `--emit-heap-probes` flag for the current thread.
@@ -638,13 +552,6 @@ pub fn set_plugin_overrides(overrides: std::collections::HashMap<String, std::pa
 /// default `~/.cleen/plugins/<name>/` resolution.
 pub fn plugin_override_dir(name: &str) -> Option<std::path::PathBuf> {
     PLUGIN_OVERRIDES.with(|cell| cell.borrow().get(name).cloned())
-}
-
-/// Snapshot of every active `--plugin-override` on the current thread.
-/// Used by the CLI's up-front validation to check every override maps to a
-/// plugin actually loaded by the compilation.
-pub fn plugin_overrides_snapshot() -> std::collections::HashMap<String, std::path::PathBuf> {
-    PLUGIN_OVERRIDES.with(|cell| cell.borrow().clone())
 }
 
 /// Translate a CLI `--target` value into the bridge host class it implies.
@@ -820,6 +727,7 @@ pub fn type_check_with_plugins(
             None,
         )]
     })?;
+    expander.check_permissions().map_err(|e| vec![e])?;
 
     // Stage 2.6: Bridge function registration + language alias registration
     let bridge_functions = registry.bridge_functions();
@@ -974,33 +882,7 @@ pub fn type_check_with_plugins(
     // Compute required-param-count overrides for language alias functions that declare
     // param_defaults — the resolver encodes param types but not optionality, so we
     // must pass the counts explicitly so optional-param calls are not rejected.
-    let required_counts = {
-        use crate::resolver::SymbolId;
-        let mut counts: std::collections::HashMap<SymbolId, usize> =
-            std::collections::HashMap::new();
-        let alias_fn_defs = registry.language_function_defs();
-        for (lang_name, lang_def) in &alias_fn_defs {
-            if lang_def.param_defaults.is_empty() {
-                continue;
-            }
-            let required = lang_def
-                .param_defaults
-                .iter()
-                .filter(|s| s.is_empty())
-                .count();
-            let total = lang_def
-                .params
-                .as_ref()
-                .map(|p| p.len())
-                .unwrap_or(lang_def.param_defaults.len());
-            if required < total {
-                if let Some(sym_id) = resolved_hir.symbol_table.lookup_symbol(lang_name.as_str()) {
-                    counts.insert(sym_id, required);
-                }
-            }
-        }
-        counts
-    };
+    let required_counts = required_param_counts(registry, &resolved_hir);
     let _type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -1175,6 +1057,48 @@ pub fn compile_source_with_detected_plugins(
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
     compile_with_external_plugins_and_opt_level(source, file_path, opt_level)
+}
+
+/// Print the non-fatal diagnostics collected by HIR validation, name
+/// resolution and type checking (FUNC004, FUNC005, FUNC007, IDX004 on `any`,
+/// ...) to stderr. Warnings never fail compilation. Warnings located in
+/// plugin-generated code or without a source position are skipped: the user
+/// cannot act on them.
+fn report_compile_warnings<'a>(warnings: impl IntoIterator<Item = &'a CompilerError>) {
+    let mut seen = std::collections::HashSet::new();
+    for warning in warnings {
+        let context = match warning {
+            CompilerError::Syntax { context }
+            | CompilerError::Type { context }
+            | CompilerError::Memory { context }
+            | CompilerError::Codegen { context }
+            | CompilerError::IO { context }
+            | CompilerError::Runtime { context }
+            | CompilerError::Validation { context }
+            | CompilerError::Module { context }
+            | CompilerError::Testing { context } => context,
+            CompilerError::LexError(_) | CompilerError::PluginError { .. } => continue,
+        };
+        // Skip warnings without a source position (compiler-injected plugin
+        // type stubs) and warnings inside plugin-generated code.
+        let loc = match context.location.as_ref() {
+            Some(loc) if !loc.file.is_empty() || loc.line > 0 => loc,
+            _ => continue,
+        };
+        if (!loc.file.is_empty() && ast::is_synthetic_file_marker(&loc.file))
+            || ast::plugin_name_from_origin_marker(&loc.file).is_some()
+        {
+            continue;
+        }
+        let code = context.error_code.as_deref().unwrap_or("W000");
+        let line = format!(
+            "warning[{}]: {}\n  --> {}:{}:{}",
+            code, context.message, loc.file, loc.line, loc.column
+        );
+        if seen.insert(line.clone()) {
+            eprintln!("{line}");
+        }
+    }
 }
 
 /// Parses a bridge function type string into an AST Type
@@ -1406,7 +1330,8 @@ pub fn compile_with_plugins_and_opt_level(
     // Stage 2.5b: Plugin Expansion - transform framework blocks into Clean AST
     tracing::debug!("Starting Stage 2.5: Plugin Expansion");
     use crate::plugins::PluginExpander;
-    let mut expander = PluginExpander::new(registry);
+    let mut expander = PluginExpander::new(registry)
+        .with_build_context(plugins::BuildContext::new().with_entry(file_path));
     let mut ast = expander.expand_program(parsed_ast).map_err(|e| {
         vec![CompilerError::syntax_error(
             e.to_string(),
@@ -1414,6 +1339,7 @@ pub fn compile_with_plugins_and_opt_level(
             None,
         )]
     })?;
+    expander.check_permissions().map_err(|e| vec![e])?;
     tracing::debug!(
         blocks_expanded = expander.blocks_expanded(),
         statements_generated = expander.statements_generated(),
@@ -1577,7 +1503,8 @@ pub fn compile_with_plugins_and_opt_level(
     // preserved so builds without a modernized plugin.toml keep working.
     use crate::hir::validation::HirValidator;
     let handler_bridges = registry.handler_registering_bridges();
-    HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
+    let validation_warnings =
+        HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
     tracing::debug!("Stage 3b complete: HIR validation passed");
 
     // Stage 4: Name and Module Resolution - symbol resolution per specification
@@ -1638,6 +1565,12 @@ pub fn compile_with_plugins_and_opt_level(
     // Stage 5: Type Inference and Checking to TAST - constraint-based type inference
     tracing::debug!("Starting Stage 5: Type Checker");
     let type_result = TypeChecker::check(resolved_hir)?;
+    report_compile_warnings(
+        validation_warnings
+            .iter()
+            .chain(&resolution_result.warnings)
+            .chain(&type_result.warnings),
+    );
     tracing::debug!(
         functions = type_result.tast.functions.len(),
         "Stage 5 complete: Type checking finished"
@@ -1961,7 +1894,8 @@ pub fn compile_with_target(
     // See handler_bridges plumbing note in compile_with_plugins_and_opt_level.
     use crate::hir::validation::HirValidator;
     let handler_bridges = handler_bridges_from_slice(&source_bridges);
-    HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
+    let validation_warnings =
+        HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
 
     // Stage 4: Name and Module Resolution
     let resolution_result = if source_bridges.is_empty() {
@@ -1973,6 +1907,12 @@ pub fn compile_with_target(
 
     // Stage 5: Type Inference and Checking
     let type_result = TypeChecker::check(resolved_hir)?;
+    report_compile_warnings(
+        validation_warnings
+            .iter()
+            .chain(&resolution_result.warnings)
+            .chain(&type_result.warnings),
+    );
 
     // Stage 6: TAST to MIR Lowering
     let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
@@ -2031,24 +1971,6 @@ pub fn compile_with_target(
 /// ```
 pub fn compile_for_plugin(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
     compile_with_target(source, file_path, CompilationTarget::Plugin, 2)
-}
-
-/// Compiles Clean Language source code for use as a WASM plugin with custom optimization level
-///
-/// # Arguments
-/// * `source` - The Clean Language source code
-/// * `file_path` - Path for error reporting
-/// * `opt_level` - Optimization level (0-3)
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes (with minimal imports)
-/// * `Err(Vec<CompilerError>)` - Compilation errors
-pub fn compile_for_plugin_with_opt_level(
-    source: &str,
-    file_path: &str,
-    opt_level: u8,
-) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_with_target(source, file_path, CompilationTarget::Plugin, opt_level)
 }
 
 /// Extracts plugin names from `plugins:` blocks in source code
@@ -2182,70 +2104,31 @@ pub fn discover_callback_contracts<P: AsRef<std::path::Path>>(
     registry.callback_contracts()
 }
 
-/// Plugin Contracts v2 — **DO NOT USE**. Always returns an empty map.
-///
-/// This function was a Phase-C stub that loaded plugins into a brand-new
-/// throwaway registry and snapshotted its (necessarily empty) BuildState. It
-/// can never reflect writes made during the real build because the writes
-/// happen in a different registry that lives only inside
-/// [`compile_multi_file_with_memory_tier`] / [`compile_multi_file_release`].
-///
-/// Both of those functions now return the populated snapshot directly in
-/// their `Result` tuple. Use that instead. This wrapper is retained only so
-/// out-of-tree callers still link; new code MUST use the tuple return.
-///
-/// Reported as `PLUGIN_BUILD_STATE_NOT_PERSISTED` against compiler 0.30.276.
-#[deprecated(
-    note = "Use the build_state returned by compile_multi_file_with_memory_tier or \
-            compile_multi_file_release. This function always returns an empty map."
-)]
-pub fn discover_build_state_snapshot<P: AsRef<std::path::Path>>(
-    entry_path: P,
-) -> std::collections::BTreeMap<String, String> {
-    let entry_source = match std::fs::read_to_string(entry_path.as_ref()) {
-        Ok(src) => src,
-        Err(_) => return std::collections::BTreeMap::new(),
-    };
-    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
-    if plugin_names.is_empty() {
-        return std::collections::BTreeMap::new();
-    }
-    let mut loader = match plugins::WasmPluginLoader::new() {
-        Ok(l) => l,
-        Err(_) => return std::collections::BTreeMap::new(),
-    };
-    let registry = match loader.load_plugins(&plugin_names) {
-        Ok(reg) => reg,
-        Err(_) => return std::collections::BTreeMap::new(),
-    };
-    registry.build_state_snapshot()
-}
-
 /// Plugin Contracts v2 — discover plugins for the given entry file, load
 /// their manifests, and return the full set keyed by plugin name. Used by
 /// the build flow to orchestrate `[[artifacts]]` emission per
 /// `foundation/spec/plugins/contracts/artifacts.md` §7.
 ///
-/// Returns an empty map on any error so the legacy emission path can
-/// gracefully take over.
+/// The map is in plugin-load order. Returns an empty map on any error so the
+/// legacy emission path can gracefully take over.
 pub fn discover_plugin_manifests<P: AsRef<std::path::Path>>(
     entry_path: P,
-) -> std::collections::HashMap<String, plugins::PluginManifest> {
+) -> indexmap::IndexMap<String, plugins::PluginManifest> {
     let entry_source = match std::fs::read_to_string(entry_path.as_ref()) {
         Ok(src) => src,
-        Err(_) => return std::collections::HashMap::new(),
+        Err(_) => return indexmap::IndexMap::new(),
     };
     let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
     if plugin_names.is_empty() {
-        return std::collections::HashMap::new();
+        return indexmap::IndexMap::new();
     }
     let mut loader = match plugins::WasmPluginLoader::new() {
         Ok(l) => l,
-        Err(_) => return std::collections::HashMap::new(),
+        Err(_) => return indexmap::IndexMap::new(),
     };
     let registry = match loader.load_plugins(&plugin_names) {
         Ok(reg) => reg,
-        Err(_) => return std::collections::HashMap::new(),
+        Err(_) => return indexmap::IndexMap::new(),
     };
     registry.loaded_manifests().clone()
 }
@@ -2659,392 +2542,6 @@ fn extract_package_target(entry_source: &str) -> Option<String> {
     None
 }
 
-/// Compiles a multi-file Clean Language program from an entry file
-///
-/// This function supports programs with `import:` statements that reference
-/// other `.cln` files. It automatically discovers, loads, and compiles all
-/// transitively imported modules into a single WASM output.
-///
-/// **Plugin Support:** If the entry file contains a `plugins:` block, plugins
-/// will be automatically loaded from `~/.cleen/plugins/` and framework blocks
-/// (like `endpoints:`, `data:`, `component:`) will be expanded.
-///
-/// # Arguments
-/// * `entry_path` - Path to the main/entry `.cln` file
-/// * `search_paths` - Additional paths to search for imported modules
-/// * `opt_level` - Optimization level (0-3)
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes containing all modules
-/// * `Err(Vec<CompilerError>)` - Compilation errors
-///
-/// # Example
-/// ```ignore
-/// // Given: main.cln imports utils.cln
-/// let wasm = compile_multi_file(
-///     Path::new("src/main.cln"),
-///     vec![PathBuf::from("src/"), PathBuf::from("lib/")],
-///     2
-/// )?;
-/// ```
-pub fn compile_multi_file<P: AsRef<std::path::Path>>(
-    entry_path: P,
-    search_paths: Vec<std::path::PathBuf>,
-    opt_level: u8,
-) -> Result<Vec<u8>, Vec<CompilerError>> {
-    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
-    use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::resolver::NameResolver as Resolver;
-    use crate::typechecker::TypeChecker;
-    use std::sync::Arc;
-
-    tracing::info!(
-        entry = %entry_path.as_ref().display(),
-        opt_level = opt_level,
-        "Starting multi-file compilation"
-    );
-
-    // Step 0: Read entry file to extract plugins
-    let entry_source = std::fs::read_to_string(entry_path.as_ref()).map_err(|e| {
-        vec![CompilerError::io_error(
-            format!("Failed to read entry file: {}", e),
-            None,
-            None,
-        )]
-    })?;
-
-    // Collect plugin names from all package files (entry, manifest entry, shared folders).
-    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
-
-    // Load plugins if any are declared
-    let registry = if !plugin_names.is_empty() {
-        tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
-
-        let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
-            vec![CompilerError::PluginError {
-                message: format!("Failed to create plugin loader: {}", e),
-                location: None,
-            }]
-        })?;
-
-        let reg = loader.load_plugins(&plugin_names).map_err(|e| {
-            vec![CompilerError::PluginError {
-                message: format!("Failed to load plugins: {}", e),
-                location: None,
-            }]
-        })?;
-
-        tracing::info!(
-            plugins = ?reg.registered_plugins(),
-            "Plugins loaded for multi-file compilation"
-        );
-
-        Some(Arc::new(reg))
-    } else {
-        tracing::debug!("No plugins: block found in entry file, compiling without plugins");
-        None
-    };
-
-    // Step 1: Build the compilation unit (discovers and parses all modules)
-    let mut config = MultiFileCompilerConfig::default()
-        .with_search_paths(search_paths)
-        .with_opt_level(opt_level);
-
-    // Add plugin registry if plugins were loaded
-    if let Some(ref reg) = registry {
-        config = config.with_plugin_registry(Arc::clone(reg));
-    }
-
-    let compiler = MultiFileCompiler::with_config(config);
-    let unit = compiler.build_from_file(&entry_path)?;
-
-    tracing::info!(
-        modules = unit.module_count(),
-        "All modules discovered and parsed to HIR"
-    );
-
-    // Step 2: Merge all HIR programs into a single unified program
-    // The compilation order ensures dependencies come before dependents
-    let merged_hir = {
-        use crate::hir::{HirFunction, HirProgram};
-
-        let mut all_functions: Vec<HirFunction> = Vec::new();
-        let mut all_classes = Vec::new();
-        let mut all_capabilities: Vec<crate::hir::HirCapability> = Vec::new();
-        let mut start_function: Option<crate::hir::HirFunction> = None;
-        // Start function bodies from non-entry modules (e.g. route registrations
-        // generated by frame.server plugin expanding a routes: block in routes.cln).
-        // These must not be dropped — they are merged into the entry start function.
-        let mut extra_start_stmts: Vec<crate::hir::HirStatement> = Vec::new();
-        let mut all_imports = Vec::new();
-        let mut all_tests = Vec::new();
-        let mut all_externals = Vec::new();
-        let mut merged_state: Option<crate::hir::HirStateBlock> = None;
-        let mut merged_screen_blocks: Vec<crate::hir::HirScreenBlock> = Vec::new();
-        let mut merged_watch_blocks: Vec<crate::hir::HirWatchBlock> = Vec::new();
-        let mut root_location = None;
-
-        // Process modules in compilation order (dependencies first)
-        for module_id in &unit.compilation_order {
-            if let Some(module) = unit.get_module(*module_id) {
-                if let Some(hir) = &module.hir {
-                    // Collect functions (but only one start function).
-                    // Dedup by name: plugin preamble injection on the entry module can
-                    // re-emit helpers (e.g. __redirect_0) that a non-entry module already
-                    // generated via block expansion, producing two MIR entries with
-                    // different SymbolIds but the same name and corrupting the export table.
-                    for func in &hir.functions {
-                        if !all_functions.iter().any(|f| f.name == func.name) {
-                            all_functions.push(func.clone());
-                        }
-                    }
-
-                    // Collect classes
-                    for class in &hir.classes {
-                        all_classes.push(class.clone());
-                    }
-
-                    // Collect capabilities (top-level `can Name:` declarations).
-                    // Dedup by name — the same capability declared in multiple
-                    // modules is a name collision handled by the resolver's
-                    // SEM003 pass; here we keep the first-seen.
-                    for cap in &hir.capabilities {
-                        if !all_capabilities.iter().any(|c| c.name == cap.name) {
-                            all_capabilities.push(cap.clone());
-                        }
-                    }
-
-                    // Merge state from every module. compilation_order is
-                    // topologically sorted with the entry last, so non-entry
-                    // plugin-emitted globals (e.g. frame.ui's `instance_<tag>`
-                    // declarations contributed by `expand_component` running on
-                    // component source files) land before the entry module's
-                    // user state declarations. Before this merge landed, the
-                    // entry-only assignment silently discarded plugin state,
-                    // breaking the v2.12.3 client_init splice with
-                    // `Undefined variable 'instance_<tag>'`.
-                    merge_hir_state(&mut merged_state, hir.state.clone());
-
-                    if module.is_entry {
-                        start_function = hir.start_function.clone();
-                        merged_screen_blocks = hir.screen_blocks.clone();
-                        merged_watch_blocks = hir.watch_blocks.clone();
-                        root_location = Some(hir.location.clone());
-                    } else if let Some(ref module_start) = hir.start_function {
-                        // Collect start statements from non-entry modules so that
-                        // plugin-generated route registrations (routes: block in
-                        // routes.cln) are not silently discarded.
-                        extra_start_stmts.extend(module_start.body.statements.iter().cloned());
-                    }
-
-                    // Collect imports (for reference, they're already resolved)
-                    for import in &hir.imports {
-                        all_imports.push(import.clone());
-                    }
-
-                    // Collect tests (only from entry module for now)
-                    if module.is_entry {
-                        for test in &hir.tests {
-                            all_tests.push(test.clone());
-                        }
-                    }
-
-                    // Collect external functions (WASM imports)
-                    for external in &hir.externals {
-                        all_externals.push(external.clone());
-                    }
-                }
-            }
-        }
-
-        // Merge non-entry start statements (e.g. routes: registrations) into the
-        // entry module's start function.  Non-entry statements are prepended so
-        // route registrations happen before any _http_listen call in the entry body.
-        if !extra_start_stmts.is_empty() {
-            let loc = root_location
-                .clone()
-                .unwrap_or_else(|| crate::ast::SourceLocation {
-                    file: entry_path.as_ref().to_string_lossy().to_string(),
-                    line: 1,
-                    column: 1,
-                    byte_start: None,
-                    byte_end: None,
-                });
-            match start_function {
-                Some(ref mut sf) => {
-                    extra_start_stmts.append(&mut sf.body.statements);
-                    sf.body.statements = extra_start_stmts;
-                }
-                None => {
-                    start_function = Some(crate::hir::HirFunction {
-                        name: "start".to_string(),
-                        parameters: Vec::new(),
-                        return_type: None,
-                        body: crate::hir::HirBlock {
-                            statements: extra_start_stmts,
-                            location: loc.clone(),
-                        },
-                        is_start: true,
-                        is_private: false,
-                        owner_screen: None,
-                        location: loc,
-                    });
-                }
-            }
-        }
-
-        let location = root_location.unwrap_or_else(|| crate::ast::SourceLocation {
-            file: entry_path.as_ref().to_string_lossy().to_string(),
-            line: 1,
-            column: 1,
-            byte_start: None,
-            byte_end: None,
-        });
-
-        tracing::info!(
-            functions = all_functions.len(),
-            classes = all_classes.len(),
-            screen_blocks = merged_screen_blocks.len(),
-            "Merged HIR from all modules"
-        );
-
-        HirProgram {
-            functions: all_functions,
-            classes: all_classes,
-            start_function,
-            imports: all_imports,
-            tests: all_tests,
-            state: merged_state,
-            watch_blocks: merged_watch_blocks,
-            externals: all_externals,
-            screen_blocks: merged_screen_blocks,
-            capabilities: all_capabilities,
-            location,
-        }
-    };
-
-    // Get bridge functions and language-to-bridge mapping from plugin registry
-    let mut bridge_functions = registry
-        .as_ref()
-        .map(|r| r.bridge_functions().to_vec())
-        .unwrap_or_default();
-    // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED:
-    // When a plugin is being built from source, the bridge declarations
-    // it CALLS through `--target=plugin` must be drawn from the source
-    // plugin.toml that lives next to (or one level above) the .cln entry
-    // — not the previously-installed `~/.cleen/plugins/<name>/plugin.toml`.
-    // Otherwise adding a new bridge to a plugin in a single commit is
-    // impossible: the source manifest declares it, but resolution looks
-    // up against the stale installed manifest and SEM007 fires before the
-    // plugin can be rebuilt.
-    extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
-    extend_with_registry_bridges(&mut bridge_functions);
-    let lang_to_bridge_multifile = registry
-        .as_ref()
-        .map(|r| r.language_to_bridge_map())
-        .unwrap_or_default();
-    let lang_to_helper_multifile = registry
-        .as_ref()
-        .map(|r| r.language_to_helper_map())
-        .unwrap_or_default();
-
-    // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
-    use crate::hir::validation::HirValidator;
-    let handler_bridges = handler_bridges_from_slice(&bridge_functions);
-    HirValidator::validate_with_handler_bridges(&merged_hir, &handler_bridges)?;
-    tracing::debug!("Stage 3b complete: HIR validation passed");
-
-    // Stage 4: Resolution (with bridge functions if plugins are loaded)
-    tracing::debug!(
-        bridge_function_count = bridge_functions.len(),
-        lang_alias_count = lang_to_bridge_multifile.len(),
-        "Starting Stage 4: Resolution"
-    );
-    let lang_fn_defs_multi: std::collections::HashMap<
-        String,
-        crate::plugins::plugin_abi::PluginFunctionDef,
-    > = registry
-        .as_ref()
-        .map(|r| {
-            r.language_function_defs()
-                .into_iter()
-                .map(|(k, v)| (k, v.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let resolution_result = if bridge_functions.is_empty() {
-        Resolver::resolve(merged_hir)?
-    } else if lang_to_bridge_multifile.is_empty() && lang_to_helper_multifile.is_empty() {
-        Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
-    } else if !lang_fn_defs_multi.is_empty() || !lang_to_helper_multifile.is_empty() {
-        Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
-            merged_hir,
-            &bridge_functions,
-            &lang_to_bridge_multifile,
-            lang_fn_defs_multi,
-            lang_to_helper_multifile.clone(),
-        )?
-    } else {
-        Resolver::resolve_with_bridge_and_language_aliases(
-            merged_hir,
-            &bridge_functions,
-            &lang_to_bridge_multifile,
-        )?
-    };
-    let resolved_hir = resolution_result.resolved_hir;
-
-    // Stage 5: Type checking
-    tracing::debug!("Starting Stage 5: Type checking");
-    let type_result = TypeChecker::check(resolved_hir)?;
-
-    // Stage 6: TAST to MIR
-    tracing::debug!("Starting Stage 6: TAST to MIR");
-    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
-
-    // Stage 7: WASM generation (with bridge functions for WASM imports if plugins are loaded)
-    tracing::debug!("Starting Stage 7: WASM generation");
-    use crate::codegen::mir_codegen::MirCodeGenerator;
-    let mut mir_codegen = MirCodeGenerator::default();
-
-    // Pass plugin bridge functions to the code generator for WASM import generation
-    if !bridge_functions.is_empty() {
-        tracing::debug!(
-            bridge_function_count = bridge_functions.len(),
-            "Passing bridge functions to MIR code generator"
-        );
-        mir_codegen.set_bridge_functions(bridge_functions);
-    }
-
-    // Pass language-to-bridge mapping so dot-notation calls resolve correctly
-    if !lang_to_bridge_multifile.is_empty() {
-        tracing::debug!(
-            alias_count = lang_to_bridge_multifile.len(),
-            "Passing language-to-bridge map to MIR code generator"
-        );
-        mir_codegen.set_language_to_bridge_map(lang_to_bridge_multifile);
-    }
-
-    if !lang_to_helper_multifile.is_empty() {
-        tracing::debug!(
-            helper_alias_count = lang_to_helper_multifile.len(),
-            "Passing language-to-helper map to MIR code generator"
-        );
-        mir_codegen.set_language_to_helper_map(lang_to_helper_multifile);
-    }
-
-    let codegen_result = mir_codegen.generate(mir_result.program)?;
-
-    crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
-        .map_err(|e| vec![e])?;
-
-    tracing::info!(
-        bytes = codegen_result.wasm_bytes.len(),
-        "Multi-file compilation complete"
-    );
-
-    Ok(codegen_result.wasm_bytes)
-}
-
 /// Returns true if a module is server-only and must be excluded from a
 /// `frontend.wasm` build. Used by `compile_multi_file_client_mode`.
 ///
@@ -3077,65 +2574,10 @@ fn is_server_only_module(module_name: &str, file_path: &std::path::Path) -> bool
         || file_stem == "routes"
 }
 
-/// Compile a Clean Language source tree with a bundled [`CompileOptions`]
-/// configuration. Preferred entry point for new callers (0.33.135+); the
-/// older positional-argument [`compile_multi_file_with_memory_tier`] remains
-/// available and is now implemented on top of this function.
-///
-/// This entry point centralises how compile-time flags (including the
-/// JSON stdlib dispatch mode, [`CompileOptions::enable_json_bridge`])
-/// reach the code generator without every intermediate function having to
-/// grow another positional parameter.
-pub fn compile_multi_file_with_options<P: AsRef<std::path::Path>>(
-    entry_path: P,
-    search_paths: Vec<std::path::PathBuf>,
-    opt_level: u8,
-    explicit_tier: Option<MemoryTier>,
-    options: CompileOptions,
-) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
-    // Publish the JSON-dispatch flag on the current thread so
-    // `mir_builder::expressions::build_call` and the codegen bridge
-    // resolver both see the same choice for the duration of this compile.
-    // Restored to its previous value on drop.
-    let _json_guard = ScopedEnableJsonBridge::set(options.enable_json_bridge);
-
-    compile_multi_file_with_memory_tier(
-        entry_path,
-        search_paths,
-        opt_level,
-        explicit_tier,
-        options.memory_tier,
-        options.client_mode,
-    )
-}
-
-/// RAII guard restoring the `ENABLE_JSON_BRIDGE` thread-local when dropped.
-/// Used by [`compile_multi_file_with_options`] so that a compile invoked
-/// with `enable_json_bridge = true` doesn't leak that state into unrelated
-/// downstream compiles on the same thread (test harnesses in particular
-/// share threads across many compiles).
-///
-/// Renamed from `ScopedEnableLegacyJsonWasm` in 0.33.137 alongside the
-/// broader flag rename ([P2-cont-2a]).
-struct ScopedEnableJsonBridge(bool);
-
-impl ScopedEnableJsonBridge {
-    fn set(new_value: bool) -> Self {
-        let previous = enable_json_bridge_override();
-        set_enable_json_bridge_override(new_value);
-        Self(previous)
-    }
-}
-
-impl Drop for ScopedEnableJsonBridge {
-    fn drop(&mut self) {
-        set_enable_json_bridge_override(self.0);
-    }
-}
-
 /// Compiles Clean Language with multi-file support and a specific memory tier.
 ///
-/// Same as `compile_multi_file` but allows controlling the memory budget tier.
+/// Supports `import:` of other `.cln` files and `plugins:` blocks, with control
+/// over the memory budget tier.
 ///
 /// # Tier resolution precedence (MEMORY_POLICY.md §3.1):
 /// 1. `explicit_tier` (`Some`) — from `--memory-tier` CLI flag, always wins.
@@ -3160,23 +2602,49 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     target_default: MemoryTier,
     client_mode: bool,
 ) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
+    compile_multi_file_impl(
+        entry_path.as_ref(),
+        search_paths,
+        opt_level,
+        explicit_tier,
+        target_default,
+        client_mode,
+        false,
+    )
+}
+
+/// The single multi-file pipeline shared by development and release builds.
+/// `release` only changes MIR lowering (`always:` invariant checks are
+/// stripped) and the module-compiler release flag; every other stage —
+/// package `target:` handling, plugin type stubs, required-parameter counts,
+/// host-class resolution — is identical for both.
+fn compile_multi_file_impl(
+    entry_path: &std::path::Path,
+    search_paths: Vec<std::path::PathBuf>,
+    opt_level: u8,
+    explicit_tier: Option<MemoryTier>,
+    target_default: MemoryTier,
+    client_mode: bool,
+    release: bool,
+) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
-    use crate::mir::lower_tast_to_mir_with_opt_level;
+    use crate::mir::{lower_tast_to_mir_release, lower_tast_to_mir_with_opt_level};
     use crate::resolver::NameResolver as Resolver;
     use crate::typechecker::TypeChecker;
     use std::sync::Arc;
 
     tracing::info!(
-        entry = %entry_path.as_ref().display(),
+        entry = %entry_path.display(),
         opt_level = opt_level,
         explicit_tier = ?explicit_tier,
         target_default = %target_default,
         client_mode = client_mode,
+        release = release,
         "Starting multi-file compilation with memory tier"
     );
 
     // Step 0: Read entry file to extract plugins
-    let entry_source = std::fs::read_to_string(entry_path.as_ref()).map_err(|e| {
+    let entry_source = std::fs::read_to_string(entry_path).map_err(|e| {
         vec![CompilerError::io_error(
             format!("Failed to read entry file: {}", e),
             None,
@@ -3184,7 +2652,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         )]
     })?;
 
-    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
+    let plugin_names = collect_package_plugins(entry_path, &entry_source);
 
     // Bridge-host-classes: if a package: block declares `target: <host>`, treat
     // it as an implicit --target flag so the codegen host-mismatch validator
@@ -3247,14 +2715,15 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     let mut config = MultiFileCompilerConfig::default()
         .with_search_paths(search_paths)
         .with_opt_level(opt_level)
-        .with_client_mode(client_mode);
+        .with_client_mode(client_mode)
+        .with_release_mode(release);
 
     if let Some(ref reg) = registry {
         config = config.with_plugin_registry(Arc::clone(reg));
     }
 
     let compiler = MultiFileCompiler::with_config(config);
-    let unit = compiler.build_from_file(&entry_path)?;
+    let unit = compiler.build_from_file(entry_path)?;
 
     // Step 2: Merge all HIR programs into a single unified program
     let mut merged_hir = {
@@ -3391,7 +2860,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
             let loc = root_location
                 .clone()
                 .unwrap_or_else(|| crate::ast::SourceLocation {
-                    file: entry_path.as_ref().to_string_lossy().to_string(),
+                    file: entry_path.to_string_lossy().to_string(),
                     line: 1,
                     column: 1,
                     byte_start: None,
@@ -3421,7 +2890,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         }
 
         let location = root_location.unwrap_or_else(|| crate::ast::SourceLocation {
-            file: entry_path.as_ref().to_string_lossy().to_string(),
+            file: entry_path.to_string_lossy().to_string(),
             line: 1,
             column: 1,
             byte_start: None,
@@ -3467,7 +2936,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         .unwrap_or_default();
     // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED — see the matching
     // call in `compile_multi_file_with_memory_tier`.
-    extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
+    extend_with_source_plugin_bridges(entry_path, &mut bridge_functions);
     extend_with_registry_bridges(&mut bridge_functions);
     let lang_to_bridge = registry
         .as_ref()
@@ -3563,7 +3032,8 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
     use crate::hir::validation::HirValidator;
     let handler_bridges = handler_bridges_from_slice(&bridge_functions);
-    HirValidator::validate_with_handler_bridges(&merged_hir, &handler_bridges)?;
+    let validation_warnings =
+        HirValidator::validate_with_handler_bridges(&merged_hir, &handler_bridges)?;
     tracing::debug!("Stage 3b complete: HIR validation passed");
 
     // Remove dot-notation language alias externals: they existed only so HIR validation
@@ -3608,41 +3078,24 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
     // Stage 5: Type checking
     // Compute required-param-count overrides for language alias functions that have
     // param_defaults — the resolver encodes param types but not optionality.
-    let required_counts = {
-        use crate::resolver::SymbolId;
-        let mut counts: std::collections::HashMap<SymbolId, usize> =
-            std::collections::HashMap::new();
-        if let Some(ref reg) = registry {
-            let lang_fn_defs_multi = reg.language_function_defs();
-            for (lang_name, lang_def) in &lang_fn_defs_multi {
-                if lang_def.param_defaults.is_empty() {
-                    continue;
-                }
-                let required = lang_def
-                    .param_defaults
-                    .iter()
-                    .filter(|s| s.is_empty())
-                    .count();
-                let total = lang_def
-                    .params
-                    .as_ref()
-                    .map(|p| p.len())
-                    .unwrap_or(lang_def.param_defaults.len());
-                if required < total {
-                    if let Some(sym_id) =
-                        resolved_hir.symbol_table.lookup_symbol(lang_name.as_str())
-                    {
-                        counts.insert(sym_id, required);
-                    }
-                }
-            }
-        }
-        counts
-    };
+    let required_counts = registry
+        .as_ref()
+        .map(|reg| required_param_counts(reg, &resolved_hir))
+        .unwrap_or_default();
     let type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
+    report_compile_warnings(
+        validation_warnings
+            .iter()
+            .chain(&resolution_result.warnings)
+            .chain(&type_result.warnings),
+    );
 
-    // Stage 6: TAST to MIR
-    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?;
+    // Stage 6: TAST to MIR. Release builds strip `always:` invariant checks.
+    let mir_result = if release {
+        lower_tast_to_mir_release(type_result.tast, opt_level, true)?
+    } else {
+        lower_tast_to_mir_with_opt_level(type_result.tast, opt_level)?
+    };
 
     // Resolve effective memory tier (MEMORY_POLICY.md §3.1):
     // explicit CLI flag > max(plugin tiers) > target default > standard
@@ -3743,11 +3196,44 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         bytes = codegen_result.wasm_bytes.len(),
         memory_tier = %memory_tier,
         client_mode = client_mode,
+        release = release,
         "Multi-file compilation with memory tier complete"
     );
 
     let build_state_snapshot = snapshot_build_state(build_state_arc.as_ref());
     Ok((codegen_result.wasm_bytes, build_state_snapshot))
+}
+
+/// Required-parameter-count overrides for plugin language-alias functions
+/// that declare `param_defaults`. The resolver encodes parameter types but not
+/// optionality, so the type checker needs these counts to accept calls that
+/// omit optional trailing arguments.
+fn required_param_counts(
+    registry: &plugins::PluginRegistry,
+    resolved_hir: &crate::resolver::ResolvedHirProgram,
+) -> std::collections::HashMap<crate::resolver::SymbolId, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for (lang_name, lang_def) in &registry.language_function_defs() {
+        if lang_def.param_defaults.is_empty() {
+            continue;
+        }
+        let required = lang_def
+            .param_defaults
+            .iter()
+            .filter(|s| s.is_empty())
+            .count();
+        let total = lang_def
+            .params
+            .as_ref()
+            .map(|p| p.len())
+            .unwrap_or(lang_def.param_defaults.len());
+        if required < total {
+            if let Some(sym_id) = resolved_hir.symbol_table.lookup_symbol(lang_name.as_str()) {
+                counts.insert(sym_id, required);
+            }
+        }
+    }
+    counts
 }
 
 /// Plugin Contracts v2 §2.5 — extract a snapshot of every `_build_state_set`
@@ -3805,411 +3291,15 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
     explicit_tier: Option<MemoryTier>,
     target_default: MemoryTier,
 ) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
-    use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
-    use crate::mir::lower_tast_to_mir_release;
-    use crate::resolver::NameResolver as Resolver;
-    use crate::typechecker::TypeChecker;
-    use std::sync::Arc;
-
-    tracing::info!(
-        entry = %entry_path.as_ref().display(),
-        opt_level = opt_level,
-        "Starting release-mode multi-file compilation (always: checks stripped)"
-    );
-
-    // Step 0: Read entry file to extract plugins (same as debug path)
-    let entry_source = std::fs::read_to_string(entry_path.as_ref()).map_err(|e| {
-        vec![CompilerError::io_error(
-            format!("Failed to read entry file: {}", e),
-            None,
-            None,
-        )]
-    })?;
-
-    let plugin_names = collect_package_plugins(entry_path.as_ref(), &entry_source);
-
-    // Plugin Contracts v2 — the release path previously used bare
-    // `load_plugins`, which gave each plugin its own private (empty)
-    // BuildState. That broke `has_build_state.*` artifact predicates and
-    // emitted manifests with an empty `build_state` field whenever a project
-    // was compiled with `--release`. Use the shared keystore here too so the
-    // snapshot is non-empty when plugins write to it.
-    let build_state_arc: Option<plugins::BuildState> = if plugin_names.is_empty() {
-        None
-    } else {
-        Some(plugins::new_build_state())
-    };
-
-    let registry = if let Some(ref bs) = build_state_arc {
-        let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
-            vec![CompilerError::PluginError {
-                message: format!("Failed to create plugin loader: {}", e),
-                location: None,
-            }]
-        })?;
-        let reg = loader
-            .load_plugins_with_build_state(&plugin_names, Arc::clone(bs))
-            .map_err(|e| {
-                vec![CompilerError::PluginError {
-                    message: format!("Failed to load plugins: {}", e),
-                    location: None,
-                }]
-            })?;
-        Some(Arc::new(reg))
-    } else {
-        None
-    };
-
-    // Step 1: Build the compilation unit (identical to debug path)
-    let mut config = MultiFileCompilerConfig::default()
-        .with_search_paths(search_paths)
-        .with_opt_level(opt_level)
-        .with_release_mode(true);
-    if let Some(ref reg) = registry {
-        config = config.with_plugin_registry(Arc::clone(reg));
-    }
-    let compiler = MultiFileCompiler::with_config(config);
-    let unit = compiler.build_from_file(&entry_path)?;
-
-    // Step 2: Merge HIR programs (identical to debug path)
-    let mut merged_hir = {
-        use crate::hir::{HirFunction, HirProgram};
-        let mut all_functions: Vec<HirFunction> = Vec::new();
-        let mut all_classes = Vec::new();
-        let mut all_capabilities: Vec<crate::hir::HirCapability> = Vec::new();
-        let mut start_function = None;
-        let mut extra_start_stmts: Vec<crate::hir::HirStatement> = Vec::new();
-        let mut all_imports = Vec::new();
-        let mut all_tests = Vec::new();
-        let mut all_externals = Vec::new();
-        let mut merged_state: Option<crate::hir::HirStateBlock> = None;
-        let mut merged_screen_blocks: Vec<crate::hir::HirScreenBlock> = Vec::new();
-        let mut merged_watch_blocks: Vec<crate::hir::HirWatchBlock> = Vec::new();
-        let mut root_location = None;
-
-        for module_id in &unit.compilation_order {
-            if let Some(module) = unit.get_module(*module_id) {
-                if let Some(hir) = &module.hir {
-                    // Dedup by name: plugin preamble injection on the entry module can
-                    // re-emit helpers (e.g. __redirect_0) already generated by a non-entry
-                    // module's block expansion, producing two MIR entries with different
-                    // SymbolIds but the same name, corrupting the export table (GEN002).
-                    for func in &hir.functions {
-                        if !all_functions.iter().any(|f| f.name == func.name) {
-                            all_functions.push(func.clone());
-                        }
-                    }
-                    for class in &hir.classes {
-                        all_classes.push(class.clone());
-                    }
-                    // Collect capabilities (top-level `can Name:` declarations).
-                    // Dedup by name — same-name duplicates from multiple modules
-                    // are caught by the resolver's SEM003 pass; keep first-seen.
-                    for cap in &hir.capabilities {
-                        if !all_capabilities.iter().any(|c| c.name == cap.name) {
-                            all_capabilities.push(cap.clone());
-                        }
-                    }
-                    // Merge state from every module. compilation_order is
-                    // topologically sorted with the entry last, so non-entry
-                    // plugin-emitted globals (e.g. frame.ui's `instance_<tag>`
-                    // declarations contributed by `expand_component` running on
-                    // component source files) land before the entry module's
-                    // user state declarations. Before this merge landed, the
-                    // entry-only assignment silently discarded plugin state,
-                    // breaking the v2.12.3 client_init splice with
-                    // `Undefined variable 'instance_<tag>'`.
-                    merge_hir_state(&mut merged_state, hir.state.clone());
-
-                    if module.is_entry {
-                        start_function = hir.start_function.clone();
-                        merged_screen_blocks = hir.screen_blocks.clone();
-                        merged_watch_blocks = hir.watch_blocks.clone();
-                        root_location = Some(hir.location.clone());
-                    } else if let Some(ref module_start) = hir.start_function {
-                        extra_start_stmts.extend(module_start.body.statements.iter().cloned());
-                    }
-                    for import in &hir.imports {
-                        all_imports.push(import.clone());
-                    }
-                    if module.is_entry {
-                        for test in &hir.tests {
-                            all_tests.push(test.clone());
-                        }
-                    }
-                    for external in &hir.externals {
-                        all_externals.push(external.clone());
-                    }
-                }
-            }
-        }
-
-        if !extra_start_stmts.is_empty() {
-            let loc = root_location
-                .clone()
-                .unwrap_or_else(|| crate::ast::SourceLocation {
-                    file: entry_path.as_ref().to_string_lossy().to_string(),
-                    line: 1,
-                    column: 1,
-                    byte_start: None,
-                    byte_end: None,
-                });
-            match start_function {
-                Some(ref mut sf) => {
-                    extra_start_stmts.append(&mut sf.body.statements);
-                    sf.body.statements = extra_start_stmts;
-                }
-                None => {
-                    start_function = Some(crate::hir::HirFunction {
-                        name: "start".to_string(),
-                        parameters: Vec::new(),
-                        return_type: None,
-                        body: crate::hir::HirBlock {
-                            statements: extra_start_stmts,
-                            location: loc.clone(),
-                        },
-                        is_start: true,
-                        is_private: false,
-                        owner_screen: None,
-                        location: loc,
-                    });
-                }
-            }
-        }
-
-        let location = root_location.unwrap_or_else(|| crate::ast::SourceLocation {
-            file: entry_path.as_ref().to_string_lossy().to_string(),
-            line: 1,
-            column: 1,
-            byte_start: None,
-            byte_end: None,
-        });
-
-        HirProgram {
-            functions: all_functions,
-            classes: all_classes,
-            start_function,
-            imports: all_imports,
-            tests: all_tests,
-            state: merged_state,
-            watch_blocks: merged_watch_blocks,
-            externals: all_externals,
-            screen_blocks: merged_screen_blocks,
-            capabilities: all_capabilities,
-            location,
-        }
-    };
-
-    let mut bridge_functions = registry
-        .as_ref()
-        .map(|r| r.bridge_functions().to_vec())
-        .unwrap_or_default();
-    // PLUGIN-BUILD-STATE-CROSS-PLUGIN-BOOTSTRAP-BLOCKED — see the matching
-    // call in `compile_multi_file_with_memory_tier`.
-    extend_with_source_plugin_bridges(entry_path.as_ref(), &mut bridge_functions);
-    extend_with_registry_bridges(&mut bridge_functions);
-    let lang_to_bridge = registry
-        .as_ref()
-        .map(|r| r.language_to_bridge_map())
-        .unwrap_or_default();
-    let lang_to_helper = registry
-        .as_ref()
-        .map(|r| r.language_to_helper_map())
-        .unwrap_or_default();
-    let lang_fn_defs_release: std::collections::HashMap<
-        String,
-        crate::plugins::plugin_abi::PluginFunctionDef,
-    > = registry
-        .as_ref()
-        .map(|r| {
-            r.language_function_defs()
-                .into_iter()
-                .map(|(k, v)| (k, v.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Add language-name alias externals (identical to debug path)
-    if !lang_to_bridge.is_empty() {
-        use crate::hir::{HirExternalFunction, HirParameter, HirType};
-        let bridge_by_name: std::collections::HashMap<&str, &crate::plugins::BridgeFunction> =
-            bridge_functions
-                .iter()
-                .map(|bf| (bf.name.as_str(), bf))
-                .collect();
-        for (lang_name, bridge_name) in &lang_to_bridge {
-            if merged_hir.externals.iter().any(|e| e.name == *lang_name) {
-                continue;
-            }
-            if let Some(bf) = bridge_by_name.get(bridge_name.as_str()) {
-                let parameters: Vec<HirParameter> = bf
-                    .params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| HirParameter {
-                        name: format!("arg{}", i),
-                        param_type: HirType::Integer,
-                        default_value: None,
-                        location: Default::default(),
-                    })
-                    .collect();
-                merged_hir.externals.push(HirExternalFunction {
-                    name: lang_name.clone(),
-                    parameters,
-                    return_type: HirType::Void,
-                    module: bf.module.clone(),
-                    location: Default::default(),
-                });
-            }
-        }
-    }
-
-    use crate::hir::validation::HirValidator;
-    let handler_bridges = handler_bridges_from_slice(&bridge_functions);
-    HirValidator::validate_with_handler_bridges(&merged_hir, &handler_bridges)?;
-
-    if !lang_to_bridge.is_empty() {
-        merged_hir
-            .externals
-            .retain(|e| !lang_to_bridge.contains_key(&e.name));
-    }
-
-    // Stage 4: Resolution (identical to debug path)
-    let resolution_result = if bridge_functions.is_empty() {
-        Resolver::resolve(merged_hir)?
-    } else if lang_to_bridge.is_empty() && lang_to_helper.is_empty() {
-        Resolver::resolve_with_bridge_functions(merged_hir, &bridge_functions)?
-    } else if !lang_to_helper.is_empty() || !lang_fn_defs_release.is_empty() {
-        Resolver::resolve_with_bridge_aliases_fn_defs_and_helpers(
-            merged_hir,
-            &bridge_functions,
-            &lang_to_bridge,
-            lang_fn_defs_release,
-            lang_to_helper.clone(),
-        )?
-    } else {
-        Resolver::resolve_with_bridge_and_language_aliases(
-            merged_hir,
-            &bridge_functions,
-            &lang_to_bridge,
-        )?
-    };
-    let resolved_hir = resolution_result.resolved_hir;
-
-    // Stage 5: Type checking (identical to debug path)
-    let type_result = TypeChecker::check(resolved_hir)?;
-
-    // Stage 6: MIR lowering — RELEASE MODE strips always: invariant checks.
-    let mir_result = lower_tast_to_mir_release(type_result.tast, opt_level, true)?;
-
-    // Resolve effective memory tier (identical to debug path)
-    let memory_tier = if let Some(tier) = explicit_tier {
-        tier
-    } else {
-        let plugin_tier = registry
-            .as_ref()
-            .map(|r| r.resolve_plugin_memory_tier())
-            .transpose()
-            .map_err(|e| vec![e])?
-            .flatten();
-        if let Some(pt) = plugin_tier {
-            std::cmp::max(pt, target_default)
-        } else {
-            target_default
-        }
-    };
-
-    // Stage 7: WASM generation (identical to debug path)
-    use crate::codegen::mir_codegen::MirCodeGenerator;
-    let mut mir_codegen = MirCodeGenerator::default();
-    mir_codegen.set_memory_tier(memory_tier);
-    if !bridge_functions.is_empty() {
-        mir_codegen.set_bridge_functions(bridge_functions);
-    }
-    if !lang_to_bridge.is_empty() {
-        mir_codegen.set_language_to_bridge_map(lang_to_bridge);
-    }
-    if !lang_to_helper.is_empty() {
-        mir_codegen.set_language_to_helper_map(lang_to_helper);
-    }
-    // Plugin Contracts v2 — release path must also honour the CLI target
-    // override so that `cln compile --release --target browser` produces a
-    // browser-targeted WASM. Without this, the release path silently kept
-    // bridge enforcement disabled and emitted server stubs for every
-    // browser-only bridge function. See bridge-host-classes.md §6.
-    // Matches the debug path's fallback order (override → inference → server).
-    // Fixes 270f8fc643db for release builds too.
-    let host_class = target_host_class_override().unwrap_or_else(|| {
-        mir_codegen
-            .infer_host_class_from_mir(&mir_result.program)
-            .unwrap_or_else(|| "server".to_string())
-    });
-    mir_codegen.set_host_class(Some(host_class));
-    let strict = strict_hosts_override()
-        || std::env::var("CLEAN_STRICT_HOSTS")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-    mir_codegen.set_strict_hosts(strict);
-    // Plugin Contracts v2 Phase B — release path must also stamp ABI version
-    // when the CLI signalled a plugin build.
-    if let Some(abi) = plugin_abi_version_override() {
-        mir_codegen.set_abi_version(Some(abi));
-    }
-    let codegen_result = mir_codegen.generate(mir_result.program)?;
-    crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
-        .map_err(|e| vec![e])?;
-
-    tracing::info!(
-        bytes = codegen_result.wasm_bytes.len(),
-        memory_tier = %memory_tier,
-        "Release-mode compilation complete"
-    );
-
-    let build_state_snapshot = snapshot_build_state(build_state_arc.as_ref());
-    Ok((codegen_result.wasm_bytes, build_state_snapshot))
-}
-
-/// Compile for testing without runtime imports
-pub fn compile_minimal(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    use crate::lexer::specification_lexer::SpecificationLexer;
-    use crate::parser::specification_parser::SpecificationParser;
-    // use crate::hir::hir_builder::HirBuilder; // Temporarily disabled
-    use crate::codegen::generate_wasm_from_mir_minimal;
-    use crate::mir::lower_tast_to_mir_with_opt_level;
-    use crate::resolver::NameResolver as Resolver;
-    use crate::typechecker::TypeChecker;
-
-    // Same 7-stage pipeline but with minimal WASM generation
-    let source_code = crate::lexer::specification_lexer::SourceCode::new(
-        source.to_string(),
-        "<test>".to_string(),
-    );
-    let mut lexer = SpecificationLexer::new(&source_code);
-    let tokens = lexer
-        .tokenize()
-        .map_err(|e| vec![CompilerError::LexError(e)])?;
-
-    let mut parser = SpecificationParser::new(tokens, "<test>".to_string());
-    let ast = parser.parse_program().map_err(|e| vec![e])?;
-
-    use crate::hir::hir_builder::HirBuilder;
-    let mut hir_builder = HirBuilder::new();
-    let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
-
-    // Stage 3b: HIR semantic validation
-    use crate::hir::validation::HirValidator;
-    HirValidator::validate(&hir_result.hir)?;
-
-    let resolution_result = Resolver::resolve(hir_result.hir)?;
-    let resolved_hir = resolution_result.resolved_hir;
-
-    let type_result = TypeChecker::check(resolved_hir)?;
-    let mir_result = lower_tast_to_mir_with_opt_level(type_result.tast, 0)?; // No optimization for testing
-    let wasm_bytes = generate_wasm_from_mir_minimal(mir_result.program).map_err(|e| vec![e])?;
-    crate::codegen::validate::validate_generated_wasm(&wasm_bytes).map_err(|e| vec![e])?;
-
-    Ok(wasm_bytes)
+    compile_multi_file_impl(
+        entry_path.as_ref(),
+        search_paths,
+        opt_level,
+        explicit_tier,
+        target_default,
+        false,
+        true,
+    )
 }
 
 #[cfg(test)]

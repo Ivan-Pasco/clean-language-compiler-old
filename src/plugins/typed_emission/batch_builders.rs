@@ -32,7 +32,7 @@ use super::batch_schema::{
 };
 use super::error::{EmitDiagnostic, EmitError};
 use super::json::decode_handle_array;
-use crate::plugins::wasm_adapter::PluginState;
+use crate::plugins::wasm_adapter::{read_clean_string, PluginState};
 
 // ─── Arena access macro (mirrors bridges.rs) ─────────────────────────────────
 
@@ -62,32 +62,6 @@ macro_rules! refuse_if_assemble_typed_batch {
             return $a.refuse_in_assemble_typed($bridge, $err_return);
         }
     }};
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LP-string reading helper (duplicated minimally — bridges.rs is pub(crate) but
-// read_lp_string is fn-private there; simpler to inline than expose).
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn read_lp_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<String> {
-    if ptr < 0 {
-        return None;
-    }
-    let memory = caller.get_export("memory")?.into_memory()?;
-    let data = memory.data(caller);
-    let start = ptr as usize;
-    if start + 4 > data.len() {
-        return None;
-    }
-    let len_bytes: [u8; 4] = data[start..start + 4].try_into().ok()?;
-    let len = u32::from_le_bytes(len_bytes) as usize;
-    let data_end = start + 4 + len;
-    if data_end > data.len() {
-        return None;
-    }
-    std::str::from_utf8(&data[start + 4..data_end])
-        .ok()
-        .map(|s| s.to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,7 +255,7 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
         "batch.stmtSeq",
         |mut caller: Caller<'_, PluginState>, ctx: i32, stmts_lp: i32| -> i32 {
             // 1. Read LP-string.
-            let json = match read_lp_string(&mut caller, stmts_lp) {
+            let json = match read_clean_string(&mut caller, stmts_lp) {
                 Some(s) => s,
                 None => {
                     let a = arena!(caller);
@@ -372,7 +346,7 @@ fn register_array_helpers(linker: &mut Linker<PluginState>) -> Result<()> {
         "batch.args",
         |mut caller: Caller<'_, PluginState>, ctx: i32, exprs_lp: i32| -> i32 {
             // 1. Read LP-string.
-            let json = match read_lp_string(&mut caller, exprs_lp) {
+            let json = match read_clean_string(&mut caller, exprs_lp) {
                 Some(s) => s,
                 None => {
                     let a = arena!(caller);
@@ -453,7 +427,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "batch.stringLit",
         |mut caller: Caller<'_, PluginState>, ctx: i32, value_lp: i32| -> i32 {
-            let value = match read_lp_string(&mut caller, value_lp) {
+            let value = match read_clean_string(&mut caller, value_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -518,7 +492,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "batch.ident",
         |mut caller: Caller<'_, PluginState>, ctx: i32, name_lp: i32| -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -540,7 +514,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          receiver_handle: i32,
          name_lp: i32|
          -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -566,7 +540,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          callee_lp: i32,
          args_array_handle: i32|
          -> i32 {
-            let callee = match read_lp_string(&mut caller, callee_lp) {
+            let callee = match read_clean_string(&mut caller, callee_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -604,7 +578,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          method_lp: i32,
          args_array_handle: i32|
          -> i32 {
-            let method = match read_lp_string(&mut caller, method_lp) {
+            let method = match read_clean_string(&mut caller, method_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -638,7 +612,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          lhs_handle: i32,
          rhs_handle: i32|
          -> i32 {
-            let op = match read_lp_string(&mut caller, op_lp) {
+            let op = match read_clean_string(&mut caller, op_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -667,7 +641,7 @@ fn register_expr_builders(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "batch.unop",
         |mut caller: Caller<'_, PluginState>, ctx: i32, op_lp: i32, operand_handle: i32| -> i32 {
-            let op = match read_lp_string(&mut caller, op_lp) {
+            let op = match read_clean_string(&mut caller, op_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -769,7 +743,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          callee_lp: i32,
          args_array_handle: i32|
          -> i32 {
-            let callee = match read_lp_string(&mut caller, callee_lp) {
+            let callee = match read_clean_string(&mut caller, callee_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -803,7 +777,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          method_lp: i32,
          args_array_handle: i32|
          -> i32 {
-            let method = match read_lp_string(&mut caller, method_lp) {
+            let method = match read_clean_string(&mut caller, method_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -832,7 +806,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "batch.stmtAssign",
         |mut caller: Caller<'_, PluginState>, ctx: i32, target_lp: i32, expr_handle: i32| -> i32 {
-            let target = match read_lp_string(&mut caller, target_lp) {
+            let target = match read_clean_string(&mut caller, target_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -865,11 +839,11 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          type_lp: i32,
          expr_handle: i32|
          -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let ty = match read_lp_string(&mut caller, type_lp) {
+            let ty = match read_clean_string(&mut caller, type_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -958,7 +932,7 @@ fn register_stmt_builders(linker: &mut Linker<PluginState>) -> Result<()> {
          iterable_handle: i32,
          body_array_handle: i32|
          -> i32 {
-            let iter_var = match read_lp_string(&mut caller, iter_var_lp) {
+            let iter_var = match read_clean_string(&mut caller, iter_var_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -1035,11 +1009,11 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
         "env",
         "batch.param",
         |mut caller: Caller<'_, PluginState>, ctx: i32, name_lp: i32, type_lp: i32| -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let ty = match read_lp_string(&mut caller, type_lp) {
+            let ty = match read_clean_string(&mut caller, type_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -1062,7 +1036,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
         "env",
         "batch.objectField",
         |mut caller: Caller<'_, PluginState>, ctx: i32, name_lp: i32, expr_handle: i32| -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -1084,11 +1058,11 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
         "env",
         "batch.classField",
         |mut caller: Caller<'_, PluginState>, ctx: i32, name_lp: i32, type_lp: i32| -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let ty = match read_lp_string(&mut caller, type_lp) {
+            let ty = match read_clean_string(&mut caller, type_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -1120,11 +1094,11 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
          return_type_lp: i32,
          body_array_handle: i32|
          -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let return_type = match read_lp_string(&mut caller, return_type_lp) {
+            let return_type = match read_clean_string(&mut caller, return_type_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -1180,11 +1154,11 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
          body_array_handle_or_0: i32,
          from_source_handle_or_0: i32|
          -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let return_type = match read_lp_string(&mut caller, return_type_lp) {
+            let return_type = match read_clean_string(&mut caller, return_type_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -1289,11 +1263,11 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
          body_handle_or_0: i32,
          from_source_handle_or_0: i32|
          -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let return_type = match read_lp_string(&mut caller, return_type_lp) {
+            let return_type = match read_clean_string(&mut caller, return_type_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -1406,14 +1380,14 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
          fields_array_handle: i32,
          methods_array_handle: i32|
          -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
             let parent = if parent_name_lp_or_0 == 0 {
                 None
             } else {
-                match read_lp_string(&mut caller, parent_name_lp_or_0) {
+                match read_clean_string(&mut caller, parent_name_lp_or_0) {
                     Some(s) if !s.is_empty() => Some(s),
                     _ => None,
                 }

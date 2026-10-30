@@ -1,0 +1,23 @@
+// Test: bugfixes/json_number_exponent_in_containers
+// Semantic: RFC 8259 §6 number grammar (`-? int frac? exp?`) for json.get
+// Fixed in: compiler 0.33.165
+// Regression: the in-WASM JSON parser had three copies of number parsing.
+//   Only the top-level value parser handled `[eE][+-]digits`; the copies for
+//   object members and array elements stopped at `e`, so
+//   `json.get("{\"f\":2e3}", "f")` returned "2". Object members and array
+//   elements now delegate to `__json_parse_value`.
+// Expected output:
+//   2000
+//   0.25
+//   150
+//   200
+//   -4
+//   7
+
+start:
+	print(json.get("{\"f\":2e3}", "f"))
+	print(json.get("{\"g\":2.5E-1}", "g"))
+	print(json.get("[1.5e2, 3]", "0"))
+	print(json.get("{\"a\":[2E+2]}", "a.0"))
+	print(json.get("{\"n\":-4,\"m\":7}", "n"))
+	print(json.get("{\"n\":-4,\"m\":7}", "m"))

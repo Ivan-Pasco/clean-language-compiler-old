@@ -3,14 +3,8 @@ use std::fmt;
 
 use crate::ast::SourceLocation;
 
-pub mod diagnostics;
-pub mod enhanced_hierarchy;
-pub mod recovery;
 pub mod reporter;
 
-pub use diagnostics::*;
-pub use enhanced_hierarchy::*;
-pub use recovery::*;
 pub use reporter::*;
 
 #[derive(Debug, Clone)]
@@ -105,18 +99,6 @@ impl ErrorContext {
         self
     }
 
-    pub fn with_location(mut self, location: SourceLocation) -> Self {
-        self.location = Some(location);
-        self
-    }
-
-    pub fn with_location_option(mut self, location: Option<SourceLocation>) -> Self {
-        if let Some(loc) = location {
-            self.location = Some(loc);
-        }
-        self
-    }
-
     pub fn with_help_option(mut self, help: Option<String>) -> Self {
         if let Some(h) = help {
             self.help = Some(h);
@@ -146,20 +128,6 @@ impl ErrorContext {
 
     pub fn with_error_code<T: Into<String>>(mut self, code: T) -> Self {
         self.error_code = Some(code.into());
-        self
-    }
-
-    pub fn with_related_error<T: Into<String>>(mut self, related: T) -> Self {
-        self.related_errors.push(related.into());
-        self
-    }
-
-    pub fn add_stack_frame(&mut self, frame: StackFrame) {
-        self.stack_trace.push(frame);
-    }
-
-    pub fn with_stack_frame(mut self, frame: StackFrame) -> Self {
-        self.stack_trace.push(frame);
         self
     }
 
@@ -661,85 +629,6 @@ impl CompilerError {
         }
     }
 
-    /// Parse error with suggestions and source snippet
-    pub fn parse_error_with_suggestions<T: Into<String>>(
-        message: T,
-        location: Option<SourceLocation>,
-        suggestions: Vec<String>,
-        source_snippet: Option<String>,
-    ) -> Self {
-        CompilerError::Syntax {
-            context: Box::new(ErrorContext::enhanced_syntax_error(
-                message,
-                location,
-                source_snippet,
-                suggestions,
-            )),
-        }
-    }
-
-    /// Unexpected token error with helpful suggestions
-    pub fn unexpected_token_error(
-        found: &str,
-        expected: Vec<&str>,
-        location: Option<SourceLocation>,
-        source_snippet: Option<String>,
-    ) -> Self {
-        let message = if expected.len() == 1 {
-            format!("Expected {}, found '{}'", expected[0], found)
-        } else if expected.len() == 2 {
-            format!(
-                "Expected {} or {}, found '{}'",
-                expected[0], expected[1], found
-            )
-        } else {
-            format!(
-                "Expected one of: {}, found '{}'",
-                expected.join(", "),
-                found
-            )
-        };
-
-        let suggestions = vec![
-            format!("Replace '{found}' with one of the expected tokens"),
-            "Check the Clean Language syntax guide for proper formatting".to_string(),
-        ];
-
-        CompilerError::Syntax {
-            context: Box::new(
-                ErrorContext::enhanced_syntax_error(message, location, source_snippet, suggestions)
-                    .with_help("Refer to the Clean Language syntax guide for proper formatting"),
-            ),
-        }
-    }
-
-    /// Missing element error (like missing function name, missing block, etc.)
-    pub fn missing_element_error<T: Into<String>>(
-        element_type: T,
-        location: Option<SourceLocation>,
-        suggestions: Vec<String>,
-    ) -> Self {
-        let element = element_type.into();
-        let message = format!("Missing {element}");
-        let help = match element.as_str() {
-            "function name" => {
-                "Function declarations require a valid function name after the 'function' keyword"
-            }
-            "indented block" => {
-                "Clean Language uses indentation to define code blocks. Use tabs for indentation"
-            }
-            _ => "Check the syntax requirements for this element",
-        };
-
-        CompilerError::Syntax {
-            context: Box::new(
-                ErrorContext::enhanced_syntax_error(message, location, None, suggestions)
-                    .with_help(help)
-                    .with_error_code("SYN003"),
-            ),
-        }
-    }
-
     /// Method suggestion error for traditional function syntax
     pub fn method_suggestion_error<T: Into<String>>(
         function_name: T,
@@ -752,81 +641,6 @@ impl CompilerError {
                 location,
                 source_snippet,
             )),
-        }
-    }
-
-    /// Function not found error with intelligent suggestions
-    pub fn function_not_found_error<T: Into<String>>(
-        name: T,
-        available_functions: &[&str],
-        location: SourceLocation,
-    ) -> Self {
-        let func_name = name.into();
-
-        // Check if this is a method-style function
-        let is_method_function = matches!(
-            func_name.as_str(),
-            "length" | "isEmpty" | "isNotEmpty" | "isDefined" | "isNotDefined" | "keepBetween"
-        );
-
-        if is_method_function {
-            return Self::method_suggestion_error(func_name, Some(location), None);
-        }
-
-        // Find similar function names
-        let suggestions = ErrorUtils::suggest_similar_names(&func_name, available_functions, 3);
-        let mut error_suggestions = vec![format!(
-            "Check if '{func_name}' is defined and spelled correctly"
-        )];
-
-        if !suggestions.is_empty() {
-            error_suggestions.push(format!("Did you mean: {}?", suggestions.join(", ")));
-        }
-
-        CompilerError::Type {
-            context: Box::new(
-                ErrorContext::new(
-                    format!("Function '{func_name}' not found"),
-                    Some(
-                        "Check if the function name is correct and the function is defined"
-                            .to_string(),
-                    ),
-                    ErrorType::Type,
-                    Some(location),
-                )
-                .with_suggestions(error_suggestions)
-                .with_error_code("FUNC001"),
-            ),
-        }
-    }
-
-    /// Variable not found error with suggestions
-    pub fn variable_not_found_error<T: Into<String>>(
-        name: T,
-        available_variables: &[&str],
-        location: SourceLocation,
-    ) -> Self {
-        let var_name = name.into();
-        let suggestions = ErrorUtils::suggest_similar_names(&var_name, available_variables, 3);
-        let mut error_suggestions = vec![format!(
-            "Check if '{var_name}' is declared and spelled correctly"
-        )];
-
-        if !suggestions.is_empty() {
-            error_suggestions.push(format!("Did you mean: {}?", suggestions.join(", ")));
-        }
-
-        CompilerError::Type {
-            context: Box::new(
-                ErrorContext::new(
-                    format!("Variable '{var_name}' not found"),
-                    Some("Variables must be declared before use".to_string()),
-                    ErrorType::Type,
-                    Some(location),
-                )
-                .with_suggestions(error_suggestions)
-                .with_error_code("SEM002"),
-            ),
         }
     }
 
@@ -871,20 +685,6 @@ impl CompilerError {
         }
     }
 
-    /// Testing-related error
-    pub fn testing_error<T: Into<String>>(
-        message: T,
-        help: Option<String>,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        CompilerError::Testing {
-            context: Box::new(
-                ErrorContext::new(message, help, ErrorType::Validation, location)
-                    .with_error_code("SEM009"),
-            ),
-        }
-    }
-
     /// Import resolution error
     pub fn import_error<T: Into<String>>(
         message: T,
@@ -899,69 +699,6 @@ impl CompilerError {
             context: Box::new(
                 ErrorContext::new(detailed_message, help, ErrorType::Import, location)
                     .with_error_code("IMPORT001"),
-            ),
-        }
-    }
-
-    /// Symbol resolution error
-    pub fn symbol_error<T: Into<String>>(
-        message: T,
-        symbol_name: &str,
-        module_name: Option<&str>,
-    ) -> Self {
-        let detailed_message = match module_name {
-            Some(module) => format!(
-                "Symbol '{}' in module '{}': {}",
-                symbol_name,
-                module,
-                message.into()
-            ),
-            None => format!("Symbol '{symbol_name}': {}", message.into()),
-        };
-        let help = Some(format!(
-            "Check if the symbol '{symbol_name}' is properly exported and accessible"
-        ));
-        CompilerError::Module {
-            context: Box::new(
-                ErrorContext::new(detailed_message, help, ErrorType::Module, None)
-                    .with_error_code("SEM002"),
-            ),
-        }
-    }
-
-    /// Plugin not found error (PLUGIN001)
-    pub fn plugin_not_found_error<T: Into<String>>(plugin_name: T) -> Self {
-        let name: String = plugin_name.into();
-        CompilerError::Validation {
-            context: Box::new(
-                ErrorContext::new(
-                    format!(
-                        "Plugin '{}' not found. Install with: cleen plugin add {}",
-                        name, name
-                    ),
-                    Some(format!(
-                        "Run `cleen plugin add {}` to install the plugin",
-                        name
-                    )),
-                    ErrorType::Validation,
-                    None,
-                )
-                .with_error_code("PLUGIN001"),
-            ),
-        }
-    }
-
-    /// Plugin registration conflict error (PLUGIN002)
-    pub fn plugin_registration_conflict_error<T: Into<String>>(conflict_desc: T) -> Self {
-        CompilerError::Validation {
-            context: Box::new(
-                ErrorContext::new(
-                    format!("Plugin registration conflict: {}", conflict_desc.into()),
-                    Some("Two plugins are attempting to register the same function or block handler. Remove or reconfigure conflicting plugins.".to_string()),
-                    ErrorType::Validation,
-                    None,
-                )
-                .with_error_code("PLUGIN002"),
             ),
         }
     }
@@ -995,53 +732,6 @@ impl CompilerError {
                     .with_error_code("COM003"),
             ),
         }
-    }
-
-    /// Detailed type error with debug information
-    pub fn detailed_type_error(
-        message: impl AsRef<str>,
-        expected_type: impl std::fmt::Debug,
-        actual_type: impl std::fmt::Debug,
-        location: Option<SourceLocation>,
-        help: Option<String>,
-    ) -> Self {
-        let full_message = format!(
-            "{}\nExpected type: {:?}\nActual type: {:?}",
-            message.as_ref(),
-            expected_type,
-            actual_type
-        );
-
-        CompilerError::Type {
-            context: Box::new(
-                ErrorContext::new(full_message, help, ErrorType::Type, location)
-                    .with_error_code("SEM001"),
-            ),
-        }
-    }
-
-    /// Division by zero error
-    pub fn division_by_zero_error(location: Option<SourceLocation>) -> Self {
-        CompilerError::Runtime {
-            context: Box::new(
-                ErrorContext::new(
-                    "Division by zero",
-                    Some("Check divisor values to ensure they are not zero.".to_string()),
-                    ErrorType::Runtime,
-                    location,
-                )
-                .with_error_code("RUN003"),
-            ),
-        }
-    }
-
-    /// Create a serialization error
-    pub fn serialization_error<T: Into<String>>(message: T) -> Self {
-        CompilerError::io_error(
-            format!("Serialization error: {}", message.into()),
-            Some("Check data format and serialization process".to_string()),
-            None,
-        )
     }
 
     /// Get the error message
@@ -1194,8 +884,6 @@ impl From<wasmtime::MemoryAccessError> for CompilerError {
     }
 }
 
-pub type CompilerResult<T> = Result<T, CompilerError>;
-
 #[derive(Debug, Clone)]
 pub struct CompilerWarning {
     pub message: String,
@@ -1230,46 +918,12 @@ impl CompilerWarning {
         self
     }
 
-    pub fn unused_variable(name: &str, location: Option<SourceLocation>) -> Self {
-        Self::new(
-            format!("Variable '{name}' is declared but never used"),
-            WarningType::UnusedVariable,
-            location,
-        )
-        .with_help("Consider removing the variable or using it in your code")
-        .with_suggestion(format!("Remove 'let {name}' or use the variable"))
-    }
-
-    pub fn unused_function(name: &str, location: Option<SourceLocation>) -> Self {
-        Self::new(
-            format!("Function '{name}' is defined but never called"),
-            WarningType::UnusedFunction,
-            location,
-        )
-        .with_help("Consider removing the function or calling it")
-        .with_suggestion(format!("Remove function '{name}' or add a call to it"))
-    }
-
     pub fn dead_code(location: Option<SourceLocation>) -> Self {
         Self::new("This code is unreachable", WarningType::DeadCode, location)
             .with_help(
                 "Code after a return statement or in an impossible branch will never execute",
             )
             .with_suggestion("Remove the unreachable code or fix the control flow")
-    }
-
-    pub fn type_inference_warning(inferred_type: &str, location: Option<SourceLocation>) -> Self {
-        Self::new(
-            format!(
-                "Type inferred as '{inferred_type}' - consider adding explicit type annotation"
-            ),
-            WarningType::TypeInference,
-            location,
-        )
-        .with_help("Explicit type annotations improve code readability and catch type errors early")
-        .with_suggestion(format!(
-            "Add ': {inferred_type}' to specify the type explicitly"
-        ))
     }
 }
 
@@ -1304,42 +958,6 @@ impl fmt::Display for CompilerWarning {
 pub struct ErrorUtils;
 
 impl ErrorUtils {
-    /// Extract a source snippet around the error location
-    pub fn extract_source_snippet(
-        source: &str,
-        location: &SourceLocation,
-        context_lines: usize,
-    ) -> String {
-        let lines: Vec<&str> = source.lines().collect();
-        let error_line = location.line.saturating_sub(1); // Convert to 0-based indexing
-
-        let start_line = error_line.saturating_sub(context_lines);
-        let end_line = std::cmp::min(error_line + context_lines + 1, lines.len());
-
-        let mut snippet = String::new();
-
-        for (i, line_content) in lines[start_line..end_line].iter().enumerate() {
-            let line_num = start_line + i + 1; // Convert back to 1-based
-            let is_error_line = line_num == location.line;
-
-            if is_error_line {
-                snippet.push_str(&format!(" --> {line_num}: {line_content}\n"));
-
-                // Add pointer to the specific column
-                let pointer_line = format!(
-                    "     {}{}",
-                    " ".repeat(location.column.saturating_sub(1)),
-                    "^".repeat(std::cmp::max(1, 1))
-                );
-                snippet.push_str(&format!("{pointer_line}\n"));
-            } else {
-                snippet.push_str(&format!("     {line_num}: {line_content}\n"));
-            }
-        }
-
-        snippet
-    }
-
     /// Generate suggestions for similar identifiers using Levenshtein distance
     pub fn suggest_similar_names(
         target: &str,
@@ -1691,50 +1309,6 @@ impl ErrorUtils {
         }
     }
 
-    pub fn from_pest_error_with_recovery(
-        pest_error: pest::error::Error<crate::parser::Rule>,
-        source: &str,
-        file_path: &str,
-        recovery_suggestions: Vec<String>,
-    ) -> CompilerError {
-        let error_span = match pest_error.location {
-            pest::error::InputLocation::Pos(pos) => (pos, pos),
-            pest::error::InputLocation::Span((start, end)) => (start, end),
-        };
-
-        let (line, column) = ErrorUtils::calculate_line_column(source, error_span.0);
-        let location = SourceLocation {
-            line,
-            column,
-            file: file_path.to_string(),
-            byte_start: Some(error_span.0),
-            byte_end: Some(error_span.1),
-        };
-
-        let source_snippet =
-            ErrorUtils::extract_enhanced_source_snippet(source, error_span, &location);
-        let (enhanced_message, mut suggestions, help) =
-            ErrorUtils::enhance_pest_error_message(&pest_error, source, error_span);
-
-        // Add recovery-specific suggestions
-        suggestions.extend(recovery_suggestions);
-
-        // Add context-specific suggestions based on error type
-        suggestions.extend(ErrorUtils::get_recovery_suggestions(
-            &pest_error,
-            source,
-            error_span,
-        ));
-
-        CompilerError::enhanced_syntax_error(
-            enhanced_message,
-            Some(location),
-            Some(source_snippet),
-            suggestions,
-            help,
-        )
-    }
-
     /// Generate recovery-specific suggestions based on the error context
     pub fn get_recovery_suggestions(
         _pest_error: &pest::error::Error<crate::parser::Rule>,
@@ -1792,105 +1366,6 @@ impl ErrorUtils {
         }
 
         suggestions
-    }
-
-    /// Generate detailed error analysis for multiple errors
-    pub fn analyze_multiple_errors(errors: &[CompilerError]) -> Vec<String> {
-        let mut analysis = Vec::new();
-
-        if errors.is_empty() {
-            return analysis;
-        }
-
-        analysis.push(format!(
-            "\n📊 Error Analysis ({} errors found):",
-            errors.len()
-        ));
-        analysis.push("═".repeat(50));
-
-        // Categorize errors by type
-        let mut syntax_errors = 0;
-        let mut type_errors = 0;
-        let mut other_errors = 0;
-        let mut error_locations = Vec::new();
-
-        for error in errors {
-            match error {
-                CompilerError::Syntax { context } => {
-                    syntax_errors += 1;
-                    if let Some(loc) = &context.location {
-                        error_locations.push((loc.line, "Syntax"));
-                    }
-                }
-                CompilerError::Type { context } => {
-                    type_errors += 1;
-                    if let Some(loc) = &context.location {
-                        error_locations.push((loc.line, "Type"));
-                    }
-                }
-                _ => {
-                    other_errors += 1;
-                }
-            }
-        }
-
-        // Summary
-        if syntax_errors > 0 {
-            analysis.push(format!("🔸 Syntax Errors: {syntax_errors}"));
-        }
-        if type_errors > 0 {
-            analysis.push(format!("🔸 Type Errors: {type_errors}"));
-        }
-        if other_errors > 0 {
-            analysis.push(format!("🔸 Other Errors: {other_errors}"));
-        }
-
-        // Error distribution by line
-        if !error_locations.is_empty() {
-            analysis.push("\n📍 Error Locations:".to_string());
-            error_locations.sort_by_key(|(line, _)| *line);
-            for (line, error_type) in error_locations {
-                analysis.push(format!("   Line {line}: {error_type}"));
-            }
-        }
-
-        // Common patterns and suggestions
-        analysis.push("\n💡 Recovery Suggestions:".to_string());
-
-        if syntax_errors > type_errors {
-            analysis.push(
-                "• Focus on syntax errors first - they often cause cascading issues".to_string(),
-            );
-            analysis.push("• Check for missing brackets, parentheses, or quotes".to_string());
-            analysis.push("• Verify proper indentation with tabs".to_string());
-        }
-
-        if errors.len() > 10 {
-            analysis.push(
-                "• Large number of errors detected - consider fixing the first few and re-parsing"
-                    .to_string(),
-            );
-        }
-
-        // Specific pattern detection
-        let all_messages: String = errors
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        if all_messages.contains("expected primary") {
-            analysis.push(
-                "• Multiple 'expected primary' errors suggest incomplete expressions".to_string(),
-            );
-        }
-
-        if all_messages.contains("missing") {
-            analysis
-                .push("• Missing elements detected - check for incomplete statements".to_string());
-        }
-
-        analysis
     }
 }
 

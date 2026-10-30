@@ -262,7 +262,10 @@ fn count_boxes_feeding(body: &str, mem_alloc_idx: u32, target: u32) -> usize {
     let target_call = format!("call {}", target);
     let mut count = 0;
     for i in 2..compact.len() {
-        if compact[i] == alloc_call && compact[i - 1] == "i32.const 12" && compact[i - 2] == "i32.const 0" {
+        if compact[i] == alloc_call
+            && compact[i - 1] == "i32.const 12"
+            && compact[i - 2] == "i32.const 0"
+        {
             if let Some(next) = compact[i + 1..].iter().find(|l| l.starts_with("call ")) {
                 if *next == target_call {
                     count += 1;

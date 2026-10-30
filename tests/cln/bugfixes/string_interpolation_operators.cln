@@ -1,0 +1,27 @@
+// Test: bugfixes/string_interpolation_operators
+// Grammar: string_interpolation = "{" logical_expression "}"
+// Fixed in: compiler 0.33.165
+// Expected output:
+//   gt true
+//   eq true
+//   ne false
+//   mod 1
+//   le false
+//   and true
+//   adj 72
+//   adj3 723
+//   7 end
+
+start:
+	integer a = 7
+	integer b = 2
+	integer c = 3
+	print("gt {a > 2}")
+	print("eq {a == 7}")
+	print("ne {a != 7}")
+	print("mod {a % 2}")
+	print("le {a <= b}")
+	print("and {a > 2 and b < 3}")
+	print("adj {a}{b}")
+	print("adj3 {a}{b}{c}")
+	print("{a} end")

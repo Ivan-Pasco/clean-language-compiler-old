@@ -5,16 +5,6 @@ use crate::types::WasmType;
 use std::collections::HashMap;
 use wasm_encoder::{Instruction, MemArg, MemorySection, MemoryType};
 
-// Type ID constants for memory management
-pub const TYPE_ID_UNKNOWN: u32 = 0;
-pub const TYPE_ID_INTEGER: u32 = 1;
-pub const TYPE_ID_FLOAT: u32 = 2;
-pub const TYPE_ID_STRING: u32 = 3;
-pub const TYPE_ID_ARRAY: u32 = 4;
-pub const TYPE_ID_MATRIX: u32 = 5;
-pub const TYPE_ID_OBJECT: u32 = 6;
-pub const TYPE_ID_FUNCTION: u32 = 7;
-
 const HEADER_SIZE: usize = 16; // Increased to include more metadata
 const MIN_ALLOCATION: usize = 32; // Increased for better alignment
 const ALIGNMENT: usize = 8;

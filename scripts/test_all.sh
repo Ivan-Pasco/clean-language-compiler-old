@@ -1,6 +1,6 @@
-#\!/bin/bash
+#!/bin/bash
 
-echo "Running comprehensive test suite on all 96 Clean files..."
+echo "Running comprehensive test suite on all tests/cln files..."
 
 # Colors for output
 RED="[0;31m"
@@ -12,28 +12,28 @@ PASSED=0
 FAILED=0
 TOTAL=0
 
-cd "/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+cd "$(dirname "$0")/.."
 
 # Ensure output directory exists
-mkdir -p tests/wasm
+mkdir -p tests/output
 
 # Find all .cln files and sort them
-for file in $(find tests/clean_files -name "*.cln" | sort); do
+for file in $(find tests/cln -path tests/cln/future -prune -o -name "*.cln" -print | sort); do
     TOTAL=$((TOTAL + 1))
     basename=$(basename "$file" .cln)
-    output="tests/wasm/${basename}.wasm"
+    output="tests/output/${basename}.wasm"
     
     echo -n "Testing $basename: "
     
     # Run the compiler
-    if cargo run --bin clean-language-compiler compile -i "$file" -o "$output" 2>/dev/null >/dev/null; then
+    if cargo run --quiet --bin cln -- compile "$file" -o "$output" 2>/dev/null >/dev/null; then
         echo -e "${GREEN}✓${NC}"
         PASSED=$((PASSED + 1))
     else
         echo -e "${RED}✗${NC}"
         FAILED=$((FAILED + 1))
         echo "    Error details for $basename:"
-        cargo run --bin clean-language-compiler compile -i "$file" -o "$output" 2>&1 | head -10 | sed "s/^/    /"
+        cargo run --quiet --bin cln -- compile "$file" -o "$output" 2>&1 | head -10 | sed "s/^/    /"
         echo ""
     fi
 done

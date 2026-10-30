@@ -64,10 +64,6 @@ pub struct BlockDispatch {
 }
 
 impl PluginManifest {
-    /// Highest expansion-ABI version this compiler implementation supports.
-    /// Bump together with shipping a higher-version code path in `wasm_adapter`.
-    pub const HIGHEST_SUPPORTED_EXPANSION_VERSION: u32 = 3;
-
     /// Returns true when the plugin opts into Plugin Contracts v3
     /// typed AST emission at the plugin level. Per-block opt-outs are
     /// still possible via `[blocks].<name>.version = 1`.
@@ -1288,40 +1284,6 @@ fn default_callback_fallback() -> String {
     "passthrough".to_string()
 }
 
-/// Expected WASM exports from a plugin
-pub struct PluginAbi;
-
-impl PluginAbi {
-    /// Minimum required exports
-    pub const REQUIRED_EXPORTS: &'static [&'static str] = &[
-        "expand", // (block_ptr: i32, block_len: i32) -> result_ptr: i32
-        "memory", // WebAssembly.Memory
-    ];
-
-    /// Optional exports
-    pub const OPTIONAL_EXPORTS: &'static [&'static str] = &[
-        "validate",        // (block_ptr: i32, block_len: i32) -> error_ptr: i32
-        "get_keywords",    // () -> keywords_ptr: i32
-        "get_completions", // (ctx_ptr: i32, ctx_len: i32) -> completions_ptr: i32
-        "get_hover_info",  // (keyword_ptr: i32, keyword_len: i32) -> info_ptr: i32
-        "get_diagnostics", // (content_ptr: i32, content_len: i32) -> diags_ptr: i32
-        "register_server", // () -> json_ptr: i32  (ServerRegistration JSON)
-        "register_cli",    // () -> json_ptr: i32  (CliRegistration JSON)
-        "register_data",   // () -> json_ptr: i32  (DataRegistration JSON)
-        "register_build",  // () -> json_ptr: i32  (BuildRegistration JSON)
-    ];
-
-    /// Validate that a module exports required functions
-    pub fn validate_module(exports: &[String]) -> Result<(), String> {
-        for required in Self::REQUIRED_EXPORTS {
-            if !exports.contains(&required.to_string()) {
-                return Err(format!("Plugin missing required export: {}", required));
-            }
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1368,15 +1330,6 @@ mod tests {
         assert_eq!(manifest.plugin.name, "minimal.plugin");
         assert_eq!(manifest.compatibility.min_compiler_version, "0.15.0");
         assert_eq!(manifest.exports.expand, "expand");
-    }
-
-    #[test]
-    fn test_validate_module() {
-        let exports = vec!["expand".to_string(), "memory".to_string()];
-        assert!(PluginAbi::validate_module(&exports).is_ok());
-
-        let missing = vec!["memory".to_string()];
-        assert!(PluginAbi::validate_module(&missing).is_err());
     }
 
     #[test]

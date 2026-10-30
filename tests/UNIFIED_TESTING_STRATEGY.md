@@ -134,7 +134,7 @@ When problems are particularly challenging:
 
 ```bash
 # Run comprehensive test to establish baseline
-timeout 120 cargo run --bin clean-language-compiler comprehensive-test
+./scripts/test.sh
 ```
 
 **Expected Output Analysis**:
@@ -190,7 +190,7 @@ MEDIUM: "String interpolation not supported" (affects 5+ tests)
 # 1. Core functionality tests (CRITICAL)
 for file in tests/cln/core/**/*.cln; do
     echo "Testing core: $file"
-    if ! cargo run --bin clean-language-compiler compile -i "$file" -o "tests/output/$(basename "$file" .cln).wasm"; then
+    if ! cargo run --bin cln -- compile "$file" -o "tests/output/$(basename "$file" .cln).wasm"; then
         echo "❌ CRITICAL FAILURE: $file"
         # Trigger Debug Agent for immediate analysis
         echo "→ Using Debug Agent for critical core failure analysis"
@@ -208,7 +208,7 @@ done
 **When Tests Fail**:
 1. **Immediate Error Capture**:
    ```bash
-   RUST_LOG=debug cargo run --bin clean-language-compiler compile -i failed_test.cln -o tests/output/debug.wasm 2>&1 | tee error_log.txt
+   RUST_LOG=debug cargo run --bin cln -- compile failed_test.cln -o tests/output/debug.wasm 2>&1 | tee error_log.txt
    ```
 
 2. **Automatic Agent Selection**:

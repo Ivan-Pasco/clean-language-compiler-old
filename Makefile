@@ -1,4 +1,4 @@
-.PHONY: build test run clean all-tests benchmark coverage quality-gate
+.PHONY: build test run clean all-tests test-unit test-integration test-parser test-semantic test-compilation benchmark coverage quality-gate test-fuzz ci pre-commit dev
 
 # Build the compiler
 build:
@@ -10,7 +10,7 @@ test:
 
 # Run a Clean Language program
 run:
-	cargo run --bin clean-language-compiler -- -i $(INPUT) -o $(OUTPUT)
+	cargo run --bin cln -- compile $(INPUT) -o $(OUTPUT)
 
 # Clean build artifacts
 clean:
@@ -37,10 +37,11 @@ test-parser:
 	@echo "📝 Running Parser Tests..."
 	cargo run --bin test_runner
 
-# Semantic analysis tests
+# Semantic analysis tests (name resolution + type checking)
 test-semantic:
 	@echo "🔍 Running Semantic Analysis Tests..."
-	cargo test semantic:: --verbose
+	cargo test --lib resolver:: --verbose
+	cargo test --lib typechecker:: --verbose
 
 # Full compilation pipeline tests
 test-compilation:
@@ -64,20 +65,10 @@ quality-gate: all-tests benchmark coverage
 	@echo "✅ Performance: NO REGRESSIONS"
 	@echo "✅ Coverage: THRESHOLD MET"
 
-# Property-based testing
-test-property:
-	@echo "🎲 Running Property-Based Tests..."
-	cargo test --features "proptest"
-
-# Fuzzing tests
+# Fuzzing tests (requires cargo-fuzz and a nightly toolchain)
 test-fuzz:
 	@echo "🔬 Running Fuzzing Tests..."
-	cargo fuzz run parser_fuzz
-
-# Mutation testing
-test-mutation:
-	@echo "🧬 Running Mutation Tests..."
-	cargo mutagen
+	cargo +nightly fuzz run parser_random_input
 
 # Continuous integration pipeline
 ci: quality-gate

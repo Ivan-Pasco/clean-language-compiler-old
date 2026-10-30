@@ -1,41 +1,16 @@
 use super::{CleanParser, Rule};
-use crate::ast::{Field, Function};
+use crate::ast::Function;
 use crate::error::CompilerError;
 /// Preprocessing solution for handling multiple functions in Clean Language
 ///
 /// This approach completely isolates individual functions before parsing,
 /// preventing PEG parser boundary issues that cause statement fallback to expression parsing.
-/// Enhanced to maintain class context when processing class methods in functions: blocks.
 use pest::Parser;
 
 /// Preprocessor that handles functions block parsing by isolating individual functions
-pub struct FunctionPreprocessor {
-    /// Class context for when processing class methods
-    class_context: Option<ClassContext>,
-}
-
-/// Class context information for processing class methods
-#[derive(Debug, Clone)]
-pub struct ClassContext {
-    pub class_name: String,
-    pub fields: Vec<Field>,
-    pub base_class: Option<String>,
-}
+pub struct FunctionPreprocessor;
 
 impl FunctionPreprocessor {
-    pub fn new(_source: &str) -> Self {
-        Self {
-            class_context: None,
-        }
-    }
-
-    /// Create a new preprocessor with class context for processing class methods
-    pub fn with_class_context(_source: &str, class_context: ClassContext) -> Self {
-        Self {
-            class_context: Some(class_context),
-        }
-    }
-
     /// Main preprocessing method: isolate and parse functions individually
     pub fn process_functions_block(
         &self,
@@ -284,33 +259,14 @@ impl FunctionPreprocessor {
                                 // Look inside function_declaration_line for function_in_block
                                 for inner_func_pair in func_pair.into_inner() {
                                     if inner_func_pair.as_rule() == Rule::function_in_block {
-                                        let mut function =
-                                            super::parser_impl::parse_function_in_block(
-                                                inner_func_pair,
-                                            )?;
-
-                                        // If we have class context, mark this as a class method
-                                        if let Some(ref class_ctx) = self.class_context {
-                                            function = self.enhance_function_with_class_context(
-                                                function, class_ctx,
-                                            )?;
-                                        }
-
-                                        return Ok(function);
+                                        return super::parser_impl::parse_function_in_block(
+                                            inner_func_pair,
+                                        );
                                     }
                                 }
                             } else if func_pair.as_rule() == Rule::function_in_block {
                                 // Direct function_in_block (for compatibility)
-                                let mut function =
-                                    super::parser_impl::parse_function_in_block(func_pair)?;
-
-                                // If we have class context, mark this as a class method
-                                if let Some(ref class_ctx) = self.class_context {
-                                    function = self
-                                        .enhance_function_with_class_context(function, class_ctx)?;
-                                }
-
-                                return Ok(function);
+                                return super::parser_impl::parse_function_in_block(func_pair);
                             }
                         }
                     }
@@ -324,28 +280,6 @@ impl FunctionPreprocessor {
             None,
             "SYN005",
         ))
-    }
-
-    /// Enhance a function with class context information
-    /// This allows the semantic analyzer to properly handle class field access
-    fn enhance_function_with_class_context(
-        &self,
-        mut function: Function,
-        class_ctx: &ClassContext,
-    ) -> Result<Function, CompilerError> {
-        // Mark the function as a method by storing class context in a custom attribute
-        // The semantic analyzer will use this information to inject class fields into scope
-
-        // For now, we'll use the function's description field to store class context
-        // In a production implementation, we'd add a proper class_context field to Function
-        let class_info = format!("CLASS_CONTEXT:{}", class_ctx.class_name);
-
-        function.description = Some(match function.description {
-            Some(existing) => format!("{existing}\n{class_info}"),
-            None => class_info,
-        });
-
-        Ok(function)
     }
 
     /// Normalize function indentation to match functions: block expectations
@@ -403,7 +337,7 @@ mod tests {
 	number divide(number a, number b)
 		return a / b"#;
 
-        let preprocessor = FunctionPreprocessor::new(source);
+        let preprocessor = FunctionPreprocessor;
         let segments = preprocessor.extract_function_segments(source).unwrap();
 
         assert_eq!(segments.len(), 2);
@@ -419,7 +353,7 @@ mod tests {
 	integer b(integer m)
 		return m"#;
 
-        let preprocessor = FunctionPreprocessor::new(source);
+        let preprocessor = FunctionPreprocessor;
         let segments = preprocessor.extract_function_segments(source).unwrap();
 
         assert_eq!(segments.len(), 2);

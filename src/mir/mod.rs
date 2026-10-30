@@ -9,21 +9,18 @@
 //! - Type-erased but still type-safe operations
 //! - Platform-independent instruction set
 //! - Dead code elimination and constant folding
-//! - Register allocation preparation
 
 use crate::error::CompilerError;
 use crate::typechecker::tast::TastProgram;
 
-pub mod control_flow;
 pub mod mir_builder;
 pub mod mir_types;
 pub mod optimization;
 
-pub use control_flow::{BasicBlock, ControlFlowGraph};
 pub use mir_builder::{MirBuildResult, MirBuilder};
 pub use mir_types::{
     BasicBlockId, MirBasicBlock, MirFunction, MirInstruction, MirOperand, MirProgram, MirType,
-    RegisterId, ValueId,
+    ValueId,
 };
 pub use optimization::{MirOptimizer, OptimizationPass};
 
@@ -51,20 +48,11 @@ pub struct MirConfig {
     /// Target optimization level (0-3)
     pub opt_level: u8,
 
-    /// Enable debug information preservation
-    pub debug_info: bool,
-
     /// Enable dead code elimination
     pub dead_code_elimination: bool,
 
     /// Enable constant folding
     pub constant_folding: bool,
-
-    /// Enable function inlining
-    pub function_inlining: bool,
-
-    /// Maximum function size for inlining
-    pub inline_threshold: usize,
 }
 
 /// Result of MIR lowering and optimization
@@ -72,31 +60,6 @@ pub struct MirConfig {
 pub struct MirResult {
     /// The generated MIR program
     pub program: MirProgram,
-
-    /// Optimization statistics
-    pub stats: OptimizationStats,
-
-    /// Any warnings generated during lowering
-    pub warnings: Vec<CompilerError>,
-}
-
-/// Statistics about optimizations performed
-#[derive(Debug, Default)]
-pub struct OptimizationStats {
-    /// Number of instructions eliminated
-    pub instructions_eliminated: usize,
-
-    /// Number of basic blocks eliminated
-    pub blocks_eliminated: usize,
-
-    /// Number of functions inlined
-    pub functions_inlined: usize,
-
-    /// Number of constants folded
-    pub constants_folded: usize,
-
-    /// Total optimization time in microseconds
-    pub optimization_time_us: u64,
 }
 
 impl MirPipeline {
@@ -153,32 +116,13 @@ impl MirPipeline {
         );
 
         // Phase 2: Apply optimization passes if enabled
-        let (optimized_program, stats) = if self.config.optimize {
-            let start_time = std::time::Instant::now();
-            let (program, mut stats) = self.optimizer.optimize(build_result.program)?;
-            stats.optimization_time_us = start_time.elapsed().as_micros() as u64;
-            (program, stats)
+        let program = if self.config.optimize {
+            self.optimizer.optimize(build_result.program)?
         } else {
-            (
-                build_result.program,
-                optimization::OptimizationStats::default(),
-            )
+            build_result.program
         };
 
-        // Convert optimization stats to local OptimizationStats type
-        let local_stats = OptimizationStats {
-            instructions_eliminated: stats.instructions_eliminated,
-            blocks_eliminated: stats.blocks_eliminated,
-            functions_inlined: stats.functions_inlined,
-            constants_folded: stats.constants_folded,
-            optimization_time_us: stats.optimization_time_us,
-        };
-
-        Ok(MirResult {
-            program: optimized_program,
-            stats: local_stats,
-            warnings: build_result.warnings,
-        })
+        Ok(MirResult { program })
     }
 
     /// Set optimization level
@@ -191,45 +135,20 @@ impl MirPipeline {
             0 => {
                 self.config.dead_code_elimination = false;
                 self.config.constant_folding = false;
-                self.config.function_inlining = false;
             }
-            1 => {
+            _ => {
                 self.config.dead_code_elimination = true;
                 self.config.constant_folding = true;
-                self.config.function_inlining = false;
             }
-            2 => {
-                self.config.dead_code_elimination = true;
-                self.config.constant_folding = true;
-                self.config.function_inlining = true;
-                self.config.inline_threshold = 50;
-            }
-            3 => {
-                self.config.dead_code_elimination = true;
-                self.config.constant_folding = true;
-                self.config.function_inlining = true;
-                self.config.inline_threshold = 100;
-            }
-            _ => unreachable!(),
         }
 
         // Update optimizer configuration
         self.optimizer = MirOptimizer::with_config(&self.config);
     }
 
-    /// Enable or disable debug information
-    pub fn set_debug_info(&mut self, enabled: bool) {
-        self.config.debug_info = enabled;
-    }
-
     /// Enable or disable release mode (strips `always:` invariant checks).
     pub fn set_release_mode(&mut self, release: bool) {
         self.builder.release_mode = release;
-    }
-
-    /// Get current configuration
-    pub fn config(&self) -> &MirConfig {
-        &self.config
     }
 }
 
@@ -238,11 +157,8 @@ impl Default for MirConfig {
         Self {
             optimize: true,
             opt_level: 2,
-            debug_info: false,
             dead_code_elimination: true,
             constant_folding: true,
-            function_inlining: true,
-            inline_threshold: 50,
         }
     }
 }
@@ -251,12 +167,6 @@ impl Default for MirPipeline {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Convenience function to lower TAST to MIR with default configuration
-pub fn lower_tast_to_mir(tast: TastProgram) -> Result<MirResult, Vec<CompilerError>> {
-    let mut pipeline = MirPipeline::new();
-    pipeline.lower(tast)
 }
 
 /// Convenience function to lower TAST to MIR with custom optimization level
@@ -302,15 +212,12 @@ mod tests {
         assert!(!pipeline.config.optimize);
         assert!(!pipeline.config.dead_code_elimination);
         assert!(!pipeline.config.constant_folding);
-        assert!(!pipeline.config.function_inlining);
 
         // Test level 3 (maximum optimization)
         pipeline.set_opt_level(3);
         assert!(pipeline.config.optimize);
         assert!(pipeline.config.dead_code_elimination);
         assert!(pipeline.config.constant_folding);
-        assert!(pipeline.config.function_inlining);
-        assert_eq!(pipeline.config.inline_threshold, 100);
     }
 
     #[test]
@@ -320,6 +227,5 @@ mod tests {
         assert_eq!(config.opt_level, 2);
         assert!(config.dead_code_elimination);
         assert!(config.constant_folding);
-        assert!(config.function_inlining);
     }
 }

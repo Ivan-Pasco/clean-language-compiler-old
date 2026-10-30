@@ -50,7 +50,6 @@ pub struct SpecificationLexer<'a> {
     indentation_stack: Vec<usize>,
     at_line_start: bool,
     token_buffer: Vec<Token>, // Buffer for emitting multiple tokens from string interpolation
-    suppress_indent_after_block_comment: bool, // Suppress indentation handling after multi-line block comment
 }
 
 impl<'a> SpecificationLexer<'a> {
@@ -68,7 +67,6 @@ impl<'a> SpecificationLexer<'a> {
             indentation_stack: vec![0], // Start with zero indentation
             at_line_start: true,
             token_buffer: Vec::new(),
-            suppress_indent_after_block_comment: false,
         }
     }
 
@@ -119,176 +117,13 @@ impl<'a> SpecificationLexer<'a> {
             return self.handle_indentation();
         }
 
-        // Skip whitespace (but preserve newlines and tabs)
-        self.skip_whitespace();
-
-        let start_location = self.current_location();
-
-        match self.peek() {
-            None => Ok(Token::simple(TokenKind::Eof, start_location)),
-            Some(&ch) => match ch {
-                // Newlines are significant
-                '\n' => {
-                    self.advance();
-                    self.at_line_start = true;
-                    Ok(Token::simple(TokenKind::Newline, start_location))
-                }
-
-                // String literals
-                '"' => self.read_string_literal(),
-
-                // Numbers (including precision modifiers)
-                c if c.is_ascii_digit() => self.read_number_literal(),
-
-                // Identifiers and keywords
-                c if c.is_alphabetic() || c == '_' => self.read_identifier_or_keyword(),
-
-                // Single-character operators and punctuation
-                '+' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Plus, start_location))
-                }
-                '-' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Minus, start_location))
-                }
-                '*' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Multiply, start_location))
-                }
-                '/' => self.handle_slash(), // Could be division or comment
-                '%' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Modulo, start_location))
-                }
-                '^' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Power, start_location))
-                }
-                '(' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::LeftParen, start_location))
-                }
-                ')' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::RightParen, start_location))
-                }
-                '[' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::LeftBracket, start_location))
-                }
-                ']' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::RightBracket, start_location))
-                }
-                '{' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::LeftBrace, start_location))
-                }
-                '}' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::RightBrace, start_location))
-                }
-                ',' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Comma, start_location))
-                }
-                ';' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Semicolon, start_location))
-                }
-                ':' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Colon, start_location))
-                }
-
-                // Multi-character operators
-                '=' => self.handle_equals(),
-                '!' => self.handle_exclamation(),
-                '<' => self.handle_less_than(),
-                '>' => self.handle_greater_than(),
-                '.' => self.handle_dot(),
-
-                // Framework attribute prefix (spec/grammar.ebnf framework_attribute)
-                '@' => {
-                    let loc = self.current_location();
-                    self.advance();
-                    Ok(Token::simple(TokenKind::At, loc))
-                }
-
-                // Nullable-type suffix — spec 04-type-system.md §"Nullable Types".
-                // Byte-range extraction for framework blocks reads raw bytes, so
-                // emitting a real Question token here does not affect html:/component:
-                // block content capture.
-                '?' => {
-                    let loc = start_location.clone();
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Question, loc))
-                }
-
-                // Characters that are not valid Clean Language syntax outside of
-                // framework blocks (html:, component:, etc.) but MUST flow through the
-                // token stream so plugin-owned blocks can capture them via byte-range
-                // raw extraction. The parser's extract_block_content_raw() reads bytes
-                // directly from the source — the token kind for these characters is
-                // irrelevant, only their presence (so the lexer doesn't error) and their
-                // byte position matter.
-                //
-                // Pass-through set:
-                //   '\''         — html attribute values like alt='Photo'
-                //   '&'          — html entities like &rarr;, &middot;
-                //   '\\'         — escaped braces `\{` `\}` in html: text (CSS rules)
-                //   '#'          — html fragment ids like href="#top" and the
-                //                  "#{var}" pattern that precedes an interpolation
-                //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
-                //
-                // If any of these appear outside a framework block, the parser will
-                // catch them later as an unexpected-token error in the right context.
-                // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
-                // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' | '\\' => {
-                    let loc = start_location.clone();
-                    let c = self.advance().unwrap();
-                    Ok(Token::new(
-                        TokenKind::Identifier(c.to_string()),
-                        loc,
-                        c.to_string(),
-                    ))
-                }
-
-                c if !c.is_ascii() => {
-                    let loc = start_location.clone();
-                    let ch = self.advance().unwrap();
-                    Ok(Token::new(
-                        TokenKind::Identifier(ch.to_string()),
-                        loc,
-                        ch.to_string(),
-                    ))
-                }
-
-                // Invalid character
-                _ => {
-                    let invalid_char = self.advance().unwrap();
-                    Err(LexError::InvalidCharacter {
-                        char: invalid_char,
-                        location: start_location,
-                    })
-                }
-            },
-        }
+        self.next_token_after_indentation()
     }
 
     /// Handle indentation at the beginning of a line
     fn handle_indentation(&mut self) -> Result<Token, LexError> {
         let mut indent_level = 0;
         let start_location = self.current_location();
-
-        // Skip indentation handling if we just exited a multi-line block comment
-        if self.suppress_indent_after_block_comment {
-            self.suppress_indent_after_block_comment = false;
-            self.at_line_start = false;
-            return self.next_token_after_indentation();
-        }
 
         // Count tab characters for indentation
         while let Some(&'\t') = self.peek() {
@@ -556,7 +391,6 @@ impl<'a> SpecificationLexer<'a> {
         self.advance(); // Skip opening quote
 
         // First, scan the entire string to check if it has interpolation
-        let mut content = String::new();
         let mut has_interpolation = false;
 
         // Save state to restart if we find interpolation
@@ -569,123 +403,18 @@ impl<'a> SpecificationLexer<'a> {
                 '"' => break,
                 '\\' => {
                     self.advance(); // Skip backslash
-                    if let Some(escaped) = self.advance() {
-                        if escaped == '{' || escaped == '}' {
-                            content.push(escaped);
-                        }
-                    }
+                    self.advance(); // Skip the escaped character
                 }
                 '{' => {
-                    // Check if this looks like interpolation (followed by identifier char or whitespace)
-                    self.advance(); // Skip '{'
-                    self.skip_whitespace();
-
-                    if let Some(&next_ch) = self.peek() {
-                        // A leading expression-start character is the cheap heuristic for
-                        // "this might be an interpolation expression". But that alone is not
-                        // enough — a string like "color: { family: Inter, weight: 700 }" also
-                        // starts with a letter after `{` yet contains characters (':') that
-                        // never appear inside a Clean expression. Walk the braced content; if
-                        // we see a definite non-expression character or the brace never
-                        // closes, fall back to treating '{' as a literal byte. That way the
-                        // user does not have to escape every '{' in DSL/config snippets.
-                        //
-                        // Expression starts: identifier (alpha / underscore), numeric literal
-                        // (digit), parenthesized sub-expression, unary operator, list literal,
-                        // or nested string literal. Anything else (':', whitespace-only,
-                        // closing brace, etc.) is treated as a literal '{'.
-                        let is_expression_start = next_ch.is_alphabetic()
-                            || next_ch == '_'
-                            || next_ch.is_ascii_digit()
-                            || next_ch == '('
-                            || next_ch == '-'
-                            || next_ch == '+'
-                            || next_ch == '!'
-                            || next_ch == '['
-                            || next_ch == '"';
-                        if is_expression_start {
-                            let mut sub_depth: u32 = 1;
-                            let mut paren_depth: u32 = 0;
-                            let mut bracket_depth: u32 = 0;
-                            let mut looks_like_interpolation = true;
-                            while let Some(&c) = self.peek() {
-                                match c {
-                                    '{' => {
-                                        sub_depth += 1;
-                                        self.advance();
-                                    }
-                                    '}' => {
-                                        sub_depth -= 1;
-                                        self.advance();
-                                        if sub_depth == 0 {
-                                            break;
-                                        }
-                                    }
-                                    '(' => {
-                                        paren_depth += 1;
-                                        self.advance();
-                                    }
-                                    ')' => {
-                                        paren_depth = paren_depth.saturating_sub(1);
-                                        self.advance();
-                                    }
-                                    '[' => {
-                                        bracket_depth += 1;
-                                        self.advance();
-                                    }
-                                    ']' => {
-                                        bracket_depth = bracket_depth.saturating_sub(1);
-                                        self.advance();
-                                    }
-                                    // End-of-string or newline before the matching brace —
-                                    // user did not close the interpolation, treat as literal.
-                                    '"' | '\n' => {
-                                        looks_like_interpolation = false;
-                                        break;
-                                    }
-                                    // Characters that never appear in a Clean expression.
-                                    // ':' is the block-header marker; ';' / '#' / '@' / '$'
-                                    // are not in the expression grammar either. Their
-                                    // presence means the braces are not interpolation.
-                                    ':' | ';' | '#' | '@' | '$' | '?' => {
-                                        looks_like_interpolation = false;
-                                        break;
-                                    }
-                                    // A top-level ',' (outside any nested '(' or '[') cannot
-                                    // appear in a single logical_expression — commas are only
-                                    // legal as separators inside call-arg lists or list/matrix
-                                    // literals. Seeing one at the outer brace level means the
-                                    // braces are a literal DSL/glob pattern like "{a,b}" or
-                                    // "Hero.{design,behavior}.md", not an interpolation.
-                                    ',' if paren_depth == 0 && bracket_depth == 0 => {
-                                        looks_like_interpolation = false;
-                                        break;
-                                    }
-                                    _ => {
-                                        self.advance();
-                                    }
-                                }
-                            }
-                            if looks_like_interpolation {
-                                has_interpolation = true;
-                                break;
-                            }
-                            // Not interpolation — treat the original '{' as literal and keep
-                            // scanning. The state-restore at the end of the pre-scan will
-                            // replay the bytes through read_simple_string anyway, so we just
-                            // need to make sure we do not flip has_interpolation here.
-                            content.push('{');
-                            continue;
-                        } else {
-                            // Not interpolation - treat '{' as literal
-                            content.push('{');
-                            // Continue scanning (already advanced past '{')
-                            continue;
-                        }
-                    } else {
-                        // End of string after '{' - not interpolation
-                        content.push('{');
+                    let (is_interpolation, scanned) = self.scan_brace_interpolation();
+                    if is_interpolation {
+                        has_interpolation = true;
                         break;
+                    }
+                    // Not interpolation: the braces are literal text. Skip what the
+                    // probe already looked at and keep scanning.
+                    for _ in 0..scanned {
+                        self.advance();
                     }
                 }
                 '\n' => {
@@ -694,7 +423,6 @@ impl<'a> SpecificationLexer<'a> {
                     });
                 }
                 _ => {
-                    content.push(*ch);
                     self.advance();
                 }
             }
@@ -783,8 +511,8 @@ impl<'a> SpecificationLexer<'a> {
         let mut parts: Vec<InterpolationPart> = Vec::new();
         let mut current_string = String::new();
 
-        while let Some(ch) = self.peek() {
-            match *ch {
+        while let Some(&ch) = self.peek() {
+            match ch {
                 '"' => {
                     // End of string
                     parts.push(InterpolationPart::String(current_string));
@@ -812,10 +540,16 @@ impl<'a> SpecificationLexer<'a> {
                         }
                     }
                 }
+                '{' if !self.scan_brace_interpolation().0 => {
+                    // Literal brace (same decision the pre-scan made)
+                    current_string.push('{');
+                    self.advance();
+                }
                 '{' => {
                     // Start of interpolation expression
-                    parts.push(InterpolationPart::String(current_string.clone()));
-                    current_string.clear();
+                    parts.push(InterpolationPart::String(std::mem::take(
+                        &mut current_string,
+                    )));
 
                     self.advance(); // Skip '{'
 
@@ -829,7 +563,7 @@ impl<'a> SpecificationLexer<'a> {
                     });
                 }
                 _ => {
-                    current_string.push(*ch);
+                    current_string.push(ch);
                     self.advance();
                 }
             }
@@ -860,169 +594,172 @@ impl<'a> SpecificationLexer<'a> {
         }
     }
 
-    /// Read expression tokens inside interpolation {}
+    /// Decide whether the `{` at the current position opens a string
+    /// interpolation. Nothing is consumed. Returns the decision and the number
+    /// of characters the probe looked at (from the `{` up to where it stopped),
+    /// which the pre-scan skips when the braces are literal.
+    ///
+    /// A leading expression-start character is the cheap heuristic for "this
+    /// might be an interpolation expression". But that alone is not enough — a
+    /// string like "color: { family: Inter, weight: 700 }" also starts with a
+    /// letter after `{` yet contains characters (':') that never appear inside a
+    /// Clean expression. The braced content is walked; a definite
+    /// non-expression character or an unclosed brace means `{` is a literal
+    /// byte. That way the user does not have to escape every '{' in DSL/config
+    /// snippets.
+    ///
+    /// Expression starts: identifier (alpha / underscore), numeric literal
+    /// (digit), parenthesized sub-expression, unary operator, list literal, or
+    /// nested string literal. Anything else (':', whitespace-only, closing
+    /// brace, etc.) is treated as a literal '{'.
+    fn scan_brace_interpolation(&self) -> (bool, usize) {
+        let mut ahead = self.input.clone().peekable();
+        let mut scanned = 0usize;
+
+        // The '{' itself
+        if ahead.next() != Some('{') {
+            return (false, 0);
+        }
+        scanned += 1;
+
+        // Leading whitespace (same set skip_whitespace() skips)
+        while let Some(&c) = ahead.peek() {
+            if c.is_whitespace() && c != '\n' && c != '\t' {
+                ahead.next();
+                scanned += 1;
+            } else {
+                break;
+            }
+        }
+
+        let is_expression_start = match ahead.peek() {
+            Some(&c) => {
+                c.is_alphabetic()
+                    || c == '_'
+                    || c.is_ascii_digit()
+                    || matches!(c, '(' | '-' | '+' | '!' | '[' | '"')
+            }
+            // End of input after '{' - not interpolation
+            None => return (false, scanned),
+        };
+        if !is_expression_start {
+            return (false, scanned);
+        }
+
+        let mut sub_depth: u32 = 1;
+        let mut paren_depth: u32 = 0;
+        let mut bracket_depth: u32 = 0;
+        while let Some(&c) = ahead.peek() {
+            match c {
+                '{' => sub_depth += 1,
+                '}' => {
+                    sub_depth -= 1;
+                    if sub_depth == 0 {
+                        return (true, scanned + 1);
+                    }
+                }
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                // End-of-string or newline before the matching brace — the user
+                // did not close the interpolation, treat as literal.
+                '"' | '\n' => return (false, scanned),
+                // Characters that never appear in a Clean expression. ':' is the
+                // block-header marker; ';' / '#' / '@' / '$' / '?' are not in the
+                // expression grammar either. Their presence means the braces are
+                // not interpolation.
+                ':' | ';' | '#' | '@' | '$' | '?' => return (false, scanned),
+                // A top-level ',' (outside any nested '(' or '[') cannot appear in
+                // a single logical_expression — commas are only legal as
+                // separators inside call-arg lists or list/matrix literals. Seeing
+                // one at the outer brace level means the braces are a literal
+                // DSL/glob pattern like "{a,b}" or "Hero.{design,behavior}.md",
+                // not an interpolation.
+                ',' if paren_depth == 0 && bracket_depth == 0 => return (false, scanned),
+                _ => {}
+            }
+            ahead.next();
+            scanned += 1;
+        }
+
+        // Ran off the end of the input: the string itself is unterminated and
+        // the interpolated-string reader reports it.
+        (true, scanned)
+    }
+
+    /// Read expression tokens inside interpolation {}.
+    ///
+    /// The content is a full `logical_expression` (grammar.ebnf
+    /// `string_interpolation`), so tokens come from the regular tokenizer.
     fn read_interpolation_expression(&mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         let mut brace_depth = 1; // We already consumed the opening '{'
 
-        while brace_depth > 0 && !self.is_at_end() {
+        loop {
             self.skip_whitespace();
             let start_location = self.current_location();
 
             match self.peek() {
                 Some(&'}') => {
+                    self.advance();
                     brace_depth -= 1;
                     if brace_depth == 0 {
-                        self.advance(); // Consume closing '}'
-                        break;
-                    } else {
-                        // Nested closing brace
-                        self.advance();
-                        tokens.push(Token::simple(TokenKind::RightBrace, start_location));
+                        return Ok(tokens);
                     }
+                    tokens.push(Token::simple(TokenKind::RightBrace, start_location));
                 }
                 Some(&'{') => {
-                    // Nested opening brace
                     self.advance();
                     brace_depth += 1;
                     tokens.push(Token::simple(TokenKind::LeftBrace, start_location));
                 }
-                Some(&ch) if ch.is_alphabetic() || ch == '_' => {
-                    tokens.push(self.read_identifier_or_keyword()?);
-                }
-                Some(&ch) if ch.is_ascii_digit() => {
-                    tokens.push(self.read_number_literal()?);
-                }
-                Some(&'.') => {
-                    tokens.push(self.handle_dot()?);
-                }
-                Some(&'(') => {
-                    self.advance();
-                    tokens.push(Token::simple(TokenKind::LeftParen, start_location));
-                }
-                Some(&')') => {
-                    self.advance();
-                    tokens.push(Token::simple(TokenKind::RightParen, start_location));
-                }
-                Some(&'[') => {
-                    self.advance();
-                    tokens.push(Token::simple(TokenKind::LeftBracket, start_location));
-                }
-                Some(&']') => {
-                    self.advance();
-                    tokens.push(Token::simple(TokenKind::RightBracket, start_location));
-                }
-                Some(_) => {
-                    // Try to get next token normally
-                    let token = self.next_token_in_interpolation()?;
-                    tokens.push(token);
-                }
-                None => {
+                None | Some(&'\n') => {
                     return Err(LexError::UnterminatedString {
                         location: start_location,
                     });
                 }
+                Some(_) => {
+                    tokens.push(self.next_token_after_indentation()?);
+                    // A nested interpolated string literal buffers its remaining
+                    // tokens; they belong to this expression, in order.
+                    tokens.append(&mut self.token_buffer);
+                }
             }
-        }
-
-        Ok(tokens)
-    }
-
-    /// Get next token while inside interpolation (helper)
-    fn next_token_in_interpolation(&mut self) -> Result<Token, LexError> {
-        let start_location = self.current_location();
-
-        match self.peek() {
-            Some(&'+') => {
-                self.advance();
-                Ok(Token::simple(TokenKind::Plus, start_location))
-            }
-            Some(&'-') => {
-                self.advance();
-                Ok(Token::simple(TokenKind::Minus, start_location))
-            }
-            Some(&'*') => {
-                self.advance();
-                Ok(Token::simple(TokenKind::Multiply, start_location))
-            }
-            Some(&'/') => {
-                self.advance();
-                Ok(Token::simple(TokenKind::Divide, start_location))
-            }
-            Some(&',') => {
-                self.advance();
-                Ok(Token::simple(TokenKind::Comma, start_location))
-            }
-            _ => Err(LexError::InvalidCharacter {
-                char: self.advance().unwrap_or('\0'),
-                location: start_location,
-            }),
         }
     }
 
-    /// Emit interpolation tokens to the buffer
+    /// Emit interpolation tokens to the buffer.
+    ///
+    /// `parts` alternates `String, Expression, String, ..., String`: the reader
+    /// pushes the text before every `{` and the text before the closing quote.
+    /// The first text becomes `InterpolationStart`, the last `InterpolationEnd`
+    /// and every one in between `InterpolationMid` — even when empty, because
+    /// the Mid token is what separates adjacent interpolations like `{a}{b}`.
     fn emit_interpolation_tokens(
         &mut self,
         parts: Vec<InterpolationPart>,
         start_location: SourceLocation,
     ) -> Result<(), LexError> {
-        if parts.is_empty() {
-            return Ok(());
-        }
-
-        let mut is_first = true;
-        let mut last_was_expr = false;
-
-        for (i, part) in parts.iter().enumerate() {
+        let last = parts.len().saturating_sub(1);
+        for (i, part) in parts.into_iter().enumerate() {
             match part {
-                InterpolationPart::String(s) => {
-                    if s.is_empty() && !is_first {
-                        continue; // Skip empty string parts in the middle
-                    }
-
-                    let token_kind = if is_first {
-                        is_first = false;
-                        last_was_expr = false;
+                InterpolationPart::String(text) => {
+                    let token_kind = if i == 0 {
                         TokenKind::InterpolationStart
-                    } else if i == parts.len() - 1 {
-                        last_was_expr = false;
+                    } else if i == last {
                         TokenKind::InterpolationEnd
                     } else {
-                        last_was_expr = false;
                         TokenKind::InterpolationMid
                     };
-
-                    self.token_buffer.push(Token::new(
-                        token_kind,
-                        start_location.clone(),
-                        s.clone(),
-                    ));
+                    self.token_buffer
+                        .push(Token::new(token_kind, start_location.clone(), text));
                 }
-                InterpolationPart::Expression(tokens) => {
-                    // Add all expression tokens to buffer
-                    for token in tokens {
-                        self.token_buffer.push(token.clone());
-                    }
-                    last_was_expr = true;
-                    is_first = false;
-                }
+                InterpolationPart::Expression(tokens) => self.token_buffer.extend(tokens),
             }
         }
 
-        // If the last part was an expression, we need to add an empty InterpolationEnd
-        if last_was_expr {
-            self.token_buffer.push(Token::new(
-                TokenKind::InterpolationEnd,
-                start_location,
-                String::new(),
-            ));
-        }
-
         Ok(())
-    }
-
-    fn is_at_end(&self) -> bool {
-        self.current_pos >= self.source_content.len()
     }
 
     /// Read number literal with optional precision modifier
@@ -1034,88 +771,8 @@ impl<'a> SpecificationLexer<'a> {
         let mut is_float = false;
 
         // Base-prefixed integer detection: 0x..., 0b..., 0o...
-        if let Some(&'0') = self.peek() {
-            if let Some(chars) = self.peek_chars(2) {
-                match chars.as_slice() {
-                    ['0', 'x'] | ['0', 'X'] => {
-                        // consume 0x
-                        self.advance();
-                        self.advance();
-                        let mut digits = String::new();
-                        while let Some(&ch) = self.peek() {
-                            if ch.is_ascii_hexdigit() {
-                                digits.push(ch);
-                                self.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                        let text = self.source_text_range(start_pos, self.current_pos);
-                        let value = i64::from_str_radix(&digits, 16).map_err(|_| {
-                            LexError::InvalidNumber {
-                                text: text.clone(),
-                                location: start_location.clone(),
-                            }
-                        })?;
-                        return Ok(Token::new(
-                            TokenKind::IntegerLiteral(value),
-                            start_location,
-                            text,
-                        ));
-                    }
-                    ['0', 'b'] | ['0', 'B'] => {
-                        self.advance();
-                        self.advance();
-                        let mut digits = String::new();
-                        while let Some(&ch) = self.peek() {
-                            if ch == '0' || ch == '1' {
-                                digits.push(ch);
-                                self.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                        let text = self.source_text_range(start_pos, self.current_pos);
-                        let value = i64::from_str_radix(&digits, 2).map_err(|_| {
-                            LexError::InvalidNumber {
-                                text: text.clone(),
-                                location: start_location.clone(),
-                            }
-                        })?;
-                        return Ok(Token::new(
-                            TokenKind::IntegerLiteral(value),
-                            start_location,
-                            text,
-                        ));
-                    }
-                    ['0', 'o'] | ['0', 'O'] => {
-                        self.advance();
-                        self.advance();
-                        let mut digits = String::new();
-                        while let Some(&ch) = self.peek() {
-                            if ('0'..='7').contains(&ch) {
-                                digits.push(ch);
-                                self.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                        let text = self.source_text_range(start_pos, self.current_pos);
-                        let value = i64::from_str_radix(&digits, 8).map_err(|_| {
-                            LexError::InvalidNumber {
-                                text: text.clone(),
-                                location: start_location.clone(),
-                            }
-                        })?;
-                        return Ok(Token::new(
-                            TokenKind::IntegerLiteral(value),
-                            start_location,
-                            text,
-                        ));
-                    }
-                    _ => {}
-                }
-            }
+        if let Some(token) = self.read_base_prefixed_integer(&start_location, start_pos) {
+            return token;
         }
 
         // Read integer part
@@ -1151,30 +808,8 @@ impl<'a> SpecificationLexer<'a> {
         }
 
         // Check for scientific notation
-        if let Some(&ch) = self.peek() {
-            if ch == 'e' || ch == 'E' {
-                is_float = true;
-                number_text.push(ch);
-                self.advance();
-
-                // Optional sign
-                if let Some(&sign) = self.peek() {
-                    if sign == '+' || sign == '-' {
-                        number_text.push(sign);
-                        self.advance();
-                    }
-                }
-
-                // Exponent digits
-                while let Some(&ch) = self.peek() {
-                    if ch.is_ascii_digit() {
-                        number_text.push(ch);
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-            }
+        if self.read_exponent(&mut number_text) {
+            is_float = true;
         }
 
         // Check for precision modifier - only if followed by valid digits
@@ -1372,6 +1007,92 @@ impl<'a> SpecificationLexer<'a> {
         }
     }
 
+    /// Read a base-prefixed integer literal (`0x1F`, `0b101`, `0o17`).
+    ///
+    /// The prefix is only taken when the character after it is a valid digit of
+    /// that base; otherwise `None` is returned and nothing is consumed, so `0`
+    /// lexes as a plain integer and the rest as an identifier. That keeps CSS
+    /// hex colours such as `#0b5ed7` (captured raw by `style:` blocks) from
+    /// being reported as malformed numbers.
+    fn read_base_prefixed_integer(
+        &mut self,
+        start_location: &SourceLocation,
+        start_pos: usize,
+    ) -> Option<Result<Token, LexError>> {
+        let chars = self.peek_chars(3)?;
+        let radix = match &chars[..2] {
+            ['0', 'x' | 'X'] => 16,
+            ['0', 'b' | 'B'] => 2,
+            ['0', 'o' | 'O'] => 8,
+            _ => return None,
+        };
+        if !chars[2].is_digit(radix) {
+            return None;
+        }
+
+        self.advance();
+        self.advance();
+        let mut digits = String::new();
+        while let Some(&ch) = self.peek() {
+            if ch.is_digit(radix) {
+                digits.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        let text = self.source_text_range(start_pos, self.current_pos);
+        Some(match i64::from_str_radix(&digits, radix) {
+            Ok(value) => Ok(Token::new(
+                TokenKind::IntegerLiteral(value),
+                start_location.clone(),
+                text,
+            )),
+            Err(_) => Err(LexError::InvalidNumber {
+                text,
+                location: start_location.clone(),
+            }),
+        })
+    }
+
+    /// Consume a scientific-notation exponent (`e3`, `E-2`, `e+10`) into
+    /// `number_text` and return true. The `e`/`E` is only taken when digits
+    /// follow (optionally after a sign); otherwise nothing is consumed, so a
+    /// CSS unit like `1em` lexes as `1` followed by the identifier `em`.
+    fn read_exponent(&mut self, number_text: &mut String) -> bool {
+        let mut ahead = self.input.clone();
+        if !matches!(ahead.next(), Some('e' | 'E')) {
+            return false;
+        }
+        let has_digits = match ahead.next() {
+            Some('+' | '-') => ahead.next().is_some_and(|c| c.is_ascii_digit()),
+            Some(c) => c.is_ascii_digit(),
+            None => false,
+        };
+        if !has_digits {
+            return false;
+        }
+
+        // 'e' / 'E' and the optional sign
+        if let Some(exp) = self.advance() {
+            number_text.push(exp);
+        }
+        if let Some(&sign @ ('+' | '-')) = self.peek() {
+            number_text.push(sign);
+            self.advance();
+        }
+        while let Some(&digit) = self.peek() {
+            if digit.is_ascii_digit() {
+                number_text.push(digit);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        true
+    }
+
     /// Read precision modifier (8, 8u, 16, 16u, 32, 64)
     /// Check if what follows the current ':' looks like a valid precision modifier
     fn is_valid_precision_modifier_ahead(&self) -> bool {
@@ -1509,18 +1230,12 @@ impl<'a> SpecificationLexer<'a> {
                 // Block comment
                 self.advance(); // Skip '*'
                 let mut comment = String::new();
-                let mut has_newline = false;
 
                 loop {
                     match self.advance() {
                         Some('*') if self.peek() == Some(&'/') => {
                             self.advance(); // Skip '/'
                             break;
-                        }
-                        Some('\n') => {
-                            // Track that we've seen a newline in this block comment
-                            has_newline = true;
-                            comment.push('\n');
                         }
                         Some(ch) => comment.push(ch),
                         None => {
@@ -1529,13 +1244,6 @@ impl<'a> SpecificationLexer<'a> {
                             });
                         }
                     }
-                }
-
-                // If the block comment contained newlines and we're at line start,
-                // suppress indentation handling on the next line
-                if has_newline && self.column == 1 {
-                    self.suppress_indent_after_block_comment = true;
-                    self.at_line_start = true;
                 }
 
                 Ok(Token::new(
@@ -1628,30 +1336,7 @@ impl<'a> SpecificationLexer<'a> {
                 }
 
                 // Check for scientific notation
-                if let Some(&exp) = self.peek() {
-                    if exp == 'e' || exp == 'E' {
-                        number_text.push(exp);
-                        self.advance();
-
-                        // Optional sign
-                        if let Some(&sign) = self.peek() {
-                            if sign == '+' || sign == '-' {
-                                number_text.push(sign);
-                                self.advance();
-                            }
-                        }
-
-                        // Exponent digits
-                        while let Some(&digit) = self.peek() {
-                            if digit.is_ascii_digit() {
-                                number_text.push(digit);
-                                self.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
+                self.read_exponent(&mut number_text);
 
                 let text = self.source_text_range(start_pos, self.current_pos);
                 let value: f64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
@@ -1825,8 +1510,6 @@ impl From<LexError> for CompilerError {
     }
 }
 
-// Tests are in tests/specification_lexer_tests.rs
-
 #[cfg(test)]
 mod regression_tests {
     use super::*;
@@ -1861,6 +1544,95 @@ mod regression_tests {
         assert!(
             tokenize("Page?").is_ok(),
             "`?` after class name must not be a lex error",
+        );
+    }
+
+    fn kinds(input: &str) -> Vec<TokenKind> {
+        tokenize(input)
+            .unwrap_or_else(|e| panic!("`{}` must lex, got {}", input, e))
+            .into_iter()
+            .map(|t| t.kind)
+            .collect()
+    }
+
+    /// Regression: CSS inside `style:` blocks flows through the lexer before the
+    /// plugin captures the raw bytes. A unit suffix starting with `e` (`1em`,
+    /// `1.5em`) or a hex colour starting with a base prefix (`#0b5ed7`,
+    /// `#0x...`-looking digits) must not be read as a malformed number.
+    #[test]
+    fn css_units_and_hex_colours_are_not_number_errors() {
+        for src in [
+            "padding: 1em;",
+            "margin: 1.5em;",
+            "width: .5em;",
+            "color: #2ecc71;",
+            "color: #0b5ed7;",
+            "color: #0o0;",
+            "color: #0xg;",
+        ] {
+            assert!(
+                tokenize(src).is_ok(),
+                "`{}` must lex: {:?}",
+                src,
+                tokenize(src).err()
+            );
+        }
+        assert_eq!(
+            kinds("1em")[..2],
+            [
+                TokenKind::IntegerLiteral(1),
+                TokenKind::Identifier("em".to_string())
+            ]
+        );
+        assert_eq!(
+            kinds("0b5ed7")[..2],
+            [
+                TokenKind::IntegerLiteral(0),
+                TokenKind::Identifier("b5ed7".to_string())
+            ]
+        );
+    }
+
+    /// Real exponents and base-prefixed integers keep working.
+    #[test]
+    fn exponents_and_base_prefixes_still_lex() {
+        assert_eq!(kinds("1e3")[0], TokenKind::NumberLiteral(1000.0));
+        assert_eq!(kinds("2.5E-1")[0], TokenKind::NumberLiteral(0.25));
+        assert_eq!(kinds(".5e+1")[0], TokenKind::NumberLiteral(5.0));
+        assert_eq!(kinds("0xFF")[0], TokenKind::IntegerLiteral(255));
+        assert_eq!(kinds("0b101")[0], TokenKind::IntegerLiteral(5));
+        assert_eq!(kinds("0o17")[0], TokenKind::IntegerLiteral(15));
+    }
+
+    /// Regression: an interpolation holds a full `logical_expression`
+    /// (grammar.ebnf `string_interpolation`), so every binary operator must
+    /// lex inside `{...}`, and adjacent interpolations need a separator token.
+    #[test]
+    fn interpolation_accepts_all_operators_and_adjacent_parts() {
+        for src in [
+            "\"r {a > 2}\"",
+            "\"r {a == 7}\"",
+            "\"r {a != 7}\"",
+            "\"r {a % 2}\"",
+            "\"r {a <= b}\"",
+            "\"r {a ^ 2}\"",
+            "\"r {a > 2 and b < 3}\"",
+        ] {
+            assert!(
+                tokenize(src).is_ok(),
+                "`{}` must lex: {:?}",
+                src,
+                tokenize(src).err()
+            );
+        }
+        let k = kinds("\"r {a}{b}\"");
+        assert_eq!(
+            k.iter()
+                .filter(|k| matches!(k, TokenKind::InterpolationMid))
+                .count(),
+            1,
+            "adjacent interpolations need an InterpolationMid separator: {:?}",
+            k
         );
     }
 }

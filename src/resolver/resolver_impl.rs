@@ -76,14 +76,7 @@ impl NameResolver {
 
     /// Resolve names in a HIR program
     pub fn resolve(hir: HirProgram) -> Result<ResolutionResult, Vec<CompilerError>> {
-        let mut resolver = Self::new();
-        match resolver.resolve_program(hir) {
-            Ok(resolved_hir) => Ok(ResolutionResult {
-                resolved_hir,
-                warnings: resolver.warnings,
-            }),
-            Err(_) => Err(resolver.errors),
-        }
+        Self::resolve_with_bridge_functions(hir, &[])
     }
 
     /// Resolve the entire HIR program
@@ -2615,7 +2608,8 @@ impl NameResolver {
                     // data and send it as application/json, the way `html(x)`
                     // becomes `htmlResponse(x)` below. Without frame.server it
                     // stays plain `json.encode`.
-                    if let Some(json_response_id) = self.symbol_table.lookup_symbol("jsonResponse") {
+                    if let Some(json_response_id) = self.symbol_table.lookup_symbol("jsonResponse")
+                    {
                         return Ok(ResolvedHirExpression::Call {
                             function: "jsonResponse".to_string(),
                             function_symbol_id: json_response_id,
@@ -4642,18 +4636,11 @@ impl NameResolver {
         hir: HirProgram,
         bridge_functions: &[crate::plugins::BridgeFunction],
     ) -> Result<ResolutionResult, Vec<CompilerError>> {
-        let mut resolver = Self::new();
-
-        // Defer bridge registration — applied inside resolve_program after builtins
-        resolver.pending_bridge_functions = bridge_functions.to_vec();
-
-        match resolver.resolve_program(hir) {
-            Ok(resolved_hir) => Ok(ResolutionResult {
-                resolved_hir,
-                warnings: resolver.warnings,
-            }),
-            Err(_) => Err(resolver.errors),
-        }
+        Self::resolve_with_bridge_and_language_aliases(
+            hir,
+            bridge_functions,
+            &std::collections::HashMap::new(),
+        )
     }
 
     /// Resolve with both bridge functions and language-name aliases.
@@ -4668,19 +4655,13 @@ impl NameResolver {
         bridge_functions: &[crate::plugins::BridgeFunction],
         language_to_bridge: &std::collections::HashMap<String, String>,
     ) -> Result<ResolutionResult, Vec<CompilerError>> {
-        let mut resolver = Self::new();
-
-        // Defer both bridge and alias registration — applied inside resolve_program after builtins
-        resolver.pending_bridge_functions = bridge_functions.to_vec();
-        resolver.pending_language_aliases = language_to_bridge.clone();
-
-        match resolver.resolve_program(hir) {
-            Ok(resolved_hir) => Ok(ResolutionResult {
-                resolved_hir,
-                warnings: resolver.warnings,
-            }),
-            Err(_) => Err(resolver.errors),
-        }
+        Self::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            hir,
+            bridge_functions,
+            language_to_bridge,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Register language-name aliases (dot-notation API names) as builtins.
@@ -5243,27 +5224,6 @@ impl NameResolver {
             "any" => HirType::Any,
             _ => HirType::Any,
         }
-    }
-
-    /// Like `resolve_with_bridge_and_language_aliases` but also accepts the
-    /// language function definitions so that return-type and param-type overrides
-    /// declared in `[language].functions` of `plugin.toml` are honoured.
-    pub fn resolve_with_bridge_aliases_and_fn_defs(
-        hir: crate::hir::HirProgram,
-        bridge_functions: &[crate::plugins::BridgeFunction],
-        language_to_bridge: &std::collections::HashMap<String, String>,
-        language_fn_defs: std::collections::HashMap<
-            String,
-            crate::plugins::plugin_abi::PluginFunctionDef,
-        >,
-    ) -> Result<ResolutionResult, Vec<CompilerError>> {
-        Self::resolve_with_bridge_aliases_fn_defs_and_helpers(
-            hir,
-            bridge_functions,
-            language_to_bridge,
-            language_fn_defs,
-            std::collections::HashMap::new(),
-        )
     }
 
     /// Full-fat resolver entry point: bridge aliases + language function defs +

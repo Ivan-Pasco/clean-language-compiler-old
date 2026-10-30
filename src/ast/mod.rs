@@ -337,50 +337,6 @@ pub enum Expression {
         location: SourceLocation,
     },
 
-    /// `chained_method_call` — (function_call | property_access | identifier)
-    /// followed by one or more `.method()` segments.
-    /// foundation/spec/grammar.ebnf: `chained_method_call`
-    ChainedMethodCall {
-        receiver: Box<Expression>,
-        chain: Vec<(String, Vec<Expression>)>, // (method_name, args) pairs
-        location: SourceLocation,
-    },
-
-    /// `multiple_method_call` — a base receiver followed by two or more
-    /// `.method()` segments (superset of `method_call`; kept distinct per spec).
-    /// foundation/spec/grammar.ebnf: `multiple_method_call`
-    ///
-    /// Note: structurally identical to `ChainedMethodCall` (two or more
-    /// segments); mapped to the same WASM codegen path. Kept as a separate
-    /// variant to preserve spec fidelity.
-    MultipleMethodCall {
-        receiver: Box<Expression>,
-        chain: Vec<(String, Vec<Expression>)>,
-        location: SourceLocation,
-    },
-
-    /// `three_level_method_call` — `a.b.method(args)` where all three parts
-    /// are identifiers.
-    /// foundation/spec/grammar.ebnf: `three_level_method_call`
-    ThreeLevelMethodCall {
-        first: String,
-        second: String,
-        method: String,
-        arguments: Vec<Expression>,
-        location: SourceLocation,
-    },
-
-    /// `property_method_call` — property chain ending in a method call:
-    /// `a.b.c...method(args)` where the path is 3+ identifiers.
-    /// foundation/spec/grammar.ebnf: `property_method_call`
-    PropertyMethodCall {
-        object: String,
-        path: Vec<String>, // intermediate property segments (may be empty)
-        method: String,
-        arguments: Vec<Expression>,
-        location: SourceLocation,
-    },
-
     // Static method call (ClassName.method() or namespace.ClassName.method())
     StaticMethodCall {
         namespace: Vec<String>, // Empty for two-level calls, ["compare"] for three-level
@@ -390,9 +346,8 @@ pub enum Expression {
         location: SourceLocation,
     },
 
-    // List and Matrix access
+    // List access
     ListAccess(Box<Expression>, Box<Expression>),
-    MatrixAccess(Box<Expression>, Box<Expression>, Box<Expression>),
 
     // String interpolation
     StringInterpolation(Vec<StringPart>),
@@ -769,37 +724,6 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
-    // Clean UI screen definition
-    // Parsed structured form of screen "Name": ... blocks
-    ScreenBlock {
-        screen: Screen,
-        location: Option<SourceLocation>,
-    },
-
-    // Clean UI inline block (ui.column, ui.text, etc. used as statements)
-    // Note: Boxed to break recursive type cycle with UiNode::ExpressionStatement
-    UiBlock {
-        node: Box<UiNode>,
-        location: Option<SourceLocation>,
-    },
-
-    // ========================================================================
-    // STATE MANAGEMENT STATEMENTS
-    // ========================================================================
-
-    // State block - declares persistent state variables
-    // Top-level state: = app scope, state: inside screen: = screen scope
-    StateBlockStmt {
-        state_block: StateBlock,
-        location: Option<SourceLocation>,
-    },
-
-    // Watch block - react to state changes
-    WatchBlockStmt {
-        watch_block: WatchBlock,
-        location: Option<SourceLocation>,
-    },
-
     // Reset statement - reset state to initial value
     // reset count (single variable) or reset state (all state in scope)
     ResetStmt {
@@ -881,10 +805,6 @@ impl Statement {
             Statement::SourceBlock { location, .. } => location,
             Statement::BuildBlock { location, .. } => location,
             Statement::FrameworkBlock { location, .. } => location,
-            Statement::ScreenBlock { location, .. } => location,
-            Statement::UiBlock { location, .. } => location,
-            Statement::StateBlockStmt { location, .. } => location,
-            Statement::WatchBlockStmt { location, .. } => location,
             Statement::ResetStmt { location, .. } => location,
             Statement::ScreenBlockStmt { location, .. } => location,
             Statement::ValidateDeclaration { location, .. } => location,
@@ -1106,209 +1026,6 @@ pub struct TestCase {
 pub struct FrameworkAttribute {
     pub name: String,          // Attribute name: "pk", "unique", "required"
     pub value: Option<String>, // Optional value: @default("value")
-    pub location: Option<SourceLocation>,
-}
-
-// ============================================================================
-// Clean UI AST Types
-// ============================================================================
-
-/// UI Screen definition: screen "Name": ...
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct Screen {
-    pub name: String,
-    pub state: Option<Vec<StateVariable>>,
-    pub body: Vec<UiNode>,
-    pub location: Option<SourceLocation>,
-}
-
-impl Screen {
-    /// Create a new screen with the given name and no state or body nodes.
-    pub fn new(name: String, location: Option<SourceLocation>) -> Self {
-        Self {
-            name,
-            state: None,
-            body: Vec::new(),
-            location,
-        }
-    }
-}
-
-/// State variable in a screen: count: integer = 0
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct StateVariable {
-    pub name: String,
-    pub type_name: String, // "integer", "number", "text", "bool", "list"
-    pub default_value: Option<Expression>,
-    pub location: Option<SourceLocation>,
-}
-
-/// UI node types for Clean UI widgets
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub enum UiNode {
-    /// Layout containers: ui.column, ui.row, ui.stack
-    Container {
-        kind: UiContainerKind,
-        props: UiProps,
-        children: Vec<UiNode>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Text widget: ui.text "Hello"
-    Text {
-        content: Expression,
-        props: UiProps,
-        location: Option<SourceLocation>,
-    },
-
-    /// Button widget: ui.button "Click"
-    Button {
-        label: Expression,
-        props: UiProps,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Text input: ui.textField
-    TextField {
-        props: UiProps,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Text area: ui.textArea
-    TextArea {
-        props: UiProps,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Checkbox: ui.checkbox
-    Checkbox {
-        props: UiProps,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Toggle switch: ui.switch
-    Switch {
-        props: UiProps,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Select dropdown: ui.select
-    Select {
-        props: UiProps,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Image: ui.image
-    Image {
-        props: UiProps,
-        location: Option<SourceLocation>,
-    },
-
-    /// Divider line: ui.divider
-    Divider {
-        props: UiProps,
-        location: Option<SourceLocation>,
-    },
-
-    /// Card container: ui.card
-    Card {
-        props: UiProps,
-        children: Vec<UiNode>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Link: ui.link
-    Link {
-        props: UiProps,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Spacer: ui.spacer
-    Spacer { location: Option<SourceLocation> },
-
-    /// Canvas region: ui.region target "canvas"
-    Region {
-        props: UiProps,
-        children: Vec<UiNode>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Canvas scene: ui.canvasScene
-    CanvasScene {
-        draw: Vec<Statement>,
-        events: Vec<UiEvent>,
-        location: Option<SourceLocation>,
-    },
-
-    /// For loop in UI: for item in items: ui.text item
-    ForLoop {
-        iterator: String,
-        collection: Expression,
-        body: Vec<UiNode>,
-        location: Option<SourceLocation>,
-    },
-
-    /// If condition in UI: if state.show: ui.text "Visible"
-    IfBlock {
-        condition: Expression,
-        then_branch: Vec<UiNode>,
-        else_branch: Option<Vec<UiNode>>,
-        location: Option<SourceLocation>,
-    },
-
-    /// Expression statement (e.g., print inside event handlers gets wrapped)
-    /// Note: Boxed to break recursive type cycle with Statement::UiBlock
-    ExpressionStatement {
-        statement: Box<Statement>,
-        location: Option<SourceLocation>,
-    },
-}
-
-/// Container types for layout
-#[derive(Debug, Clone, PartialEq, Copy, serde::Serialize)]
-pub enum UiContainerKind {
-    Column,
-    Row,
-    Stack,
-}
-
-/// Common properties for UI widgets
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
-pub struct UiProps {
-    pub gap: Option<Expression>,
-    pub padding: Option<Expression>,
-    pub visible: Option<Expression>,
-    pub disabled: Option<Expression>,
-    pub label: Option<Expression>,
-    pub value: Option<Expression>,
-    pub placeholder: Option<Expression>,
-    pub size: Option<Expression>,
-    pub weight: Option<Expression>,
-    pub tone: Option<Expression>,
-    pub color: Option<Expression>,
-    pub background: Option<Expression>,
-    pub radius: Option<Expression>,
-    pub align: Option<Expression>,
-    pub justify: Option<Expression>,
-    pub target: Option<String>, // For ui.region target "canvas"
-    pub height: Option<Expression>,
-    pub width: Option<Expression>,
-    pub options: Option<Expression>, // For ui.select
-}
-
-/// Event handler for UI widgets
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct UiEvent {
-    pub name: String,        // "onClick", "onChange", "onFocus", "onBlur", "draw"
-    pub params: Vec<String>, // ["value"] for onChange, ["dt"] for draw
-    pub body: Vec<Statement>,
     pub location: Option<SourceLocation>,
 }
 
@@ -1777,7 +1494,6 @@ pub struct Program {
     pub capabilities: Vec<Capability>,
     pub start_function: Option<Function>,
     pub tests: Vec<TestCase>,
-    pub screens: Vec<Screen>,             // Clean UI screens (legacy)
     pub state: Option<StateBlock>,        // App-level state
     pub watch_blocks: Vec<WatchBlock>,    // Top-level watch observers
     pub screen_blocks: Vec<Statement>,    // Screen blocks with state scope
@@ -1799,7 +1515,6 @@ impl Program {
             capabilities: Vec::new(),
             start_function: None,
             tests: Vec::new(),
-            screens: Vec::new(),
             state: None,
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
@@ -2042,7 +1757,6 @@ mod tests {
             capabilities: vec![],
             start_function: None,
             tests: vec![],
-            screens: vec![],
             state: None,
             watch_blocks: vec![],
             screen_blocks: vec![],

@@ -175,16 +175,9 @@ enum Commands {
         #[arg(long, default_value = None)]
         memory_tier: Option<String>,
 
-        /// Run tests during compilation
-        #[arg(long)]
-        test: bool,
-
-        /// Include tests in the compiled binary
-        #[arg(long)]
-        include_tests: bool,
-
-        /// Enable external plugin loading from ~/.cleen/plugins/
-        #[arg(long)]
+        /// Accepted for compatibility with existing build scripts; has no
+        /// effect. Plugins are always loaded from the source's `plugins:` block.
+        #[arg(long, hide = true)]
         plugins: bool,
 
         /// Release mode: strip always: invariant checks for smaller, faster output
@@ -198,14 +191,6 @@ enum Commands {
         /// See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
         #[arg(long)]
         strict_hosts: bool,
-
-        /// Refuse plugins that omit [compatibility].emission_ops_hash (default: warn only).
-        /// When set, every loaded plugin must declare the hash of the typed-emission-ops.toml
-        /// table it was compiled against, enabling exact op-code table validation.
-        /// Plugins without the hash were built before typed-op bridges were supported.
-        /// See foundation/spec/plugins/contracts/typed-emission.md §3.10.
-        #[arg(long)]
-        strict_emission_ops: bool,
 
         /// Emit heap-probe instrumentation for STATE-A hunt.
         ///
@@ -239,7 +224,7 @@ enum Commands {
         /// eventual Phase D flip already work. Lint is OFF by default in
         /// `cln compile` throughout Phase B — this flag is a no-op until the
         /// default flips. See `foundation/spec/framework/contracts/lint-extension.md` §9.
-        #[arg(long)]
+        #[arg(long, hide = true)]
         no_lint: bool,
 
         /// Override plugin resolution: `<name>=<path>`. Repeatable. Path may
@@ -288,19 +273,11 @@ enum Commands {
         /// Validate code style
         #[arg(long)]
         check_style: bool,
-
-        /// Show detailed error analysis
-        #[arg(long)]
-        analyze_errors: bool,
     },
     /// Validate Clean Language code style and conventions
     Lint {
         /// Input file or directory to lint
         input: String,
-
-        /// Fix issues automatically where possible
-        #[arg(long)]
-        fix: bool,
 
         /// Show only errors (suppress warnings)
         #[arg(long)]
@@ -561,12 +538,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             opt_level,
             target,
             memory_tier,
-            test,
-            include_tests,
-            plugins,
+            plugins: _,
             release,
             strict_hosts,
-            strict_emission_ops,
             emit_heap_probes,
             emit_bridge_probes,
             // Contract 5 Phase B: `no_lint` is accepted on the CLI but not
@@ -593,12 +567,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 opt_level,
                 target,
                 memory_tier,
-                test,
-                include_tests,
-                plugins,
                 release,
                 strict_hosts,
-                strict_emission_ops,
                 emit_heap_probes,
                 emit_bridge_probes,
                 plugin_override,
@@ -614,14 +584,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             show_ast,
             check_style,
-            analyze_errors,
-        } => handle_debug(input, show_ast, check_style, analyze_errors, &output_config).await?,
+        } => handle_debug(input, show_ast, check_style, &output_config).await?,
         Commands::Lint {
             input,
-            fix,
             errors_only,
             plugin_override,
-        } => handle_lint(input, fix, errors_only, plugin_override, &output_config).await?,
+        } => handle_lint(input, errors_only, plugin_override, &output_config).await?,
         Commands::Parse {
             input,
             show_tree,
@@ -631,7 +599,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if ast_json {
                 handle_ast_json(input, &output_config).await?
             } else {
-                handle_parse(input, show_tree, recover_errors).await?
+                handle_parse(input, show_tree, recover_errors, &output_config).await?
             }
         }
         Commands::Run { input, debug } => handle_run(input, debug, &output_config).await?,
@@ -790,19 +758,15 @@ async fn handle_serve(
         println!("{}Compiling{} {} to WASM...", cyan, reset, input);
     }
 
-    // Compile with plugins enabled (server target for serve command)
+    // Compile for the server target (plugins load from the source's `plugins:` block)
     let compile_result = handle_compile(
         input.clone(),
         wasm_output.clone(),
         2,                    // opt_level
         "server".to_string(), // target - no bridge needed for serve
         None,                 // memory_tier - use target default
-        false,                // test
-        false,                // include_tests
-        true,                 // plugins enabled
         false,                // release mode: off for serve
         false,                // strict_hosts off for serve
-        false,                // strict_emission_ops off for serve
         false,                // emit_heap_probes off for serve
         false,                // emit_bridge_probes off for serve
         Vec::new(),           // plugin_override — none for serve
@@ -1190,13 +1154,36 @@ fn apply_plugin_overrides(
     Ok(())
 }
 
+/// Read a source file, turning an I/O failure into a command error so the
+/// CLI exits non-zero.
+fn read_source(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    fs::read_to_string(path).map_err(|e| format!("Failed to read '{}': {}", path, e).into())
+}
+
+/// Print the parsed AST of `source`, or report its parse errors.
+fn print_parsed_ast(
+    source: &str,
+    input: &str,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match clean_language_compiler::parse_to_ast(source, input) {
+        Ok(ast) => {
+            DebugUtils::print_ast(&ast);
+            Ok(())
+        }
+        Err(errors) => {
+            output_config.report_errors(&errors, Some(source));
+            Err(format!("Parse failed with {} error(s)", errors.len()).into())
+        }
+    }
+}
+
 async fn handle_check(
     input: String,
     plugin_override: Vec<String>,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let source = std::fs::read_to_string(&input)
-        .map_err(|e| format!("Failed to read '{}': {}", input, e))?;
+    let source = read_source(&input)?;
 
     if let Err(msg) = apply_plugin_overrides(
         &plugin_override,
@@ -1604,12 +1591,8 @@ async fn handle_compile(
     opt_level: u8,
     target: String,
     memory_tier_str: Option<String>,
-    test: bool,
-    _include_tests: bool,
-    plugins: bool,
     release: bool,
     strict_hosts: bool,
-    strict_emission_ops: bool,
     emit_heap_probes: bool,
     emit_bridge_probes: bool,
     plugin_override: Vec<String>,
@@ -1648,8 +1631,6 @@ async fn handle_compile(
         clean_language_compiler::set_target_host_class_override(None);
     }
     clean_language_compiler::set_strict_hosts_override(strict_hosts);
-    // Plugin Contracts v3 Layer D step 2 — thread --strict-emission-ops.
-    clean_language_compiler::set_strict_emission_ops_override(strict_emission_ops);
     // STATE-A heap-probe hunt — thread --emit-heap-probes and its
     // bridge-scoped superset --emit-bridge-probes. Both feed the same
     // callsite table + `.probes.json` sidecar.
@@ -1677,14 +1658,13 @@ async fn handle_compile(
             3 => "aggressive (speed + size)",
             _ => "unknown",
         };
-        let plugin_mode = if plugins { " [plugins enabled]" } else { "" };
         let target_info = if target != "server" {
             format!(" [target: {}]", target)
         } else {
             String::new()
         };
         println!(
-            "Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc}){plugin_mode}{target_info}"
+            "Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc}){target_info}"
         );
     }
 
@@ -1703,7 +1683,6 @@ async fn handle_compile(
     tracing::debug!(
         input = %input,
         opt_level = opt_level,
-        plugins = plugins,
         target = %target,
         search_paths = ?search_paths,
         "Starting multi-file compilation"
@@ -1716,7 +1695,6 @@ async fn handle_compile(
     // Use multi-file compilation to support file path imports
     // This automatically handles `import "path/to/file.cln"` syntax
     // as well as module imports like `import Math`
-    let _ = plugins; // Ignore the flag for now, multi-file compilation handles imports
     let wasm_binary_result = if release {
         clean_language_compiler::compile_multi_file_release(
             input_path,
@@ -1749,11 +1727,6 @@ async fn handle_compile(
             return Err(format!("Compilation failed with {} errors", errors.len()).into());
         }
     };
-
-    // Note: Tests are not currently supported in the 7-stage pipeline
-    if test {
-        println!("⚠️  Test execution not yet implemented in 7-stage pipeline");
-    }
 
     if let Some(parent) = Path::new(&output).parent() {
         fs::create_dir_all(parent)?;
@@ -2009,10 +1982,9 @@ async fn handle_test(
         let status = cmd.status()?;
         if status.success() {
             println!("All tests passed!");
-        } else {
-            eprintln!("Some tests failed");
+            return Ok(());
         }
-        return Ok(());
+        return Err("Some tests failed".into());
     }
 
     let mut any_failed = false;
@@ -2095,32 +2067,26 @@ async fn handle_debug(
     input: String,
     show_ast: bool,
     check_style: bool,
-    _analyze_errors: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Debugging Clean Language file: {input}\n");
 
-    let source = match fs::read_to_string(&input) {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("❌ Error reading file '{input}': {e}");
-            return Ok(());
-        }
-    };
+    let source = read_source(&input)?;
 
-    // Debug using the 7-stage pipeline compilation attempt
-    match compile_with_file(&source, &input) {
+    if show_ast {
+        print_parsed_ast(&source, &input, output_config)?;
+    }
+
+    let compile_result = compile_with_file(&source, &input);
+    match &compile_result {
         Ok(wasm_binary) => {
             println!(
                 "✅ Compilation successful: {} bytes of WASM generated",
                 wasm_binary.len()
             );
-            if show_ast {
-                println!("⚠️  AST display not available in 7-stage pipeline (use specification parser directly)");
-            }
         }
         Err(errors) => {
-            output_config.report_errors(&errors, Some(&source));
+            output_config.report_errors(errors, Some(&source));
         }
     }
 
@@ -2136,12 +2102,15 @@ async fn handle_debug(
             }
         }
     }
-    Ok(())
+
+    match compile_result {
+        Ok(_) => Ok(()),
+        Err(errors) => Err(format!("Compilation failed with {} errors", errors.len()).into()),
+    }
 }
 
 async fn handle_lint(
     input: String,
-    fix: bool,
     errors_only: bool,
     plugin_override: Vec<String>,
     output_config: &OutputConfig,
@@ -2156,7 +2125,7 @@ async fn handle_lint(
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 if let Some(ext) = entry.path().extension() {
-                    if ext == "clean" {
+                    if ext == "cln" {
                         if let Some(path_str) = entry.path().to_str() {
                             clean_files.push(path_str.to_string());
                         }
@@ -2166,8 +2135,7 @@ async fn handle_lint(
         }
         clean_files
     } else {
-        eprintln!("❌ Error: '{input}' is not a valid file or directory");
-        return Ok(());
+        return Err(format!("'{input}' is not a valid file or directory").into());
     };
 
     if files_to_lint.is_empty() {
@@ -2196,6 +2164,7 @@ async fn handle_lint(
     }
 
     let mut total_errors = 0;
+    let mut unreadable_files = 0;
 
     for file_path in &files_to_lint {
         println!("\n📄 Linting: {file_path}");
@@ -2204,6 +2173,7 @@ async fn handle_lint(
             Ok(content) => content,
             Err(e) => {
                 eprintln!("  ❌ Error reading file: {e}");
+                unreadable_files += 1;
                 continue;
             }
         };
@@ -2215,15 +2185,14 @@ async fn handle_lint(
             }
             Err(errors) => {
                 total_errors += errors.len();
-                if !errors_only {
-                    output_config.report_errors(&errors, Some(&source));
-                }
+                output_config.report_errors(&errors, Some(&source));
             }
         }
 
-        // Note: Style validation not available in 7-stage pipeline
         if !errors_only {
-            println!("  ⚠️  Style validation not yet implemented in 7-stage pipeline");
+            for issue in DebugUtils::validate_style(&source) {
+                println!("  ⚠️  {issue}");
+            }
         }
 
         // Contract 5 Phase B: run the plugin lint pass on this file.
@@ -2237,8 +2206,11 @@ async fn handle_lint(
     println!("Files checked: {}", files_to_lint.len());
     println!("Compilation errors: {total_errors}");
 
-    if fix {
-        println!("Note: Automatic fixing is not yet implemented");
+    if unreadable_files > 0 {
+        return Err(format!("{unreadable_files} file(s) could not be read").into());
+    }
+    if total_errors > 0 {
+        return Err(format!("Lint found {total_errors} compilation error(s)").into());
     }
     Ok(())
 }
@@ -2366,8 +2338,7 @@ async fn handle_ast_json(
     input: String,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let source = std::fs::read_to_string(&input)
-        .map_err(|e| format!("Failed to read '{}': {}", input, e))?;
+    let source = read_source(&input)?;
 
     match clean_language_compiler::parse_to_ast(&source, &input) {
         Ok(ast) => {
@@ -2391,18 +2362,16 @@ async fn handle_parse(
     input: String,
     show_tree: bool,
     recover_errors: bool,
+    output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("📝 Parsing file: {input}");
 
-    let source = match fs::read_to_string(&input) {
-        Ok(content) => content,
-        Err(e) => {
-            eprintln!("❌ Error reading file '{input}': {e}");
-            return Ok(());
-        }
-    };
+    let source = read_source(&input)?;
 
-    // Use 7-stage pipeline for parsing
+    if show_tree {
+        print_parsed_ast(&source, &input, output_config)?;
+    }
+
     println!("🔄 Using 7-stage compilation pipeline for parsing...\n");
 
     match compile_with_file(&source, &input) {
@@ -2410,14 +2379,10 @@ async fn handle_parse(
             println!("✅ Parsing and compilation succeeded!");
             println!("Generated {} bytes of WASM", wasm_binary.len());
 
-            if show_tree {
-                println!("⚠️  AST display not available in 7-stage pipeline");
-                println!("    Use the specification parser directly for AST inspection");
-            }
-
             if recover_errors {
                 println!("ℹ️  Error recovery mode not needed - compilation succeeded");
             }
+            Ok(())
         }
         Err(errors) => {
             println!(
@@ -2433,10 +2398,9 @@ async fn handle_parse(
             println!("  • Check the Clean Language syntax documentation");
             println!("  • Ensure proper indentation (tabs, not spaces)");
             println!("  • Verify function and variable declarations follow specification");
+            Err(format!("Parsing failed with {} error(s)", errors.len()).into())
         }
     }
-
-    Ok(())
 }
 
 async fn handle_run(
@@ -2445,8 +2409,7 @@ async fn handle_run(
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !Path::new(&input).exists() {
-        eprintln!("❌ Error: File '{input}' not found");
-        return Ok(());
+        return Err(format!("File '{input}' not found").into());
     }
 
     let input_path = Path::new(&input);
@@ -2456,7 +2419,7 @@ async fn handle_run(
                 println!("🔧 Compiling Clean Language file: {input}");
             }
 
-            let source = fs::read_to_string(&input)?;
+            let source = read_source(&input)?;
             let wasm_binary = match compile_with_file(&source, &input) {
                 Ok(binary) => binary,
                 Err(compile_errors) => {
@@ -2484,20 +2447,14 @@ async fn handle_run(
             }
             execute_via_clean_runner(&input, debug)
         }
-        Some(ext) => {
-            eprintln!("❌ Error: Unsupported file extension '.{ext}'");
-            eprintln!(
-                "   Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
-            );
-            Ok(())
-        }
-        None => {
-            eprintln!("❌ Error: File has no extension");
-            eprintln!(
-                "   Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
-            );
-            Ok(())
-        }
+        Some(ext) => Err(format!(
+            "Unsupported file extension '.{ext}'. Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
+        )
+        .into()),
+        None => Err(
+            "File has no extension. Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
+                .into(),
+        ),
     }
 }
 

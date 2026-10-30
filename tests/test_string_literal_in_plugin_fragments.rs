@@ -23,7 +23,11 @@ fn string_literals(source: &str) -> Vec<String> {
             _ => {}
         }
     }
-    if let Statement::VariableDecl { initializer: Some(init), .. } = &stmt {
+    if let Statement::VariableDecl {
+        initializer: Some(init),
+        ..
+    } = &stmt
+    {
         walk(init, &mut out);
     }
     out
@@ -31,7 +35,10 @@ fn string_literals(source: &str) -> Vec<String> {
 
 #[test]
 fn leading_spaces_in_string_literals_are_kept() {
-    assert_eq!(string_literals("string a = \"x\" + \" y\"\n"), vec!["x", " y"]);
+    assert_eq!(
+        string_literals("string a = \"x\" + \" y\"\n"),
+        vec!["x", " y"]
+    );
 }
 
 #[test]

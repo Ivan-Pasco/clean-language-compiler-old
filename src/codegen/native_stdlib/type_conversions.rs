@@ -485,26 +485,3 @@ pub fn gen_string_to_int() -> Vec<Instruction<'static>> {
         Instruction::End, // End empty string check
     ]
 }
-
-/// Get local variables needed for each type conversion function
-pub fn get_locals(func_name: &str) -> Vec<(u32, ValType)> {
-    match func_name {
-        "int_to_string" => vec![
-            (1, ValType::I32), // is_negative
-            (1, ValType::I32), // abs_value
-            (1, ValType::I32), // digit_count / total_len
-            (1, ValType::I32), // temp
-            (1, ValType::I32), // new_ptr
-            (1, ValType::I32), // write_pos
-            (1, ValType::I32), // digit
-        ],
-        "string_to_int" => vec![
-            (1, ValType::I32), // len
-            (1, ValType::I32), // is_negative
-            (1, ValType::I32), // i
-            (1, ValType::I32), // result
-            (1, ValType::I32), // char
-        ],
-        _ => vec![],
-    }
-}

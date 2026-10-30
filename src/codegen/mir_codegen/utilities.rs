@@ -3,9 +3,9 @@
 //! Contains:
 //! * Type helpers: `get_value_type`, `get_operand_mir_type`, `get_stdlib_return_type`
 //! * Function signature conversion: `convert_function_signature`, `mir_type_to_wasm_type`
-//! * Local/block computation: `compute_local_types`, `compute_block_order`
+//! * Local computation: `compute_local_types`
 //! * Function resolution: `get_function_name_by_symbol`
-//! * Module setup: `register_builtin_function_signatures`, `setup_memory_section`,
+//! * Module setup: `register_builtin_function_signatures`,
 //!   `setup_string_pool`, `add_function_to_module`, `val_type_to_wasm_type`
 //! * Export helpers: `generate_start_function_export`
 //! * JSON helpers: `get_or_register_json_get_field`, `get_or_register_json_get_index`
@@ -42,12 +42,14 @@ impl MirCodeGenerator<'_> {
     // Type helpers
     // -------------------------------------------------------------------------
 
-    /// Get the MIR type of a `ValueId` from the current function's locals.
+    /// Get the MIR type of a `ValueId`: the current function's locals first,
+    /// then `value_to_type`, which also holds the function's parameters.
     pub(super) fn get_value_type(&self, value_id: ValueId) -> Option<MirType> {
         self.current_function
             .as_ref()
             .and_then(|func| func.locals.get(&value_id))
             .map(|local| local.local_type.clone())
+            .or_else(|| self.value_to_type.get(&value_id).cloned())
     }
 
     /// Get the MIR type of a `MirOperand`.
@@ -352,20 +354,6 @@ impl MirCodeGenerator<'_> {
         locals
     }
 
-    /// Compute basic block ordering for code generation.
-    ///
-    /// Reserved for future optimisation passes; currently produces entry-block-first order.
-    #[allow(dead_code)] // Block ordering utility — not yet called from the main codegen loop
-    pub(super) fn compute_block_order(&self, function: &MirFunction) -> Vec<BasicBlockId> {
-        let mut order = vec![function.entry_block];
-        for &block_id in function.blocks.keys() {
-            if block_id != function.entry_block {
-                order.push(block_id);
-            }
-        }
-        order
-    }
-
     // -------------------------------------------------------------------------
     // Function resolution
     // -------------------------------------------------------------------------
@@ -553,26 +541,6 @@ impl MirCodeGenerator<'_> {
             count = self.function_return_types.len(),
             "Registered builtin function signatures and return types"
         );
-    }
-
-    /// Set up the WASM memory section using the configured memory tier.
-    pub(super) fn setup_memory_section(&mut self) -> Result<(), CompilerError> {
-        let initial = self.memory_tier.initial_pages();
-        let max = self.memory_tier.max_pages();
-        debug_mir!(
-            "DEBUG MIR: Setting up memory section: tier={}, initial={} pages ({}KB), max={} pages ({}KB)",
-            self.memory_tier.name(), initial, initial * 64, max, max * 64
-        );
-        self.wasm_generator
-            .memory_section
-            .memory(wasm_encoder::MemoryType {
-                minimum: initial,
-                maximum: Some(max),
-                memory64: false,
-                shared: false,
-            });
-        debug_mir!("DEBUG MIR: Memory section configured");
-        Ok(())
     }
 
     /// Register all strings from `string_pool` into the WASM data section.
@@ -2941,7 +2909,6 @@ impl MirCodeGenerator<'_> {
     /// `"time.now"` for the `_time_now` wrap-i64 case), and every
     /// language-facing alias registered via `language_to_bridge_map`
     /// (`"json.get"`, `"db.query"`, etc.).
-    #[allow(dead_code)] // used by future MIR-builder call-site inspection
     pub(super) fn resolves_to_expand_strings_wrapper(&self, name: &str) -> bool {
         self.expand_strings_wrapper_names.contains(name)
     }

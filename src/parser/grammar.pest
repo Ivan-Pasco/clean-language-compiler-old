@@ -7,7 +7,7 @@
 //
 // This Pest grammar is kept for:
 //   - Legacy test paths (`src/parser/expression_parser.rs`, `property_tests.rs`)
-//   - Pre-token-parser code in `src/parser/parser_impl.rs` / `function_parser.rs`
+//   - Pre-token-parser code in `src/parser/parser_impl.rs`
 //     that processes a handful of Pest rules directly.
 //
 // It is INTENTIONALLY OUT OF SYNC with `foundation/spec/grammar.ebnf` in several

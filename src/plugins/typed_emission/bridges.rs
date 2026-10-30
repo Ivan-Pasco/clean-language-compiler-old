@@ -26,34 +26,7 @@ use crate::ast::{
 };
 
 // ─── Re-use PluginState from wasm_adapter (pub(crate) visibility) ────────────
-use crate::plugins::wasm_adapter::PluginState;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LP-string reading helpers (borrowed from wasm_adapter.rs conventions)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Read an LP-string (4-byte LE length + bytes) from WASM memory at `ptr`.
-/// Returns `None` on any invalid pointer/bounds condition.
-fn read_lp_string(caller: &mut Caller<'_, PluginState>, ptr: i32) -> Option<String> {
-    if ptr < 0 {
-        return None;
-    }
-    let memory = caller.get_export("memory")?.into_memory()?;
-    let data = memory.data(caller);
-    let start = ptr as usize;
-    if start + 4 > data.len() {
-        return None;
-    }
-    let len_bytes: [u8; 4] = data[start..start + 4].try_into().ok()?;
-    let len = u32::from_le_bytes(len_bytes) as usize;
-    let data_end = start + 4 + len;
-    if data_end > data.len() {
-        return None;
-    }
-    std::str::from_utf8(&data[start + 4..data_end])
-        .ok()
-        .map(|s| s.to_string())
-}
+use crate::plugins::wasm_adapter::{read_clean_string, PluginState};
 
 /// Build a span JSON payload for use in `EmitDiagnostic.span_json` when the
 /// diagnostic originates from `_emit_stmt_from_source`. The `"source"` field
@@ -316,7 +289,7 @@ fn register_type_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_type_class_ref",
         |mut caller: Caller<'_, PluginState>, ctx: i32, name_lp: i32| -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -341,7 +314,7 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_expr_string_lit",
         |mut caller: Caller<'_, PluginState>, ctx: i32, value_lp: i32| -> i32 {
-            let s = match read_lp_string(&mut caller, value_lp) {
+            let s = match read_clean_string(&mut caller, value_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -402,7 +375,7 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_expr_ident",
         |mut caller: Caller<'_, PluginState>, ctx: i32, name_lp: i32| -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -419,7 +392,7 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_expr_field",
         |mut caller: Caller<'_, PluginState>, ctx: i32, recv_handle: i32, name_lp: i32| -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -438,11 +411,11 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_expr_call",
         |mut caller: Caller<'_, PluginState>, ctx: i32, callee_lp: i32, args_json_lp: i32| -> i32 {
-            let callee = match read_lp_string(&mut caller, callee_lp) {
+            let callee = match read_clean_string(&mut caller, callee_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let args_json = match read_lp_string(&mut caller, args_json_lp) {
+            let args_json = match read_clean_string(&mut caller, args_json_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -477,11 +450,11 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          method_lp: i32,
          args_json_lp: i32|
          -> i32 {
-            let method = match read_lp_string(&mut caller, method_lp) {
+            let method = match read_clean_string(&mut caller, method_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let args_json = match read_lp_string(&mut caller, args_json_lp) {
+            let args_json = match read_clean_string(&mut caller, args_json_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -518,7 +491,7 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          lhs_handle: i32,
          rhs_handle: i32|
          -> i32 {
-            let op_str = match read_lp_string(&mut caller, op_lp) {
+            let op_str = match read_clean_string(&mut caller, op_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -550,7 +523,7 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_expr_unop",
         |mut caller: Caller<'_, PluginState>, ctx: i32, op_lp: i32, operand_handle: i32| -> i32 {
-            let op_str = match read_lp_string(&mut caller, op_lp) {
+            let op_str = match read_clean_string(&mut caller, op_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -671,7 +644,7 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_expr_array_lit",
         |mut caller: Caller<'_, PluginState>, ctx: i32, elems_json_lp: i32| -> i32 {
-            let elems_json = match read_lp_string(&mut caller, elems_json_lp) {
+            let elems_json = match read_clean_string(&mut caller, elems_json_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -707,7 +680,7 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_expr_object_lit",
         |mut caller: Caller<'_, PluginState>, ctx: i32, fields_json_lp: i32| -> i32 {
-            let fields_json = match read_lp_string(&mut caller, fields_json_lp) {
+            let fields_json = match read_clean_string(&mut caller, fields_json_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -745,11 +718,11 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_stmt_call",
         |mut caller: Caller<'_, PluginState>, ctx: i32, callee_lp: i32, args_json_lp: i32| -> i32 {
-            let callee = match read_lp_string(&mut caller, callee_lp) {
+            let callee = match read_clean_string(&mut caller, callee_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let args_json = match read_lp_string(&mut caller, args_json_lp) {
+            let args_json = match read_clean_string(&mut caller, args_json_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -779,7 +752,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_stmt_assign",
         |mut caller: Caller<'_, PluginState>, ctx: i32, target_lp: i32, expr_handle: i32| -> i32 {
-            let target_name = match read_lp_string(&mut caller, target_lp) {
+            let target_name = match read_clean_string(&mut caller, target_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -821,11 +794,11 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          type_lp: i32,
          expr_handle: i32|
          -> i32 {
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let ty_str = match read_lp_string(&mut caller, type_lp) {
+            let ty_str = match read_clean_string(&mut caller, type_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -905,7 +878,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          iter_expr_handle: i32,
          body_handle: i32|
          -> i32 {
-            let iter_var = match read_lp_string(&mut caller, iter_lp) {
+            let iter_var = match read_clean_string(&mut caller, iter_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
@@ -961,7 +934,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          origin_offset: i32|
          -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_stmt_from_source", 0);
-            let source = match read_lp_string(&mut caller, source_lp) {
+            let source = match read_clean_string(&mut caller, source_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -1042,7 +1015,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
          origin_offset: i32|
          -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_expr_from_source", 0);
-            let source = match read_lp_string(&mut caller, source_lp) {
+            let source = match read_clean_string(&mut caller, source_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -1105,7 +1078,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_stmt_block",
         |mut caller: Caller<'_, PluginState>, ctx: i32, stmts_json_lp: i32| -> i32 {
-            let stmts_json = match read_lp_string(&mut caller, stmts_json_lp) {
+            let stmts_json = match read_clean_string(&mut caller, stmts_json_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -1217,7 +1190,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
             // failures loud (via emit_diagnostic → compiler diagnostic channel)
             // is the same architectural fix as the emit_arena-drain error from
             // 0.33.29 (fingerprint 4dad9b6a).
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => {
                     let a = arena!(caller);
@@ -1233,7 +1206,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                     return 1;
                 }
             };
-            let params_json = match read_lp_string(&mut caller, params_json_lp) {
+            let params_json = match read_clean_string(&mut caller, params_json_lp) {
                 Some(s) => s,
                 None => {
                     let a = arena!(caller);
@@ -1424,11 +1397,11 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          flags: i32|
          -> i32 {
             refuse_if_assemble_typed!(caller, "_define_function", 0);
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 0,
             };
-            let params_json = match read_lp_string(&mut caller, params_json_lp) {
+            let params_json = match read_clean_string(&mut caller, params_json_lp) {
                 Some(s) => s,
                 None => return 0,
             };
@@ -1519,11 +1492,11 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          _flags: i32|
          -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_class", 1);
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
             };
-            let class_json = match read_lp_string(&mut caller, class_json_lp) {
+            let class_json = match read_clean_string(&mut caller, class_json_lp) {
                 Some(s) => s,
                 None => return 1,
             };
@@ -1599,17 +1572,17 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          host_class_lp: i32|
          -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_external", 1);
-            let name = match read_lp_string(&mut caller, name_lp) {
+            let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
             };
-            let params_json = match read_lp_string(&mut caller, params_json_lp) {
+            let params_json = match read_clean_string(&mut caller, params_json_lp) {
                 Some(s) => s,
                 None => return 1,
             };
             // host_class_lp may legitimately be 0 / empty (plugin did not
             // restrict to a host class); only enforce when non-empty.
-            let host_class_decl = read_lp_string(&mut caller, host_class_lp);
+            let host_class_decl = read_clean_string(&mut caller, host_class_lp);
             let param_descs = match decode_param_array(&params_json) {
                 Ok(d) => d,
                 Err(_) => return 1,
@@ -1681,7 +1654,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "_emit_state_block",
         |mut caller: Caller<'_, PluginState>, ctx: i32, fields_json_lp: i32| -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_state_block", 1);
-            let fields_json = match read_lp_string(&mut caller, fields_json_lp) {
+            let fields_json = match read_clean_string(&mut caller, fields_json_lp) {
                 Some(s) => s,
                 None => return 1,
             };
@@ -1915,11 +1888,11 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          _attrs_json_lp: i32|
          -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_route", 1);
-            let method = match read_lp_string(&mut caller, method_lp) {
+            let method = match read_clean_string(&mut caller, method_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
             };
-            let path = match read_lp_string(&mut caller, path_lp) {
+            let path = match read_clean_string(&mut caller, path_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
             };
@@ -1965,7 +1938,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "_emit_artifact_directive",
         |mut caller: Caller<'_, PluginState>, ctx: i32, artifact_json_lp: i32| -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_artifact_directive", 1);
-            let artifact_json = match read_lp_string(&mut caller, artifact_json_lp) {
+            let artifact_json = match read_clean_string(&mut caller, artifact_json_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => return 1,
             };
@@ -2008,7 +1981,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
          virtual_path_lp: i32,
          content_lp: i32|
          -> i32 {
-            let virtual_path = match read_lp_string(&mut caller, virtual_path_lp) {
+            let virtual_path = match read_clean_string(&mut caller, virtual_path_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => {
                     let a = arena!(caller);
@@ -2025,7 +1998,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                     return 1;
                 }
             };
-            let content = match read_lp_string(&mut caller, content_lp) {
+            let content = match read_clean_string(&mut caller, content_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => {
                     let a = arena!(caller);
@@ -2109,7 +2082,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "env",
         "_transform_source_file",
         |mut caller: Caller<'_, PluginState>, ctx: i32, path_lp: i32, new_content_lp: i32| -> i32 {
-            let path = match read_lp_string(&mut caller, path_lp) {
+            let path = match read_clean_string(&mut caller, path_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => {
                     let a = arena!(caller);
@@ -2126,7 +2099,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
                     return 1;
                 }
             };
-            let new_content = match read_lp_string(&mut caller, new_content_lp) {
+            let new_content = match read_clean_string(&mut caller, new_content_lp) {
                 Some(s) if !s.is_empty() => s,
                 _ => {
                     let a = arena!(caller);
@@ -2194,7 +2167,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
         "_emit_capability",
         |mut caller: Caller<'_, PluginState>, ctx: i32, spec_lp: i32| -> i32 {
             refuse_if_assemble_typed!(caller, "_emit_capability", 1);
-            let json = match read_lp_string(&mut caller, spec_lp) {
+            let json = match read_clean_string(&mut caller, spec_lp) {
                 Some(s) => s,
                 None => {
                     let a = arena!(caller);
@@ -2376,7 +2349,7 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
                 // Amendment 3 LP-string JSON path. The borrow of `a` ends at the
                 // closing brace of the `if` arm above; Rust releases it here so
                 // we can borrow `caller` to read WASM memory.
-                let json = match read_lp_string(&mut caller, spec_handle_or_lp) {
+                let json = match read_clean_string(&mut caller, spec_handle_or_lp) {
                     Some(s) => s,
                     None => {
                         let a = arena!(caller);
@@ -2636,7 +2609,7 @@ fn register_batch_emitters(linker: &mut Linker<PluginState>) -> Result<()> {
             } else {
                 // Amendment 3 LP-string JSON path, extended by Amendment 10.
                 // Borrow of `a` ends above.
-                let json = match read_lp_string(&mut caller, class_handle_or_lp) {
+                let json = match read_clean_string(&mut caller, class_handle_or_lp) {
                     Some(s) => s,
                     None => {
                         let a = arena!(caller);
@@ -2878,9 +2851,9 @@ fn register_error_bridge(linker: &mut Linker<PluginState>) -> Result<()> {
          message_lp: i32,
          span_lp: i32|
          -> i32 {
-            let code = read_lp_string(&mut caller, code_lp).unwrap_or_default();
-            let message = read_lp_string(&mut caller, message_lp).unwrap_or_default();
-            let span_json = read_lp_string(&mut caller, span_lp).unwrap_or_default();
+            let code = read_clean_string(&mut caller, code_lp).unwrap_or_default();
+            let message = read_clean_string(&mut caller, message_lp).unwrap_or_default();
+            let span_json = read_clean_string(&mut caller, span_lp).unwrap_or_default();
             let a = arena!(caller);
             // ctx validation: if ctx is wrong we still emit the diagnostic (the
             // call came from the plugin) but we don't set saw_error_severity via
@@ -2952,8 +2925,8 @@ fn register_ctx_error_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
         "env",
         "_ctx_set_error_context",
         |mut caller: Caller<'_, PluginState>, ctx: i32, code_lp: i32, message_lp: i32| -> i32 {
-            let code = read_lp_string(&mut caller, code_lp).unwrap_or_default();
-            let message = read_lp_string(&mut caller, message_lp).unwrap_or_default();
+            let code = read_clean_string(&mut caller, code_lp).unwrap_or_default();
+            let message = read_clean_string(&mut caller, message_lp).unwrap_or_default();
             let a = arena!(caller);
             if ctx != a.ctx_handle() {
                 return 0;

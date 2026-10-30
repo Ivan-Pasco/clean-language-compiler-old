@@ -161,7 +161,6 @@ impl TokenParser {
         let mut imports = Vec::new();
         let mut plugins = Vec::new();
         let mut statements = Vec::new();
-        let screens = Vec::new(); // Legacy field; screen blocks are stored in screen_blocks below
         let mut screen_blocks_vec: Vec<crate::ast::Statement> = Vec::new();
         let mut state: Option<crate::ast::StateBlock> = None;
         let mut watch_blocks: Vec<crate::ast::WatchBlock> = Vec::new();
@@ -480,7 +479,6 @@ impl TokenParser {
             capabilities,
             start_function,
             tests,
-            screens,
             state,
             watch_blocks,
             screen_blocks: screen_blocks_vec,
@@ -582,40 +580,15 @@ impl TokenParser {
     /// Skip whitespace tokens (newlines, comments)
     /// When inside parentheses or braces, also skip Indent/Dedent for multiline expressions
     pub(super) fn skip_whitespace(&mut self) {
-        let start_token = self.current_kind().clone();
-        let mut consumed = vec![];
-
         // When inside parentheses or braces, skip indent/dedent tokens too (for multiline expressions)
-        if self.paren_depth > 0 || self.brace_depth > 0 {
-            while matches!(
-                self.current_kind(),
-                TokenKind::Newline
-                    | TokenKind::Comment(_)
-                    | TokenKind::BlockComment(_)
-                    | TokenKind::Indent(_)
-                    | TokenKind::Dedent(_)
-            ) {
-                consumed.push(format!("{:?}", self.current_kind()));
-                self.bump();
+        let skip_layout = self.paren_depth > 0 || self.brace_depth > 0;
+        loop {
+            match self.current_kind() {
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_) => {}
+                TokenKind::Indent(_) | TokenKind::Dedent(_) if skip_layout => {}
+                _ => break,
             }
-        } else {
-            while matches!(
-                self.current_kind(),
-                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
-            ) {
-                consumed.push(format!("{:?}", self.current_kind()));
-                self.bump();
-            }
-        }
-
-        if !consumed.is_empty() {
-            tracing::trace!(
-                start = ?start_token,
-                consumed = ?consumed,
-                after = ?self.current_kind(),
-                paren_depth = self.paren_depth,
-                "skip_whitespace consumed tokens"
-            );
+            self.bump();
         }
     }
 

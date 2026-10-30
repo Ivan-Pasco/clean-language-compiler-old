@@ -840,45 +840,6 @@ impl ConcreteType {
             _ => false,
         }
     }
-
-    /// Check if this is a primitive type
-    pub fn is_primitive(&self) -> bool {
-        match self {
-            ConcreteType::Integer
-            | ConcreteType::Number
-            | ConcreteType::String
-            | ConcreteType::Boolean => true,
-            ConcreteType::Optional(inner) => inner.is_primitive(),
-            _ => false,
-        }
-    }
-
-    /// If this type is Optional(T), return T.  Otherwise return self unchanged.
-    /// Used by codegen to strip the compile-time Optional wrapper before emitting WASM.
-    pub fn unwrap_optional(&self) -> &ConcreteType {
-        match self {
-            ConcreteType::Optional(inner) => inner.unwrap_optional(),
-            other => other,
-        }
-    }
-
-    /// Returns true iff this type is Optional(_).
-    pub fn is_optional(&self) -> bool {
-        matches!(self, ConcreteType::Optional(_))
-    }
-
-    /// Get the default value for this type
-    pub fn default_value(&self) -> TastLiteral {
-        match self {
-            ConcreteType::Integer => TastLiteral::Integer(0),
-            ConcreteType::Number => TastLiteral::Number(0.0),
-            ConcreteType::String => TastLiteral::String(String::new()),
-            ConcreteType::Boolean => TastLiteral::Boolean(false),
-            // Optional default is none (represented as null/0)
-            ConcreteType::Optional(_) => TastLiteral::Null,
-            _ => TastLiteral::Null,
-        }
-    }
 }
 
 impl std::fmt::Display for ConcreteType {

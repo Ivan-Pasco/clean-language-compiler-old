@@ -9,7 +9,7 @@
 
 use clean_language_compiler::plugin_artifacts::{orchestrate, EmitContext};
 use clean_language_compiler::plugins::plugin_abi::{ArtifactSource, PluginManifest};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
 
 fn fixture_dir() -> PathBuf {
@@ -101,7 +101,7 @@ fn build_manifest_schema_is_emitted_for_user_code_compiles() {
 #[test]
 fn declared_artifacts_appear_in_build_manifest_json() {
     let m = load_manifest();
-    let mut manifests = HashMap::new();
+    let mut manifests = IndexMap::new();
     manifests.insert("test.artifacts_v2".to_string(), m);
 
     // build_state mimics what `test.artifacts_v2`'s expand_block would push

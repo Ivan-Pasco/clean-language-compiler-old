@@ -314,6 +314,55 @@ impl MirBuilder {
         }
     }
 
+    /// List methods whose namespace form `list.<method>(items, ...)` takes
+    /// the list as its first argument and lowers exactly like the method
+    /// call `items.<method>(...)`.
+    pub(super) fn is_list_receiver_method(method: &str) -> bool {
+        matches!(
+            method,
+            "get"
+                | "set"
+                | "add"
+                | "push"
+                | "insert"
+                | "remove"
+                | "pop"
+                | "removeLast"
+                | "peek"
+                | "first"
+                | "last"
+                | "contains"
+                | "indexOf"
+                | "lastIndexOf"
+                | "sort"
+                | "reverse"
+                | "slice"
+                | "concat"
+        )
+    }
+
+    /// Name of the element-typed implementation of a list method registered
+    /// in `src/stdlib/list_class.rs`, or `None` when the method keeps its
+    /// default dispatch (i32 `indexOf`/`contains` natives, behavior-aware
+    /// `peek`, and the string `indexOf`/`contains` variants).
+    pub(super) fn list_method_variant(method: &str, element: &ConcreteType) -> Option<String> {
+        match element {
+            ConcreteType::Number => Some(match method {
+                "first" | "last" | "peek" | "get" | "remove" | "removeAt" | "removeLast" => {
+                    format!("__list_{}_f64", method)
+                }
+                _ => format!("list.{}.f64", method),
+            }),
+            _ => match method {
+                "indexOf" | "contains" | "peek" => None,
+                "sort" | "lastIndexOf" if matches!(element, ConcreteType::String) => {
+                    Some(format!("list.{}.string", method))
+                }
+                _ => Some(format!("list.{}", method)),
+            },
+        }
+    }
+
     /// Store the list pointer returned by `list.add` back into the receiver.
     ///
     /// `list.add` moves a full list to a larger block and returns the new

@@ -88,49 +88,45 @@ pub fn unop_from_code(code: i32) -> Option<UnaryOperator> {
     })
 }
 
-// ── Round-trip helpers (used in tests) ───────────────────────────────────────
-
-/// Return the string representation of a binary op code (for diagnostics).
-/// Returns `"<unknown>"` for out-of-range codes.
-#[allow(dead_code)]
-pub fn binop_code_to_str(code: i32) -> &'static str {
-    match code {
-        0 => "+",
-        1 => "-",
-        2 => "*",
-        3 => "/",
-        4 => "%",
-        5 => "==",
-        6 => "!=",
-        7 => "<",
-        8 => ">",
-        9 => "<=",
-        10 => ">=",
-        11 => "and",
-        12 => "or",
-        13 => "default",
-        14 => "^",
-        15 => "is",
-        _ => "<unknown>",
-    }
-}
-
-/// Return the string representation of a unary op code (for diagnostics).
-/// Returns `"<unknown>"` for out-of-range codes.
-#[allow(dead_code)]
-pub fn unop_code_to_str(code: i32) -> &'static str {
-    match code {
-        0 => "-",
-        1 => "not",
-        _ => "<unknown>",
-    }
-}
-
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Return the string representation of a binary op code (for diagnostics).
+    /// Returns `"<unknown>"` for out-of-range codes.
+    fn binop_code_to_str(code: i32) -> &'static str {
+        match code {
+            0 => "+",
+            1 => "-",
+            2 => "*",
+            3 => "/",
+            4 => "%",
+            5 => "==",
+            6 => "!=",
+            7 => "<",
+            8 => ">",
+            9 => "<=",
+            10 => ">=",
+            11 => "and",
+            12 => "or",
+            13 => "default",
+            14 => "^",
+            15 => "is",
+            _ => "<unknown>",
+        }
+    }
+
+    /// Return the string representation of a unary op code (for diagnostics).
+    /// Returns `"<unknown>"` for out-of-range codes.
+    fn unop_code_to_str(code: i32) -> &'static str {
+        match code {
+            0 => "-",
+            1 => "not",
+            _ => "<unknown>",
+        }
+    }
 
     /// Every defined binop code maps to a variant.
     #[test]

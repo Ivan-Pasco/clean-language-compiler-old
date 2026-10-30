@@ -1,0 +1,38 @@
+// Test: bugfixes/list_line_remove_shifts
+// Semantic: specification 04-type-system.md §List Behaviors — on a `.line`
+//   list `remove()` takes the front element and `peek()` shows the next one;
+//   otherwise `remove()` takes the last element.
+// Fixed in: compiler 0.33.165
+// Regression: `.line` `remove()` returned the front element but only shrank
+//   the length, so the next `remove()` returned the same element and the
+//   last element was lost.
+// Expected output:
+//   A B C 1
+//   1 2 3 1
+//   1.25 2.25 1
+//   3 2 1
+
+start:
+	list<string>.line q = []
+	q.add("A")
+	q.add("B")
+	q.add("C")
+	string q1 = q.remove()
+	string q2 = q.remove()
+	print(q1 + " " + q2 + " " + q.peek() + " " + q.length().toString())
+	list<integer>.line qi = []
+	qi.add(1)
+	qi.add(2)
+	qi.add(3)
+	integer i1 = qi.remove()
+	integer i2 = qi.remove()
+	print(i1.toString() + " " + i2.toString() + " " + qi.peek().toString() + " " + qi.length().toString())
+	list<number>.line qn = []
+	qn.add(1.25)
+	qn.add(2.25)
+	number n1 = qn.remove()
+	print(n1.toString() + " " + qn.peek().toString() + " " + qn.length().toString())
+	list<integer> st = [1, 2, 3]
+	integer s1 = st.remove()
+	integer s2 = st.pop()
+	print(s1.toString() + " " + s2.toString() + " " + st.length().toString())

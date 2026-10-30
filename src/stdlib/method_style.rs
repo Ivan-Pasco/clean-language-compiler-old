@@ -1,22 +1,17 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::memory::MemoryManager;
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
-use std::cell::RefCell;
-use std::rc::Rc;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 /// Method-style syntax implementation for Clean Language
 /// Enables value.method() calls instead of only function(value) calls
-pub struct MethodStyleManager {
-    #[allow(dead_code)] // Held for future direct allocations; codegen uses global memory manager
-    memory_manager: Rc<RefCell<MemoryManager>>,
-}
+#[derive(Default)]
+pub struct MethodStyleManager;
 
 impl MethodStyleManager {
-    pub fn new(memory_manager: Rc<RefCell<MemoryManager>>) -> Self {
-        Self { memory_manager }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Register all method-style functions as stdlib functions
@@ -611,21 +606,4 @@ impl MethodStyleManager {
     }
 
     // Helper methods removed - replaced with direct memory access for better performance and reliability
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_method_style_manager_creation() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(1, Some(10))));
-        let method_manager = MethodStyleManager::new(memory_manager.clone());
-
-        // Test that manager is created successfully
-        assert_eq!(
-            method_manager.memory_manager.borrow().get_total_allocated(),
-            0
-        );
-    }
 }

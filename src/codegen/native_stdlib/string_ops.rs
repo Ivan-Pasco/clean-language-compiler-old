@@ -8,43 +8,6 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 use super::{STRING_DATA_OFFSET, STRING_LENGTH_OFFSET};
 
-/// Generate instructions for string.length
-/// Simply reads the length field at offset 0
-pub fn gen_length() -> Vec<Instruction<'static>> {
-    vec![
-        Instruction::LocalGet(0), // string pointer
-        Instruction::I32Load(MemArg {
-            offset: STRING_LENGTH_OFFSET as u64,
-            align: 2, // 4-byte alignment
-            memory_index: 0,
-        }),
-    ]
-}
-
-/// Generate instructions for string.charAt
-/// Returns the byte value at the given index
-pub fn gen_char_at() -> Vec<Instruction<'static>> {
-    vec![
-        // Calculate address: ptr + 4 + index
-        Instruction::LocalGet(0), // string pointer
-        Instruction::I32Const(STRING_DATA_OFFSET as i32),
-        Instruction::I32Add,
-        Instruction::LocalGet(1), // index
-        Instruction::I32Add,
-        // Load single byte
-        Instruction::I32Load8U(MemArg {
-            offset: 0,
-            align: 0,
-            memory_index: 0,
-        }),
-    ]
-}
-
-/// Generate instructions for string.charCodeAt (same as charAt)
-pub fn gen_char_code_at() -> Vec<Instruction<'static>> {
-    gen_char_at()
-}
-
 /// Generate instructions for string.fromCharCode
 ///
 /// Converts an integer code point to a single-character string.
@@ -1864,64 +1827,4 @@ pub fn gen_to_lower(malloc_func: u32) -> Vec<Instruction<'static>> {
         // Return new string ptr
         Instruction::LocalGet(2),
     ]
-}
-
-/// Get local variables needed for each string function
-pub fn get_locals(func_name: &str) -> Vec<(u32, ValType)> {
-    match func_name {
-        "starts_with" => vec![
-            (1, ValType::I32), // prefix_len
-            (1, ValType::I32), // str_len
-            (1, ValType::I32), // i
-        ],
-        "ends_with" => vec![
-            (1, ValType::I32), // suffix_len
-            (1, ValType::I32), // str_len
-            (1, ValType::I32), // offset
-            (1, ValType::I32), // i
-        ],
-        "index_of" => vec![
-            (1, ValType::I32), // str_len
-            (1, ValType::I32), // search_len
-            (1, ValType::I32), // i
-            (1, ValType::I32), // j
-            (1, ValType::I32), // match
-        ],
-        "concat" => vec![
-            (1, ValType::I32), // len1
-            (1, ValType::I32), // len2
-            (1, ValType::I32), // new_ptr
-            (1, ValType::I32), // i
-        ],
-        "substring" => vec![
-            (1, ValType::I32), // new_len
-            (1, ValType::I32), // new_ptr
-            (1, ValType::I32), // i
-        ],
-        "trim_start" => vec![
-            (1, ValType::I32), // str_len
-            (1, ValType::I32), // start_idx
-            (1, ValType::I32), // new_len
-            (1, ValType::I32), // new_ptr
-            (1, ValType::I32), // i
-            (1, ValType::I32), // temp byte
-        ],
-        "trim_end" => vec![
-            (1, ValType::I32), // str_len
-            (1, ValType::I32), // end_idx
-            (1, ValType::I32), // new_ptr
-            (1, ValType::I32), // i
-            (1, ValType::I32), // temp byte
-        ],
-        "trim" => vec![
-            (1, ValType::I32), // str_len
-            (1, ValType::I32), // start_idx
-            (1, ValType::I32), // end_idx
-            (1, ValType::I32), // new_len
-            (1, ValType::I32), // new_ptr
-            (1, ValType::I32), // i
-            (1, ValType::I32), // temp byte
-        ],
-        _ => vec![],
-    }
 }

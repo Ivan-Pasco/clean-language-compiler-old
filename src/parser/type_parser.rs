@@ -1,19 +1,19 @@
+use super::get_location;
 use super::Rule;
-use super::{convert_to_ast_location, get_location};
 use crate::ast::{ListBehavior, Type};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
 
 pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
     let parser_location = get_location(&pair);
-    let ast_location = convert_to_ast_location(&parser_location);
+    let ast_location = parser_location.clone();
 
     // Handle both direct type rules and type_ wrapper
     let type_rule = if pair.as_rule() == Rule::type_ {
         pair.clone().into_inner().next().ok_or_else(|| {
             CompilerError::parse_error(
                 "Empty type declaration".to_string(),
-                Some(convert_to_ast_location(&parser_location)),
+                Some(parser_location.clone()),
                 Some("Type declarations must specify a type".to_string()),
             )
         })?
@@ -21,7 +21,7 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
         pair.clone().into_inner().next().ok_or_else(|| {
             CompilerError::parse_error(
                 "Empty variable type declaration".to_string(),
-                Some(convert_to_ast_location(&parser_location)),
+                Some(parser_location.clone()),
                 Some("Variable type declarations must specify a type".to_string()),
             )
         })?
@@ -30,7 +30,7 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
         pair.clone().into_inner().next().ok_or_else(|| {
             CompilerError::parse_error(
                 "Empty function return type declaration".to_string(),
-                Some(convert_to_ast_location(&parser_location)),
+                Some(parser_location.clone()),
                 Some("Function return type declarations must specify a type".to_string()),
             )
         })?
@@ -85,7 +85,7 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
             let inner_type = type_rule.into_inner().next().ok_or_else(|| {
                 CompilerError::parse_error(
                     "Empty function type declaration".to_string(),
-                    Some(convert_to_ast_location(&parser_location)),
+                    Some(parser_location.clone()),
                     Some("Function type declarations must specify a type".to_string()),
                 )
             })?;
@@ -136,7 +136,7 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
 
 fn parse_generic_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
     let parser_location = get_location(&pair);
-    let ast_location = convert_to_ast_location(&parser_location);
+    let ast_location = parser_location.clone();
 
     let mut base_type = String::new();
     let mut type_arguments = Vec::new();
@@ -168,7 +168,7 @@ fn parse_generic_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
 
 fn parse_basic_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
     let parser_location = get_location(&pair);
-    let _ast_location = convert_to_ast_location(&parser_location);
+    let _ast_location = parser_location.clone();
 
     let type_name = pair.as_str();
     match type_name {

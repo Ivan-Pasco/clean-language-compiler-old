@@ -39,10 +39,7 @@ const V1_TOML_SRC: &str = include_str!("runtime-abi-v1.toml");
 
 #[derive(Debug, Deserialize)]
 struct RuntimeAbiV1 {
-    #[allow(dead_code)]
-    version: String,
-    #[allow(dead_code)]
-    status: String,
+    // `version` and `status` header fields are documentation-only here.
     bridge: Vec<BridgeEntry>,
 }
 

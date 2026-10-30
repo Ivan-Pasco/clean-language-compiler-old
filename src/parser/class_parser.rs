@@ -1,9 +1,8 @@
-use super::parser_impl::parse_functions_block_with_context;
-use super::preprocessor::ClassContext;
+use super::get_location;
+use super::parser_impl::parse_functions_block_traditional;
 use super::statement_parser::parse_statement;
 use super::type_parser::parse_type;
 use super::Rule;
-use super::{convert_to_ast_location, get_location};
 use crate::ast::{Class, Constructor, Field, Parameter, Visibility};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
@@ -18,7 +17,7 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
     let mut methods = Vec::new();
     let mut constructor = None;
     let location = get_location(&pair);
-    let ast_location = convert_to_ast_location(&location);
+    let ast_location = location.clone();
 
     for item in pair.into_inner() {
         match item.as_rule() {
@@ -45,16 +44,8 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                         Some(parse_constructor(body_item, ast_location.clone())?);
                                 }
                                 Rule::functions_block | Rule::class_functions_block => {
-                                    let class_context = ClassContext {
-                                        class_name: name.clone(),
-                                        fields: fields.clone(),
-                                        base_class: base_class.clone(),
-                                    };
-
-                                    let class_methods = parse_functions_block_with_context(
-                                        body_item,
-                                        Some(class_context),
-                                    )?;
+                                    let class_methods =
+                                        parse_functions_block_traditional(body_item)?;
                                     methods.extend(class_methods);
                                 }
                                 _ => {}
@@ -72,16 +63,7 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
                                     Some(parse_constructor(class_item, ast_location.clone())?);
                             }
                             Rule::functions_block | Rule::class_functions_block => {
-                                let class_context = ClassContext {
-                                    class_name: name.clone(),
-                                    fields: fields.clone(),
-                                    base_class: base_class.clone(),
-                                };
-
-                                let class_methods = parse_functions_block_with_context(
-                                    class_item,
-                                    Some(class_context),
-                                )?;
+                                let class_methods = parse_functions_block_traditional(class_item)?;
                                 methods.extend(class_methods);
                             }
                             _ => {}

@@ -97,17 +97,6 @@ impl fmt::Display for RuntimeInfo {
     }
 }
 
-/// Helper function to create a runtime-appropriate configuration
-pub fn create_runtime_config(runtime_type: RuntimeType) -> RuntimeConfig {
-    let async_support = matches!(runtime_type, RuntimeType::Wasmtime);
-
-    RuntimeConfig {
-        runtime_type,
-        async_support,
-        ..RuntimeConfig::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,15 +116,5 @@ mod tests {
         let config = RuntimeConfig::default();
         let selected = RuntimeManager::select_runtime(&config);
         assert!(selected.is_ok(), "Auto-selection should succeed");
-    }
-
-    #[test]
-    fn test_create_runtime_config() {
-        let config = create_runtime_config(RuntimeType::Auto);
-        assert_eq!(config.runtime_type, RuntimeType::Auto);
-
-        let wasmtime_config = create_runtime_config(RuntimeType::Wasmtime);
-        assert_eq!(wasmtime_config.runtime_type, RuntimeType::Wasmtime);
-        assert!(wasmtime_config.async_support);
     }
 }

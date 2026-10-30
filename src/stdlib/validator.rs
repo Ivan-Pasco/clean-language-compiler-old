@@ -1,18 +1,13 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::memory::MemoryManager;
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
-use std::cell::RefCell;
-use std::rc::Rc;
 use wasm_encoder::{BlockType, Instruction, MemArg};
 
 /// Type ID for ValidationResult objects in memory
 pub const VALIDATION_RESULT_TYPE_ID: u32 = 20;
 /// Type ID for ValidationRules objects in memory
 pub const VALIDATION_RULES_TYPE_ID: u32 = 21;
-/// Type ID for ValidationError objects in memory
-pub const VALIDATION_ERROR_TYPE_ID: u32 = 22;
 
 /// Byte size of a single field entry in the fields array
 /// Layout (80 bytes total):
@@ -90,32 +85,17 @@ pub const DEFAULT_MEM_ALLOC_CALL_INDEX: u32 = 7;
 ///     print result.firstError
 /// ```
 pub struct ValidatorManager {
-    #[allow(dead_code)] // Held for future direct allocations; codegen uses global memory manager
-    memory_manager: Rc<RefCell<MemoryManager>>,
     /// Dynamically resolved index for mem_alloc in the current module's import table.
     /// Set at registration time so the validator is resilient to import ordering changes.
     mem_alloc_idx: u32,
 }
 
 impl ValidatorManager {
-    pub fn new(memory_manager: Rc<RefCell<MemoryManager>>) -> Self {
-        Self {
-            memory_manager,
-            mem_alloc_idx: DEFAULT_MEM_ALLOC_CALL_INDEX,
-        }
-    }
-
     /// Create a ValidatorManager with a specific mem_alloc call index.
     /// Use this from `register_validator_operations` after mem_alloc has been
     /// registered, so the index reflects the actual module layout.
-    pub fn new_with_mem_alloc_idx(
-        memory_manager: Rc<RefCell<MemoryManager>>,
-        mem_alloc_idx: u32,
-    ) -> Self {
-        Self {
-            memory_manager,
-            mem_alloc_idx,
-        }
+    pub fn new_with_mem_alloc_idx(mem_alloc_idx: u32) -> Self {
+        Self { mem_alloc_idx }
     }
 
     /// Register all validator functions as stdlib functions
@@ -2411,8 +2391,7 @@ mod tests {
 
     #[test]
     fn test_validator_manager_creation() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let _manager = ValidatorManager::new(memory_manager);
+        let _manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
     }
 
     #[test]
@@ -2430,8 +2409,7 @@ mod tests {
 
     #[test]
     fn test_generate_validator_create_not_empty() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_create();
         // Must produce a non-trivial instruction sequence
         assert!(instrs.len() > 5);
@@ -2439,8 +2417,7 @@ mod tests {
 
     #[test]
     fn test_generate_validator_run_produces_loop() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_run();
         // The run function must contain loop and block instructions
         let has_loop = instrs.iter().any(|i| matches!(i, Instruction::Loop(_)));
@@ -2451,8 +2428,7 @@ mod tests {
 
     #[test]
     fn test_generate_validator_field_zeros_entry() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_field();
         // Must have exactly 20 zero-store instructions (one per word in 80-byte entry)
         let zero_stores = instrs
@@ -2468,8 +2444,7 @@ mod tests {
 
     #[test]
     fn test_min_length_stores_at_offset_16() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_min_length();
         // Must contain an I32Store with offset 16
         let has_offset_16 = instrs
@@ -2483,8 +2458,7 @@ mod tests {
 
     #[test]
     fn test_max_length_stores_at_offset_20() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_max_length();
         let has_offset_20 = instrs
             .iter()
@@ -2497,8 +2471,7 @@ mod tests {
 
     #[test]
     fn test_message_stores_at_offset_24() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_message();
         let has_offset_24 = instrs
             .iter()
@@ -2511,8 +2484,7 @@ mod tests {
 
     #[test]
     fn test_custom_stores_at_offset_28() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_custom();
         let has_offset_28 = instrs
             .iter()
@@ -2525,8 +2497,7 @@ mod tests {
 
     #[test]
     fn test_trim_stores_at_offset_36() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_trim();
         let has_offset_36 = instrs
             .iter()
@@ -2539,8 +2510,7 @@ mod tests {
 
     #[test]
     fn test_min_value_stores_at_offset_64_and_72() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_min_value();
         let has_offset_64 = instrs
             .iter()
@@ -2560,8 +2530,7 @@ mod tests {
 
     #[test]
     fn test_max_value_stores_at_offset_68_and_76() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_max_value();
         let has_offset_68 = instrs
             .iter()
@@ -2581,8 +2550,7 @@ mod tests {
 
     #[test]
     fn test_merge_produces_two_copy_loops() {
-        let memory_manager = Rc::new(RefCell::new(MemoryManager::new(16, Some(1024))));
-        let manager = ValidatorManager::new(memory_manager);
+        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
         let instrs = manager.generate_validator_merge();
         let loop_count = instrs
             .iter()

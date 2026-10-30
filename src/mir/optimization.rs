@@ -3,9 +3,7 @@
 //! This module implements optimization passes for MIR code, including:
 //! - Dead code elimination
 //! - Constant folding and propagation
-//! - Function inlining
 //! - Control flow simplification
-//! - Peephole optimizations
 
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
@@ -14,25 +12,6 @@ use crate::mir::mir_types::{
 };
 use crate::mir::MirConfig;
 use std::collections::{HashMap, HashSet};
-
-/// Optimization statistics
-#[derive(Debug, Default, Clone)]
-pub struct OptimizationStats {
-    /// Number of instructions eliminated
-    pub instructions_eliminated: usize,
-
-    /// Number of basic blocks eliminated
-    pub blocks_eliminated: usize,
-
-    /// Number of functions inlined
-    pub functions_inlined: usize,
-
-    /// Number of constants folded
-    pub constants_folded: usize,
-
-    /// Total optimization time in microseconds
-    pub optimization_time_us: u64,
-}
 
 /// MIR optimizer that applies optimization passes
 #[derive(Debug)]
@@ -75,7 +54,6 @@ pub struct PassStats {
     pub instructions_eliminated: usize,
     pub blocks_eliminated: usize,
     pub constants_folded: usize,
-    pub functions_inlined: usize,
 }
 
 impl PassStats {
@@ -84,7 +62,6 @@ impl PassStats {
         self.instructions_eliminated += other.instructions_eliminated;
         self.blocks_eliminated += other.blocks_eliminated;
         self.constants_folded += other.constants_folded;
-        self.functions_inlined += other.functions_inlined;
     }
 }
 
@@ -95,8 +72,6 @@ impl MirOptimizer {
             Box::new(ConstantFoldingPass::new()),
             Box::new(DeadCodeEliminationPass::new()),
             Box::new(ControlFlowSimplificationPass::new()),
-            Box::new(PeepholeOptimizationPass::new()),
-            Box::new(FunctionInliningPass::new()),
         ];
 
         Self {
@@ -112,15 +87,9 @@ impl MirOptimizer {
         optimizer
     }
 
-    /// Optimize a MIR program
-    pub fn optimize(
-        &mut self,
-        mut program: MirProgram,
-    ) -> Result<(MirProgram, OptimizationStats), Vec<CompilerError>> {
-        let start_time = std::time::Instant::now();
-        let mut total_stats = OptimizationStats::default();
-
-        // Apply optimization passes multiple times until convergence
+    /// Optimize a MIR program, re-running the enabled passes until nothing
+    /// changes or the per-level iteration limit is reached.
+    pub fn optimize(&mut self, mut program: MirProgram) -> Result<MirProgram, Vec<CompilerError>> {
         let max_iterations = match self.config.opt_level {
             0 => 0,
             1 => 1,
@@ -137,23 +106,12 @@ impl MirOptimizer {
                     continue;
                 }
 
-                match pass.optimize_program(&mut program) {
-                    Ok(stats) => {
-                        if stats.instructions_eliminated > 0
-                            || stats.blocks_eliminated > 0
-                            || stats.constants_folded > 0
-                        {
-                            changed = true;
-                        }
-
-                        total_stats.instructions_eliminated += stats.instructions_eliminated;
-                        total_stats.blocks_eliminated += stats.blocks_eliminated;
-                        total_stats.constants_folded += stats.constants_folded;
-                        total_stats.functions_inlined += stats.functions_inlined;
-                    }
-                    Err(error) => {
-                        return Err(vec![error]);
-                    }
+                let stats = pass.optimize_program(&mut program).map_err(|e| vec![e])?;
+                if stats.instructions_eliminated > 0
+                    || stats.blocks_eliminated > 0
+                    || stats.constants_folded > 0
+                {
+                    changed = true;
                 }
             }
 
@@ -163,9 +121,7 @@ impl MirOptimizer {
             }
         }
 
-        total_stats.optimization_time_us = start_time.elapsed().as_micros() as u64;
-
-        Ok((program, total_stats))
+        Ok(program)
     }
 }
 
@@ -215,7 +171,14 @@ impl ConstantFoldingPass {
         }
     }
 
-    /// Try to fold a binary operation with constant operands
+    /// Try to fold a binary operation with constant operands.
+    ///
+    /// The folded result must be exactly what the unoptimized WASM computes:
+    /// `MirConstant::Integer` is an `i32` at runtime (`i32.add`, `i32.div_s`, ...
+    /// with two's-complement wrapping), `MirConstant::Integer64` is an `i64`, and
+    /// floats compare with IEEE-754 equality (`f64.eq`). Operations that trap at
+    /// runtime (integer division or remainder by zero, `MIN / -1`) are left
+    /// unfolded so the trap still happens.
     fn try_fold_binary_op(
         &self,
         op: &MirBinaryOp,
@@ -223,27 +186,52 @@ impl ConstantFoldingPass {
         right: &MirConstant,
     ) -> Option<MirConstant> {
         match (left, right) {
-            (MirConstant::Integer(a), MirConstant::Integer(b)) => match op {
-                MirBinaryOp::Add => Some(MirConstant::Integer(a + b)),
-                MirBinaryOp::Sub => Some(MirConstant::Integer(a - b)),
-                MirBinaryOp::Mul => Some(MirConstant::Integer(a * b)),
-                MirBinaryOp::Div if *b != 0 => Some(MirConstant::Integer(a / b)),
-                MirBinaryOp::Rem if *b != 0 => Some(MirConstant::Integer(a % b)),
-                MirBinaryOp::Eq => Some(MirConstant::Boolean(a == b)),
-                MirBinaryOp::Ne => Some(MirConstant::Boolean(a != b)),
-                MirBinaryOp::Lt => Some(MirConstant::Boolean(a < b)),
-                MirBinaryOp::Le => Some(MirConstant::Boolean(a <= b)),
-                MirBinaryOp::Gt => Some(MirConstant::Boolean(a > b)),
-                MirBinaryOp::Ge => Some(MirConstant::Boolean(a >= b)),
-                _ => None,
-            },
+            (MirConstant::Integer(a), MirConstant::Integer(b)) => {
+                // Integer payloads are narrowed to i32 by `load_constant`.
+                let (a, b) = (*a as i32, *b as i32);
+                let int = |v: i32| Some(MirConstant::Integer(i64::from(v)));
+                match op {
+                    MirBinaryOp::Add => int(a.wrapping_add(b)),
+                    MirBinaryOp::Sub => int(a.wrapping_sub(b)),
+                    MirBinaryOp::Mul => int(a.wrapping_mul(b)),
+                    // `i32.div_s` traps on b == 0 and on MIN / -1.
+                    MirBinaryOp::Div => a.checked_div(b).and_then(int),
+                    // `i32.rem_s` traps on b == 0; MIN % -1 is 0.
+                    MirBinaryOp::Rem if b != 0 => int(a.wrapping_rem(b)),
+                    MirBinaryOp::Eq => Some(MirConstant::Boolean(a == b)),
+                    MirBinaryOp::Ne => Some(MirConstant::Boolean(a != b)),
+                    MirBinaryOp::Lt => Some(MirConstant::Boolean(a < b)),
+                    MirBinaryOp::Le => Some(MirConstant::Boolean(a <= b)),
+                    MirBinaryOp::Gt => Some(MirConstant::Boolean(a > b)),
+                    MirBinaryOp::Ge => Some(MirConstant::Boolean(a >= b)),
+                    _ => None,
+                }
+            }
+            (MirConstant::Integer64(a), MirConstant::Integer64(b)) => {
+                let (a, b) = (*a, *b);
+                let int = |v: i64| Some(MirConstant::Integer64(v));
+                match op {
+                    MirBinaryOp::Add => int(a.wrapping_add(b)),
+                    MirBinaryOp::Sub => int(a.wrapping_sub(b)),
+                    MirBinaryOp::Mul => int(a.wrapping_mul(b)),
+                    MirBinaryOp::Div => a.checked_div(b).and_then(int),
+                    MirBinaryOp::Rem if b != 0 => int(a.wrapping_rem(b)),
+                    MirBinaryOp::Eq => Some(MirConstant::Boolean(a == b)),
+                    MirBinaryOp::Ne => Some(MirConstant::Boolean(a != b)),
+                    MirBinaryOp::Lt => Some(MirConstant::Boolean(a < b)),
+                    MirBinaryOp::Le => Some(MirConstant::Boolean(a <= b)),
+                    MirBinaryOp::Gt => Some(MirConstant::Boolean(a > b)),
+                    MirBinaryOp::Ge => Some(MirConstant::Boolean(a >= b)),
+                    _ => None,
+                }
+            }
             (MirConstant::Float(a), MirConstant::Float(b)) => match op {
                 MirBinaryOp::Add => Some(MirConstant::Float(a + b)),
                 MirBinaryOp::Sub => Some(MirConstant::Float(a - b)),
                 MirBinaryOp::Mul => Some(MirConstant::Float(a * b)),
                 MirBinaryOp::Div if *b != 0.0 => Some(MirConstant::Float(a / b)),
-                MirBinaryOp::Eq => Some(MirConstant::Boolean((a - b).abs() < f64::EPSILON)),
-                MirBinaryOp::Ne => Some(MirConstant::Boolean((a - b).abs() >= f64::EPSILON)),
+                MirBinaryOp::Eq => Some(MirConstant::Boolean(a == b)),
+                MirBinaryOp::Ne => Some(MirConstant::Boolean(a != b)),
                 MirBinaryOp::Lt => Some(MirConstant::Boolean(a < b)),
                 MirBinaryOp::Le => Some(MirConstant::Boolean(a <= b)),
                 MirBinaryOp::Gt => Some(MirConstant::Boolean(a > b)),
@@ -261,10 +249,13 @@ impl ConstantFoldingPass {
         }
     }
 
-    /// Try to fold a unary operation with constant operand
+    /// Try to fold a unary operation with constant operand (same runtime-exact
+    /// rules as `try_fold_binary_op`).
     fn try_fold_unary_op(&self, op: &MirUnaryOp, operand: &MirConstant) -> Option<MirConstant> {
         match (op, operand) {
-            (MirUnaryOp::Neg, MirConstant::Integer(i)) => Some(MirConstant::Integer(-i)),
+            (MirUnaryOp::Neg, MirConstant::Integer(i)) => {
+                Some(MirConstant::Integer(i64::from((*i as i32).wrapping_neg())))
+            }
             (MirUnaryOp::Neg, MirConstant::Float(f)) => Some(MirConstant::Float(-f)),
             (MirUnaryOp::Not, MirConstant::Boolean(b)) => Some(MirConstant::Boolean(!b)),
             _ => None,
@@ -443,9 +434,6 @@ impl DeadCodeEliminationPass {
     fn mark_operands_live(&mut self, operation: &MirOperation, function: &MirFunction) {
         match operation {
             MirOperation::Copy { source } => {
-                self.mark_operand_live(source, function);
-            }
-            MirOperation::Move { source } => {
                 self.mark_operand_live(source, function);
             }
             MirOperation::BinaryOp { left, right, .. } => {
@@ -720,7 +708,7 @@ impl OptimizationPass for ControlFlowSimplificationPass {
 
 impl ControlFlowSimplificationPass {
     /// DFS from the entry block; derives successors from each block's terminator
-    /// because `BasicBlock::successors` is never populated by the MIR builder.
+    /// (the terminator is the only record of control-flow edges in MIR).
     fn reachable_blocks(function: &MirFunction) -> HashSet<BasicBlockId> {
         let mut visited = HashSet::new();
         let mut stack = vec![function.entry_block];
@@ -754,94 +742,6 @@ impl ControlFlowSimplificationPass {
             }
         }
         visited
-    }
-}
-
-/// Peephole optimization pass
-#[derive(Debug)]
-pub struct PeepholeOptimizationPass;
-
-impl Default for PeepholeOptimizationPass {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PeepholeOptimizationPass {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl OptimizationPass for PeepholeOptimizationPass {
-    fn name(&self) -> &str {
-        "peephole-optimization"
-    }
-
-    fn optimize_function(
-        &mut self,
-        _function: &mut MirFunction,
-    ) -> Result<PassStats, CompilerError> {
-        let stats = PassStats::default();
-
-        // Peephole optimizations (placeholder for future optimization)
-        // Potential improvements: strength reduction, identity operations, algebraic simplification
-
-        Ok(stats)
-    }
-
-    fn is_enabled(&self, config: &MirConfig) -> bool {
-        config.optimize && config.opt_level >= 2
-    }
-}
-
-/// Function inlining optimization pass
-#[derive(Debug)]
-pub struct FunctionInliningPass {}
-
-impl Default for FunctionInliningPass {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl FunctionInliningPass {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl OptimizationPass for FunctionInliningPass {
-    fn name(&self) -> &str {
-        "function-inlining"
-    }
-
-    fn optimize_function(
-        &mut self,
-        _function: &mut MirFunction,
-    ) -> Result<PassStats, CompilerError> {
-        let stats = PassStats::default();
-
-        // Function inlining (placeholder for future optimization)
-        // Potential improvements: small function inlining, size-based thresholds
-
-        Ok(stats)
-    }
-
-    fn optimize_program(&mut self, program: &mut MirProgram) -> Result<PassStats, CompilerError> {
-        // Collect inlining candidates and apply inlining
-        let mut total_stats = PassStats::default();
-
-        for function in program.functions.values_mut() {
-            let stats = self.optimize_function(function)?;
-            total_stats.merge(stats);
-        }
-
-        Ok(total_stats)
-    }
-
-    fn is_enabled(&self, config: &MirConfig) -> bool {
-        config.function_inlining
     }
 }
 

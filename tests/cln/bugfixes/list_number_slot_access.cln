@@ -1,0 +1,52 @@
+// Test: bugfixes/list_number_slot_access
+// Semantic: stdlib-reference.md §5 — `.get`, `.set`, `.pop`, `.removeLast`,
+//   `.remove()` and their `list.<method>(items, ...)` namespace forms work on
+//   list<number>, whose elements are 8-byte values.
+// Fixed in: compiler 0.33.165
+// Regression: `get` read 4-byte slots (1073217536 for 2.5), `set` and the
+//   namespace forms failed WASM validation, and `pop` / `removeLast` /
+//   `.remove()` returned 0 without removing anything.
+// Expected output:
+//   2.5 3.5
+//   9.5 8.5
+//   8.5 3.5 3.5
+//   true 2 1
+//   5 4.5 5.5
+//   0.5 0.25
+//   pop 5.5 4.5 5
+//   last 3.5 9.5 3
+//   remove 8.5 2
+//   2 -1
+//   1.5 1.5
+
+start:
+	list<number> a = [1.5, 2.5, 3.5]
+	number x = list.get(a, 2)
+	print(a.get(1).toString() + " " + x.toString())
+	a.set(1, 9.5)
+	list.set(a, 0, 8.5)
+	print(a[1].toString() + " " + a.get(0).toString())
+	number f = list.first(a)
+	number l = list.last(a)
+	number p = list.peek(a)
+	print(f.toString() + " " + l.toString() + " " + p.toString())
+	print(list.contains(a, 9.5).toString() + " " + list.indexOf(a, 3.5).toString() + " " + list.lastIndexOf(a, 9.5).toString())
+	list.add(a, 4.5)
+	list.push(a, 5.5)
+	print(a.length().toString() + " " + a[3].toString() + " " + a[4].toString())
+	a.insert(0, 0.5)
+	list.insert(a, 1, 0.25)
+	print(a[0].toString() + " " + a[1].toString())
+	number p1 = a.pop()
+	number p2 = list.pop(a)
+	print("pop " + p1.toString() + " " + p2.toString() + " " + a.length().toString())
+	number r1 = a.removeLast()
+	number r2 = list.removeLast(a)
+	print("last " + r1.toString() + " " + r2.toString() + " " + a.length().toString())
+	number r3 = a.remove()
+	print("remove " + r3.toString() + " " + a.length().toString())
+	list<number> s = list.sort(a)
+	print(s.length().toString() + " " + list.indexOf(a, 8.5).toString())
+	list<number> b = [2.5, 1.5]
+	list<number> sorted = list.sort(b)
+	print(sorted.get(0).toString() + " " + list.reverse(b).get(0).toString())

@@ -4,7 +4,6 @@
 //! from the entry point file to all transitively imported modules.
 
 use crate::ast::SourceLocation;
-use crate::error::CompilerError;
 use crate::hir::HirProgram;
 use crate::resolver::{GlobalSymbolTable, ResolvedHirProgram, SymbolId};
 use std::collections::HashMap;
@@ -226,13 +225,6 @@ impl CompilationUnit {
         self.modules.get_mut(&id)
     }
 
-    /// Get a module by its name
-    pub fn get_module_by_name(&self, name: &str) -> Option<&CompiledModule> {
-        self.module_by_name
-            .get(name)
-            .and_then(|id| self.modules.get(id))
-    }
-
     /// Get the entry module
     pub fn get_entry_module(&self) -> &CompiledModule {
         self.modules
@@ -255,43 +247,9 @@ impl CompilationUnit {
         self.compilation_order = order;
     }
 
-    /// Get all module names
-    pub fn module_names(&self) -> Vec<&String> {
-        self.module_by_name.keys().collect()
-    }
-
     /// Validate that all modules have been parsed to HIR
     pub fn all_modules_have_hir(&self) -> bool {
         self.modules.values().all(|m| m.hir.is_some())
-    }
-
-    /// Collect all HIR programs in compilation order
-    pub fn collect_hir_programs(
-        &self,
-    ) -> Result<Vec<(&CompiledModule, &HirProgram)>, CompilerError> {
-        let mut result = Vec::new();
-
-        for id in &self.compilation_order {
-            let module = self.modules.get(id).ok_or_else(|| {
-                CompilerError::codegen_error(
-                    format!("Module with ID {:?} not found in compilation unit", id),
-                    None,
-                    None,
-                )
-            })?;
-
-            let hir = module.hir.as_ref().ok_or_else(|| {
-                CompilerError::codegen_error(
-                    format!("Module '{}' has no HIR - was it parsed?", module.name),
-                    None,
-                    Some(module.location.clone()),
-                )
-            })?;
-
-            result.push((module, hir));
-        }
-
-        Ok(result)
     }
 }
 

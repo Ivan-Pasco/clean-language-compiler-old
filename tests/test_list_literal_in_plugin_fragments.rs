@@ -11,13 +11,16 @@ use clean_language_compiler::parser::grammar::{CleanParser, SingleStatementParse
 fn parenthesized_list_element_parses_in_a_fragment() {
     let source = "list<integer> n = [1, (2 + 3), x]\n";
     match CleanParser::parse_single_statement(source) {
-        SingleStatementParse::Statement(Statement::VariableDecl { initializer: Some(init), .. }) => {
-            match init {
-                Expression::ListLiteral(items) => assert_eq!(items.len(), 3),
-                other => panic!("expected a list literal, got {other:?}"),
-            }
+        SingleStatementParse::Statement(Statement::VariableDecl {
+            initializer: Some(init),
+            ..
+        }) => match init {
+            Expression::ListLiteral(items) => assert_eq!(items.len(), 3),
+            other => panic!("expected a list literal, got {other:?}"),
+        },
+        SingleStatementParse::Statement(other) => {
+            panic!("expected a variable declaration, got {other:?}")
         }
-        SingleStatementParse::Statement(other) => panic!("expected a variable declaration, got {other:?}"),
         _ => panic!("fragment with a parenthesized list element must parse"),
     }
 }

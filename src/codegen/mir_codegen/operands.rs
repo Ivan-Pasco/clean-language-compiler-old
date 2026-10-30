@@ -101,7 +101,6 @@ impl MirCodeGenerator<'_> {
                 // NOTE: Load the string structure base offset (not index, not content offset)
                 // String format in memory: [4-byte len][content]
                 // Load base offset - points to the length field
-                // The generate_terminator will expand this to (content_ptr, len) if needed
                 if let Some(string_pool) = &self.string_pool {
                     if let Some(string_content) = string_pool.get(*index) {
                         let base_offset = self
@@ -650,6 +649,44 @@ impl MirCodeGenerator<'_> {
         Ok(())
     }
 
+    /// Convert the numeric value on top of the WASM stack from `src` to `dst`.
+    ///
+    /// Covers `integer` ↔ `number`, `integer:64` ↔ `integer`, and
+    /// `integer:64` ↔ `number` (type-system.md §5: integer widening,
+    /// sized → unsized, integer → number). Types that share a WASM
+    /// representation, and non-numeric types, need no instruction.
+    pub(super) fn emit_numeric_coercion(&mut self, src: &MirType, dst: &MirType) {
+        let is_i32 = |t: &MirType| {
+            matches!(
+                t,
+                MirType::I32
+                    | MirType::I8
+                    | MirType::I16
+                    | MirType::U8
+                    | MirType::U16
+                    | MirType::U32
+                    | MirType::Bool
+            )
+        };
+        let is_i64 = |t: &MirType| matches!(t, MirType::I64 | MirType::U64);
+        let instruction = if *src == MirType::F64 && *dst == MirType::I32 {
+            Instruction::I32TruncF64S
+        } else if is_i32(src) && *src != MirType::Bool && *dst == MirType::F64 {
+            Instruction::F64ConvertI32S
+        } else if is_i32(src) && is_i64(dst) {
+            Instruction::I64ExtendI32S
+        } else if is_i64(src) && *dst == MirType::I32 {
+            Instruction::I32WrapI64
+        } else if is_i64(src) && *dst == MirType::F64 {
+            Instruction::F64ConvertI64S
+        } else if *src == MirType::F64 && is_i64(dst) {
+            Instruction::I64TruncF64S
+        } else {
+            return;
+        };
+        self.current_instructions.push(instruction);
+    }
+
     /// Store value from WASM stack to local with automatic type conversion if needed.
     ///
     /// Checks if the value on the stack needs type conversion before storing.
@@ -661,46 +698,8 @@ impl MirCodeGenerator<'_> {
         if let Some(&local_index) = self.value_to_local.get(&value_id) {
             // Get destination type from function.locals
             if let Some(dest_type) = self.get_value_type(value_id) {
-                // If we know the source type, check if conversion is needed
                 if let Some(src_type) = source_type {
-                    // NOTE: Add type conversions when assigning between i32 and f64
-                    match (&src_type, &dest_type) {
-                        // f64 → i32: Truncate float to integer
-                        (MirType::F64, MirType::I32) => {
-                            debug_mir!(
-                                "DEBUG TYPE CONVERSION: Adding f64→i32 conversion for ValueId({:?})",
-                                value_id.0
-                            );
-                            self.current_instructions.push(Instruction::I32TruncF64S);
-                        }
-                        // i32 → f64: Convert integer to float
-                        (MirType::I32, MirType::F64) => {
-                            debug_mir!(
-                                "DEBUG TYPE CONVERSION: Adding i32→f64 conversion for ValueId({:?})",
-                                value_id.0
-                            );
-                            self.current_instructions.push(Instruction::F64ConvertI32S);
-                        }
-                        // `integer:64` ↔ 32-bit integer and number. The
-                        // spec allows sized→unsized and widening integer
-                        // assignment (type-system.md §5); i64 values need an
-                        // explicit WASM conversion to land in an i32/f64
-                        // local and vice versa.
-                        (MirType::I32 | MirType::Bool, MirType::I64 | MirType::U64) => {
-                            self.current_instructions.push(Instruction::I64ExtendI32S);
-                        }
-                        (MirType::I64 | MirType::U64, MirType::I32) => {
-                            self.current_instructions.push(Instruction::I32WrapI64);
-                        }
-                        (MirType::I64 | MirType::U64, MirType::F64) => {
-                            self.current_instructions.push(Instruction::F64ConvertI64S);
-                        }
-                        (MirType::F64, MirType::I64 | MirType::U64) => {
-                            self.current_instructions.push(Instruction::I64TruncF64S);
-                        }
-                        // Same types or pointer types - no conversion needed
-                        _ => {}
-                    }
+                    self.emit_numeric_coercion(&src_type, &dest_type);
                 }
             }
 

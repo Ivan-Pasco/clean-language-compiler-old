@@ -1,22 +1,1116 @@
+//! List methods implemented as native WASM functions.
+//!
+//! All functions operate on the standard list layout
+//! (see `foundation/spec/platform/MEMORY_MODEL.md`):
+//!
+//! ```text
+//! [length: i32 @0][capacity: i32 @4][type_id: i32 @8][flags: i32 @12][elements @16]
+//! ```
+//!
+//! `capacity` counts 4-byte slots, so an f64 element occupies two of them.
+//! Element stride is 4 bytes for i32-represented values (integer, boolean,
+//! string and object pointers) and 8 bytes for `number` (f64).
+//!
+//! [`ListClass::register_functions`] is called from
+//! `ListManager::register_functions`, which runs after the native memory
+//! operations (`__malloc`) and `list_behavior.rs` (`list.add`) are registered.
+//!
+//! Element-typed variants are selected by the MIR builder from the receiver's
+//! element type: `list.<method>` for i32 elements, `list.<method>.f64` for
+//! `list<number>`, and `list.<method>.string` where strings need byte
+//! comparison. Variants that return an f64 element use an internal
+//! `__list_*_f64` name so the `list.` namespace return-type heuristic (i32)
+//! never applies to them.
+
+use crate::codegen::native_stdlib::list_ops::{gen_reverse_i32, gen_slice_i32};
 use crate::codegen::CodeGenerator;
+use crate::codegen::LIST_TYPE_ID;
 use crate::error::CompilerError;
+use crate::stdlib::list_behavior::BEHAVIOR_LINE;
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
-use wasm_encoder::{BlockType, Instruction, MemArg};
+use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
-/// Fallback mem_alloc call index matching the standard import layout.
-/// 0=print, 1=printl, 2=input, 3=input_integer, 4=input_float,
-/// 5=input_yesno, 6=input_range, 7=mem_alloc.
-const DEFAULT_MEM_ALLOC_CALL_INDEX: u32 = 7;
-/// Public alias for use in codegen_registration.rs.
-pub const DEFAULT_MEM_ALLOC_CALL_INDEX_PUB: u32 = DEFAULT_MEM_ALLOC_CALL_INDEX;
+/// Byte offset of the first element.
+const DATA: i32 = 16;
 
-/// List class implementation for Clean Language
-/// Provides comprehensive list manipulation capabilities as static methods
-pub struct ListClass {
-    /// Dynamically resolved index for mem_alloc in the current module's import table.
-    mem_alloc_idx: u32,
+fn mem(offset: u64, align: u32) -> MemArg {
+    MemArg {
+        offset,
+        align,
+        memory_index: 0,
+    }
 }
+
+/// Element representation of a list.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Elem {
+    /// 4-byte scalar compared by value (integer, boolean, object pointer).
+    I32,
+    /// 8-byte `number`.
+    F64,
+    /// 4-byte pointer to a length-prefixed string, compared by bytes.
+    Str,
+}
+
+impl Elem {
+    fn stride(self) -> i32 {
+        match self {
+            Elem::F64 => 8,
+            Elem::I32 | Elem::Str => 4,
+        }
+    }
+
+    fn wasm(self) -> WasmType {
+        match self {
+            Elem::F64 => WasmType::F64,
+            Elem::I32 | Elem::Str => WasmType::I32,
+        }
+    }
+
+    fn load(self) -> Instruction<'static> {
+        match self {
+            Elem::F64 => Instruction::F64Load(mem(DATA as u64, 3)),
+            Elem::I32 | Elem::Str => Instruction::I32Load(mem(DATA as u64, 2)),
+        }
+    }
+
+    fn store(self) -> Instruction<'static> {
+        match self {
+            Elem::F64 => Instruction::F64Store(mem(DATA as u64, 3)),
+            Elem::I32 | Elem::Str => Instruction::I32Store(mem(DATA as u64, 2)),
+        }
+    }
+}
+
+/// Push the address `list + index * stride` (element offset is folded into the
+/// load/store `MemArg`).
+fn elem_addr(list_local: u32, index_local: u32, elem: Elem) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(list_local),
+        Instruction::LocalGet(index_local),
+        Instruction::I32Const(elem.stride()),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+    ]
+}
+
+/// Allocate a list of `len_local` elements with the same type id and behavior
+/// flags as `src_local`, storing the pointer in `dst_local`. Capacity is set to
+/// exactly the allocated slot count so in-place appends grow the list instead
+/// of writing past the block.
+fn emit_alloc_like(
+    malloc: u32,
+    src_local: u32,
+    len_local: u32,
+    dst_local: u32,
+    stride: i32,
+) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(len_local),
+        Instruction::I32Const(stride),
+        Instruction::I32Mul,
+        Instruction::I32Const(DATA),
+        Instruction::I32Add,
+        Instruction::Call(malloc),
+        Instruction::LocalSet(dst_local),
+        // length
+        Instruction::LocalGet(dst_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32Store(mem(0, 2)),
+        // capacity in 4-byte slots
+        Instruction::LocalGet(dst_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32Const(stride / 4),
+        Instruction::I32Mul,
+        Instruction::I32Store(mem(4, 2)),
+        // type id
+        Instruction::LocalGet(dst_local),
+        Instruction::LocalGet(src_local),
+        Instruction::I32Load(mem(8, 2)),
+        Instruction::I32Store(mem(8, 2)),
+        // behavior flags
+        Instruction::LocalGet(dst_local),
+        Instruction::LocalGet(src_local),
+        Instruction::I32Load(mem(12, 2)),
+        Instruction::I32Store(mem(12, 2)),
+    ]
+}
+
+/// Allocate a fresh list (type id `LIST_TYPE_ID`, no behavior flags) holding
+/// `len_local` i32 elements.
+fn emit_alloc_fresh_i32(malloc: u32, len_local: u32, dst_local: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(len_local),
+        Instruction::I32Const(4),
+        Instruction::I32Mul,
+        Instruction::I32Const(DATA),
+        Instruction::I32Add,
+        Instruction::Call(malloc),
+        Instruction::LocalSet(dst_local),
+        Instruction::LocalGet(dst_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32Store(mem(0, 2)),
+        Instruction::LocalGet(dst_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32Store(mem(4, 2)),
+        Instruction::LocalGet(dst_local),
+        Instruction::I32Const(LIST_TYPE_ID as i32),
+        Instruction::I32Store(mem(8, 2)),
+        Instruction::LocalGet(dst_local),
+        Instruction::I32Const(0),
+        Instruction::I32Store(mem(12, 2)),
+    ]
+}
+
+/// Copy `words_local` 4-byte words from `src_local + 16` to
+/// `dst_local + 16 + dst_word_offset_local * 4`, using `i_local` as counter.
+fn emit_copy_words(
+    src_local: u32,
+    dst_local: u32,
+    dst_word_offset_local: Option<u32>,
+    words_local: u32,
+    i_local: u32,
+) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::I32Const(0),
+        Instruction::LocalSet(i_local),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(i_local),
+        Instruction::LocalGet(words_local),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(dst_local),
+        Instruction::LocalGet(i_local),
+    ];
+    if let Some(off) = dst_word_offset_local {
+        v.push(Instruction::LocalGet(off));
+        v.push(Instruction::I32Add);
+    }
+    v.extend([
+        Instruction::I32Const(4),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::LocalGet(src_local),
+        Instruction::LocalGet(i_local),
+        Instruction::I32Const(4),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::I32Load(mem(DATA as u64, 2)),
+        Instruction::I32Store(mem(DATA as u64, 2)),
+        Instruction::LocalGet(i_local),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(i_local),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+    ]);
+    v
+}
+
+/// Trap when the list in `list_local` is empty (spec: `.first()`, `.last()`
+/// and `.peek()` halt on an empty list). Leaves the length in `len_local`.
+fn emit_halt_if_empty(list_local: u32, len_local: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(list_local),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalTee(len_local),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::Unreachable,
+        Instruction::End,
+    ]
+}
+
+/// `first` / `last` / `peek`: params (list); local 1 = len.
+fn gen_end_element(elem: Elem, last: bool) -> Vec<Instruction<'static>> {
+    let mut v = emit_halt_if_empty(0, 1);
+    v.push(Instruction::LocalGet(0));
+    if last {
+        v.extend([
+            Instruction::LocalGet(1),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::I32Const(elem.stride()),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+        ]);
+    }
+    v.push(elem.load());
+    v
+}
+
+/// `peek` for `list<number>`: the front element of a `.line` list, otherwise
+/// the last element (mirrors the i32 `list.peek` in `list_behavior.rs`).
+/// Halts on an empty list. params (list); local 1 = len.
+fn gen_peek_f64() -> Vec<Instruction<'static>> {
+    let mut v = emit_halt_if_empty(0, 1);
+    v.extend([
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(12, 2)),
+        Instruction::I32Const(BEHAVIOR_LINE),
+        Instruction::I32And,
+        Instruction::If(BlockType::Result(ValType::F64)),
+    ]);
+    v.extend(gen_end_element(Elem::F64, false).into_iter().skip(7));
+    v.push(Instruction::Else);
+    v.extend(gen_end_element(Elem::F64, true).into_iter().skip(7));
+    v.push(Instruction::End);
+    v
+}
+
+/// Push `1` when the element value on the stack equals the needle in local 1.
+/// Stack before: [element]. `str_cmp` is required for `Elem::Str`.
+fn emit_equals_needle(elem: Elem, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
+    match elem {
+        Elem::I32 => vec![Instruction::LocalGet(1), Instruction::I32Eq],
+        Elem::F64 => vec![Instruction::LocalGet(1), Instruction::F64Eq],
+        Elem::Str => vec![
+            Instruction::LocalGet(1),
+            Instruction::Call(str_cmp.expect("string comparison helper registered")),
+            Instruction::I32Eqz,
+        ],
+    }
+}
+
+/// `indexOf` / `lastIndexOf`: params (list, needle); locals 2 = len, 3 = i.
+/// Returns the index of the first (or last) equal element, or -1.
+fn gen_search(elem: Elem, from_end: bool, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(2),
+    ];
+    if from_end {
+        v.extend([
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(3),
+        ]);
+    } else {
+        v.extend([Instruction::I32Const(0), Instruction::LocalSet(3)]);
+    }
+    v.extend([
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+    ]);
+    if from_end {
+        v.extend([
+            Instruction::LocalGet(3),
+            Instruction::I32Const(0),
+            Instruction::I32LtS,
+            Instruction::BrIf(1),
+        ]);
+    } else {
+        v.extend([
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeS,
+            Instruction::BrIf(1),
+        ]);
+    }
+    v.extend(elem_addr(0, 3, elem));
+    v.push(elem.load());
+    v.extend(emit_equals_needle(elem, str_cmp));
+    v.extend([
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(3),
+        Instruction::I32Const(if from_end { -1 } else { 1 }),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::I32Const(-1),
+    ]);
+    v
+}
+
+/// `contains` built on an `indexOf` variant: params (list, needle).
+fn gen_contains_via(index_of: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::Call(index_of),
+        Instruction::I32Const(0),
+        Instruction::I32GeS,
+    ]
+}
+
+/// `reverse` for 8-byte elements: params (list); locals 1 = len, 2 = dst, 3 = i.
+fn gen_reverse_f64(malloc: u32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(1),
+    ];
+    v.extend(emit_alloc_like(malloc, 0, 1, 2, 8));
+    v.extend([
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+        // dst[i] = src[len - 1 - i] (bit copy)
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(8),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalGet(3),
+        Instruction::I32Sub,
+        Instruction::I32Const(8),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::I64Load(mem(DATA as u64, 3)),
+        Instruction::I64Store(mem(DATA as u64, 3)),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(2),
+    ]);
+    v
+}
+
+/// Clamp `start` (local 1) to [0, len] and `end` (local 2) to [start, len],
+/// with the length in `len_local`.
+fn emit_clamp_range(len_local: u32) -> Vec<Instruction<'static>> {
+    vec![
+        // start = max(start, 0)
+        Instruction::LocalGet(1),
+        Instruction::I32Const(0),
+        Instruction::LocalGet(1),
+        Instruction::I32Const(0),
+        Instruction::I32GtS,
+        Instruction::Select,
+        Instruction::LocalSet(1),
+        // start = min(start, len)
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(len_local),
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(len_local),
+        Instruction::I32LtS,
+        Instruction::Select,
+        Instruction::LocalSet(1),
+        // end = min(end, len)
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(len_local),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(len_local),
+        Instruction::I32LtS,
+        Instruction::Select,
+        Instruction::LocalSet(2),
+        // end = max(end, start)
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32GtS,
+        Instruction::Select,
+        Instruction::LocalSet(2),
+    ]
+}
+
+/// `slice` for 8-byte elements: params (list, start, end);
+/// locals 3 = len / new_len, 4 = dst, 5 = i (word counter), 6 = words, 7 = src_base.
+fn gen_slice_f64(malloc: u32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(3),
+    ];
+    v.extend(emit_clamp_range(3));
+    v.extend([
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(3),
+    ]);
+    v.extend(emit_alloc_like(malloc, 0, 3, 4, 8));
+    v.extend([
+        // words = new_len * 2; src_base = list + start * 8
+        Instruction::LocalGet(3),
+        Instruction::I32Const(2),
+        Instruction::I32Mul,
+        Instruction::LocalSet(6),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::I32Const(8),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::LocalSet(7),
+    ]);
+    v.extend(emit_copy_words(7, 4, None, 6, 5));
+    v.push(Instruction::LocalGet(4));
+    v
+}
+
+/// Push `1` when element `a` (below) is greater than element `b` (top).
+fn emit_greater(elem: Elem, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
+    match elem {
+        Elem::I32 => vec![Instruction::I32GtS],
+        Elem::F64 => vec![Instruction::F64Gt],
+        Elem::Str => vec![
+            Instruction::Call(str_cmp.expect("string comparison helper registered")),
+            Instruction::I32Const(0),
+            Instruction::I32GtS,
+        ],
+    }
+}
+
+/// `sort`: returns a new list sorted ascending (stable insertion sort).
+/// params (list); locals 1 = len, 2 = dst, 3 = i, 4 = j, 5 = words, 6 = key.
+fn gen_sort(malloc: u32, elem: Elem, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
+    let stride = elem.stride();
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(1),
+    ];
+    v.extend(emit_alloc_like(malloc, 0, 1, 2, stride));
+    v.extend([
+        Instruction::LocalGet(1),
+        Instruction::I32Const(stride / 4),
+        Instruction::I32Mul,
+        Instruction::LocalSet(5),
+    ]);
+    v.extend(emit_copy_words(0, 2, None, 5, 3));
+    v.extend([
+        Instruction::I32Const(1),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+    ]);
+    // key = dst[i]
+    v.extend(elem_addr(2, 3, elem));
+    v.push(elem.load());
+    v.push(Instruction::LocalSet(6));
+    // j = i - 1
+    v.extend([
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::BrIf(1),
+    ]);
+    // stop shifting once dst[j] <= key
+    v.extend(elem_addr(2, 4, elem));
+    v.push(elem.load());
+    v.push(Instruction::LocalGet(6));
+    v.extend(emit_greater(elem, str_cmp));
+    v.extend([Instruction::I32Eqz, Instruction::BrIf(1)]);
+    // dst[j + 1] = dst[j]
+    v.extend(elem_addr(2, 4, elem));
+    v.extend([Instruction::I32Const(stride), Instruction::I32Add]);
+    v.extend(elem_addr(2, 4, elem));
+    v.push(elem.load());
+    v.push(elem.store());
+    v.extend([
+        Instruction::LocalGet(4),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+    ]);
+    // dst[j + 1] = key
+    v.extend(elem_addr(2, 4, elem));
+    v.extend([Instruction::I32Const(stride), Instruction::I32Add]);
+    v.push(Instruction::LocalGet(6));
+    v.push(elem.store());
+    v.extend([
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(2),
+    ]);
+    v
+}
+
+/// `insert(index, value)`: params (list, index, value);
+/// locals 3 = old_len, 4 = list (possibly moved), 5 = new_len, 6 = j.
+///
+/// Appends through `list.add` / `list.add_f64` (which grows the block and
+/// honours behavior flags), then rotates the new element into `index`.
+/// Returns the possibly moved list pointer; the MIR builder writes it back
+/// into the receiver. Halts when `index` is outside `0..=length`.
+fn gen_insert(elem: Elem, list_add: u32) -> Vec<Instruction<'static>> {
+    let stride = elem.stride();
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(3),
+        Instruction::I32GtS,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+        Instruction::Unreachable,
+        Instruction::End,
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(2),
+        Instruction::Call(list_add),
+        Instruction::LocalSet(4),
+        Instruction::LocalGet(4),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(5),
+        // A `.unique` list rejected the value: nothing to place.
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(3),
+        Instruction::I32Eq,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::Return,
+        Instruction::End,
+        // j = new_len - 1; while j > index: list[j] = list[j - 1]; j--
+        Instruction::LocalGet(5),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(6),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(1),
+        Instruction::I32LeS,
+        Instruction::BrIf(1),
+    ];
+    v.extend(elem_addr(4, 6, elem));
+    v.extend(elem_addr(4, 6, elem));
+    v.extend([Instruction::I32Const(stride), Instruction::I32Sub]);
+    v.push(elem.load());
+    v.push(elem.store());
+    v.extend([
+        Instruction::LocalGet(6),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::LocalSet(6),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+    ]);
+    v.extend(elem_addr(4, 1, elem));
+    v.push(Instruction::LocalGet(2));
+    v.push(elem.store());
+    v.push(Instruction::LocalGet(4));
+    v
+}
+
+/// Which element a remove operation takes out of the list.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RemoveAt {
+    /// `.remove(index)`: params (list, index). Halts when `index` is outside
+    /// `0..length`.
+    Index,
+    /// `.pop()` / `.removeLast()`: params (list). Halts on an empty list.
+    Last,
+    /// Index-less `.remove()`: params (list). The front element of a `.line`
+    /// list, otherwise the last one; an empty list yields the zero value.
+    Behavior,
+}
+
+/// Remove one element in place, shifting the following elements down one
+/// slot, and return it.
+///
+/// Locals: 1 = index (a parameter for [`RemoveAt::Index`]), 2 = len, 3 = j,
+/// 4 = removed element (i32 or f64).
+fn gen_remove(elem: Elem, at: RemoveAt) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(2),
+    ];
+    match at {
+        RemoveAt::Index => {}
+        RemoveAt::Last => v.extend([
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::LocalSet(1),
+        ]),
+        RemoveAt::Behavior => {
+            v.extend([
+                Instruction::LocalGet(2),
+                Instruction::I32Eqz,
+                Instruction::If(BlockType::Empty),
+            ]);
+            v.push(match elem {
+                Elem::F64 => Instruction::F64Const(0.0),
+                Elem::I32 | Elem::Str => Instruction::I32Const(0),
+            });
+            v.extend([
+                Instruction::Return,
+                Instruction::End,
+                Instruction::LocalGet(0),
+                Instruction::I32Load(mem(12, 2)),
+                Instruction::I32Const(BEHAVIOR_LINE),
+                Instruction::I32And,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                Instruction::I32Const(0),
+                Instruction::Else,
+                Instruction::LocalGet(2),
+                Instruction::I32Const(1),
+                Instruction::I32Sub,
+                Instruction::End,
+                Instruction::LocalSet(1),
+            ]);
+        }
+    }
+    v.extend(emit_halt_if_out_of_bounds(1, 2));
+    v.extend(elem_addr(0, 1, elem));
+    v.push(elem.load());
+    v.push(Instruction::LocalSet(4));
+    // j = index; while j < len - 1: list[j] = list[j + 1]; j++
+    v.extend([
+        Instruction::LocalGet(1),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+    ]);
+    v.extend(elem_addr(0, 3, elem));
+    v.extend(elem_addr(0, 3, elem));
+    v.extend([Instruction::I32Const(elem.stride()), Instruction::I32Add]);
+    v.push(elem.load());
+    v.push(elem.store());
+    v.extend([
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // length = len - 1
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::I32Store(mem(0, 2)),
+        Instruction::LocalGet(4),
+    ]);
+    v
+}
+
+/// Trap unless `0 <= index < len` (spec: `.get`, `.set` and `.remove(index)`
+/// halt on an out-of-bounds index).
+fn emit_halt_if_out_of_bounds(index_local: u32, len_local: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(index_local),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+        Instruction::LocalGet(index_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32GeS,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+        Instruction::Unreachable,
+        Instruction::End,
+    ]
+}
+
+/// `get(index)`: params (list, index); local 2 = len. Halts when `index` is
+/// outside `0..length`.
+fn gen_get(elem: Elem) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(2),
+    ];
+    v.extend(emit_halt_if_out_of_bounds(1, 2));
+    v.extend(elem_addr(0, 1, elem));
+    v.push(elem.load());
+    v
+}
+
+/// `set(index, value)`: params (list, index, value); local 3 = len. Stores
+/// in place; halts when `index` is outside `0..length`.
+fn gen_set(elem: Elem) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(3),
+    ];
+    v.extend(emit_halt_if_out_of_bounds(1, 3));
+    v.extend(elem_addr(0, 1, elem));
+    v.push(Instruction::LocalGet(2));
+    v.push(elem.store());
+    v
+}
+
+/// `concat(a, b)`: params (a, b); locals 2 = la, 3 = lb, 4 = total, 5 = dst,
+/// 6 = i, 7 = words_a, 8 = words_b.
+fn gen_concat(malloc: u32, elem: Elem) -> Vec<Instruction<'static>> {
+    let slots = elem.stride() / 4;
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(3),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+    ];
+    v.extend(emit_alloc_like(malloc, 0, 4, 5, elem.stride()));
+    v.extend([
+        Instruction::LocalGet(2),
+        Instruction::I32Const(slots),
+        Instruction::I32Mul,
+        Instruction::LocalSet(7),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(slots),
+        Instruction::I32Mul,
+        Instruction::LocalSet(8),
+    ]);
+    v.extend(emit_copy_words(0, 5, None, 7, 6));
+    v.extend(emit_copy_words(1, 5, Some(7), 8, 6));
+    v.push(Instruction::LocalGet(5));
+    v
+}
+
+/// `list.range(start, end)`: params (start, end); locals 2 = len, 3 = dst, 4 = i.
+/// Produces `start, start + 1, ..., end - 1` (empty when `end <= start`).
+fn gen_range(malloc: u32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(0),
+        Instruction::I32Sub,
+        Instruction::LocalTee(2),
+        Instruction::I32Const(0),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(0),
+        Instruction::I32GtS,
+        Instruction::Select,
+        Instruction::LocalSet(2),
+    ];
+    v.extend(emit_alloc_fresh_i32(malloc, 2, 3));
+    v.extend([
+        Instruction::I32Const(0),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(2),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+    ]);
+    v.extend(elem_addr(3, 4, Elem::I32));
+    v.extend([
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(4),
+        Instruction::I32Add,
+        Elem::I32.store(),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(3),
+    ]);
+    v
+}
+
+/// `list.fill(size, value)` for i32 elements: params (size, value);
+/// locals 2 = len, 3 = dst, 4 = i.
+fn gen_fill(malloc: u32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        // len = max(size, 0)
+        Instruction::LocalGet(0),
+        Instruction::I32Const(0),
+        Instruction::LocalGet(0),
+        Instruction::I32Const(0),
+        Instruction::I32GtS,
+        Instruction::Select,
+        Instruction::LocalSet(2),
+    ];
+    v.extend(emit_alloc_fresh_i32(malloc, 2, 3));
+    v.extend([
+        Instruction::I32Const(0),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(2),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+    ]);
+    v.extend(elem_addr(3, 4, Elem::I32));
+    v.extend([
+        Instruction::LocalGet(1),
+        Elem::I32.store(),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(3),
+    ]);
+    v
+}
+
+/// Copy `len_local` bytes from `src_local` to `pos_local`, advancing
+/// `pos_local`; `k_local` is scratch.
+fn emit_copy_bytes(
+    src_local: u32,
+    len_local: u32,
+    pos_local: u32,
+    k_local: u32,
+) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::I32Const(0),
+        Instruction::LocalSet(k_local),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(k_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(pos_local),
+        Instruction::LocalGet(k_local),
+        Instruction::I32Add,
+        Instruction::LocalGet(src_local),
+        Instruction::LocalGet(k_local),
+        Instruction::I32Add,
+        Instruction::I32Load8U(mem(0, 0)),
+        Instruction::I32Store8(mem(0, 0)),
+        Instruction::LocalGet(k_local),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(k_local),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(pos_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32Add,
+        Instruction::LocalSet(pos_local),
+    ]
+}
+
+/// `list.join(items, sep)` / `string.join(items, sep)` for `list<string>`:
+/// params (list, sep); locals 2 = len, 3 = total, 4 = i, 5 = dst, 6 = pos,
+/// 7 = src, 8 = n, 9 = sep_len, 10 = k.
+fn gen_join(malloc: u32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(9),
+        // total = sum(len(item)) + sep_len * max(len - 1, 0)
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(2),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(3),
+    ];
+    v.extend(elem_addr(0, 4, Elem::Str));
+    v.extend([
+        Elem::Str.load(),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(2),
+        Instruction::I32Const(0),
+        Instruction::I32GtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(9),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Sub,
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::End,
+        // dst = malloc(4 + total); dst.len = total; pos = dst + 4
+        Instruction::LocalGet(3),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::Call(malloc),
+        Instruction::LocalSet(5),
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(3),
+        Instruction::I32Store(mem(0, 2)),
+        Instruction::LocalGet(5),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::LocalSet(6),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(2),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+        // separator before every item but the first
+        Instruction::LocalGet(4),
+        Instruction::I32Const(0),
+        Instruction::I32GtS,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(1),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::LocalSet(7),
+    ]);
+    v.extend(emit_copy_bytes(7, 9, 6, 10));
+    v.push(Instruction::End);
+    // item bytes
+    v.extend(elem_addr(0, 4, Elem::Str));
+    v.extend([
+        Elem::Str.load(),
+        Instruction::LocalTee(7),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(8),
+        Instruction::LocalGet(7),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::LocalSet(7),
+    ]);
+    v.extend(emit_copy_bytes(7, 8, 6, 10));
+    v.extend([
+        Instruction::LocalGet(4),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(5),
+    ]);
+    v
+}
+
+/// Byte-wise lexicographic comparison of two length-prefixed strings.
+/// params (a, b); locals 2 = la, 3 = lb, 4 = n, 5 = i, 6 = ca, 7 = cb.
+/// Returns -1, 0 or 1.
+fn gen_str_cmp() -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(3),
+        // n = min(la, lb)
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32LtU,
+        Instruction::Select,
+        Instruction::LocalSet(4),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(5),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(5),
+        Instruction::LocalGet(4),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(5),
+        Instruction::I32Add,
+        Instruction::I32Load8U(mem(4, 0)),
+        Instruction::LocalSet(6),
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(5),
+        Instruction::I32Add,
+        Instruction::I32Load8U(mem(4, 0)),
+        Instruction::LocalSet(7),
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(7),
+        Instruction::I32Ne,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(-1),
+        Instruction::I32Const(1),
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(7),
+        Instruction::I32LtU,
+        Instruction::Select,
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(5),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(5),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        // Common prefix equal: the shorter string sorts first.
+        Instruction::I32Const(-1),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32GtU,
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32LtU,
+        Instruction::Select,
+    ]
+}
+
+/// List class implementation for Clean Language.
+pub struct ListClass;
 
 impl Default for ListClass {
     fn default() -> Self {
@@ -26,894 +1120,315 @@ impl Default for ListClass {
 
 impl ListClass {
     pub fn new() -> Self {
-        Self {
-            mem_alloc_idx: DEFAULT_MEM_ALLOC_CALL_INDEX,
-        }
+        Self
     }
 
-    /// Create a ListClass with a specific mem_alloc call index.
-    pub fn new_with_mem_alloc_idx(mem_alloc_idx: u32) -> Self {
-        Self { mem_alloc_idx }
-    }
-
-    /// Register all List class methods as static functions
+    /// Register every list method implementation. Must run after the native
+    /// memory operations (`__malloc`) and `list_behavior.rs` (`list.add`).
+    /// `list.length`, `list.size`, `list.isEmpty`, `list.isNotEmpty`,
+    /// `list.get`, `list.contains`, `list.indexOf`, `list.add` and
+    /// `list.peek` are registered by `list_behavior.rs` and the native aliases
+    /// in `codegen_registration.rs`; `list.set`, `list.pop` and the remove
+    /// family are (re)registered here.
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Basic list operations
-        self.register_basic_operations(codegen)?;
+        let malloc = codegen
+            .get_function_index("__malloc")
+            .ok_or_else(|| missing("__malloc"))?;
+        let list_add = codegen
+            .get_function_index("list.add")
+            .ok_or_else(|| missing("list.add"))?;
+        let list_add_f64 = codegen
+            .get_function_index("list.add_f64")
+            .ok_or_else(|| missing("list.add_f64"))?;
 
-        // Search operations
-        self.register_search_operations(codegen)?;
+        let i32x = |n: usize| vec![WasmType::I32; n];
 
-        // Modification operations
-        self.register_modification_operations(codegen)?;
-
-        // Transformation operations
-        self.register_transformation_operations(codegen)?;
-
-        // Utility operations
-        self.register_utility_operations(codegen)?;
-
-        Ok(())
-    }
-
-    fn register_basic_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // NOTE: The following list functions are registered as HOST IMPORTS by codegen_registration.rs
-        // and must NOT be re-registered here as stdlib WASM functions, because the last
-        // registration wins (function_map.insert overwrites) and stubs would replace real code:
-        //   - list.allocate  (host import: i32 -> i32)
-        //   - list.push      (host import: i32,i32 -> i32)
-        //   - list.push_f64  (host import: i32,f64 -> i32)
-        //   - list.length    (native alias to array_length)
-        //   - list.isEmpty   (host import: i32 -> i32)
-        //   - list.get       (host import: i32,i32 -> i32)
-        //   - list.set       (host import: i32,i32,i32 -> void)
-        //   - list.add       (host import: i32,i32 -> void)
-        //   - list.remove    (host import: i32,i32 -> i32)
-        //   - list.clear     (host import: i32 -> void)
-        //   - list.contains  (host import: i32,i32 -> i32)
-
-        // List.size(list lst) -> integer
-        // Returns the number of elements in the list.
-        // This is NOT in the host imports (only list.length is), so we register it here.
-        register_stdlib_function(
+        // Byte-wise string ordering shared by the string variants.
+        let str_cmp = register_stdlib_function_with_locals(
             codegen,
-            "list.size",
-            &[WasmType::I32],
+            "__list_str_cmp",
+            &i32x(2),
             Some(WasmType::I32),
-            vec![
-                // Get list pointer
-                Instruction::LocalGet(0),
-                // Load list size (first 4 bytes)
-                Instruction::I32Load(MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }),
-            ],
+            &i32x(6),
+            gen_str_cmp(),
         )?;
 
-        // List.isNotEmpty(list lst) -> boolean
-        // Returns true if the list has at least one element
+        // first / last
+        for (name, last) in [("list.first", false), ("list.last", true)] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(1),
+                Some(WasmType::I32),
+                &i32x(1),
+                gen_end_element(Elem::I32, last),
+            )?;
+        }
+        for (name, body) in [
+            ("__list_first_f64", gen_end_element(Elem::F64, false)),
+            ("__list_last_f64", gen_end_element(Elem::F64, true)),
+            ("__list_peek_f64", gen_peek_f64()),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(1),
+                Some(WasmType::F64),
+                &i32x(1),
+                body,
+            )?;
+            codegen.record_wasm_return_type(name, Some(WasmType::F64));
+        }
+
+        // indexOf / lastIndexOf / contains. `list.indexOf`, `list.contains`
+        // (i32) and `list.indexOf.string` / `list.contains.string` already
+        // have native implementations.
+        for (name, elem, from_end) in [
+            ("list.lastIndexOf", Elem::I32, true),
+            ("list.lastIndexOf.string", Elem::Str, true),
+            ("list.indexOf.f64", Elem::F64, false),
+            ("list.lastIndexOf.f64", Elem::F64, true),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &[WasmType::I32, elem.wasm()],
+                Some(WasmType::I32),
+                &i32x(2),
+                gen_search(elem, from_end, Some(str_cmp)),
+            )?;
+        }
+        let index_of_f64 = codegen
+            .get_function_index("list.indexOf.f64")
+            .ok_or_else(|| missing("list.indexOf.f64"))?;
         register_stdlib_function(
             codegen,
-            "list.isNotEmpty",
-            &[WasmType::I32],
+            "list.contains.f64",
+            &[WasmType::I32, WasmType::F64],
             Some(WasmType::I32),
-            vec![
-                // Get list pointer
-                Instruction::LocalGet(0),
-                // Load list length
-                Instruction::I32Load(MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }),
-                // Check if length != 0 (equivalent to length > 0)
-                Instruction::I32Const(0),
-                Instruction::I32Ne,
-            ],
+            gen_contains_via(index_of_f64),
         )?;
 
-        // List.first(list lst) -> any
-        // Returns the first element of the list
-        register_stdlib_function(
-            codegen,
-            "list.first",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_first(),
-        )?;
-
-        // List.last(list lst) -> any
-        // Returns the last element of the list
-        register_stdlib_function(
-            codegen,
-            "list.last",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_last(),
-        )?;
-
-        Ok(())
-    }
-
-    fn register_search_operations(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // NOTE: list.contains is registered as a HOST IMPORT by codegen_registration.rs.
-        // Do NOT register it here — any stub would shadow the real host implementation.
-
-        // List.indexOf(list lst, any value) -> integer
-        // Not in host imports — register here.
-        register_stdlib_function(
-            codegen,
-            "list.indexOf",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_index_of(),
-        )?;
-
-        // List.lastIndexOf(list lst, any value) -> integer
-        // Not in host imports — register here.
-        register_stdlib_function(
-            codegen,
-            "list.lastIndexOf",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_last_index_of(),
-        )?;
-
-        // List.find(list lst, any value) -> any
-        // Not in host imports — register here.
-        register_stdlib_function(
-            codegen,
-            "list.find",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_find(),
-        )?;
-
-        Ok(())
-    }
-
-    fn register_modification_operations(
-        &self,
-        codegen: &mut CodeGenerator,
-    ) -> Result<(), CompilerError> {
-        // NOTE: list.push, list.push_f64, list.add, list.remove, list.clear are HOST IMPORTS
-        // registered by codegen_registration.rs. Do NOT re-register them here.
-
-        // List.pop(list lst) -> any
-        // Not in host imports — register here.
-        register_stdlib_function(
-            codegen,
-            "list.pop",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_pop(),
-        )?;
-
-        // List.peek(list lst) -> any
-        // Returns the last element without removing it
-        register_stdlib_function(
-            codegen,
-            "list.peek",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            vec![
-                // Get list pointer
-                Instruction::LocalGet(0),
-                // Duplicate for offset calculation
-                Instruction::LocalGet(0),
-                // Load list size
-                Instruction::I32Load(MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }),
-                // Calculate last index (size - 1)
-                Instruction::I32Const(1),
-                Instruction::I32Sub,
-                // Multiply by 4 for byte offset
-                Instruction::I32Const(4),
-                Instruction::I32Mul,
-                // Add header offset (16 bytes)
-                Instruction::I32Const(16),
-                Instruction::I32Add,
-                // Add to list pointer
-                Instruction::I32Add,
-                // Load the element
-                Instruction::I32Load(MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }),
-            ],
-        )?;
-
-        // List.shift(list lst) -> any
-        register_stdlib_function(
-            codegen,
-            "list.shift",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_shift(),
-        )?;
-
-        // List.unshift(list lst, any value) -> void
-        register_stdlib_function(
-            codegen,
-            "list.unshift",
-            &[WasmType::I32, WasmType::I32],
-            None,
-            self.generate_unshift(),
-        )?;
-
-        // List.insert(list lst, integer index, any value) -> integer (success/failure)
-        register_stdlib_function(
-            codegen,
-            "list.insert",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_insert(),
-        )?;
-
-        Ok(())
-    }
-
-    fn register_transformation_operations(
-        &self,
-        codegen: &mut CodeGenerator,
-    ) -> Result<(), CompilerError> {
-        // List.slice(list lst, integer start, integer end) -> list
-        register_stdlib_function(
-            codegen,
-            "list.slice",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_slice(),
-        )?;
-
-        // List.concat(list lst1, list lst2) -> list
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.concat",
-            &[WasmType::I32, WasmType::I32], // list1_ptr (0), list2_ptr (1)
-            Some(WasmType::I32),
-            &[
-                WasmType::I32, // local 2: size1
-                WasmType::I32, // local 3: size2
-                WasmType::I32, // local 4: total_size
-                WasmType::I32, // local 5: new_list_ptr
-                WasmType::I32, // local 6: loop counter
-            ],
-            self.generate_concat(),
-        )?;
-
-        // List.reverse(list lst) -> list
-        register_stdlib_function(
+        // reverse
+        let reverse = register_stdlib_function_with_locals(
             codegen,
             "list.reverse",
-            &[WasmType::I32],
+            &i32x(1),
             Some(WasmType::I32),
-            self.generate_reverse(),
+            &i32x(3),
+            gen_reverse_i32(malloc),
         )?;
-
-        // List.sort(list lst) -> list
-        register_stdlib_function(
-            codegen,
-            "list.sort",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_sort(),
-        )?;
-
-        // List.join(list lst, string separator) -> string
-        register_stdlib_function(
-            codegen,
-            "list.join",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_join(),
-        )?;
-
-        Ok(())
-    }
-
-    fn register_utility_operations(
-        &self,
-        codegen: &mut CodeGenerator,
-    ) -> Result<(), CompilerError> {
-        // List.copy(list lst) -> list
-        register_stdlib_function(
-            codegen,
-            "list.copy",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_copy(),
-        )?;
-
-        // List.equals(list lst1, list lst2) -> boolean
-        register_stdlib_function(
-            codegen,
-            "list.equals",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_equals(),
-        )?;
-
-        // List.fill(size: integer, value: any) -> list
-        // Creates a new list of given size, filled with value
+        codegen.add_function_alias("list_reverse", reverse);
         register_stdlib_function_with_locals(
             codegen,
-            "list.fill",
-            &[WasmType::I32, WasmType::I32], // size, value
-            Some(WasmType::I32),             // returns list pointer
-            &[WasmType::I32, WasmType::I32], // locals: list_ptr, i
-            self.generate_fill(),
+            "list.reverse.f64",
+            &i32x(1),
+            Some(WasmType::I32),
+            &i32x(3),
+            gen_reverse_f64(malloc),
         )?;
 
-        // List.range(start: integer, end: integer) -> list<integer>
-        // Creates a new list with integer values from start to end (exclusive)
+        // slice
+        let slice = register_stdlib_function_with_locals(
+            codegen,
+            "list.slice",
+            &i32x(3),
+            Some(WasmType::I32),
+            &i32x(3),
+            gen_slice_i32(malloc),
+        )?;
+        codegen.add_function_alias("list_slice", slice);
+        register_stdlib_function_with_locals(
+            codegen,
+            "list.slice.f64",
+            &i32x(3),
+            Some(WasmType::I32),
+            &i32x(5),
+            gen_slice_f64(malloc),
+        )?;
+
+        // sort
+        for (name, elem) in [
+            ("list.sort", Elem::I32),
+            ("list.sort.f64", Elem::F64),
+            ("list.sort.string", Elem::Str),
+        ] {
+            let idx = register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(1),
+                Some(WasmType::I32),
+                &[
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                    WasmType::I32,
+                    elem.wasm(),
+                ],
+                gen_sort(malloc, elem, Some(str_cmp)),
+            )?;
+            if elem == Elem::I32 {
+                codegen.add_function_alias("list_sort", idx);
+            }
+        }
+
+        // insert — returns the possibly moved list pointer
+        let insert = register_stdlib_function_with_locals(
+            codegen,
+            "list.insert",
+            &i32x(3),
+            Some(WasmType::I32),
+            &i32x(4),
+            gen_insert(Elem::I32, list_add),
+        )?;
+        codegen.add_function_alias("list_insert", insert);
+        register_stdlib_function_with_locals(
+            codegen,
+            "list.insert.f64",
+            &[WasmType::I32, WasmType::I32, WasmType::F64],
+            Some(WasmType::I32),
+            &i32x(4),
+            gen_insert(Elem::F64, list_add_f64),
+        )?;
+
+        // remove(index), pop/removeLast and the behavior-aware `.remove()`.
+        let i32_locals = i32x(3);
+        let f64_locals = [WasmType::I32, WasmType::I32, WasmType::F64];
+        for (name, elem, at) in [
+            ("list.removeAt", Elem::I32, RemoveAt::Index),
+            ("__list_removeAt_f64", Elem::F64, RemoveAt::Index),
+            ("list.removeLast", Elem::I32, RemoveAt::Last),
+            ("__list_removeLast_f64", Elem::F64, RemoveAt::Last),
+            ("list.remove", Elem::I32, RemoveAt::Behavior),
+            ("__list_remove_f64", Elem::F64, RemoveAt::Behavior),
+        ] {
+            let params = if at == RemoveAt::Index {
+                i32x(2)
+            } else {
+                i32x(1)
+            };
+            // The index is a local for the parameterless forms.
+            let mut locals: Vec<WasmType> = if at == RemoveAt::Index {
+                Vec::new()
+            } else {
+                vec![WasmType::I32]
+            };
+            locals.extend_from_slice(if elem == Elem::F64 {
+                &f64_locals
+            } else {
+                &i32_locals
+            });
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &params,
+                Some(elem.wasm()),
+                &locals,
+                gen_remove(elem, at),
+            )?;
+            if elem == Elem::F64 {
+                codegen.record_wasm_return_type(name, Some(WasmType::F64));
+            }
+        }
+        let pop = codegen
+            .get_function_index("list.removeLast")
+            .ok_or_else(|| missing("list.removeLast"))?;
+        codegen.add_function_alias("list.pop", pop);
+
+        // get / set with bounds checks; `list.set` replaces the earlier
+        // registration in `list_ops.rs`.
+        register_stdlib_function_with_locals(
+            codegen,
+            "__list_get_f64",
+            &i32x(2),
+            Some(WasmType::F64),
+            &i32x(1),
+            gen_get(Elem::F64),
+        )?;
+        codegen.record_wasm_return_type("__list_get_f64", Some(WasmType::F64));
+        let set = register_stdlib_function_with_locals(
+            codegen,
+            "list.set",
+            &i32x(3),
+            None,
+            &i32x(1),
+            gen_set(Elem::I32),
+        )?;
+        codegen.add_function_alias("list_set", set);
+        register_stdlib_function_with_locals(
+            codegen,
+            "list.set.f64",
+            &[WasmType::I32, WasmType::I32, WasmType::F64],
+            None,
+            &i32x(1),
+            gen_set(Elem::F64),
+        )?;
+        for name in ["list.set", "list.set.f64"] {
+            codegen.record_wasm_return_type(name, None);
+        }
+
+        // concat
+        let concat = register_stdlib_function_with_locals(
+            codegen,
+            "list.concat",
+            &i32x(2),
+            Some(WasmType::I32),
+            &i32x(7),
+            gen_concat(malloc, Elem::I32),
+        )?;
+        codegen.add_function_alias("list_concat", concat);
+        register_stdlib_function_with_locals(
+            codegen,
+            "list.concat.f64",
+            &i32x(2),
+            Some(WasmType::I32),
+            &i32x(7),
+            gen_concat(malloc, Elem::F64),
+        )?;
+
+        // range / fill
         register_stdlib_function_with_locals(
             codegen,
             "list.range",
-            &[WasmType::I32, WasmType::I32], // start, end
-            Some(WasmType::I32),             // returns list pointer
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // locals: list_ptr, current, size
-            self.generate_range(),
+            &i32x(2),
+            Some(WasmType::I32),
+            &i32x(3),
+            gen_range(malloc),
+        )?;
+        register_stdlib_function_with_locals(
+            codegen,
+            "list.fill",
+            &i32x(2),
+            Some(WasmType::I32),
+            &i32x(3),
+            gen_fill(malloc),
         )?;
 
-        // List.toString(list lst) -> string
-        register_stdlib_function(
+        // join — `list.join(items, sep)` and `string.join(items, sep)` are
+        // the same operation (stdlib-reference.md §5).
+        let join = register_stdlib_function_with_locals(
             codegen,
-            "list.toString",
-            &[WasmType::I32],
+            "list.join",
+            &i32x(2),
             Some(WasmType::I32),
-            self.generate_to_string(),
+            &i32x(9),
+            gen_join(malloc),
         )?;
+        codegen.add_function_alias("string.join", join);
+        codegen.add_function_alias("list_join", join);
 
         Ok(())
     }
+}
 
-    // Implementation methods for list operations
-
-    fn generate_index_of(&self) -> Vec<Instruction> {
-        // Simplified indexOf implementation
-        // Parameters: list, value to find
-        // Returns: -1 (not found)
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // value
-            Instruction::Drop,        // drop it
-            // Return -1 (not found)
-            Instruction::I32Const(-1),
-        ]
-    }
-
-    fn generate_last_index_of(&self) -> Vec<Instruction> {
-        // Simplified lastIndexOf implementation
-        // Parameters: list, value to find
-        // Returns: -1 (not found)
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // value
-            Instruction::Drop,        // drop it
-            // Return -1 (not found)
-            Instruction::I32Const(-1),
-        ]
-    }
-
-    fn generate_find(&self) -> Vec<Instruction> {
-        // Simplified find implementation
-        // Parameters: list, value to find
-        // Returns: 0 (null - not found)
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // value
-            Instruction::Drop,        // drop it
-            // Return null (not found)
-            Instruction::I32Const(0),
-        ]
-    }
-
-    fn generate_pop(&self) -> Vec<Instruction> {
-        // Simplified list.pop implementation to maintain spec compliance
-        // According to spec: Removes and returns the last element from a list
-        // Parameters: list_ptr
-        // Returns: popped element (simplified to return 0)
-        vec![
-            // Consume the parameter to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            // Return 0 (simplified — full implementation would return popped element)
-            Instruction::I32Const(0),
-        ]
-    }
-
-    fn generate_shift(&self) -> Vec<Instruction> {
-        vec![
-            // Basic shift — return 0 for now
-            // Full implementation would return and remove first element
-            Instruction::I32Const(0),
-        ]
-    }
-
-    fn generate_unshift(&self) -> Vec<Instruction> {
-        vec![
-            // Simplified list.unshift implementation
-            // According to spec: Adds an element to the beginning of a list
-            // Parameters: list_ptr, item
-            // Returns: void
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // item
-            Instruction::Drop,        // drop it
-        ]
-    }
-
-    fn generate_insert(&self) -> Vec<Instruction> {
-        // Simplified implementation
-        // Parameters: list_ptr, index, item
-        // Returns: I32 (1 for success)
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // index
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(2), // item
-            Instruction::Drop,        // drop it
-            // Return true (success indicator)
-            Instruction::I32Const(1),
-        ]
-    }
-
-    fn generate_slice(&self) -> Vec<Instruction> {
-        // Simplified slice implementation
-        // Parameters: list, start index, end index
-        // Returns: original list pointer (no actual slicing performed)
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // start_index
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(2), // end_index
-            Instruction::Drop,        // drop it
-            // Allocate new list for slice result
-            // mem_alloc signature: (type_id: i32, size: i32) -> i32
-            Instruction::I32Const(0),  // type_id = 0 for generic allocation
-            Instruction::I32Const(12), // Basic list header size
-            Instruction::Call(self.mem_alloc_idx), // memory_runtime.mem_alloc (dynamic index)
-        ]
-    }
-
-    fn generate_concat(&self) -> Vec<Instruction> {
-        // List concat - creates a new list containing elements from both lists
-        // Parameters: list1_ptr (0), list2_ptr (1)
-        // Locals: size1 (2), size2 (3), total_size (4), new_list_ptr (5), loop_counter (6)
-        // Returns: new list pointer
-        //
-        // List memory layout: [size:i32|capacity:i32|type_id:i32|padding:i32|elements...]
-        // Elements start at offset 16
-        //
-        // Uses mem_alloc import (index 7) for memory allocation
-        // mem_alloc signature: (type_id: i32, size: i32) -> i32
-        vec![
-            // Get size of list1
-            Instruction::LocalGet(0), // list1_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(2), // size1
-            // Get size of list2
-            Instruction::LocalGet(1), // list2_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3), // size2
-            // Calculate total_size = size1 + size2
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(3),
-            Instruction::I32Add,
-            Instruction::LocalSet(4), // total_size
-            // Allocate new list using mem_alloc(type_id=4, size=16 + total_size*4)
-            Instruction::I32Const(4),  // type_id = 4 (list type)
-            Instruction::I32Const(16), // header size
-            Instruction::LocalGet(4),  // total_size
-            Instruction::I32Const(4),  // element size
-            Instruction::I32Mul,
-            Instruction::I32Add, // total bytes = 16 + total_size * 4
-            Instruction::Call(self.mem_alloc_idx), // mem_alloc - returns new list pointer
-            Instruction::LocalSet(5), // new_list_ptr
-            // Initialize new list header
-            // Store size = total_size
-            Instruction::LocalGet(5), // new_list_ptr
-            Instruction::LocalGet(4), // total_size
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Store capacity = total_size
-            Instruction::LocalGet(5),
-            Instruction::LocalGet(4),
-            Instruction::I32Store(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Store type_id = 4 (list type)
-            Instruction::LocalGet(5),
-            Instruction::I32Const(4),
-            Instruction::I32Store(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Copy elements from list1 (loop i = 0 to size1-1)
-            Instruction::I32Const(0),
-            Instruction::LocalSet(6),             // i = 0
-            Instruction::Block(BlockType::Empty), // outer block for break
-            Instruction::Loop(BlockType::Empty),  // loop start
-            // if i >= size1, break
-            Instruction::LocalGet(6),
-            Instruction::LocalGet(2), // size1
-            Instruction::I32GeS,
-            Instruction::BrIf(1), // break to outer block
-            // Copy element: new_list[i] = list1[i]
-            // dst address: new_list_ptr + 16 + i*4
-            Instruction::LocalGet(5), // new_list_ptr
-            Instruction::I32Const(16),
-            Instruction::I32Add,
-            Instruction::LocalGet(6), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            // src value: list1_ptr + 16 + i*4
-            Instruction::LocalGet(0), // list1_ptr
-            Instruction::I32Const(16),
-            Instruction::I32Add,
-            Instruction::LocalGet(6), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Store to dst
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // i++
-            Instruction::LocalGet(6),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(6),
-            Instruction::Br(0), // continue loop
-            Instruction::End,   // end loop
-            Instruction::End,   // end block
-            // Copy elements from list2 (loop i = 0 to size2-1)
-            // dst index = size1 + i
-            Instruction::I32Const(0),
-            Instruction::LocalSet(6),             // i = 0
-            Instruction::Block(BlockType::Empty), // outer block for break
-            Instruction::Loop(BlockType::Empty),  // loop start
-            // if i >= size2, break
-            Instruction::LocalGet(6),
-            Instruction::LocalGet(3), // size2
-            Instruction::I32GeS,
-            Instruction::BrIf(1), // break to outer block
-            // Copy element: new_list[size1 + i] = list2[i]
-            // dst address: new_list_ptr + 16 + (size1+i)*4
-            Instruction::LocalGet(5), // new_list_ptr
-            Instruction::I32Const(16),
-            Instruction::I32Add,
-            Instruction::LocalGet(2), // size1
-            Instruction::LocalGet(6), // i
-            Instruction::I32Add,      // size1 + i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            // src value: list2_ptr + 16 + i*4
-            Instruction::LocalGet(1), // list2_ptr
-            Instruction::I32Const(16),
-            Instruction::I32Add,
-            Instruction::LocalGet(6), // i
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Store to dst
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // i++
-            Instruction::LocalGet(6),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(6),
-            Instruction::Br(0), // continue loop
-            Instruction::End,   // end loop
-            Instruction::End,   // end block
-            // Return new list pointer
-            Instruction::LocalGet(5),
-        ]
-    }
-
-    fn generate_reverse(&self) -> Vec<Instruction> {
-        // Simplified reverse implementation
-        // Parameters: list
-        // Returns: original list pointer (no actual reversal performed)
-        vec![
-            // Return the original list pointer
-            Instruction::LocalGet(0),
-        ]
-    }
-
-    fn generate_sort(&self) -> Vec<Instruction> {
-        // Simplified sort implementation
-        // Parameters: list_ptr
-        // Returns: same list_ptr (no actual sorting performed)
-        vec![
-            // Return the original list pointer
-            Instruction::LocalGet(0),
-        ]
-    }
-
-    fn generate_join(&self) -> Vec<Instruction> {
-        // Simplified join implementation
-        // Parameters: list_ptr (0), separator (1)
-        // Returns: empty string pointer
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // separator
-            Instruction::Drop,        // drop it
-            // Return empty string pointer (simplified implementation)
-            Instruction::I32Const(0),
-        ]
-    }
-
-    fn generate_copy(&self) -> Vec<Instruction> {
-        // Simplified list.copy implementation
-        // According to spec: Creates a shallow copy of a list
-        // Parameters: list_ptr
-        // Returns: copied list pointer (simplified to return original)
-        vec![
-            // Return the original list pointer
-            Instruction::LocalGet(0),
-        ]
-    }
-
-    fn generate_equals(&self) -> Vec<Instruction> {
-        // Simplified equals implementation
-        // Parameters: list1, list2
-        // Returns: 0 (false - not equal, since we don't compare without full iteration)
-        vec![
-            // Consume the parameters to avoid stack mismatch
-            Instruction::LocalGet(0), // list1_ptr
-            Instruction::Drop,        // drop it
-            Instruction::LocalGet(1), // list2_ptr
-            Instruction::Drop,        // drop it
-            // Return false
-            Instruction::I32Const(0),
-        ]
-    }
-
-    fn generate_fill(&self) -> Vec<Instruction> {
-        // Parameters: size (local 0), value (local 1)
-        // Locals: list_ptr (local 2), i (local 3)
-        // Returns: list pointer
-        vec![
-            // mem_alloc signature: (type_id: i32, size: i32) -> i32
-            Instruction::I32Const(0), // type_id = 0 for generic list allocation
-            // Calculate memory needed: 4 bytes (size) + size * 4 bytes (elements)
-            Instruction::LocalGet(0), // size
-            Instruction::I32Const(4), // bytes per element
-            Instruction::I32Mul,      // size * 4
-            Instruction::I32Const(4), // + 4 bytes for size field
-            Instruction::I32Add,      // total bytes needed
-            // Call mem_alloc to allocate memory
-            Instruction::Call(self.mem_alloc_idx), // mem_alloc function index (dynamic)
-            Instruction::LocalSet(2),              // store list_ptr
-            // Write size to list header
-            Instruction::LocalGet(2), // list_ptr
-            Instruction::LocalGet(0), // size
-            Instruction::I32Store(MemArg {
-                align: 2,
-                offset: 0,
-                memory_index: 0,
-            }),
-            // Initialize loop counter
-            Instruction::I32Const(0),
-            Instruction::LocalSet(3), // i = 0
-            // Loop: while i < size
-            Instruction::Block(BlockType::Empty),
-            Instruction::Loop(BlockType::Empty),
-            // Check if i < size
-            Instruction::LocalGet(3), // i
-            Instruction::LocalGet(0), // size
-            Instruction::I32GeS,      // i >= size?
-            Instruction::BrIf(1),     // if so, break out of loop
-            // Set list[i] = value
-            Instruction::LocalGet(2), // list_ptr
-            Instruction::I32Const(4), // offset to data area
-            Instruction::I32Add,
-            Instruction::LocalGet(3), // i
-            Instruction::I32Const(4), // element size
-            Instruction::I32Mul,
-            Instruction::I32Add,      // list_ptr + 4 + i*4
-            Instruction::LocalGet(1), // value
-            Instruction::I32Store(MemArg {
-                align: 2,
-                offset: 0,
-                memory_index: 0,
-            }),
-            // i = i + 1
-            Instruction::LocalGet(3),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(3),
-            Instruction::Br(0), // continue loop
-            Instruction::End,   // end loop
-            Instruction::End,   // end block
-            // Return list_ptr
-            Instruction::LocalGet(2),
-        ]
-    }
-
-    fn generate_range(&self) -> Vec<Instruction> {
-        // Parameters: start (local 0), end (local 1)
-        // Locals: list_ptr (local 2), current (local 3), size (local 4)
-        // Returns: list pointer
-        vec![
-            // Calculate size = end - start
-            Instruction::LocalGet(1), // end
-            Instruction::LocalGet(0), // start
-            Instruction::I32Sub,      // end - start
-            Instruction::LocalSet(4), // size = end - start
-            // mem_alloc signature: (type_id: i32, size: i32) -> i32
-            Instruction::I32Const(0), // type_id = 0 for generic list allocation
-            // Calculate memory needed: 4 bytes (size) + size * 4 bytes (elements)
-            Instruction::LocalGet(4), // size
-            Instruction::I32Const(4), // bytes per element
-            Instruction::I32Mul,      // size * 4
-            Instruction::I32Const(4), // + 4 bytes for size field
-            Instruction::I32Add,      // total bytes needed
-            // Call mem_alloc to allocate memory
-            Instruction::Call(self.mem_alloc_idx), // mem_alloc function index (dynamic)
-            Instruction::LocalSet(2),              // store list_ptr
-            // Write size to list header
-            Instruction::LocalGet(2), // list_ptr
-            Instruction::LocalGet(4), // size
-            Instruction::I32Store(MemArg {
-                align: 2,
-                offset: 0,
-                memory_index: 0,
-            }),
-            // Initialize current = start
-            Instruction::LocalGet(0), // start
-            Instruction::LocalSet(3), // current = start
-            // Loop: while current < end
-            Instruction::Block(BlockType::Empty),
-            Instruction::Loop(BlockType::Empty),
-            // Check if current >= end
-            Instruction::LocalGet(3), // current
-            Instruction::LocalGet(1), // end
-            Instruction::I32GeS,      // current >= end?
-            Instruction::BrIf(1),     // if so, break out of loop
-            // Calculate index = current - start
-            // Set list[index] = current
-            Instruction::LocalGet(2), // list_ptr
-            Instruction::I32Const(4), // offset to data area
-            Instruction::I32Add,
-            Instruction::LocalGet(3), // current
-            Instruction::LocalGet(0), // start
-            Instruction::I32Sub,      // current - start = index
-            Instruction::I32Const(4), // element size
-            Instruction::I32Mul,
-            Instruction::I32Add,      // list_ptr + 4 + index*4
-            Instruction::LocalGet(3), // current value
-            Instruction::I32Store(MemArg {
-                align: 2,
-                offset: 0,
-                memory_index: 0,
-            }),
-            // current = current + 1
-            Instruction::LocalGet(3),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(3),
-            Instruction::Br(0), // continue loop
-            Instruction::End,   // end loop
-            Instruction::End,   // end block
-            // Return list_ptr
-            Instruction::LocalGet(2),
-        ]
-    }
-
-    fn generate_to_string(&self) -> Vec<Instruction> {
-        vec![
-            // Basic toString - return empty string pointer
-            // Full implementation would convert list to string representation
-            Instruction::I32Const(0),
-        ]
-    }
-
-    fn generate_first(&self) -> Vec<Instruction> {
-        // List.first(list lst) -> any
-        // Returns the first element of the list (element at index 0)
-        // Parameters: list_ptr (0)
-        // Returns: first element value
-        vec![
-            // Get list pointer
-            Instruction::LocalGet(0),
-            // Add header offset (16 bytes)
-            Instruction::I32Const(16),
-            Instruction::I32Add,
-            // Load first element (at index 0)
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]
-    }
-
-    fn generate_last(&self) -> Vec<Instruction> {
-        // List.last(list lst) -> any
-        // Returns the last element of the list (element at index size-1)
-        // Parameters: list_ptr (0)
-        // Returns: last element value
-        vec![
-            // Get list pointer
-            Instruction::LocalGet(0),
-            // Duplicate for offset calculation
-            Instruction::LocalGet(0),
-            // Load list size
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Calculate last index (size - 1)
-            Instruction::I32Const(1),
-            Instruction::I32Sub,
-            // Multiply by 4 for byte offset
-            Instruction::I32Const(4),
-            Instruction::I32Mul,
-            // Add header offset (16 bytes)
-            Instruction::I32Const(16),
-            Instruction::I32Add,
-            // Add to list pointer
-            Instruction::I32Add,
-            // Load the last element
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]
-    }
+fn missing(name: &str) -> CompilerError {
+    CompilerError::codegen_error(
+        format!(
+            "list stdlib registration requires `{}` to be registered first",
+            name
+        ),
+        None,
+        None,
+    )
 }

@@ -1,0 +1,18 @@
+// Test: bugfixes/codegen_integer64_assign_from_param
+// Semantic: type-system.md §5 integer widening (integer → integer:64)
+// Regression: `integer:64 y = x` where `x` is an `integer` parameter emitted
+//   invalid WASM because the source type lookup only searched function
+//   locals, not parameters, so no i64.extend_i32_s was emitted.
+// Fixed in: compiler 0.33.165
+// Expected output:
+//   12
+//   -9
+
+start:
+	printl(widen(12))
+	printl(widen(-9))
+
+functions:
+	integer:64 widen(integer x)
+		integer:64 y = x
+		return y

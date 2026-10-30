@@ -231,7 +231,10 @@ impl HirValidator {
     /// [`validate_with_handler_bridges`] when the plugin registry is
     /// available so any plugin declaring
     /// `registers_handler_at_arg` in plugin.toml is honored.
-    pub fn validate(hir: &HirProgram) -> Result<(), Vec<CompilerError>> {
+    ///
+    /// On success returns the warnings found (FUNC005, FUNC007, CLASS004, ...);
+    /// on failure returns the errors.
+    pub fn validate(hir: &HirProgram) -> Result<Vec<CompilerError>, Vec<CompilerError>> {
         Self::validate_with_handler_bridges(hir, &[])
     }
 
@@ -250,7 +253,7 @@ impl HirValidator {
     pub fn validate_with_handler_bridges(
         hir: &HirProgram,
         extra_handler_bridges: &[(String, usize)],
-    ) -> Result<(), Vec<CompilerError>> {
+    ) -> Result<Vec<CompilerError>, Vec<CompilerError>> {
         let mut context = ValidationContext::new();
         context.handler_bridges = extra_handler_bridges.to_vec();
 
@@ -285,9 +288,9 @@ impl HirValidator {
         // Second pass: validate all constructs
         Self::validate_program(&mut context, hir);
 
-        // Return errors if any
+        // Return errors if any, otherwise the warnings
         if context.errors.is_empty() {
-            Ok(())
+            Ok(context.warnings)
         } else {
             Err(context.errors)
         }
@@ -733,21 +736,9 @@ impl HirValidator {
             context.declare_variable(param.name.clone(), param.param_type.clone());
         }
 
-        // Validate function body
+        // Validate function body. Missing-return analysis (FUNC004) is done
+        // by the type checker on the typed body.
         Self::validate_block(context, &function.body);
-
-        // Check if non-void function has return
-        if let Some(return_type) = &function.return_type {
-            if *return_type != HirType::Void && !Self::block_has_return(&function.body) {
-                context.warning(
-                    &format!(
-                        "Function '{}' may not return a value on all paths",
-                        function.name
-                    ),
-                    function.location.clone(),
-                );
-            }
-        }
 
         // Restore context
         context.pop_scope();
@@ -935,19 +926,9 @@ impl HirValidator {
             context.declare_variable(param.name.clone(), param.param_type.clone());
         }
 
-        // Validate method body
+        // Validate method body. Missing-return analysis (FUNC004) is done
+        // by the type checker on the typed body.
         Self::validate_block(context, &method.body);
-
-        // Check return paths for non-void methods
-        if method.return_type != HirType::Void && !Self::block_has_return(&method.body) {
-            context.warning(
-                &format!(
-                    "Method '{}' may not return a value on all paths",
-                    method.name
-                ),
-                method.location.clone(),
-            );
-        }
 
         context.pop_scope();
         context.current_return_type = old_return_type;
@@ -1606,27 +1587,6 @@ impl HirValidator {
             // Primitive types and inferred types are always valid
             _ => {}
         }
-    }
-
-    /// Check if a block has a return statement
-    fn block_has_return(block: &HirBlock) -> bool {
-        for statement in &block.statements {
-            match statement {
-                HirStatement::Return { .. } => return true,
-
-                HirStatement::If {
-                    then_branch,
-                    else_branch: Some(else_block),
-                    ..
-                } if Self::block_has_return(then_branch) && Self::block_has_return(else_block) => {
-                    return true;
-                }
-                HirStatement::If { .. } => {}
-
-                _ => {}
-            }
-        }
-        false
     }
 
     /// Return `true` when `namespace` is a request-context namespace.

@@ -17,10 +17,6 @@ pub struct BasicBlockId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ValueId(pub usize);
 
-/// Unique identifier for virtual registers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RegisterId(pub usize);
-
 /// Complete MIR program representation.
 ///
 /// The maps below use `BTreeMap` instead of `HashMap` so codegen iterates
@@ -47,26 +43,10 @@ pub struct MirProgram {
     /// Entry point function (start function)
     pub entry_point: Option<SymbolId>,
 
-    /// Debug information if enabled
-    pub debug_info: Option<MirDebugInfo>,
-
     /// Mapping from SymbolId to function name for ALL functions
     /// (builtins + user-defined). Used by code generator to resolve function
     /// calls. Sorted by SymbolId for deterministic iteration.
     pub symbol_name_map: BTreeMap<SymbolId, String>,
-
-    /// Plugins used by this program, detected during AST parsing
-    /// Maps plugin name to whether it was explicitly imported or auto-detected
-    #[allow(dead_code)] // Populated during AST traversal; querying not yet wired into codegen
-    pub used_plugins: Vec<String>,
-
-    /// State rules (invariants) — tracked here for tooling/debugging
-    /// Actual enforcement is done via MirTerminator::Trap blocks injected into start/frame functions
-    pub state_rules: Vec<MirStateRule>,
-
-    /// State guards — per-variable validation
-    /// Actual enforcement is done via guard checks injected before state variable assignments
-    pub state_guards: Vec<MirStateGuard>,
 
     /// External functions (WASM imports from host)
     /// These generate import entries during code generation
@@ -108,66 +88,6 @@ pub struct MirExternalFunction {
 
     /// Source location for debugging
     pub location: SourceLocation,
-}
-
-/// State rule — a boolean invariant that must hold at operation boundaries
-#[derive(Debug, Clone)]
-pub struct MirStateRule {
-    /// The boolean expression that must be true
-    pub condition: MirExpression,
-    /// Source location for error reporting
-    pub location: SourceLocation,
-}
-
-/// State guard — per-variable validation checked before assignment
-#[derive(Debug, Clone)]
-pub struct MirStateGuard {
-    /// The state variable this guard applies to
-    pub variable_symbol_id: SymbolId,
-    /// The variable name for error messages
-    pub variable_name: String,
-    /// The boolean condition (uses 'value' binding for the proposed new value)
-    pub condition: MirExpression,
-    /// Error message shown on guard violation
-    pub error_message: String,
-    /// Source location for error reporting
-    pub location: SourceLocation,
-}
-
-/// Simplified MIR expression for state rules/guards (evaluated at runtime)
-#[derive(Debug, Clone)]
-pub enum MirExpression {
-    /// Compare: left op right → boolean
-    Compare {
-        left: Box<MirExpression>,
-        op: MirCompareOp,
-        right: Box<MirExpression>,
-    },
-    /// Logical AND
-    And(Box<MirExpression>, Box<MirExpression>),
-    /// Logical OR
-    Or(Box<MirExpression>, Box<MirExpression>),
-    /// Logical NOT
-    Not(Box<MirExpression>),
-    /// Read a global state variable
-    GlobalGet(SymbolId),
-    /// Integer constant
-    IntConst(i64),
-    /// Float constant
-    FloatConst(f64),
-    /// Boolean constant
-    BoolConst(bool),
-}
-
-/// Comparison operator for MIR expressions
-#[derive(Debug, Clone)]
-pub enum MirCompareOp {
-    Equal,
-    NotEqual,
-    LessThan,
-    LessEqual,
-    GreaterThan,
-    GreaterEqual,
 }
 
 /// MIR function representation
@@ -366,9 +286,6 @@ pub enum MirOperation {
 
     /// Copy value
     Copy { source: MirOperand },
-
-    /// Move value (for move semantics)
-    Move { source: MirOperand },
 
     /// Phi node for SSA form
     Phi {
@@ -667,20 +584,6 @@ impl AnyTypeTag {
     pub fn as_i32(self) -> i32 {
         self as i32
     }
-
-    /// Convert from i32 tag value
-    pub fn from_i32(value: i32) -> Option<Self> {
-        match value {
-            0 => Some(AnyTypeTag::Null),
-            1 => Some(AnyTypeTag::Integer),
-            2 => Some(AnyTypeTag::Boolean),
-            3 => Some(AnyTypeTag::Number),
-            4 => Some(AnyTypeTag::String),
-            5 => Some(AnyTypeTag::List),
-            6 => Some(AnyTypeTag::Object),
-            _ => None,
-        }
-    }
 }
 
 /// Binary operations in MIR
@@ -742,70 +645,7 @@ pub struct MirFunctionAttributes {
     pub exported: bool,
 }
 
-/// Debug information for MIR
-#[derive(Debug, Clone)]
-pub struct MirDebugInfo {
-    /// Source file names
-    pub source_files: Vec<String>,
-
-    /// Line number information for instructions
-    pub line_info: HashMap<ValueId, (usize, u32)>, // (file_index, line_number)
-
-    /// Variable names for debugging
-    pub variable_names: HashMap<ValueId, String>,
-}
-
 impl MirType {
-    /// Get the size in bytes of this type
-    pub fn size_bytes(&self) -> usize {
-        match self {
-            MirType::Void => 0,
-            MirType::I8 | MirType::U8 | MirType::Bool => 1,
-            MirType::I16 | MirType::U16 => 2,
-            MirType::I32 | MirType::U32 | MirType::F32 => 4,
-            MirType::I64 | MirType::U64 | MirType::F64 | MirType::Ptr(_) => 8,
-            MirType::StringTuple => 8, // Two i32 values (ptr + len)
-            MirType::Any => 12,        // [tag:i32][value1:i32][value2:i32]
-            MirType::Array(element_type, count) => element_type.size_bytes() * count,
-            MirType::Function { .. } => 8, // Function pointer
-            MirType::Struct(fields) => fields.iter().map(|f| f.size_bytes()).sum(),
-        }
-    }
-
-    /// Get the alignment requirement for this type
-    pub fn alignment(&self) -> usize {
-        match self {
-            MirType::Void => 1,
-            MirType::I8 | MirType::U8 | MirType::Bool => 1,
-            MirType::I16 | MirType::U16 => 2,
-            MirType::I32 | MirType::U32 | MirType::F32 => 4,
-            MirType::I64 | MirType::U64 | MirType::F64 | MirType::Ptr(_) => 8,
-            MirType::StringTuple => 4, // Aligned to i32
-            MirType::Any => 4,         // Aligned to i32 (all fields are i32)
-            MirType::Array(element_type, _) => element_type.alignment(),
-            MirType::Function { .. } => 8,
-            MirType::Struct(fields) => fields.iter().map(|f| f.alignment()).max().unwrap_or(1),
-        }
-    }
-
-    /// Check if this type is a primitive type
-    pub fn is_primitive(&self) -> bool {
-        matches!(
-            self,
-            MirType::I8
-                | MirType::I16
-                | MirType::I32
-                | MirType::I64
-                | MirType::U8
-                | MirType::U16
-                | MirType::U32
-                | MirType::U64
-                | MirType::F32
-                | MirType::F64
-                | MirType::Bool
-        )
-    }
-
     /// Convert from TAST ConcreteType to MIR type
     pub fn from_concrete_type(concrete_type: &ConcreteType) -> Self {
         match concrete_type {
@@ -949,11 +789,5 @@ impl fmt::Display for BasicBlockId {
 impl fmt::Display for ValueId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "%{}", self.0)
-    }
-}
-
-impl fmt::Display for RegisterId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "r{}", self.0)
     }
 }

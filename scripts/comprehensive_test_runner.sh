@@ -19,7 +19,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_ROOT="/Users/earcandy/Documents/Dev/Clean Language/clean-language-compiler"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$PROJECT_ROOT/tests/cln"
 OUTPUT_DIR="$PROJECT_ROOT/tests/output"
 QA_DIR="$PROJECT_ROOT/tests/qa"
@@ -88,7 +88,7 @@ test_single_file() {
     echo "Testing [$category]: $(basename "$file_path")"
 
     # Attempt compilation
-    if cargo run --bin clean-language-compiler compile -i "$file_path" -o "$output_file" >/dev/null 2>&1; then
+    if cargo run --quiet --bin cln -- compile "$file_path" -o "$output_file" >/dev/null 2>&1; then
         PASSED_TESTS=$((PASSED_TESTS + 1))
         echo -e "  ${GREEN}✅ PASS${NC}"
 
@@ -111,7 +111,7 @@ test_single_file() {
 
         # Capture detailed error for analysis
         echo "    Error details:"
-        cargo run --bin clean-language-compiler compile -i "$file_path" -o "$output_file" 2>&1 | head -3 | sed 's/^/    /'
+        cargo run --quiet --bin cln -- compile "$file_path" -o "$output_file" 2>&1 | head -3 | sed 's/^/    /'
 
         # Return failure for critical analysis
         return 1
@@ -147,7 +147,7 @@ handle_test_failure() {
     echo "Category: $category" >> "$error_log"
     echo "" >> "$error_log"
     echo "=== COMPILATION ERROR ===" >> "$error_log"
-    RUST_LOG=debug cargo run --bin clean-language-compiler compile -i "$failed_file" -o "$OUTPUT_DIR/debug.wasm" 2>&1 >> "$error_log"
+    RUST_LOG=debug cargo run --quiet --bin cln -- compile "$failed_file" -o "$OUTPUT_DIR/debug.wasm" 2>&1 >> "$error_log"
     echo "" >> "$error_log"
     echo "=== FILE CONTENTS ===" >> "$error_log"
     cat "$failed_file" >> "$error_log"

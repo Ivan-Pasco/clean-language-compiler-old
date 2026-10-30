@@ -8,7 +8,7 @@
 //!   4. _expr_binop_op invalid code (e.g. 99) → returns 0 + PLUGIN_INVALID_BINOP_CODE diagnostic.
 //!   5. _expr_unop_op happy (op_code=0) + all 2 ops + invalid.
 //!   6. emission_ops_hash three-case loader (match / mismatch / absent).
-//!   7. --strict-emission-ops flag: 4 cases.
+//!   7. emission_ops_hash match / mismatch / absent cases.
 //!   8. Unit: binop_from_code / unop_from_code coverage within ops module.
 //!
 //! See: foundation/spec/plugins/contracts/typed-emission.md §3.9–3.10
@@ -588,7 +588,7 @@ fn emission_ops_hash_absent_produces_warning_text() {
 // ─── Test 7: emission_ops_hash three cases (Phase D — absent is always an error) ──
 //
 // Cases:
-//   a) absent   → PLUGIN006 (regardless of --strict-emission-ops flag)
+//   a) absent   → PLUGIN006
 //   b) match    → load silently (Ok)
 //   c) mismatch → PLUGIN006
 
@@ -616,15 +616,6 @@ fn emission_ops_hash_absent_is_always_plugin006() {
 
 #[test]
 fn strict_emission_ops_on_match_loads_silently() {
-    clean_language_compiler::set_strict_emission_ops_override(true);
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            clean_language_compiler::set_strict_emission_ops_override(false);
-        }
-    }
-    let _g = Reset;
-
     // Match case is Ok(()) with no output — verify the hash constant is non-empty.
     assert!(
         !EMISSION_OPS_HASH.is_empty(),
@@ -643,15 +634,6 @@ fn strict_emission_ops_on_match_loads_silently() {
 
 #[test]
 fn strict_emission_ops_on_mismatch_produces_plugin006() {
-    clean_language_compiler::set_strict_emission_ops_override(true);
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            clean_language_compiler::set_strict_emission_ops_override(false);
-        }
-    }
-    let _g = Reset;
-
     let msg = WasmPluginLoader::format_emission_ops_hash_mismatch_error(
         "frame.data",
         Path::new("/tmp/frame.data"),

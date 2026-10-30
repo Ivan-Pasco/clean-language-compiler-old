@@ -11,8 +11,7 @@ pub struct EmitDiagnostic {
     pub message: String,
     /// JSON span: `{"start":N,"end":N,"source":"block_body"|"attrs"|"plugin"}`.
     /// Empty string when the plugin did not supply a span.
-    /// Stored for future diagnostic reporting in the IDE language server.
-    #[allow(dead_code)]
+    /// Reported alongside the diagnostic by the typed-emission driver.
     pub span_json: String,
 }
 

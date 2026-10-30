@@ -1,0 +1,64 @@
+// Test: bugfixes/stdlib_list_element_return_types
+// Semantic: stdlib-reference.md §5 — `.first()`/`.last()`/`.peek()` return the
+//   element type, `.indexOf()`/`.lastIndexOf()` return integer, `.concat()`
+//   returns a list; `list.range` / `list.fill` create lists.
+// Fixed in: compiler 0.33.165
+// Regression: with `list<integer> a = [5, 6, 7]`, `integer i = a.indexOf(7)`
+//   printed 0, `a.first()` / `a.last()` printed 0 and `a.lastIndexOf(7)`
+//   trapped: the method results had no type, so the plain i32 was unboxed as
+//   an `any` pointer. `list<number>` methods read 4-byte slots of 8-byte
+//   elements, `lastIndexOf` was a stub returning -1, and `list.range` /
+//   `list.fill` wrote a 4-byte header instead of the 16-byte list header.
+// Expected output:
+//   2
+//   5
+//   6
+//   3
+//   -1
+//   1.5
+//   2.5
+//   1
+//   2
+//   true
+//   false
+//   2.5
+//   ab
+//   2
+//   3:3
+//   3:3.5
+//   4:25
+//   3:7
+
+start:
+	list<integer> c = [5, 6, 7, 6]
+	integer i = c.indexOf(7)
+	print(i.toString())
+	print(c.first().toString())
+	print(c.last().toString())
+	print(c.lastIndexOf(6).toString())
+	print(c.lastIndexOf(9).toString())
+
+	list<number> n = [1.5, 2.5, 1.5, 2.5]
+	print(n.first().toString())
+	print(n.last().toString())
+	print(n.indexOf(2.5).toString())
+	print(n.lastIndexOf(1.5).toString())
+	print(n.contains(2.5).toString())
+	print(n.contains(9.0).toString())
+	print(n.peek().toString())
+
+	list<string> s = ["a", "b", "a"]
+	print(s.first() + s.last().replace("a", "b"))
+	print(s.lastIndexOf("a").toString())
+
+	list<integer> d = [1, 2]
+	list<integer> dd = d.concat([3])
+	print(dd.length().toString() + ":" + dd[2].toString())
+	list<number> e = [1.5]
+	list<number> ee = e.concat([2.5, 3.5])
+	print(ee.length().toString() + ":" + ee[2].toString())
+
+	list<integer> r = list.range(2, 6)
+	print(r.length().toString() + ":" + r[0].toString() + r[3].toString())
+	list<integer> f = list.fill(3, 7)
+	print(f.length().toString() + ":" + f[2].toString())

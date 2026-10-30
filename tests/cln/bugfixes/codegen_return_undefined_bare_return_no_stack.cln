@@ -26,7 +26,9 @@
 //   Fix: introduce `push_zero_for_return_type` on MirCodeGenerator and
 //   call it from all three Return-terminator emission sites whenever
 //   `value` is `None` OR `Some(Undefined)`, so a typed zero is on the
-//   stack before every bare `Return`.
+//   stack before every bare `Return`. (The emission sites have since been
+//   merged into `emit_return` in mir_codegen/blocks.rs, and the unused
+//   `generate_terminator` fallback was removed.)
 //
 //   Surfaced by: clean-errors platform_health `widget_component_strip`
 //   which uses an early guard-if returning html, followed by SQL query

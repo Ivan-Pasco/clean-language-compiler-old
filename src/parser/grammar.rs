@@ -86,12 +86,6 @@ impl CleanParser {
             indented.push_str(line);
         }
         let wrapped = format!("start:\n{}\n", indented);
-        // Offset of the fragment inside the wrapped source. Every line was
-        // prefixed with 4 spaces after `start:\n`; the first fragment byte lives
-        // at wrapped_offset = "start:\n".len() + 4.
-        // "start:\n" + one TAB character before the first fragment byte.
-        const WRAPPED_PREFIX_LEN: usize = "start:\n".len() + 1;
-
         let mut parser = ErrorRecoveringParser::new(&wrapped, "<plugin-fragment>");
         let program = match parser.parse_program() {
             Ok(p) => p,
@@ -102,13 +96,11 @@ impl CleanParser {
                 if is_valid_expression(trimmed) {
                     return SingleStatementParse::ExpressionNotStatement;
                 }
-                let msg = e.to_string();
-                let wrapped_byte = extract_byte_offset(&msg);
-                let byte_offset = wrapped_byte
-                    .and_then(|b| b.checked_sub(WRAPPED_PREFIX_LEN))
+                let byte_offset = error_byte_offset(&e)
+                    .map(|b| statement_fragment_offset(trimmed, b))
                     .unwrap_or(0);
                 return SingleStatementParse::ParseError {
-                    message: msg,
+                    message: e.to_string(),
                     byte_offset,
                 };
             }
@@ -185,7 +177,10 @@ impl CleanParser {
     /// - `ParseError` with the fragment-relative byte offset otherwise —
     ///   the bridge maps this to PLUGIN015.
     pub fn parse_single_expression(source: &str) -> SingleExpressionParse {
-        let trimmed = source.trim_matches(&[' ', '\t', '\n', '\r'][..]);
+        let ws: &[char] = &[' ', '\t', '\n', '\r'];
+        let trimmed = source.trim_matches(ws);
+        // Parser offsets are relative to `trimmed`; report them relative to `source`.
+        let leading_ws = source.len() - source.trim_start_matches(ws).len();
         if trimmed.is_empty() {
             return SingleExpressionParse::ParseError {
                 message: "empty source fragment".to_string(),
@@ -209,12 +204,11 @@ impl CleanParser {
             let program = match parser.parse_program() {
                 Ok(p) => p,
                 Err(e) => {
-                    let msg = e.to_string();
-                    let wrapped_byte = extract_byte_offset(&msg);
-                    let byte_offset = wrapped_byte
+                    let byte_offset = error_byte_offset(&e)
                         .and_then(|b| b.checked_sub(wrapped_prefix_len))
+                        .map(|b| leading_ws + b.min(trimmed.len()))
                         .unwrap_or(0);
-                    last_err = Some((msg, byte_offset));
+                    last_err = Some((e.to_string(), byte_offset));
                     continue;
                 }
             };
@@ -259,22 +253,45 @@ impl CleanParser {
     }
 }
 
-/// Best-effort extraction of `pos: <N>` or `at <N>` byte offset from an error
-/// message string. Returns `None` when no offset is embedded.
-fn extract_byte_offset(msg: &str) -> Option<usize> {
-    // Look for common pest/compiler formats like "pos: 42", "at 42", "column 5"
-    // We try the two most common representations without hard-coding assumptions
-    // about the CompilerError Display format.
-    for tag in ["pos: ", "pos:", "at byte ", "byte offset ", "offset "] {
-        if let Some(idx) = msg.find(tag) {
-            let rest = &msg[idx + tag.len()..];
-            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(n) = digits.parse::<usize>() {
-                return Some(n);
-            }
+/// Byte offset (into the parsed source) recorded in a parse error's location.
+fn error_byte_offset(error: &CompilerError) -> Option<usize> {
+    let location = match error {
+        CompilerError::Syntax { context }
+        | CompilerError::Type { context }
+        | CompilerError::Memory { context }
+        | CompilerError::Codegen { context }
+        | CompilerError::IO { context }
+        | CompilerError::Runtime { context }
+        | CompilerError::Validation { context }
+        | CompilerError::Module { context }
+        | CompilerError::Testing { context } => context.location.as_ref(),
+        CompilerError::PluginError { location, .. } => location.as_ref(),
+        CompilerError::LexError(_) => None,
+    };
+    location.and_then(|l| l.byte_start)
+}
+
+/// Map a byte offset in the `parse_single_statement` wrapper back to the
+/// fragment. The wrapper is `start:\n` followed by every fragment line, with a
+/// TAB prepended to each non-empty line, so each line before the error shifts
+/// the offset by its TAB.
+fn statement_fragment_offset(fragment: &str, wrapped_byte: usize) -> usize {
+    let mut wrapped_pos = "start:\n".len();
+    let mut fragment_pos = 0;
+    for line in fragment.split('\n') {
+        // The wrapper is built from `str::lines`, which drops a trailing '\r'.
+        let content = line.strip_suffix('\r').unwrap_or(line);
+        if !content.is_empty() {
+            wrapped_pos += 1; // the TAB
         }
+        let line_end = wrapped_pos + content.len();
+        if wrapped_byte <= line_end {
+            return fragment_pos + wrapped_byte.saturating_sub(wrapped_pos);
+        }
+        wrapped_pos = line_end + 1; // '\n'
+        fragment_pos += line.len() + 1;
     }
-    None
+    fragment.len()
 }
 
 /// Returns true iff an expression, when appearing as a bare statement, is
@@ -286,10 +303,6 @@ fn is_statement_shaped_expression(expr: &crate::ast::Expression) -> bool {
         expr,
         E::Call(_, _)
             | E::MethodCall { .. }
-            | E::ChainedMethodCall { .. }
-            | E::MultipleMethodCall { .. }
-            | E::ThreeLevelMethodCall { .. }
-            | E::PropertyMethodCall { .. }
             | E::StaticMethodCall { .. }
             | E::NamespaceCall { .. }
             | E::PropertyAccess { .. }
@@ -314,4 +327,55 @@ fn is_valid_expression(source: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: fragment parse errors used to always report byte offset 0
+    /// because the offset was scraped from the error's display text, which never
+    /// contains it. The offset now comes from the error location.
+    #[test]
+    fn single_statement_parse_error_reports_fragment_offset() {
+        let fragment = "integer x = 1\nprint(x\n";
+        match CleanParser::parse_single_statement(fragment) {
+            SingleStatementParse::ParseError { byte_offset, .. } => {
+                // The error is on the second line (`print(x` is unclosed).
+                assert!(
+                    byte_offset >= "integer x = 1\n".len() && byte_offset <= fragment.len(),
+                    "offset {} must point into the second line of the fragment",
+                    byte_offset
+                );
+            }
+            _ => panic!("fragment must fail to parse"),
+        }
+    }
+
+    #[test]
+    fn single_expression_parse_error_reports_fragment_offset() {
+        let fragment = "  1 + (2 * ";
+        match CleanParser::parse_single_expression(fragment) {
+            SingleExpressionParse::ParseError { byte_offset, .. } => {
+                assert!(
+                    byte_offset > "  1 ".len() && byte_offset <= fragment.len(),
+                    "offset {} must point at the unfinished group",
+                    byte_offset
+                );
+            }
+            _ => panic!("fragment must fail to parse as an expression"),
+        }
+    }
+
+    #[test]
+    fn statement_offsets_skip_the_wrapper_tabs() {
+        // wrapped: "start:\n\tab\n\n\tcd\n"
+        let fragment = "ab\n\ncd";
+        assert_eq!(statement_fragment_offset(fragment, "start:\n\t".len()), 0);
+        assert_eq!(statement_fragment_offset(fragment, "start:\n\ta".len()), 1);
+        assert_eq!(
+            statement_fragment_offset(fragment, "start:\n\tab\n\n\tc".len()),
+            "ab\n\nc".len()
+        );
+    }
 }

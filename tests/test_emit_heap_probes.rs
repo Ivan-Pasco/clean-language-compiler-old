@@ -202,7 +202,10 @@ fn flag_on_emits_probe_call_after_each_string_builder_call() {
             }
         }
     }
-    assert!(!sb_indices.is_empty(), "string_builder functions must be exported");
+    assert!(
+        !sb_indices.is_empty(),
+        "string_builder functions must be exported"
+    );
 
     // Walk every code body and count how many times we see a
     // `Call(sb_append|sb_finalize)` and how many of those are immediately

@@ -3,7 +3,7 @@
 //! Generates type constraints from resolved HIR and performs type inference
 //! using constraint-based approach with Hindley-Milner algorithm.
 
-use super::constraint_solver::{ConstraintSolver, SolverResult};
+use super::constraint_solver::ConstraintSolver;
 use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
@@ -130,9 +130,6 @@ impl<'a> TypeInference<'a> {
         );
         solver.add_constraints(std::mem::take(&mut self.constraints));
         let solver_result = solver.solve();
-
-        // Apply final substitutions to type environment
-        self.apply_substitutions(&solver_result);
 
         // Collect errors
         self.errors.extend(solver_result.errors);
@@ -1044,6 +1041,13 @@ impl<'a> TypeInference<'a> {
             },
             HirType::Number32 => ConcreteType::NumberSized { bits: 32 },
             HirType::Number64 => ConcreteType::NumberSized { bits: 64 },
+            // Builtin signatures such as `string.split -> list<string>` and
+            // `validator.getErrors -> list<string>` carry composite types.
+            // Mapping them to Unknown typed the call result as `any`, so the
+            // returned list pointer was unboxed as a tagged value.
+            HirType::List(element_type) => {
+                ConcreteType::Array(Box::new(Self::hir_type_to_concrete_type(element_type)))
+            }
             HirType::Named { name, .. } => {
                 // For now, map named types to concrete types by name
                 match name.as_str() {
@@ -1457,33 +1461,14 @@ impl<'a> TypeInference<'a> {
             inferred_return_type.clone()
         };
 
-        // Gap 1: Return path analysis (FUNC004)
-        // Warn when a non-void function may not return a value on all paths.
-        // We only warn — never hard-error — to preserve backwards compatibility.
-        let is_void_return = matches!(
-            declared_return_type,
-            ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Never
-        );
-        if !is_void_return && function.return_type.is_some() {
-            let body_definitely_returns = Self::block_definitely_returns(&tast_body);
-            if !body_definitely_returns {
-                let warning = CompilerError::Validation {
-                    context: Box::new(
-                        crate::error::ErrorContext::new(
-                            format!(
-                                "Function '{}' may not return a value on all paths",
-                                function.name
-                            ),
-                            Some("Ensure every code path ends with a return statement".to_string()),
-                            crate::error::ErrorType::Validation,
-                            Some(function.location.clone()),
-                        )
-                        .with_severity(crate::error::ErrorSeverity::Warning)
-                        .with_error_code("FUNC004"),
-                    ),
-                };
-                self.warnings.push(warning);
-            }
+        if function.return_type.is_some() {
+            self.check_missing_return(
+                "Function",
+                &function.name,
+                &declared_return_type,
+                &tast_body,
+                &function.location,
+            );
         }
 
         // Optional return type inference (spec Step 3):
@@ -1615,6 +1600,13 @@ impl<'a> TypeInference<'a> {
         let tast_body = self.infer_block(&method.body)?;
 
         let declared_return_type = self.hir_type_to_concrete(&method.return_type);
+        self.check_missing_return(
+            "Method",
+            &method.name,
+            &declared_return_type,
+            &tast_body,
+            &method.location,
+        );
 
         // Determine if method should be static based on class context.
         // For classes with inheritance OR instance fields OR declared capabilities:
@@ -1648,6 +1640,37 @@ impl<'a> TypeInference<'a> {
             visibility: Visibility::Public, // Would get from HIR
             location: method.location.clone(),
         })
+    }
+
+    /// FUNC004: warn when a non-void function or method may not return a
+    /// value on all paths. A warning, never an error (error-codes.md).
+    fn check_missing_return(
+        &mut self,
+        kind: &str,
+        name: &str,
+        declared_return_type: &ConcreteType,
+        body: &TastBlock,
+        location: &SourceLocation,
+    ) {
+        let is_void_return = matches!(
+            declared_return_type,
+            ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Never
+        );
+        if is_void_return || Self::block_definitely_returns(body) {
+            return;
+        }
+        self.warnings.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    format!("{kind} '{name}' may not return a value on all paths"),
+                    Some("Ensure every code path ends with a return statement".to_string()),
+                    crate::error::ErrorType::Validation,
+                    Some(location.clone()),
+                )
+                .with_severity(crate::error::ErrorSeverity::Warning)
+                .with_error_code("FUNC004"),
+            ),
+        });
     }
 
     /// Infer types for a class
@@ -3494,118 +3517,80 @@ impl<'a> TypeInference<'a> {
         let tast_array = self.infer_expression(array)?;
         let tast_index = self.infer_expression(index)?;
 
-        // Extract element type based on array type and index type
+        // Extract element type based on array type and index type.
+        // IDX001–IDX004 are errors (error-codes.md) when both sides have a
+        // definite type; when either side is still unresolved (Unknown, Any,
+        // generic, union, optional, sized integer) the mismatch cannot be
+        // proven and is reported as a warning instead.
+        let index_type = tast_index.expr_type.clone();
+        let index_is_definite = Self::is_definite_index_type(&index_type);
         let element_type = match &tast_array.expr_type {
             // Any type supports both string (object access) and integer (array access)
-            ConcreteType::Any => match &tast_index.expr_type {
-                ConcreteType::String | ConcreteType::Integer => ConcreteType::Any,
-                other => {
-                    // IDX004: wrong index type on Any — emit warning, not error
-                    self.warnings.push(CompilerError::Validation {
-                        context: Box::new(
-                            crate::error::ErrorContext::new(
-                                format!(
-                                    "Index type {:?} is unusual for Any: expected string (object access) or integer (array access)",
-                                    other
-                                ),
-                                Some(
-                                    "Use data[\"field\"] for object access or data[0] for array access"
-                                        .to_string(),
-                                ),
-                                crate::error::ErrorType::Validation,
-                                Some(location.clone()),
-                            )
-                            .with_severity(crate::error::ErrorSeverity::Warning)
-                            .with_error_code("IDX004"),
+            ConcreteType::Any => {
+                if !matches!(index_type, ConcreteType::String | ConcreteType::Integer) {
+                    self.report_index_diagnostic(
+                        false,
+                        "IDX004",
+                        format!(
+                            "Index type {} is unusual for Any: expected string (object access) or integer (array access)",
+                            index_type
                         ),
-                    });
-                    ConcreteType::Any
+                        "Use data[\"field\"] for object access or data[0] for array access",
+                        location,
+                    );
                 }
-            },
+                ConcreteType::Any
+            }
             // Array requires integer index (IDX001)
             ConcreteType::Array(element_type) => {
-                if !matches!(tast_index.expr_type, ConcreteType::Integer) {
-                    self.warnings.push(CompilerError::Validation {
-                        context: Box::new(
-                            crate::error::ErrorContext::new(
-                                format!(
-                                    "Array index should be integer, found {}",
-                                    tast_index.expr_type
-                                ),
-                                Some(
-                                    "Use an integer expression to index into an array".to_string(),
-                                ),
-                                crate::error::ErrorType::Validation,
-                                Some(location.clone()),
-                            )
-                            .with_severity(crate::error::ErrorSeverity::Warning)
-                            .with_error_code("IDX001"),
-                        ),
-                    });
+                if !matches!(index_type, ConcreteType::Integer) {
+                    self.report_index_diagnostic(
+                        index_is_definite,
+                        "IDX001",
+                        format!("List index must be integer, found {}", index_type),
+                        "Use an integer expression to index into a list",
+                        location,
+                    );
                 }
                 (**element_type).clone()
             }
             // Matrix indexing: matrix<T>[i] returns Array<T> (IDX002)
             ConcreteType::Matrix(element_type) => {
-                if !matches!(tast_index.expr_type, ConcreteType::Integer) {
-                    self.warnings.push(CompilerError::Validation {
-                        context: Box::new(
-                            crate::error::ErrorContext::new(
-                                format!(
-                                    "Matrix index should be integer, found {}",
-                                    tast_index.expr_type
-                                ),
-                                Some(
-                                    "Use an integer expression to index into a matrix".to_string(),
-                                ),
-                                crate::error::ErrorType::Validation,
-                                Some(location.clone()),
-                            )
-                            .with_severity(crate::error::ErrorSeverity::Warning)
-                            .with_error_code("IDX002"),
-                        ),
-                    });
+                if !matches!(index_type, ConcreteType::Integer) {
+                    self.report_index_diagnostic(
+                        index_is_definite,
+                        "IDX002",
+                        format!("Matrix index must be integer, found {}", index_type),
+                        "Use an integer expression to index into a matrix",
+                        location,
+                    );
                 }
                 ConcreteType::Array(Box::new((**element_type).clone()))
             }
-            // Pairs type supports string key access (IDX003)
-            ConcreteType::Pairs(_, value_type) => {
-                if !matches!(tast_index.expr_type, ConcreteType::String) {
-                    self.warnings.push(CompilerError::Validation {
-                        context: Box::new(
-                            crate::error::ErrorContext::new(
-                                format!(
-                                    "Pairs key should be string, found {}",
-                                    tast_index.expr_type
-                                ),
-                                Some("Use pairs[\"key\"] for pairs access".to_string()),
-                                crate::error::ErrorType::Validation,
-                                Some(location.clone()),
-                            )
-                            .with_severity(crate::error::ErrorSeverity::Warning)
-                            .with_error_code("IDX003"),
-                        ),
-                    });
+            // Pairs bracket access uses the declared key type (IDX003)
+            ConcreteType::Pairs(key_type, value_type) => {
+                let key_is_string = matches!(**key_type, ConcreteType::String);
+                if index_type != **key_type && !matches!(index_type, ConcreteType::String) {
+                    self.report_index_diagnostic(
+                        key_is_string && index_is_definite,
+                        "IDX003",
+                        format!("Pairs key must be string, found {}", index_type),
+                        "Use pairs[\"key\"] for pairs access",
+                        location,
+                    );
                 }
                 (**value_type).clone()
             }
             other_type => {
-                // IDX004: indexing into a non-indexable type — warn only
-                self.warnings.push(CompilerError::Validation {
-                    context: Box::new(
-                        crate::error::ErrorContext::new(
-                            format!("Cannot index into type: {}", other_type),
-                            Some(
-                                "Bracket access is only supported on list, matrix, pairs, or any types"
-                                    .to_string(),
-                            ),
-                            crate::error::ErrorType::Validation,
-                            Some(location.clone()),
-                        )
-                        .with_severity(crate::error::ErrorSeverity::Warning)
-                        .with_error_code("IDX004"),
-                    ),
-                });
+                // IDX004: indexing into a non-indexable type
+                let receiver_is_definite = Self::is_definite_index_type(other_type);
+                self.report_index_diagnostic(
+                    receiver_is_definite,
+                    "IDX004",
+                    format!("Cannot index into type: {}", other_type),
+                    "Bracket access is only supported on list, matrix, pairs, or any types",
+                    location,
+                );
                 ConcreteType::Unknown
             }
         };
@@ -3618,6 +3603,197 @@ impl<'a> TypeInference<'a> {
             element_type,
             location.clone(),
         ))
+    }
+
+    /// True when `t` is a fully-known type, so an index-type mismatch
+    /// involving it is certain rather than an artefact of unfinished inference.
+    fn is_definite_index_type(t: &ConcreteType) -> bool {
+        matches!(
+            t,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::NumberSized { .. }
+                | ConcreteType::String
+                | ConcreteType::Boolean
+                | ConcreteType::Array(_)
+                | ConcreteType::Matrix(_)
+                | ConcreteType::Pairs(_, _)
+                | ConcreteType::Class { .. }
+                | ConcreteType::Interface { .. }
+                | ConcreteType::Function { .. }
+                | ConcreteType::Tuple(_)
+        )
+    }
+
+    /// Record an IDX00x diagnostic: an error when the mismatch is certain,
+    /// a warning otherwise.
+    fn report_index_diagnostic(
+        &mut self,
+        is_error: bool,
+        code: &str,
+        message: String,
+        help: &str,
+        location: &SourceLocation,
+    ) {
+        let mut context = crate::error::ErrorContext::new(
+            message,
+            Some(help.to_string()),
+            crate::error::ErrorType::Validation,
+            Some(location.clone()),
+        )
+        .with_error_code(code);
+        if is_error {
+            self.errors.push(CompilerError::Validation {
+                context: Box::new(context),
+            });
+        } else {
+            context = context.with_severity(crate::error::ErrorSeverity::Warning);
+            self.warnings.push(CompilerError::Validation {
+                context: Box::new(context),
+            });
+        }
+    }
+
+    /// Methods every value answers regardless of its class declaration.
+    fn is_universal_method(method: &str) -> bool {
+        matches!(method, "toString")
+    }
+
+    /// Names of every method declared by `class_id` or one of its ancestors.
+    fn class_method_names(&self, class_id: SymbolId) -> Vec<String> {
+        use crate::resolver::symbol_table::SymbolKind;
+        let mut names = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut current = Some(class_id);
+        while let Some(cid) = current {
+            if !visited.insert(cid) {
+                break;
+            }
+            current = None;
+            if let Some(SymbolKind::Class {
+                methods, parent, ..
+            }) = self.symbol_table.get_symbol(cid).map(|s| &s.kind)
+            {
+                for method_id in methods {
+                    if let Some(m) = self.symbol_table.get_symbol(*method_id) {
+                        if !names.contains(&m.name) {
+                            names.push(m.name.clone());
+                        }
+                    }
+                }
+                current = *parent;
+            }
+        }
+        names
+    }
+
+    /// FUNC001 error for a method that `class_id`'s hierarchy does not declare,
+    /// with a did-you-mean suggestion when a similarly named method exists.
+    fn unknown_class_method_error(
+        &self,
+        class_id: SymbolId,
+        method: &str,
+        location: &SourceLocation,
+    ) -> CompilerError {
+        let class_name = self
+            .symbol_table
+            .get_symbol(class_id)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let candidates = self.class_method_names(class_id);
+        let candidate_refs: Vec<&str> = candidates.iter().map(String::as_str).collect();
+        let suggestions =
+            crate::error::ErrorUtils::suggest_similar_names(method, &candidate_refs, 3);
+        CompilerError::Type {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    format!("Method '{}' not found on class '{}'", method, class_name),
+                    Some(format!(
+                        "Declare `{method}` in the `functions:` block of `{class_name}` or one of its parent classes"
+                    )),
+                    crate::error::ErrorType::Type,
+                    Some(location.clone()),
+                )
+                .with_suggestions(suggestions)
+                .with_error_code("FUNC001"),
+            ),
+        }
+    }
+
+    /// SEM005: a private class member (field or method) may only be used from
+    /// inside the class that declares it.
+    ///
+    /// `method_receiver` is the receiver type of a method call (None for field
+    /// access). Method calls are only checked when the receiver is statically
+    /// typed as the owning class: calling a non-public parent method through a
+    /// subclass-typed receiver is accepted, because programs in tests/cln
+    /// (spec_compliance/classes/inheritance_spec.cln, class001_parent_must_exist.cln,
+    /// inheritance_chain_spec.cln, language/classes/15_classes_inheritance.cln,
+    /// integration/comprehensive/33_complex_integration.cln) rely on it and
+    /// semantic-rules.md §SEM005 does not settle whether inherited members are
+    /// visible through a subclass.
+    fn check_private_member_access(
+        &mut self,
+        member_symbol: SymbolId,
+        member_name: &str,
+        method_receiver: Option<&ConcreteType>,
+        location: &SourceLocation,
+    ) {
+        let owner = match self.symbol_table.get_symbol(member_symbol) {
+            Some(sym) if sym.is_private => match &sym.owner_scope_name {
+                Some(owner) => owner.clone(),
+                None => return,
+            },
+            _ => return,
+        };
+        let inside_owner = self
+            .current_class
+            .and_then(|cid| self.symbol_table.get_symbol(cid))
+            .map(|s| s.name == owner)
+            .unwrap_or(false);
+        if inside_owner {
+            return;
+        }
+        if let Some(receiver) = method_receiver {
+            let receiver_is_owner = match receiver {
+                ConcreteType::Class { symbol_id, .. } => self
+                    .symbol_table
+                    .get_symbol(*symbol_id)
+                    .map(|s| s.name == owner)
+                    .unwrap_or(false),
+                _ => false,
+            };
+            if !receiver_is_owner {
+                return;
+            }
+        }
+        let help = if method_receiver.is_some() {
+            format!(
+                "Class methods are private by default (semantic-rules.md §Visibility). \
+                 To call `{member_name}` from outside `{owner}`, move its declaration under a \
+                 `public:` sub-section inside `{owner}`'s `functions:` block."
+            )
+        } else {
+            format!(
+                "Class fields are private by default (semantic-rules.md §Visibility). \
+                 To read or write `{member_name}` from outside `{owner}`, move its declaration \
+                 under the `public:` sub-section of `{owner}`'s class body."
+            )
+        };
+        self.errors.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    format!(
+                        "'{}' is private and cannot be accessed from outside '{}'",
+                        member_name, owner
+                    ),
+                    Some(help),
+                    crate::error::ErrorType::Validation,
+                    Some(location.clone()),
+                )
+                .with_error_code("SEM005"),
+            ),
+        });
     }
 
     /// Helper: infer a `MethodCall` (instance method call) expression.
@@ -3713,11 +3889,6 @@ impl<'a> TypeInference<'a> {
                             );
                             Some(method_sym)
                         } else {
-                            tracing::warn!(
-                                class_symbol = symbol_id.0,
-                                method = %method,
-                                "Method not found in class - using SymbolId(0) fallback"
-                            );
                             None
                         }
                     }
@@ -3762,58 +3933,27 @@ impl<'a> TypeInference<'a> {
         // emits `MirOperation::CallCapability` for these, which codegen
         // lowers to a runtime class-id switch. No compile-time error needed.
 
-        // SEM005: Private method access check.
-        // If the method is private, it may only be called from within the class that
-        // owns it.  We know the receiver's class (from resolved_receiver_type) and the
-        // current class (from self.current_class).  A violation is when:
-        //   - the method symbol is known (not the SymbolId(0) placeholder),
-        //   - the method is private,
-        //   - and the receiver's class differs from the currently executing class.
-        if resolved_method_symbol.0 != 0 {
-            if let Some(method_sym) = self.symbol_table.get_symbol(resolved_method_symbol) {
-                if method_sym.is_private {
-                    if let Some(owner) = &method_sym.owner_scope_name.clone() {
-                        let receiver_class_name = match &resolved_receiver_type {
-                            ConcreteType::Class { symbol_id, .. } => self
-                                .symbol_table
-                                .get_symbol(*symbol_id)
-                                .map(|s| s.name.clone()),
-                            _ => None,
-                        };
-                        let current_class_name = self.current_class.and_then(|cid| {
-                            self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
-                        });
-                        let inside_owner = current_class_name
-                            .as_deref()
-                            .map(|cn| cn == owner)
-                            .unwrap_or(false);
-                        if !inside_owner {
-                            if let Some(rcn) = &receiver_class_name {
-                                if rcn == owner {
-                                    self.errors.push(CompilerError::Validation {
-                                        context: Box::new(
-                                            crate::error::ErrorContext::new(
-                                                format!(
-                                                    "'{}' is private and cannot be accessed from outside '{}'",
-                                                    method, owner
-                                                ),
-                                                Some(format!(
-                                                    "Class methods are private by default (semantic-rules.md §Visibility). \
-                                                     To call `{method}` from outside `{owner}`, move its declaration under a \
-                                                     `public:` sub-section inside `{owner}`'s `functions:` block."
-                                                )),
-                                                crate::error::ErrorType::Validation,
-                                                Some(location.clone()),
-                                            )
-                                            .with_error_code("SEM005"),
-                                        ),
-                                    });
-                                }
-                            }
-                        }
-                    }
+        // FUNC001: a method called on a class instance must be declared by the
+        // class or one of its ancestors. Without this check the call compiled
+        // against the SymbolId(0) placeholder and dispatched to an unrelated
+        // function at runtime.
+        if method_symbol_id.is_none() && resolved_method_symbol.0 == 0 {
+            if let ConcreteType::Class { symbol_id, .. } = &resolved_receiver_type {
+                if !Self::is_universal_method(method) {
+                    let error = self.unknown_class_method_error(*symbol_id, method, location);
+                    self.errors.push(error);
                 }
             }
+        }
+
+        // SEM005: Private method access check.
+        if resolved_method_symbol.0 != 0 {
+            self.check_private_member_access(
+                resolved_method_symbol,
+                method,
+                Some(&resolved_receiver_type),
+                location,
+            );
         }
 
         Ok((
@@ -3961,43 +4101,8 @@ impl<'a> TypeInference<'a> {
             self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
 
         // SEM005: Private field access check.
-        // A private class field may only be read/written from within the class that
-        // owns it.  resolved_field_symbol_id (when != SymbolId(0)) is the actual
-        // field symbol, which carries is_private and owner_scope_name.
         if resolved_field_symbol_id.0 != 0 {
-            if let Some(field_sym) = self.symbol_table.get_symbol(resolved_field_symbol_id) {
-                if field_sym.is_private {
-                    if let Some(owner) = &field_sym.owner_scope_name.clone() {
-                        let current_class_name = self.current_class.and_then(|cid| {
-                            self.symbol_table.get_symbol(cid).map(|s| s.name.clone())
-                        });
-                        let inside_owner = current_class_name
-                            .as_deref()
-                            .map(|cn| cn == owner)
-                            .unwrap_or(false);
-                        if !inside_owner {
-                            self.errors.push(CompilerError::Validation {
-                                context: Box::new(
-                                    crate::error::ErrorContext::new(
-                                        format!(
-                                            "'{}' is private and cannot be accessed from outside '{}'",
-                                            field, owner
-                                        ),
-                                        Some(format!(
-                                            "Class fields are private by default (semantic-rules.md §Visibility). \
-                                             To read or write `{field}` from outside `{owner}`, move its declaration \
-                                             under the `public:` sub-section of `{owner}`'s class body."
-                                        )),
-                                        crate::error::ErrorType::Validation,
-                                        Some(location.clone()),
-                                    )
-                                    .with_error_code("SEM005"),
-                                ),
-                            });
-                        }
-                    }
-                }
-            }
+            self.check_private_member_access(resolved_field_symbol_id, field, None, location);
         }
 
         Ok((
@@ -5144,6 +5249,14 @@ impl<'a> TypeInference<'a> {
             (ConcreteType::Array(_), "isEmpty") => Ok(ConcreteType::Boolean), // isEmpty() returns boolean
             (ConcreteType::Array(_), "isNotEmpty") => Ok(ConcreteType::Boolean),
             (ConcreteType::Array(_), "toString") => Ok(ConcreteType::String),
+            // stdlib-reference.md §5
+            (ConcreteType::Array(element_type), "first" | "last" | "peek") => {
+                Ok((**element_type).clone())
+            }
+            (ConcreteType::Array(_), "indexOf" | "lastIndexOf") => Ok(ConcreteType::Integer),
+            (ConcreteType::Array(_), "reverse" | "sort" | "slice" | "concat") => {
+                Ok(receiver_type.clone())
+            }
 
             // Boolean methods
             (ConcreteType::Boolean, "toString") => Ok(ConcreteType::String),
@@ -5216,8 +5329,8 @@ impl<'a> TypeInference<'a> {
                     }
                 }
 
-                // Method not found or not a method - log warning and return Unknown
-                tracing::warn!(
+                // Method not found: infer_method_call_expression reports FUNC001
+                tracing::debug!(
                     class_symbol = symbol_id.0,
                     method_name = %method_name,
                     "Method not found in class or invalid method info - returning Unknown"
@@ -5826,122 +5939,6 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    #[allow(dead_code)] // Convenience wrapper — callers currently use infer_field_type_and_symbol directly
-    fn infer_field_type(
-        &self,
-        object_type: &ConcreteType,
-        field_name: &str,
-    ) -> Result<ConcreteType, CompilerError> {
-        self.infer_field_type_and_symbol(object_type, field_name)
-            .map(|(field_type, _symbol_id)| field_type)
-    }
-
-    fn _old_infer_field_type_removed(
-        &self,
-        object_type: &ConcreteType,
-        field_name: &str,
-    ) -> Result<ConcreteType, CompilerError> {
-        match object_type {
-            // Array fields
-            ConcreteType::Array(_element_type) if field_name == "length" => {
-                Ok(ConcreteType::Integer)
-            }
-
-            // String fields
-            ConcreteType::String if field_name == "length" => Ok(ConcreteType::Integer),
-
-            // NOTE: For class types, look up the field in the class definition
-            ConcreteType::Class {
-                symbol_id,
-                type_args: _,
-            } => {
-                // Look up the class symbol to get its fields
-                if let Some(class_symbol) = self.symbol_table.get_symbol(*symbol_id) {
-                    if let SymbolKind::Class {
-                        fields,
-                        methods: _,
-                        parent,
-                    } = &class_symbol.kind
-                    {
-                        // Search for the field with the matching name in this class
-                        for field_symbol_id in fields {
-                            if let Some(field_symbol) =
-                                self.symbol_table.get_symbol(*field_symbol_id)
-                            {
-                                if field_symbol.name == field_name {
-                                    // Found the field! Return its type
-                                    if let SymbolKind::Field {
-                                        class_id: _,
-                                        field_type,
-                                    } = &field_symbol.kind
-                                    {
-                                        return Ok(self.hir_type_to_concrete(field_type));
-                                    }
-                                }
-                            }
-                        }
-
-                        // Field not found in this class - check parent class if exists
-                        if let Some(parent_symbol_id) = parent {
-                            if let Some(parent_symbol) =
-                                self.symbol_table.get_symbol(*parent_symbol_id)
-                            {
-                                if let SymbolKind::Class {
-                                    fields: parent_fields,
-                                    ..
-                                } = &parent_symbol.kind
-                                {
-                                    // Search for the field in parent class
-                                    for field_symbol_id in parent_fields {
-                                        if let Some(field_symbol) =
-                                            self.symbol_table.get_symbol(*field_symbol_id)
-                                        {
-                                            if field_symbol.name == field_name {
-                                                // Found the field in parent class!
-                                                if let SymbolKind::Field {
-                                                    class_id: _,
-                                                    field_type,
-                                                } = &field_symbol.kind
-                                                {
-                                                    return Ok(
-                                                        self.hir_type_to_concrete(field_type)
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Field not found in class or parent class
-                        return Err(CompilerError::type_error(
-                            format!(
-                                "Field '{}' not found in class '{}'",
-                                field_name, class_symbol.name
-                            ),
-                            None,
-                            None,
-                        ));
-                    }
-                }
-                // Class symbol not found - return error
-                Err(CompilerError::type_error(
-                    format!(
-                        "Cannot resolve class type for field access '{}'",
-                        field_name
-                    ),
-                    None,
-                    None,
-                ))
-            }
-
-            // For unrecognized field accesses, return Unknown
-            // This handles cases where field access is used on non-class types
-            _ => Ok(ConcreteType::Unknown),
-        }
-    }
-
     /// Explicit precision of a sized HIR type: (is_number, bits, unsigned).
     /// Unsized `integer` / `number` return None.
     fn explicit_precision(hir_type: &HirType) -> Option<(bool, u8, bool)> {
@@ -5975,11 +5972,16 @@ impl<'a> TypeInference<'a> {
             SymbolKind::Parameter { param_type } => param_type.clone(),
             _ => return None,
         };
-        let (source_is_number, source_bits, source_unsigned) = Self::explicit_precision(&source_type)?;
+        let (source_is_number, source_bits, source_unsigned) =
+            Self::explicit_precision(&source_type)?;
         if source_is_number != target_is_number || source_bits <= target_bits {
             return None;
         }
-        let kind = if source_is_number { "number" } else { "integer" };
+        let kind = if source_is_number {
+            "number"
+        } else {
+            "integer"
+        };
         let suffix = if source_unsigned { "u" } else { "" };
         Some(format!(
             "Narrowing assignment: {kind}:{source_bits}{suffix} cannot be assigned to {kind}:{target_bits} (precision loss)"
@@ -6133,12 +6135,6 @@ impl<'a> TypeInference<'a> {
     /// Add a constraint to be solved
     fn add_constraint(&mut self, constraint: TypeConstraint) {
         self.constraints.push(constraint);
-    }
-
-    /// Apply solved substitutions to type environment
-    fn apply_substitutions(&mut self, _solver_result: &SolverResult) {
-        // Would apply substitutions to finalize types
-        // For now, types in type_env are already concrete
     }
 
     /// Apply current substitution to resolve a type

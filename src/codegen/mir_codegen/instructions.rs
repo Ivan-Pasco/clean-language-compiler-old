@@ -1,6 +1,6 @@
 //! MIR instruction-to-WASM emission.
 //!
-//! Contains `generate_instruction`, `generate_terminator`, and all helpers that
+//! Contains `generate_instruction` and all helpers that
 //! directly emit WASM instructions for individual MIR operations.
 
 use super::*;
@@ -1145,113 +1145,6 @@ impl MirCodeGenerator<'_> {
                     self.current_instructions.push(Instruction::Drop);
                 }
             }
-
-            _ => {
-                // Unsupported MIR operation
-                return Err(CompilerError::Codegen {
-                    context: Box::new(crate::error::ErrorContext::new(
-                        format!(
-                            "MIR operation not yet implemented: {:?}",
-                            instruction.operation
-                        ),
-                        None,
-                        crate::error::ErrorType::Codegen,
-                        Some(instruction.location.clone()),
-                    )),
-                });
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Generate WASM terminator instruction.
-    #[allow(dead_code)] // Used internally by generate_basic_block
-    pub(super) fn generate_terminator(
-        &mut self,
-        terminator: &MirTerminator,
-    ) -> Result<(), CompilerError> {
-        match terminator {
-            MirTerminator::Return { value } => {
-                // A Return terminator must leave a value on the stack matching the
-                // function's declared return type before the bare Return
-                // instruction (or nothing on the stack for void). Handle all three
-                // shapes uniformly via push_zero_for_return_type. See its docs.
-                let func_return_type = self
-                    .current_function
-                    .as_ref()
-                    .map(|f| f.return_type.clone());
-                let mut pushed_value = false;
-                if let Some(return_value) = value {
-                    if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
-                        // NOTE: Removed StringTuple expansion logic
-                        // Since ConcreteType::String now maps to MirType::I32, strings are single i32 pointers
-                        // No expansion needed - just load the operand directly
-                        self.load_operand(return_value)?;
-                        pushed_value = true;
-
-                        // Coerce the return value type to match the function's declared return type
-                        // (E007 fix). value_to_type covers both parameters and locals;
-                        // get_operand_mir_type only covers func.locals, missing parameters.
-                        let value_type = match return_value {
-                            MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
-                            _ => self.get_operand_mir_type(return_value),
-                        };
-                        match (&func_return_type, &value_type) {
-                            (Some(MirType::F64), Some(MirType::I32))
-                            | (Some(MirType::F64), Some(MirType::I8))
-                            | (Some(MirType::F64), Some(MirType::I16))
-                            | (Some(MirType::F64), Some(MirType::U8))
-                            | (Some(MirType::F64), Some(MirType::U16))
-                            | (Some(MirType::F64), Some(MirType::U32)) => {
-                                // Return value is integer but function declares number (f64) return.
-                                // Insert signed integer-to-float conversion (E007 fix).
-                                self.current_instructions.push(Instruction::F64ConvertI32S);
-                            }
-                            (Some(MirType::I32), Some(MirType::F64)) => {
-                                // Return value is float but function declares integer (i32) return.
-                                // Truncate to integer (saturating behaviour via TruncF64S).
-                                self.current_instructions.push(Instruction::I32TruncF64S);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                if !pushed_value {
-                    self.push_zero_for_return_type(&func_return_type);
-                }
-                self.current_instructions.push(Instruction::Return);
-            }
-
-            MirTerminator::Jump { target } => {
-                // Fallthrough to next block (structured control flow handled by block ordering)
-                debug_mir!("DEBUG MIR: Skipping Jump to {:?} (fallthrough)", target);
-            }
-
-            MirTerminator::Branch {
-                condition,
-                true_block,
-                false_block,
-            } => {
-                // Evaluate condition (if/else structure handled by generate_branch_block)
-                self.load_operand(condition)?;
-                // Pop the condition value since we're not using it
-                self.current_instructions.push(Instruction::Drop);
-                debug_mir!(
-                    "DEBUG MIR: Skipping Branch to {:?}/{:?} (fallthrough)",
-                    true_block,
-                    false_block
-                );
-            }
-
-            MirTerminator::Unreachable => {
-                self.current_instructions.push(Instruction::Unreachable);
-            }
-
-            MirTerminator::Trap => {
-                // Contract violation trap - generates WASM unreachable
-                self.current_instructions.push(Instruction::Unreachable);
-            }
         }
 
         Ok(())
@@ -1586,6 +1479,16 @@ impl MirCodeGenerator<'_> {
                     if let Some(params) = param_types {
                         if i < params.len() {
                             let expected_param = &params[i];
+
+                            // `integer:64` on either side (integer widening,
+                            // integer:64 → integer / number; type-system.md §5).
+                            let arg_type = self.get_operand_mir_type(arg);
+                            let involves_i64 = |t: &MirType| matches!(t, MirType::I64 | MirType::U64);
+                            if let Some(src) = arg_type.as_ref() {
+                                if involves_i64(&expected_param.param_type) || involves_i64(src) {
+                                    self.emit_numeric_coercion(src, &expected_param.param_type);
+                                }
+                            }
 
                             // Check if parameter expects f64
                             if matches!(expected_param.param_type, MirType::F64) {

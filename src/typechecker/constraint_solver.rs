@@ -17,7 +17,6 @@ pub type Substitution = HashMap<TypeVarId, ConcreteType>;
 
 /// Constraint solver for type inference
 #[derive(Debug)]
-#[allow(dead_code)] // Constraint-based solver not yet integrated; inference runs via TypeInference directly
 pub struct ConstraintSolver<'a> {
     /// Current substitution being built
     substitution: Substitution,
@@ -27,12 +26,6 @@ pub struct ConstraintSolver<'a> {
 
     /// Pending constraints to solve
     constraints: VecDeque<TypeConstraint>,
-
-    /// Solved constraints (for debugging)
-    solved_constraints: Vec<TypeConstraint>,
-
-    /// Type variable bounds and relationships
-    type_var_bounds: HashMap<TypeVarId, Vec<ConcreteType>>,
 
     /// Errors encountered during solving
     errors: Vec<CompilerError>,
@@ -65,8 +58,6 @@ impl<'a> ConstraintSolver<'a> {
             substitution: HashMap::new(),
             type_var_counter: 0,
             constraints: VecDeque::new(),
-            solved_constraints: Vec::new(),
-            type_var_bounds: HashMap::new(),
             errors: Vec::new(),
             symbol_table: None,
             class_conformance: HashMap::new(),
@@ -79,8 +70,6 @@ impl<'a> ConstraintSolver<'a> {
             substitution: HashMap::new(),
             type_var_counter: 0,
             constraints: VecDeque::new(),
-            solved_constraints: Vec::new(),
-            type_var_bounds: HashMap::new(),
             errors: Vec::new(),
             symbol_table: Some(symbol_table),
             class_conformance: HashMap::new(),
@@ -829,43 +818,8 @@ impl<'a> ConstraintSolver<'a> {
 
     /// Try alternative solving strategies when stuck
     fn try_alternative_strategies(&mut self) -> bool {
-        // Strategy 1: Try to resolve any type variables to their bounds
-        if self.resolve_bounded_type_vars() {
-            return true;
-        }
-
-        // Strategy 2: Try to break down complex constraints
-        if self.decompose_complex_constraints() {
-            return true;
-        }
-
-        // Strategy 3: Apply default types to unconstrained variables
-        if self.apply_default_types() {
-            return true;
-        }
-
-        false
-    }
-
-    /// Resolve type variables that have clear bounds
-    fn resolve_bounded_type_vars(&mut self) -> bool {
-        let mut made_progress = false;
-
-        for (var_id, bounds) in &self.type_var_bounds.clone() {
-            if bounds.len() == 1 && !self.substitution.contains_key(var_id) {
-                // Only one bound - use it as the type
-                self.substitution.insert(*var_id, bounds[0].clone());
-                made_progress = true;
-            }
-        }
-
-        made_progress
-    }
-
-    /// Break down complex constraints into simpler ones
-    fn decompose_complex_constraints(&mut self) -> bool {
-        // Would implement constraint decomposition here
-        false
+        // Apply default types to unconstrained variables
+        self.apply_default_types()
     }
 
     /// Apply default types to unconstrained type variables

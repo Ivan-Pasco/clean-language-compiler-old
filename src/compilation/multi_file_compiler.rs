@@ -114,12 +114,6 @@ impl MultiFileCompilerConfig {
         self
     }
 
-    /// Enable debug mode
-    pub fn with_debug(mut self, debug: bool) -> Self {
-        self.debug = debug;
-        self
-    }
-
     /// Set the plugin registry for framework block expansion
     pub fn with_plugin_registry(mut self, registry: Arc<PluginRegistry>) -> Self {
         self.plugin_registry = Some(registry);
@@ -401,7 +395,7 @@ impl MultiFileCompiler {
             // Pass 3a: add shared-folder files to the compilation unit with
             // transformations applied. Files inside the plugin's owned paths
             // flow through this branch.
-            for (file_path, shared_dir, raw_source) in shared_files {
+            for (file_path, _shared_dir, raw_source) in shared_files {
                 let path_str = file_path.to_string_lossy().into_owned();
                 if let Some(existing_id) = unit.module_id_for_path(&file_path) {
                     // Already in unit (e.g. the entry file) — apply transformation if any.
@@ -420,7 +414,6 @@ impl MultiFileCompiler {
                         let module_name =
                             crate::plugins::builtin_assemblers::derive_companion_module_name(
                                 &file_path,
-                                &shared_dir,
                             );
                         applied_transforms.insert(
                             file_path
@@ -638,7 +631,6 @@ impl MultiFileCompiler {
             if companion_path.exists() {
                 let module_name = crate::plugins::builtin_assemblers::derive_companion_module_name(
                     &companion_path,
-                    manifest_dir,
                 );
                 let companion_source = fs::read_to_string(&companion_path).unwrap_or_default();
                 let has_guard =
@@ -1337,13 +1329,17 @@ impl MultiFileCompiler {
             // it dispatches only the lifecycle slots that match the build
             // shape. See contracts/lifecycle.md §3.3, §3.4.
             let mut expander = PluginExpander::new(registry.as_ref())
-                .with_build_target(!self.config.client_mode, self.config.client_mode);
+                .with_build_target(!self.config.client_mode, self.config.client_mode)
+                .with_build_context(
+                    crate::plugins::BuildContext::new()
+                        .with_entry(file_path.to_string_lossy().to_string()),
+                );
             let expand_result = if is_entry {
                 expander.expand_program(parsed_ast)
             } else {
                 expander.expand_program_without_preambles(parsed_ast)
             };
-            expand_result.map_err(|e| {
+            let expanded = expand_result.map_err(|e| {
                 CompilerError::syntax_error(
                     e.to_string(),
                     Some("Plugin expansion failed".to_string()),
@@ -1355,7 +1351,9 @@ impl MultiFileCompiler {
                         byte_end: None,
                     }),
                 )
-            })?
+            })?;
+            expander.check_permissions()?;
+            expanded
         } else {
             parsed_ast
         };
@@ -1403,10 +1401,7 @@ impl Default for MultiFileCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::builtin_assemblers::{
-        derive_companion_module_name, derive_page_name_from_cln, derive_page_route_from_cln,
-        generate_page_route_source, PageCompanionRecord,
-    };
+    use crate::plugins::builtin_assemblers::derive_companion_module_name;
 
     #[test]
     fn test_single_file_compilation() {
@@ -1571,25 +1566,22 @@ start:
 
     #[test]
     fn test_derive_companion_module_name() {
-        // The base_dir parameter is no longer load-bearing — the canonical
-        // anchor is the `pages/` segment in the path itself. Every result
+        // The canonical anchor is the `pages/` segment in the path. Every result
         // is prefixed `pages_` to match frame.ui's `derive_module_name` so
         // the compiler's call sites (which feed the result into
         // `process_html`'s `companion_json`) agree with what frame.ui's
         // `assemble` later names the renamed function. See
         // SEM-PAGE-COMPANION-NAMING-DRIFT for what happens when they don't.
-        let base = Path::new("app/pages");
-
         assert_eq!(
-            derive_companion_module_name(Path::new("app/pages/dashboard.cln"), base),
+            derive_companion_module_name(Path::new("app/pages/dashboard.cln")),
             "pages_dashboard"
         );
         assert_eq!(
-            derive_companion_module_name(Path::new("app/pages/blog/post.cln"), base),
+            derive_companion_module_name(Path::new("app/pages/blog/post.cln")),
             "pages_blog_post"
         );
         assert_eq!(
-            derive_companion_module_name(Path::new("app/pages/blog/[slug].cln"), base),
+            derive_companion_module_name(Path::new("app/pages/blog/[slug].cln")),
             "pages_blog_slug"
         );
         // The real-world layout the page-project hang surfaced: the
@@ -1597,21 +1589,18 @@ start:
         // never defined, so the synthesized call to `<name>_load_impl`
         // SEM007'd. The new shape is `pages_home`, matching frame.ui.
         assert_eq!(
-            derive_companion_module_name(Path::new("app/ui/web/pages/home.cln"), Path::new(""),),
+            derive_companion_module_name(Path::new("app/ui/web/pages/home.cln")),
             "pages_home"
         );
         assert_eq!(
-            derive_companion_module_name(
-                Path::new("app/ui/web/pages/blog/index.cln"),
-                Path::new(""),
-            ),
+            derive_companion_module_name(Path::new("app/ui/web/pages/blog/index.cln")),
             "pages_blog_index"
         );
         // Identifier-invalid characters in the page name (frame.ui sanitises
         // these in its `derive_module_name` so the rewritten function name
         // is a valid Clean identifier; we must do the same).
         assert_eq!(
-            derive_companion_module_name(Path::new("app/pages/my-page.cln"), Path::new(""),),
+            derive_companion_module_name(Path::new("app/pages/my-page.cln")),
             "pages_my_page"
         );
     }
@@ -2054,157 +2043,6 @@ start:
     // — depended on the in-tree PageCompanionAssembler Rust shim. Page companion
     // prefixing now lives in frame.ui's WASM `assemble` export; the equivalent
     // regression coverage belongs in clean-framework/plugins/frame.ui/tests.
-
-    // =========================================================================
-    // Page companion route registration tests (E-PGREG fix)
-    // =========================================================================
-
-    #[test]
-    fn test_derive_page_route_from_cln() {
-        let shared = Path::new("app/web");
-
-        assert_eq!(
-            derive_page_route_from_cln(Path::new("app/web/pages/login.cln"), shared),
-            "/login"
-        );
-        assert_eq!(
-            derive_page_route_from_cln(Path::new("app/web/pages/index.cln"), shared),
-            "/"
-        );
-        assert_eq!(
-            derive_page_route_from_cln(Path::new("app/web/pages/blog/post.cln"), shared),
-            "/blog/post"
-        );
-        assert_eq!(
-            derive_page_route_from_cln(Path::new("app/web/pages/[id].cln"), shared),
-            "/:id"
-        );
-    }
-
-    #[test]
-    fn test_derive_page_name_from_cln() {
-        // Fixed: was using shared_dir and returning bare stem; now uses project_root
-        // and returns full relative path with .html so _ui_render_page can locate
-        // the template on disk (GEN001).
-        let project_root = Path::new("/project");
-
-        assert_eq!(
-            derive_page_name_from_cln(Path::new("/project/app/web/pages/login.cln"), project_root),
-            "app/web/pages/login.html"
-        );
-        assert_eq!(
-            derive_page_name_from_cln(
-                Path::new("/project/app/web/pages/blog/post.cln"),
-                project_root
-            ),
-            "app/web/pages/blog/post.html"
-        );
-    }
-
-    #[test]
-    fn test_page_companion_route_registration_generated() {
-        // Verifies that generate_page_route_source produces the expected synthetic
-        // Clean Language module content for a page companion with a load() function.
-        let records = vec![PageCompanionRecord {
-            module_name: "pages_login".to_string(),
-            route_path: "/login".to_string(),
-            page_name: "login".to_string(),
-            has_guard: false,
-            has_load: true,
-        }];
-
-        let source = generate_page_route_source(&records);
-
-        assert!(
-            source.contains("__page_handler_pages_login"),
-            "should generate handler function; got:\n{}",
-            source
-        );
-        assert!(
-            source.contains("_http_route(\"GET\", \"/login\""),
-            "should register GET /login route; got:\n{}",
-            source
-        );
-        // Fixed: was asserting 0-arg call pages_login_load(); spec requires Request parameter,
-        // so the handler now passes a constructed any request object.
-        assert!(
-            source.contains("pages_login_load(__page_req)"),
-            "should call pages_login_load with request arg; got:\n{}",
-            source
-        );
-        assert!(
-            source.contains("__page_req"),
-            "should build a page request object; got:\n{}",
-            source
-        );
-        assert!(
-            source.contains("_ui_render_page(\"login\""),
-            "should call _ui_render_page with page name; got:\n{}",
-            source
-        );
-        assert!(
-            source.contains("json.encode(data)"),
-            "should encode data as JSON; got:\n{}",
-            source
-        );
-    }
-
-    #[test]
-    fn test_page_companion_route_registration_with_guard() {
-        // Verifies guard() call is emitted before load() when the companion has_guard=true.
-        let records = vec![PageCompanionRecord {
-            module_name: "pages_dashboard".to_string(),
-            route_path: "/dashboard".to_string(),
-            page_name: "dashboard".to_string(),
-            has_guard: true,
-            has_load: true,
-        }];
-
-        let source = generate_page_route_source(&records);
-
-        // Fixed: was asserting 0-arg calls; spec requires Request parameter so both
-        // guard and load now receive the constructed any request object.
-        assert!(
-            source.contains("pages_dashboard_guard(__page_req)"),
-            "should call pages_dashboard_guard with request arg; got:\n{}",
-            source
-        );
-        assert!(
-            source.contains("guard_result != null"),
-            "should have null-check on guard result; got:\n{}",
-            source
-        );
-        assert!(
-            source.contains("pages_dashboard_load(__page_req)"),
-            "should call pages_dashboard_load with request arg; got:\n{}",
-            source
-        );
-    }
-
-    #[test]
-    fn test_page_companion_route_registration_no_load() {
-        // When has_load=false the handler should render the page with an empty JSON object.
-        let records = vec![PageCompanionRecord {
-            module_name: "pages_about".to_string(),
-            route_path: "/about".to_string(),
-            page_name: "about".to_string(),
-            has_guard: false,
-            has_load: false,
-        }];
-
-        let source = generate_page_route_source(&records);
-
-        assert!(
-            source.contains("_ui_render_page(\"about\", \"{}\""),
-            "should render with empty JSON when no load(); got:\n{}",
-            source
-        );
-        assert!(
-            !source.contains("_load()"),
-            "should not emit a load call when has_load=false; got:\n{}",
-            source
-        );
-    }
 
     // Deleted: test_build_from_file_generates_route_module_for_page_companions
     // — asserted the shim emitted `_http_route` calls in a synthetic module.

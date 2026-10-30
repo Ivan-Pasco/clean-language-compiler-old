@@ -1,5 +1,5 @@
+use super::get_location;
 use super::Rule;
-use super::{convert_to_ast_location, get_location};
 use crate::ast::{BinaryOperator, Expression, StringPart, UnaryOperator, Value};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
@@ -10,7 +10,7 @@ fn parse_integer_literal(
     location: &super::SourceLocation,
 ) -> Result<Expression, CompilerError> {
     let num_str = pair.as_str();
-    let location_ast = convert_to_ast_location(location);
+    let location_ast = location.clone();
 
     let value = match pair.as_rule() {
         Rule::hex_integer => {
@@ -121,7 +121,7 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
         Rule::on_error_expr => {
             // Handle onError expression
-            let location = convert_to_ast_location(&get_location(&pair));
+            let location = get_location(&pair);
             let mut inner = pair.into_inner();
             let expression = parse_expression(inner.next().expect("invariant: on_error_expr first child"))?;
             let fallback = parse_expression(inner.next().expect("invariant: on_error_expr second child"))?;
@@ -134,7 +134,7 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
         Rule::on_error_block => {
             // Handle onError block
-            let location = convert_to_ast_location(&get_location(&pair));
+            let location = get_location(&pair);
             let mut inner = pair.into_inner();
             let expression = parse_expression(inner.next().expect("invariant: on_error_block expression child"))?;
 
@@ -186,12 +186,12 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
         Rule::error_variable => {
             // Parse error variable
-            let location = convert_to_ast_location(&get_location(&pair));
+            let location = get_location(&pair);
             Ok(Expression::ErrorVariable { location })
         }
         Rule::start_expr => {
             // Parse start expression - async start
-            let location = convert_to_ast_location(&get_location(&pair));
+            let location = get_location(&pair);
             let inner = pair.into_inner().next().expect("invariant: start_expr grammar child");
             let expr = parse_expression(inner)?;
             Ok(Expression::StartExpression {
@@ -298,7 +298,7 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         _ => {
             Err(CompilerError::parse_error(
                 format!("Unsupported expression rule: {:?}", pair.as_rule()),
-                Some(convert_to_ast_location(&get_location(&pair))),
+                Some(get_location(&pair)),
                 Some("Expected expression, on_error_expr, on_error_block, base_expression, start_expr, conditional_expr, argument_expression, list_element, or error_variable".to_string())
             ))
         }
@@ -317,7 +317,7 @@ pub fn parse_base_expression(pair: Pair<Rule>) -> Result<Expression, CompilerErr
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in base expression: {:?}", item.as_rule()),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     Some("Expected logical expression, or conditional expression".to_string()),
                 ))
             }
@@ -350,7 +350,7 @@ pub fn parse_logical_expression(pair: Pair<Rule>) -> Result<Expression, Compiler
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid logical operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid logical operators are: and, or".to_string()),
                         ))
                     }
@@ -363,7 +363,7 @@ pub fn parse_logical_expression(pair: Pair<Rule>) -> Result<Expression, Compiler
                         "Unexpected rule in logical expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     Some("Expected comparison expression or logical operator".to_string()),
                 ))
             }
@@ -421,7 +421,7 @@ pub fn parse_comparison_expression(pair: Pair<Rule>) -> Result<Expression, Compi
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid comparison operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some(
                                 "Valid comparison operators are: ==, !=, <, <=, >, >=, is"
                                     .to_string(),
@@ -437,7 +437,7 @@ pub fn parse_comparison_expression(pair: Pair<Rule>) -> Result<Expression, Compi
                         "Unexpected rule in comparison expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     Some("Expected arithmetic expression or comparison operator".to_string()),
                 ))
             }
@@ -489,7 +489,7 @@ pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid unary operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid unary operators are: not, -".to_string()),
                         ))
                     }
@@ -502,7 +502,7 @@ pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in unary expression: {:?}", item.as_rule()),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     Some("Expected unary operator or primary expression".to_string()),
                 ))
             }
@@ -556,7 +556,7 @@ pub fn parse_additive_expression(pair: Pair<Rule>) -> Result<Expression, Compile
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid additive operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid additive operators are: +, -".to_string()),
                         ))
                     }
@@ -569,7 +569,7 @@ pub fn parse_additive_expression(pair: Pair<Rule>) -> Result<Expression, Compile
                         "Unexpected rule in additive expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     Some("Expected multiplicative expression or additive operator".to_string()),
                 ))
             }
@@ -626,7 +626,7 @@ pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, C
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid multiplicative operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid multiplicative operators are: *, /, %".to_string()),
                         ))
                     }
@@ -639,7 +639,7 @@ pub fn parse_multiplicative_expression(pair: Pair<Rule>) -> Result<Expression, C
                         "Unexpected rule in multiplicative expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     Some("Expected power expression or multiplicative operator".to_string()),
                 ))
             }
@@ -693,7 +693,7 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid power operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid power operator is: ^".to_string()),
                         ))
                     }
@@ -703,7 +703,7 @@ pub fn parse_power_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in power expression: {:?}", item.as_rule()),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     Some("Expected unary expression or power operator".to_string()),
                 ))
             }
@@ -736,7 +736,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
     let inner = pair.clone().into_inner().next().ok_or_else(|| {
         CompilerError::parse_error(
             "Empty primary expression".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Expected a value inside the primary expression".to_string()),
         )
     })?;
@@ -764,7 +764,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 .map_err(|_| {
                     CompilerError::parse_error(
                         format!("Invalid float: {num_str}"),
-                        Some(convert_to_ast_location(&location)),
+                        Some(location.clone()),
                         Some("Check that the float is in a valid format".to_string()),
                     )
                 })
@@ -776,7 +776,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                 _ => {
                     return Err(CompilerError::parse_error(
                         format!("Invalid boolean: {}", inner.as_str()),
-                        Some(convert_to_ast_location(&location)),
+                        Some(location.clone()),
                         Some("Boolean values must be 'true' or 'false'".to_string()),
                     ))
                 }
@@ -803,7 +803,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::error_variable => {
             // Parse error variable
             Ok(Expression::ErrorVariable {
-                location: convert_to_ast_location(&location),
+                location: location.clone(),
             })
         }
         Rule::identifier | Rule::base_identifier | Rule::soft_keyword_identifier => {
@@ -853,7 +853,7 @@ pub fn parse_primary(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         }
         _ => Err(CompilerError::parse_error(
             format!("Unexpected primary expression: {}", inner.as_str()),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Expected a literal, identifier, or function call".to_string()),
         )),
     }
@@ -1072,7 +1072,7 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
     let inner = pair.into_inner().next().ok_or_else(|| {
         CompilerError::parse_error(
             "Empty list element".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Expected a value in the list element".to_string()),
         )
     })?;
@@ -1088,7 +1088,7 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
                 .map_err(|_| {
                     CompilerError::parse_error(
                         format!("Invalid float: {num_str}"),
-                        Some(convert_to_ast_location(&location)),
+                        Some(location.clone()),
                         Some("Check that the float is in a valid format".to_string()),
                     )
                 })
@@ -1100,7 +1100,7 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
                 _ => {
                     return Err(CompilerError::parse_error(
                         format!("Invalid boolean: {}", inner.as_str()),
-                        Some(convert_to_ast_location(&location)),
+                        Some(location.clone()),
                         Some("Boolean values must be 'true' or 'false'".to_string()),
                     ))
                 }
@@ -1124,7 +1124,7 @@ pub fn parse_list_element(pair: Pair<Rule>) -> Result<Expression, CompilerError>
         }
         _ => Err(CompilerError::parse_error(
             format!("Unexpected list element: {:?}", inner.as_rule()),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some(
                 "Expected number, boolean, string, identifier, pairs literal, or parenthesized expression"
                     .to_string(),
@@ -1166,7 +1166,7 @@ pub fn parse_matrix_literal(pair: Pair<Rule>) -> Result<Expression, CompilerErro
 }
 
 pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let location = convert_to_ast_location(&get_location(&pair));
+    let location = get_location(&pair);
     let mut fields = Vec::new();
 
     for pair_element in pair.into_inner() {
@@ -1228,7 +1228,7 @@ pub fn parse_pairs_literal(pair: Pair<Rule>) -> Result<Expression, CompilerError
 }
 
 pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let location = convert_to_ast_location(&get_location(&pair));
+    let location = get_location(&pair);
     let mut inner = pair.into_inner();
     let name = inner
         .next()
@@ -1278,7 +1278,7 @@ pub fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError
 }
 
 pub fn parse_namespace_function_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let location = convert_to_ast_location(&get_location(&pair));
+    let location = get_location(&pair);
     let mut inner = pair.into_inner();
 
     // First child is namespace_identifier
@@ -1325,7 +1325,7 @@ pub fn parse_namespace_function_call(pair: Pair<Rule>) -> Result<Expression, Com
 }
 
 pub fn parse_namespace_method_chain(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let location = convert_to_ast_location(&get_location(&pair));
+    let location = get_location(&pair);
     let mut inner = pair.into_inner();
 
     // First child is namespace_identifier
@@ -1716,7 +1716,7 @@ pub fn parse_list_access(pair: Pair<Rule>) -> Result<Expression, CompilerError> 
 }
 
 pub fn parse_conditional_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    let location = convert_to_ast_location(&get_location(&pair));
+    let location = get_location(&pair);
     let mut inner = pair.into_inner();
 
     // Parse: if condition then value else value
@@ -1790,7 +1790,7 @@ pub fn parse_base_call(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
 
     Ok(Expression::BaseCall {
         arguments,
-        location: convert_to_ast_location(&location),
+        location: location.clone(),
     })
 }
 
@@ -1826,7 +1826,7 @@ pub fn parse_constructor_call(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     if class_name.is_empty() {
         return Err(CompilerError::parse_error(
             "Constructor call missing class name".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Constructor calls must have a class name".to_string()),
         ));
     }
@@ -1834,7 +1834,7 @@ pub fn parse_constructor_call(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     Ok(Expression::ObjectCreation {
         class_name,
         arguments,
-        location: convert_to_ast_location(&location),
+        location: location.clone(),
     })
 }
 
@@ -1900,7 +1900,7 @@ pub fn parse_static_method_call(pair: Pair<Rule>) -> Result<Expression, Compiler
         class_name,
         method: method_name,
         arguments,
-        location: convert_to_ast_location(&location),
+        location: location.clone(),
     })
 }
 
@@ -1957,7 +1957,7 @@ pub fn parse_three_level_method_call(pair: Pair<Rule>) -> Result<Expression, Com
         class_name: subnamespace,   // Actual class name
         method: method_name,
         arguments,
-        location: convert_to_ast_location(&location),
+        location: location.clone(),
     })
 }
 
@@ -2073,7 +2073,7 @@ pub fn parse_start_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
 
     Ok(Expression::StartExpression {
         expression: Box::new(expression),
-        location: convert_to_ast_location(&location),
+        location: location.clone(),
     })
 }
 
@@ -2082,7 +2082,7 @@ pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, Compile
     let inner = pair.into_inner().next().ok_or_else(|| {
         CompilerError::parse_error(
             "Empty argument expression".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Argument expression should contain an argument_logical".to_string()),
         )
     })?;
@@ -2096,7 +2096,7 @@ pub fn parse_argument_expression(pair: Pair<Rule>) -> Result<Expression, Compile
                     "Unexpected rule in argument expression: {:?}",
                     inner.as_rule()
                 ),
-                Some(convert_to_ast_location(&location)),
+                Some(location.clone()),
                 Some("Expected argument_logical".to_string()),
             ))
         }
@@ -2117,7 +2117,7 @@ pub fn parse_argument_item(pair: Pair<Rule>) -> Result<Expression, CompilerError
             let inner = pair.into_inner().next().ok_or_else(|| {
                 CompilerError::parse_error(
                     "Empty argument item".to_string(),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     None,
                 )
             })?;
@@ -2129,18 +2129,18 @@ pub fn parse_argument_item(pair: Pair<Rule>) -> Result<Expression, CompilerError
             let label_pair = inner.next().ok_or_else(|| {
                 CompilerError::parse_error(
                     "Missing label in named argument".to_string(),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     None,
                 )
             })?;
             let label = label_pair.as_str().to_string();
-            let loc = convert_to_ast_location(&get_location(&label_pair));
+            let loc = get_location(&label_pair);
 
             // Skip colon (implicit in the rule structure — it's a separator, not a node)
             let value_pair = inner.next().ok_or_else(|| {
                 CompilerError::parse_error(
                     "Missing value in named argument".to_string(),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     None,
                 )
             })?;
@@ -2155,7 +2155,7 @@ pub fn parse_argument_item(pair: Pair<Rule>) -> Result<Expression, CompilerError
         Rule::argument_expression => parse_argument_expression(pair),
         _ => Err(CompilerError::parse_error(
             format!("Unexpected rule in argument item: {:?}", pair.as_rule()),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Expected named_argument or argument_expression".to_string()),
         )),
     }
@@ -2182,7 +2182,7 @@ pub fn parse_argument_logical(pair: Pair<Rule>) -> Result<Expression, CompilerEr
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unknown logical operator: {}", op),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     Some("Expected && or ||".to_string()),
                 ))
             }
@@ -2216,7 +2216,7 @@ pub fn parse_argument_comparison(pair: Pair<Rule>) -> Result<Expression, Compile
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unknown comparison operator: {}", op),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     Some("Expected ==, !=, <, <=, >, or >=".to_string()),
                 ))
             }
@@ -2246,7 +2246,7 @@ pub fn parse_argument_additive(pair: Pair<Rule>) -> Result<Expression, CompilerE
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unknown additive operator: {}", op),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     Some("Expected + or -".to_string()),
                 ))
             }
@@ -2277,7 +2277,7 @@ pub fn parse_argument_multiplicative(pair: Pair<Rule>) -> Result<Expression, Com
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unknown multiplicative operator: {}", op),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     Some("Expected *, /, or %".to_string()),
                 ))
             }
@@ -2306,7 +2306,7 @@ pub fn parse_argument_power(pair: Pair<Rule>) -> Result<Expression, CompilerErro
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unknown power operator: {}", op),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     Some("Expected ^".to_string()),
                 ))
             }
@@ -2335,7 +2335,7 @@ pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerErro
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unexpected rule in argument unary: {:?}", child.as_rule()),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     Some("Expected unary_op or argument_primary".to_string()),
                 ));
             }
@@ -2345,7 +2345,7 @@ pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerErro
     let primary_pair = primary_pair.ok_or_else(|| {
         CompilerError::parse_error(
             "Missing primary expression in argument unary expression".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Argument unary should contain argument_primary".to_string()),
         )
     })?;
@@ -2360,7 +2360,7 @@ pub fn parse_argument_unary(pair: Pair<Rule>) -> Result<Expression, CompilerErro
             _ => {
                 return Err(CompilerError::parse_error(
                     format!("Unknown unary operator: {}", op),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     Some("Expected -, !, or not".to_string()),
                 ))
             }
@@ -2377,7 +2377,7 @@ pub fn parse_argument_primary(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     let inner = pair.into_inner().next().ok_or_else(|| {
         CompilerError::parse_error(
             "Empty argument_primary".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             Some("Expected primary expression".to_string()),
         )
     })?;
@@ -2391,7 +2391,7 @@ pub fn parse_single_line_expression(pair: Pair<Rule>) -> Result<Expression, Comp
     let inner = pair.into_inner().next().ok_or_else(|| {
         CompilerError::parse_error(
             "Empty single_line_expression".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             None,
         )
     })?;
@@ -2405,7 +2405,7 @@ pub fn parse_single_line_expression(pair: Pair<Rule>) -> Result<Expression, Comp
                 "Unexpected rule in single_line_expression: {:?}",
                 inner.as_rule()
             ),
-            Some(convert_to_ast_location(&get_location(&inner))),
+            Some(get_location(&inner)),
             None,
         )),
     }
@@ -2428,7 +2428,7 @@ pub fn parse_single_line_logical_expression(pair: Pair<Rule>) -> Result<Expressi
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid logical operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid logical operators are: and, or".to_string()),
                         ))
                     }
@@ -2441,7 +2441,7 @@ pub fn parse_single_line_logical_expression(pair: Pair<Rule>) -> Result<Expressi
                         "Unexpected element in logical expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     None,
                 ))
             }
@@ -2478,7 +2478,7 @@ pub fn parse_single_line_default_expression(pair: Pair<Rule>) -> Result<Expressi
                     "Unexpected rule in single_line_default_expression: {:?}",
                     inner.as_rule()
                 ),
-                Some(convert_to_ast_location(&get_location(&inner))),
+                Some(get_location(&inner)),
                 None,
             )),
         }
@@ -2514,7 +2514,7 @@ pub fn parse_single_line_comparison_expression(
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid comparison operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid comparison operators are: =, !=, <, >, <=, >=".to_string()),
                         ))
                     }
@@ -2527,7 +2527,7 @@ pub fn parse_single_line_comparison_expression(
                         "Unexpected element in comparison expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     None,
                 ))
             }
@@ -2561,7 +2561,7 @@ pub fn parse_single_line_unary_expression(pair: Pair<Rule>) -> Result<Expression
     let inner = inner_iter.next().ok_or_else(|| {
         CompilerError::parse_error(
             "Empty single_line_unary_expression".to_string(),
-            Some(convert_to_ast_location(&location)),
+            Some(location.clone()),
             None,
         )
     })?;
@@ -2575,7 +2575,7 @@ pub fn parse_single_line_unary_expression(pair: Pair<Rule>) -> Result<Expression
                 _ => {
                     return Err(CompilerError::parse_error(
                         format!("Invalid unary operator: {}", inner.as_str()),
-                        Some(convert_to_ast_location(&get_location(&inner))),
+                        Some(get_location(&inner)),
                         Some("Valid unary operators are: not, -".to_string()),
                     ))
                 }
@@ -2585,7 +2585,7 @@ pub fn parse_single_line_unary_expression(pair: Pair<Rule>) -> Result<Expression
             let expr_inner = inner_iter.next().ok_or_else(|| {
                 CompilerError::parse_error(
                     "Missing expression after unary operator".to_string(),
-                    Some(convert_to_ast_location(&location)),
+                    Some(location.clone()),
                     None,
                 )
             })?;
@@ -2598,7 +2598,7 @@ pub fn parse_single_line_unary_expression(pair: Pair<Rule>) -> Result<Expression
                 "Unexpected rule in single_line_unary_expression: {:?}",
                 inner.as_rule()
             ),
-            Some(convert_to_ast_location(&get_location(&inner))),
+            Some(get_location(&inner)),
             None,
         )),
     }
@@ -2623,7 +2623,7 @@ pub fn parse_single_line_additive_expression(
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid additive operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid additive operators are: +, -".to_string()),
                         ))
                     }
@@ -2636,7 +2636,7 @@ pub fn parse_single_line_additive_expression(
                         "Unexpected element in additive expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     None,
                 ))
             }
@@ -2683,7 +2683,7 @@ pub fn parse_single_line_multiplicative_expression(
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid multiplicative operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid multiplicative operators are: *, /, %".to_string()),
                         ))
                     }
@@ -2696,7 +2696,7 @@ pub fn parse_single_line_multiplicative_expression(
                         "Unexpected element in multiplicative expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     None,
                 ))
             }
@@ -2739,7 +2739,7 @@ pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid power operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid power operator is: ^".to_string()),
                         ))
                     }
@@ -2752,7 +2752,7 @@ pub fn parse_single_line_power_expression(pair: Pair<Rule>) -> Result<Expression
                         "Unexpected element in power expression: {:?}",
                         item.as_rule()
                     ),
-                    Some(convert_to_ast_location(&get_location(&item))),
+                    Some(get_location(&item)),
                     None,
                 ))
             }
@@ -2798,7 +2798,7 @@ pub fn parse_multiline_default_expression(pair: Pair<Rule>) -> Result<Expression
                     "Unexpected rule in multiline_default_expression: {:?}",
                     inner.as_rule()
                 ),
-                Some(convert_to_ast_location(&get_location(&inner))),
+                Some(get_location(&inner)),
                 None,
             )),
         }
@@ -2828,7 +2828,7 @@ pub fn parse_multiline_logical_expression(pair: Pair<Rule>) -> Result<Expression
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid logical operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid logical operators are: and, or".to_string()),
                         ))
                     }
@@ -2896,7 +2896,7 @@ pub fn parse_multiline_comparison_expression(
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid comparison operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some(
                                 "Valid comparison operators are: ==, !=, <, >, <=, >=, is"
                                     .to_string(),
@@ -2957,7 +2957,7 @@ pub fn parse_multiline_unary_expression(pair: Pair<Rule>) -> Result<Expression, 
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid unary operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid unary operators are: not, -".to_string()),
                         ))
                     }
@@ -3004,7 +3004,7 @@ pub fn parse_multiline_additive_expression(pair: Pair<Rule>) -> Result<Expressio
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid additive operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid additive operators are: +, -".to_string()),
                         ))
                     }
@@ -3068,7 +3068,7 @@ pub fn parse_multiline_multiplicative_expression(
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid multiplicative operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid multiplicative operators are: *, /, %".to_string()),
                         ))
                     }
@@ -3128,7 +3128,7 @@ pub fn parse_multiline_power_expression(pair: Pair<Rule>) -> Result<Expression, 
                     _ => {
                         return Err(CompilerError::parse_error(
                             format!("Invalid power operator: {}", item.as_str()),
-                            Some(convert_to_ast_location(&get_location(&item))),
+                            Some(get_location(&item)),
                             Some("Valid power operator is: ^".to_string()),
                         ))
                     }

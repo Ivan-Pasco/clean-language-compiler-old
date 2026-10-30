@@ -114,33 +114,6 @@ impl AppConfig {
 
         Ok(Self::parse(&content))
     }
-
-    /// Find and load the configuration file from a project directory
-    ///
-    /// Searches for (in order):
-    /// 1. app.cln
-    /// 2. configuration.cln
-    ///
-    /// # Arguments
-    /// * `project_dir` - The project directory to search in
-    ///
-    /// # Returns
-    /// * `Some(AppConfig)` - If a config file was found and parsed
-    /// * `None` - If no config file exists
-    pub fn find_and_load(project_dir: &Path) -> Option<Self> {
-        let config_files = ["app.cln", "configuration.cln"];
-
-        for file in &config_files {
-            let path = project_dir.join(file);
-            if path.exists() {
-                if let Ok(config) = Self::load(&path) {
-                    return Some(config);
-                }
-            }
-        }
-
-        None
-    }
 }
 
 /// Parse a key = "value" style assignment

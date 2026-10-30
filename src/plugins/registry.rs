@@ -2,6 +2,7 @@
  * Plugin Registry - Manages framework plugin registration and dispatch
  */
 
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -175,7 +176,7 @@ pub struct PluginRegistry {
     /// These are functions that plugins expect the runtime to provide (e.g., _db_query)
     bridge_functions: Vec<BridgeFunction>,
     /// Full plugin manifests for enforcement rules and path detection
-    manifests: HashMap<String, PluginManifest>,
+    manifests: IndexMap<String, PluginManifest>,
     /// Lifecycle registrations collected from all loaded plugins
     registrations: PluginRegistrations,
     /// Plugin name → set of bridge function names that plugin is allowed to call.
@@ -229,7 +230,7 @@ impl PluginRegistry {
             expression_handlers: HashMap::new(),
             registered_plugins: Vec::new(),
             bridge_functions: Vec::new(),
-            manifests: HashMap::new(),
+            manifests: IndexMap::new(),
             registrations: PluginRegistrations::default(),
             plugin_permissions: HashMap::new(),
             build_state: super::new_build_state(),
@@ -480,19 +481,9 @@ impl PluginRegistry {
         out.into_iter()
     }
 
-    /// Get list of handled block types
-    pub fn handled_block_types(&self) -> Vec<&str> {
-        self.handlers.keys().map(|s| s.as_str()).collect()
-    }
-
     /// Check if the registry has any plugins registered
     pub fn is_empty(&self) -> bool {
         self.handlers.is_empty()
-    }
-
-    /// Get the number of registered handlers
-    pub fn handler_count(&self) -> usize {
-        self.handlers.len()
     }
 
     /// Get all bridge functions from loaded plugins
@@ -611,9 +602,6 @@ impl PluginRegistry {
         (combined, errors)
     }
 
-    /// Get all loaded plugin manifests
-    ///
-    /// Returns the full manifests for enforcement rules, path detection, etc.
     /// Plugin Contracts v2 — replace the registry's per-build state container.
     /// Called by `WasmPluginLoader::load_plugins_with_build_state` after
     /// every adapter has been wired so the registry can hand the same `Arc`
@@ -752,7 +740,10 @@ impl PluginRegistry {
         out
     }
 
-    pub fn loaded_manifests(&self) -> &HashMap<String, PluginManifest> {
+    /// Every loaded plugin manifest keyed by plugin name, in plugin-load
+    /// order (the order of the `plugins:` declaration). Order-sensitive
+    /// consumers such as artifact orchestration rely on this.
+    pub fn loaded_manifests(&self) -> &IndexMap<String, PluginManifest> {
         &self.manifests
     }
 
@@ -823,35 +814,9 @@ impl PluginRegistry {
         &self.registrations
     }
 
-    /// Return `true` if any plugin registered server lifecycle hooks.
-    pub fn has_server_registrations(&self) -> bool {
-        !self.registrations.server.is_empty()
-    }
-
-    /// Return `true` if any plugin registered CLI commands.
-    pub fn has_cli_registrations(&self) -> bool {
-        !self.registrations.cli.is_empty()
-    }
-
-    /// Return `true` if any plugin registered build lifecycle hooks.
-    pub fn has_build_registrations(&self) -> bool {
-        !self.registrations.build.is_empty()
-    }
-
     // ========================================================================
     // Permission Enforcement Methods
     // ========================================================================
-
-    /// Check if a plugin is allowed to call a specific bridge function.
-    ///
-    /// Returns `true` only when the function appears in the plugin's `[bridge] functions`.
-    /// Returns `false` if the plugin has no manifest or the function is not declared.
-    pub fn plugin_can_call(&self, plugin_name: &str, function_name: &str) -> bool {
-        match self.plugin_permissions.get(plugin_name) {
-            None => false,
-            Some(allowed) => allowed.contains(function_name),
-        }
-    }
 
     /// Get the set of bridge function names that a plugin is allowed to call.
     ///
@@ -1234,26 +1199,6 @@ impl PluginRegistry {
             Vec::new()
         }
     }
-
-    /// Get all plugin descriptions for documentation
-    ///
-    /// Returns a list of (name, block_types, description) for all registered plugins.
-    pub fn get_plugin_info(&self) -> Vec<(&str, Vec<&str>, &str)> {
-        let mut info = Vec::new();
-        let mut seen_plugins = std::collections::HashSet::new();
-
-        for plugin in self.handlers.values() {
-            if seen_plugins.insert(plugin.name()) {
-                info.push((
-                    plugin.name(),
-                    plugin.handles().to_vec(),
-                    plugin.description(),
-                ));
-            }
-        }
-
-        info
-    }
 }
 
 impl fmt::Debug for PluginRegistry {
@@ -1282,7 +1227,7 @@ impl fmt::Debug for PluginRegistry {
 pub struct PluginRegistryBuilder {
     plugins: Vec<Arc<dyn FrameworkPlugin>>,
     bridge_functions: Vec<BridgeFunction>,
-    manifests: HashMap<String, PluginManifest>,
+    manifests: IndexMap<String, PluginManifest>,
     registrations: PluginRegistrations,
     /// Accumulated permission allowlists (plugin name → allowed bridge function names)
     plugin_permissions: HashMap<String, HashSet<String>>,
@@ -1297,7 +1242,7 @@ impl PluginRegistryBuilder {
         Self {
             plugins: Vec::new(),
             bridge_functions: Vec::new(),
-            manifests: HashMap::new(),
+            manifests: IndexMap::new(),
             registrations: PluginRegistrations::default(),
             plugin_permissions: HashMap::new(),
             validation_policy: None,
@@ -1329,18 +1274,6 @@ impl PluginRegistryBuilder {
         self
     }
 
-    /// Add a plugin via Arc (for when you already have an Arc)
-    ///
-    /// # Arguments
-    /// * `plugin` - The plugin Arc to add
-    ///
-    /// # Returns
-    /// Self for method chaining
-    pub fn add_arc(mut self, plugin: Arc<dyn FrameworkPlugin>) -> Self {
-        self.plugins.push(plugin);
-        self
-    }
-
     /// Add bridge functions from a plugin manifest
     ///
     /// Bridge functions are runtime-provided functions declared in plugin.toml [bridge] sections.
@@ -1355,18 +1288,6 @@ impl PluginRegistryBuilder {
         bridge: &crate::plugins::plugin_abi::PluginBridge,
     ) -> Self {
         self.bridge_functions.extend(bridge.functions.clone());
-        self
-    }
-
-    /// Add a single bridge function
-    ///
-    /// # Arguments
-    /// * `func` - The bridge function to add
-    ///
-    /// # Returns
-    /// Self for method chaining
-    pub fn add_bridge_function(mut self, func: BridgeFunction) -> Self {
-        self.bridge_functions.push(func);
         self
     }
 

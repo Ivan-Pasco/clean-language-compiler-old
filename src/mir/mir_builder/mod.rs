@@ -410,11 +410,7 @@ impl MirBuilder {
             globals: BTreeMap::new(),
             string_pool: Vec::new(),
             entry_point: None,
-            debug_info: None,
             symbol_name_map: BTreeMap::new(),
-            used_plugins: Vec::new(),
-            state_rules: Vec::new(),
-            state_guards: Vec::new(),
             externals: Vec::new(),
             test_functions: Vec::new(),
             class_ids: self

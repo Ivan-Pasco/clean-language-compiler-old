@@ -20,40 +20,23 @@ pub mod property_tests;
 pub mod tast;
 pub mod type_inference;
 
-pub use constraint_solver::{ConstraintSolver, TypeVarId};
-pub use tast::{
-    BinaryOperator, ConcreteType, TastBlock, TastClass, TastExpression, TastFunction, TastProgram,
-    TastStatement, TypeConstraint, UnaryOperator, Visibility,
-};
-pub use type_inference::{InferenceResult, TypeInference};
+pub use tast::{ConcreteType, TastProgram};
+pub use type_inference::TypeInference;
 
 /// Type checker - Stage 5 of the pipeline
 ///
-/// This is the main interface for type checking that wraps the constraint-based
-/// type inference engine. It transforms resolved HIR into TAST.
-#[derive(Debug)]
-#[allow(dead_code)] // TypeChecker struct not yet called from lib.rs; pipeline goes direct to MIR builder
-pub struct TypeChecker {
-    /// The underlying type inference engine
-    inference_engine: Option<TypeInference<'static>>,
-}
+/// Entry point for type checking: wraps the constraint-based type inference
+/// engine and transforms resolved HIR into TAST.
+pub struct TypeChecker;
 
 /// Type checking result
 #[derive(Debug)]
 pub struct TypeCheckResult {
     pub tast: TastProgram,
-    pub type_env: HashMap<SymbolId, ConcreteType>,
     pub warnings: Vec<CompilerError>,
 }
 
 impl TypeChecker {
-    /// Create a new type checker
-    pub fn new() -> Self {
-        Self {
-            inference_engine: None,
-        }
-    }
-
     /// Type check a resolved HIR program using constraint-based type inference
     pub fn check(resolved_hir: ResolvedHirProgram) -> Result<TypeCheckResult, Vec<CompilerError>> {
         Self::check_with_required_counts(resolved_hir, HashMap::new())
@@ -86,28 +69,15 @@ impl TypeChecker {
         } else {
             Ok(TypeCheckResult {
                 tast: inference_result.tast,
-                type_env: inference_result.type_env,
                 warnings: inference_result.warnings,
             })
         }
     }
 }
 
-impl Default for TypeChecker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_typechecker_creation() {
-        let checker = TypeChecker::new();
-        assert!(checker.inference_engine.is_none());
-    }
 
     #[test]
     fn test_concrete_type_assignability() {

@@ -94,14 +94,6 @@ impl Default for MemoryConfig {
 }
 
 impl RuntimeType {
-    /// Get the best runtime for the current platform.
-    /// This is a metadata-only preference — the compiler does not execute
-    /// WASM in any case, so the choice only influences what gets recorded
-    /// in target configuration.
-    pub fn auto_detect() -> Self {
-        RuntimeType::Wasmtime
-    }
-
     /// Get human-readable name
     pub fn name(&self) -> &'static str {
         match self {

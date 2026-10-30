@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0.0",
-  "compiler_version": "0.33.161",
+  "compiler_version": "0.33.164",
   "contract_version": "1.0.0",
   "runtime_abi_version": "1.0.0",
-  "generated_at_epoch_seconds": 1793307635,
+  "generated_at_epoch_seconds": 1793378109,
   "artifacts": [
     {
       "name": "dashboard_shape.wasm",
@@ -11,8 +11,8 @@
       "purpose": "main_module",
       "public": false,
       "content_type": "application/wasm",
-      "size_bytes": 30753,
-      "sha256": "78c7af03bccfcfc9ed1dba47aaeb36bc3cc52e406b55006810510f562d2a89c7",
+      "size_bytes": 33593,
+      "sha256": "d83918b178679e17878367233c7748641ddb362faa397fa9abd9a656ce1135de",
       "source_plugin": null
     }
   ],

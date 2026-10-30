@@ -1,51 +1,30 @@
 # Clean Language Compiler Scripts
 
-This directory contains utility scripts for fixing and testing the Clean Language compiler.
+Utility scripts for testing, release gating and CI. Run them from the
+compiler crate root (the scripts `cd` there themselves where needed).
 
-## Fix Scripts
+## Test runners
 
-- **fix_all.sh**: Master script that runs all fix scripts in the correct order
-- **fix_call_indirect.sh**: Fixes CallIndirect field names in array operations
-- **fix_errors.sh**: Updates error method calls to use the new signatures with all required parameters
-- **fix_wasm_types.sh**: Updates tuple usage to use the type conversion helpers
+- **test.sh**: Entry point for the "test" workflow; runs `comprehensive_test_runner.sh`.
+- **comprehensive_test_runner.sh**: Compiles every file under `tests/cln/` by category with `cln compile`, writes WASM to `tests/output/`, and stops on the first failure with a detailed error log. See `tests/UNIFIED_TESTING_STRATEGY.md`.
+- **comprehensive_test.sh**: Compiles and executes every `.cln` file with `wasmtime_runner`.
+- **test_all.sh**: Compiles every `tests/cln/` file (except `future/`) and reports pass/fail counts.
+- **test_smoke.sh**: Fast smoke run over a representative subset.
 
-## Test Scripts
+## Guards (used by git hooks and CI)
 
-- **verify_fixes.sh**: Runs standalone tests to verify that fixes are working correctly
+- **check_regressions.py**: Enforces that every `tests/cln/bugfixes/` pin still compiles and prints its expected output.
+- **check_test_quality.py**: Rejects vacuous or placeholder tests (rules R1–R4, C1–C3).
+- **require_pin.py**: Requires a regression pin under `tests/cln/bugfixes/` before a bug is closed.
+- **spec_coverage.py**: Reports which spec rules have test coverage.
+- **wasm_determinism.py**: Checks that compiling the corpus in `wasm_determinism_corpus.txt` twice yields identical WASM (`wasm_determinism_allowlist.txt` lists known exceptions).
+- **release_gate.sh**: Release-tier verification gate.
+- **canary_applicability.py**, **canary_matrix.py**: Build the cross-component canary manifest and summary.
 
-## Usage
+## Setup
 
-All scripts should be made executable before use:
+- **install-hooks.sh**: Points git at the repo-tracked hooks in `.githooks/`.
 
-```bash
-chmod +x scripts/*.sh
-```
+## Workflows
 
-### Running All Fixes
-
-```bash
-./scripts/fix_all.sh
-```
-
-### Verifying Fixes
-
-```bash
-./scripts/verify_fixes.sh
-```
-
-### Running Individual Fixes
-
-```bash
-# Fix CallIndirect field names
-./scripts/fix_call_indirect.sh
-
-# Fix error method calls
-./scripts/fix_errors.sh
-
-# Fix WasmType usage
-./scripts/fix_wasm_types.sh
-```
-
-## Note
-
-These scripts interact with the source code directly, making automated changes. Always ensure you have a backup or are using version control before running these scripts to avoid losing important changes. 
+- **CI_CD_WORKFLOW.md**: The `comita` release workflow.

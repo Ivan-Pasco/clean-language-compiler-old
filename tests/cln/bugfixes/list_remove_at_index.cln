@@ -1,0 +1,54 @@
+// Test: bugfixes/list_remove_at_index
+// Semantic: stdlib-reference.md §5 — `.remove(index)` mutates the list in
+//   place and returns the removed element; `list.remove(items, index)` is the
+//   namespace form of the same operation.
+// Fixed in: compiler 0.33.165
+// Regression: both forms called the behavior-aware `list.remove(list)`
+//   with an extra index argument, which became the list pointer, so nothing
+//   was removed and the result was 0 / an empty string.
+// Expected output:
+//   r=z
+//   x,y
+//   q=6
+//   5,7
+//   first=a
+//   b,c,d
+//   mid=c
+//   b,d
+//   2.5
+//   1.5,3.5
+//   last=3.5
+//   1.5 1
+//   10
+//   20,30
+//   0
+
+start:
+	list<string> s = ["x", "y", "z"]
+	string r = list.remove(s, 2)
+	print("r=" + r)
+	print(list.join(s, ","))
+	list<integer> n = [5, 6, 7]
+	integer q = n.remove(1)
+	print("q=" + q.toString())
+	print(n.get(0).toString() + "," + n.get(1).toString())
+	list<string> letters = ["a", "b", "c", "d"]
+	string first = letters.remove(0)
+	print("first=" + first)
+	print(list.join(letters, ","))
+	string mid = list.remove(letters, 1)
+	print("mid=" + mid)
+	print(list.join(letters, ","))
+	list<number> nums = [1.5, 2.5, 3.5]
+	number removed = nums.remove(1)
+	print(removed.toString())
+	print(nums.first().toString() + "," + nums.last().toString())
+	number lastNum = list.remove(nums, 1)
+	print("last=" + lastNum.toString())
+	print(nums.first().toString() + " " + nums.length().toString())
+	list<integer> one = [10, 20, 30]
+	print(list.remove(one, 0).toString())
+	print(one.get(0).toString() + "," + one.get(1).toString())
+	integer gone = one.remove(1)
+	gone = one.remove(0)
+	print(one.length().toString())

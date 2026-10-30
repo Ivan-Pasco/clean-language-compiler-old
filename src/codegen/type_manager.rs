@@ -1,6 +1,5 @@
 //! Module for type management during code generation.
 
-use crate::ast::{Expression, Value};
 use crate::error::CompilerError;
 use crate::types::WasmType;
 use wasm_encoder::{TypeSection, ValType};
@@ -76,35 +75,5 @@ impl TypeManager {
     ) -> Result<u32, CompilerError> {
         let return_types: Vec<WasmType> = return_type.map(|t| vec![t]).unwrap_or_default();
         self.add_function_type(params, &return_types)
-    }
-
-    /// Check if conversion is possible between two types
-    #[allow(dead_code)] // Type compatibility helper — not yet called from codegen paths
-    pub(crate) fn can_convert(&self, from: WasmType, to: WasmType) -> bool {
-        // Any type is compatible with any other type
-        if from == WasmType::I32 && to == WasmType::I32 {
-            return true;
-        }
-
-        match (from, to) {
-            (WasmType::I32, WasmType::F64) => true,
-            (WasmType::F64, WasmType::I32) => true,
-            (WasmType::I64, WasmType::F64) => true,
-            (WasmType::F64, WasmType::I64) => true,
-            (WasmType::F32, WasmType::F64) => true,
-            (WasmType::F64, WasmType::F32) => true,
-            _ => from == to,
-        }
-    }
-
-    /// Check if the given expression is a string type
-    #[allow(dead_code)] // String-type predicate — not yet called from codegen paths
-    pub(crate) fn is_string_type(&self, expr: &Expression) -> bool {
-        match expr {
-            Expression::Literal(Value::String(_)) => true,
-            Expression::StringInterpolation(_) => true,
-            // For variables, ideally this would check the variable's type
-            _ => false,
-        }
     }
 }

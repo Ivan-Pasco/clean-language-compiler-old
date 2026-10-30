@@ -63,12 +63,11 @@ pub struct FieldDesc {
     pub default_expr_handle: i32,
 }
 
-/// One method descriptor inside `class_json_lp`.
-// `name` is part of the class emission contract; used in sub-cycle 3 `_emit_class`.
+/// One method descriptor inside `class_json_lp`. The method's name is
+/// carried by the function the handle points at; a `name` key in the JSON
+/// is accepted and ignored.
 #[derive(Deserialize, Debug)]
-#[allow(dead_code)]
 pub struct MethodDesc {
-    pub name: String,
     pub function_handle: i32,
 }
 

@@ -380,6 +380,17 @@ fn merge_capability(program: &mut Program, incoming: crate::ast::Capability) -> 
     Ok(())
 }
 
+/// Where the start-function body of a plugin expansion is placed.
+#[derive(Debug, Clone, Copy)]
+enum StartPlacement {
+    /// Merged into the program's start function (top-level blocks).
+    Program,
+    /// Spliced at the block's position, after its statements (blocks nested
+    /// in function bodies, branches, loops, tests and class members, and
+    /// ORM query expressions).
+    Inline,
+}
+
 /// AST expander that transforms framework blocks into Clean Language code
 pub struct PluginExpander<'a> {
     registry: &'a PluginRegistry,
@@ -848,94 +859,15 @@ impl<'a> PluginExpander<'a> {
                     location,
                 } => {
                     let block = FrameworkBlock {
-                        name: name.clone(),
+                        name,
                         content,
                         attributes,
-                        location: location.clone(),
+                        location,
                     };
-
-                    if self.registry.handles(&name) {
-                        // Use expand_full to preserve start function
-                        let mut expansion = self.registry.expand_full(&block)?;
-                        self.blocks_expanded += 1;
-                        self.statements_generated += expansion.statements.len();
-
-                        // Stamp plugin origin on every synthesized statement so
-                        // downstream diagnostics route to the plugin's owning
-                        // component (framework for frame.*). Resolves
-                        // TELEMETRY-SYNTHETIC-ORIGIN-CLASSIFICATION
-                        // (fingerprint f5f2a9954225).
-                        let owning_plugin = self
-                            .registry
-                            .get_handler(&name)
-                            .map(|h| h.name().to_string());
-                        if let Some(ref plugin_name) = owning_plugin {
-                            stamp_plugin_origin_expansion(&mut expansion, plugin_name);
-                        }
-
-                        // Validate that the expanded code only calls bridge functions
-                        // that the plugin declared in its [bridge] section.
-                        if let Some(ref plugin_name) = owning_plugin {
-                            let violations = validate_plugin_permissions(
-                                self.registry,
-                                plugin_name,
-                                &expansion.statements,
-                            );
-                            if !violations.is_empty() {
-                                tracing::warn!(
-                                    plugin = %plugin_name,
-                                    block = %name,
-                                    violation_count = violations.len(),
-                                    "Plugin permission violations detected in expanded code"
-                                );
-                                self.permission_errors.extend(violations);
-                            }
-                        }
-
-                        // Capture start function if plugin generated one
-                        if let Some(start_fn) = expansion.start_function {
-                            if self.pending_start.is_none() {
-                                self.pending_start = Some(start_fn);
-                            } else {
-                                // Merge start functions
-                                if let Some(ref mut existing) = self.pending_start {
-                                    existing.body.extend(start_fn.body);
-                                }
-                            }
-                        }
-
-                        // Capture additional functions
-                        self.pending_functions.extend(expansion.functions);
-
-                        // Capture class definitions (e.g., ORM models from frame.data)
-                        self.pending_classes.extend(expansion.classes);
-                        self.pending_capabilities.extend(expansion.capabilities);
-
-                        // Capture external functions
-                        self.pending_externals.extend(expansion.externals);
-
-                        // Capture top-level state: block. Required for the
-                        // frame.ui v2.12.3 hydration pattern, where each
-                        // `component:` block contributes one
-                        // `instance_<tag>` declaration that the `client_init`
-                        // splice later dispatches through.
-                        merge_state_block(&mut self.pending_state, expansion.state);
-
-                        // Add expanded statements
-                        let expanded = self.expand_statements_full(expansion.statements)?;
-                        result.extend(expanded);
-                    } else {
-                        // No plugin registered for this block. Nothing downstream
-                        // handles a pass-through FrameworkBlock — resolver, type
-                        // checker, HIR, MIR, and codegen all skip it — so it would
-                        // vanish silently and the program would compile with a
-                        // missing feature. Fail here with a clear error so the
-                        // author knows to add the owning plugin to `plugins:`.
-                        return Err(PluginError::UnknownBlockType {
-                            block_name: name,
-                            location,
-                        });
-                    }
+                    // Top-level block: a plugin-generated start function is
+                    // merged into the program's start function.
+                    let expanded = self.expand_framework_block(block, StartPlacement::Program)?;
+                    result.extend(self.expand_statements_full(expanded)?);
                 }
                 other => {
                     // Use regular expansion for non-framework statements
@@ -962,49 +894,18 @@ impl<'a> PluginExpander<'a> {
                     attributes,
                     location,
                 } => {
-                    // Build the framework block struct
                     let block = FrameworkBlock {
-                        name: name.clone(),
+                        name,
                         content,
                         attributes,
-                        location: location.clone(),
+                        location,
                     };
-
-                    // Check if we have a handler
-                    if self.registry.handles(&name) {
-                        let mut expanded = self.registry.expand(&block)?;
-                        self.blocks_expanded += 1;
-                        self.statements_generated += expanded.len();
-
-                        // Stamp plugin origin so telemetry routes diagnostics
-                        // on this synthesized code to the plugin's owning
-                        // component. See `stamp_plugin_origin` docstring.
-                        if let Some(plugin_name) = self
-                            .registry
-                            .get_handler(&name)
-                            .map(|h| h.name().to_string())
-                        {
-                            stamp_plugin_origin(&mut expanded, &plugin_name);
-                        }
-
-                        tracing::trace!(
-                            block_name = %name,
-                            expanded_count = expanded.len(),
-                            "Expanded framework block"
-                        );
-
-                        // Recursively expand any nested framework blocks
-                        let expanded = self.expand_statements(expanded)?;
-                        result.extend(expanded);
-                    } else {
-                        // See matching branch in expand_statements_full: unhandled
-                        // FrameworkBlocks are invisible to every stage after the
-                        // expander, so pass-through means silent feature drop.
-                        return Err(PluginError::UnknownBlockType {
-                            block_name: name,
-                            location,
-                        });
-                    }
+                    // Nested block (function body, branch, loop, test, class
+                    // member): its start-function body runs at the splice
+                    // point, while helper functions, classes, capabilities,
+                    // externals and state are still lifted to the program.
+                    let expanded = self.expand_framework_block(block, StartPlacement::Inline)?;
+                    result.extend(self.expand_statements(expanded)?);
                 }
 
                 // Recursively expand nested statements
@@ -1119,9 +1020,9 @@ impl<'a> PluginExpander<'a> {
                 //
                 // `list<User> rows = User.find:\n\tjoin: ...\n\twhere: ...`
                 //
-                // Convert this to a FrameworkBlock so the frame.data plugin can expand it.
-                // The block content carries the variable binding information as a header line
-                // (`type name =`) so the plugin can emit the correct assignment statement.
+                // The block content carries the variable binding as a header line
+                // (`type name =`) so the plugin can emit the correct assignment
+                // statement.
                 Statement::VariableDecl {
                     ref name,
                     ref type_,
@@ -1134,59 +1035,12 @@ impl<'a> PluginExpander<'a> {
                         }),
                     ..
                 } => {
-                    let block_name = format!("{}.{}", model, verb);
-                    // Encode the variable binding as the first line of block content so
-                    // the plugin knows the LHS name and type.
-                    let type_str = format!("{}", type_);
-                    let block_content = format!("{} {} =\n{}", type_str, name, content);
-                    let block = FrameworkBlock {
-                        name: block_name.clone(),
-                        content: block_content,
-                        attributes: Vec::new(),
-                        location: Some(location.clone()),
-                    };
-
-                    if self.registry.handles_as_expression(&block_name) {
-                        // Use expand_full so start_function.body statements
-                        // emitted by v3 typed plugins (frame.data et al.) via
-                        // `_emit_statement_into_start` land at the ORM block's
-                        // splice point. Without this, per-verb expanders that
-                        // emit an assignment statement (`n = __Model_count(...)`)
-                        // silently discard those statements — see post-plan
-                        // follow-up 2026-07-04 §8.
-                        let expansion = self.registry.expand_full(&block)?;
-                        let mut expanded = expansion.statements;
-                        if let Some(sf) = expansion.start_function {
-                            expanded.extend(sf.body);
-                        }
-                        // Stamp plugin origin so telemetry routes diagnostics
-                        // on ORM-block-synthesized code (e.g. `User.find:`) to
-                        // the plugin's owning component (frame.data → framework).
-                        // See `stamp_plugin_origin` docstring.
-                        if let Some(plugin_name) = self.plugin_name_for_block(&block_name) {
-                            stamp_plugin_origin(&mut expanded, &plugin_name);
-                        }
-                        self.pending_functions.extend(expansion.functions);
-                        self.pending_classes.extend(expansion.classes);
-                        self.pending_capabilities.extend(expansion.capabilities);
-                        self.pending_externals.extend(expansion.externals);
-                        merge_state_block(&mut self.pending_state, expansion.state);
-                        self.blocks_expanded += 1;
-                        self.statements_generated += expanded.len();
-
-                        tracing::trace!(
-                            block_name = %block_name,
-                            expanded_count = expanded.len(),
-                            "Expanded ORM query expression"
-                        );
-
-                        // Recursively expand any nested framework blocks
-                        let expanded = self.expand_statements(expanded)?;
-                        result.extend(expanded);
-                    } else {
+                    let block_content = format!("{} {} =\n{}", type_, name, content);
+                    match self.expand_orm_query(model, verb, block_content, location)? {
+                        Some(expanded) => result.extend(expanded),
                         // No plugin registered for this expression pattern — keep the
-                        // statement as-is.  Semantic analysis will emit a helpful error.
-                        result.push(stmt);
+                        // statement as-is. Semantic analysis will emit a helpful error.
+                        None => result.push(stmt),
                     }
                 }
 
@@ -1197,8 +1051,7 @@ impl<'a> PluginExpander<'a> {
                 // dispatches the block to its plugin and re-wraps the resulting bare
                 // expression as `Return { value: Some(expr) }`. Without this arm the
                 // OrmQuery survives to HIR and trips SEM001 even though the verb is
-                // registered (typed-binding form works because the VariableDecl arm
-                // above handles it).
+                // registered.
                 Statement::Return {
                     value:
                         Some(crate::ast::Expression::OrmQuery {
@@ -1209,71 +1062,35 @@ impl<'a> PluginExpander<'a> {
                         }),
                     location: ref return_location,
                 } => {
-                    let block_name = format!("{}.{}", model, verb);
                     // No binding header — plugin emits the bare expression.
-                    let block = FrameworkBlock {
-                        name: block_name.clone(),
-                        content: content.clone(),
-                        attributes: Vec::new(),
-                        location: Some(location.clone()),
-                    };
-
-                    if self.registry.handles_as_expression(&block_name) {
-                        // expand_full so start_function.body statements land at
-                        // the splice point (see VariableDecl+OrmQuery arm above).
-                        let expansion = self.registry.expand_full(&block)?;
-                        let mut expanded = expansion.statements;
-                        if let Some(sf) = expansion.start_function {
-                            expanded.extend(sf.body);
-                        }
-                        // Stamp plugin origin so telemetry routes diagnostics
-                        // on ORM-block-synthesized code (e.g. `User.find:`) to
-                        // the plugin's owning component (frame.data → framework).
-                        // See `stamp_plugin_origin` docstring.
-                        if let Some(plugin_name) = self.plugin_name_for_block(&block_name) {
-                            stamp_plugin_origin(&mut expanded, &plugin_name);
-                        }
-                        self.pending_functions.extend(expansion.functions);
-                        self.pending_classes.extend(expansion.classes);
-                        self.pending_capabilities.extend(expansion.capabilities);
-                        self.pending_externals.extend(expansion.externals);
-                        merge_state_block(&mut self.pending_state, expansion.state);
-                        self.blocks_expanded += 1;
-                        self.statements_generated += expanded.len();
-
-                        tracing::trace!(
-                            block_name = %block_name,
-                            expanded_count = expanded.len(),
-                            "Expanded return-form ORM query expression"
-                        );
-
-                        // Expression-returning verbs produce a single bare expression
-                        // (e.g. `__Model_count(...)`) which parses as one
-                        // `Statement::Expression`. Re-wrap that as a Return; recursively
-                        // expand first in case the expansion contains nested blocks.
-                        let mut expanded = self.expand_statements(expanded)?;
-                        if expanded.len() == 1 {
-                            if let Statement::Expression { expr, .. } = expanded.remove(0) {
-                                result.push(Statement::Return {
-                                    value: Some(expr),
-                                    location: return_location.clone(),
-                                });
-                                continue;
-                            }
-                        }
-                        // Plugin returned a non-expression or multi-statement shape —
-                        // not legal as the operand of `return`. Emit the statements
-                        // followed by a bare `return` so codegen still terminates the
-                        // function. A type error will surface for non-void functions.
-                        result.extend(expanded);
-                        result.push(Statement::Return {
-                            value: None,
-                            location: return_location.clone(),
-                        });
-                    } else {
+                    let Some(mut expanded) =
+                        self.expand_orm_query(model, verb, content.clone(), location)?
+                    else {
                         // No plugin claims this verb — leave intact so HIR emits SEM001.
                         result.push(stmt);
+                        continue;
+                    };
+                    // Expression-returning verbs produce a single bare expression
+                    // (e.g. `__Model_count(...)`) which parses as one
+                    // `Statement::Expression`. Re-wrap that as a Return.
+                    if expanded.len() == 1 {
+                        if let Statement::Expression { expr, .. } = expanded.remove(0) {
+                            result.push(Statement::Return {
+                                value: Some(expr),
+                                location: return_location.clone(),
+                            });
+                            continue;
+                        }
                     }
+                    // Plugin returned a non-expression or multi-statement shape —
+                    // not legal as the operand of `return`. Emit the statements
+                    // followed by a bare `return` so codegen still terminates the
+                    // function. A type error will surface for non-void functions.
+                    result.extend(expanded);
+                    result.push(Statement::Return {
+                        value: None,
+                        location: return_location.clone(),
+                    });
                 }
 
                 // Expression statement whose expression is a standalone ORM query block.
@@ -1288,44 +1105,10 @@ impl<'a> PluginExpander<'a> {
                             ref location,
                         },
                     ..
-                } => {
-                    let block_name = format!("{}.{}", model, verb);
-                    let block = FrameworkBlock {
-                        name: block_name.clone(),
-                        content: content.clone(),
-                        attributes: Vec::new(),
-                        location: Some(location.clone()),
-                    };
-
-                    if self.registry.handles_as_expression(&block_name) {
-                        // expand_full so start_function.body statements land at
-                        // the splice point (see VariableDecl+OrmQuery arm above).
-                        let expansion = self.registry.expand_full(&block)?;
-                        let mut expanded = expansion.statements;
-                        if let Some(sf) = expansion.start_function {
-                            expanded.extend(sf.body);
-                        }
-                        // Stamp plugin origin so telemetry routes diagnostics
-                        // on ORM-block-synthesized code (e.g. `User.find:`) to
-                        // the plugin's owning component (frame.data → framework).
-                        // See `stamp_plugin_origin` docstring.
-                        if let Some(plugin_name) = self.plugin_name_for_block(&block_name) {
-                            stamp_plugin_origin(&mut expanded, &plugin_name);
-                        }
-                        self.pending_functions.extend(expansion.functions);
-                        self.pending_classes.extend(expansion.classes);
-                        self.pending_capabilities.extend(expansion.capabilities);
-                        self.pending_externals.extend(expansion.externals);
-                        merge_state_block(&mut self.pending_state, expansion.state);
-                        self.blocks_expanded += 1;
-                        self.statements_generated += expanded.len();
-
-                        let expanded = self.expand_statements(expanded)?;
-                        result.extend(expanded);
-                    } else {
-                        result.push(stmt);
-                    }
-                }
+                } => match self.expand_orm_query(model, verb, content.clone(), location)? {
+                    Some(expanded) => result.extend(expanded),
+                    None => result.push(stmt),
+                },
 
                 // Pass through statements that don't contain nested statements
                 other => result.push(other),
@@ -1333,6 +1116,134 @@ impl<'a> PluginExpander<'a> {
         }
 
         Ok(result)
+    }
+
+    /// Dispatch one framework block to its plugin and absorb the full
+    /// expansion. Returns the statements to splice in place of the block
+    /// (not yet recursively expanded — the caller does that).
+    ///
+    /// A block with no registered plugin is an error: nothing downstream
+    /// handles a pass-through FrameworkBlock — resolver, type checker, HIR,
+    /// MIR and codegen all skip it — so it would vanish silently and the
+    /// program would compile with a missing feature.
+    fn expand_framework_block(
+        &mut self,
+        block: FrameworkBlock,
+        placement: StartPlacement,
+    ) -> Result<Vec<Statement>, PluginError> {
+        if !self.registry.handles(&block.name) {
+            return Err(PluginError::UnknownBlockType {
+                block_name: block.name,
+                location: block.location,
+            });
+        }
+        let expansion = self.registry.expand_full(&block)?;
+        let plugin_name = self
+            .registry
+            .get_handler(&block.name)
+            .map(|h| h.name().to_string());
+        tracing::trace!(block_name = %block.name, "Expanded framework block");
+        Ok(self.absorb_expansion(expansion, plugin_name.as_deref(), placement))
+    }
+
+    /// Dispatch an ORM query block expression (`Model.<verb>: ...`) to the
+    /// plugin that registered the `Model.<verb>` expression pattern. Returns
+    /// `Ok(None)` when no plugin claims the pattern so the caller keeps the
+    /// original statement (HIR then reports SEM001). The returned statements
+    /// are already recursively expanded.
+    fn expand_orm_query(
+        &mut self,
+        model: &str,
+        verb: &str,
+        content: String,
+        location: &crate::ast::SourceLocation,
+    ) -> Result<Option<Vec<Statement>>, PluginError> {
+        let block_name = format!("{}.{}", model, verb);
+        if !self.registry.handles_as_expression(&block_name) {
+            return Ok(None);
+        }
+        let block = FrameworkBlock {
+            name: block_name,
+            content,
+            attributes: Vec::new(),
+            location: Some(location.clone()),
+        };
+        let expansion = self.registry.expand_full(&block)?;
+        let plugin_name = self.plugin_name_for_block(&block.name);
+        // Statements a v3 plugin emits via `_emit_statement_into_start` land
+        // at the ORM block's splice point (e.g. `n = __Model_count(...)`).
+        let expanded =
+            self.absorb_expansion(expansion, plugin_name.as_deref(), StartPlacement::Inline);
+        tracing::trace!(
+            block_name = %block.name,
+            expanded_count = expanded.len(),
+            "Expanded ORM query expression"
+        );
+        self.expand_statements(expanded).map(Some)
+    }
+
+    /// Fold one plugin expansion into the expander state and return the
+    /// statements that replace the block at its splice point.
+    ///
+    /// Every dispatch path (top-level blocks, nested blocks, ORM query
+    /// expressions) goes through here so none of them can drop part of the
+    /// expansion:
+    /// - plugin origin is stamped on all synthesized code (telemetry routes
+    ///   diagnostics on it to the plugin's owning component — fingerprint
+    ///   f5f2a9954225);
+    /// - the inline statements are checked against the plugin's declared
+    ///   `[bridge]` functions; violations are collected for the caller
+    ///   (`take_permission_errors`);
+    /// - functions, classes, capabilities, externals and the `state:` block
+    ///   are queued for merging into the program;
+    /// - the start-function body is merged into the program start function
+    ///   (`StartPlacement::Program`) or spliced inline after the statements
+    ///   (`StartPlacement::Inline`).
+    fn absorb_expansion(
+        &mut self,
+        mut expansion: super::PluginExpansion,
+        plugin_name: Option<&str>,
+        placement: StartPlacement,
+    ) -> Vec<Statement> {
+        if let Some(plugin_name) = plugin_name {
+            stamp_plugin_origin_expansion(&mut expansion, plugin_name);
+        }
+
+        let mut inline = std::mem::take(&mut expansion.statements);
+        if let Some(start_fn) = expansion.start_function.take() {
+            match placement {
+                StartPlacement::Inline => inline.extend(start_fn.body),
+                StartPlacement::Program => match self.pending_start {
+                    Some(ref mut existing) => existing.body.extend(start_fn.body),
+                    None => self.pending_start = Some(start_fn),
+                },
+            }
+        }
+
+        if let Some(plugin_name) = plugin_name {
+            let violations = validate_plugin_permissions(self.registry, plugin_name, &inline);
+            if !violations.is_empty() {
+                tracing::warn!(
+                    plugin = %plugin_name,
+                    violation_count = violations.len(),
+                    "Plugin permission violations detected in expanded code"
+                );
+                self.permission_errors.extend(violations);
+            }
+        }
+
+        self.pending_functions.extend(expansion.functions);
+        self.pending_classes.extend(expansion.classes);
+        self.pending_capabilities.extend(expansion.capabilities);
+        self.pending_externals.extend(expansion.externals);
+        // Required for the frame.ui hydration pattern, where each
+        // `component:` block contributes one `instance_<tag>` declaration
+        // that the `client_init` splice later dispatches through.
+        merge_state_block(&mut self.pending_state, expansion.state);
+
+        self.blocks_expanded += 1;
+        self.statements_generated += inline.len();
+        inline
     }
 
     /// Expand framework blocks in functions
@@ -1382,14 +1293,27 @@ impl<'a> PluginExpander<'a> {
         self.statements_generated
     }
 
-    /// Take ownership of any permission violation errors collected during expansion.
-    ///
-    /// Callers should check this after `expand_program` returns and incorporate
-    /// the errors into the compilation diagnostics.  Errors are non-fatal with
-    /// respect to expansion itself (expansion still succeeds), but the caller
-    /// can choose to fail compilation on any violation.
-    pub fn take_permission_errors(&mut self) -> Vec<CompilerError> {
-        std::mem::take(&mut self.permission_errors)
+    /// Report the plugin permission violations collected during expansion
+    /// (plugin-generated code calling a bridge function its manifest does not
+    /// declare). Call after `expand_program` returns. Every violation is
+    /// reported in one pass; the collected list is drained.
+    pub fn check_permissions(&mut self) -> Result<(), CompilerError> {
+        let violations = std::mem::take(&mut self.permission_errors);
+        if violations.is_empty() {
+            return Ok(());
+        }
+        let message = violations
+            .iter()
+            .map(|e| match e {
+                CompilerError::PluginError { message, .. } => message.clone(),
+                other => other.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Err(CompilerError::PluginError {
+            message,
+            location: None,
+        })
     }
 }
 
@@ -1430,7 +1354,6 @@ mod tests {
             plugins: vec![],
             start_function: None,
             tests: vec![],
-            screens: vec![],
             state: None,
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),
@@ -2148,5 +2071,194 @@ mod tests {
         );
         merge_capability(&mut program, cap1).unwrap();
         assert!(merge_capability(&mut program, cap2).is_err());
+    }
+
+    // ── Nested framework blocks keep their whole expansion ────────────────
+    //
+    // A framework block nested inside a function body (or branch, loop,
+    // test, class member) used to be dispatched through `registry.expand`,
+    // which for typed-emission plugins kept only the inline statements and
+    // silently dropped the helper functions, classes, capabilities, state
+    // and start body the plugin emitted — and skipped the bridge permission
+    // check. Every dispatch path now folds through `absorb_expansion`.
+
+    /// Emits one inline statement, a start-function body statement and a
+    /// helper function, the shape a typed-emission plugin produces for a
+    /// block that needs a module-level helper.
+    struct HelperEmittingPlugin;
+
+    impl FrameworkPlugin for HelperEmittingPlugin {
+        fn name(&self) -> &'static str {
+            "test.helper"
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            &["with_helper"]
+        }
+
+        fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(Vec::new())
+        }
+
+        fn expand_full(&self, _block: &FrameworkBlock) -> PluginResult<PluginExpansion> {
+            let call = |name: &str| Statement::Expression {
+                expr: Expression::Call(name.to_string(), Vec::new()),
+                location: None,
+            };
+            Ok(PluginExpansion {
+                statements: vec![call("__helper_inline")],
+                start_function: Some(Function::new(
+                    "start".to_string(),
+                    Vec::new(),
+                    Type::Void,
+                    vec![call("__helper_start")],
+                    None,
+                )),
+                functions: vec![Function::new(
+                    "__helper_inline".to_string(),
+                    Vec::new(),
+                    Type::Void,
+                    Vec::new(),
+                    None,
+                )],
+                ..PluginExpansion::default()
+            })
+        }
+    }
+
+    fn nested_block(name: &str) -> Statement {
+        Statement::FrameworkBlock {
+            name: name.to_string(),
+            content: String::new(),
+            attributes: vec![],
+            location: None,
+        }
+    }
+
+    #[test]
+    fn nested_block_in_function_keeps_helper_functions_and_start_body() {
+        let mut registry = PluginRegistry::new();
+        registry.register(Arc::new(HelperEmittingPlugin)).unwrap();
+
+        let mut program = make_test_program(vec![]);
+        program.functions.push(Function::new(
+            "handler".to_string(),
+            Vec::new(),
+            Type::Void,
+            vec![Statement::If {
+                condition: Expression::Literal(Value::Boolean(true)),
+                then_branch: vec![nested_block("with_helper")],
+                else_branch: None,
+                location: None,
+            }],
+            None,
+        ));
+
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program).unwrap();
+
+        assert!(
+            result.functions.iter().any(|f| f.name == "__helper_inline"),
+            "helper function emitted by a nested block must reach the program; got {:?}",
+            result.functions.iter().map(|f| &f.name).collect::<Vec<_>>()
+        );
+
+        let handler = result
+            .functions
+            .iter()
+            .find(|f| f.name == "handler")
+            .unwrap();
+        let Statement::If { then_branch, .. } = &handler.body[0] else {
+            panic!("handler body must still start with the if statement");
+        };
+        let called: Vec<&str> = then_branch
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Expression {
+                    expr: Expression::Call(name, _),
+                    ..
+                } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        // The inline statements and the start body both land at the splice
+        // point; neither is moved into the program's start function.
+        assert_eq!(called, vec!["__helper_inline", "__helper_start"]);
+        assert!(result.start_function.is_none());
+    }
+
+    #[test]
+    fn top_level_block_start_body_merges_into_program_start() {
+        let mut registry = PluginRegistry::new();
+        registry.register(Arc::new(HelperEmittingPlugin)).unwrap();
+
+        let program = make_test_program(vec![nested_block("with_helper")]);
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program).unwrap();
+
+        assert!(result.functions.iter().any(|f| f.name == "__helper_inline"));
+        let start = result.start_function.expect("plugin start body merged");
+        assert!(matches!(
+            &start.body[0],
+            Statement::Expression { expr: Expression::Call(name, _), .. } if name == "__helper_start"
+        ));
+    }
+
+    /// Calls a bridge-looking function its (absent) manifest never declares.
+    struct UndeclaredBridgePlugin;
+
+    impl FrameworkPlugin for UndeclaredBridgePlugin {
+        fn name(&self) -> &'static str {
+            "test.undeclared"
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            &["undeclared_bridge"]
+        }
+
+        fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(vec![Statement::Expression {
+                expr: Expression::Call("_db_query".to_string(), Vec::new()),
+                location: None,
+            }])
+        }
+    }
+
+    #[test]
+    fn permission_violation_in_nested_block_is_reported() {
+        let mut registry = PluginRegistry::new();
+        registry.register(Arc::new(UndeclaredBridgePlugin)).unwrap();
+
+        let mut program = make_test_program(vec![]);
+        program.functions.push(Function::new(
+            "handler".to_string(),
+            Vec::new(),
+            Type::Void,
+            vec![nested_block("undeclared_bridge")],
+            None,
+        ));
+
+        let mut expander = PluginExpander::new(&registry);
+        expander.expand_program(program).unwrap();
+        let err = expander
+            .check_permissions()
+            .expect_err("undeclared bridge call must be reported");
+        assert!(
+            err.to_string().contains("_db_query"),
+            "violation must name the bridge: {}",
+            err
+        );
+        // Drained: a second check reports nothing new.
+        assert!(expander.check_permissions().is_ok());
+    }
+
+    #[test]
+    fn no_permission_violations_is_ok() {
+        let mut registry = PluginRegistry::new();
+        registry.register(Arc::new(HelperEmittingPlugin)).unwrap();
+        let program = make_test_program(vec![nested_block("with_helper")]);
+        let mut expander = PluginExpander::new(&registry);
+        expander.expand_program(program).unwrap();
+        assert!(expander.check_permissions().is_ok());
     }
 }

@@ -22,7 +22,7 @@
 //!   active build is itself a client build.
 
 use crate::plugins::plugin_abi::{ArtifactSource, PluginArtifact, PluginManifest};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::{Path, PathBuf};
 
 /// Result of producing a single artifact.
@@ -92,7 +92,7 @@ impl std::fmt::Display for ArtifactError {
 /// silently skips the artifact rather than producing it incorrectly.
 pub fn evaluate_required_when(
     predicate: &str,
-    loaded_manifests: &HashMap<String, PluginManifest>,
+    loaded_manifests: &IndexMap<String, PluginManifest>,
     artifacts_so_far: &[String],
     build_state: &std::collections::BTreeMap<String, String>,
 ) -> bool {
@@ -369,7 +369,7 @@ fn emit_static_asset_from_path(
 /// sources, unknown predicates). Hard failures (cycle, emission error)
 /// short-circuit and return as the error path.
 pub fn orchestrate(
-    loaded_manifests: &HashMap<String, PluginManifest>,
+    loaded_manifests: &IndexMap<String, PluginManifest>,
     ctx: &EmitContext,
 ) -> Result<(Vec<EmittedArtifact>, Vec<String>), ArtifactError> {
     let mut emitted = Vec::new();
@@ -532,7 +532,7 @@ mod tests {
             },
         );
 
-        let mut manifests = HashMap::new();
+        let mut manifests = IndexMap::new();
         manifests.insert("plugin.declarer".to_string(), declarer);
         manifests.insert("plugin.optin".to_string(), opter_in);
 
@@ -589,7 +589,7 @@ mod tests {
         });
 
         // No plugin declares client_init. Predicate must short-circuit.
-        let mut manifests = HashMap::new();
+        let mut manifests = IndexMap::new();
         manifests.insert("plugin.declarer".to_string(), declarer);
 
         assert!(
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_always_is_true() {
-        let m = HashMap::new();
+        let m = IndexMap::new();
         assert!(evaluate_required_when(
             "always",
             &m,
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_never_is_false() {
-        let m = HashMap::new();
+        let m = IndexMap::new();
         assert!(!evaluate_required_when(
             "never",
             &m,
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_has_client_init_when_a_plugin_declares_it() {
-        let mut manifests = HashMap::new();
+        let mut manifests = IndexMap::new();
         manifests.insert(
             "frame.ui".to_string(),
             manifest_with_lifecycle(
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_has_client_init_when_no_plugin_declares_it() {
-        let mut manifests = HashMap::new();
+        let mut manifests = IndexMap::new();
         manifests.insert(
             "frame.server".to_string(),
             manifest_with_lifecycle("frame.server", PluginLifecycle::default()),
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_has_lifecycle_for_arbitrary_slot() {
-        let mut manifests = HashMap::new();
+        let mut manifests = IndexMap::new();
         manifests.insert(
             "frame.server".to_string(),
             manifest_with_lifecycle(
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_has_artifact_checks_prior_emissions() {
-        let manifests = HashMap::new();
+        let manifests = IndexMap::new();
         let prior = vec!["frontend.wasm".to_string()];
         assert!(evaluate_required_when(
             "has_artifact.frontend.wasm",
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_has_build_state_key_present() {
-        let manifests = HashMap::new();
+        let manifests = IndexMap::new();
         let mut state = std::collections::BTreeMap::new();
         state.insert("has_client_components".to_string(), "true".to_string());
         assert!(
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_has_build_state_empty_map() {
-        let manifests = HashMap::new();
+        let manifests = IndexMap::new();
         let state = std::collections::BTreeMap::new();
         assert!(
             !evaluate_required_when("has_build_state.any_key", &manifests, &[], &state),
@@ -755,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_unknown_predicate_defaults_to_false() {
-        let manifests = HashMap::new();
+        let manifests = IndexMap::new();
         assert!(!evaluate_required_when(
             "typo",
             &manifests,
@@ -969,7 +969,7 @@ mod tests {
             cache: "build_input_hash".to_string(),
             content_type: Some("text/css".to_string()),
         };
-        let mut plugin_dirs = HashMap::new();
+        let mut plugin_dirs = std::collections::HashMap::new();
         plugin_dirs.insert("frame.ui".to_string(), plugin_dir);
 
         let ctx = EmitContext {
@@ -1020,7 +1020,7 @@ mod tests {
             content_type: Some("text/css".to_string()),
         });
 
-        let mut manifests = HashMap::new();
+        let mut manifests = IndexMap::new();
         manifests.insert("test.artifacts_v2".to_string(), declarer);
 
         let mut state = std::collections::BTreeMap::new();
@@ -1063,5 +1063,73 @@ mod tests {
         assert!(s.public);
         assert_eq!(s.content_type, "text/css");
         assert_eq!(s.bytes, b"body{}");
+    }
+
+    /// `required_when = "has_artifact.X"` across plugins depends on which
+    /// plugin's artifacts were produced first. Orchestration must walk the
+    /// manifests in plugin-load order so the result is the same on every
+    /// build — it used to iterate a `HashMap`, so the dependent artifact
+    /// appeared or vanished depending on hash order.
+    #[test]
+    fn test_orchestrate_cross_plugin_has_artifact_follows_load_order() {
+        fn css_artifact(name: &str, required_when: &str) -> PluginArtifact {
+            PluginArtifact {
+                name: name.to_string(),
+                purpose: "static_asset".to_string(),
+                emit: Some(ArtifactSource::Callback(format!("emit_{}", name))),
+                static_path: None,
+                output_relative: format!("{{output_dir}}/{}", name),
+                required_when: required_when.to_string(),
+                public: true,
+                cache: "build_input_hash".to_string(),
+                content_type: Some("text/css".to_string()),
+            }
+        }
+        let mut base = manifest_with_lifecycle("test.base", PluginLifecycle::default());
+        base.artifacts.push(css_artifact("base.css", "always"));
+        let mut theme = manifest_with_lifecycle("test.theme", PluginLifecycle::default());
+        theme
+            .artifacts
+            .push(css_artifact("theme.css", "has_artifact.base.css"));
+
+        let mut state = std::collections::BTreeMap::new();
+        state.insert("test.base.base.css".to_string(), "a{}".to_string());
+        state.insert("test.theme.theme.css".to_string(), "b{}".to_string());
+        let output_dir = PathBuf::from("/tmp/dist-test-orchestrate-order");
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/x.cln"),
+            output_dir: &output_dir,
+            opt_level: 2,
+            in_nested_build: false,
+            build_state: state,
+            plugin_dirs: Default::default(),
+        };
+
+        // Many plugins loaded before the pair so a hash-ordered walk would
+        // reorder them on some runs.
+        for _ in 0..32 {
+            let mut manifests = IndexMap::new();
+            for i in 0..8 {
+                let name = format!("test.filler{}", i);
+                manifests.insert(
+                    name.clone(),
+                    manifest_with_lifecycle(&name, PluginLifecycle::default()),
+                );
+            }
+            manifests.insert("test.base".to_string(), base.clone());
+            manifests.insert("test.theme".to_string(), theme.clone());
+            let (emitted, _) = orchestrate(&manifests, &ctx).expect("orchestrate ok");
+            let names: Vec<&str> = emitted.iter().map(|a| a.name.as_str()).collect();
+            assert_eq!(names, vec!["base.css", "theme.css"]);
+        }
+
+        // Loaded the other way round, the dependency is not yet satisfied
+        // when `test.theme` is visited — consistently.
+        let mut reversed = IndexMap::new();
+        reversed.insert("test.theme".to_string(), theme);
+        reversed.insert("test.base".to_string(), base);
+        let (emitted, _) = orchestrate(&reversed, &ctx).expect("orchestrate ok");
+        let names: Vec<&str> = emitted.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["base.css"]);
     }
 }

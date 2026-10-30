@@ -101,7 +101,7 @@ pub use plugin_abi::{
     AssembleInput, AssembleOutput, AssembleSourceFile, InjectedSource, TransformedSource,
 };
 pub use plugin_abi::{
-    BridgeFunction, PluginAbi, PluginBridge, PluginCompletionDef, PluginFunctionDef, PluginKeyword,
+    BridgeFunction, PluginBridge, PluginCompletionDef, PluginFunctionDef, PluginKeyword,
     PluginLanguage, PluginManifest, PluginTypeDef, PluginTypeField, PLUGIN_ABI_VERSION,
 };
 pub use plugin_abi::{
@@ -236,29 +236,6 @@ impl<'a> PluginLspContext<'a> {
         self.line = line;
         self.column = column;
         self
-    }
-
-    /// Set the block stack
-    pub fn with_block_stack(mut self, stack: Vec<&'a str>) -> Self {
-        self.block_stack = stack;
-        self
-    }
-
-    /// Set the file path
-    pub fn with_file_path(mut self, path: &'a std::path::Path) -> Self {
-        self.file_path = Some(path);
-        self
-    }
-
-    /// Set the owning plugin
-    pub fn with_owning_plugin(mut self, plugin: &'a str) -> Self {
-        self.owning_plugin = Some(plugin);
-        self
-    }
-
-    /// Get the current context (innermost block in the stack)
-    pub fn current_context(&self) -> &str {
-        self.block_stack.last().copied().unwrap_or(self.block_name)
     }
 }
 
@@ -641,6 +618,22 @@ pub struct PluginExpansion {
     /// plugin declarations come before user declarations; computed values
     /// concatenate; only one rules block is allowed across the whole program.
     pub state: Option<crate::ast::StateBlock>,
+}
+
+impl PluginExpansion {
+    /// The statements this expansion contributes at the block's splice point
+    /// when the block is used inline (inside a function body, a control-flow
+    /// branch, or as an expression): the top-level statements followed by the
+    /// start-function body. Functions, classes, capabilities, externals and
+    /// state are discarded — callers that need them must consume the whole
+    /// expansion.
+    pub fn into_inline_statements(self) -> Vec<Statement> {
+        let mut statements = self.statements;
+        if let Some(start_fn) = self.start_function {
+            statements.extend(start_fn.body);
+        }
+        statements
+    }
 }
 
 #[cfg(test)]

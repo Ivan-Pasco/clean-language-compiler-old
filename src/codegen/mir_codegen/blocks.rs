@@ -2,7 +2,7 @@
 //!
 //! Contains:
 //! * `generate_function`        — top-level per-function driver
-//! * `generate_basic_block`     — linear block emission (used by legacy path)
+//! * `emit_return`              — Return terminator emission with return-type coercion
 //! * `generate_branch_block`    — branch body emission (no Jump-following)
 //! * `generate_structured_blocks` — recursive structured-CF traversal
 
@@ -53,6 +53,38 @@ impl MirCodeGenerator<'_> {
             // never appear as a function return type in valid MIR.
             _ => {}
         }
+    }
+
+    /// Emit a `return` for a `MirTerminator::Return`.
+    ///
+    /// The stack must hold exactly one value of the function's declared
+    /// return type (or nothing for void) before the bare `Return`:
+    ///   1. `Some(non-Undefined)` → load the value and coerce it to the
+    ///      declared return type (`emit_numeric_coercion`).
+    ///   2. `Some(Undefined)` → push a typed zero (implicit return added by
+    ///      `ensure_function_termination` for a non-void function whose
+    ///      reachable tail had no explicit return).
+    ///   3. `None` → push a typed zero (no-op for void functions).
+    pub(super) fn emit_return(&mut self, value: Option<&MirOperand>) -> Result<(), CompilerError> {
+        let func_return_type = self
+            .current_function
+            .as_ref()
+            .map(|f| f.return_type.clone());
+        match value {
+            Some(return_value)
+                if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) =>
+            {
+                self.load_operand(return_value)?;
+                if let (Some(dst), Some(src)) =
+                    (&func_return_type, self.get_operand_mir_type(return_value))
+                {
+                    self.emit_numeric_coercion(&src, dst);
+                }
+            }
+            _ => self.push_zero_for_return_type(&func_return_type),
+        }
+        self.current_instructions.push(Instruction::Return);
+        Ok(())
     }
 
     /// Generate WASM function from MIR function.
@@ -320,49 +352,6 @@ impl MirCodeGenerator<'_> {
         Ok(stats)
     }
 
-    /// Generate WASM instructions for a basic block.
-    #[allow(dead_code)] // Used internally by generate_function
-    pub(super) fn generate_basic_block(
-        &mut self,
-        block: &MirBasicBlock,
-    ) -> Result<(), CompilerError> {
-        tracing::trace!(
-            predecessors = block.predecessors.len(),
-            "Starting basic block generation"
-        );
-
-        // Start block if it has predecessors (not entry block)
-        if !block.predecessors.is_empty() {
-            if let Some(&label) = self.block_labels.get(&block.id) {
-                self.current_instructions
-                    .push(Instruction::Block(BlockType::Empty));
-                debug_mir!(label = label, "Added Block instruction for label");
-            }
-        }
-
-        // Generate instructions
-        tracing::trace!(
-            instructions = block.instructions.len(),
-            "Generating block instructions"
-        );
-        for (i, instruction) in block.instructions.iter().enumerate() {
-            debug_mir!("DEBUG MIR: Processing instruction {}: {:?}", i, instruction);
-            self.generate_instruction(instruction)?;
-        }
-
-        // Generate terminator
-        debug_mir!("DEBUG MIR: Generating terminator: {:?}", block.terminator);
-        self.generate_terminator(&block.terminator)?;
-
-        // End block if it was started
-        if !block.predecessors.is_empty() {
-            self.current_instructions.push(Instruction::End);
-        }
-
-        debug_mir!("DEBUG MIR: generate_basic_block completed successfully");
-        Ok(())
-    }
-
     /// Generate a branch block body (for if/else branches) without following Jump terminators.
     ///
     /// Jump terminators in branch blocks represent exits to continuation blocks that should
@@ -413,52 +402,7 @@ impl MirCodeGenerator<'_> {
         );
         match &block.terminator {
             MirTerminator::Return { value } => {
-                // A Return terminator in a branch block must leave an i32/i64/f64
-                // on the stack matching the function's declared return type
-                // before the bare Return instruction. There are three cases:
-                //   1. value is Some(non-Undefined) → load it (with type coercion)
-                //   2. value is Some(Undefined) → push a typed zero (implicit
-                //      return from ensure_function_termination for a non-void
-                //      function whose reachable tail had no explicit return)
-                //   3. value is None → push a typed zero (defensive; should
-                //      only happen for void functions)
-                let func_return_type = self
-                    .current_function
-                    .as_ref()
-                    .map(|f| f.return_type.clone());
-                let mut pushed_value = false;
-                if let Some(return_value) = value {
-                    if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
-                        self.load_operand(return_value)?;
-                        pushed_value = true;
-
-                        // Coerce return value to the function's declared return type (E007 fix).
-                        // value_to_type covers both parameters and locals; get_operand_mir_type
-                        // only covers locals, so we use value_to_type for Value operands.
-                        let value_type = match return_value {
-                            MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
-                            _ => self.get_operand_mir_type(return_value),
-                        };
-                        match (&func_return_type, &value_type) {
-                            (Some(MirType::F64), Some(MirType::I32))
-                            | (Some(MirType::F64), Some(MirType::I8))
-                            | (Some(MirType::F64), Some(MirType::I16))
-                            | (Some(MirType::F64), Some(MirType::U8))
-                            | (Some(MirType::F64), Some(MirType::U16))
-                            | (Some(MirType::F64), Some(MirType::U32)) => {
-                                self.current_instructions.push(Instruction::F64ConvertI32S);
-                            }
-                            (Some(MirType::I32), Some(MirType::F64)) => {
-                                self.current_instructions.push(Instruction::I32TruncF64S);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                if !pushed_value {
-                    self.push_zero_for_return_type(&func_return_type);
-                }
-                self.current_instructions.push(Instruction::Return);
+                self.emit_return(value.as_ref())?;
             }
 
             MirTerminator::Jump { target } => {
@@ -806,44 +750,7 @@ impl MirCodeGenerator<'_> {
         // See push_zero_for_return_type for the three-case invariant.
         match &block.terminator {
             MirTerminator::Return { value } => {
-                let func_return_type = self
-                    .current_function
-                    .as_ref()
-                    .map(|f| f.return_type.clone());
-                let mut pushed_value = false;
-                if let Some(return_value) = value {
-                    if !matches!(return_value, MirOperand::Constant(MirConstant::Undefined)) {
-                        self.load_operand(return_value)?;
-                        pushed_value = true;
-
-                        // Coerce the return value to match the function's declared return type
-                        // (E007 fix). value_to_type covers both parameters and locals;
-                        // get_operand_mir_type only covers locals, so we use value_to_type
-                        // as the authoritative type lookup for Value operands.
-                        let value_type = match return_value {
-                            MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
-                            _ => self.get_operand_mir_type(return_value),
-                        };
-                        match (&func_return_type, &value_type) {
-                            (Some(MirType::F64), Some(MirType::I32))
-                            | (Some(MirType::F64), Some(MirType::I8))
-                            | (Some(MirType::F64), Some(MirType::I16))
-                            | (Some(MirType::F64), Some(MirType::U8))
-                            | (Some(MirType::F64), Some(MirType::U16))
-                            | (Some(MirType::F64), Some(MirType::U32)) => {
-                                self.current_instructions.push(Instruction::F64ConvertI32S);
-                            }
-                            (Some(MirType::I32), Some(MirType::F64)) => {
-                                self.current_instructions.push(Instruction::I32TruncF64S);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                if !pushed_value {
-                    self.push_zero_for_return_type(&func_return_type);
-                }
-                self.current_instructions.push(Instruction::Return);
+                self.emit_return(value.as_ref())?;
             }
 
             MirTerminator::Jump { target } => {

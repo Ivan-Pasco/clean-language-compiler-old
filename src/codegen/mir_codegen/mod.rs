@@ -15,8 +15,8 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
 use crate::mir::mir_types::{
-    AnyTypeTag, BasicBlockId, MirBasicBlock, MirBinaryOp, MirConstant, MirFunction, MirInstruction,
-    MirOperand, MirOperation, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
+    AnyTypeTag, BasicBlockId, MirBinaryOp, MirConstant, MirFunction, MirInstruction, MirOperand,
+    MirOperation, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::SymbolId;
 use std::collections::{HashMap, HashSet};
@@ -333,7 +333,6 @@ pub struct MirCodeGenerator<'a> {
     /// 0.33.44 (fingerprint 54887260) — the guard below (see
     /// `resolves_to_expand_strings_wrapper`) exists so a second attempt
     /// panics loudly instead of shipping.
-    #[allow(dead_code)] // populated eagerly; read via `resolves_to_expand_strings_wrapper`
     pub(super) expand_strings_wrapper_names: HashSet<String>,
 
     /// Memory budget tier — controls initial/max pages in the WASM memory section
@@ -539,11 +538,6 @@ impl MirCodeGenerator<'_> {
     /// versions (that lands in Phase B cycle 2).
     pub fn set_abi_version(&mut self, abi_version: Option<String>) {
         self.abi_version = abi_version;
-    }
-
-    /// Set the compilation target.
-    pub fn set_target(&mut self, target: crate::CompilationTarget) {
-        self.target = target;
     }
 
     /// Set the memory budget tier.
@@ -945,11 +939,6 @@ impl MirCodeGenerator<'_> {
                 .register_string_class_operations()
                 .map_err(|e| vec![e])?;
 
-            debug_mir!("DEBUG MIR: Registering list class operations");
-            self.wasm_generator
-                .register_list_class_operations()
-                .map_err(|e| vec![e])?;
-
             debug_mir!("DEBUG MIR: Registering conditional operations");
             self.wasm_generator
                 .register_conditional_operations()
@@ -1082,9 +1071,6 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
         }
-
-        // Set up memory section
-        self.setup_memory_section().map_err(|e| vec![e])?;
 
         // Transfer string pool to WASM module BEFORE function generation
         self.setup_string_pool(&mir_program.string_pool)

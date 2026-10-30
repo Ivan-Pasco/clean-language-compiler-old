@@ -1,0 +1,27 @@
+// Test: bugfixes/string_split_namespace_returns_list
+// Semantic: stdlib-reference.md §4 — `string.split(text, delimiter)` returns
+//   list<string>, the same list the method form `text.split(delimiter)` returns.
+// Fixed in: compiler 0.33.165
+// Regression: the namespace form was typed `Unknown` because the builtin
+//   signature mapper dropped list return types, so the list pointer was
+//   unboxed as an `any` value and every use saw an empty list.
+// Expected output:
+//   3
+//   3
+//   b
+//   a-b-c
+//   4
+//   x|y|z|
+
+start:
+	list<string> a = string.split("a,b,c", ",")
+	print(a.length().toString())
+	print(string.split("1;2;3", ";").length().toString())
+	print(a.get(1))
+	print(string.join(a, "-"))
+	list<string> words = string.split("one two three four", " ")
+	print(words.length().toString())
+	string joined = ""
+	for part in string.split("x y z", " ")
+		joined = joined + part + "|"
+	print(joined)

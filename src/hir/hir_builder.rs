@@ -566,12 +566,9 @@ impl HirBuilder {
                         Some((4, "functions", location.clone()))
                     }
                 }
-                Statement::StateBlockStmt { location, .. } => Some((2, "state", location.clone())),
                 Statement::ClassDefinition { location, .. } => Some((3, "class", location.clone())),
                 // Auxiliary — exempt from ordering.
-                Statement::WatchBlockStmt { .. }
-                | Statement::ScreenBlockStmt { .. }
-                | Statement::ScreenBlock { .. }
+                Statement::ScreenBlockStmt { .. }
                 | Statement::FrameworkBlock { .. }
                 | Statement::TestsBlock { .. } => None,
                 _ => None,
@@ -2011,6 +2008,18 @@ impl HirBuilder {
     }
 
     /// Convert AST expression to HIR expression
+    /// Location of the first expression whose location is known (non-default),
+    /// or the default location when none is.
+    fn first_known_location(exprs: &[&HirExpression]) -> SourceLocation {
+        let unknown = SourceLocation::default();
+        exprs
+            .iter()
+            .map(|e| e.location())
+            .find(|loc| **loc != unknown)
+            .cloned()
+            .unwrap_or(unknown)
+    }
+
     fn build_expression(&mut self, expr: &Expression) -> Result<HirExpression, CompilerError> {
         match expr {
             Expression::ListLiteral(elements) => {
@@ -2067,23 +2076,28 @@ impl HirBuilder {
                 let hir_left = self.build_expression(left)?;
                 let hir_right = self.build_expression(right)?;
                 let hir_op = self.convert_binary_op(op);
+                // The AST binary node carries no span of its own; borrow the
+                // first operand location that is known so type errors on the
+                // operator point at the expression instead of 0:0.
+                let location = Self::first_known_location(&[&hir_left, &hir_right]);
 
                 Ok(HirExpression::BinaryOp {
                     left: Box::new(hir_left),
                     op: hir_op,
                     right: Box::new(hir_right),
-                    location: SourceLocation::default(),
+                    location,
                 })
             }
 
             Expression::Unary(op, operand) => {
                 let hir_operand = self.build_expression(operand)?;
                 let hir_op = self.convert_unary_op(op);
+                let location = Self::first_known_location(&[&hir_operand]);
 
                 Ok(HirExpression::UnaryOp {
                     op: hir_op,
                     operand: Box::new(hir_operand),
-                    location: SourceLocation::default(),
+                    location,
                 })
             }
 
@@ -2218,114 +2232,6 @@ impl HirBuilder {
 
                 Ok(HirExpression::MethodCall {
                     receiver: Box::new(hir_object),
-                    method: method.clone(),
-                    arguments: hir_args,
-                    location: location.clone(),
-                })
-            }
-
-            // ChainedMethodCall — foundation/spec/grammar.ebnf `chained_method_call`.
-            // Lowered to a left-to-right fold of HirExpression::MethodCall nodes.
-            Expression::ChainedMethodCall {
-                receiver,
-                chain,
-                location,
-            } => {
-                let mut hir_recv = self.build_expression(receiver)?;
-                for (method, args) in chain {
-                    let hir_args = args
-                        .iter()
-                        .map(|arg| self.build_expression(arg))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    hir_recv = HirExpression::MethodCall {
-                        receiver: Box::new(hir_recv),
-                        method: method.clone(),
-                        arguments: hir_args,
-                        location: location.clone(),
-                    };
-                }
-                Ok(hir_recv)
-            }
-
-            // MultipleMethodCall — foundation/spec/grammar.ebnf `multiple_method_call`.
-            // Structurally identical to ChainedMethodCall; lowered the same way.
-            Expression::MultipleMethodCall {
-                receiver,
-                chain,
-                location,
-            } => {
-                let mut hir_recv = self.build_expression(receiver)?;
-                for (method, args) in chain {
-                    let hir_args = args
-                        .iter()
-                        .map(|arg| self.build_expression(arg))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    hir_recv = HirExpression::MethodCall {
-                        receiver: Box::new(hir_recv),
-                        method: method.clone(),
-                        arguments: hir_args,
-                        location: location.clone(),
-                    };
-                }
-                Ok(hir_recv)
-            }
-
-            // ThreeLevelMethodCall — foundation/spec/grammar.ebnf `three_level_method_call`.
-            // `first.second.method(args)` — lowered to nested FieldAccess then MethodCall.
-            Expression::ThreeLevelMethodCall {
-                first,
-                second,
-                method,
-                arguments,
-                location,
-            } => {
-                let base = HirExpression::Variable {
-                    name: first.clone(),
-                    location: location.clone(),
-                };
-                let intermediate = HirExpression::FieldAccess {
-                    object: Box::new(base),
-                    field: second.clone(),
-                    location: location.clone(),
-                };
-                let hir_args = arguments
-                    .iter()
-                    .map(|arg| self.build_expression(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(HirExpression::MethodCall {
-                    receiver: Box::new(intermediate),
-                    method: method.clone(),
-                    arguments: hir_args,
-                    location: location.clone(),
-                })
-            }
-
-            // PropertyMethodCall — foundation/spec/grammar.ebnf `property_method_call`.
-            // `obj.a.b...method(args)` — lowered to a chain of FieldAccess then MethodCall.
-            Expression::PropertyMethodCall {
-                object,
-                path,
-                method,
-                arguments,
-                location,
-            } => {
-                let base = HirExpression::Variable {
-                    name: object.clone(),
-                    location: location.clone(),
-                };
-                let receiver = path
-                    .iter()
-                    .fold(base, |acc, seg| HirExpression::FieldAccess {
-                        object: Box::new(acc),
-                        field: seg.clone(),
-                        location: location.clone(),
-                    });
-                let hir_args = arguments
-                    .iter()
-                    .map(|arg| self.build_expression(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(HirExpression::MethodCall {
-                    receiver: Box::new(receiver),
                     method: method.clone(),
                     arguments: hir_args,
                     location: location.clone(),
@@ -6667,7 +6573,7 @@ impl HirBuilder {
                 Self::block_contains_return_or_throw(then_branch)
                     || else_branch
                         .as_ref()
-                        .is_some_and(|eb| Self::block_contains_return_or_throw(eb))
+                        .is_some_and(Self::block_contains_return_or_throw)
             }
             HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
                 Self::block_contains_return_or_throw(body)
@@ -8135,7 +8041,6 @@ mod tests {
             plugins: vec![],
             start_function: None,
             tests: vec![],
-            screens: vec![],
             state: None,
             watch_blocks: Vec::new(),
             screen_blocks: Vec::new(),

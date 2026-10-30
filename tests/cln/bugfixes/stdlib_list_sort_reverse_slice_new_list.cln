@@ -1,0 +1,56 @@
+// Test: bugfixes/stdlib_list_sort_reverse_slice_new_list
+// Semantic: stdlib-reference.md §5 — `.sort()` and `.reverse()` return a NEW
+//   list without mutating; `.slice(start, end)` returns a list.
+// Fixed in: compiler 0.33.165
+// Regression: `list.sort` and `list.reverse` returned the receiver unchanged,
+//   `list.slice` returned an empty list, and the method-call result type was
+//   unknown, so `list<integer> s = a.sort()` read garbage. Number and string
+//   lists now use their own element-typed bodies; slices get an exact
+//   capacity so a later `add` grows instead of writing past the block.
+// Expected output:
+//   123
+//   312
+//   213
+//   -503
+//   2:23
+//   2
+//   3:9:4
+//   -1 0.5 2.5
+//   2.5 -1 0.5
+//   0.5 -1
+//   1:-1
+//   app,apple,fig,pear
+//   pear,apple,fig,app
+
+start:
+	list<integer> a = [3, 1, 2]
+	list<integer> s = a.sort()
+	print(s[0].toString() + s[1].toString() + s[2].toString())
+	print(a[0].toString() + a[1].toString() + a[2].toString())
+	list<integer> r = a.reverse()
+	print(r[0].toString() + r[1].toString() + r[2].toString())
+	list<integer> neg = [3, (-5), 0]
+	list<integer> negSorted = neg.sort()
+	print(negSorted[0].toString() + negSorted[1].toString() + negSorted[2].toString())
+
+	list<integer> b = [1, 2, 3, 4]
+	list<integer> sl = b.slice(1, 3)
+	print(sl.length().toString() + ":" + sl[0].toString() + sl[1].toString())
+	list<integer> tail = b.slice(2, 99)
+	print(tail.length().toString())
+	sl.add(9)
+	print(sl.length().toString() + ":" + sl[2].toString() + ":" + b[3].toString())
+
+	list<number> n = [2.5, (-1.0), 0.5]
+	list<number> ns = n.sort()
+	print(ns[0].toString() + " " + ns[1].toString() + " " + ns[2].toString())
+	print(n[0].toString() + " " + n[1].toString() + " " + n[2].toString())
+	list<number> nr = n.reverse()
+	print(nr[0].toString() + " " + nr[1].toString())
+	list<number> nsl = n.slice(1, 2)
+	print(nsl.length().toString() + ":" + nsl[0].toString())
+
+	list<string> w = ["pear", "apple", "fig", "app"]
+	list<string> ws = w.sort()
+	print(ws[0] + "," + ws[1] + "," + ws[2] + "," + ws[3])
+	print(w[0] + "," + w[1] + "," + w[2] + "," + w[3])

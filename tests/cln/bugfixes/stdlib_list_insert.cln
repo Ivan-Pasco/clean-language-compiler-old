@@ -1,0 +1,37 @@
+// Test: bugfixes/stdlib_list_insert
+// Semantic: stdlib-reference.md §5 — `.insert(index, item)` mutates the list
+//   in place, shifting later elements right.
+// Fixed in: compiler 0.33.165
+// Regression: `list.insert` was a no-op returning 1, so the list never
+//   changed. It now appends through `list.add` (growing the block when full)
+//   and rotates the item into place; the possibly moved list is written back
+//   to the receiver.
+// Expected output:
+//   4:1923
+//   8
+//   78
+//   20:20:1
+//   3:2.5:3.5
+//   ab
+
+start:
+	list<integer> a = [1, 2, 3]
+	a.insert(1, 9)
+	print(a.length().toString() + ":" + a[0].toString() + a[1].toString() + a[2].toString() + a[3].toString())
+	a.insert(4, 8)
+	print(a[4].toString())
+	a.insert(0, 7)
+	print(a[0].toString() + a[5].toString())
+
+	list<integer> grow = []
+	iterate i in 1 to 20
+		grow.insert(0, i)
+	print(grow.length().toString() + ":" + grow[0].toString() + ":" + grow[19].toString())
+
+	list<number> n = [1.5, 3.5]
+	n.insert(1, 2.5)
+	print(n.length().toString() + ":" + n[1].toString() + ":" + n[2].toString())
+
+	list<string> s = ["b"]
+	s.insert(0, "a")
+	print(s[0] + s[1])

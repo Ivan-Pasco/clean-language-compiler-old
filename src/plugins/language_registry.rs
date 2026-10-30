@@ -148,17 +148,6 @@ impl LanguageRegistry {
         registry
     }
 
-    /// Build from a vec of (name, manifest) pairs
-    pub fn from_manifest_vec(manifests: &[(String, PluginManifest)]) -> Self {
-        let mut registry = Self::new();
-
-        for (name, manifest) in manifests {
-            registry.add_manifest(name, manifest);
-        }
-
-        registry
-    }
-
     /// Add a plugin manifest to the registry
     pub fn add_manifest(&mut self, plugin_name: &str, manifest: &PluginManifest) {
         let language = &manifest.language;
@@ -345,11 +334,6 @@ impl LanguageRegistry {
             .iter()
             .filter(|c| c.trigger.starts_with(prefix) || prefix.starts_with(&c.trigger))
             .collect()
-    }
-
-    /// Get all completions
-    pub fn all_completions(&self) -> &[CompletionSnippet] {
-        &self.completions
     }
 
     /// Find the plugin that "owns" a file path

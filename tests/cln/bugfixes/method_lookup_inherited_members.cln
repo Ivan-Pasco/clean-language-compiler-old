@@ -1,0 +1,44 @@
+// Test: bugfixes/method_lookup_inherited_members
+// Grammar: method_call (grammar.ebnf), class inheritance with `is`
+// Semantic: FUNC001, SEM005
+// Unknown methods on a class receiver are now a FUNC001 error. This locks in
+// that methods found through the class hierarchy keep compiling: a public
+// method inherited through a subclass, a public parent method that calls its
+// own private helper on a subclass instance, and a method the subclass
+// declares itself.
+// Fixed in: compiler 0.33.165
+// Expected output:
+//   hello from base
+//   secret=7
+//   own
+
+start:
+	Derived d = Derived()
+	printl(d.greet())
+	printl(d.reveal())
+	printl(d.own())
+
+class Base
+	integer x
+
+	constructor()
+		x = 7
+
+	functions:
+		string secret()
+			return "secret=" + x.toString()
+
+		public:
+			string greet()
+				return "hello from base"
+			string reveal()
+				return this.secret()
+
+class Derived is Base
+	constructor()
+		base()
+
+	functions:
+		public:
+			string own()
+				return "own"

@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "compiler_version": "0.33.164",
+  "contract_version": "1.0.0",
+  "runtime_abi_version": "1.0.0",
+  "generated_at_epoch_seconds": 1793371482,
+  "artifacts": [
+    {
+      "name": "mir_constant_folding_matches_runtime.wasm",
+      "path_relative": "mir_constant_folding_matches_runtime.wasm",
+      "purpose": "main_module",
+      "public": false,
+      "content_type": "application/wasm",
+      "size_bytes": 22328,
+      "sha256": "b26049ccb78b7099664ee1fa19c254595cc7d9a0956d8aa8d38f87cb2dd9bc48",
+      "source_plugin": null
+    }
+  ],
+  "callbacks": [],
+  "build_state": {}
+}

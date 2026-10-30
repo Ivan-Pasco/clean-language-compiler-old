@@ -6,9 +6,9 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 ## 1. String Heap Pointer Initialization Order
 
-**What:** The heap pointer (`__heap_base`) must be set AFTER all string constants are transferred into WASM linear memory, aligned to 8 bytes. If initialization happens too early, string constants get overwritten by heap allocations.
+**What:** The heap start (initial `__heap_ptr`) must be computed AFTER all string constants are transferred into WASM linear memory, aligned to 8 bytes. Layout: string literals from offset 4096 (`CodeGenerator::string_offset_counter`), then the transient arena pool, then the main bump heap. If the heap start is computed too early, string constants get overwritten by heap allocations.
 
-**Where:** `src/codegen/mir_codegen.rs` (~line 5893), `src/codegen/mod.rs` (~line 7199)
+**Where:** `src/codegen/mir_codegen/utilities.rs` (`finalize_module`, reads `string_offset_counter` after `setup_string_pool` and all function bodies have run), `src/codegen/codegen_module_builder.rs` (`get_or_create_string_offset`)
 
 **Watch for:** Any change to string pool transfer order, memory layout initialization, or bump allocator setup.
 
@@ -18,7 +18,7 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 **What:** String equality comparison uses `i32.eqz` to invert the result of a byte-by-byte compare loop: `Equal` needs `i32.eqz`, `NotEqual` does NOT. Getting this backward silently produces wrong results without any runtime error.
 
-**Where:** `src/codegen/mir_codegen.rs` (~line 4548)
+**Where:** `src/codegen/mir_codegen/instructions.rs` (`generate_binary_operation`)
 
 **Watch for:** Any refactoring of comparison operators, string equality logic, or conditional branching on string values.
 
@@ -26,15 +26,15 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 ## 3. Codegen Architecture (CLEANED UP 2026-04-12)
 
-**What:** `MirCodeGenerator` (mir_codegen.rs) is the sole active codegen path. It wraps `CodeGenerator` (mod.rs) as `wasm_generator` field, using its infrastructure (type_manager, memory_utils, function_map, register_* methods) but NOT its direct AST-to-WASM generation methods.
+**What:** `MirCodeGenerator` (`src/codegen/mir_codegen/`) is the sole active codegen path. It wraps `CodeGenerator` (mod.rs) as `wasm_generator` field, using its infrastructure (type_manager, memory_utils data section, function_map, register_* methods). The final module is assembled only by `MirCodeGenerator::finalize_module` (`mir_codegen/utilities.rs`).
 
-**Deleted:** expression_generator.rs (1,846 lines), statement_generator.rs (843 lines), binary_operations.rs (619 lines), type_manager_tests.rs (96 lines), and 2 dead tests from tests.rs. Total: ~3,400 lines removed.
+**Deleted:** expression_generator.rs, statement_generator.rs, binary_operations.rs, type_manager_tests.rs (2026-04-12); the old `CodeGenerator::assemble_module` path with wasm_module_builder.rs, the never-called `generate_basic_block`/`generate_terminator` linear emitters, and `src/mir/control_flow.rs` (2026-10).
 
-**Still present but infrastructure-only:** `CodeGenerator` struct in mod.rs provides field storage and registration methods used by `MirCodeGenerator`. instruction_generator.rs provides `LocalVarInfo` and `InstructionGenerator` types. type_manager.rs, type_conversion.rs, wasm_module_builder.rs, binaryen_optimizer.rs are fields of `CodeGenerator`.
+**Still present but infrastructure-only:** `CodeGenerator` struct in mod.rs provides field storage and registration methods used by `MirCodeGenerator` (codegen_module_builder.rs, codegen_registration.rs, type_manager.rs, memory.rs).
 
-**Where:** `src/codegen/mir_codegen.rs` (active), `src/codegen/mod.rs` (infrastructure)
+**Where:** `src/codegen/mir_codegen/` — `blocks.rs` (functions, structured blocks, `emit_return`), `control_flow.rs`, `instructions.rs`, `operands.rs` (loads/stores, `emit_numeric_coercion`), `utilities.rs` (types, module setup, `finalize_module`).
 
-**Watch for:** All new codegen work goes in `mir_codegen.rs`. The CodeGenerator struct methods in mod.rs should only be modified when changing infrastructure used by MirCodeGenerator.
+**Watch for:** All new codegen work goes in `src/codegen/mir_codegen/`. The CodeGenerator struct methods in mod.rs should only be modified when changing infrastructure used by MirCodeGenerator. Numeric conversions between `integer`, `integer:64` and `number` go through `emit_numeric_coercion` (stores and returns); do not add another copy of the match.
 
 ---
 
@@ -52,7 +52,7 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 **What:** String-to-integer, integer-to-string, and boolean conversion operations require careful operand stack management. Stack underflow/overflow in generated WASM caused 68/68 test failures at one point before being fully resolved. Each conversion path must leave exactly the right number of values on the WASM operand stack.
 
-**Where:** Throughout `src/codegen/mir_codegen.rs` and `src/codegen/mod.rs`
+**Where:** Throughout `src/codegen/mir_codegen/` (`operands.rs::emit_numeric_coercion`, `instructions.rs` Cast handling) and `src/codegen/native_stdlib/type_conversions.rs`
 
 **Watch for:** Adding new type conversion paths, modifying function call sequences, changing how temporary locals are allocated.
 
@@ -62,7 +62,7 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 **What:** Strings use a length-prefixed format in WASM memory: 4 bytes of length followed by content bytes. When passing strings as `Ptr(U8)`, the content pointer is at offset +4 from the string base pointer. The compiler and all bridge functions must agree on this layout.
 
-**Where:** `src/codegen/mir_codegen.rs` (~lines 3871, 4116)
+**Where:** `src/codegen/mir_codegen/operands.rs` (`load_string_argument_for_print`), `src/codegen/mir_codegen/instructions.rs` (bridge call argument expansion)
 
 **Watch for:** Changes to string memory layout, bridge function string passing conventions, or `expand_strings` behavior in plugin.toml.
 
@@ -106,7 +106,7 @@ Known fragile areas discovered across sessions. Read before modifying any compil
 
 ---
 
-## 8. Remaining Design Notes in mir_codegen.rs (UPDATED 2026-04-12)
+## 8. Remaining Design Notes in mir_codegen/ (UPDATED 2026-04-12)
 
 Three workarounds assessed and resolved, two remain as known limitations:
 
@@ -117,7 +117,7 @@ Three workarounds assessed and resolved, two remain as known limitations:
 
 **Known limitations (kept as-is):**
 4. ~~Ptr(Void) type ambiguity~~ — **FIXED (2026-04-12)**: MIR lowering now emits `MirType::Any` instead of `Ptr(Void)` for unresolved generics and complex type fallbacks. Codegen handles `MirType::Any` as i32 pointer to boxed value. Legacy `Ptr(Void)` checks retained for backward compatibility.
-5. **Name conversion fallback** (~line 2666): Underscore/dot conversion for function lookups. Defensive code that doesn't cause bugs. Rarely triggered.
+5. **Name conversion fallback** (`mir_codegen/instructions.rs`, call lowering): Underscore/dot conversion for function lookups. Defensive code that doesn't cause bugs. Rarely triggered.
 
 ---
 
@@ -216,3 +216,27 @@ The fix excludes Jumps that target any `exit_block_id` in `self.loop_context_sta
 - Anyone adding "bytes manipulation" primitives (slice, index, compare) to Clean code touching these handles: the whole point of the opaque convention is to defer that until a real `bytes` type lands. If you find yourself wanting to inspect a handle in Clean code, escalate to a language change instead — do NOT introduce ad-hoc string-cast escape hatches.
 - Adding more bytes-producing or bytes-consuming bridges: match the same convention (returns/params `= "ptr"` in the registry, docs cite spec §9b). Every new bridge MUST be listed in the §9b handle-user table in `type-system.md`.
 - The compiler-local `runtime-abi-v1.toml` is auto-synced from `foundation/platform-architecture/runtime-abi/v1.toml`. Edits to the compiler-local copy may be silently reverted by the sync — always edit the foundation copy first, then `cp` (or wait for the sync) into `src/plugins/runtime-abi-v1.toml`. The count invariant `bridges_in_toml == func_wrap_sites_in_wasm_adapter` is enforced by `runtime_abi_schema.rs::verify_registrations_against_schema`; both files must move together.
+
+---
+
+## 15. MIR Constant Folding Must Match the Unoptimized WASM
+
+**What:** `ConstantFoldingPass` (`src/mir/optimization.rs`) runs at the default `-O2`. A folded result must be bit-identical to what the unoptimized WASM computes, or programs print different values depending on the optimization level.
+
+- `MirConstant::Integer` is an `i32` at runtime (`load_constant` narrows the `i64` payload): fold with `i32` wrapping arithmetic and compare as `i32`.
+- `MirConstant::Integer64` is an `i64`: fold with `i64` wrapping arithmetic.
+- Integer `Div`/`Rem` that trap at runtime (`b == 0`, `MIN / -1`) are left unfolded so the trap still happens.
+- Floats compare with exact IEEE-754 equality (`f64.eq`), never an epsilon.
+
+**Regression test:** `tests/cln/bugfixes/mir_constant_folding_matches_runtime.cln`.
+
+## 16. Stdlib Registration Order — Last Registration Wins
+
+**What:** `register_function` / `add_function_alias` overwrite the name in `function_map`, so when two registrars register the same name the later one silently wins. The active order (`src/codegen/mir_codegen/mod.rs`) is: string class (non-allocating) → conditional ops (`method_style.rs`, `list_behavior.rs`) → HTTP/file/validator → native memory operations (`__malloc`, native list/string aliases in `codegen_registration.rs`) → `ListManager` (`list_ops.rs`) → pairs → JSON.
+
+**Where:** `ListManager::register_functions` runs after `__malloc` exists and calls `ListClass::register_functions` and `StringClass::register_heap_operations`. Every allocating list/string method lives there. Element-typed list variants (`list.<m>.f64`, `list.<m>.string`, `__list_{first,last,peek,removeAt}_f64`) are picked by `MirBuilder::list_method_variant` from the receiver's element type. `.remove(index)` goes to `list.removeAt` / `__list_removeAt_f64`, `.pop()` / `.removeLast()` to `list.removeLast` / `__list_removeLast_f64`, the index-less `.remove()` to the behavior-aware `list.remove` / `__list_remove_f64`, and `.set` to `list.set` / `list.set.f64` (all in `list_class.rs`). Namespace calls `list.<m>(items, ...)` are lowered through the method-call path (`MirBuilder::is_list_receiver_method`), so both forms share dispatch and receiver write-back.
+
+**Watch for:**
+- Registering an allocating stdlib function before `register_memory_operations` — `__malloc` does not exist yet, which previously left `padStart`/`padEnd` as identity functions.
+- f64-returning stdlib functions named `list.*` / `string.*`: the MIR return-type heuristic treats those prefixes as i32. Use an internal `__` name and `record_wasm_return_type`.
+- New lists must set capacity to the allocated slot count (4-byte slots; two per `number`) — `list.add` trusts it when appending in place.

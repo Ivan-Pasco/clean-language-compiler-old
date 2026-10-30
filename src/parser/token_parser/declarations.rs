@@ -1977,11 +1977,12 @@ impl TokenParser {
                 let keyword = self.current().clone();
                 let previous_on_same_line = self.tokens[..self.cursor.min(self.tokens.len())]
                     .iter()
-                    .rev()
-                    .next()
+                    .next_back()
                     .is_some_and(|t| {
-                        !matches!(t.kind, TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_))
-                            && t.location.line == keyword.location.line
+                        !matches!(
+                            t.kind,
+                            TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_)
+                        ) && t.location.line == keyword.location.line
                     });
                 if previous_on_same_line {
                     return Err(CompilerError::parse_error(

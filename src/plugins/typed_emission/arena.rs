@@ -27,17 +27,6 @@ use crate::plugins::PluginExpansion;
 /// Batch handles returned from builder bridges always have this bit set.
 pub const BATCH_TAG: i32 = 0x0100_0000;
 
-/// Record of the first bridge that tripped the sticky-error flag.
-/// The bridge name and a short reason are captured for the auto-emitted
-/// PLUGIN014 diagnostic (typed-emission.md §3.15, Amendment 5).
-#[derive(Debug, Clone)]
-pub struct StickyError {
-    #[allow(dead_code)]
-    pub bridge: &'static str,
-    #[allow(dead_code)]
-    pub reason: String,
-}
-
 /// All node kinds that can be allocated in the arena.
 pub(super) enum EmitNode {
     /// A fully-built statement.
@@ -159,15 +148,6 @@ pub enum BatchArrayPushError {
 }
 
 impl BatchArrayPushError {
-    #[allow(dead_code)]
-    pub fn plugin_code(&self) -> &'static str {
-        match self {
-            BatchArrayPushError::ArrayConsumed { .. } => "PLUGIN008",
-            BatchArrayPushError::ItemConsumed { .. } => "PLUGIN008",
-            _ => "PLUGIN013",
-        }
-    }
-
     pub fn message(&self) -> String {
         match self {
             BatchArrayPushError::InvalidArrayHandle => {
@@ -284,7 +264,7 @@ pub struct EmitArena {
     /// custom error code + message via `_ctx_set_error_context(ctx, code, message)`
     /// before making a group of bridge calls, so the auto-emitted diagnostic
     /// on first failure carries a plugin-authored code (§3.15.3).
-    sticky_error: Option<StickyError>,
+    sticky_error: bool,
 
     /// Optional plugin-supplied error context. When present, the first bridge
     /// failure that trips sticky_error auto-emits a diagnostic with this
@@ -364,7 +344,7 @@ impl EmitArena {
             diagnostics: Vec::new(),
             expansion: PluginExpansion::default(),
             saw_error_severity: false,
-            sticky_error: None,
+            sticky_error: false,
             sticky_context: None,
             batch_nodes: vec![None], // index 0 = sentinel
             batch_consumed: vec![false],
@@ -376,7 +356,7 @@ impl EmitArena {
 
     /// Which lifecycle slot this arena is servicing.
     #[inline]
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn slot(&self) -> EmitSlot {
         self.slot
     }
@@ -418,7 +398,7 @@ impl EmitArena {
     /// directly — the sticky gate is folded into `check_ctx`. Exposed for
     /// `_ctx_had_error` (§3.15) and for unit tests.
     pub fn is_sticky(&self) -> bool {
-        self.sticky_error.is_some()
+        self.sticky_error
     }
 
     /// Set the sticky flag if not already set, and auto-emit the PLUGIN014
@@ -429,14 +409,11 @@ impl EmitArena {
     /// that (code, message) is used for the auto-emitted diagnostic; otherwise
     /// the default PLUGIN014 message names the failing bridge.
     pub fn trip(&mut self, bridge: &'static str, reason: impl Into<String>) -> i32 {
-        if self.sticky_error.is_some() {
+        if self.sticky_error {
             return 0;
         }
         let reason = reason.into();
-        self.sticky_error = Some(StickyError {
-            bridge,
-            reason: reason.clone(),
-        });
+        self.sticky_error = true;
         let (code, message) = match self.sticky_context.clone() {
             Some((c, m)) => (c, format!("{} (first failure: {} — {})", m, bridge, reason)),
             None => (
@@ -458,11 +435,7 @@ impl EmitArena {
 
     /// Public plugin-side query: 1 if sticky is set, else 0.
     pub fn had_error(&self) -> i32 {
-        if self.sticky_error.is_some() {
-            1
-        } else {
-            0
-        }
+        i32::from(self.sticky_error)
     }
 
     /// Public plugin-side setter for the error context used on first sticky trip.
@@ -480,7 +453,7 @@ impl EmitArena {
     /// Intended for helper functions that want to recover from a nested
     /// failure and continue emission — rarely needed in practice.
     pub fn clear_error(&mut self) {
-        self.sticky_error = None;
+        self.sticky_error = false;
         self.sticky_context = None;
     }
 
@@ -514,7 +487,7 @@ impl EmitArena {
     pub fn check_ctx(&self, ctx: i32) -> Result<(), EmitError> {
         if ctx != self.ctx_handle {
             Err(EmitError::WrongCtx)
-        } else if self.sticky_error.is_some() {
+        } else if self.sticky_error {
             Err(EmitError::StickyErrorActive)
         } else {
             Ok(())
@@ -524,43 +497,6 @@ impl EmitArena {
     // ──────────────────────────────────────────────────────────────────────────
     // Internal take helpers — validate, optionally consume, return the node
     // ──────────────────────────────────────────────────────────────────────────
-
-    /// Consume (or peek at) a node by handle, validating ctx and kind.
-    ///
-    /// `consume = true` marks the handle as consumed; subsequent calls with
-    /// the same handle return `Err(HandleConsumed)` — PLUGIN008.
-    /// Reserved for sub-cycle 3 bridge extensions; not yet called in sub-cycle 2.
-    #[allow(dead_code)]
-    fn take_node(&mut self, ctx: i32, handle: i32, consume: bool) -> Result<&EmitNode, EmitError> {
-        self.check_ctx(ctx)?;
-
-        if handle <= 0 {
-            // 0 is the sentinel; negative is always invalid.
-            return Err(EmitError::NullHandle);
-        }
-
-        let idx = handle as usize;
-
-        if idx >= self.nodes.len() {
-            return Err(EmitError::OutOfRange { handle });
-        }
-
-        if self.consumed[idx] {
-            return Err(EmitError::HandleConsumed { handle });
-        }
-
-        if self.nodes[idx].is_none() {
-            // Should not happen — nodes are only ever set to None after
-            // consumption in destructive take below.
-            return Err(EmitError::OutOfRange { handle });
-        }
-
-        if consume {
-            self.consumed[idx] = true;
-        }
-
-        Ok(self.nodes[idx].as_ref().unwrap())
-    }
 
     /// Destructively take a node out of the arena (always consume).
     fn take_node_owned(&mut self, ctx: i32, handle: i32) -> Result<EmitNode, EmitError> {
@@ -664,17 +600,6 @@ impl EmitArena {
                 })
             }
         }
-    }
-
-    /// Take a `Type` or return `None` (i.e. `Type::Void`) when handle == 0.
-    /// Used in tests and reserved for nullable type slots in sub-cycle 3 bridges.
-    #[allow(dead_code)]
-    pub fn take_type_opt(&mut self, ctx: i32, handle: i32) -> Result<Option<Type>, EmitError> {
-        if handle == 0 {
-            self.check_ctx(ctx)?;
-            return Ok(None);
-        }
-        self.take_type(ctx, handle).map(Some)
     }
 
     /// Take a `PendingFunction` from the arena.
@@ -856,7 +781,7 @@ impl EmitArena {
 
     /// Peek at the `BatchArrayKind` of an array handle without consuming it.
     /// Used by `batch.arrayPush` to enforce homogeneity and by unit tests.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn peek_batch_array_kind(&self, handle: i32) -> Option<BatchArrayKind> {
         if !Self::is_batch_handle(handle) {
             return None;
@@ -1006,7 +931,7 @@ impl EmitArena {
     }
 
     /// Take a `BatchNode` and assert it is a `Function`. Returns the inner `BatchFunction`.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn take_batch_function(&mut self, handle: i32) -> Result<BatchFunction, EmitError> {
         let node = self.take_batch_node(handle)?;
         match node {
@@ -1019,7 +944,7 @@ impl EmitArena {
     }
 
     /// Take a `BatchNode` and assert it is a `Method`. Returns the inner `BatchMethod`.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn take_batch_method(&mut self, handle: i32) -> Result<BatchMethod, EmitError> {
         let node = self.take_batch_node(handle)?;
         match node {
@@ -1292,7 +1217,7 @@ impl EmitArena {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Expression, Statement, Type, Value};
+    use crate::ast::{Expression, Statement, Value};
 
     fn dummy_stmt() -> Statement {
         Statement::Return {
@@ -1303,11 +1228,6 @@ mod tests {
 
     fn dummy_expr() -> Expression {
         Expression::Literal(Value::Boolean(true))
-    }
-
-    #[allow(dead_code)]
-    fn dummy_type() -> Type {
-        Type::Integer
     }
 
     // ── Test 1: wrong ctx_handle is rejected ─────────────────────────────────
@@ -1361,9 +1281,6 @@ mod tests {
         assert_eq!(result, Ok(None));
         // take_expr_opt with handle=0 should return Ok(None).
         let result = arena.take_expr_opt(5, 0);
-        assert_eq!(result, Ok(None));
-        // take_type_opt with handle=0 should return Ok(None).
-        let result = arena.take_type_opt(5, 0);
         assert_eq!(result, Ok(None));
     }
 

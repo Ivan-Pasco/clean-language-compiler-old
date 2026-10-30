@@ -857,6 +857,34 @@ impl MirBuilder {
                     }
                 };
 
+                // `list.<method>(items, args...)` is the namespace form of
+                // `items.<method>(args...)`. Lower it through the method-call
+                // path so both forms share element-typed dispatch (`number`
+                // lists use 8-byte slots) and the receiver write-back of
+                // operations that can move the list (`add`, `push`, `insert`).
+                if let Some(method) = function_name_opt
+                    .as_deref()
+                    .and_then(|name| name.strip_prefix("list."))
+                {
+                    if Self::is_list_receiver_method(method)
+                        && arguments
+                            .first()
+                            .is_some_and(|a| matches!(a.expr_type, ConcreteType::Array(_)))
+                    {
+                        let method_call = TastExpression {
+                            kind: TastExpressionKind::MethodCall {
+                                receiver: Box::new(arguments[0].clone()),
+                                method_name: method.to_string(),
+                                method_symbol: function_symbol_id,
+                                arguments: arguments[1..].to_vec(),
+                                type_args: Vec::new(),
+                            },
+                            ..expression.clone()
+                        };
+                        return self.build_expression(context, &method_call);
+                    }
+                }
+
                 // NOTE: Handle standalone toString(any) function calls
                 // When calling toString(value) where value is Any type, we need to use
                 // the AnyToString operation for proper runtime type dispatch
@@ -2267,6 +2295,118 @@ impl MirBuilder {
                             self.add_instruction(context, instruction);
                             return Ok(result_id);
                         }
+                        // Element-slot access whose body depends on the element
+                        // representation (src/stdlib/list_class.rs):
+                        // `.remove(index)`, the behavior-aware `.remove()`
+                        // (front of a `.line`, last element otherwise),
+                        // `.pop()` / `.removeLast()`, `.set(index, value)` and
+                        // `list<number>.get(index)`.
+                        "remove" | "pop" | "removeLast" | "set" | "get"
+                            if method_name != "get"
+                                || matches!(**element_type, ConcreteType::Number) =>
+                        {
+                            let variant = match method_name.as_str() {
+                                "remove" if arguments.len() == 1 => "removeAt",
+                                "pop" => "removeLast",
+                                other => other,
+                            };
+                            let function_name = Self::list_method_variant(variant, element_type)
+                                .expect(
+                                    "element-slot methods have a variant for every element type",
+                                );
+                            let is_set = method_name == "set";
+                            let result_type = if is_set {
+                                self.convert_concrete_type(&expression.expr_type)
+                            } else {
+                                self.convert_concrete_type(element_type)
+                            };
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                result_type,
+                                expression.location.clone(),
+                            );
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+                            self.add_instruction(
+                                context,
+                                MirInstruction {
+                                    dest: if is_set { None } else { Some(result_id) },
+                                    operation: MirOperation::Call {
+                                        function: MirOperand::NamedFunction {
+                                            name: function_name,
+                                            symbol_id: SymbolId(0),
+                                        },
+                                        arguments: args,
+                                    },
+                                    location: expression.location.clone(),
+                                },
+                            );
+                            return Ok(result_id);
+                        }
+                        // List methods whose implementation depends on the
+                        // element representation (src/stdlib/list_class.rs):
+                        // 8-byte `number` elements use the `.f64` variants,
+                        // strings compare by bytes for ordering/search, and
+                        // every other element type uses the i32 body.
+                        "first" | "last" | "peek" | "indexOf" | "lastIndexOf" | "contains"
+                        | "reverse" | "sort" | "slice" | "concat" | "insert"
+                            if Self::list_method_variant(method_name, element_type).is_some() =>
+                        {
+                            let function_name =
+                                Self::list_method_variant(method_name, element_type)
+                                    .expect("guarded by is_some");
+                            let result_type = match method_name.as_str() {
+                                "first" | "last" | "peek" => {
+                                    self.convert_concrete_type(element_type)
+                                }
+                                "indexOf" | "lastIndexOf" | "contains" | "insert" => MirType::I32,
+                                _ => self.convert_concrete_type(&receiver.expr_type),
+                            };
+                            let result_id = ValueId(context.function.next_value_id);
+                            context.function.next_value_id += 1;
+                            self.register_temp_local(
+                                context,
+                                result_id,
+                                result_type,
+                                expression.location.clone(),
+                            );
+                            let mut args = vec![MirOperand::Value(receiver_id)];
+                            for arg in arguments {
+                                let arg_id = self.build_expression(context, arg)?;
+                                args.push(MirOperand::Value(arg_id));
+                            }
+                            self.add_instruction(
+                                context,
+                                MirInstruction {
+                                    dest: Some(result_id),
+                                    operation: MirOperation::Call {
+                                        function: MirOperand::NamedFunction {
+                                            name: function_name,
+                                            symbol_id: SymbolId(0),
+                                        },
+                                        arguments: args,
+                                    },
+                                    location: expression.location.clone(),
+                                },
+                            );
+                            // insert grows the list through list.add and returns the
+                            // (possibly moved) list pointer.
+                            if method_name == "insert" {
+                                self.write_back_list_receiver(
+                                    context,
+                                    receiver,
+                                    result_id,
+                                    &expression.location,
+                                )?;
+                            }
+                            return Ok(result_id);
+                        }
                         _ => {} // Fall through for other methods
                     }
                 }
@@ -3099,18 +3239,6 @@ impl MirBuilder {
                                 args.push(MirOperand::Value(arg_id));
                             }
                             (set_flags_symbol, args)
-                        }
-                        (ConcreteType::Array(_), "remove" | "pop" | "removeLast") => {
-                            // Use the behavior-aware list.remove so that LINE (FIFO) and
-                            // PILE (LIFO) flags are respected at runtime.
-                            let list_remove_symbol = self
-                                .symbol_table
-                                .lookup_symbol("list.remove")
-                                .unwrap_or_else(|| {
-                                    warn!("list.remove not found in symbol table, using fallback");
-                                    *method_symbol
-                                });
-                            (list_remove_symbol, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Array(_), "get") => {
                             // Call list_get - look up from symbol table

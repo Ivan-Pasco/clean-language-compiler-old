@@ -778,41 +778,9 @@ impl WasmPluginLoader {
         parse(a) < parse(b)
     }
 
-    /// List all installed plugins
-    pub fn list_installed_plugins(&self) -> Result<Vec<(String, String)>> {
-        let mut plugins = Vec::new();
-
-        if !self.plugins_dir.exists() {
-            return Ok(plugins);
-        }
-
-        for entry in std::fs::read_dir(&self.plugins_dir)? {
-            let entry = entry?;
-            if entry.path().is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-
-                // Find latest version
-                if let Ok(plugin_dir) = self.find_plugin_dir(&name) {
-                    let version = plugin_dir
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    plugins.push((name, version));
-                }
-            }
-        }
-
-        Ok(plugins)
-    }
-
     /// Get the engine for creating stores
     pub fn engine(&self) -> &Engine {
         &self.engine
-    }
-
-    /// Check if a plugin is installed
-    pub fn is_plugin_installed(&self, name: &str) -> bool {
-        self.plugins_dir.join(name).exists()
     }
 }
 
@@ -852,14 +820,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let loader = WasmPluginLoader::with_plugins_dir(temp_dir.path().to_path_buf());
         assert!(loader.is_ok());
-    }
-
-    #[test]
-    fn test_list_empty_plugins() {
-        let temp_dir = TempDir::new().unwrap();
-        let loader = WasmPluginLoader::with_plugins_dir(temp_dir.path().to_path_buf()).unwrap();
-        let plugins = loader.list_installed_plugins().unwrap();
-        assert!(plugins.is_empty());
     }
 
     #[test]

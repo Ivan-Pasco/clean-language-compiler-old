@@ -5,7 +5,7 @@
 
 OUTPUT_DIR="tests/output"
 RESULTS_FILE="test_results_$(date +%Y%m%d_%H%M%S).json"
-COMPILER="cargo run --bin clean-language-compiler"
+COMPILER="cargo run --quiet --bin cln --"
 RUNNER="cargo run --bin wasmtime_runner"
 
 # Create output directory
@@ -43,7 +43,7 @@ while IFS= read -r cln_file; do
     echo '      "file": "'$cln_file'",' >> "$RESULTS_FILE"
 
     # Try to compile
-    compile_output=$($COMPILER compile -i "$cln_file" -o "$wasm_file" 2>&1)
+    compile_output=$($COMPILER compile "$cln_file" -o "$wasm_file" 2>&1)
     compile_exit=$?
 
     if [ $compile_exit -eq 0 ]; then

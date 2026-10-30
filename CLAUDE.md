@@ -78,10 +78,10 @@ cargo test
 cargo test --test integration
 
 # Compile a file
-cargo run --bin clean-language-compiler compile -i file.cln -o output.wasm
+cargo run --bin cln -- compile file.cln -o output.wasm
 
 # Debug
-cargo run --bin clean-language-compiler debug -i file.cln --show-ast
+cargo run --bin cln -- debug file.cln --show-ast
 cargo run --bin debug_wasm -- file.wasm
 ```
 

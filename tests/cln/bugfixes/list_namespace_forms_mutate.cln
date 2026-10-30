@@ -1,0 +1,33 @@
+// Test: bugfixes/list_namespace_forms_mutate
+// Semantic: stdlib-reference.md §5 — `list.<method>(items, ...)` behaves like
+//   `items.<method>(...)`: `set`, `add`, `push`, `insert`, `pop` and
+//   `removeLast` mutate the list in place.
+// Fixed in: compiler 0.33.165
+// Regression: `list.set` stored 0 (it read the value as a pointer), growing
+//   `list.add` / `list.push` / `list.insert` left the variable on the old
+//   block, `pop` did not shrink the list and `removeLast` failed to compile.
+// Expected output:
+//   8 9 3
+//   5 5
+//   6 7 3
+//   5 4 5
+//   x z 1
+
+start:
+	list<integer> a = [1, 2, 3]
+	a.set(0, 8)
+	list.set(a, 1, 9)
+	print(a[0].toString() + " " + a[1].toString() + " " + a[2].toString())
+	list.add(a, 4)
+	list.push(a, 5)
+	print(a.length().toString() + " " + a[4].toString())
+	list.insert(a, 0, 7)
+	a.insert(0, 6)
+	print(a[0].toString() + " " + a[1].toString() + " " + list.indexOf(a, 9).toString())
+	integer p = list.pop(a)
+	integer r = list.removeLast(a)
+	print(p.toString() + " " + r.toString() + " " + a.length().toString())
+	list<string> w = ["x", "y", "z"]
+	string last = w.removeLast()
+	string gone = list.remove(w, 1)
+	print(w.get(0) + " " + last + " " + w.length().toString())

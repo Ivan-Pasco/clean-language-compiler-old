@@ -1,0 +1,35 @@
+// Test: bugfixes/stdlib_string_join_charat_isblank_pad
+// Semantic: stdlib-reference.md §4 and §5 — `list.join(items, sep)` and
+//   `string.join(list, delimiter)` produce identical output; `.charAt(index)`
+//   returns a one-character string; `.isBlank()` is true for whitespace-only
+//   text; `.padStart` / `.padEnd` pad to the requested width.
+// Fixed in: compiler 0.33.165
+// Regression: `list.join` returned a null string, `string.join` returned the
+//   separator, `charAt` returned a fixed pointer (empty text), `isBlank`
+//   always returned false, and `padStart` / `padEnd` returned the input
+//   unchanged because they were registered before the allocator existed.
+// Expected output:
+//   a, bb, c
+//   a-bb-c
+//   []
+//   b
+//   ac
+//   true
+//   false
+//   true
+//   ***ab
+//   ab--|
+
+start:
+	list<string> w = ["a", "bb", "c"]
+	print(list.join(w, ", "))
+	print(string.join(w, "-"))
+	list<string> empty = []
+	print("[" + list.join(empty, ",") + "]")
+	print("abc".charAt(1))
+	print("abc".charAt(0) + "abc".charAt(2))
+	print("  \t ".isBlank().toString())
+	print(" x ".isBlank().toString())
+	print("".isBlank().toString())
+	print("ab".padStart(5, "*"))
+	print("ab".padEnd(4, "-") + "|")

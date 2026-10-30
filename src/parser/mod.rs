@@ -6,12 +6,9 @@
 // Include all parser modules
 pub mod class_parser;
 pub mod expression_parser;
-pub mod function_parser;
 pub mod grammar;
-pub mod lexical_analyzer;
 pub mod parser_impl;
 pub mod preprocessor;
-pub mod program_parser;
 pub mod property_tests;
 pub mod specification_parser;
 pub mod statement_parser;
@@ -27,11 +24,6 @@ pub use parser_impl::ErrorRecoveringParser;
 
 // Re-export location types
 pub use crate::ast::SourceLocation;
-
-// Helper functions for location conversion
-pub fn convert_to_ast_location(location: &SourceLocation) -> crate::ast::SourceLocation {
-    location.clone()
-}
 
 pub fn get_location(pair: &pest::iterators::Pair<Rule>) -> SourceLocation {
     let span = pair.as_span();

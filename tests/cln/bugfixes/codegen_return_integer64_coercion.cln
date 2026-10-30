@@ -1,0 +1,29 @@
+// Test: bugfixes/codegen_return_integer64_coercion
+// Semantic: type-system.md §5 integer widening and integer:64 → number
+// Regression: return values were not converted to or from `integer:64`.
+//   Returning an `integer` from an `integer:64` function emitted invalid
+//   WASM ("expected i64, found i32"), and returning an `integer:64` from a
+//   `number` function emitted "expected f64, found i64".
+// Fixed in: compiler 0.33.165
+// Expected output:
+//   42
+//   7
+//   5
+
+start:
+	integer:64 a = big(42)
+	printl(a)
+	number b = narrow(7)
+	printl(b)
+	integer c = shrink(5)
+	printl(c)
+
+functions:
+	integer:64 big(integer x)
+		return x
+
+	number narrow(integer:64 x)
+		return x
+
+	integer shrink(integer:64 x)
+		return x

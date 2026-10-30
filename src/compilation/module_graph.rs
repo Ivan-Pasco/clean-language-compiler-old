@@ -238,16 +238,6 @@ impl ModuleGraph {
     pub fn modules(&self) -> impl Iterator<Item = &CompilationModuleId> {
         self.nodes.iter()
     }
-
-    /// Check if a module has any dependencies
-    pub fn has_dependencies(&self, id: CompilationModuleId) -> bool {
-        !self.get_dependencies(id).is_empty()
-    }
-
-    /// Get the total number of edges (imports)
-    pub fn edge_count(&self) -> usize {
-        self.edges.len()
-    }
 }
 
 #[cfg(test)]
