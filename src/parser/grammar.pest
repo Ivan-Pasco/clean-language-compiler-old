@@ -103,9 +103,12 @@ size_specifier = { ":" ~ ASCII_DIGIT+ ~ ("u")? }
 // String interpolation with {} syntax and escaped quotes
 string_content = @{ (!("\"" | "\\") ~ ANY)+ }
 escaped_char = @{ "\\" ~ ("\"" | "{" | "}" | "\\" | "n" | "r" | "t") }
-string_interpolation = { "{" ~ logical_expression ~ "}" }
-string_part = { escaped_char | string_interpolation | string_content }
-string = { "\"" ~ string_part* ~ "\"" }
+// `string` is compound-atomic: implicit WHITESPACE must not be skipped inside
+// the quotes, or a leading space (`" y"`) is lost. The interpolation re-enables
+// whitespace for the expression between the braces.
+string_interpolation = !{ "{" ~ logical_expression ~ "}" }
+string_part = ${ escaped_char | string_interpolation | string_content }
+string = ${ "\"" ~ string_part* ~ "\"" }
 
 // Core types from specification
 core_type = { 
