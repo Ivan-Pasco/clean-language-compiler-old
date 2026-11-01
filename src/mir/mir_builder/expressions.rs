@@ -1302,12 +1302,20 @@ impl MirBuilder {
                 // Build argument operands
                 let mut mir_arguments = Vec::new();
 
-                // Check if this is a constructor call by examining the return type
-                // Constructor calls return a Class type
-                if let ConcreteType::Class {
-                    symbol_id: class_symbol_id,
-                    ..
-                } = &expression.expr_type
+                // Check if this is a constructor call: it returns a Class type and
+                // targets `<Class>.constructor`. A regular function that returns a
+                // class instance (`K e = makeK()`) is an ordinary call — it must not
+                // get a freshly allocated instance prepended as an argument.
+                let is_constructor_target = function_name_opt
+                    .as_deref()
+                    .is_some_and(|name| name == "constructor" || name.ends_with(".constructor"));
+                if let (
+                    ConcreteType::Class {
+                        symbol_id: class_symbol_id,
+                        ..
+                    },
+                    true,
+                ) = (&expression.expr_type, is_constructor_target)
                 {
                     // This is a constructor call - we need to allocate instance memory
                     // and pass the instance pointer as the first argument
@@ -3794,12 +3802,77 @@ impl MirBuilder {
                 arguments,
                 type_args: _,
             } => {
-                // Build all arguments (NO 'this' parameter for static methods!)
+                // Build all arguments (a null receiver only for instance-lowered methods)
+                // A static call on a program class (e.g. `Database.save(user)`)
+                // takes the instance itself; only bridge/namespace calls get the
+                // JSON-serialized form.
+                let callee_is_program_class =
+                    context.all_classes.iter().any(|c| c.name == *class_name);
                 let mut mir_arguments = Vec::new();
+                // Methods of a class with fields, a parent or capabilities are
+                // lowered as instance methods (`this` first parameter, see
+                // type_inference.rs `is_static`). A `ClassName.method()` call is
+                // only valid for methods that don't use instance fields (spec
+                // 15-classes-and-objects.md "Static Methods"), so it passes a
+                // null receiver to fill that parameter; without it the call is
+                // one argument short and the module fails WASM validation.
+                //
+                // The method symbol can still be `SymbolId(0)` for a program
+                // class when the caller was resolved before the class's methods
+                // were registered (top-level functions and plugin fragments
+                // resolve first); bind it by class + method name in that case,
+                // walking up the parent chain for inherited methods.
+                let callee_method: Option<(SymbolId, bool, ConcreteType)> = if method_symbol.0 != 0
+                {
+                    context
+                        .all_classes
+                        .iter()
+                        .flat_map(|c| c.methods.iter())
+                        .find(|m| m.symbol_id == *method_symbol)
+                        .map(|m| (m.symbol_id, m.is_static, m.return_type.clone()))
+                } else {
+                    let mut class = context.all_classes.iter().find(|c| c.name == *class_name);
+                    let mut found = None;
+                    while let Some(c) = class {
+                        if let Some(m) = c.methods.iter().find(|m| m.name == *method_name) {
+                            found = Some((m.symbol_id, m.is_static, m.return_type.clone()));
+                            break;
+                        }
+                        class = c.parent_class.and_then(|parent| {
+                            context.all_classes.iter().find(|p| p.symbol_id == parent)
+                        });
+                    }
+                    found
+                };
+                let callee_symbol = callee_method.as_ref().map_or(*method_symbol, |m| m.0);
+                let callee_takes_this = callee_method.as_ref().is_some_and(|m| !m.1);
+                if callee_takes_this {
+                    let receiver_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(
+                        context,
+                        receiver_id,
+                        MirType::I32,
+                        expression.location.clone(),
+                    );
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: Some(receiver_id),
+                            operation: MirOperation::Copy {
+                                source: MirOperand::Constant(MirConstant::Integer(0)),
+                            },
+                            location: expression.location.clone(),
+                        },
+                    );
+                    mir_arguments.push(MirOperand::Value(receiver_id));
+                }
                 for arg in arguments {
                     let arg_id = self.build_expression(context, arg)?;
                     // Auto-serialize class instances to JSON strings for bridge/namespace calls.
-                    let final_id = if let ConcreteType::Class {
+                    let final_id = if callee_is_program_class {
+                        arg_id
+                    } else if let ConcreteType::Class {
                         symbol_id: class_sym,
                         ..
                     } = &arg.expr_type
@@ -3848,8 +3921,13 @@ impl MirBuilder {
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                // Get return type from expression
-                let inferred_type = &expression.expr_type;
+                // Get return type from expression. A method bound by name above
+                // supplies its declared return type when the call's inferred type
+                // stayed Unknown (callee resolved after the caller).
+                let inferred_type = match (&expression.expr_type, &callee_method) {
+                    (ConcreteType::Unknown, Some(m)) => &m.2,
+                    (t, _) => t,
+                };
                 let mir_return_type = self.convert_concrete_type(inferred_type);
 
                 // Detect void static methods. Without this, calling a
@@ -3883,7 +3961,7 @@ impl MirBuilder {
                     is_void = is_void,
                     "Static method call"
                 );
-                let function_operand = if method_symbol.0 == 0 {
+                let function_operand = if callee_symbol.0 == 0 {
                     // Namespace function - use NamedFunction pattern
                     let full_name = format!("{}.{}", class_name, method_name);
                     trace!(full_name = %full_name, "Creating NamedFunction for static call");
@@ -3894,16 +3972,16 @@ impl MirBuilder {
                 } else {
                     // Regular static method - use symbol ID directly
                     trace!(
-                        method_symbol = method_symbol.0,
+                        method_symbol = callee_symbol.0,
                         "Creating Function for static call"
                     );
-                    MirOperand::Function(*method_symbol)
+                    MirOperand::Function(callee_symbol)
                 };
 
                 // For void static methods, skip dest so codegen doesn't emit a local.set
                 let dest_opt = if is_void { None } else { Some(result_id) };
 
-                // Emit Call instruction - NO 'this' parameter prepended!
+                // Emit Call instruction (receiver, if any, is already in mir_arguments)
                 let instruction = MirInstruction {
                     dest: dest_opt,
                     operation: MirOperation::Call {

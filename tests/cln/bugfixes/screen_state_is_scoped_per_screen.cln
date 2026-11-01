@@ -1,0 +1,46 @@
+// Test: bugfixes/screen_state_is_scoped_per_screen
+// Grammar: screen_block (grammar.ebnf §6.10), state_block
+// Semantic: SCOPE005 — screen state is its own namespace, separate from app
+//   state and from other screens (spec §23 "State in Screens")
+// Regression: screen state variables were registered under their bare names,
+//   so a second screen (or the app) declaring the same name was silently
+//   dropped, and screen state never received its declared initial value.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   app label=App
+//   Home: label=Home count=1
+//   Settings: label=Settings count=10
+//   Home: label=Home count=2
+//   Settings: label=Settings count=10
+
+start:
+	printl("app label=" + label)
+	printl(Home.describe())
+	printl(Settings.describe())
+	Home.bump()
+	printl(Home.describe())
+	printl(Settings.describe())
+
+state:
+	string label = "App"
+
+screen Home:
+	state:
+		string label = "Home"
+		integer count = 1
+
+	functions:
+		string describe()
+			return "Home: label=" + label + " count=" + count.toString()
+
+		void bump()
+			count = count + 1
+
+screen Settings:
+	state:
+		string label = "Settings"
+		integer count = 10
+
+	functions:
+		string describe()
+			return "Settings: label=" + label + " count=" + count.toString()

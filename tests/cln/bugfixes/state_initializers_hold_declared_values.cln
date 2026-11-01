@@ -1,0 +1,28 @@
+// Test: bugfixes/state_initializers_hold_declared_values
+// Grammar: state_block (state_declaration with initializer)
+// Regression: a string state variable started as a null pointer and a state
+//   variable initialized from a call or other runtime expression was never
+//   evaluated, so both read as empty/zero. Only numeric and boolean literals
+//   reached the WASM global initializer.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   greeting=hello
+//   shout=HELLO WORLD
+//   total=5
+//   ready=true
+
+start:
+	printl("greeting=" + greeting)
+	printl("shout=" + loud())
+	printl("total=" + total.toString())
+	printl("ready=" + ready.toString())
+
+state:
+	string greeting = "hello"
+	string shout = "hello world".toUpperCase()
+	integer total = 2 + 3
+	boolean ready = true
+
+functions:
+	string loud()
+		return shout

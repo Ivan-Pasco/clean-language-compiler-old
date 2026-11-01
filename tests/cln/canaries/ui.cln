@@ -26,7 +26,8 @@ component: tag="canary-widget"
 
 	events:
 		void toggle()
-			state.expanded = !state.expanded
+			// Fixed: was using !, grammar.ebnf unary_op requires not
+			state.expanded = not state.expanded
 			state.count = state.count + 1
 
 	html:

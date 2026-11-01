@@ -1,0 +1,56 @@
+// Test: bugfixes/continue_in_nested_if_inside_iterate
+// Grammar: iterate_statement, if_statement, continue_statement
+// Regression: a `continue` nested in an `if` inside another `if` (or inside an
+//   else arm) of an `iterate` body jumped to the loop's increment block, which
+//   codegen treated as an ordinary if-continuation: the rest of the body still
+//   ran (wrong totals), and with an if/else the loop never terminated.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   18
+//   13
+//   212
+//   18
+
+start:
+	list<integer> xs = [1, 2, 3, 4, 5, 6]
+	integer total = 0
+	iterate x in xs
+		if x > 1
+			if x == 3
+				continue
+		total = total + x
+	printl(total.toString())
+
+	integer t1 = 0
+	iterate x in xs
+		if x > 1
+			if x == 3
+				continue
+			if x == 5
+				continue
+		t1 = t1 + x
+	printl(t1.toString())
+
+	integer t2 = 0
+	iterate i in 1 to 6
+		if i % 2 == 0
+			if i == 4
+				continue
+			t2 = t2 + 100
+		else
+			if i == 5
+				continue
+		t2 = t2 + i
+	printl(t2.toString())
+
+	integer t3 = 0
+	iterate i in 1 to 4
+		iterate j in 1 to 3
+			if j > 1
+				if j == 2
+					continue
+			t3 = t3 + j
+		if i > 2
+			continue
+		t3 = t3 + 1
+	printl(t3.toString())

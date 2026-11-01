@@ -3,14 +3,14 @@
 //! Orchestrates the compilation of multi-file Clean Language programs.
 //! This is the main entry point for building programs with imports.
 
-use super::{CompilationModuleId, CompilationUnit, ModuleGraph};
+use super::{CompilationModuleId, CompilationUnit, ModuleGraph, ModulePluginExpansion};
 use crate::ast::SourceLocation;
 use crate::error::{CompilerError, ErrorContext, ErrorType};
 use crate::hir::hir_builder::HirBuilder;
 use crate::hir::HirProgram;
 use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
 use crate::parser::SpecificationParser;
-use crate::plugins::{PluginExpander, PluginRegistry};
+use crate::plugins::{HtmlEntryOutput, PluginExpander, PluginRegistry};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -204,6 +204,10 @@ impl MultiFileCompiler {
             None
         };
 
+        // AST a typed-emission HTML processor emitted for an HTML entry; it is
+        // attached to the entry module and merged during plugin expansion.
+        let mut entry_plugin_expansion: Option<ModulePluginExpansion> = None;
+
         let (manifest_info, entry_source, canonical_path) =
             if let Some(ref manifest_dir) = manifest_root {
                 let (info, manifest_errors) = Self::parse_manifest_info(
@@ -230,13 +234,24 @@ impl MultiFileCompiler {
                         // Clean parser would error with SYN001 on the leading
                         // `<`. See `[exports].process_html` in plugin.toml and
                         // `PluginRegistry::find_html_processor`.
-                        match self.process_html_entry_via_plugin(ep, manifest_dir) {
-                            Ok(src) => {
-                                let ep_canonical = ep.canonicalize().unwrap_or_else(|_| ep.clone());
-                                (Some(info), src, ep_canonical)
+                        let (plugin_name, output) =
+                            self.process_html_entry_via_plugin(ep, manifest_dir)?;
+                        let ep_canonical = ep.canonicalize().unwrap_or_else(|_| ep.clone());
+                        let src = match output {
+                            HtmlEntryOutput::Source(src) => src,
+                            // A typed-emission plugin hands back the page as
+                            // AST. The entry module starts from empty source
+                            // and the expansion is merged into it during
+                            // plugin expansion (parse_module_to_hir).
+                            HtmlEntryOutput::Expansion(expansion) => {
+                                entry_plugin_expansion = Some(ModulePluginExpansion {
+                                    plugin_name,
+                                    expansion,
+                                });
+                                String::new()
                             }
-                            Err(errs) => return Err(errs),
-                        }
+                        };
+                        (Some(info), src, ep_canonical)
                     } else {
                         match fs::read_to_string(ep) {
                             Ok(src) => {
@@ -261,6 +276,9 @@ impl MultiFileCompiler {
 
         // Create compilation unit
         let mut unit = CompilationUnit::new(entry_name, canonical_path.clone(), entry_source);
+        if let Some(module) = unit.get_module_mut(unit.entry_module) {
+            module.plugin_expansion = entry_plugin_expansion;
+        }
 
         // Build the module graph by discovering all imports
         let mut graph = ModuleGraph::new();
@@ -566,20 +584,22 @@ impl MultiFileCompiler {
     // HTML-First Page Processing Methods
     // =========================================================================
 
-    /// Convert an HTML entry into Clean Language source by delegating to a
+    /// Convert an HTML entry into the entry module by delegating to a
     /// plugin's `process_html` WASM export.
     ///
     /// Architectural note: the compiler owns no HTML logic. It reads the HTML
     /// file off disk, hands the bytes to the plugin (typically frame.ui via
-    /// `[exports].process_html`), and uses whatever Clean source the plugin
-    /// returns as the entry module. Without a loaded HTML processor the
-    /// manifest configuration is rejected — no fallback parsing of the raw
-    /// HTML, no inline conversion in Rust.
+    /// `[exports].process_html`), and uses whatever the plugin returns — Clean
+    /// source (v1 plugins) or emitted AST (typed-emission plugins) — as the
+    /// entry module. Without a loaded HTML processor the manifest
+    /// configuration is rejected — no fallback parsing of the raw HTML, no
+    /// inline conversion in Rust. Returns the processing plugin's name with
+    /// its output.
     fn process_html_entry_via_plugin(
         &self,
         entry_path: &Path,
         manifest_dir: &Path,
-    ) -> Result<String, Vec<CompilerError>> {
+    ) -> Result<(String, HtmlEntryOutput), Vec<CompilerError>> {
         let registry = self.config.plugin_registry.as_ref().ok_or_else(|| {
             vec![CompilerError::PluginError {
                 message: format!(
@@ -667,7 +687,7 @@ impl MultiFileCompiler {
             .ok_or_else(|| {
                 vec![CompilerError::PluginError {
                     message: format!(
-                        "Plugin `{}` returned no Clean source for HTML entry `{}`",
+                        "Plugin `{}` returned no output for HTML entry `{}`",
                         processor.name(),
                         entry_path.display()
                     ),
@@ -675,16 +695,21 @@ impl MultiFileCompiler {
                 }]
             })?;
 
-        Ok(generated)
+        Ok((processor.name().to_string(), generated))
     }
 
     // =========================================================================
     // Project Manifest Support
     // =========================================================================
 
-    /// Returns true if the source file is a project manifest (starts with "package:")
-    fn is_manifest_file(source: &str) -> bool {
-        source.trim_start().starts_with("package:")
+    /// Returns true if the source file is a project manifest: its first line
+    /// of code (after blank lines and `//` comments) is `package:`.
+    pub(crate) fn is_manifest_file(source: &str) -> bool {
+        source
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with("//"))
+            .is_some_and(|line| line.starts_with("package:"))
     }
 
     /// Extract entry: and shared: declarations from a manifest file, then
@@ -1218,7 +1243,12 @@ impl MultiFileCompiler {
         for module_id in order {
             if let Some(module) = unit.get_module_mut(module_id) {
                 let is_entry = module.is_entry;
-                match self.parse_module_to_hir(&module.source, &module.file_path, is_entry) {
+                match self.parse_module_to_hir(
+                    &module.source,
+                    &module.file_path,
+                    is_entry,
+                    module.plugin_expansion.clone(),
+                ) {
                     Ok(hir) => {
                         module.set_hir(hir);
                     }
@@ -1246,6 +1276,7 @@ impl MultiFileCompiler {
         source: &str,
         file_path: &Path,
         is_entry: bool,
+        plugin_expansion: Option<ModulePluginExpansion>,
     ) -> Result<HirProgram, CompilerError> {
         // Stage 1: Tokenize
         let source_code =
@@ -1265,7 +1296,7 @@ impl MultiFileCompiler {
             file_path.to_string_lossy().to_string(),
             plugin_keywords,
         );
-        let parsed_ast = parser.parse_program()?;
+        let mut parsed_ast = parser.parse_program()?;
 
         // Stage 2.5a: Plugin Enforcement
         if let Some(ref registry) = self.config.plugin_registry {
@@ -1334,6 +1365,16 @@ impl MultiFileCompiler {
                     crate::plugins::BuildContext::new()
                         .with_entry(file_path.to_string_lossy().to_string()),
                 );
+            // AST the plugin emitted for the module as a whole (an HTML page
+            // entry processed by a typed-emission plugin) is folded in like a
+            // top-level framework block before the program is expanded.
+            if let Some(module_expansion) = plugin_expansion {
+                expander.absorb_entry_expansion(
+                    &mut parsed_ast,
+                    &module_expansion.plugin_name,
+                    module_expansion.expansion,
+                );
+            }
             let expand_result = if is_entry {
                 expander.expand_program(parsed_ast)
             } else {
@@ -1370,7 +1411,13 @@ impl MultiFileCompiler {
         crate::plugins::expander::emit_event_handler_shims(&mut ast);
 
         // Stage 3: Build HIR
-        let mut hir_builder = HirBuilder::new();
+        let generic_instances = self
+            .config
+            .plugin_registry
+            .as_ref()
+            .map(|r| r.generic_instance_classes())
+            .unwrap_or_default();
+        let mut hir_builder = HirBuilder::new().with_generic_instance_classes(generic_instances);
         let hir_result = hir_builder.build_hir(ast)?;
 
         Ok(hir_result.hir)

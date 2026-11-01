@@ -86,23 +86,35 @@ impl CleanParser {
             indented.push_str(line);
         }
         let wrapped = format!("start:\n{}\n", indented);
-        let mut parser = ErrorRecoveringParser::new(&wrapped, "<plugin-fragment>");
-        let program = match parser.parse_program() {
-            Ok(p) => p,
-            Err(e) => {
-                // Before returning ParseError, probe whether the fragment
-                // parses as a valid expression — if so, this is PLUGIN012
-                // territory (typed-emission.md §3.11), not a syntax error.
-                if is_valid_expression(trimmed) {
-                    return SingleStatementParse::ExpressionNotStatement;
+        // Plugin fragments (endpoint handler bodies, plugin-built method
+        // bodies) must parse exactly like a regular function body, so the
+        // token-driven parser used for source files goes first: it handles ORM
+        // query blocks (`User u = User.first:` + indented `where:`), generic
+        // class types, field assignment and statements after nested blocks the
+        // same way as everywhere else. The pest grammar remains the fallback
+        // and the source of diagnostics.
+        let program = match parse_with_token_parser(&wrapped) {
+            Some(p) => p,
+            None => {
+                let mut parser = ErrorRecoveringParser::new(&wrapped, "<plugin-fragment>");
+                match parser.parse_program() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        // Before returning ParseError, probe whether the fragment
+                        // parses as a valid expression — if so, this is PLUGIN012
+                        // territory (typed-emission.md §3.11), not a syntax error.
+                        if is_valid_expression(trimmed) {
+                            return SingleStatementParse::ExpressionNotStatement;
+                        }
+                        let byte_offset = error_byte_offset(&e)
+                            .map(|b| statement_fragment_offset(trimmed, b))
+                            .unwrap_or(0);
+                        return SingleStatementParse::ParseError {
+                            message: e.to_string(),
+                            byte_offset,
+                        };
+                    }
                 }
-                let byte_offset = error_byte_offset(&e)
-                    .map(|b| statement_fragment_offset(trimmed, b))
-                    .unwrap_or(0);
-                return SingleStatementParse::ParseError {
-                    message: e.to_string(),
-                    byte_offset,
-                };
             }
         };
 
@@ -251,6 +263,45 @@ impl CleanParser {
             byte_offset,
         }
     }
+}
+
+/// Plugin block keywords of the loaded plugins, shared with fragment parsing
+/// so a nested block (`transaction:` inside an endpoint handler) parses as a
+/// framework block exactly as it does in a source file.
+static FRAGMENT_BLOCK_KEYWORDS: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Record plugin block keywords for fragment parsing (union with any already
+/// registered by other loaded registries).
+pub fn register_fragment_block_keywords(keywords: &[String]) {
+    if let Ok(mut known) = FRAGMENT_BLOCK_KEYWORDS.write() {
+        for keyword in keywords {
+            if !known.contains(keyword) {
+                known.push(keyword.clone());
+            }
+        }
+    }
+}
+
+/// Parse a wrapped plugin fragment (`start:` + indented body) with the
+/// token-driven parser used for regular source files. Returns `None` when the
+/// lexer or parser rejects it.
+fn parse_with_token_parser(wrapped: &str) -> Option<Program> {
+    use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+    use crate::parser::SpecificationParser;
+
+    let source_code = SourceCode::new(wrapped.to_string(), "<plugin-fragment>".to_string());
+    let tokens = SpecificationLexer::new(&source_code).tokenize().ok()?;
+    let keywords = FRAGMENT_BLOCK_KEYWORDS
+        .read()
+        .map(|k| k.clone())
+        .unwrap_or_default();
+    let mut parser = SpecificationParser::with_plugin_keywords(
+        tokens,
+        "<plugin-fragment>".to_string(),
+        keywords,
+    );
+    parser.set_lenient_section_order(true);
+    parser.parse_program().ok()
 }
 
 /// Byte offset (into the parsed source) recorded in a parse error's location.

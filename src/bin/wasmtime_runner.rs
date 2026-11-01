@@ -1024,7 +1024,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // string_compare - Compare two strings, return 0 if equal, 1 if not (C/strcmp convention; codegen uses i32.eqz)
+    // string_compare - Lexicographic comparison: -1 if a < b, 0 if equal, 1 if a > b
+    // (function-registry.toml; codegen uses i32.eqz for equality and compares
+    // against 0 for ordering)
     linker.func_wrap(
         "env",
         "string_compare",
@@ -1059,7 +1061,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let start2 = ptr2 as usize + 4;
                     let string2 = std::str::from_utf8(&data[start2..start2 + len2]).unwrap_or("");
 
-                    return if string1 == string2 { 0 } else { 1 };
+                    return match string1.cmp(string2) {
+                        std::cmp::Ordering::Less => -1,
+                        std::cmp::Ordering::Equal => 0,
+                        std::cmp::Ordering::Greater => 1,
+                    };
                 }
             }
             0

@@ -1233,8 +1233,11 @@ impl super::CodeGenerator {
                 &[Instruction::Call(raw_idx), Instruction::I32WrapI64],
             )?;
             self.function_map.insert("time.now".to_string(), wrap_idx);
-            // now() is a bare alias used by frame.data plugin-generated code
+            // now() is a bare alias used by frame.data plugin-generated code. Direct
+            // `_time_now()` calls resolve to the wrapper too: Clean code receives an
+            // integer, never the raw i64 import result.
             self.function_map.insert("now".to_string(), wrap_idx);
+            self.function_map.insert("_time_now".to_string(), wrap_idx);
         }
         Ok(())
     }
@@ -1320,6 +1323,68 @@ impl super::CodeGenerator {
             &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
         )?;
+        self.register_import_function(
+            "env",
+            "_crypto_hmac",
+            &[WasmType::I32; 6],
+            Some(WasmType::I32),
+        )?;
+        Ok(())
+    }
+
+    /// Register host bridge imports for the `jwt` namespace (stdlib-reference.md
+    /// §11, Layer 2). Each string argument crosses the boundary as `(ptr, len)`.
+    /// Wrappers are created by `register_jwt_builtin_wrappers` after all imports.
+    pub(crate) fn register_jwt_builtin_imports(&mut self) -> Result<(), CompilerError> {
+        for (name, string_params) in [
+            ("_jwt_sign", 3usize),
+            ("_jwt_verify", 3),
+            ("_jwt_decode", 1),
+        ] {
+            self.register_import_function(
+                "env",
+                name,
+                &vec![WasmType::I32; string_params * 2],
+                Some(WasmType::I32),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Create local wrapper functions for the `jwt` namespace. Each wrapper takes
+    /// Clean string pointers and expands them to the `(ptr + 4, len)` pairs the
+    /// host bridge expects. Skips any name a plugin already mapped.
+    pub(crate) fn register_jwt_builtin_wrappers(&mut self) -> Result<(), CompilerError> {
+        for (raw_name, lang_name, string_params) in &[
+            ("_jwt_sign", "jwt.sign", 3u32),
+            ("_jwt_verify", "jwt.verify", 3u32),
+            ("_jwt_decode", "jwt.decode", 1u32),
+        ] {
+            if self.function_map.contains_key(*lang_name) {
+                continue;
+            }
+            if let Some(raw_idx) = self.builtin_wrapper_source(raw_name, lang_name) {
+                let mut body = Vec::new();
+                for param in 0..*string_params {
+                    body.extend([
+                        Instruction::LocalGet(param),
+                        Instruction::I32Const(4),
+                        Instruction::I32Add,
+                        Instruction::LocalGet(param),
+                        Instruction::I32Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 2,
+                            memory_index: 0,
+                        }),
+                    ]);
+                }
+                body.push(Instruction::Call(raw_idx));
+                let params = vec![WasmType::I32; *string_params as usize];
+                let wrap_idx =
+                    self.register_function(lang_name, &params, Some(WasmType::I32), &body)?;
+                self.function_map.insert(lang_name.to_string(), wrap_idx);
+            }
+        }
         Ok(())
     }
 
@@ -1386,39 +1451,34 @@ impl super::CodeGenerator {
             }
         }
 
-        // Two-string-param wrapper for verifyPassword
-        if !self.function_map.contains_key("crypto.verifyPassword") {
-            if let Some(raw_idx) =
-                self.builtin_wrapper_source("_crypto_verify_password", "crypto.verifyPassword")
-            {
-                let wrap_idx = self.register_function(
-                    "crypto.verifyPassword",
-                    &[WasmType::I32, WasmType::I32],
-                    Some(WasmType::I32),
-                    &[
-                        Instruction::LocalGet(0),
+        // Multi-string-param wrappers (each string expands ptr → ptr+4, len)
+        for (raw_name, lang_name, string_params) in &[
+            ("_crypto_verify_password", "crypto.verifyPassword", 2u32),
+            ("_crypto_hmac", "crypto.hmac", 3u32),
+        ] {
+            if self.function_map.contains_key(*lang_name) {
+                continue;
+            }
+            if let Some(raw_idx) = self.builtin_wrapper_source(raw_name, lang_name) {
+                let mut body = Vec::new();
+                for param in 0..*string_params {
+                    body.extend([
+                        Instruction::LocalGet(param),
                         Instruction::I32Const(4),
                         Instruction::I32Add,
-                        Instruction::LocalGet(0),
+                        Instruction::LocalGet(param),
                         Instruction::I32Load(wasm_encoder::MemArg {
                             offset: 0,
                             align: 2,
                             memory_index: 0,
                         }),
-                        Instruction::LocalGet(1),
-                        Instruction::I32Const(4),
-                        Instruction::I32Add,
-                        Instruction::LocalGet(1),
-                        Instruction::I32Load(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 2,
-                            memory_index: 0,
-                        }),
-                        Instruction::Call(raw_idx),
-                    ],
-                )?;
-                self.function_map
-                    .insert("crypto.verifyPassword".to_string(), wrap_idx);
+                    ]);
+                }
+                body.push(Instruction::Call(raw_idx));
+                let params = vec![WasmType::I32; *string_params as usize];
+                let wrap_idx =
+                    self.register_function(lang_name, &params, Some(WasmType::I32), &body)?;
+                self.function_map.insert(lang_name.to_string(), wrap_idx);
             }
         }
 

@@ -112,8 +112,17 @@ pub(super) struct LoopCodegenContext {
     /// MIR block ID of the loop's exit block (where `break` jumps to).
     pub(super) exit_block_id: BasicBlockId,
     /// WASM block depth when the outer `Block` instruction was pushed.
-    /// Used to calculate the relative `br` depth for `break`.
+    /// Used to calculate the relative `br` depth for `break`. The `loop`
+    /// label sits one level deeper (`block_depth + 1`).
     pub(super) block_depth: u32,
+    /// MIR block ID of the loop header. A Jump to it from inside the body
+    /// is a `continue` (or the natural end of a `while` body).
+    pub(super) header_block_id: BasicBlockId,
+    /// For loops with an explicit increment block (`iterate`): that block's
+    /// id and the WASM depth of the `block` wrapping the loop body. A Jump to
+    /// the increment block from inside the body is a `continue`: it branches
+    /// out of the body wrapper and lands on the increment code.
+    pub(super) continue_target: Option<(BasicBlockId, u32)>,
 }
 
 /// Info for a pending bridge wrapper function.
@@ -858,6 +867,12 @@ impl MirCodeGenerator<'_> {
                     .register_crypto_builtin_imports()
                     .map_err(|e| vec![e])?;
             }
+            if !self.alias_has_declared_bridge("jwt.sign") {
+                debug_mir!("DEBUG MIR: Registering jwt builtin imports (no plugin bridge for jwt)");
+                self.wasm_generator
+                    .register_jwt_builtin_imports()
+                    .map_err(|e| vec![e])?;
+            }
             if !self.alias_has_declared_bridge("server.sleep") {
                 debug_mir!(
                     "DEBUG MIR: Registering server_sleep import (no plugin bridge for server.sleep)"
@@ -1036,6 +1051,12 @@ impl MirCodeGenerator<'_> {
                     .register_crypto_builtin_wrappers()
                     .map_err(|e| vec![e])?;
             }
+            if !self.alias_has_declared_bridge("jwt.sign") {
+                debug_mir!("DEBUG MIR: Registering jwt builtin wrappers");
+                self.wasm_generator
+                    .register_jwt_builtin_wrappers()
+                    .map_err(|e| vec![e])?;
+            }
             if !self.alias_has_declared_bridge("server.sleep") {
                 debug_mir!("DEBUG MIR: Registering server_sleep wrapper");
                 self.wasm_generator
@@ -1091,11 +1112,33 @@ impl MirCodeGenerator<'_> {
         for (next_global_index, (symbol_id, global)) in (reserved..).zip(sorted_globals) {
             self.state_global_indices
                 .insert(symbol_id, next_global_index);
+            // A string initializer becomes the address of its data-section
+            // copy, so the global holds a valid string before any code runs.
+            let initializer = match &global.initializer {
+                Some(MirConstant::String(index)) => {
+                    let text = mir_program.string_pool.get(*index).ok_or_else(|| {
+                        vec![CompilerError::codegen_error(
+                            format!(
+                                "state variable '{}' refers to missing string constant {}",
+                                global.name, index
+                            ),
+                            None,
+                            None,
+                        )]
+                    })?;
+                    let offset = self
+                        .wasm_generator
+                        .get_or_create_string_offset(text)
+                        .map_err(|e| vec![e])?;
+                    Some(MirConstant::Integer(offset as i64))
+                }
+                other => other.clone(),
+            };
             self.state_globals.push((
                 symbol_id,
                 global.name.clone(),
                 global.global_type.clone(),
-                global.initializer.clone(),
+                initializer,
             ));
             debug_mir!(
                 name = %global.name,

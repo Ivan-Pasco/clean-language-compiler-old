@@ -12,8 +12,8 @@ use wasmtime::{
 
 use crate::ast::{FrameworkBlock, Statement};
 use crate::plugins::{
-    FrameworkPlugin, PluginCompletionItem, PluginDiagnostic, PluginError, PluginExpansion,
-    PluginHoverInfo, PluginLspContext, PluginResult,
+    FrameworkPlugin, HtmlEntryOutput, PluginCompletionItem, PluginDiagnostic, PluginError,
+    PluginExpansion, PluginHoverInfo, PluginLspContext, PluginResult,
 };
 
 use super::plugin_abi::PluginManifest;
@@ -345,7 +345,7 @@ impl WasmPluginAdapter {
         // and lint_project imports the union of both surfaces. Stub the lint
         // bridges so instantiation succeeds; a wrong-context call traps with
         // a `BRIDGE-WRONG-CONTEXT` diagnostic. Prompt f9ee2728-8597-11f1-9d55-da25a95a496b.
-        crate::plugins::bridge_stubs::register_lint_stubs(&mut linker)?;
+        crate::plugins::bridge_stubs::register_lint_stubs(&mut linker, "expand")?;
         Ok(linker)
     }
 
@@ -390,7 +390,7 @@ impl WasmPluginAdapter {
         self.register_plugin_stdlib_functions(&mut linker)?;
         crate::plugins::lint::register_lint_bridges(&mut linker)?;
         // Contract 5 Phase C: see build_typed_emission_linker for rationale.
-        crate::plugins::bridge_stubs::register_typed_emission_stubs(&mut linker)?;
+        crate::plugins::bridge_stubs::register_typed_emission_stubs(&mut linker, "lint")?;
         Ok(linker)
     }
 
@@ -676,10 +676,9 @@ impl WasmPluginAdapter {
     /// slot call. Used by `invoke_lifecycle_slot` when the plugin opts into
     /// typed emission at the manifest level (`expansion_version = "3.0.0"`).
     ///
-    /// Signature mirrors `call_expand_typed`: a per-call `EmitArena` is
-    /// installed, a fresh `ctx_handle` is allocated, the plugin's typed slot
-    /// export is invoked as `(ctx, build_context_lp) -> i32`, diagnostics are
-    /// routed, and the accumulated `PluginExpansion` is returned.
+    /// The plugin's typed slot export is invoked as
+    /// `(ctx, build_context_lp) -> i32` with the serialized build context;
+    /// see `call_typed_json_export`.
     ///
     /// Per typed-emission.md §7: every v1 lifecycle slot has a typed-emission
     /// counterpart with the same call site but a different ABI shape.
@@ -689,6 +688,62 @@ impl WasmPluginAdapter {
         export_name: &str,
         context: &crate::plugins::BuildContext,
     ) -> Result<PluginExpansion> {
+        let context_json = serde_json::to_string(context).map_err(|e| {
+            anyhow!(
+                "typed-emission: failed to serialize build context for slot `{}`: {}",
+                slot_name,
+                e
+            )
+        })?;
+        self.call_typed_json_export(
+            &format!("lifecycle slot `{}`", slot_name),
+            export_name,
+            &context_json,
+        )
+    }
+
+    /// Typed-emission variant of `process_html`, used when the plugin opts
+    /// into typed emission. The export is invoked as `(ctx, ctx_json_lp) -> i32`
+    /// where `ctx_json` is a JSON object whose string fields `html`, `path`,
+    /// `registry_json` and `companion_json` carry the same four inputs the v1
+    /// string ABI passes positionally. The page is returned as the emitted
+    /// `PluginExpansion`.
+    fn call_process_html_typed(
+        &self,
+        export_name: &str,
+        html: &str,
+        path: &str,
+        registry_json: &str,
+        companion_json: &str,
+    ) -> Result<PluginExpansion> {
+        let ctx_json = serde_json::json!({
+            "html": html,
+            "path": path,
+            "registry_json": registry_json,
+            "companion_json": companion_json,
+        })
+        .to_string();
+        self.call_typed_json_export(
+            &format!("process_html for `{}`", path),
+            export_name,
+            &ctx_json,
+        )
+    }
+
+    /// Shared typed-emission call shape for exports taking `(ctx, json_lp) -> i32`.
+    ///
+    /// A per-call `EmitArena` is installed under a fresh ctx handle, the
+    /// plugin is instantiated with the typed-emission linker, the export is
+    /// called with the JSON input written into plugin memory, diagnostics are
+    /// routed, and the accumulated `PluginExpansion` is returned. A non-zero
+    /// return or any error-severity diagnostic fails the call. `what` names
+    /// the call in diagnostics (e.g. "lifecycle slot `program_init`").
+    fn call_typed_json_export(
+        &self,
+        what: &str,
+        export_name: &str,
+        input_json: &str,
+    ) -> Result<PluginExpansion> {
         let ctx = self.next_ctx_handle();
         let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
         let mut store = self.create_store_with_arena(arena);
@@ -696,9 +751,9 @@ impl WasmPluginAdapter {
         let linker = self.build_typed_emission_linker()?;
         let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
             anyhow!(
-                "typed-emission: failed to instantiate plugin `{}` for slot `{}`: {}",
+                "typed-emission: failed to instantiate plugin `{}` for {}: {}",
                 self.name,
-                slot_name,
+                what,
                 e
             )
         })?;
@@ -713,36 +768,26 @@ impl WasmPluginAdapter {
         // Heap pointer fix — same convention as call_expand_typed.
         relocate_default_heap_pointer(&mut store, &instance);
 
-        let context_json = serde_json::to_string(context).map_err(|e| {
+        let input_ptr = self.find_or_write_string(&mut store, &memory, input_json)?;
+
+        let export: TypedFunc<(i32, i32), i32> = instance
+            .get_typed_func(&mut store, export_name)
+            .map_err(|e| {
             anyhow!(
-                "typed-emission: failed to serialize build context for slot `{}`: {}",
-                slot_name,
+                "typed-emission: plugin `{}` does not export {} as `{}(ctx, json) -> i32`: {}",
+                self.name,
+                what,
+                export_name,
                 e
             )
         })?;
-        let context_ptr = self.find_or_write_string(&mut store, &memory, &context_json)?;
 
-        // The typed lifecycle slot signature is `(ctx, build_context_lp) -> i32`.
-        let slot: TypedFunc<(i32, i32), i32> = instance
-            .get_typed_func(&mut store, export_name)
-            .map_err(|e| {
-                anyhow!(
-                    "typed-emission: plugin `{}` does not export typed lifecycle slot \
-                     `{}` (export `{}`): {}",
-                    self.name,
-                    slot_name,
-                    export_name,
-                    e
-                )
-            })?;
-
-        let plugin_return = slot.call(&mut store, (ctx, context_ptr)).map_err(|e| {
+        let plugin_return = export.call(&mut store, (ctx, input_ptr)).map_err(|e| {
             let oom = store.data().oom_during_call.clone();
             anyhow!(
-                "PLUGIN009: plugin `{}` trapped during typed lifecycle slot `{}`: {}{}",
+                "PLUGIN009: plugin `{}`: {}{}",
                 self.name,
-                slot_name,
-                e,
+                describe_plugin_trap(&e, &format!("typed {}", what)),
                 oom.as_deref()
                     .map(|s| format!(" [OOM: {}]", s))
                     .unwrap_or_default(),
@@ -753,7 +798,7 @@ impl WasmPluginAdapter {
             .data_mut()
             .emit_arena
             .take()
-            .expect("typed-emission: arena must be present after slot call");
+            .expect("typed-emission: arena must be present after the typed call");
 
         let (expansion, diagnostics, saw_error) = arena.finish();
 
@@ -762,19 +807,19 @@ impl WasmPluginAdapter {
                 tracing::error!(
                     target: "compiler::plugins::typed_emission",
                     plugin = %self.name,
-                    slot = slot_name,
+                    call = what,
                     code = %diag.code,
                     message = %diag.message,
-                    "plugin typed-emission error (lifecycle slot)"
+                    "plugin typed-emission error"
                 );
             } else {
                 tracing::warn!(
                     target: "compiler::plugins::typed_emission",
                     plugin = %self.name,
-                    slot = slot_name,
+                    call = what,
                     code = %diag.code,
                     message = %diag.message,
-                    "plugin typed-emission warning (lifecycle slot)"
+                    "plugin typed-emission warning"
                 );
             }
         }
@@ -787,9 +832,9 @@ impl WasmPluginAdapter {
                 .collect::<Vec<_>>()
                 .join("; ");
             return Err(anyhow!(
-                "plugin `{}` failed typed lifecycle slot `{}` (return={}, errors: {})",
+                "plugin `{}` failed typed {} (return={}, errors: {})",
                 self.name,
-                slot_name,
+                what,
                 plugin_return,
                 if error_summary.is_empty() {
                     "(none)"
@@ -888,6 +933,15 @@ impl WasmPluginAdapter {
                 msg
             ));
         }
+
+        // v1 calls (process_html, lifecycle hooks, v1 expansion) instantiate
+        // plugins that may also export expand_block_typed / lint_project and
+        // therefore import those bridge surfaces. Stub them (after the ABI
+        // parity gate, which covers only the v1 surface) so instantiation
+        // succeeds; a call from the wrong context traps with
+        // BRIDGE-WRONG-CONTEXT.
+        crate::plugins::bridge_stubs::register_typed_emission_stubs(&mut linker, "v1 plugin call")?;
+        crate::plugins::bridge_stubs::register_lint_stubs(&mut linker, "v1 plugin call")?;
 
         Ok(linker)
     }
@@ -1423,10 +1477,11 @@ impl WasmPluginAdapter {
                 let data = memory.data(&caller);
                 let s1 = read_lp_from_data(data, ptr1).unwrap_or(&[]);
                 let s2 = read_lp_from_data(data, ptr2).unwrap_or(&[]);
-                if s1 == s2 {
-                    0
-                } else {
-                    1
+                // Lexicographic order per function-registry.toml: -1 / 0 / 1.
+                match s1.cmp(s2) {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
                 }
             },
         )?;
@@ -4162,18 +4217,12 @@ impl WasmPluginAdapter {
     /// where each `*_ptr` points to a length-prefixed Clean string.
     fn call_process_html(
         &self,
+        export_name: &str,
         html: &str,
         path: &str,
         registry_json: &str,
         companion_json: &str,
     ) -> Result<String> {
-        let Some(export_name) = self.manifest.exports.process_html.as_ref() else {
-            return Err(anyhow!(
-                "Plugin `{}` did not declare an HTML processor (no `[exports].process_html`)",
-                self.name
-            ));
-        };
-
         let mut store = self.create_store();
         let linker = self.get_linker()?;
 
@@ -4195,7 +4244,7 @@ impl WasmPluginAdapter {
         let companion_ptr = self.find_or_write_string(&mut store, &memory, companion_json)?;
 
         let process: TypedFunc<(i32, i32, i32, i32), i32> = instance
-            .get_typed_func(&mut store, export_name.as_str())
+            .get_typed_func(&mut store, export_name)
             .map_err(|e| anyhow!("Plugin does not export `{}` function: {}", export_name, e))?;
 
         let result_ptr = process
@@ -4409,21 +4458,26 @@ impl FrameworkPlugin for WasmPluginAdapter {
         path: &str,
         registry_json: &str,
         companion_json: &str,
-    ) -> PluginResult<Option<String>> {
+    ) -> PluginResult<Option<HtmlEntryOutput>> {
         // Plugin opted out of HTML processing — return None so the caller
         // tries the next plugin.
-        if self.manifest.exports.process_html.is_none() {
+        let Some(export_name) = self.manifest.exports.process_html.as_deref() else {
             return Ok(None);
-        }
+        };
 
-        self.call_process_html(html, path, registry_json, companion_json)
-            .map(Some)
-            .map_err(|e| PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "__process_html".to_string(),
-                message: e.to_string(),
-                location: None,
-            })
+        let output = if self.manifest.opts_into_typed_emission() {
+            self.call_process_html_typed(export_name, html, path, registry_json, companion_json)
+                .map(HtmlEntryOutput::Expansion)
+        } else {
+            self.call_process_html(export_name, html, path, registry_json, companion_json)
+                .map(HtmlEntryOutput::Source)
+        };
+        output.map(Some).map_err(|e| PluginError::ExpansionFailed {
+            plugin_name: self.name.clone(),
+            block_name: "__process_html".to_string(),
+            message: e.to_string(),
+            location: None,
+        })
     }
 
     fn lint_project(

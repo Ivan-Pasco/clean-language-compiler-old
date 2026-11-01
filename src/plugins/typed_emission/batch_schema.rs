@@ -401,6 +401,8 @@ pub fn substitute_stmt(
                 .map(|s| substitute_stmt(s, ctx))
                 .collect::<Result<Vec<_>, _>>()?,
         },
+        // User-authored AST carries no template placeholders.
+        BatchStatement::Ast(stmt) => BatchStatement::Ast(stmt.clone()),
     })
 }
 
@@ -469,6 +471,8 @@ pub fn substitute_expr(e: &BatchExpr, ctx: &SubstitutionContext) -> Result<Batch
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         },
+        // User-authored AST carries no template placeholders.
+        BatchExpr::Ast(expr) => BatchExpr::Ast(expr.clone()),
     })
 }
 
@@ -694,6 +698,11 @@ pub enum BatchStatement {
     Block {
         stmts: Vec<BatchStatement>,
     },
+    /// A statement already in AST form — a §3.11 `_emit_stmt_from_source` or
+    /// §3.8 constructor handle pushed into a Stmt-kind batch array. Only built
+    /// by `batch.arrayPush`; never part of the JSON schema.
+    #[serde(skip)]
+    Ast(Box<Statement>),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -759,6 +768,11 @@ pub enum BatchExpr {
         #[serde(default)]
         fields: Vec<BatchObjectField>,
     },
+    /// An expression already in AST form — a §3.16 `_emit_expr_from_source`
+    /// or §3.9 constructor handle pushed into an Expr-kind batch array. Only
+    /// built by `batch.arrayPush`; never part of the JSON schema.
+    #[serde(skip)]
+    Ast(Box<Expression>),
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -955,6 +969,7 @@ pub fn expr_to_ast(e: BatchExpr) -> Result<Expression, BatchSchemaError> {
             }
             Expression::Call("__object_literal__".to_string(), args)
         }
+        BatchExpr::Ast(expr) => *expr,
     })
 }
 
@@ -1063,6 +1078,7 @@ pub fn stmt_to_ast(s: BatchStatement) -> Result<Statement, BatchSchemaError> {
                 location: None,
             }
         }
+        BatchStatement::Ast(stmt) => *stmt,
     })
 }
 

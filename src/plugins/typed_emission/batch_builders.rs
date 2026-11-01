@@ -1631,6 +1631,115 @@ mod tests {
     }
 
     #[test]
+    fn array_push_accepts_source_statement_handle() {
+        // typed-emission.md §3.14 / §3.17: a `_emit_stmt_from_source` handle is
+        // built into a batch statement, so it can join a Stmt array next to
+        // plugin-built statements.
+        let mut a = fresh_arena();
+        let arr_h = a.alloc_batch(BatchNode::Array(BatchArray {
+            kind: BatchArrayKind::Unset,
+            items: Vec::new(),
+        }));
+        let built_h = a.alloc_batch(BatchNode::Stmt(BatchStatement::Return { expr: None }));
+        a.batch_array_push(arr_h, built_h).unwrap();
+        let ast_h = a.alloc_stmt(crate::ast::Statement::Expression {
+            expr: crate::ast::Expression::Call("draw".to_string(), Vec::new()),
+            location: None,
+        });
+        a.batch_array_push(arr_h, ast_h)
+            .expect("statement handle joins a Stmt array");
+        let (items, kind) = a.take_batch_array(arr_h).unwrap();
+        assert_eq!(kind, BatchArrayKind::Stmt);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(
+            a.take_stmt(42, ast_h),
+            Err(crate::plugins::typed_emission::error::EmitError::HandleConsumed { .. })
+        ));
+    }
+
+    #[test]
+    fn array_push_rejects_statement_handle_in_expr_array_without_consuming() {
+        let mut a = fresh_arena();
+        let arr_h = a.alloc_batch(BatchNode::Array(BatchArray {
+            kind: BatchArrayKind::Unset,
+            items: Vec::new(),
+        }));
+        let expr_h = a.alloc_batch(BatchNode::Expr(BatchExpr::IntLit { value: 1 }));
+        a.batch_array_push(arr_h, expr_h).unwrap();
+        let ast_h = a.alloc_stmt(crate::ast::Statement::Expression {
+            expr: crate::ast::Expression::Call("draw".to_string(), Vec::new()),
+            location: None,
+        });
+        let err = a.batch_array_push(arr_h, ast_h).unwrap_err();
+        assert!(matches!(err, BatchArrayPushError::KindMismatch { .. }));
+        assert!(
+            a.take_stmt(42, ast_h).is_ok(),
+            "rejected handle stays usable"
+        );
+    }
+
+    #[test]
+    fn array_push_accepts_source_expression_handle() {
+        let mut a = fresh_arena();
+        let arr_h = a.alloc_batch(BatchNode::Array(BatchArray {
+            kind: BatchArrayKind::Unset,
+            items: Vec::new(),
+        }));
+        let built_h = a.alloc_batch(BatchNode::Expr(BatchExpr::Ident {
+            name: "__cv".to_string(),
+        }));
+        a.batch_array_push(arr_h, built_h).unwrap();
+        let ast_h = a.alloc_expr(crate::ast::Expression::Variable("x".to_string()));
+        a.batch_array_push(arr_h, ast_h)
+            .expect("expression handle joins an Expr array");
+        let (items, kind) = a.take_batch_array(arr_h).unwrap();
+        assert_eq!(kind, BatchArrayKind::Expr);
+        assert_eq!(items.len(), 2);
+        let lowered = crate::plugins::typed_emission::batch_schema::expr_to_ast(BatchExpr::Ast(
+            Box::new(crate::ast::Expression::Variable("x".to_string())),
+        ))
+        .unwrap();
+        assert!(matches!(lowered, crate::ast::Expression::Variable(ref n) if n == "x"));
+    }
+
+    #[test]
+    fn expression_operand_accepts_source_expression_handle() {
+        let mut a = fresh_arena();
+        let ast_h = a.alloc_expr(crate::ast::Expression::Variable("ready".to_string()));
+        let operand = a
+            .take_batch_expr(ast_h)
+            .expect("expression handle is an operand");
+        assert!(matches!(operand, BatchExpr::Ast(_)));
+        let stmt_h = a.alloc_stmt(crate::ast::Statement::Expression {
+            expr: crate::ast::Expression::Call("draw".to_string(), Vec::new()),
+            location: None,
+        });
+        assert!(
+            a.take_batch_expr(stmt_h).is_err(),
+            "a statement handle is not an expression operand"
+        );
+    }
+
+    #[test]
+    fn source_statement_in_batch_array_lowers_to_the_same_ast() {
+        let stmt = crate::ast::Statement::Expression {
+            expr: crate::ast::Expression::Call("draw".to_string(), Vec::new()),
+            location: None,
+        };
+        let lowered = crate::plugins::typed_emission::batch_schema::stmt_to_ast(
+            BatchStatement::Ast(Box::new(stmt)),
+        )
+        .unwrap();
+        assert!(matches!(
+            lowered,
+            crate::ast::Statement::Expression {
+                expr: crate::ast::Expression::Call(ref name, _),
+                ..
+            } if name == "draw"
+        ));
+    }
+
+    #[test]
     fn array_consumed_after_drain() {
         let mut a = fresh_arena();
         let arr_h = a.alloc_batch(BatchNode::Array(BatchArray {

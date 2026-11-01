@@ -429,6 +429,30 @@ impl MirCodeGenerator<'_> {
                 }
 
                 if !emitted_br {
+                    // A Jump to the header of a loop that is being emitted is a
+                    // `continue`: branch to that loop's `loop` label so the rest
+                    // of the body is skipped. Without the branch, a `continue`
+                    // nested under an inner `if` inside one arm of an if/else
+                    // fell through into the statements after the if/else.
+                    for loop_ctx in self.loop_context_stack.iter().rev() {
+                        if *target == loop_ctx.header_block_id {
+                            let br_depth = self.current_block_depth - (loop_ctx.block_depth + 1);
+                            self.current_instructions.push(Instruction::Br(br_depth));
+                            emitted_br = true;
+                            break;
+                        }
+                        if let Some((continue_block, body_depth)) = loop_ctx.continue_target {
+                            if *target == continue_block {
+                                let br_depth = self.current_block_depth - body_depth;
+                                self.current_instructions.push(Instruction::Br(br_depth));
+                                emitted_br = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if !emitted_br {
                     // Check if the target is a loop header (nested loop).
                     // Loop headers must always be generated inline — they are never
                     // "continuation" blocks that an outer structure will emit later.
@@ -479,12 +503,7 @@ impl MirCodeGenerator<'_> {
                 } else {
                     let tc = self.find_eventual_continuation(function, *true_block);
                     let fc = self.find_eventual_continuation(function, *false_block);
-                    match (tc, fc) {
-                        (Some(t), Some(f)) if t == f => Some(t),
-                        (Some(t), None) => Some(t),
-                        (None, Some(f)) => Some(f),
-                        _ => tc.or(fc),
-                    }
+                    self.resolve_if_merge(function, tc, fc)
                 };
                 let pushed_continuation = pending_continuation
                     .filter(|cont| !generated.contains(cont))
@@ -643,9 +662,18 @@ impl MirCodeGenerator<'_> {
                             if let Some(fc) = false_cont {
                                 if let Some(tc) = continuation {
                                     if tc != fc {
-                                        // Branches merge at different points — can't inline a
-                                        // single continuation here; outer structure will pick it up.
-                                        continuation = None;
+                                        // One arm may end at an intermediate merge of its
+                                        // own inner if/else that then flows into the other
+                                        // arm's continuation — that one is the real merge.
+                                        // Otherwise the branches merge at different points
+                                        // and the outer structure picks the merge up.
+                                        let merge =
+                                            self.resolve_if_merge(function, Some(tc), Some(fc));
+                                        continuation = merge.filter(|m| {
+                                            (*m == tc && self.jump_chain_reaches(function, fc, tc))
+                                                || (*m == fc
+                                                    && self.jump_chain_reaches(function, tc, fc))
+                                        });
                                     }
                                 } else {
                                     continuation = Some(fc);
@@ -790,9 +818,30 @@ impl MirCodeGenerator<'_> {
                     self.current_block_depth += 1;
 
                     // NOTE: Push loop context so break inside nested if can emit correct br
+                    // An explicit increment block (`iterate` loops) is the
+                    // target of `continue`. The body is wrapped in its own
+                    // `block` so a `continue` from any nesting depth branches
+                    // to the end of the body and then runs the increment.
+                    // Without the wrapper a Jump to the increment block from a
+                    // nested `if` was treated as an ordinary continuation and
+                    // the rest of the body still ran.
+                    let explicit_increment = self
+                        .find_loop_increment_block(function, *true_block, block_id)
+                        .filter(|id| {
+                            function.blocks.get(id).is_some_and(|b| {
+                                matches!(
+                                    b.label.as_deref(),
+                                    Some("for_increment") | Some("range_for_increment")
+                                )
+                            })
+                        });
+                    let continue_target =
+                        explicit_increment.map(|id| (id, self.current_block_depth + 2));
                     self.loop_context_stack.push(LoopCodegenContext {
                         exit_block_id: *false_block,
                         block_depth: self.current_block_depth,
+                        header_block_id: block_id,
+                        continue_target,
                     });
 
                     self.current_instructions
@@ -812,7 +861,22 @@ impl MirCodeGenerator<'_> {
 
                     // Generate loop body (true_block) - this will have a Jump to increment or back to header
                     // Mark the loop body as generated to prevent infinite recursion
-                    self.generate_branch_block(function, *true_block, generated)?;
+                    if let Some(increment_id) = explicit_increment {
+                        self.current_instructions
+                            .push(Instruction::Block(BlockType::Empty)); // continue target
+                        self.current_block_depth += 1;
+                        // Reserved for the loop: no nested if may inline it
+                        // as its continuation.
+                        let newly_reserved = generated.insert(increment_id);
+                        self.generate_branch_block(function, *true_block, generated)?;
+                        self.current_instructions.push(Instruction::End);
+                        self.current_block_depth -= 1;
+                        if newly_reserved {
+                            generated.remove(&increment_id);
+                        }
+                    } else {
+                        self.generate_branch_block(function, *true_block, generated)?;
+                    }
 
                     // NOTE: Find and generate the increment block for for-loops
                     // The body may contain nested control flow (if statements), so we can't just
@@ -899,12 +963,7 @@ impl MirCodeGenerator<'_> {
                     } else {
                         let tc = self.find_eventual_continuation(function, *true_block);
                         let fc = self.find_eventual_continuation(function, *false_block);
-                        match (tc, fc) {
-                            (Some(t), Some(f)) if t == f => Some(t),
-                            (Some(t), None) => Some(t),
-                            (None, Some(f)) => Some(f),
-                            _ => tc.or(fc),
-                        }
+                        self.resolve_if_merge(function, tc, fc)
                     };
                     let pushed_continuation = pending_continuation
                         .filter(|cont| !generated.contains(cont))
@@ -951,9 +1010,7 @@ impl MirCodeGenerator<'_> {
                     } else {
                         // Find and generate continuation block.
                         // We need to find the continuation that at least one non-returning branch jumps to.
-                        let mut continuation: Option<BasicBlockId> = None;
-
-                        if !has_else_clause {
+                        let continuation: Option<BasicBlockId> = if !has_else_clause {
                             // No else clause: `false_block` IS the outer if's continuation by
                             // construction (the MIR builder allocates it as the merge point for
                             // the if's non-taken path). Use it directly.
@@ -964,7 +1021,7 @@ impl MirCodeGenerator<'_> {
                             // while emitting the true branch. Re-entering it would short-circuit
                             // on `generated.contains(&...)` and the outer continuation would
                             // never be visited, dropping every statement after the outer if.
-                            continuation = Some(*false_block);
+                            Some(*false_block)
                         } else {
                             // Real else clause: locate the merge block both branches jump to.
                             //
@@ -981,22 +1038,18 @@ impl MirCodeGenerator<'_> {
                             // (CMP-HTML-BLOCK-INTERPOLATION-DROPS-VARIABLE-OPERANDS
                             // residual path, fp e96188e7e08a).
 
-                            if !true_has_return {
-                                continuation =
-                                    self.find_eventual_continuation(function, *true_block);
-                            }
-
-                            if !false_has_return {
-                                let false_cont =
-                                    self.find_eventual_continuation(function, *false_block);
-                                if let Some(fc) = false_cont {
-                                    if continuation.is_none() {
-                                        continuation = Some(fc);
-                                    }
-                                    // Both branches should lead to same continuation
-                                }
-                            }
-                        }
+                            let true_cont = if true_has_return {
+                                None
+                            } else {
+                                self.find_eventual_continuation(function, *true_block)
+                            };
+                            let false_cont = if false_has_return {
+                                None
+                            } else {
+                                self.find_eventual_continuation(function, *false_block)
+                            };
+                            self.resolve_if_merge(function, true_cont, false_cont)
+                        };
 
                         // Generate the continuation block if we found one
                         if let Some(cont) = continuation {

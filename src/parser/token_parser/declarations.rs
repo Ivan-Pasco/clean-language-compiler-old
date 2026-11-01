@@ -1859,6 +1859,21 @@ impl TokenParser {
             // handler — first-class function reference (WASM i32 table index)
             // grammar.ebnf: sized_type alternatives include handler
             "handler" => Type::Handler,
+            // Generic class type (grammar.ebnf `type`): `PagedResult<Item>`,
+            // the same Type::Generic node the pest type parser builds.
+            other if matches!(self.current_kind(), TokenKind::Less) => {
+                self.bump(); // consume '<'
+                self.skip_whitespace();
+                let mut type_args = vec![self.parse_type()?];
+                self.skip_whitespace();
+                while self.eat(&TokenKind::Comma) {
+                    self.skip_whitespace();
+                    type_args.push(self.parse_type()?);
+                    self.skip_whitespace();
+                }
+                self.expect(&TokenKind::Greater)?;
+                Type::Generic(Box::new(Type::Object(other.to_string())), type_args)
+            }
             other => Type::Object(other.to_string()),
         };
 
@@ -2056,7 +2071,10 @@ impl TokenParser {
             | TokenKind::Source
             | TokenKind::Build
             | TokenKind::Spec
-            | TokenKind::Intent => Ok(self.bump()),
+            | TokenKind::Intent
+            // `can` opens a capability declaration only at the top level; as a
+            // member name it is an ordinary method (`auth.can("posts.write")`).
+            | TokenKind::Can => Ok(self.bump()),
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(

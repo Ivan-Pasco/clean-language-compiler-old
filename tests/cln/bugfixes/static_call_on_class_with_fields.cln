@@ -1,0 +1,55 @@
+// Test: bugfixes/static_call_on_class_with_fields
+// Grammar: method_call
+// Semantic: Static Methods (specification 15-classes-and-objects.md)
+// Regression: `ClassName.method()` on a class that declares fields produced
+//   invalid WASM ("type mismatch: expected i32 but nothing on stack"). Methods
+//   of a class with fields take a `this` parameter, and the static call
+//   pushed no receiver. frame.data models hit this with `User.migrate()`
+//   (DAT-C005), whose body also calls a sibling method. A call from a
+//   top-level function (resolved before the class's methods) is bound by
+//   name and must get the receiver and the declared return type too.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   true
+//   CREATE (id, name)
+//   true
+//   5
+//   CREATE (id, name)
+//   7
+//   done
+
+start:
+	printl(Schema.ready().toString())
+	printl(Schema.create())
+	Schema s = Schema()
+	printl(s.ready().toString())
+	printl(Schema.sum(2, 3).toString())
+	viaFunction()
+
+class Schema
+	integer id = 0
+	string name = ""
+
+	functions:
+		string columns()
+			return "(id, name)"
+
+		public:
+			boolean ready()
+				return true
+
+			string create()
+				return "CREATE " + columns()
+
+			integer sum(integer a, integer b)
+				return a + b
+
+			void log()
+				printl("done")
+
+functions:
+	void viaFunction()
+		printl(Schema.create())
+		integer total = Schema.sum(3, 4)
+		printl(total.toString())
+		Schema.log()

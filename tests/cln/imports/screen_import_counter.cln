@@ -1,0 +1,15 @@
+// Test: imports/screen_import_counter (module imported by screen_import_main)
+// Grammar: screen_block (grammar.ebnf §6.10)
+// Semantic: SCOPE005
+// Expected output:
+
+screen Counter:
+	state:
+		integer count = 0
+
+	functions:
+		void increment()
+			count = count + 1
+
+		integer currentCount()
+			return count

@@ -861,9 +861,6 @@ impl MirBuilder {
         // Store test symbol IDs for the codegen phase to use when generating _run_tests.
         mir_program.test_functions = test_symbol_ids;
 
-        // Transfer string pool
-        mir_program.string_pool = self.string_pool.clone();
-
         // Add state variables to MirProgram.globals
         // If TAST has state declarations, use them with const evaluation
         // Otherwise fall back to pre-registered state variables
@@ -884,8 +881,11 @@ impl MirBuilder {
                     (ConstValue::Boolean(b), MirType::I32 | MirType::Bool) => {
                         Some(MirConstant::Integer(if *b { 1 } else { 0 }))
                     }
-                    // Strings require runtime initialization - use 0 (null ptr) as placeholder
-                    (ConstValue::String(_), _) => Some(MirConstant::Integer(0)),
+                    // A constant string lives in the data section; the global
+                    // starts out pointing at it (resolved to an offset in codegen).
+                    (ConstValue::String(text), _) => {
+                        Some(MirConstant::String(self.get_string_index(text.clone())))
+                    }
                     // Non-const expressions need runtime init - use default zero
                     (ConstValue::NotConst, MirType::I32 | MirType::Bool) => {
                         Some(MirConstant::Integer(0))
@@ -895,9 +895,7 @@ impl MirBuilder {
                     _ => Some(MirConstant::Integer(0)),
                 };
 
-                let is_const = const_val.is_const()
-                    && !matches!(const_val, ConstValue::String(_))
-                    && !matches!(const_val, ConstValue::NotConst);
+                let is_const = const_val.is_const() && !matches!(const_val, ConstValue::NotConst);
 
                 let global = MirGlobal {
                     symbol_id: decl.symbol_id,
@@ -941,6 +939,10 @@ impl MirBuilder {
                 );
             }
         }
+
+        // Transfer string pool (after the state globals, whose string
+        // initializers are interned above).
+        mir_program.string_pool = self.string_pool.clone();
 
         // Record build time
         self.stats.build_time_us = start_time.elapsed().as_micros() as u64;

@@ -1186,6 +1186,11 @@ impl MirCodeGenerator<'_> {
                     wasm_encoder::ValType::F64,
                     wasm_encoder::ConstExpr::f64_const(0.0),
                 ),
+                // Pointer-valued state (strings point at their data-section copy).
+                (_, Some(MirConstant::Integer(n))) => (
+                    wasm_encoder::ValType::I32,
+                    wasm_encoder::ConstExpr::i32_const(*n as i32),
+                ),
                 _ => (
                     wasm_encoder::ValType::I32,
                     wasm_encoder::ConstExpr::i32_const(0),
@@ -1733,8 +1738,12 @@ impl MirCodeGenerator<'_> {
                     continue;
                 }
             };
+            // `deep_instructions` also yields the instructions packed into
+            // every (possibly nested) `a and b` / `a or b` right-hand side —
+            // they live in the operation, not in any block, and a bridge
+            // reached only from a nested rhs would otherwise be tree-shaken.
             for block in current_func.blocks.values() {
-                for instruction in &block.instructions {
+                for instruction in deep_instructions(&block.instructions) {
                     match &instruction.operation {
                         MirOperation::Call { function, .. } => match function {
                             MirOperand::NamedFunction { name, symbol_id } => {
@@ -1801,7 +1810,13 @@ impl MirCodeGenerator<'_> {
                             }
                         }
                         MirOperation::BinaryOp {
-                            op: MirBinaryOp::Eq | MirBinaryOp::Ne,
+                            op:
+                                MirBinaryOp::Eq
+                                | MirBinaryOp::Ne
+                                | MirBinaryOp::Lt
+                                | MirBinaryOp::Le
+                                | MirBinaryOp::Gt
+                                | MirBinaryOp::Ge,
                             left,
                             right,
                         } => {
@@ -1824,106 +1839,6 @@ impl MirCodeGenerator<'_> {
                             if left_is_string || right_is_string {
                                 names.insert("string_compare".to_string());
                                 names.insert("string.compare".to_string());
-                            }
-                        }
-                        // `a and b` / `a or b` short-circuit. The rhs's MIR
-                        // instructions are embedded in the operation rather
-                        // than living in any block — walk them so the
-                        // call-graph BFS sees their callees, named imports,
-                        // and string-comparison BinaryOps. Without this,
-                        // e.g. `i < len and substring(i, i+1) == " "` would
-                        // tree-shake `string_compare` (the rhs's `==` never
-                        // appears in a block) and codegen would silently
-                        // fall back to pointer-equality `i32.eq`. The walk
-                        // is intentionally a flat scan rather than a
-                        // recursive descent — at present rhs_instructions
-                        // is always a linear sequence (the MIR builder
-                        // rejects rhs expressions that open control flow,
-                        // see `build_short_circuit_logical`).
-                        MirOperation::LogicalShortCircuit {
-                            rhs_instructions, ..
-                        } => {
-                            for sub in rhs_instructions {
-                                match &sub.operation {
-                                    MirOperation::Call {
-                                        function: MirOperand::NamedFunction { name, symbol_id },
-                                        ..
-                                    } => {
-                                        insert_name(&mut names, &mut worklist, &mut visited, name);
-                                        let callee = if symbol_id.0 != 0 {
-                                            Some(*symbol_id)
-                                        } else {
-                                            name_to_symbol.get(name.as_str()).copied()
-                                        };
-                                        if let Some(s) = callee {
-                                            if visited.insert(s) {
-                                                worklist.push(s);
-                                            }
-                                        }
-                                    }
-                                    MirOperation::Call {
-                                        function: MirOperand::Function(callee_sym),
-                                        ..
-                                    } => {
-                                        if let Some(name) =
-                                            mir_program.symbol_name_map.get(callee_sym)
-                                        {
-                                            insert_name(
-                                                &mut names,
-                                                &mut worklist,
-                                                &mut visited,
-                                                name,
-                                            );
-                                        }
-                                        if visited.insert(*callee_sym) {
-                                            worklist.push(*callee_sym);
-                                        }
-                                    }
-                                    MirOperation::Copy {
-                                        source: MirOperand::Function(callee_sym),
-                                    } => {
-                                        if let Some(name) =
-                                            mir_program.symbol_name_map.get(callee_sym)
-                                        {
-                                            insert_name(
-                                                &mut names,
-                                                &mut worklist,
-                                                &mut visited,
-                                                name,
-                                            );
-                                        }
-                                        if visited.insert(*callee_sym) {
-                                            worklist.push(*callee_sym);
-                                        }
-                                    }
-                                    MirOperation::BinaryOp {
-                                        op: MirBinaryOp::Eq | MirBinaryOp::Ne,
-                                        left,
-                                        right,
-                                    } => {
-                                        let left_is_str = match left {
-                                            MirOperand::Value(vid) => current_func
-                                                .locals
-                                                .get(vid)
-                                                .map(|l| is_string_type(&l.local_type))
-                                                .unwrap_or(false),
-                                            _ => false,
-                                        };
-                                        let right_is_str = match right {
-                                            MirOperand::Value(vid) => current_func
-                                                .locals
-                                                .get(vid)
-                                                .map(|l| is_string_type(&l.local_type))
-                                                .unwrap_or(false),
-                                            _ => false,
-                                        };
-                                        if left_is_str || right_is_str {
-                                            names.insert("string_compare".to_string());
-                                            names.insert("string.compare".to_string());
-                                        }
-                                    }
-                                    _ => {}
-                                }
                             }
                         }
                         _ => {}
@@ -1982,7 +1897,7 @@ impl MirCodeGenerator<'_> {
                 continue; // dead-code eliminated when unreachable; don't register their imports
             }
             for block in function.blocks.values() {
-                for instruction in &block.instructions {
+                for instruction in deep_instructions(&block.instructions) {
                     match &instruction.operation {
                         MirOperation::Call {
                             function: MirOperand::Function(sym),
@@ -2009,7 +1924,13 @@ impl MirCodeGenerator<'_> {
                             insert_name(&mut names, &mut worklist, &mut visited, name);
                         }
                         MirOperation::BinaryOp {
-                            op: MirBinaryOp::Eq | MirBinaryOp::Ne,
+                            op:
+                                MirBinaryOp::Eq
+                                | MirBinaryOp::Ne
+                                | MirBinaryOp::Lt
+                                | MirBinaryOp::Le
+                                | MirBinaryOp::Gt
+                                | MirBinaryOp::Ge,
                             left,
                             right,
                         } => {
@@ -2095,25 +2016,6 @@ impl MirCodeGenerator<'_> {
                         } => push_operand(source, out),
                         MirOperation::AsyncFireCall { fn_name, .. }
                         | MirOperation::AsyncAwaitCall { fn_name, .. } => out.push(fn_name.clone()),
-                        MirOperation::LogicalShortCircuit {
-                            rhs_instructions, ..
-                        } => {
-                            for sub in rhs_instructions {
-                                match &sub.operation {
-                                    MirOperation::Call { function, .. } => {
-                                        push_operand(function, out)
-                                    }
-                                    MirOperation::Copy {
-                                        source: source @ MirOperand::Function(_),
-                                    } => push_operand(source, out),
-                                    MirOperation::AsyncFireCall { fn_name, .. }
-                                    | MirOperation::AsyncAwaitCall { fn_name, .. } => {
-                                        out.push(fn_name.clone())
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
                         _ => {}
                     }
                 };
@@ -2130,7 +2032,7 @@ impl MirCodeGenerator<'_> {
                         continue;
                     }
                     for block in f.blocks.values() {
-                        for instr in &block.instructions {
+                        for instr in deep_instructions(&block.instructions) {
                             buf.clear();
                             called_names_in_instr(instr, &mut buf);
                             for name in buf.drain(..) {
@@ -2202,8 +2104,15 @@ impl MirCodeGenerator<'_> {
                     // "http.set_cache" → "http_set_cache"
                     let underscored = n.replace('.', "_");
                     out.push(underscored.clone());
-                    // "http.set_cache" → "_http_set_cache" (plugin bridge name)
-                    out.push(format!("_{}", underscored));
+                    // "http.set_cache" → "_http_set_cache" (plugin bridge name),
+                    // unless a plugin mapped the name to a different bridge:
+                    // `feed.close` → `_sse_close` must not also mark the
+                    // browser-only `_feed_close` reachable.
+                    let conventional = format!("_{}", underscored);
+                    match self.language_to_bridge_map.get(n.as_str()) {
+                        Some(mapped) if *mapped != conventional => {}
+                        _ => out.push(conventional),
+                    }
                 }
                 if n.contains('_') && !n.starts_with('_') {
                     // "http_get" → "http.get"
@@ -2229,6 +2138,7 @@ impl MirCodeGenerator<'_> {
             ("crypto.sha512", "_crypto_hash_sha512"),
             ("crypto.hashPassword", "_crypto_hash_password"),
             ("crypto.verifyPassword", "_crypto_verify_password"),
+            ("crypto.hmac", "_crypto_hmac"),
             // http response accessors: "http.responseCode" → "http_responseCode" (wrong)
             //                          actual import:        "http_get_response_code"
             ("http.responseCode", "http_get_response_code"),
@@ -2339,7 +2249,7 @@ impl MirCodeGenerator<'_> {
                 // Reachable preamble — fall through and scan its bridge calls
             }
             for block in function.blocks.values() {
-                for instruction in &block.instructions {
+                for instruction in deep_instructions(&block.instructions) {
                     if let MirOperation::Call { function, .. } = &instruction.operation {
                         match function {
                             MirOperand::NamedFunction { name, .. } => {
@@ -2876,12 +2786,17 @@ impl MirCodeGenerator<'_> {
                         self.expand_strings_wrapper_names.insert(lang_name.clone());
                     }
                 }
-                // now() is a bare alias for time.now() used by frame.data plugin-generated code
+                // now() is a bare alias for time.now() used by frame.data plugin-generated
+                // code. A direct `_time_now()` call (plugin-emitted helpers call bridges by
+                // their canonical name) must also get the integer the wrapper returns, not
+                // the raw i64 import result.
                 if public_name == "time.now" {
-                    self.wasm_generator
-                        .function_map
-                        .insert("now".to_string(), wrapper_index);
-                    self.expand_strings_wrapper_names.insert("now".to_string());
+                    for alias in ["now", "_time_now"] {
+                        self.wasm_generator
+                            .function_map
+                            .insert(alias.to_string(), wrapper_index);
+                        self.expand_strings_wrapper_names.insert(alias.to_string());
+                    }
                 }
             }
         }
@@ -3440,4 +3355,26 @@ mod expand_strings_wrapper_awareness_tests {
         assert!(!gen.resolves_to_expand_strings_wrapper("Json.Get"));
         assert!(!gen.resolves_to_expand_strings_wrapper("JSON.GET"));
     }
+}
+
+/// Every instruction in `instructions`, including the ones packed into the
+/// right-hand side of each `a and b` / `a or b` (`LogicalShortCircuit`), at
+/// any nesting depth. Those rhs instructions live inside the operation rather
+/// than in a basic block, so a plain block walk never sees their callees.
+fn deep_instructions(
+    instructions: &[crate::mir::mir_types::MirInstruction],
+) -> Vec<&crate::mir::mir_types::MirInstruction> {
+    let mut out = Vec::with_capacity(instructions.len());
+    let mut pending: Vec<&crate::mir::mir_types::MirInstruction> =
+        instructions.iter().rev().collect();
+    while let Some(instr) = pending.pop() {
+        if let crate::mir::mir_types::MirOperation::LogicalShortCircuit {
+            rhs_instructions, ..
+        } = &instr.operation
+        {
+            pending.extend(rhs_instructions.iter().rev());
+        }
+        out.push(instr);
+    }
+    out
 }

@@ -798,6 +798,12 @@ pub struct PluginTypeDef {
     /// Fields not listed here are implicitly typed as `any`.
     #[serde(default)]
     pub fields: Vec<PluginTypeField>,
+    /// Generic shorthand (plugin-contract.md §4.5, type-system.md "Plugin
+    /// generic shorthand"): when set, the type `Name<Arg>` in user code
+    /// denotes the concrete class this template names, with `{T}` replaced by
+    /// `Arg` — a class the plugin itself emits (e.g. `"PagedResult_{T}"`).
+    #[serde(default)]
+    pub instance_class: Option<String>,
 }
 
 /// A function definition for the plugin's DSL
@@ -846,7 +852,9 @@ pub struct PluginFunctionDef {
     pub returns: Option<String>,
     /// Per-parameter default values (as literal strings: "302", "{}", etc.).
     /// Parallel to `params`: index N is the default for param N.
-    /// Empty string `""` means the param is required (no default).
+    /// Empty string `""` means the param is required (no default); a quoted
+    /// value (`"\"\""`) is a string literal, which is how an empty-string
+    /// default is written.
     #[serde(default)]
     pub param_defaults: Vec<String>,
 }

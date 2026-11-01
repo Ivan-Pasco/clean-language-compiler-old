@@ -1,0 +1,32 @@
+// Test: bugfixes/public_field_assignment_from_outside_class
+// Grammar: assignment_target (`identifier , "." , identifier`), public_class_fields_section
+// Regression: `obj.field = value` written outside the class was parsed into an
+//   expression node that had no lowering, so the store was silently dropped and
+//   the field kept its old value. A value read from json.get (an `any`) is now
+//   also unwrapped before it is stored in a typed field.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   7
+//   9
+//   renamed
+//   zed
+
+start:
+	Box b = Box(7)
+	printl(b.size.toString())
+	b.size = 9
+	printl(b.size.toString())
+	b.label = "renamed"
+	printl(b.label)
+	string payload = "\{\"name\":\"zed\"\}"
+	b.label = json.get(payload, "name")
+	printl(b.label)
+
+class Box
+	public:
+		integer size
+		string label
+
+	constructor(integer initial)
+		size = initial
+		label = "box"

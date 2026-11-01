@@ -2905,6 +2905,19 @@ impl<'a> TypeInference<'a> {
                         // Handle field assignments like obj.field = value
                         let tast_object = self.infer_expression(object)?;
 
+                        // The resolver leaves `obj.field` l-values unbound
+                        // (SymbolId(0)) because the field depends on the
+                        // object's type; bind it here the same way field reads
+                        // are bound.
+                        let (target_type, field_symbol_id) = if *field_symbol_id == SymbolId(0) {
+                            match self.infer_field_type_and_symbol(&tast_object.expr_type, field) {
+                                Ok(found) => found,
+                                Err(_) => (target_type, *field_symbol_id),
+                            }
+                        } else {
+                            (target_type, *field_symbol_id)
+                        };
+
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
                             // Add constraint that value type matches field type
@@ -2919,7 +2932,7 @@ impl<'a> TypeInference<'a> {
                             kind: TastExpressionKind::PropertyAccess {
                                 object: Box::new(tast_object),
                                 property_name: field.clone(),
-                                property_symbol: *field_symbol_id,
+                                property_symbol: field_symbol_id,
                             },
                             expr_type: target_type,
                             location: field_location.clone(),
@@ -5768,6 +5781,20 @@ impl<'a> TypeInference<'a> {
                                 return Ok(self.hir_type_to_concrete(return_type));
                             }
                         }
+                    }
+                }
+                // A dotted plugin language function (`auth.csrf.generate`) is
+                // registered under its full name; use its declared return type.
+                if let Some(function_symbol) = self
+                    .symbol_table
+                    .lookup_symbol(&full_method_name)
+                    .and_then(|id| self.symbol_table.get_symbol(id))
+                {
+                    if let SymbolKind::Function { return_type, .. } = &function_symbol.kind {
+                        return Ok(match return_type {
+                            Some(t) => self.hir_type_to_concrete(t),
+                            None => ConcreteType::Null,
+                        });
                     }
                 }
                 Ok(ConcreteType::Unknown)

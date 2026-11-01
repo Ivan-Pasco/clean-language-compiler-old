@@ -1,6 +1,8 @@
 // Test: spec_compliance/statements/scope005_screen_state_valid
 // Grammar: screen_block, state_block
 // Semantic: SCOPE005 — Access within the owning screen must be accepted
+// Updated: screen functions are scoped under the screen name (Screen.fn);
+//   calls from outside the screen use the qualified name.
 // Expected output:
 //   0
 
@@ -13,4 +15,4 @@ screen Home:
 			print(homeCount)
 
 start:
-	showCount()
+	Home.showCount()

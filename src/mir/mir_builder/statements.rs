@@ -524,11 +524,33 @@ impl MirBuilder {
 
                         // Check if field type is 'any' and value type is not 'any' - need boxing
                         // The target.expr_type tells us the field type
+                        // Unboxing mirrors the variable-assignment path: `obj.f = json.get(...)`
+                        // with a non-Any field must store the inner value, not the Any wrapper.
                         let final_value_id = if matches!(target.expr_type, ConcreteType::Any)
                             && !matches!(value.expr_type, ConcreteType::Any)
                         {
                             // Box the value before storing
                             self.emit_box_any(context, value_id, &value.expr_type, &value.location)
+                        } else if (matches!(value.expr_type, ConcreteType::Any)
+                            || matches!(
+                                context
+                                    .function
+                                    .locals
+                                    .get(&value_id)
+                                    .map(|l| &l.local_type),
+                                Some(MirType::Any)
+                            ))
+                            && !matches!(
+                                target.expr_type,
+                                ConcreteType::Any | ConcreteType::Unknown
+                            )
+                        {
+                            self.emit_unbox_any(
+                                context,
+                                value_id,
+                                &target.expr_type,
+                                &value.location,
+                            )
                         } else {
                             value_id
                         };

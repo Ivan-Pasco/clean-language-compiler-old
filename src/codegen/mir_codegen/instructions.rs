@@ -1638,8 +1638,17 @@ impl MirCodeGenerator<'_> {
                             function_name
                         );
 
-                        // Try direct lookup first
-                        let function_index = if let Some(&idx) =
+                        // An emitted `maps_to_helper` target wins over every other
+                        // lookup (see the NamedFunction arm below for why).
+                        let helper_index = self
+                            .language_to_helper_map
+                            .get(&function_name)
+                            .and_then(|helper_name| {
+                                self.wasm_generator.function_map.get(helper_name).copied()
+                            });
+                        let function_index = if helper_index.is_some() {
+                            helper_index
+                        } else if let Some(&idx) =
                             self.wasm_generator.function_map.get(&function_name)
                         {
                             Some(idx)
@@ -1716,18 +1725,6 @@ impl MirCodeGenerator<'_> {
                                     self.wasm_generator.function_map.get(bridge_name).copied()
                                 },
                             )
-                        })
-                        // Plugin-emitted helper lookup: "auth.jwt.sign" → "jwt_sign"
-                        // (see language_to_helper_map above). Same fix as the
-                        // NamedFunction arm below; kept in parity so calls whose
-                        // callee arrives as SymbolFunction (resolver path) and
-                        // NamedFunction (parser fallback path) both resolve.
-                        .or_else(|| {
-                            self.language_to_helper_map.get(&function_name).and_then(
-                                |helper_name| {
-                                    self.wasm_generator.function_map.get(helper_name).copied()
-                                },
-                            )
                         });
 
                         if let Some(function_index) = function_index {
@@ -1797,60 +1794,61 @@ impl MirCodeGenerator<'_> {
                         name
                     );
 
-                    // Try direct lookup first
-                    let function_index =
-                        if let Some(&idx) = self.wasm_generator.function_map.get(name) {
-                            Some(idx)
+                    // An explicit `maps_to_helper` declaration whose helper was
+                    // emitted in this build names the exact function the owning
+                    // plugin generated for this language name, so it wins over a
+                    // bridge alias of the same name from another plugin
+                    // (frame.server's basic `auth.can` vs frame.auth's roles-aware
+                    // helper) and over the name-shape fallbacks below
+                    // ("auth.jwt.sign" stripped to "jwt.sign" would otherwise hit
+                    // the raw `_jwt_sign` bridge wrapper).
+                    let helper_index =
+                        self.language_to_helper_map
+                            .get(name)
+                            .and_then(|helper_name| {
+                                self.wasm_generator.function_map.get(helper_name).copied()
+                            });
+                    let function_index = if helper_index.is_some() {
+                        helper_index
+                    } else if let Some(&idx) = self.wasm_generator.function_map.get(name) {
+                        Some(idx)
+                    } else {
+                        // Try underscore/dot conversion
+                        // "input.integer" -> "input_integer" or vice versa
+                        let alt_name = if name.contains('.') {
+                            name.replace('.', "_")
+                        } else if name.contains('_') {
+                            name.replace('_', ".")
                         } else {
-                            // Try underscore/dot conversion
-                            // "input.integer" -> "input_integer" or vice versa
-                            let alt_name = if name.contains('.') {
-                                name.replace('.', "_")
-                            } else if name.contains('_') {
-                                name.replace('_', ".")
-                            } else {
-                                String::new()
-                            };
+                            String::new()
+                        };
 
-                            if !alt_name.is_empty() {
-                                self.wasm_generator.function_map.get(&alt_name).copied()
-                            } else {
-                                None
-                            }
+                        if !alt_name.is_empty() {
+                            self.wasm_generator.function_map.get(&alt_name).copied()
+                        } else {
+                            None
                         }
-                        // Imported module call fallback: "ModuleName.function" → "function"
-                        // When modules are merged into a single compilation unit, their
-                        // functions are registered without the module prefix. Strip the
-                        // first qualifier and look up the bare function name.
-                        .or_else(|| {
-                            if let Some(dot_pos) = name.find('.') {
-                                let bare_name = &name[dot_pos + 1..];
-                                self.wasm_generator.function_map.get(bare_name).copied()
-                            } else {
-                                None
-                            }
-                        })
-                        // Bridge function lookup: "req.body" → "_req_body" via language_to_bridge_map
-                        .or_else(|| {
-                            self.language_to_bridge_map
-                                .get(name)
-                                .and_then(|bridge_name| {
-                                    self.wasm_generator.function_map.get(bridge_name).copied()
-                                })
-                        })
-                        // Plugin-emitted helper lookup: "auth.jwt.sign" → "jwt_sign"
-                        // via language_to_helper_map. Fixes FRAME-AUTH-JWT-HELPERS-UNREACHABLE:
-                        // the helper WAS emitted (appended to program.functions during
-                        // framework-block expansion) but its language-facing dotted name
-                        // was previously dropped as "LSP-only" and had no route to the
-                        // helper's WASM index.
-                        .or_else(|| {
-                            self.language_to_helper_map
-                                .get(name)
-                                .and_then(|helper_name| {
-                                    self.wasm_generator.function_map.get(helper_name).copied()
-                                })
-                        });
+                    }
+                    // Imported module call fallback: "ModuleName.function" → "function"
+                    // When modules are merged into a single compilation unit, their
+                    // functions are registered without the module prefix. Strip the
+                    // first qualifier and look up the bare function name.
+                    .or_else(|| {
+                        if let Some(dot_pos) = name.find('.') {
+                            let bare_name = &name[dot_pos + 1..];
+                            self.wasm_generator.function_map.get(bare_name).copied()
+                        } else {
+                            None
+                        }
+                    })
+                    // Bridge function lookup: "req.body" → "_req_body" via language_to_bridge_map
+                    .or_else(|| {
+                        self.language_to_bridge_map
+                            .get(name)
+                            .and_then(|bridge_name| {
+                                self.wasm_generator.function_map.get(bridge_name).copied()
+                            })
+                    });
 
                     if let Some(idx) = function_index {
                         debug_mir!(
@@ -3018,6 +3016,40 @@ impl MirCodeGenerator<'_> {
                 return Ok(());
             }
             // Fall through to pointer comparison if string_compare not available
+        }
+
+        // Relational operators on strings order them lexicographically:
+        // `string_compare` returns -1 / 0 / 1 (function-registry.toml), which is
+        // compared against 0. Comparing the raw pointers would order strings by
+        // where they happen to live in memory.
+        if is_string
+            && matches!(
+                op,
+                MirBinaryOp::Lt | MirBinaryOp::Le | MirBinaryOp::Gt | MirBinaryOp::Ge
+            )
+        {
+            let compare_idx = self
+                .wasm_generator
+                .get_function_index("string_compare")
+                .ok_or_else(|| {
+                    CompilerError::codegen_error(
+                        "string ordering comparison requires the string_compare import, \
+                         which was not registered"
+                            .to_string(),
+                        None,
+                        None,
+                    )
+                })?;
+            self.current_instructions
+                .push(Instruction::Call(compare_idx));
+            self.current_instructions.push(Instruction::I32Const(0));
+            self.current_instructions.push(match op {
+                MirBinaryOp::Lt => Instruction::I32LtS,
+                MirBinaryOp::Le => Instruction::I32LeS,
+                MirBinaryOp::Gt => Instruction::I32GtS,
+                _ => Instruction::I32GeS,
+            });
+            return Ok(());
         }
 
         let instruction = match op {

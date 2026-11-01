@@ -1,0 +1,27 @@
+// Test: bugfixes/can_method_name_and_standalone_on_error
+// Grammar: method_call (member name), standalone_on_error
+// Regression: the token parser rejected the keyword `can` used as a method
+//   name (`gate.can("x")`, as in frame.auth's `auth.can(...)`) and a standalone
+//   `onError:` block after a statement, both of which the grammar allows.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   parsed
+//   true
+
+start:
+	Gate gate = Gate(1)
+	printl("parsed")
+	printl(gate.can("x").toString())
+	onError:
+		printl("not reached")
+
+class Gate
+	integer level
+
+	constructor(integer startLevel)
+		level = startLevel
+
+	functions:
+		public:
+			boolean can(string permission)
+				return permission.length() > 0 and level > 0

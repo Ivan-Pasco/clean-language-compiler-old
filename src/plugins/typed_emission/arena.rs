@@ -157,7 +157,8 @@ impl BatchArrayPushError {
                 format!("batch.arrayPush: array handle {} has already been consumed (PLUGIN008 ConsumedHandleReuse)", handle)
             }
             BatchArrayPushError::InvalidItemHandle => {
-                "batch.arrayPush: item_handle is not a valid batch handle".to_string()
+                "batch.arrayPush: item_handle is not a valid batch handle or statement handle"
+                    .to_string()
             }
             BatchArrayPushError::ItemConsumed { handle } => {
                 format!("batch.arrayPush: item handle {} has already been consumed (PLUGIN008 ConsumedHandleReuse)", handle)
@@ -834,10 +835,20 @@ impl EmitArena {
             });
         }
 
+        // A §3.11 `_emit_stmt_from_source` / §3.16 `_emit_expr_from_source`
+        // (or §3.8 / §3.9 constructor) handle is built into a batch node
+        // (typed-emission.md §3.14 "Composition with §3.11 pass-through",
+        // §3.17): a statement joins a Stmt-kind array and an expression an
+        // Expr-kind array, so bodies and argument lists can mix plugin-built
+        // nodes with user-authored ones. The array kind is checked before the
+        // AST handle is taken, so a rejected push leaves the handle unconsumed.
+        let item_handle = if !Self::is_batch_handle(item_handle) {
+            self.wrap_ast_for_array(arr_idx, item_handle)?
+        } else {
+            item_handle
+        };
+
         // Validate item handle and determine its kind.
-        if !Self::is_batch_handle(item_handle) {
-            return Err(BatchArrayPushError::InvalidItemHandle);
-        }
         let item_idx = Self::batch_index(item_handle);
         if item_idx == 0 || item_idx >= self.batch_nodes.len() {
             return Err(BatchArrayPushError::InvalidItemHandle);
@@ -890,6 +901,50 @@ impl EmitArena {
         Ok(())
     }
 
+    /// Move the AST statement or expression behind `ast_handle` into a fresh
+    /// batch node so it can be pushed into the batch array at `arr_idx`.
+    /// Fails without consuming `ast_handle` when the array does not accept
+    /// that kind.
+    fn wrap_ast_for_array(
+        &mut self,
+        arr_idx: usize,
+        ast_handle: i32,
+    ) -> Result<i32, BatchArrayPushError> {
+        let idx = ast_handle as usize;
+        if ast_handle <= 0 || idx >= self.nodes.len() {
+            return Err(BatchArrayPushError::InvalidItemHandle);
+        }
+        if self.consumed[idx] {
+            return Err(BatchArrayPushError::ItemConsumed { handle: ast_handle });
+        }
+        let item_kind = match self.nodes[idx] {
+            Some(EmitNode::Stmt(_)) => BatchArrayKind::Stmt,
+            Some(EmitNode::Expr(_)) => BatchArrayKind::Expr,
+            _ => return Err(BatchArrayPushError::NonPushableKind { handle: ast_handle }),
+        };
+        if let Some(BatchNode::Array(arr)) = &self.batch_nodes[arr_idx] {
+            if arr.kind != BatchArrayKind::Unset && arr.kind != item_kind {
+                return Err(BatchArrayPushError::KindMismatch {
+                    array_kind: arr.kind,
+                    item_kind,
+                });
+            }
+        }
+        let ctx = self.ctx_handle;
+        let node = if item_kind == BatchArrayKind::Stmt {
+            let stmt = self
+                .take_stmt(ctx, ast_handle)
+                .map_err(|_| BatchArrayPushError::InvalidItemHandle)?;
+            BatchNode::Stmt(BatchStatement::Ast(Box::new(stmt)))
+        } else {
+            let expr = self
+                .take_expr(ctx, ast_handle)
+                .map_err(|_| BatchArrayPushError::InvalidItemHandle)?;
+            BatchNode::Expr(BatchExpr::Ast(Box::new(expr)))
+        };
+        Ok(self.alloc_batch(node))
+    }
+
     /// Drain all items from a batch array (consuming the array).
     /// Returns the raw item indices and the array kind.
     pub fn take_batch_array(
@@ -908,6 +963,17 @@ impl EmitArena {
 
     /// Take a `BatchNode` and assert it is an `Expr`. Returns the inner `BatchExpr`.
     pub fn take_batch_expr(&mut self, handle: i32) -> Result<BatchExpr, EmitError> {
+        // A §3.16 `_emit_expr_from_source` (or §3.9 constructor) expression
+        // handle is built into a batch expression wherever a builder takes an
+        // expression operand (typed-emission.md §3.14 "Composition with §3.11
+        // pass-through") — e.g. the user-authored condition of a
+        // `batch.stmtWhile` whose body mixes plugin-built statements.
+        if handle > 0 && !Self::is_batch_handle(handle) {
+            let ctx = self.ctx_handle;
+            return self
+                .take_expr(ctx, handle)
+                .map(|e| BatchExpr::Ast(Box::new(e)));
+        }
         let node = self.take_batch_node(handle)?;
         match node {
             BatchNode::Expr(e) => Ok(e),

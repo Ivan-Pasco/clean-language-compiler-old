@@ -138,11 +138,15 @@ sized_type = @{ core_type ~ size_specifier }
 // consumes `list<T> xs` and leaves ` = []` unparseable. Reported as
 // SYN001-LIST-GENERIC-REGRESSION (fp 3d5a3082). Internal whitespace
 // (`" "*`) is still explicit inside the rule, so atomic is safe.
-matrix_type = @{ "matrix" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
+// Compound-atomic (`${ }`) rather than plain atomic (`@{ }`): same no-implicit-
+// whitespace behaviour, but the inner `type_` pairs are kept so the element
+// type reaches the AST. Plain atomic dropped them and every `list<T>`,
+// `matrix<T>` and `pairs<K, V>` parsed as its bare `any` form.
+matrix_type = ${ "matrix" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
 // list_behavior suffix: .line | .pile | .unique (spec grammar.ebnf §list_behavior)
 list_behavior = { "." ~ ("line" | "pile" | "unique") }
-list_type = @{ "list" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") ~ list_behavior? }
-pairs_type = @{ "pairs" ~ ("<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
+list_type = ${ "list" ~ ("<" ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") ~ list_behavior? }
+pairs_type = ${ "pairs" ~ ("<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "* ~ ">")? ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Generic types
 generic_type = { identifier ~ "<" ~ type_arguments ~ ">" }
@@ -199,11 +203,17 @@ simple_indented_block = {
 
 // Removed indented_statement rule - was allowing INDENT+ which mixed indentation levels
 
-// Nested block within function bodies - flexible indentation pattern for nested contexts
-function_nested_block = { 
-    NEWLINE ~ (empty_line)* ~ 
-    INDENT ~ INDENT+ ~ statement ~ 
-    (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ statement)* 
+// Nested block within function bodies (two or more tabs deep). The first
+// line's indentation is pushed and every following statement of the block
+// must sit at exactly that depth (`PEEK ~ !INDENT`): a shallower line closes
+// the block and belongs to an enclosing one. Matching any depth of two or
+// more tabs instead let the body of an inner `if` swallow the statements
+// that follow it in the enclosing loop or block.
+function_nested_block = {
+    NEWLINE ~ (empty_line)* ~
+    PUSH(INDENT ~ INDENT+) ~ statement ~
+    (NEWLINE ~ (empty_line)* ~ PEEK ~ !INDENT ~ statement)* ~
+    DROP
 }
 
 // Apply-blocks (core language feature) - Specification compliant

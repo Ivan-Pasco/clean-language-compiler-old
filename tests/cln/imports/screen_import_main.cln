@@ -1,0 +1,16 @@
+// Test: imports/screen_import_main
+// Grammar: screen_block (grammar.ebnf §6.10), import_block
+// Semantic: SCOPE005 (screen state is visible to its own functions)
+// Fixed in: compiler 0.33.166
+// Updated: screen functions are scoped under the screen name (Screen.fn);
+//   calls from outside the screen use the qualified name.
+// Expected output:
+//   2
+
+import:
+	screen_import_counter
+
+start:
+	Counter.increment()
+	Counter.increment()
+	printl(Counter.currentCount().toString())

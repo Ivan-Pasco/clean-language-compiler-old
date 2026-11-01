@@ -185,16 +185,23 @@ fn parse_assignment_statement(
             let identifier = target_parts[0].as_str().to_string();
 
             // Check if it's a property access (second part is an identifier)
-            if target_parts[1].as_rule() == Rule::identifier {
-                let property_name = target_parts[1].as_str().to_string();
-
-                return Ok(Statement::Expression {
-                    expr: Expression::PropertyAssignment {
-                        object: Box::new(Expression::Variable(identifier)),
-                        property: property_name,
-                        value: Box::new(value),
-                        location: ast_location.clone(),
+            // Lowered as a real field assignment (grammar.ebnf `assignment_target`);
+            // `Expression::PropertyAssignment` has no HIR lowering and the write
+            // was silently dropped.
+            if target_parts[1..]
+                .iter()
+                .all(|p| p.as_rule() == Rule::identifier)
+            {
+                let path = target_parts[1..]
+                    .iter()
+                    .map(|p| p.as_str().to_string())
+                    .collect();
+                return Ok(Statement::Assignment {
+                    target: AssignmentTarget::Property {
+                        object: identifier,
+                        path,
                     },
+                    value,
                     location: Some(ast_location),
                 });
             }
@@ -225,6 +232,16 @@ fn parse_assignment_statement(
             location,
         } = property_expr
         {
+            if let Expression::Variable(name) = object.as_ref() {
+                return Ok(Statement::Assignment {
+                    target: AssignmentTarget::Property {
+                        object: name.clone(),
+                        path: vec![property],
+                    },
+                    value,
+                    location: Some(ast_location),
+                });
+            }
             return Ok(Statement::Expression {
                 expr: Expression::PropertyAssignment {
                     object,

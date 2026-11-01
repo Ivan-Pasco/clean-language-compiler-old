@@ -382,6 +382,8 @@ impl HirValidator {
         // The resolver will emit SCOPE005 when a screen-local variable is accessed
         // outside its owning screen.
         for screen in &hir.screen_blocks {
+            // A screen is a namespace: its functions are called as `Screen.fn()`.
+            context.plugin_namespaces.insert(screen.name.clone());
             if let Some(ref screen_state) = screen.state {
                 for decl in &screen_state.declarations {
                     context.declare_variable(decl.name.clone(), decl.state_type.clone());

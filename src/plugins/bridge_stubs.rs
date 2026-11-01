@@ -27,9 +27,12 @@ use crate::plugins::wasm_adapter::PluginState;
 /// surface) can still instantiate for a lint pass. Any bridge invoked
 /// from the wrong context traps with a diagnostic naming the specific
 /// bridge and the pass it was called from.
-pub fn register_typed_emission_stubs(linker: &mut Linker<PluginState>) -> Result<()> {
+pub fn register_typed_emission_stubs(
+    linker: &mut Linker<PluginState>,
+    context: &'static str,
+) -> Result<()> {
     for (name, arity) in TYPED_EMISSION_BRIDGES {
-        register_trap_stub(linker, name, *arity, "lint")?;
+        register_trap_stub(linker, name, *arity, context)?;
     }
     Ok(())
 }
@@ -39,9 +42,9 @@ pub fn register_typed_emission_stubs(linker: &mut Linker<PluginState>) -> Result
 /// Called from `build_typed_emission_linker` so a plugin that also
 /// exports `lint_project` (and therefore imports the lint surface) can
 /// still instantiate for an expand pass.
-pub fn register_lint_stubs(linker: &mut Linker<PluginState>) -> Result<()> {
+pub fn register_lint_stubs(linker: &mut Linker<PluginState>, context: &'static str) -> Result<()> {
     for (name, arity) in LINT_BRIDGES {
-        register_trap_stub(linker, name, *arity, "expand")?;
+        register_trap_stub(linker, name, *arity, context)?;
     }
     Ok(())
 }
@@ -267,10 +270,11 @@ mod tests {
     fn stub_lists_have_no_duplicates() {
         let engine = Engine::default();
         let mut linker: Linker<PluginState> = Linker::new(&engine);
-        register_typed_emission_stubs(&mut linker).expect("typed-emission stubs register cleanly");
+        register_typed_emission_stubs(&mut linker, "lint")
+            .expect("typed-emission stubs register cleanly");
 
         let mut linker: Linker<PluginState> = Linker::new(&engine);
-        register_lint_stubs(&mut linker).expect("lint stubs register cleanly");
+        register_lint_stubs(&mut linker, "expand").expect("lint stubs register cleanly");
     }
 
     /// The two surfaces must stay disjoint — an overlap would mean one

@@ -1,0 +1,43 @@
+// Test: bugfixes/accumulator_loop_keeps_outer_string_assignments
+// Semantic: string values assigned to a variable declared outside a loop stay valid after the loop
+// Regression: a loop that appends to a string accumulator was wrapped in a
+//   heap scope that is rewound after the loop. The check for that wrap only
+//   looked at collection writes, so a string assigned to an outer variable
+//   inside the loop (port_str below) was freed by the rewind and overwritten
+//   by the next allocation. frame.server's `server:` expansion trapped this way.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   3400
+//   3400
+//   100
+start:
+	string port = parse_port("port: 3400\nany err:\nhandle\n")
+	printl(port)
+	string other = build_text()
+	printl(port)
+	printl(other.length().toString())
+
+functions:
+	string parse_port(string body)
+		string port_str = "3000"
+		string handled = ""
+		integer line_start = 0
+		while line_start < body.length()
+			integer line_end = body.indexOf("\n", line_start)
+			if line_end == -1
+				line_end = body.length()
+			string line = body.substring(line_start, line_end)
+			string trimmed = line.trim()
+			if trimmed.startsWith("port:")
+				port_str = trimmed.substring(5, trimmed.length()).trim()
+			else
+				handled = handled + trimmed + "\n"
+			line_start = line_end + 1
+		return port_str
+
+	string build_text()
+		string s = ""
+		s = s + "first line of the generated text\n"
+		s = s + "second line of the generated text\n"
+		s = s + "third line of the generated text\n"
+		return s

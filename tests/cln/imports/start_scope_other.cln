@@ -1,0 +1,12 @@
+// Test: imports/start_scope_other (module imported by start_scope_main)
+// Grammar: start_block (grammar.ebnf §6)
+// Expected output:
+//   other 2
+
+start:
+	integer s = 2
+	printl("other " + s.toString())
+
+functions:
+	integer helper()
+		return 1

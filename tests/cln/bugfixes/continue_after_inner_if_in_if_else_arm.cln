@@ -1,0 +1,52 @@
+// Test: bugfixes/continue_after_inner_if_in_if_else_arm
+// Grammar: while_statement, if_statement, continue_statement
+// Regression: a `continue` that followed an inner `if` inside one arm of an
+//   if/else in a `while` body emitted no branch, so execution fell through
+//   into the statements after the if/else. frame.jobs' `retry:` parsing hit
+//   this and copied the retry settings into the job handler body.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   one
+//   else
+//   else
+//   2
+//   [b|keep2|]
+
+start:
+	integer i = 0
+	integer appended = 0
+	while i < 4
+		i = i + 1
+		if i < 3
+			if i == 1
+				printl("one")
+			continue
+		else
+			printl("else")
+		appended = appended + 1
+	printl(appended.toString())
+	printl("[" + collect("a\nkeep1\nb\nkeep2\n") + "]")
+
+functions:
+	string collect(string text)
+		string out = ""
+		string rem = text
+		boolean flag = false
+		integer guard = 0
+		while guard < 50 and rem.length() > 0
+			guard = guard + 1
+			integer nl = rem.indexOf("\n")
+			string line = rem.substring(0, nl)
+			rem = rem.substring(nl + 1, rem.length())
+			if line == "a"
+				flag = true
+				continue
+			if flag
+				if line.startsWith("keep")
+					if line == "keep1"
+						flag = true
+					continue
+				else
+					flag = false
+			out = out + line + "|"
+		return out

@@ -282,42 +282,31 @@ impl TokenParser {
                         self.cursor -= 1;
                         return self.parse_method_apply_block();
                     } else if has_assign {
-                        // This is a property assignment: OBJECT.PROPERTY = VALUE
-                        // Move cursor back to the identifier
-                        self.cursor -= 1;
-
-                        // Parse the object part
-                        let object = self.parse_expression()?;
-                        self.skip_whitespace();
-
-                        // Extract property name from the parsed expression
-                        // We need to check if it's a PropertyAccess
-                        if let Expression::PropertyAccess { property, .. } = &object {
-                            let property_name = property.clone();
-
-                            // Consume the = token
-                            if self.eat(&TokenKind::Assign) {
+                        // Property assignment: OBJECT.PROPERTY[.PROPERTY...] = VALUE
+                        // (grammar.ebnf `assignment_target`). Lowered as a real
+                        // assignment to a field l-value; the former
+                        // `Expression::PropertyAssignment` form had no HIR
+                        // lowering, so the write was silently dropped.
+                        let mut path: Vec<String> = Vec::new();
+                        while self.eat(&TokenKind::Dot) {
+                            self.skip_whitespace();
+                            if let TokenKind::Identifier(seg) = self.current_kind() {
+                                path.push(seg.clone());
+                                self.bump();
                                 self.skip_whitespace();
-                                let value = self.parse_expression()?;
-
-                                // Create PropertyAssignment expression wrapped in Statement::Expression
-                                return Ok(Statement::Expression {
-                                    expr: Expression::PropertyAssignment {
-                                        object: if let Expression::PropertyAccess {
-                                            object, ..
-                                        } = object
-                                        {
-                                            object
-                                        } else {
-                                            Box::new(Expression::Variable(first_name.clone()))
-                                        },
-                                        property: property_name,
-                                        value: Box::new(value),
-                                        location: first_location.clone(),
-                                    },
-                                    location: Some(first_location),
-                                });
                             }
+                        }
+                        if !path.is_empty() && self.eat(&TokenKind::Assign) {
+                            self.skip_whitespace();
+                            let value = self.parse_expression()?;
+                            return Ok(Statement::Assignment {
+                                target: AssignmentTarget::Property {
+                                    object: first_name,
+                                    path,
+                                },
+                                value,
+                                location: Some(first_location),
+                            });
                         }
 
                         return Err(CompilerError::parse_error(
@@ -334,7 +323,7 @@ impl TokenParser {
                 let next_could_be_var_name = matches!(
                     self.current_kind(),
                     TokenKind::Identifier(_) | TokenKind::Test | TokenKind::Error | TokenKind::Unit
-                );
+                ) || self.at_generic_type_declaration();
 
                 if next_could_be_var_name {
                     // Next token is an Identifier - this could be a variable declaration
@@ -579,6 +568,22 @@ impl TokenParser {
             // reset_statement: "reset" , ( "state" | identifier )
             // grammar.ebnf reset_statement production.
             TokenKind::Reset => self.parse_reset_statement(),
+            // standalone_on_error: "onError" , ":" , indented_block
+            // (grammar.ebnf §4.7) — same AST node the pest grammar produces.
+            TokenKind::OnError => {
+                let location = self.current().location.clone();
+                match self.try_parse_on_error_block()? {
+                    Some((body, _)) => Ok(Statement::StandaloneErrorHandler {
+                        body,
+                        location: Some(location),
+                    }),
+                    None => Err(CompilerError::parse_error(
+                        "Expected 'onError:' block".to_string(),
+                        Some(location),
+                        None,
+                    )),
+                }
+            }
             // Contextual keywords used as variable names in statements
             // (e.g., `rules = rules + ","` or `rules.trim()`)
             TokenKind::Rules
@@ -1064,6 +1069,41 @@ impl TokenParser {
             expression,
             location: Some(location),
         })
+    }
+
+    /// At `<` right after a class name: true when the tokens read
+    /// `<TypeArgs> name =` — a variable declaration with a generic class type
+    /// such as `PagedResult<Item> page = ...` (grammar.ebnf `type`).
+    pub(super) fn at_generic_type_declaration(&self) -> bool {
+        if !matches!(self.current_kind(), TokenKind::Less) {
+            return false;
+        }
+        let mut idx = self.cursor;
+        let mut depth = 0usize;
+        while idx < self.tokens.len() {
+            match &self.tokens[idx].kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::Newline | TokenKind::Assign => return false,
+                _ => {}
+            }
+            idx += 1;
+        }
+        if depth != 0 {
+            return false;
+        }
+        matches!(
+            self.tokens.get(idx + 1).map(|t| &t.kind),
+            Some(TokenKind::Identifier(_))
+        ) && matches!(
+            self.tokens.get(idx + 2).map(|t| &t.kind),
+            Some(TokenKind::Assign)
+        )
     }
 
     /// Check if the current position has `onError:` and parse the error handling block

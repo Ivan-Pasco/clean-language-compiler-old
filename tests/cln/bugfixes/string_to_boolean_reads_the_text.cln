@@ -1,0 +1,21 @@
+// Test: bugfixes/string_to_boolean_reads_the_text
+// Semantic: stdlib-reference.md — `.toBoolean()` on a string accepts
+//   "true"/"false"/"1"/"0"; other values return false
+// Regression: string.toBoolean() returned true for every non-empty string,
+//   so "false" and "0" converted to true.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   true
+//   false
+//   true
+//   false
+//   false
+//   false
+
+start:
+	printl("true".toBoolean().toString())
+	printl("false".toBoolean().toString())
+	printl("1".toBoolean().toString())
+	printl("0".toBoolean().toString())
+	printl("yes".toBoolean().toString())
+	printl("".toBoolean().toString())

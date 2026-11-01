@@ -1,0 +1,16 @@
+// Test: imports/start_scope_main
+// Grammar: start_block (grammar.ebnf §6), import_block
+// Semantic: SCOPE (each file's start: body is its own block scope)
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   other 2
+//   main 1
+//   1
+
+import:
+	start_scope_other
+
+start:
+	integer s = 1
+	printl("main " + s.toString())
+	printl(helper().toString())

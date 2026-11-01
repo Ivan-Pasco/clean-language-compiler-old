@@ -1,0 +1,39 @@
+// Test: bugfixes/string_relational_comparison_lexicographic
+// Grammar: comparison_expression (`<`, `>`, `<=`, `>=`)
+// Regression: `<`, `>`, `<=` and `>=` on strings compared the two string
+//   pointers, so the result depended on where each string lived in memory
+//   instead of on the text. They now order strings lexicographically through
+//   string_compare (-1 / 0 / 1, function-registry.toml).
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   true
+//   true
+//   false
+//   false
+//   true
+//   true
+//   valid
+
+start:
+	string first = "S"
+	printl((first >= "A" and first <= "Z").toString())
+	printl(("apple" < "banana").toString())
+	printl(("b" < "a").toString())
+	printl(("same" > "same").toString())
+	printl(("same" >= "same").toString())
+	printl(("abc" < "abd").toString())
+	if is_identifier("SendEmail")
+		printl("valid")
+	else
+		printl("invalid")
+
+functions:
+	boolean is_identifier(string s)
+		integer i = 0
+		while i < s.length()
+			string ch = s.substring(i, i + 1)
+			boolean ok = (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+			if not ok
+				return false
+			i = i + 1
+		return true

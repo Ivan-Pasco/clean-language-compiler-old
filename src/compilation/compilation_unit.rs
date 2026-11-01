@@ -13,6 +13,14 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CompilationModuleId(pub usize);
 
+/// AST emitted by a plugin for a whole module, together with the plugin
+/// that produced it (used for origin stamping and permission checks).
+#[derive(Debug, Clone)]
+pub struct ModulePluginExpansion {
+    pub plugin_name: String,
+    pub expansion: crate::plugins::PluginExpansion,
+}
+
 /// Represents a single module (source file) in the compilation unit
 #[derive(Debug, Clone)]
 pub struct CompiledModule {
@@ -40,6 +48,11 @@ pub struct CompiledModule {
     /// Whether this is the entry module
     pub is_entry: bool,
 
+    /// AST a plugin emitted for this module instead of Clean source (a
+    /// typed-emission plugin's output for an HTML page entry). Merged into
+    /// the module's parsed program during plugin expansion.
+    pub plugin_expansion: Option<ModulePluginExpansion>,
+
     /// Source location for error reporting
     pub location: SourceLocation,
 }
@@ -62,6 +75,7 @@ impl CompiledModule {
             imports: Vec::new(),
             exports: HashMap::new(),
             is_entry,
+            plugin_expansion: None,
             location: SourceLocation {
                 file: file_path.to_string_lossy().to_string(),
                 line: 1,

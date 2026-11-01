@@ -432,6 +432,7 @@ mod tests {
                     name: "Model".to_string(),
                     description: "Data model type".to_string(),
                     fields: vec![],
+                    instance_class: None,
                 }],
                 functions: vec![PluginFunctionDef {
                     name: "Data.tx".to_string(),

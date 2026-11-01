@@ -186,6 +186,10 @@ pub struct HirBuilder {
     /// integer local. Kept separate from `string_builder_counter` so the
     /// two rewrites can interleave freely.
     carryover_counter: usize,
+    /// Plugin generic shorthand (plugin-contract.md §4.5): plugin type name →
+    /// `instance_class` template. `Name<Arg>` lowers to the class the template
+    /// names with `{T}` replaced by `Arg`.
+    generic_instance_classes: std::collections::HashMap<String, String>,
 }
 
 impl HirBuilder {
@@ -206,7 +210,40 @@ impl HirBuilder {
             state_initializers: std::collections::HashMap::new(),
             string_builder_counter: 0,
             carryover_counter: 0,
+            generic_instance_classes: std::collections::HashMap::new(),
         }
+    }
+
+    /// Install the plugin generic shorthand table (plugin-contract.md §4.5),
+    /// usually `PluginRegistry::generic_instance_classes()`.
+    pub fn with_generic_instance_classes(
+        mut self,
+        table: std::collections::HashMap<String, String>,
+    ) -> Self {
+        self.generic_instance_classes = table;
+        self
+    }
+
+    /// Concrete class named by the plugin generic shorthand `base<args>`, if
+    /// `base` is a plugin type with an `instance_class` template and the single
+    /// type argument is a class or core type name.
+    fn generic_instance_class(&self, base: &Type, args: &[Type]) -> Option<String> {
+        let Type::Object(base_name) = base else {
+            return None;
+        };
+        let template = self.generic_instance_classes.get(base_name)?;
+        let [arg] = args else {
+            return None;
+        };
+        let arg_name = match arg {
+            Type::Object(name) | Type::Class { name, .. } => name.clone(),
+            Type::Integer => "integer".to_string(),
+            Type::Number => "number".to_string(),
+            Type::String => "string".to_string(),
+            Type::Boolean => "boolean".to_string(),
+            _ => return None,
+        };
+        Some(template.replace("{T}", &arg_name))
     }
 
     // =========================================================================
@@ -604,6 +641,26 @@ impl HirBuilder {
         Ok(())
     }
 
+    /// A state initializer the WASM global section can hold directly: a
+    /// numeric, boolean or string literal (strings point into the data section).
+    fn is_constant_state_initializer(init: &Expression) -> bool {
+        matches!(
+            init,
+            Expression::Literal(
+                Value::Integer(_)
+                    | Value::Number(_)
+                    | Value::Boolean(_)
+                    | Value::String(_)
+                    | Value::Integer8(_)
+                    | Value::Integer8u(_)
+                    | Value::Integer16(_)
+                    | Value::Integer16u(_)
+                    | Value::Integer32(_)
+                    | Value::Integer64(_)
+            )
+        )
+    }
+
     /// Build HIR from an AST program
     pub fn build_hir(&mut self, program: Program) -> Result<HirValidationResult, CompilerError> {
         // Enforce the spec-mandated section ordering before any other processing.
@@ -954,10 +1011,14 @@ impl HirBuilder {
                     .iter()
                     .map(|f| self.build_function(f))
                     .collect::<Result<Vec<_>, _>>()?;
-                // Set owner_screen on each function so the resolver can enforce SCOPE005
-                // while resolving the function body, and promote them to the global
-                // function list so they are callable from start: and other functions.
+                // A screen's functions live in the screen's own namespace
+                // (`Screen.fn`), so two screens may both declare `render()`.
+                // owner_screen lets the resolver enforce SCOPE005 and resolve
+                // unqualified names inside the body against the screen first.
+                // The functions are promoted to the global function list so
+                // they are compiled and callable as `Screen.fn(...)`.
                 for hir_fn in hir_fns.iter_mut() {
+                    hir_fn.name = format!("{}.{}", name, hir_fn.name);
                     hir_fn.owner_screen = Some(name.clone());
                     functions.push(hir_fn.clone());
                 }
@@ -969,6 +1030,30 @@ impl HirBuilder {
                     location: location.clone().unwrap_or_default(),
                 });
             }
+        }
+
+        // A state initializer that is not a scalar or string literal (a call,
+        // a list, an expression over other values) cannot be encoded in the
+        // WASM global's constant initializer. Evaluate it at the top of start
+        // so the variable holds its declared value before any other code runs.
+        if let (Some(ast_state), Some(ref mut start_fn)) = (&program.state, &mut start_function) {
+            let mut state_init = Vec::new();
+            for decl in &ast_state.declarations {
+                if Self::is_constant_state_initializer(&decl.initializer) {
+                    continue;
+                }
+                let loc = decl.location.clone().unwrap_or_default();
+                state_init.push(HirStatement::Assignment {
+                    target: HirLValue::Variable {
+                        name: decl.name.clone(),
+                        location: loc.clone(),
+                    },
+                    value: self.build_expression(&decl.initializer)?,
+                    location: loc,
+                });
+            }
+            state_init.append(&mut start_fn.body.statements);
+            start_fn.body.statements = state_init;
         }
 
         // Prepend top-level validate schema initializations to the start function body.
@@ -1293,6 +1378,12 @@ impl HirBuilder {
                 name: name.clone(),
                 location: SourceLocation::default(),
             }),
+            Type::Generic(base, args) if self.generic_instance_class(base, args).is_some() => {
+                Ok(HirType::Named {
+                    name: self.generic_instance_class(base, args).unwrap_or_default(),
+                    location: SourceLocation::default(),
+                })
+            }
             Type::Nullable(inner) => {
                 // Spec 04-type-system.md §"Nullable Types": T? shares the
                 // WASM representation of T (0 is the null sentinel — same
@@ -2828,7 +2919,10 @@ impl HirBuilder {
             // full rewrite, splice the result back in.
             let decl_clone = stmts[i].clone();
             let loop_clone = stmts[loop_idx].clone();
-            let Some(rewrite) = self.try_match_accumulator_pair(&decl_clone, &loop_clone) else {
+            let outer_scalars = Self::scalar_decl_names(&stmts[..loop_idx]);
+            let Some(rewrite) =
+                self.try_match_accumulator_pair(&decl_clone, &loop_clone, &outer_scalars)
+            else {
                 i += 1;
                 continue;
             };
@@ -4109,6 +4203,7 @@ impl HirBuilder {
         &mut self,
         decl: &HirStatement,
         loop_stmt: &HirStatement,
+        outer_scalars: &std::collections::HashSet<String>,
     ) -> Option<AccumulatorRewrite> {
         // -- Step 1: decl must be `string <name> = <string literal>`.
         // The initial literal may be empty ("") or non-empty ("[",
@@ -4371,8 +4466,9 @@ impl HirBuilder {
                 HirStatement::While { body, .. } | HirStatement::For { body, .. } => body,
                 _ => unreachable!("new_loop constructed above is While or For"),
             };
-            if Self::is_body_mem_scope_safe(body_ref) {
-                Some(format!("__sb_{}_mmark", self.string_builder_counter - 1))
+            let builder_name = format!("__sb_{}", self.string_builder_counter - 1);
+            if Self::is_body_mem_scope_safe(body_ref, &builder_name, outer_scalars) {
+                Some(format!("{}_mmark", builder_name))
             } else {
                 None
             }
@@ -6546,13 +6642,130 @@ impl HirBuilder {
     /// intermediate is reclaimable by the pop; the accumulator preserves
     /// only what's been appended into it (which is copied into the
     /// builder's own region — outside the intermediates).
-    fn is_body_mem_scope_safe(body: &HirBlock) -> bool {
+    fn is_body_mem_scope_safe(
+        body: &HirBlock,
+        builder_name: &str,
+        outer_scalars: &std::collections::HashSet<String>,
+    ) -> bool {
         let mut escapes = std::collections::HashSet::new();
         Self::collect_escaping_body_local_names(body, &mut escapes);
         if !escapes.is_empty() {
             return false;
         }
-        !Self::block_contains_return_or_throw(body)
+        if Self::block_contains_return_or_throw(body) {
+            return false;
+        }
+        let mut body_locals = std::collections::HashSet::new();
+        Self::collect_body_declared_names(body, &mut body_locals);
+        !Self::block_assigns_outer_pointer(body, builder_name, outer_scalars, &body_locals)
+    }
+
+    /// Names declared with a scalar type (no heap allocation behind the
+    /// value) by the statements of an enclosing block. Assigning one of
+    /// these inside a scope-wrapped loop cannot leave a dangling pointer.
+    fn scalar_decl_names(stmts: &[HirStatement]) -> std::collections::HashSet<String> {
+        stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                HirStatement::VariableDeclaration { name, var_type, .. }
+                    if Self::is_scalar_hir_type(var_type) =>
+                {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn is_scalar_hir_type(t: &HirType) -> bool {
+        matches!(
+            t,
+            HirType::Integer
+                | HirType::Number
+                | HirType::Boolean
+                | HirType::Integer8
+                | HirType::Integer8u
+                | HirType::Integer16
+                | HirType::Integer16u
+                | HirType::Integer32
+                | HirType::Integer32u
+                | HirType::Integer64
+                | HirType::Integer64u
+                | HirType::Number32
+                | HirType::Number64
+        )
+    }
+
+    fn collect_body_declared_names(block: &HirBlock, out: &mut std::collections::HashSet<String>) {
+        for stmt in &block.statements {
+            match stmt {
+                HirStatement::VariableDeclaration { name, .. } => {
+                    out.insert(name.clone());
+                }
+                HirStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::collect_body_declared_names(then_branch, out);
+                    if let Some(eb) = else_branch {
+                        Self::collect_body_declared_names(eb, out);
+                    }
+                }
+                HirStatement::While { body, .. } => {
+                    Self::collect_body_declared_names(body, out);
+                }
+                HirStatement::For { variable, body, .. } => {
+                    out.insert(variable.clone());
+                    Self::collect_body_declared_names(body, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// True when the loop body stores a value into state that outlives the
+    /// iteration and may hold a main-heap pointer: a variable declared
+    /// outside the loop (other than the scope's keeper builder and
+    /// variables known to be scalar), a field, or an index. The post-loop
+    /// `scope_pop_keeping` rewinds `__heap_ptr` to the mark taken before
+    /// the loop, so such a pointer would dangle and the next allocation
+    /// would overwrite the string it refers to.
+    fn block_assigns_outer_pointer(
+        block: &HirBlock,
+        builder_name: &str,
+        outer_scalars: &std::collections::HashSet<String>,
+        body_locals: &std::collections::HashSet<String>,
+    ) -> bool {
+        block.statements.iter().any(|stmt| match stmt {
+            HirStatement::Assignment { target, .. } => match target {
+                HirLValue::Variable { name, .. } => {
+                    name != builder_name
+                        && !body_locals.contains(name)
+                        && !outer_scalars.contains(name)
+                }
+                HirLValue::FieldAccess { .. } | HirLValue::Index { .. } => true,
+            },
+            HirStatement::LaterAssignment { .. } => true,
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::block_assigns_outer_pointer(
+                    then_branch,
+                    builder_name,
+                    outer_scalars,
+                    body_locals,
+                ) || else_branch.as_ref().is_some_and(|eb| {
+                    Self::block_assigns_outer_pointer(eb, builder_name, outer_scalars, body_locals)
+                })
+            }
+            HirStatement::While { body, .. } | HirStatement::For { body, .. } => {
+                Self::block_assigns_outer_pointer(body, builder_name, outer_scalars, body_locals)
+            }
+            _ => false,
+        })
     }
 
     fn block_contains_return_or_throw(block: &HirBlock) -> bool {
@@ -8081,6 +8294,42 @@ mod tests {
             msg.contains("plugins:"),
             "expected the corrected form to be named in the message, got: {msg}"
         );
+    }
+
+    /// plugin-contract.md §4.5 / type-system.md §10 "Plugin Generic
+    /// Shorthand": `Name<Arg>` for a plugin type with an `instance_class`
+    /// template lowers to the concrete class the template names.
+    #[test]
+    fn plugin_generic_shorthand_lowers_to_instance_class() {
+        let mut table = std::collections::HashMap::new();
+        table.insert("PagedResult".to_string(), "PagedResult_{T}".to_string());
+        let mut builder = HirBuilder::new().with_generic_instance_classes(table);
+        let shorthand = Type::Generic(
+            Box::new(Type::Object("PagedResult".to_string())),
+            vec![Type::Object("Item".to_string())],
+        );
+        match builder.build_type(&shorthand).expect("lowers") {
+            HirType::Named { name, .. } => assert_eq!(name, "PagedResult_Item"),
+            other => panic!("expected the instance class, got {other:?}"),
+        }
+        // A generic type whose base declares no template is left alone.
+        let other = Type::Generic(
+            Box::new(Type::Object("Box".to_string())),
+            vec![Type::Object("Item".to_string())],
+        );
+        assert!(!matches!(
+            builder.build_type(&other).expect("lowers"),
+            HirType::Named { .. }
+        ));
+        // Two type arguments never match the single-placeholder template.
+        let two_args = Type::Generic(
+            Box::new(Type::Object("PagedResult".to_string())),
+            vec![Type::Object("A".to_string()), Type::Object("B".to_string())],
+        );
+        assert!(!matches!(
+            builder.build_type(&two_args).expect("lowers"),
+            HirType::Named { .. }
+        ));
     }
 
     #[test]

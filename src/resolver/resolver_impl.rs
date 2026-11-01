@@ -17,6 +17,10 @@ pub struct NameResolver {
     /// Name of the screen currently being resolved (for SCOPE005 enforcement).
     /// `None` when resolving code that is not inside a screen block.
     current_screen: Option<String>,
+    /// Names of every screen in the program. Screen state and functions are
+    /// registered under `Screen.name`; this list lets an unqualified access
+    /// from outside a screen be reported as SCOPE005.
+    screen_names: Vec<String>,
     /// class name → set of declared method names. Populated during
     /// `register_top_level_symbols` so `receiver_has_method` can answer
     /// "does this class declare this method?" during the FIRST pass of
@@ -62,6 +66,7 @@ impl NameResolver {
             current_function: None,
             current_function_return_type: None,
             current_screen: None,
+            screen_names: Vec::new(),
             class_method_names: std::collections::HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -115,7 +120,7 @@ impl NameResolver {
         let resolved_tests = self.resolve_tests(&hir.tests)?;
 
         // Resolve state block if present
-        let resolved_state = if let Some(ref state_block) = hir.state {
+        let mut resolved_state = if let Some(ref state_block) = hir.state {
             Some(self.resolve_state_block(state_block)?)
         } else {
             None
@@ -165,16 +170,66 @@ impl NameResolver {
 
         // Resolve screen blocks — each body is resolved with current_screen set so
         // that SCOPE005 access checks know they're inside the owning screen.
+        //
+        // A screen holds one copy of its state for the program's lifetime, so
+        // its (qualified) state declarations join the program state block and
+        // become globals with their declared initial values, and its watch
+        // blocks join the program watch blocks. The screen's functions were
+        // promoted to `hir.functions` as `Screen.fn` and are resolved there.
         for screen in &hir.screen_blocks {
             self.current_screen = Some(screen.name.clone());
             if let Some(ref screen_state) = screen.state {
-                let _ = self.resolve_state_block(screen_state);
+                let mut qualified_state = screen_state.clone();
+                for decl in qualified_state.declarations.iter_mut() {
+                    decl.name = format!("{}.{}", screen.name, decl.name);
+                }
+                for computed in qualified_state.computed.iter_mut() {
+                    computed.name = format!("{}.{}", screen.name, computed.name);
+                }
+                let resolved_screen_state = self.resolve_state_block(&qualified_state)?;
+                match resolved_state {
+                    Some(ref mut app_state) => {
+                        app_state
+                            .declarations
+                            .extend(resolved_screen_state.declarations);
+                        app_state.computed.extend(resolved_screen_state.computed);
+                        app_state.rules.extend(resolved_screen_state.rules);
+                    }
+                    None => resolved_state = Some(resolved_screen_state),
+                }
             }
             for watch in &screen.watch_blocks {
-                let _ = self.resolve_block(&watch.body);
-            }
-            for func in &screen.functions {
-                let _ = self.resolve_function(func.clone());
+                let mut targets = Vec::new();
+                let mut target_symbol_ids = Vec::new();
+                for target in &watch.targets {
+                    let qualified = format!("{}.{}", screen.name, target);
+                    let (name, sid) = match self.symbol_table.lookup_symbol(&qualified) {
+                        Some(sid) => (qualified, sid),
+                        None => match self.symbol_table.lookup_symbol(target) {
+                            Some(sid) => (target.clone(), sid),
+                            None => {
+                                self.error_with_code(
+                                    &format!(
+                                        "Watch target '{}' is not a state variable of screen '{}'",
+                                        target, screen.name
+                                    ),
+                                    "SCOPE001",
+                                    watch.location.clone(),
+                                );
+                                continue;
+                            }
+                        },
+                    };
+                    targets.push(name);
+                    target_symbol_ids.push(sid);
+                }
+                let body = self.resolve_block(&watch.body)?;
+                resolved_watch_blocks.push(crate::resolver::ResolvedHirWatchBlock {
+                    targets,
+                    target_symbol_ids,
+                    body,
+                    location: watch.location.clone(),
+                });
             }
             self.current_screen = None;
         }
@@ -1042,28 +1097,73 @@ impl NameResolver {
         // Each screen's state variables are registered globally so that the symbol table
         // can look them up, but they carry the owning screen name so that access from
         // outside that screen can be rejected at resolution time.
+        //
+        // Each screen is its own namespace: the screen name is registered as a
+        // Namespace symbol (so `Screen.fn()` resolves through the namespace
+        // call path) and every screen state variable is registered under its
+        // qualified name `Screen.var`. Two screens may therefore declare the
+        // same state or function names, and a screen variable never collides
+        // with an app-level one (spec §23 "State in Screens").
         for screen in &hir.screen_blocks {
+            if self.screen_names.contains(&screen.name) {
+                self.error(
+                    &format!("Screen '{}' is declared more than once", screen.name),
+                    screen.location.clone(),
+                );
+                continue;
+            }
+            self.screen_names.push(screen.name.clone());
+            if !self.symbol_table.has_symbol_in_current_scope(&screen.name) {
+                self.symbol_table.create_symbol(
+                    screen.name.clone(),
+                    SymbolKind::Namespace { functions: vec![] },
+                    self.symbol_table.current_scope_id(),
+                    screen.location.clone(),
+                );
+            }
             if let Some(ref screen_state) = screen.state {
-                for state_decl in &screen_state.declarations {
-                    // Screen-local variables share the global symbol table but carry
-                    // their screen name so SCOPE005 can be enforced during resolution.
-                    if !self
-                        .symbol_table
-                        .has_symbol_in_current_scope(&state_decl.name)
-                    {
-                        self.symbol_table.create_symbol(
-                            state_decl.name.clone(),
-                            SymbolKind::StateVariable {
-                                var_type: state_decl.state_type.clone(),
-                                scope: crate::hir::HirStateScope::Screen,
-                                has_guard: state_decl.guard.is_some(),
-                                is_computed: false,
-                                screen_name: Some(screen.name.clone()),
-                            },
-                            self.symbol_table.current_scope_id(),
-                            state_decl.location.clone(),
+                let entries = screen_state
+                    .declarations
+                    .iter()
+                    .map(|d| {
+                        (
+                            &d.name,
+                            &d.state_type,
+                            d.guard.is_some(),
+                            false,
+                            &d.location,
+                        )
+                    })
+                    .chain(
+                        screen_state
+                            .computed
+                            .iter()
+                            .map(|c| (&c.name, &c.computed_type, false, true, &c.location)),
+                    );
+                for (name, var_type, has_guard, is_computed, location) in entries {
+                    let qualified = format!("{}.{}", screen.name, name);
+                    if self.symbol_table.has_symbol_in_current_scope(&qualified) {
+                        self.error(
+                            &format!(
+                                "State variable '{}' is declared more than once in screen '{}'",
+                                name, screen.name
+                            ),
+                            location.clone(),
                         );
+                        continue;
                     }
+                    self.symbol_table.create_symbol(
+                        qualified,
+                        SymbolKind::StateVariable {
+                            var_type: var_type.clone(),
+                            scope: crate::hir::HirStateScope::Screen,
+                            has_guard,
+                            is_computed,
+                            screen_name: Some(screen.name.clone()),
+                        },
+                        self.symbol_table.current_scope_id(),
+                        location.clone(),
+                    );
                 }
             }
         }
@@ -2340,6 +2440,16 @@ impl NameResolver {
             }
         }
 
+        // Inside a screen, an unqualified name that is not a local variable or
+        // parameter refers to the screen's own state first.
+        if let Some((qualified, symbol_id)) = self.screen_scoped_symbol(name) {
+            return Ok(ResolvedHirExpression::Variable {
+                name: qualified,
+                symbol_id,
+                location: location.clone(),
+            });
+        }
+
         // Try to find the variable in normal scope (for non-shadowed cases)
         if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
             // SCOPE005: Screen-local state cannot be accessed outside its screen.
@@ -2385,6 +2495,11 @@ impl NameResolver {
             });
         }
 
+        // SCOPE005: the name is another screen's state.
+        if self.report_screen_state_access(name, location) {
+            return Err(());
+        }
+
         // If still not found, report error (SCOPE001: UseBeforeDeclaration)
         self.error_with_code(
             &format!("Variable '{}' not found", name),
@@ -2392,6 +2507,61 @@ impl NameResolver {
             location.clone(),
         );
         Err(())
+    }
+
+    /// Inside a screen, resolve an unqualified name against the screen's own
+    /// namespace (`Screen.name`). Local variables and parameters shadow the
+    /// screen's state and functions, so a name that resolves to a symbol in a
+    /// non-global scope is left alone.
+    fn screen_scoped_symbol(&self, name: &str) -> Option<(String, SymbolId)> {
+        let screen = self.current_screen.as_ref()?;
+        if let Some(local_id) = self.symbol_table.lookup_symbol(name) {
+            if let Some(local) = self.symbol_table.get_symbol(local_id) {
+                if local.scope_id != ScopeId(0) {
+                    return None;
+                }
+            }
+        }
+        let qualified = format!("{}.{}", screen, name);
+        self.symbol_table
+            .lookup_symbol(&qualified)
+            .map(|sid| (qualified, sid))
+    }
+
+    /// Report SCOPE005 when `name` is not visible here but is a state variable
+    /// of some screen other than the current one. Returns true when reported.
+    fn report_screen_state_access(&mut self, name: &str, location: &SourceLocation) -> bool {
+        let owner = self.screen_names.iter().find(|screen| {
+            self.current_screen.as_deref() != Some(screen.as_str())
+                && self
+                    .symbol_table
+                    .lookup_symbol(&format!("{}.{}", screen, name))
+                    .and_then(|sid| self.symbol_table.get_symbol(sid))
+                    .map(|sym| matches!(sym.kind, SymbolKind::StateVariable { .. }))
+                    .unwrap_or(false)
+        });
+        let Some(owner) = owner.cloned() else {
+            return false;
+        };
+        self.errors.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    format!(
+                        "State variable '{}' is local to screen '{}' and cannot be accessed here",
+                        name, owner
+                    ),
+                    Some(format!(
+                        "Screen-local state is private to its screen. \
+                         Access '{}' only from within screen '{}'.",
+                        name, owner
+                    )),
+                    crate::error::ErrorType::Validation,
+                    Some(location.clone()),
+                )
+                .with_error_code("SCOPE005"),
+            ),
+        });
+        true
     }
 
     /// Resolve a `BinaryOp` expression.
@@ -2444,6 +2614,14 @@ impl NameResolver {
         arguments: &[HirExpression],
         location: &SourceLocation,
     ) -> Result<ResolvedHirExpression, ()> {
+        // Inside a screen, an unqualified call names the screen's own
+        // function (`Screen.fn`) before any app-level function.
+        let screen_function = self.screen_scoped_symbol(function);
+        let function: &str = match screen_function {
+            Some((ref qualified, _)) => qualified.as_str(),
+            None => function,
+        };
+
         // Lookup function in symbol table (includes builtin functions)
         let function_symbol_opt = self.symbol_table.lookup_symbol(function);
 
@@ -2525,7 +2703,22 @@ impl NameResolver {
         // hitting the resolver-side SEM007 get the same actionable suggestion.
         let function_symbol_id = function_symbol_opt.ok_or_else(|| {
             let msg = format!("Function '{}' not found", function);
-            let hint = self.did_you_mean_function(&function);
+            let screen_owner = self
+                .screen_names
+                .iter()
+                .find(|screen| {
+                    self.symbol_table
+                        .lookup_symbol(&format!("{}.{}", screen, function))
+                        .is_some()
+                })
+                .cloned();
+            let hint = match screen_owner {
+                Some(screen) => Some(format!(
+                    "'{}' is a function of screen '{}'; call it as {}.{}(...)",
+                    function, screen, screen, function
+                )),
+                None => self.did_you_mean_function(&function),
+            };
             self.error_with_help(&msg, hint, location.clone(), "SEM007");
         })?;
 
@@ -2534,35 +2727,7 @@ impl NameResolver {
             resolved_arguments.push(self.resolve_expression(arg)?);
         }
 
-        // Inject default arguments for language-alias bridge functions that declare
-        // `param_defaults` in their plugin.toml `[language].functions` section.
-        // When a caller passes fewer args than the max param count, fill the gap with
-        // the declared default values (integer literals or string literals).
-        if let Some(defaults) = self.language_fn_defaults.get(function.as_str()).cloned() {
-            let provided = resolved_arguments.len();
-            let expected = defaults.len();
-            if provided < expected {
-                for i in provided..expected {
-                    let default_str = defaults.get(i).map(|s| s.as_str()).unwrap_or("");
-                    if default_str.is_empty() {
-                        // Required parameter — do not inject; type checker will flag it
-                        break;
-                    }
-                    let default_expr = if let Ok(n) = default_str.parse::<i64>() {
-                        ResolvedHirExpression::Literal {
-                            value: crate::ast::Value::Integer(n),
-                            location: location.clone(),
-                        }
-                    } else {
-                        ResolvedHirExpression::Literal {
-                            value: crate::ast::Value::String(default_str.to_string()),
-                            location: location.clone(),
-                        }
-                    };
-                    resolved_arguments.push(default_expr);
-                }
-            }
-        }
+        self.inject_param_defaults(function.as_str(), &mut resolved_arguments, location);
 
         // Check if this is actually a namespace (cannot be called directly).
         //
@@ -2758,6 +2923,11 @@ impl NameResolver {
                         for arg in arguments {
                             resolved_arguments.push(self.resolve_expression(arg)?);
                         }
+                        self.inject_param_defaults(
+                            &qualified_name,
+                            &mut resolved_arguments,
+                            location,
+                        );
 
                         // Return as a regular function call (namespace functions are just functions)
                         return Ok(ResolvedHirExpression::Call {
@@ -3162,6 +3332,45 @@ impl NameResolver {
         })
     }
 
+    /// Fill trailing arguments a caller omitted with the `param_defaults`
+    /// declared for a plugin language function (`[language].functions`).
+    /// Integer defaults become integer literals, quoted defaults string
+    /// literals of their content, anything else a string literal as written.
+    /// An empty default marks a required parameter, so injection stops there
+    /// and the type checker reports the missing argument.
+    fn inject_param_defaults(
+        &self,
+        function: &str,
+        resolved_arguments: &mut Vec<ResolvedHirExpression>,
+        location: &SourceLocation,
+    ) {
+        let Some(defaults) = self.language_fn_defaults.get(function) else {
+            return;
+        };
+        for default_str in defaults.iter().skip(resolved_arguments.len()) {
+            if default_str.is_empty() {
+                break;
+            }
+            let value = if let Ok(n) = default_str.parse::<i64>() {
+                crate::ast::Value::Integer(n)
+            } else if default_str.len() >= 2
+                && default_str.starts_with('"')
+                && default_str.ends_with('"')
+            {
+                // A quoted default is a string literal; this is how an
+                // empty-string default is written, since a bare empty entry
+                // marks the parameter as required.
+                crate::ast::Value::String(default_str[1..default_str.len() - 1].to_string())
+            } else {
+                crate::ast::Value::String(default_str.clone())
+            };
+            resolved_arguments.push(ResolvedHirExpression::Literal {
+                value,
+                location: location.clone(),
+            });
+        }
+    }
+
     /// Resolve a `NamespaceCall` expression (e.g., `math.sin(x)`).
     ///
     /// Handles, in order:
@@ -3371,12 +3580,20 @@ impl NameResolver {
                 Some(SymbolKind::Class { methods, .. }) => {
                     // This is a static method call on a class (e.g., MathUtils.add(5, 3))
                     // Look for the method in the class
-                    let method_symbol_id = methods.iter().find_map(|&method_id| {
-                        self.symbol_table
-                            .get_symbol(method_id)
-                            .filter(|s| s.name == function)
-                            .map(|_| method_id)
-                    });
+                    let method_symbol_id = methods
+                        .iter()
+                        .find_map(|&method_id| {
+                            self.symbol_table
+                                .get_symbol(method_id)
+                                .filter(|s| s.name == function)
+                                .map(|_| method_id)
+                        })
+                        // Top-level functions are resolved before classes, so a
+                        // function calling `Database.save(x)` can run before the
+                        // class's methods are registered (empty list). Use the
+                        // same placeholder as resolve_method_call_expression;
+                        // codegen binds the method by name.
+                        .or_else(|| methods.is_empty().then_some(SymbolId(0)));
 
                     if let Some(method_id) = method_symbol_id {
                         // Resolve arguments
@@ -3455,6 +3672,7 @@ impl NameResolver {
         for arg in arguments {
             resolved_arguments.push(self.resolve_expression(arg)?);
         }
+        self.inject_param_defaults(&qualified_name, &mut resolved_arguments, location);
 
         // Return as a regular function call
         Ok(ResolvedHirExpression::Call {
@@ -3765,6 +3983,15 @@ impl NameResolver {
                     }
                 }
 
+                // Inside a screen, assign to the screen's own state first.
+                if let Some((qualified, symbol_id)) = self.screen_scoped_symbol(name) {
+                    return Ok(ResolvedHirLValue::Variable {
+                        name: qualified,
+                        symbol_id,
+                        location: location.clone(),
+                    });
+                }
+
                 // If not a field, try to find the variable in normal scope
                 if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
                     return Ok(ResolvedHirLValue::Variable {
@@ -3772,6 +3999,10 @@ impl NameResolver {
                         symbol_id,
                         location: location.clone(),
                     });
+                }
+
+                if self.report_screen_state_access(name, location) {
+                    return Err(());
                 }
 
                 // If still not found, report error (SCOPE001: UseBeforeDeclaration)

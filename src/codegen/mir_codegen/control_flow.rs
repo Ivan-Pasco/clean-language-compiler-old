@@ -233,6 +233,14 @@ impl MirCodeGenerator<'_> {
         let mut continuations = std::collections::HashSet::new();
         self.collect_jump_targets(function, block_id, &mut visited, &mut continuations);
 
+        // A candidate the walk also stepped through is interior to this
+        // region, not an exit from it: with two consecutive single-arm ifs,
+        // the first if's merge (which holds the second if's test) is both a
+        // Jump target of the first if's body and the block the walk follows
+        // into via the first if's false edge. Keeping it left two candidates
+        // (it and the real exit), so no continuation was found.
+        continuations.retain(|c| !visited.contains(c));
+
         // Reduce intermediate merges out of the candidate set.
         //
         // When a branch's then- or else-arm contains its OWN inner if/else followed
@@ -299,6 +307,56 @@ impl MirCodeGenerator<'_> {
         } else {
             None
         }
+    }
+
+    /// Pick the merge block of an if/else from the eventual continuations of
+    /// its two arms.
+    ///
+    /// When an arm ends with its own inner if/else followed by more
+    /// statements, that arm's eventual continuation is the inner merge (it
+    /// carries the trailing statements) — a block that belongs to the arm, not
+    /// the merge of this if/else. The inner merge Jump-chains into the other
+    /// arm's continuation, so whichever candidate reaches the other is the
+    /// intermediate one and the reached block is the real merge. Treating the
+    /// intermediate block as this if's merge made the inner if refuse to
+    /// inline it (it looked owned by the outer if), so its statements were
+    /// emitted after the outer if/else and also ran on the other arm.
+    pub(super) fn resolve_if_merge(
+        &self,
+        function: &MirFunction,
+        true_cont: Option<BasicBlockId>,
+        false_cont: Option<BasicBlockId>,
+    ) -> Option<BasicBlockId> {
+        match (true_cont, false_cont) {
+            (Some(t), Some(f)) if t == f => Some(t),
+            (Some(t), Some(f)) if self.jump_chain_reaches(function, t, f) => Some(f),
+            (Some(t), Some(f)) if self.jump_chain_reaches(function, f, t) => Some(t),
+            (t, f) => t.or(f),
+        }
+    }
+
+    /// Whether following `from`'s Jump terminators (through blocks with or
+    /// without instructions) arrives at `to`.
+    pub(super) fn jump_chain_reaches(
+        &self,
+        function: &MirFunction,
+        from: BasicBlockId,
+        to: BasicBlockId,
+    ) -> bool {
+        let mut cur = from;
+        let mut seen = std::collections::HashSet::new();
+        while seen.insert(cur) {
+            match function.blocks.get(&cur).map(|b| &b.terminator) {
+                Some(MirTerminator::Jump { target }) => {
+                    if *target == to {
+                        return true;
+                    }
+                    cur = *target;
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Walk a Jump chain through empty merge blocks until landing on a
@@ -376,7 +434,20 @@ impl MirCodeGenerator<'_> {
                         return;
                     }
                 }
-                targets.insert(self.chase_jump_chain(function, *target));
+                let dest = self.chase_jump_chain(function, *target);
+                // A jump to the increment block of a loop being emitted is a
+                // `continue`: it leaves the region like `return` does (the
+                // loop codegen branches out of the body), so it is no merge
+                // candidate. Counting it let an if/else whose arm ends in a
+                // nested `continue` pick the increment block as its merge, and
+                // the statements after the if/else were never emitted.
+                let is_continue = self
+                    .loop_context_stack
+                    .iter()
+                    .any(|l| l.continue_target.is_some_and(|(id, _)| id == dest));
+                if !is_continue {
+                    targets.insert(dest);
+                }
             }
             MirTerminator::Branch {
                 true_block,

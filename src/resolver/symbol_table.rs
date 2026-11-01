@@ -1236,6 +1236,44 @@ impl GlobalSymbolTable {
             // either rename the registry aliases or change the resolver entries.
             ("crypto.sha256", vec![HirType::String], HirType::String),
             ("crypto.sha512", vec![HirType::String], HirType::String),
+            // Layer 2 crypto / jwt functions (stdlib-reference.md §10, §11) are
+            // available to every program: codegen supplies built-in wrappers over
+            // the host bridges when no plugin declares them. Their signatures are
+            // declared here so a call's result has its real type (string or
+            // boolean) instead of an untyped value; a plugin declaring the same
+            // names registers the same signatures.
+            (
+                "crypto.hashPassword",
+                vec![HirType::String],
+                HirType::String,
+            ),
+            (
+                "crypto.verifyPassword",
+                vec![HirType::String, HirType::String],
+                HirType::Boolean,
+            ),
+            (
+                "crypto.randomBytes",
+                vec![HirType::Integer],
+                HirType::String,
+            ),
+            ("crypto.randomHex", vec![HirType::Integer], HirType::String),
+            (
+                "crypto.hmac",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "jwt.sign",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "jwt.verify",
+                vec![HirType::String, HirType::String, HirType::String],
+                HirType::String,
+            ),
+            ("jwt.decode", vec![HirType::String], HirType::String),
             // jwt.sign / jwt.verify / jwt.decode removed in 0.30.296 — provided by
             // frame.auth plugin.toml. Per BUILTIN-NAMESPACE-OVERREACH Sub-A resolution;
             // framework v2.12.26+ declares these with maps_to and matching types.

@@ -743,6 +743,21 @@ impl PluginRegistry {
     /// Every loaded plugin manifest keyed by plugin name, in plugin-load
     /// order (the order of the `plugins:` declaration). Order-sensitive
     /// consumers such as artifact orchestration rely on this.
+    /// Generic shorthand table (plugin-contract.md §4.5): type name →
+    /// `instance_class` template for every loaded plugin type that declares
+    /// one. `Name<Arg>` resolves to the template with `{T}` set to `Arg`.
+    pub fn generic_instance_classes(&self) -> std::collections::HashMap<String, String> {
+        self.loaded_manifests()
+            .values()
+            .flat_map(|m| m.language.types.iter())
+            .filter_map(|t| {
+                t.instance_class
+                    .as_ref()
+                    .map(|template| (t.name.clone(), template.clone()))
+            })
+            .collect()
+    }
+
     pub fn loaded_manifests(&self) -> &IndexMap<String, PluginManifest> {
         &self.manifests
     }
@@ -848,6 +863,12 @@ impl PluginRegistry {
     /// silently omitted — they are treated as LSP-only (hover, completions).
     pub fn language_to_bridge_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
+        // Names some plugin mapped with an explicit `maps_to`. A
+        // convention-derived mapping from another plugin never replaces one
+        // of these: frame.server's `feed.close` → `_sse_close` must not be
+        // overridden by frame.client's convention `feed.close` →
+        // `_feed_close`, whichever manifest happens to be visited last.
+        let mut explicit: HashSet<String> = HashSet::new();
 
         for manifest in self.manifests.values() {
             // Build the set of bridge function names declared by this plugin
@@ -863,10 +884,13 @@ impl PluginRegistry {
                 if let Some(ref bridge_name) = func.maps_to {
                     // Explicit override always wins
                     map.insert(func.name.clone(), bridge_name.clone());
+                    explicit.insert(func.name.clone());
                 } else {
                     // Convention: "req.param" → "_req_param"
                     let conventional = format!("_{}", func.name.replace('.', "_"));
-                    if bridge_names.contains(conventional.as_str()) {
+                    if bridge_names.contains(conventional.as_str())
+                        && !explicit.contains(&func.name)
+                    {
                         map.insert(func.name.clone(), conventional);
                     }
                 }
@@ -1086,7 +1110,25 @@ impl PluginRegistry {
     /// // Returns: ["data", "endpoints"]
     /// ```
     pub fn get_all_block_keywords(&self) -> Vec<String> {
-        self.handlers.keys().cloned().collect()
+        let mut keywords: Vec<String> = self.handlers.keys().cloned().collect();
+        // Statement-level expression blocks claimed by name (e.g. frame.data's
+        // `transaction:`) open a plugin block inside a function body just like
+        // a block keyword. Wildcard (`*.find:`) and dotted (`db.query:`)
+        // patterns are recognized by their own syntax and are not keywords.
+        for pattern in self.expression_handlers.keys() {
+            let name = pattern.trim_end_matches(':');
+            if !name.is_empty()
+                && !name.contains('*')
+                && !name.contains('.')
+                && !keywords.iter().any(|k| k == name)
+            {
+                keywords.push(name.to_string());
+            }
+        }
+        // Plugin fragments parsed by `_emit_stmt_from_source` (endpoint
+        // handler bodies) must see the same block keywords as source files.
+        crate::parser::grammar::register_fragment_block_keywords(&keywords);
+        keywords
     }
 
     /// Get completions for a specific block type

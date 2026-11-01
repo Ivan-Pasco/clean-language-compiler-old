@@ -1,0 +1,19 @@
+// Test: bugfixes/nested_logical_rhs_keeps_bridge_import
+// Grammar: logical_and_expression
+// Regression: a bridge call that appeared only inside the right-hand side of
+//   an `and`/`or` nested in another `and`/`or`'s right-hand side was missed by
+//   the import-minimality walk, so codegen failed with "Function 'file.exists'
+//   not found in function map". frame.auth's `auth.userId()` hit this once a
+//   single-use boolean (`a and auth.userId() == uid`) was folded into a later
+//   `x and ok` expression.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   true
+//   true
+
+start:
+	boolean a = true
+	boolean b = a and (a and file.exists("/definitely/not/here/x.txt") == false)
+	printl(b.toString())
+	boolean c = not a or (a or file.exists("/definitely/not/here/y.txt"))
+	printl(c.toString())

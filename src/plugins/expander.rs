@@ -56,6 +56,74 @@ fn stamp_plugin_origin_expansion(expansion: &mut super::PluginExpansion, plugin_
 /// plugin-synthesized code carried an empty `SourceLocation`, so the
 /// telemetry classifier defaulted them to `component=compiler` instead of
 /// routing to the plugin's owning component (framework for frame.*).
+/// Names of the functions `stmts` registers as request handlers: the
+/// argument at `registers_handler_at_arg` of every handler-registering bridge
+/// call (plugin-contract.md §3.6), plus the historical `_http_route` /
+/// `_http_route_protected` handler at argument 2 when no plugin declares them.
+fn registered_request_handlers(
+    stmts: &[Statement],
+    bridges: &[(String, usize)],
+) -> std::collections::HashSet<String> {
+    use crate::ast::{Expression, Value};
+    fn handler_name(expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Variable(name) => Some(name.clone()),
+            Expression::Literal(Value::String(name)) => Some(name.clone()),
+            _ => None,
+        }
+    }
+    fn scan_expr(
+        expr: &Expression,
+        bridges: &[(String, usize)],
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        if let Expression::Call(callee, args) = expr {
+            let declared = bridges.iter().find(|(name, _)| name == callee);
+            let arg_index = match declared {
+                Some((_, index)) => Some(*index),
+                None if callee == "_http_route" || callee == "_http_route_protected" => Some(2),
+                None => None,
+            };
+            if let Some(name) = arg_index.and_then(|i| args.get(i)).and_then(handler_name) {
+                out.insert(name);
+            }
+            for arg in args {
+                scan_expr(arg, bridges, out);
+            }
+        }
+    }
+    fn scan_stmts(
+        stmts: &[Statement],
+        bridges: &[(String, usize)],
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Statement::Expression { expr, .. } => scan_expr(expr, bridges, out),
+                Statement::VariableDecl {
+                    initializer: Some(expr),
+                    ..
+                } => scan_expr(expr, bridges, out),
+                Statement::Assignment { value, .. } => scan_expr(value, bridges, out),
+                Statement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    scan_stmts(then_branch, bridges, out);
+                    if let Some(else_branch) = else_branch {
+                        scan_stmts(else_branch, bridges, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    scan_stmts(stmts, bridges, &mut out);
+    out
+}
+
 fn stamp_plugin_origin(stmts: &mut [Statement], plugin_name: &str) {
     let marker = format!(
         "{}{}{}",
@@ -498,6 +566,29 @@ impl<'a> PluginExpander<'a> {
         self
     }
 
+    /// Absorb an expansion a plugin produced for the entry module itself
+    /// rather than for a framework block in it — a typed-emission plugin's
+    /// `process_html` output for an HTML page entry.
+    ///
+    /// The expansion is folded in exactly like a top-level framework block:
+    /// origin stamping, permission checks, start-function merging and queued
+    /// functions/classes/capabilities/externals/state all go through
+    /// `absorb_expansion`. Its top-level statements are placed ahead of the
+    /// program's own statements so the following `expand_program` call
+    /// expands any framework blocks they contain and merges everything
+    /// queued here into the program.
+    pub fn absorb_entry_expansion(
+        &mut self,
+        program: &mut Program,
+        plugin_name: &str,
+        expansion: super::PluginExpansion,
+    ) {
+        let mut statements =
+            self.absorb_expansion(expansion, Some(plugin_name), StartPlacement::Program);
+        statements.append(&mut program.statements);
+        program.statements = statements;
+    }
+
     /// Expand all framework blocks in a program
     ///
     /// This is the main entry point for the expansion pass. It walks the entire
@@ -528,6 +619,7 @@ impl<'a> PluginExpander<'a> {
 
         // Expand statements in functions
         program.functions = self.expand_functions(program.functions)?;
+        program.screen_blocks = self.expand_screen_blocks(program.screen_blocks)?;
 
         // Expand statements in classes
         program.classes = self.expand_classes(program.classes)?;
@@ -547,23 +639,8 @@ impl<'a> PluginExpander<'a> {
         // Merge pending functions into program. Plugin-emitted functions
         // (endpoint handlers, helpers) can contain framework blocks of their
         // own — an `html:` page inside a route handler — so they are expanded
-        // before merging. Expanding can emit further functions; repeat until
-        // none are left, with a bound against a plugin that never converges.
-        let mut rounds = 0;
-        while !self.pending_functions.is_empty() {
-            rounds += 1;
-            if rounds > 16 {
-                return Err(PluginError::ExpansionFailed {
-                    plugin_name: "expander".to_string(),
-                    block_name: String::new(),
-                    message: "plugin-emitted functions kept emitting new functions after 16 expansion rounds".to_string(),
-                    location: None,
-                });
-            }
-            let pending = std::mem::take(&mut self.pending_functions);
-            let expanded = self.expand_functions(pending)?;
-            program.functions.extend(expanded);
-        }
+        // before merging.
+        self.merge_pending_functions(&mut program)?;
 
         // Merge pending classes into program (e.g., ORM models from frame.data)
         program.classes.append(&mut self.pending_classes);
@@ -644,8 +721,20 @@ impl<'a> PluginExpander<'a> {
             // (program_init + client_init). Without this, prepend_to_start leaves
             // the server SSR entry reachable from _start, pulling the entire
             // migration chain into the browser WASM via DCE BFS.
+            //
+            // The cleared body holds the route registrations, so the request
+            // handlers they register (plugin-contract.md §3.6) are server-only
+            // code with no caller in the browser: drop them too, or the client
+            // artifact would carry request-context code (`req.*`, `session.*`,
+            // `res.*`, server-host bridges) with nothing marking it as a
+            // request handler (bridge-host-classes.md §6).
             if let Some(ref mut sf) = program.start_function {
+                let handlers = registered_request_handlers(
+                    &sf.body,
+                    &self.registry.handler_registering_bridges(),
+                );
                 sf.body.clear();
+                program.functions.retain(|f| !handlers.contains(&f.name));
             }
         }
         // per_request lifecycle splicing into route handlers — follow-up
@@ -767,6 +856,28 @@ impl<'a> PluginExpander<'a> {
         }
     }
 
+    /// Expand plugin-emitted functions and merge them into `program`.
+    /// Expanding can emit further functions; repeat until none are left, with
+    /// a bound against a plugin that never converges.
+    fn merge_pending_functions(&mut self, program: &mut Program) -> Result<(), PluginError> {
+        let mut rounds = 0;
+        while !self.pending_functions.is_empty() {
+            rounds += 1;
+            if rounds > 16 {
+                return Err(PluginError::ExpansionFailed {
+                    plugin_name: "expander".to_string(),
+                    block_name: String::new(),
+                    message: "plugin-emitted functions kept emitting new functions after 16 expansion rounds".to_string(),
+                    location: None,
+                });
+            }
+            let pending = std::mem::take(&mut self.pending_functions);
+            let expanded = self.expand_functions(pending)?;
+            program.functions.extend(expanded);
+        }
+        Ok(())
+    }
+
     /// Like `expand_program` but skips preamble injection.
     ///
     /// Used for shared/non-entry modules in a multi-file build.  Preambles
@@ -788,6 +899,7 @@ impl<'a> PluginExpander<'a> {
             start_fn.body = self.expand_statements(body)?;
         }
         program.functions = self.expand_functions(program.functions)?;
+        program.screen_blocks = self.expand_screen_blocks(program.screen_blocks)?;
         program.classes = self.expand_classes(program.classes)?;
 
         if let Some(start_fn) = self.pending_start.take() {
@@ -798,7 +910,9 @@ impl<'a> PluginExpander<'a> {
             }
         }
 
-        program.functions.append(&mut self.pending_functions);
+        // Plugin-emitted functions (endpoint handlers) carry framework blocks
+        // and ORM queries of their own in every module, not only the entry one.
+        self.merge_pending_functions(&mut program)?;
         program.classes.append(&mut self.pending_classes);
 
         // Mirror expand_program's PLUGIN002 dedup for plugin-emitted `can`
@@ -887,6 +1001,7 @@ impl<'a> PluginExpander<'a> {
         let mut result = Vec::with_capacity(statements.len());
 
         for stmt in statements {
+            let stmt = self.bare_orm_query_to_block_form(stmt);
             match stmt {
                 Statement::FrameworkBlock {
                     name,
@@ -1146,6 +1261,66 @@ impl<'a> PluginExpander<'a> {
         Ok(self.absorb_expansion(expansion, plugin_name.as_deref(), placement))
     }
 
+    /// The bare query form `<Model>.<verb>` with no body (frame-data.ebnf
+    /// `query_argument` may be empty, e.g. `integer n = User.count`) parses as
+    /// a property access. When a plugin claims `<Model>.<verb>` and `<Model>`
+    /// is a class name, rewrite the initializer / return value into an
+    /// `OrmQuery` with an empty body so it expands like the block form.
+    fn bare_orm_query_to_block_form(&self, stmt: Statement) -> Statement {
+        fn bare_query(
+            expr: &crate::ast::Expression,
+            registry: &PluginRegistry,
+        ) -> Option<crate::ast::Expression> {
+            let crate::ast::Expression::PropertyAccess {
+                object,
+                property,
+                location,
+            } = expr
+            else {
+                return None;
+            };
+            let crate::ast::Expression::Variable(model) = object.as_ref() else {
+                return None;
+            };
+            if !model.starts_with(|c: char| c.is_ascii_uppercase())
+                || !registry.handles_as_expression(&format!("{}.{}", model, property))
+            {
+                return None;
+            }
+            Some(crate::ast::Expression::OrmQuery {
+                model: model.clone(),
+                verb: property.clone(),
+                content: String::new(),
+                location: location.clone(),
+            })
+        }
+
+        match stmt {
+            Statement::VariableDecl {
+                name,
+                type_,
+                initializer: Some(init),
+                location,
+            } => {
+                let initializer = Some(bare_query(&init, self.registry).unwrap_or(init));
+                Statement::VariableDecl {
+                    name,
+                    type_,
+                    initializer,
+                    location,
+                }
+            }
+            Statement::Return {
+                value: Some(value),
+                location,
+            } => Statement::Return {
+                value: Some(bare_query(&value, self.registry).unwrap_or(value)),
+                location,
+            },
+            other => other,
+        }
+    }
+
     /// Dispatch an ORM query block expression (`Model.<verb>: ...`) to the
     /// plugin that registered the `Model.<verb>` expression pattern. Returns
     /// `Ok(None)` when no plugin claims the pattern so the caller keeps the
@@ -1253,6 +1428,34 @@ impl<'a> PluginExpander<'a> {
             .map(|mut func| {
                 func.body = self.expand_statements(func.body)?;
                 Ok(func)
+            })
+            .collect()
+    }
+
+    /// Expand framework blocks (e.g. `html:`) inside the functions of every
+    /// `screen Name:` block. Screen functions are ordinary functions scoped
+    /// under the screen, so their bodies get the same expansion as any other.
+    fn expand_screen_blocks(
+        &mut self,
+        screens: Vec<Statement>,
+    ) -> Result<Vec<Statement>, PluginError> {
+        screens
+            .into_iter()
+            .map(|screen| match screen {
+                Statement::ScreenBlockStmt {
+                    name,
+                    state,
+                    watch_blocks,
+                    functions,
+                    location,
+                } => Ok(Statement::ScreenBlockStmt {
+                    name,
+                    state,
+                    watch_blocks,
+                    functions: self.expand_functions(functions)?,
+                    location,
+                }),
+                other => Ok(other),
             })
             .collect()
     }
@@ -2201,6 +2404,61 @@ mod tests {
         assert!(matches!(
             &start.body[0],
             Statement::Expression { expr: Expression::Call(name, _), .. } if name == "__helper_start"
+        ));
+    }
+
+    /// An expansion emitted for the entry module as a whole (typed
+    /// `process_html` output) is merged like a top-level block: helper
+    /// functions and the start body reach the program, and framework blocks
+    /// among its statements are expanded.
+    #[test]
+    fn entry_expansion_is_merged_and_expanded() {
+        let mut registry = PluginRegistry::new();
+        registry.register(Arc::new(EchoPlugin)).unwrap();
+
+        let call = |name: &str| Statement::Expression {
+            expr: Expression::Call(name.to_string(), Vec::new()),
+            location: None,
+        };
+        let expansion = PluginExpansion {
+            statements: vec![Statement::FrameworkBlock {
+                name: "echo".to_string(),
+                content: "page".to_string(),
+                attributes: vec![],
+                location: None,
+            }],
+            start_function: Some(Function::new(
+                "start".to_string(),
+                Vec::new(),
+                Type::Void,
+                vec![call("__page_start")],
+                None,
+            )),
+            functions: vec![Function::new(
+                "__page_start".to_string(),
+                Vec::new(),
+                Type::Void,
+                Vec::new(),
+                None,
+            )],
+            ..PluginExpansion::default()
+        };
+
+        let mut program = make_test_program(vec![call("__user_stmt")]);
+        let mut expander = PluginExpander::new(&registry);
+        expander.absorb_entry_expansion(&mut program, "test.page", expansion);
+        let result = expander.expand_program(program).unwrap();
+
+        assert!(matches!(result.statements[0], Statement::Print { .. }));
+        assert!(matches!(
+            &result.statements[1],
+            Statement::Expression { expr: Expression::Call(name, _), .. } if name == "__user_stmt"
+        ));
+        assert!(result.functions.iter().any(|f| f.name == "__page_start"));
+        let start = result.start_function.expect("entry start body merged");
+        assert!(matches!(
+            &start.body[0],
+            Statement::Expression { expr: Expression::Call(name, _), .. } if name == "__page_start"
         ));
     }
 

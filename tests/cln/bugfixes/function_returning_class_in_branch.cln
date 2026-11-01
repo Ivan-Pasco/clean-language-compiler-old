@@ -1,0 +1,36 @@
+// Test: bugfixes/function_returning_class_in_branch
+// Grammar: if_statement, variable_declaration, function_call
+// Regression: a call to an ordinary function whose return type is a class
+//   (`Point p = makePoint()`) was lowered like a constructor call — a fresh
+//   instance was allocated and passed as an extra argument — which produced
+//   invalid WebAssembly when the declaration sat inside an if/else arm.
+// Fixed in: compiler 0.33.166
+// Expected output:
+//   2
+//   2
+//   5
+
+start:
+	integer n = 1
+	if n == 1
+		Point inside = makePoint()
+		printl(inside.getX().toString())
+	Point outside = makePoint()
+	printl(outside.getX().toString())
+	Point built = Point(5)
+	printl(built.getX().toString())
+
+class Point
+	integer x
+
+	constructor(integer startX)
+		x = startX
+
+	functions:
+		public:
+			integer getX()
+				return x
+
+functions:
+	Point makePoint()
+		return Point(2)

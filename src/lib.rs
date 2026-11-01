@@ -844,7 +844,8 @@ pub fn type_check_with_plugins(
 
     // Stage 3: AST to HIR
     use crate::hir::hir_builder::HirBuilder;
-    let mut hir_builder = HirBuilder::new();
+    let mut hir_builder =
+        HirBuilder::new().with_generic_instance_classes(registry.generic_instance_classes());
     let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
 
     // Stage 3b: HIR semantic validation (ordering rules, contract placement, etc.)
@@ -1488,7 +1489,8 @@ pub fn compile_with_plugins_and_opt_level(
         }
     }
     use crate::hir::hir_builder::HirBuilder;
-    let mut hir_builder = HirBuilder::new();
+    let mut hir_builder =
+        HirBuilder::new().with_generic_instance_classes(registry.generic_instance_classes());
     let hir_result = hir_builder.build_hir(ast.clone()).map_err(|e| vec![e])?;
     tracing::debug!(
         functions = hir_result.hir.functions.len(),
@@ -2411,7 +2413,7 @@ fn handler_bridges_from_slice(bridges: &[plugins::BridgeFunction]) -> Vec<(Strin
 fn collect_package_plugins(entry_path: &std::path::Path, entry_source: &str) -> Vec<String> {
     let mut plugins: Vec<String> = extract_plugins(entry_source);
 
-    if !entry_source.trim_start().starts_with("package:") {
+    if !compilation::MultiFileCompiler::is_manifest_file(entry_source) {
         return plugins;
     }
 
@@ -2549,6 +2551,9 @@ fn extract_package_target(entry_source: &str) -> Option<String> {
 /// (`foundation/spec/plugins/frame-ui-semantics.md` §UI-S007):
 ///   - synthetic `__page_routes_generated` module → server-only
 ///   - file path contains `/server/`, `/backend/`, `/api/`, `/pages/`, or `routes` → server-only
+///   - files in `app/auth/` → server-only: auth configuration (sessions, JWT,
+///     roles) lives there and is server configuration
+///     (`foundation/spec/framework/frame-server-semantics.md` SRV-I001)
 ///   - `.client.cln` companion files → client (kept)
 ///   - `/components/` files → client (kept)
 ///   - everything else → client (kept, may include shared utilities)
@@ -2571,6 +2576,7 @@ fn is_server_only_module(module_name: &str, file_path: &std::path::Path) -> bool
         || path_str.contains("/backend/")
         || path_str.contains("/api/")
         || path_str.contains("/pages/")
+        || path_str.contains("/app/auth/")
         || file_stem == "routes"
 }
 
@@ -2734,6 +2740,8 @@ fn compile_multi_file_impl(
         let mut all_capabilities: Vec<crate::hir::HirCapability> = Vec::new();
         let mut start_function: Option<crate::hir::HirFunction> = None;
         let mut extra_start_stmts: Vec<crate::hir::HirStatement> = Vec::new();
+        // Non-entry modules' `start:` bodies, in compilation order.
+        let mut module_starts: Vec<(String, crate::hir::HirFunction)> = Vec::new();
         let mut all_imports = Vec::new();
         let mut all_tests = Vec::new();
         let mut all_externals = Vec::new();
@@ -2798,13 +2806,17 @@ fn compile_multi_file_impl(
                     // `Undefined variable 'instance_<tag>'`.
                     merge_hir_state(&mut merged_state, hir.state.clone());
 
+                    // Screens are named, self-contained blocks (spec §23 "State
+                    // in Screens"): a screen declared in an imported module
+                    // keeps its own state: scope exactly like one declared in
+                    // the entry file, so every module contributes its screens.
+                    merged_screen_blocks.extend(hir.screen_blocks.iter().cloned());
                     if module.is_entry {
                         start_function = hir.start_function.clone();
-                        merged_screen_blocks = hir.screen_blocks.clone();
                         merged_watch_blocks = hir.watch_blocks.clone();
                         root_location = Some(hir.location.clone());
                     } else if let Some(ref module_start) = hir.start_function {
-                        extra_start_stmts.extend(module_start.body.statements.iter().cloned());
+                        module_starts.push((module.name.clone(), module_start.clone()));
                     }
                     for import in &hir.imports {
                         all_imports.push(import.clone());
@@ -2819,6 +2831,47 @@ fn compile_multi_file_impl(
                     }
                 }
             }
+        }
+
+        // Each module's `start:` is its own block with its own local scope, so
+        // two files may both declare `integer s` in their start bodies. Lower
+        // every non-entry start body to a private function and call it, in
+        // compilation order, ahead of the entry start body — instead of
+        // splicing the statements into one shared scope (SEM007 clash).
+        // Client builds never run non-entry start bodies (see below).
+        if client_mode {
+            module_starts.clear();
+        }
+        for (module_name, module_start) in module_starts {
+            let base: String = module_name
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let mut fn_name = format!("__module_start_{}", base);
+            let mut suffix = 1;
+            while all_functions.iter().any(|f| f.name == fn_name) {
+                fn_name = format!("__module_start_{}_{}", base, suffix);
+                suffix += 1;
+            }
+            let loc = module_start.location.clone();
+            extra_start_stmts.push(crate::hir::HirStatement::Expression {
+                expression: crate::hir::HirExpression::Call {
+                    function: fn_name.clone(),
+                    arguments: Vec::new(),
+                    location: loc.clone(),
+                },
+                location: loc.clone(),
+            });
+            all_functions.push(crate::hir::HirFunction {
+                name: fn_name,
+                parameters: Vec::new(),
+                return_type: None,
+                body: module_start.body,
+                is_start: false,
+                is_private: false,
+                owner_screen: None,
+                location: loc,
+            });
         }
 
         // Client mode: build-pipeline enforcement — what runs in the browser _start.
@@ -3307,6 +3360,20 @@ mod integration_tests {
     use super::*;
 
     #[test]
+    fn auth_folder_modules_stay_out_of_the_browser_build() {
+        // SRV-I001: auth configuration in app/auth/ is server-side. An
+        // `auth:` block there used to be merged into frontend.wasm and fail
+        // with BRIDGE-HOST-MISMATCH on `_session_get`.
+        let p = std::path::Path::new("/proj/app/auth/auth.cln");
+        assert!(is_server_only_module("auth", p));
+        // Component and client code is still kept.
+        let c = std::path::Path::new("/proj/app/ui/web/components/auth/Login.cln");
+        assert!(!is_server_only_module("Login", c));
+        let k = std::path::Path::new("/proj/app/ui/web/client/auth.cln");
+        assert!(!is_server_only_module("auth", k));
+    }
+
+    #[test]
     fn test_basic_integration() {
         let source = r#"start:
 	integer x = 42
@@ -3553,6 +3620,19 @@ start:
         let source = "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/main.cln\n";
         let plugins = extract_plugins(source);
         assert_eq!(plugins, vec!["frame.ui", "frame.server"]);
+    }
+
+    #[test]
+    fn manifest_web_target_is_browser_only() {
+        // bridge-host-classes.md §6: `target: web` means browser only; a
+        // project with a server part declares `target: server`.
+        let web =
+            "package: Test\n\ttarget: web\n\t\tplugins: [frame.ui]\n\t\tentry: app/main.cln\n";
+        let target = extract_package_target(web).expect("target: web");
+        assert_eq!(target_to_host_class(&target), Some("browser"));
+        let server = "package: Test\n\ttarget: server\n\t\tplugins: [frame.ui, frame.server]\n\t\tentry: app/main.cln\n";
+        let target = extract_package_target(server).expect("target: server");
+        assert_eq!(target_to_host_class(&target), Some("server"));
     }
 
     #[test]

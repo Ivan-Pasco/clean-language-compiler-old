@@ -369,28 +369,27 @@ pub trait FrameworkPlugin: Send + Sync {
         Ok(())
     }
 
-    /// Optional: Process an HTML page entry into Clean Language source.
+    /// Optional: Process an HTML page entry into the entry module.
     ///
     /// Called by the compiler when a manifest's `entry:` resolves to a file
-    /// whose extension is listed in this plugin's `[html].extensions`. The
-    /// plugin returns Clean source for the page, which the compiler parses
-    /// as the entry module. Default returns `None` — the compiler treats
-    /// that as "this plugin does not process HTML entries" and tries the
-    /// next plugin.
+    /// whose extension is listed in this plugin's `[html].extensions`.
+    /// Default returns `None` — the compiler treats that as "this plugin
+    /// does not process HTML entries" and tries the next plugin.
     ///
-    /// Arguments are passed verbatim to the plugin's `process_html` WASM
-    /// export (signature in `PluginExports::process_html`): the raw HTML
-    /// content, the file path relative to the project root, a JSON registry
-    /// of registered components, and a JSON descriptor of any companion
-    /// `.cln` file (or `""` if none). Plugins that do not implement HTML
-    /// processing return `None`.
+    /// The inputs are the raw HTML content, the file path relative to the
+    /// project root, a JSON registry of registered components, and a JSON
+    /// descriptor of any companion `.cln` file (or `""` if none). A v1
+    /// plugin returns Clean source (`HtmlEntryOutput::Source`), which the
+    /// compiler parses as the entry module; a typed-emission plugin returns
+    /// the emitted AST (`HtmlEntryOutput::Expansion`), which the compiler
+    /// merges into the entry module during plugin expansion.
     fn process_html(
         &self,
         html: &str,
         path: &str,
         registry_json: &str,
         companion_json: &str,
-    ) -> PluginResult<Option<String>> {
+    ) -> PluginResult<Option<HtmlEntryOutput>> {
         let _ = (html, path, registry_json, companion_json);
         Ok(None)
     }
@@ -585,6 +584,17 @@ impl FrameworkBlockBuilder {
 
 /// Re-export FrameworkBlock from AST for convenience
 pub use crate::ast::{FrameworkAttribute, FrameworkBlock};
+
+/// What a plugin's `process_html` produced for an HTML page entry.
+#[derive(Debug, Clone)]
+pub enum HtmlEntryOutput {
+    /// Clean Language source for the entry module (v1 string ABI).
+    Source(String),
+    /// AST emitted through the typed-emission bridges (v3 ABI). The
+    /// compiler absorbs it into the entry module the same way it absorbs a
+    /// top-level framework block expansion.
+    Expansion(PluginExpansion),
+}
 
 /// Result of expanding a framework block
 ///
