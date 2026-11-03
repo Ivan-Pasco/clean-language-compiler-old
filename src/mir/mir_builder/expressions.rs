@@ -1539,7 +1539,13 @@ impl MirBuilder {
                             );
                             self.emit_box_any(context, arg_id, &arg.expr_type, &arg.location)
                         } else {
-                            arg_id
+                            self.unbox_any_argument(
+                                context,
+                                arg_id,
+                                &arg.expr_type,
+                                param_type_opt,
+                                &arg.location,
+                            )
                         }
                     };
 
@@ -3550,7 +3556,13 @@ impl MirBuilder {
                                 // Box the argument
                                 self.emit_box_any(context, arg_id, &arg.expr_type, &arg.location)
                             } else {
-                                arg_id
+                                self.unbox_any_argument(
+                                    context,
+                                    arg_id,
+                                    &arg.expr_type,
+                                    Some(param_type),
+                                    &arg.location,
+                                )
                             }
                         } else {
                             arg_id

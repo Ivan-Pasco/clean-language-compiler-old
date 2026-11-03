@@ -199,6 +199,40 @@ impl MirBuilder {
         result_id
     }
 
+    /// An `any` value passed where a parameter expects a primitive is unboxed
+    /// at the call site, as `string v = json.get(...)` is at a declaration.
+    /// Without it the callee read the boxed Any's address as the string:
+    /// `TaskCard().card(json.get(rows, p + ".id"), ...)` rendered garbage.
+    pub(super) fn unbox_any_argument(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        arg_id: ValueId,
+        arg_type: &ConcreteType,
+        param_type: Option<&ConcreteType>,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let Some(param_type) = param_type else {
+            return arg_id;
+        };
+        let primitive_param = matches!(
+            param_type,
+            ConcreteType::String
+                | ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::Boolean
+        );
+        let arg_is_any = matches!(arg_type, ConcreteType::Any)
+            || matches!(
+                context.function.locals.get(&arg_id).map(|l| &l.local_type),
+                Some(MirType::Any)
+            );
+        if primitive_param && arg_is_any {
+            self.emit_unbox_any(context, arg_id, param_type, location)
+        } else {
+            arg_id
+        }
+    }
+
     /// Unbox an any value to a specific type - emits an UnboxAny instruction
     pub(super) fn emit_unbox_any(
         &mut self,

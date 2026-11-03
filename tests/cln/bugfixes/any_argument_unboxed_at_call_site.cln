@@ -1,0 +1,44 @@
+// Test: bugfixes/any_argument_unboxed_at_call_site
+// Semantic: an `any` argument passed to a `string` parameter is converted as in `string v = json.get(...)`
+// Fixed in: compiler 0.33.167
+// Expected output:
+//   [7|Hello|]
+//   [8|Second|Ann]
+//   [ex|q]
+//   ex
+//
+// Regression: a generated task board rendered garbage task cards. A method
+// call whose arguments were `json.get(...)` results passed the boxed Any
+// address where the `string` parameter expected a string, so the callee
+// read the any-struct header as text. Assigning the result to a `string`
+// local first worked, because declarations unbox and call arguments did not.
+
+start:
+	string rows = "{\"data\":{\"rows\":[{\"id\":\"7\",\"title\":\"Hello\",\"who\":\"\"},{\"id\":\"8\",\"title\":\"Second\",\"who\":\"Ann\"}],\"count\":2}}"
+	print(column(rows)) +
+	string pair = "{\"x\":\"ex\"}"
+	printl(Card().two(json.get(pair, "x"), "q"))
+	printl(json.get(pair, "x"))
+
+class Card
+	string kind
+
+	constructor()
+		kind = "card"
+
+	functions:
+		public:
+			string row(string id, string title, string who)
+				return "[" + id + "|" + title + "|" + who + "]"
+
+			string two(string a, string b)
+				return "[" + a + "|" + b + "]"
+
+functions:
+	string column(string rows)
+		integer count = json.get(rows, "data.count").toInteger()
+		string items = ""
+		iterate i in 0 to count - 1
+			string prefix = "data.rows." + i.toString()
+			items = items + Card().row(json.get(rows, prefix + ".id"), json.get(rows, prefix + ".title"), json.get(rows, prefix + ".who")) + "\n"
+		return items
