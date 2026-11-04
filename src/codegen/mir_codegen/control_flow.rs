@@ -356,6 +356,12 @@ impl MirCodeGenerator<'_> {
     /// intermediate block as this if's merge made the inner if refuse to
     /// inline it (it looked owned by the outer if), so its statements were
     /// emitted after the outer if/else and also ran on the other arm.
+    ///
+    /// The intermediate block need not end in a Jump: when the arm's last
+    /// statement is a single-arm `if ...: return`, the block holding that
+    /// test ends in a Branch whose fall-through path reaches the real merge.
+    /// The reachability test therefore follows every forward edge
+    /// (`flows_to`), not only Jump chains.
     pub(super) fn resolve_if_merge(
         &self,
         function: &MirFunction,
@@ -364,31 +370,52 @@ impl MirCodeGenerator<'_> {
     ) -> Option<BasicBlockId> {
         match (true_cont, false_cont) {
             (Some(t), Some(f)) if t == f => Some(t),
-            (Some(t), Some(f)) if self.jump_chain_reaches(function, t, f) => Some(f),
-            (Some(t), Some(f)) if self.jump_chain_reaches(function, f, t) => Some(t),
+            (Some(t), Some(f)) if self.flows_to(function, t, f) => Some(f),
+            (Some(t), Some(f)) if self.flows_to(function, f, t) => Some(t),
             (t, f) => t.or(f),
         }
     }
 
-    /// Whether following `from`'s Jump terminators (through blocks with or
-    /// without instructions) arrives at `to`.
-    pub(super) fn jump_chain_reaches(
+    /// Whether control can pass from `from` to `to` along Jump and Branch
+    /// edges without leaving the current iteration of a loop being emitted
+    /// (`break` / `continue` edges end the walk, as `return` does).
+    ///
+    /// A `from` that is itself the header, increment or exit block of such a
+    /// loop lies outside the iteration: an arm whose continuation is the loop
+    /// header (its statements end the loop body) reaches every block of the
+    /// body through the header, which says nothing about where the if merges.
+    pub(super) fn flows_to(
         &self,
         function: &MirFunction,
         from: BasicBlockId,
         to: BasicBlockId,
     ) -> bool {
-        let mut cur = from;
+        if self.ends_loop_iteration(from) {
+            return false;
+        }
         let mut seen = std::collections::HashSet::new();
-        while seen.insert(cur) {
-            match function.blocks.get(&cur).map(|b| &b.terminator) {
-                Some(MirTerminator::Jump { target }) => {
-                    if *target == to {
-                        return true;
-                    }
-                    cur = *target;
+        let mut stack = vec![from];
+        while let Some(cur) = stack.pop() {
+            if !seen.insert(cur) {
+                continue;
+            }
+            let successors: &[BasicBlockId] = match function.blocks.get(&cur).map(|b| &b.terminator)
+            {
+                Some(MirTerminator::Jump { target }) => std::slice::from_ref(target),
+                Some(MirTerminator::Branch {
+                    true_block,
+                    false_block,
+                    ..
+                }) => &[*true_block, *false_block],
+                _ => &[],
+            };
+            for &next in successors {
+                if next == to {
+                    return true;
                 }
-                _ => return false,
+                if !self.ends_loop_iteration(next) {
+                    stack.push(next);
+                }
             }
         }
         false

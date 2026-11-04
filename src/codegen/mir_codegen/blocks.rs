@@ -670,9 +670,8 @@ impl MirCodeGenerator<'_> {
                                         let merge =
                                             self.resolve_if_merge(function, Some(tc), Some(fc));
                                         continuation = merge.filter(|m| {
-                                            (*m == tc && self.jump_chain_reaches(function, fc, tc))
-                                                || (*m == fc
-                                                    && self.jump_chain_reaches(function, tc, fc))
+                                            (*m == tc && self.flows_to(function, fc, tc))
+                                                || (*m == fc && self.flows_to(function, tc, fc))
                                         });
                                     }
                                 } else {

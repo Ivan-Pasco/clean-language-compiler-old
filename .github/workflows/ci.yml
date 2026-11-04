@@ -91,7 +91,7 @@ jobs:
     - name: Checkout framework (main)
       uses: actions/checkout@v4
       with:
-        repository: Ivan-Pasco/cleen-framework
+        repository: Ivan-Pasco/cleen-framework-old
         ref: main
         path: clean-framework
 
@@ -169,7 +169,7 @@ jobs:
     - name: Checkout framework (main)
       uses: actions/checkout@v4
       with:
-        repository: Ivan-Pasco/cleen-framework
+        repository: Ivan-Pasco/cleen-framework-old
         ref: main
         path: clean-framework
 
@@ -189,6 +189,14 @@ jobs:
       env:
         CLEAN_PLUGIN_REGISTRY_VALIDATION: all
       run: cargo test --test test_plugin_registry_contract framework_plugins_match_registry -- --nocapture
+
+    # Plugins are Clean programs built by this compiler: rebuild frame.data
+    # and frame.server with the compiler under test and expand the
+    # framework's frame.data unit tests with them, so a codegen regression
+    # that only shows in freshly built plugins fails here, not after release.
+    - name: Rebuilt frame.data expands the data tests
+      working-directory: clean-language-compiler
+      run: cargo test --test test_frame_data_rebuilt_expansion -- --nocapture
 
   build-test:
     name: Build Test ${{ matrix.os }}

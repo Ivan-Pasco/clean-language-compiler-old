@@ -1,0 +1,128 @@
+// Test: bugfixes/if_return_after_inner_if_else_stays_in_its_arm
+// Grammar: grammar.ebnf if_statement, return_statement
+// Fixed in: compiler 0.33.169
+// When one arm of an if/else ended with an inner if/else followed by a
+// single-arm `if ...: return` check, the code generator took the block that
+// holds that check for the merge block of the outer if/else. The check was
+// then emitted after the outer if/else and also ran when the other arm was
+// taken, returning the wrong value. frame.data's expand_first (tenant arm
+// vs. where arm) hit this and handed an empty statement to the host. The
+// loop case guards the other direction: an arm whose continuation is the
+// loop header must not be taken to flow into the other arm.
+// Expected output:
+//   then: start t end
+//   else: start e end
+//   ladder tenant: decl tw limit
+//   ladder tenant no where: decl t limit
+//   ladder where: decl w limit
+//   ladder plain: decl limit
+//   nested: a-in b-out
+//   nested: a-out b-in
+//   loop: one,x,
+
+start:
+	printl("then: " + arm(true))
+	printl("else: " + arm(false))
+	printl("ladder tenant: " + ladder(true, "w"))
+	printl("ladder tenant no where: " + ladder(true, ""))
+	printl("ladder where: " + ladder(false, "w"))
+	printl("ladder plain: " + ladder(false, ""))
+	printl("nested: " + nested(true, false))
+	printl("nested: " + nested(false, true))
+	printl("loop: " + scan(3))
+
+functions:
+	string arm(boolean t)
+		string acc = "start"
+		if t
+			string src = ""
+			if acc.length() > 100
+				src = "tw"
+			else
+				src = "t"
+			if src.length() == 0
+				return "fail-then-check"
+			acc = acc + " " + src
+		else
+			acc = acc + " e"
+		acc = acc + " end"
+		return acc
+
+	integer emit(string s)
+		if s.length() == 0
+			return 1
+		return 0
+
+	string ladder(boolean hasTenant, string whereClause)
+		string acc = "decl"
+		if hasTenant
+			integer first = emit("tenant")
+			if first != 0
+				return "fail-tenant"
+			string whereSrc = ""
+			if whereClause.length() > 0
+				whereSrc = "tw"
+			else
+				whereSrc = "t"
+			integer whereHandle = emit(whereSrc)
+			if whereHandle != 0
+				return "fail-tenant-where"
+			acc = acc + " " + whereSrc
+		else if whereClause.length() > 0
+			integer whereHandle = emit("w")
+			if whereHandle != 0
+				return "fail-where"
+			acc = acc + " w"
+		integer limitHandle = emit("limit")
+		if limitHandle != 0
+			return "fail-limit"
+		return acc + " limit"
+
+	string nested(boolean a, boolean b)
+		string out = ""
+		if a
+			string tag = ""
+			if b
+				tag = "x"
+			else
+				tag = "a-in"
+			if tag.length() == 0
+				return "fail-a"
+			out = tag
+		else
+			out = "a-out"
+		if b
+			string tag = ""
+			if a
+				tag = "y"
+			else
+				tag = "b-in"
+			if tag.length() == 0
+				return "fail-b"
+			out = out + " " + tag
+		else
+			out = out + " b-out"
+		return out
+
+	integer same(integer x)
+		return x
+
+	string scan(integer n)
+		string out = ""
+		integer i = 0
+		boolean going = true
+		while i < 10 and going
+			i = i + 1
+			if i >= n
+				going = false
+			else
+				string tag = ""
+				if i == 1
+					tag = "one"
+				else
+					tag = "x"
+				integer e = same(i)
+				if e < 0
+					return "neg"
+				out = out + tag + ","
+		return out
