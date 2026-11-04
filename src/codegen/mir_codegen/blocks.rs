@@ -637,27 +637,27 @@ impl MirCodeGenerator<'_> {
                             None
                         };
 
+                        // An arm that ends in `break` or `continue` leaves the
+                        // loop iteration (it is emitted as a `br`), so its jump
+                        // target is not this if's merge block.
                         if let Some(tc) = true_cont {
-                            let is_loop_exit_target = self
-                                .loop_context_stack
-                                .iter()
-                                .any(|ctx| ctx.exit_block_id == tc);
-                            if !is_loop_exit_target {
+                            if !self.ends_loop_iteration(tc) {
                                 continuation = Some(tc);
                             }
                         }
 
                         if !false_has_return {
-                            let false_cont =
-                                function.blocks.get(false_block).and_then(|b| {
-                                    match &b.terminator {
-                                        MirTerminator::Jump { target } => Some(*target),
-                                        MirTerminator::Branch { .. } => {
-                                            self.find_eventual_continuation(function, *false_block)
-                                        }
-                                        _ => None,
+                            let false_cont = function
+                                .blocks
+                                .get(false_block)
+                                .and_then(|b| match &b.terminator {
+                                    MirTerminator::Jump { target } => Some(*target),
+                                    MirTerminator::Branch { .. } => {
+                                        self.find_eventual_continuation(function, *false_block)
                                     }
-                                });
+                                    _ => None,
+                                })
+                                .filter(|fc| !self.ends_loop_iteration(*fc));
 
                             if let Some(fc) = false_cont {
                                 if let Some(tc) = continuation {

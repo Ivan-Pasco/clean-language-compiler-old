@@ -26,18 +26,9 @@ use self::memory::MemoryUtils;
 pub use mir_codegen::{MirCodeGenerator, MirCodegenResult};
 use type_manager::TypeManager;
 
-// Add these constants for memory type IDs
-pub const INTEGER_TYPE_ID: u32 = 1;
-pub const FLOAT_TYPE_ID: u32 = 2;
-pub const STRING_TYPE_ID: u32 = 3;
+/// Type id stored in a list's header (offset 8).
 pub const LIST_TYPE_ID: u32 = 4;
-pub const MATRIX_TYPE_ID: u32 = 5;
-pub const PAIRS_TYPE_ID: u32 = 6;
 
-// Memory constants
-pub const PAGE_SIZE: u32 = 65536;
-pub const HEADER_SIZE: u32 = 16; // 16-byte header for memory blocks
-pub const MIN_ALLOCATION: u32 = 16;
 /// Data-section layout offset: static data (string pool, globals) is placed
 /// starting at byte 1024 in WASM linear memory.  This is *not* the runtime
 /// heap start — see `native_stdlib::HEAP_START` (1 MB) for that.
@@ -47,10 +38,6 @@ pub const MIN_ALLOCATION: u32 = 16;
 ///   [1 KB .. ~1 MB]       Data section (string literals, static data)
 ///   [1 MB .. top]         Runtime heap (bump allocator, `__heap_ptr` global)
 pub const DATA_SECTION_START: usize = 1024;
-
-/// Default maximum WASM memory pages for the `standard` tier (32 MB).
-/// Other tiers override this via `MemoryTier::max_pages()`.
-pub const DEFAULT_MAX_MEMORY_PAGES: u64 = 512;
 
 /// Code generator for Clean Language
 pub struct CodeGenerator {
@@ -162,15 +149,6 @@ impl CodeGenerator {
         // Use the type manager to add the function type (single return value)
         self.type_manager
             .add_function_type_single(params, return_type)
-    }
-
-    fn add_function_type_multi(
-        &mut self,
-        params: &[WasmType],
-        return_types: &[WasmType],
-    ) -> Result<u32, CompilerError> {
-        // Use the type manager to add the function type (multi-value returns)
-        self.type_manager.add_function_type(params, return_types)
     }
 
     pub fn register_import_function(

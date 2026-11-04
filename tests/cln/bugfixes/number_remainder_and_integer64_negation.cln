@@ -1,0 +1,30 @@
+// Test: bugfixes/number_remainder_and_integer64_negation
+// Grammar: multiplicative_expression (`%`), unary_expression (`-`)
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   1.5
+//   -1.5
+//   2
+//   -5000000000
+//   5000000000
+//
+// Regression: `number % number` emitted the i32 remainder instruction on f64
+// operands and negating an `integer:64` emitted i32 arithmetic on an i64
+// value, so both programs failed WASM validation ("type mismatch") instead
+// of compiling.
+
+start:
+	number a = 7.5
+	number b = 2.0
+	number r = a % b
+	printl(r.toString())
+	number n = -7.5
+	number nr = n % b
+	printl(nr.toString())
+	integer m = 17 % 5
+	printl(m.toString())
+	integer:64 big = 5000000000
+	integer:64 neg = -big
+	printl(neg.toString())
+	integer:64 back = -neg
+	printl(back.toString())

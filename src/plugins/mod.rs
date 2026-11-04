@@ -104,10 +104,7 @@ pub use plugin_abi::{
     BridgeFunction, PluginBridge, PluginCompletionDef, PluginFunctionDef, PluginKeyword,
     PluginLanguage, PluginManifest, PluginTypeDef, PluginTypeField, PLUGIN_ABI_VERSION,
 };
-pub use plugin_abi::{
-    BuildRegistration, CliCommand, CliRegistration, DataRegistration, ServerRegistration,
-};
-pub use registry::{PluginError, PluginRegistrations, PluginRegistry, PluginRegistryBuilder};
+pub use registry::{PluginError, PluginRegistry, PluginRegistryBuilder};
 pub use wasm_adapter::WasmPluginAdapter;
 pub use wasm_loader::{AbiStampOutcome, WasmPluginLoader};
 // Typed-emission op-code lookup tables (public surface for integration tests and tooling).

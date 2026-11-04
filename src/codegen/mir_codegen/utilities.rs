@@ -627,7 +627,7 @@ impl MirCodeGenerator<'_> {
         // Defense in depth for CODEGEN_STACK_REMAINING (fp ab7f9b3f): the
         // call-site void detection in `wasm_function_is_void` queries this
         // registry as a last resort. Previously only `register_function` /
-        // `register_function_multi` / `register_import_function` populated
+        // `register_import_function` populated
         // it — MIR-emitted user functions (the ones that go through this
         // `add_function_to_module` path) were missing, so any user-class
         // void method called as an expression-statement could not be
@@ -1111,34 +1111,15 @@ impl MirCodeGenerator<'_> {
             &wasm_encoder::ConstExpr::i32_const(heap_start as i32),
         );
 
-        // Globals 1-12: __json_get parse-result cache — 4-entry round-robin
-        // LRU. Widened from a single entry in fingerprint #19cd8092 — the
-        // single-entry cache thrashed when a page rendered rows via two
-        // interleaved JSON sources (outer `list_result` +
-        // inner per-row `components_json`), causing every outer-loop
-        // iteration to re-parse the large source and blow the module's
-        // declared memory cap. Each entry is 3 slots (src, parsed, floor);
-        // eviction is round-robin via the cursor in global 13. Layout
-        // constants live in `native_stdlib::JSON_CACHE_BASE_GLOBAL` /
-        // `JSON_CACHE_CURSOR_GLOBAL`. See json.get shim in
-        // src/stdlib/json_class.rs.
-        //
-        // Per-entry: source ptr / parsed-tree boxed Any ptr / heap floor
-        // (the __heap_ptr value immediately after the parse). On lookup
-        // we require __heap_ptr >= entry.floor, otherwise some
-        // mem_scope_pop has reclaimed the tree and we must re-parse.
-        //
-        // Global 13: LRU insert cursor (values 0..3, wraps).
-        //
-        // Globals 14-15: transient arena (see native_stdlib::transient_arena).
-        // Global 14 = TRANSIENT_BASE_GLOBAL (pool base ptr; 0 = uninit).
-        // Global 15 = TRANSIENT_PTR_GLOBAL  (bump pointer within the pool).
+        // Globals 1-2: transient arena (see native_stdlib::transient_arena).
+        // Global 1 = TRANSIENT_BASE_GLOBAL (pool base ptr; 0 = uninit).
+        // Global 2 = TRANSIENT_PTR_GLOBAL  (bump pointer within the pool).
         // Both start at the reserved pool below `heap_start` (see the
         // memory layout note above). The matching scope_exit restores
         // TRANSIENT_PTR — the mechanism that replaces the rolled-back
         // string_builder_reclaim (see ARCHITECTURE in transient_arena.rs).
         //
-        // Globals 16-17: carryover slot pools
+        // Globals 3-4: carryover slot pools
         // (see native_stdlib::carryover). Two independent single-tenanted
         // pools used to ping-pong an outer-scope string variable that is
         // reassigned once per iteration inside an accumulator-rewritten
@@ -1163,38 +1144,31 @@ impl MirCodeGenerator<'_> {
             );
         }
 
-        // State variable globals (indices start at 4, after heap pointer + 3 json cache slots)
+        // State variable globals (indices start at RESERVED_GLOBAL_COUNT)
         for (symbol_id, name, mir_type, initializer) in &self.state_globals {
-            let (val_type, init_expr) = match (mir_type, initializer) {
-                (MirType::I32, Some(MirConstant::Integer(n))) => (
-                    wasm_encoder::ValType::I32,
-                    wasm_encoder::ConstExpr::i32_const(*n as i32),
-                ),
-                (MirType::F64, Some(MirConstant::Float(f))) => (
-                    wasm_encoder::ValType::F64,
-                    wasm_encoder::ConstExpr::f64_const(*f),
-                ),
-                (MirType::Bool, Some(MirConstant::Integer(n))) => (
-                    wasm_encoder::ValType::I32,
-                    wasm_encoder::ConstExpr::i32_const(*n as i32),
-                ),
-                (MirType::I32 | MirType::Bool, _) => (
-                    wasm_encoder::ValType::I32,
-                    wasm_encoder::ConstExpr::i32_const(0),
-                ),
-                (MirType::F64, _) => (
-                    wasm_encoder::ValType::F64,
-                    wasm_encoder::ConstExpr::f64_const(0.0),
-                ),
-                // Pointer-valued state (strings point at their data-section copy).
-                (_, Some(MirConstant::Integer(n))) => (
-                    wasm_encoder::ValType::I32,
-                    wasm_encoder::ConstExpr::i32_const(*n as i32),
-                ),
-                _ => (
-                    wasm_encoder::ValType::I32,
-                    wasm_encoder::ConstExpr::i32_const(0),
-                ),
+            // The global's WASM type follows its MIR type (the same mapping as
+            // locals), and the initializer is a constant of that type.
+            let val_type = self.mir_type_to_wasm_type(mir_type)?;
+            let init_expr = match (val_type, initializer) {
+                (wasm_encoder::ValType::I64, Some(MirConstant::Integer64(n))) => {
+                    wasm_encoder::ConstExpr::i64_const(*n)
+                }
+                (wasm_encoder::ValType::I64, Some(MirConstant::Integer(n))) => {
+                    wasm_encoder::ConstExpr::i64_const(*n)
+                }
+                (wasm_encoder::ValType::I64, _) => wasm_encoder::ConstExpr::i64_const(0),
+                (wasm_encoder::ValType::F64, Some(MirConstant::Float(f))) => {
+                    wasm_encoder::ConstExpr::f64_const(*f)
+                }
+                (wasm_encoder::ValType::F64, _) => wasm_encoder::ConstExpr::f64_const(0.0),
+                (wasm_encoder::ValType::F32, Some(MirConstant::Float(f))) => {
+                    wasm_encoder::ConstExpr::f32_const(*f as f32)
+                }
+                (wasm_encoder::ValType::F32, _) => wasm_encoder::ConstExpr::f32_const(0.0),
+                // i32: integers, booleans, and pointers (strings point at
+                // their data-section copy).
+                (_, Some(MirConstant::Integer(n))) => wasm_encoder::ConstExpr::i32_const(*n as i32),
+                _ => wasm_encoder::ConstExpr::i32_const(0),
             };
             global_section.global(
                 wasm_encoder::GlobalType {
@@ -1706,14 +1680,6 @@ impl MirCodeGenerator<'_> {
                 {
                     seed(*sym);
                 }
-                // Page handlers call json.encode(data) to serialize load() return values.
-                // json.encode is a pure WASM function that requires string.concat to be
-                // registered (register_stringify_operations gates on string.concat). Force
-                // string.concat into the reachable set whenever a page handler is present
-                // so the pure WASM path is always available (GEN004).
-                if !self.client_mode && f.name.starts_with("__page_handler_") {
-                    names.insert("string.concat".to_string());
-                }
             }
         } // seed closure dropped here, releasing borrows on visited/worklist
 
@@ -1738,6 +1704,9 @@ impl MirCodeGenerator<'_> {
                     continue;
                 }
             };
+            if uses_any_to_string(current_func) {
+                names.insert(ANY_TO_STRING_BRIDGE.to_string());
+            }
             // `deep_instructions` also yields the instructions packed into
             // every (possibly nested) `a and b` / `a or b` right-hand side —
             // they live in the operation, not in any block, and a bridge
@@ -1845,25 +1814,6 @@ impl MirCodeGenerator<'_> {
                     }
                 }
             }
-        }
-
-        // Implicit dependency: JSON stringify operations (json.dataToText,
-        // json.prettyDataToText) generate native WASM that calls string.concat
-        // internally. If any json.* function is reachable, ensure string.concat
-        // is also in the reachable set so the import is not tree-shaken.
-        // The `__json_*` prefix covers the typed-collection encoders
-        // (`__json_encode_cln_list`, `__json_encode_cln_pairs`) emitted by the
-        // `json.encode(List<T>)` / `json.encode(Pairs<K,V>)` dispatch in
-        // `mir_builder/expressions.rs` — those are the only call-graph names
-        // when the user wrote `json.encode(...)` but never wrote any plain
-        // string concatenation, so without this case the helpers would be
-        // skipped at registration time and codegen would fail with
-        // "Function '__json_encode_cln_pairs' not found in function map".
-        if names
-            .iter()
-            .any(|n| n.starts_with("json.") || n.starts_with("json_") || n.starts_with("__json_"))
-        {
-            names.insert("string.concat".to_string());
         }
 
         // NOTE: the `now → _time_now` expansion is deliberately deferred to
@@ -2247,6 +2197,11 @@ impl MirCodeGenerator<'_> {
                     continue;
                 }
                 // Reachable preamble — fall through and scan its bridge calls
+            }
+            if uses_any_to_string(function) {
+                if let Some(bridge_name) = resolve_to_bridge(ANY_TO_STRING_BRIDGE) {
+                    self.used_bridge_function_names.insert(bridge_name);
+                }
             }
             for block in function.blocks.values() {
                 for instruction in deep_instructions(&block.instructions) {
@@ -3377,4 +3332,29 @@ fn deep_instructions(
         out.push(instr);
     }
     out
+}
+
+/// The bridge `emit_any_to_string` calls to turn a boxed array or object
+/// into JSON text (stdlib-reference §8).
+const ANY_TO_STRING_BRIDGE: &str = "_json_encode_v2";
+
+/// Whether codegen for `function` can emit an any-to-string conversion: an
+/// explicit `AnyToString`, or a value typed `any` that a string consumer
+/// (print, concatenation) converts on the fly. Such a function needs the
+/// `_json_encode_v2` import for array and object values.
+fn uses_any_to_string(function: &crate::mir::mir_types::MirFunction) -> bool {
+    use crate::mir::mir_types::{MirOperation, MirType};
+    function
+        .locals
+        .values()
+        .any(|local| local.local_type == MirType::Any)
+        || function
+            .parameters
+            .iter()
+            .any(|param| param.param_type == MirType::Any)
+        || function.blocks.values().any(|block| {
+            deep_instructions(&block.instructions)
+                .iter()
+                .any(|i| matches!(i.operation, MirOperation::AnyToString { .. }))
+        })
 }

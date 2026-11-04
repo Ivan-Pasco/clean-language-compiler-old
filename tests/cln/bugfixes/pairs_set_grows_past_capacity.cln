@@ -1,0 +1,43 @@
+// Test: bugfixes/pairs_set_grows_past_capacity
+// Grammar: pairs_type, pairs_literal
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   1 2
+//   12
+//   1 111
+//   true
+//   7
+//
+// Regression: `pairs.set` silently dropped a new key once the map was full.
+// A literal is allocated with exactly as many entries as it lists and an
+// empty map with 8, so `{"a": 1}` could take no new key and `{}` lost every
+// key after the 8th. A full map now moves to a larger block and the variable
+// follows it, as `list.add` does for lists.
+
+start:
+	pairs<string, integer> one = {"a": 1}
+	one.set("b", 2)
+	printl(one.get("a").toString() + " " + one.get("b").toString())
+	pairs<string, integer> many = {}
+	integer i = 0
+	while i < 12
+		many.set("k" + i.toString(), i * 10 + 1)
+		i = i + 1
+	printl(many.len().toString())
+	printl(many.get("k0").toString() + " " + many.get("k11").toString())
+	printl(many.has("k8").toString())
+	Holder h = Holder()
+	h.fill()
+	printl(h.map.get("x6").toString())
+
+class Holder
+	public:
+		pairs<string, integer> map = {}
+
+	functions:
+		public:
+			void fill()
+				integer j = 0
+				while j < 10
+					map.set("x" + j.toString(), j + 1)
+					j = j + 1

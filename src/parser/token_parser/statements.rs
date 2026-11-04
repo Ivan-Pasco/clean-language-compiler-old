@@ -50,6 +50,7 @@ impl TokenParser {
             TokenKind::Test => {
                 let first_name = "Test".to_string();
                 let first_location = self.current().location.clone();
+                let first_cursor = self.cursor;
                 self.bump(); // consume Test token
                 self.skip_whitespace();
 
@@ -77,7 +78,7 @@ impl TokenParser {
                 } else {
                     // Not a variable declaration, might be a function call like Test()
                     // Move cursor back to reparse as expression
-                    self.cursor -= 1;
+                    self.cursor = first_cursor;
                     let expr = self.parse_expression()?;
                     Ok(Statement::Expression {
                         expr,
@@ -237,25 +238,24 @@ impl TokenParser {
                     // Check if identifier is a registered plugin block name (e.g., html, component)
                     if self.plugin_keywords.contains(&first_name) {
                         // This is a plugin framework block inside a function body
-                        self.cursor -= 1;
+                        self.cursor = first_cursor;
                         return self.parse_framework_block();
                     }
                     // This is a function apply block: FUNCTION:
                     // Move cursor back to re-parse the identifier
-                    self.cursor -= 1;
+                    self.cursor = first_cursor;
                     return self.parse_function_apply_block();
                 } else if self.check(&TokenKind::Dot) {
                     // Could be:
                     // 1. Method apply block: OBJECT.METHOD:
                     // 2. Property assignment: OBJECT.PROPERTY = VALUE
                     // 3. Expression statement: OBJECT.METHOD()
-                    // Need to look ahead to see which one
+                    // Only (1) is decided here; (2) and (3) by the `Dot` branch below.
                     // Save current position (after the object name)
                     let saved_cursor = self.cursor;
 
-                    // Try to parse property chain to see if it ends with ':' or '='
+                    // Walk the property chain to see if it ends with ':'
                     let mut has_colon = false;
-                    let mut has_assign = false;
                     while self.eat(&TokenKind::Dot) {
                         self.skip_whitespace();
                         if matches!(self.current_kind(), TokenKind::Identifier(_)) {
@@ -265,7 +265,6 @@ impl TokenParser {
                                 has_colon = true;
                                 break;
                             } else if self.check(&TokenKind::Assign) {
-                                has_assign = true;
                                 break;
                             }
                         } else {
@@ -279,43 +278,11 @@ impl TokenParser {
                     if has_colon {
                         // This is a method apply block: OBJECT.METHOD:
                         // Move cursor back to re-parse from the object name
-                        self.cursor -= 1;
+                        self.cursor = first_cursor;
                         return self.parse_method_apply_block();
-                    } else if has_assign {
-                        // Property assignment: OBJECT.PROPERTY[.PROPERTY...] = VALUE
-                        // (grammar.ebnf `assignment_target`). Lowered as a real
-                        // assignment to a field l-value; the former
-                        // `Expression::PropertyAssignment` form had no HIR
-                        // lowering, so the write was silently dropped.
-                        let mut path: Vec<String> = Vec::new();
-                        while self.eat(&TokenKind::Dot) {
-                            self.skip_whitespace();
-                            if let TokenKind::Identifier(seg) = self.current_kind() {
-                                path.push(seg.clone());
-                                self.bump();
-                                self.skip_whitespace();
-                            }
-                        }
-                        if !path.is_empty() && self.eat(&TokenKind::Assign) {
-                            self.skip_whitespace();
-                            let value = self.parse_expression()?;
-                            return Ok(Statement::Assignment {
-                                target: AssignmentTarget::Property {
-                                    object: first_name,
-                                    path,
-                                },
-                                value,
-                                location: Some(first_location),
-                            });
-                        }
-
-                        return Err(CompilerError::parse_error(
-                            "Expected '=' after property access".to_string(),
-                            Some(self.current().location.clone()),
-                            None,
-                        ));
                     }
-                    // Not an apply block or property assignment, continue with regular parsing
+                    // Not an apply block: a property assignment or an expression,
+                    // handled by the `Dot` branch below.
                 }
 
                 // Check if next token is an Identifier or keyword that can be used as a variable name
@@ -329,7 +296,7 @@ impl TokenParser {
                     // Next token is an Identifier - this could be a variable declaration
                     // with a custom class type: ClassName varName = ...
                     // Move cursor back to re-parse as type
-                    self.cursor -= 1;
+                    self.cursor = first_cursor;
 
                     // Parse the type
                     let type_ = self.parse_type()?;
@@ -440,7 +407,7 @@ impl TokenParser {
                     // This could be an indexed assignment: VAR[index] = value
                     // or an expression statement: VAR[index]
                     // Parse the full LHS expression first
-                    self.cursor -= 1; // Go back to the identifier
+                    self.cursor = first_cursor; // Go back to the identifier
 
                     let lhs_expr = self.parse_expression()?;
                     self.skip_whitespace();
@@ -451,44 +418,26 @@ impl TokenParser {
                         self.skip_whitespace();
                         let value = self.parse_expression()?;
 
-                        // Check if lhs_expr is a list access (e.g., numbers[0])
+                        // grammar.ebnf `assignment_target`: identifier [ index ].
+                        // Any other indexed receiver (`m[0][1]`, `f()[0]`) is not
+                        // assignable.
                         if let Expression::ListAccess(list, index) = lhs_expr {
-                            // Prefer AssignmentTarget::Index when the collection is a
-                            // simple variable (foundation/spec/grammar.ebnf `assignment_target`).
-                            // Fall back to the legacy ListAssignment expression for
-                            // complex receivers (e.g., method-call results) that the
-                            // codegen already handles.
-                            if let Expression::Variable(collection_name) = *list.clone() {
+                            if let Expression::Variable(collection) = *list {
                                 return Ok(Statement::Assignment {
-                                    target: AssignmentTarget::Index {
-                                        collection: collection_name,
-                                        index,
-                                    },
+                                    target: AssignmentTarget::Index { collection, index },
                                     value,
                                     location: Some(first_location),
                                 });
                             }
-                            // Non-variable receiver — keep as ListAssignment expression.
-                            Ok(Statement::Expression {
-                                expr: Expression::ListAssignment {
-                                    list,
-                                    index,
-                                    value: Box::new(value),
-                                    location: first_location.clone(),
-                                },
-                                location: Some(first_location),
-                            })
-                        } else {
-                            // Not a list access - unsupported assignment target
-                            Err(CompilerError::parse_error(
-                                "Unsupported assignment target".to_string(),
-                                Some(first_location),
-                                Some(
-                                    "Only simple variables and list indices can be assigned to"
-                                        .to_string(),
-                                ),
-                            ))
                         }
+                        Err(CompilerError::parse_error(
+                            "Unsupported assignment target".to_string(),
+                            Some(first_location),
+                            Some(
+                                "Only a variable, a single list index (`xs[i]`) or a property path (`obj.a.b`) can be assigned to"
+                                    .to_string(),
+                            ),
+                        ))
                     } else {
                         // Not an assignment, just an expression statement
                         Ok(Statement::Expression {
@@ -500,7 +449,7 @@ impl TokenParser {
                     // This could be an expression statement with operators: x + 1, x * y, etc.
                     // Or just a bare identifier
                     // Parse as full expression to handle all cases
-                    self.cursor -= 1; // Go back to the identifier
+                    self.cursor = first_cursor; // Go back to the identifier
 
                     let expr = self.parse_expression()?;
 

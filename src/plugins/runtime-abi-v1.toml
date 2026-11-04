@@ -1507,16 +1507,17 @@ host_class = "all"
 semantics  = "stub"
 source     = "wasm_adapter.rs:3084"
 
-# Delivery-2 boxed-Any JSON bridges. Compiler-embedded stubs match the
-# `_v2` shape declared in foundation/spec/platform/function-registry.toml.
+# Delivery-2 boxed-Any JSON bridges and `_json_get` (stdlib-reference §8).
+# Real implementations shared with the wasmtime_runner — see
+# src/runtime/json_bridge.rs.
 [[bridge]]
 name       = "_json_encode_v2"
 module     = "env"
 params     = ["i32"]
 returns    = "i32"
 host_class = "all"
-semantics  = "stub"
-source     = "wasm_adapter.rs"
+semantics  = "wired"
+source     = "runtime/json_bridge.rs"
 
 [[bridge]]
 name       = "_json_encode_pretty_v2"
@@ -1524,17 +1525,26 @@ module     = "env"
 params     = ["i32"]
 returns    = "i32"
 host_class = "all"
-semantics  = "stub"
-source     = "wasm_adapter.rs"
+semantics  = "wired"
+source     = "runtime/json_bridge.rs"
 
 [[bridge]]
 name       = "_json_decode_v2"
 module     = "env"
-params     = ["i32"]
+params     = ["i32", "i32"]
 returns    = "i32"
 host_class = "all"
-semantics  = "stub"
-source     = "wasm_adapter.rs"
+semantics  = "wired"
+source     = "runtime/json_bridge.rs"
+
+[[bridge]]
+name       = "_json_get"
+module     = "env"
+params     = ["i32", "i32"]
+returns    = "i32"
+host_class = "all"
+semantics  = "wired"
+source     = "runtime/json_bridge.rs"
 
 # =============================================================================
 # Group: build_state

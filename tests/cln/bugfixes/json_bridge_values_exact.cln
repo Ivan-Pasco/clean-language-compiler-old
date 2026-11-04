@@ -1,0 +1,84 @@
+// Test: bugfixes/json_bridge_values_exact
+// Grammar: function_call → namespace "." function_name "(" args ")"
+// Semantic: stdlib-reference.md §8 (JSON is Layer 2: _json_encode_v2,
+//   _json_decode_v2, _json_get) and BOXED_ANY_ABI.md §2 (an integer box
+//   holds the full i64).
+// Regressions fixed with the removal of the in-WASM JSON parser:
+//   * a negative integer boxed to `any` serialized as 4294967291 (the box
+//     left the high payload word 0 instead of sign-extending);
+//   * a decoded integer above 2^31 read back as a truncated i32;
+//   * a JSON `null` member compared unequal to `null` and read as "null";
+//   * object keys came back sorted instead of in insertion order (D3);
+//   * json.get on an already-decoded tree went through the in-WASM walker.
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   -5
+//   [1,2,-7]
+//   {"b":2,"a":1}
+//   1730000000000
+//   -3
+//   null member is null
+//   []
+//   41
+//   missing is null
+//   [Ann]
+//   {"name":"Ann","age":-41,"admin":true,"score":2.5,"tags":["x","y"],"home":{"city":"Oslo","zip":123}}
+
+start:
+	integer n = -5
+	any boxed = n
+	printl(json.encode(boxed))
+	list<integer> xs = [1, 2]
+	xs.add(0 - 7)
+	printl(json.encode(xs))
+	any ordered = json.decode("{\"b\":2,\"a\":1}")
+	printl(json.encode(ordered))
+
+	any d = json.decode("{\"big\":1730000000000,\"neg\":-3,\"none\":null,\"user\":{\"name\":\"Ann\",\"age\":41}}")
+	string big = d.big
+	printl(big)
+	string neg = d.neg
+	printl(neg)
+	any empty = d.empty
+	if empty == null
+		printl("null member is null")
+	else
+		printl("null member is not null")
+	string emptyText = d.empty
+	printl("[" + emptyText + "]")
+	string age = json.get(d, "user.age")
+	printl(age)
+	any missing = json.get(d, "user.missing")
+	if missing == null
+		printl("missing is null")
+	else
+		printl("missing is not null")
+	string name = json.get(d, "user.name")
+	printl("[" + name + "]")
+
+	Person p = Person("Ann", -41)
+	printl(json.encode(p))
+
+class Address
+	string city
+	integer zip
+
+	constructor(string c, integer z)
+		city = c
+		zip = z
+
+class Person
+	string name
+	integer age
+	boolean admin
+	number score
+	list<string> tags
+	Address home
+
+	constructor(string personName, integer personAge)
+		name = personName
+		age = personAge
+		admin = true
+		score = 2.5
+		tags = ["x", "y"]
+		home = Address("Oslo", 123)

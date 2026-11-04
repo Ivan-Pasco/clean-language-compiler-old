@@ -4,10 +4,9 @@
 //! Provides full Clean Language runtime environment for plugin execution
 
 use anyhow::{anyhow, Result};
-use serde::de::DeserializeOwned;
 use std::sync::atomic::{AtomicI32, Ordering};
 use wasmtime::{
-    Caller, Engine, Extern, ExternType, Linker, Memory, Module, Store, TypedFunc, ValType,
+    AsContextMut, Caller, Engine, ExternType, Linker, Memory, Module, Store, TypedFunc, ValType,
 };
 
 use crate::ast::{FrameworkBlock, Statement};
@@ -28,8 +27,9 @@ pub struct WasmPluginAdapter {
     module: Module,
     /// Wasmtime engine
     engine: Engine,
-    /// Cached block types this plugin handles
-    handles_cache: Vec<&'static str>,
+    /// Block types this plugin handles, leaked once at construction so
+    /// `FrameworkPlugin::handles` can hand out the `'static` slice.
+    handles_cache: &'static [&'static str],
     /// Cached ORM expression patterns from `[handles] expressions`
     expression_patterns_cache: Vec<String>,
     /// Cached name string
@@ -38,13 +38,18 @@ pub struct WasmPluginAdapter {
     version_cache: &'static str,
     /// Cached description string
     description_cache: &'static str,
-    /// Cached Linker — set up once, reused across all expand calls.
-    /// The Linker is bound to the Engine (not the Store), so it can be
-    /// shared across multiple Store/Instance pairs.
-    cached_linker: Option<Linker<PluginState>>,
-    /// Plugin Contracts v2 — shared per-build state. Captured by the
-    /// `_build_state_set` / `_build_state_get` bridge stubs in the linker so
-    /// every plugin loaded with the same `BuildState` shares the same store.
+    /// v1 linker — set up once, reused across all v1 calls. The Linker is
+    /// bound to the Engine (not the Store), so it can be shared across
+    /// multiple Store/Instance pairs.
+    linker: Linker<PluginState>,
+    /// Typed-emission linker (v3 calls), built on first use.
+    typed_emission_linker: std::sync::OnceLock<Linker<PluginState>>,
+    /// Contract 5 lint linker, built on first use.
+    lint_linker: std::sync::OnceLock<Linker<PluginState>>,
+    /// Plugin Contracts v2 — shared per-build state. Handed to every store
+    /// this adapter creates, where the `_build_state_set` /
+    /// `_build_state_get` bridges read it, so every plugin loaded with the
+    /// same `BuildState` shares the same keystore.
     /// See `foundation/spec/plugins/contracts/lifecycle.md` §2.5.
     build_state: crate::plugins::BuildState,
     /// Monotonically-increasing counter for typed-emission ctx handles.
@@ -192,12 +197,15 @@ impl WasmPluginAdapter {
         let description_cache: &'static str =
             Box::leak(manifest.plugin.description.clone().into_boxed_str());
 
-        let handles_cache: Vec<&'static str> = manifest
-            .handles
-            .blocks
-            .iter()
-            .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
-            .collect();
+        let handles_cache: &'static [&'static str] = Box::leak(
+            manifest
+                .handles
+                .blocks
+                .iter()
+                .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
 
         // Expression patterns come exclusively from the plugin's
         // `[handles] expressions` manifest declaration. The previous fallback
@@ -237,7 +245,11 @@ impl WasmPluginAdapter {
             validate_lint_export_signature(&module, &name, export_name)?;
         }
 
-        let mut adapter = Self {
+        // Build the v1 linker once — it sets up ~150 host functions and is
+        // expensive to do per call.
+        let linker = Self::setup_linker(&engine)?;
+
+        Ok(Self {
             name,
             manifest,
             module,
@@ -247,37 +259,24 @@ impl WasmPluginAdapter {
             name_cache,
             version_cache,
             description_cache,
-            cached_linker: None,
+            linker,
+            typed_emission_linker: std::sync::OnceLock::new(),
+            lint_linker: std::sync::OnceLock::new(),
             build_state: crate::plugins::new_build_state(),
             next_ctx_counter: AtomicI32::new(1),
-        };
-
-        // Pre-build the linker once — this sets up ~50+ host function stubs
-        // and is expensive to do per-block call.
-        let linker = adapter.setup_linker()?;
-        adapter.cached_linker = Some(linker);
-
-        Ok(adapter)
+        })
     }
 
     /// Replace the adapter's per-build state container so multiple plugins
     /// loaded into the same registry share a single keystore. Called by
-    /// `WasmPluginLoader::load_plugins` immediately after `new()` so the
-    /// linker's bridge stubs (set up once, cached) capture the shared store.
-    ///
-    /// Note: because the bridge stubs were registered before this point,
-    /// the linker is rebuilt to ensure the captured `Arc` points to the
-    /// shared store. Plugins loaded after `set_build_state` see the new
-    /// state immediately on their next slot invocation.
-    pub fn set_build_state(&mut self, state: crate::plugins::BuildState) -> Result<()> {
+    /// `WasmPluginLoader::load_plugins` immediately after `new()`. Every
+    /// store created afterwards carries the shared state.
+    pub fn set_build_state(&mut self, state: crate::plugins::BuildState) {
         self.build_state = state;
-        // Rebuild the linker so the bridge stubs capture the new Arc.
-        let linker = self.setup_linker()?;
-        self.cached_linker = Some(linker);
-        Ok(())
     }
 
-    /// Create a new store with host functions.
+    /// Create a store for one plugin call around `state`, carrying the
+    /// shared build state.
     ///
     /// The store inherits the engine's epoch-based interruption (see
     /// `wasm_loader::build_engine`) and sets a per-call deadline derived
@@ -287,8 +286,8 @@ impl WasmPluginAdapter {
     /// the diagnostic the framework team asked for under
     /// COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS.
     /// Setting the env var to `0` disables the deadline.
-    fn create_store(&self) -> Store<PluginState> {
-        let state = PluginState::new();
+    fn create_store_with_state(&self, mut state: PluginState) -> Store<PluginState> {
+        state.build_state = std::sync::Arc::clone(&self.build_state);
         let mut store = Store::new(&self.engine, state);
         let timeout = super::wasm_loader::plugin_timeout_secs();
         if timeout > 0 {
@@ -309,25 +308,44 @@ impl WasmPluginAdapter {
         store
     }
 
-    /// Get a reference to the cached linker, or create one if not yet cached.
-    fn get_linker(&self) -> Result<&Linker<PluginState>> {
-        self.cached_linker
-            .as_ref()
-            .ok_or_else(|| anyhow!("Linker not initialized"))
+    /// Create a store for a v1 call (no typed-emission or lint arena).
+    fn create_store(&self) -> Store<PluginState> {
+        self.create_store_with_state(PluginState::new())
     }
 
-    /// Build a fresh typed-emission linker for a single v3 expansion call.
-    ///
-    /// Unlike the v1 linker (which is cached because it has no per-call state),
-    /// the typed-emission linker is built once per `call_expand_typed` call
-    /// because the bridge closures access `store.data_mut().emit_arena` — a
-    /// per-call arena installed just before instantiation. If we tried to cache
-    /// the linker across calls the closures would capture a stale arena reference.
-    ///
-    /// The overhead is acceptable: the typed-emission bridge surface is ~30
-    /// functions compared to the v1 linker's ~120, and the arena fill rate
-    /// per block expansion is at most a few hundred nodes.
-    fn build_typed_emission_linker(&self) -> Result<Linker<PluginState>> {
+    /// Instantiate the plugin module in `store` and prepare its memory for a
+    /// call: returns the instance and its exported memory, with the plugin's
+    /// default heap pointer moved past its data section. `what` names the
+    /// call in diagnostics.
+    fn instantiate(
+        &self,
+        store: &mut Store<PluginState>,
+        linker: &Linker<PluginState>,
+        what: &str,
+    ) -> Result<(wasmtime::Instance, Memory)> {
+        let instance = linker.instantiate(&mut *store, &self.module).map_err(|e| {
+            anyhow!(
+                "failed to instantiate plugin `{}` for {}: {}",
+                self.name,
+                what,
+                e
+            )
+        })?;
+        let memory = instance
+            .get_memory(&mut *store, "memory")
+            .ok_or_else(|| anyhow!("plugin `{}` does not export memory", self.name))?;
+        relocate_default_heap_pointer(store, &instance);
+        Ok((instance, memory))
+    }
+
+    /// The typed-emission linker used by every v3 call (`expand_block_typed`,
+    /// typed lifecycle slots, typed `process_html`, `assemble`). Built on
+    /// first use and cached: the bridges keep no per-call state of their own
+    /// — they reach the per-call arena through the store's `PluginState`.
+    fn typed_emission_linker(&self) -> Result<&Linker<PluginState>> {
+        if let Some(linker) = self.typed_emission_linker.get() {
+            return Ok(linker);
+        }
         let mut linker = Linker::new(&self.engine);
         // Register the full stdlib first so any Clean Language code inside a v3
         // plugin body (string.concat, env::print, float_to_string, math ops, etc.)
@@ -337,8 +355,8 @@ impl WasmPluginAdapter {
         // Bug: f4b7d6977f05 (TYPED-EMISSION-LINKER-INCOMPLETE) — this call was
         // missing, causing frame.locale (and any other v3 plugin that calls stdlib
         // from its expand_block_typed body) to fail instantiation.
-        self.register_plugin_stdlib_functions(&mut linker)?;
-        // Then overlay the 30 typed-emission bridge functions on top of the stdlib.
+        Self::register_plugin_stdlib_functions(&mut linker)?;
+        // Then overlay the typed-emission bridge functions on top of the stdlib.
         // These are the v3-specific handles: _emit_function, _stmt_block, _stmt_return, etc.
         crate::plugins::typed_emission::register_typed_emission_bridges(&mut linker)?;
         // Contract 5 Phase C: a plugin that exports both expand_block_typed
@@ -346,7 +364,7 @@ impl WasmPluginAdapter {
         // bridges so instantiation succeeds; a wrong-context call traps with
         // a `BRIDGE-WRONG-CONTEXT` diagnostic. Prompt f9ee2728-8597-11f1-9d55-da25a95a496b.
         crate::plugins::bridge_stubs::register_lint_stubs(&mut linker, "expand")?;
-        Ok(linker)
+        Ok(self.typed_emission_linker.get_or_init(|| linker))
     }
 
     /// Allocate the next monotonic ctx_handle for typed-emission.
@@ -354,67 +372,31 @@ impl WasmPluginAdapter {
         self.next_ctx_counter.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Create a store with a typed-emission arena pre-installed.
-    fn create_store_with_arena(
-        &self,
-        arena: crate::plugins::typed_emission::EmitArena,
-    ) -> Store<PluginState> {
-        let mut state = PluginState::new();
-        state.emit_arena = Some(arena);
-        let mut store = Store::new(&self.engine, state);
-        let timeout = super::wasm_loader::plugin_timeout_secs();
-        if timeout > 0 {
-            let ticks = (timeout * 1000) / super::wasm_loader::EPOCH_TICK_MS;
-            store.set_epoch_deadline(ticks.max(1));
-            store.epoch_deadline_trap();
-        }
-        store
-    }
-
-    /// Build a fresh lint linker for a single Contract 5 `lint_project` call.
+    /// The lint linker used by Contract 5 `lint_project` calls. Built on
+    /// first use and cached, like `typed_emission_linker`.
     ///
-    /// Mirrors `build_typed_emission_linker` but registers the 4 read-only
-    /// AST accessor bridges (see `foundation/spec/framework/contracts/lint-extension.md`
-    /// §4) on top of the plugin stdlib. Kept separate from the v1 and
-    /// typed-emission linkers so a lint call gets exactly the lint surface —
-    /// no expand bridges, no typed-emission constructors — matching the
-    /// spec's "fresh WASM instance per lint call" execution model.
-    /// Used by `call_lint_project`, which owns the arena lifecycle.
-    pub(crate) fn build_lint_linker(&self) -> Result<Linker<PluginState>> {
+    /// Registers the read-only AST accessor bridges (see
+    /// `foundation/spec/framework/contracts/lint-extension.md` §4) on top of
+    /// the plugin stdlib. Kept separate from the v1 and typed-emission
+    /// linkers so a lint call gets exactly the lint surface — no expand
+    /// bridges, no typed-emission constructors. Each call still runs in a
+    /// fresh store and instance, matching the spec's "fresh WASM instance
+    /// per lint call" execution model.
+    fn lint_linker(&self) -> Result<&Linker<PluginState>> {
+        if let Some(linker) = self.lint_linker.get() {
+            return Ok(linker);
+        }
         let mut linker = Linker::new(&self.engine);
         // Plugins that write their `lint_project` in Clean Language will
         // reference stdlib functions (string ops, json helpers, math) the
         // same way expand-block bodies do. Register the full stdlib first
         // so any such import resolves at instantiation time — matching the
         // fix that landed for the typed-emission linker (fp f4b7d6977f05).
-        self.register_plugin_stdlib_functions(&mut linker)?;
+        Self::register_plugin_stdlib_functions(&mut linker)?;
         crate::plugins::lint::register_lint_bridges(&mut linker)?;
-        // Contract 5 Phase C: see build_typed_emission_linker for rationale.
+        // Contract 5 Phase C: see typed_emission_linker for rationale.
         crate::plugins::bridge_stubs::register_typed_emission_stubs(&mut linker, "lint")?;
-        Ok(linker)
-    }
-
-    /// Create a store with a lint arena pre-installed.
-    ///
-    /// The store shares the same epoch-based timeout enforcement as every
-    /// other plugin call — a plugin whose lint runs past
-    /// `CLN_PLUGIN_TIMEOUT_SECS` (default 30 s per Contract 5 §5) traps
-    /// with `wasm trap: interrupt` and the caller emits LINT001 without
-    /// blocking the build.
-    pub(crate) fn create_store_with_lint_arena(
-        &self,
-        arena: crate::plugins::lint::LintArena,
-    ) -> Store<PluginState> {
-        let mut state = PluginState::new();
-        state.lint_arena = Some(arena);
-        let mut store = Store::new(&self.engine, state);
-        let timeout = super::wasm_loader::plugin_timeout_secs();
-        if timeout > 0 {
-            let ticks = (timeout * 1000) / super::wasm_loader::EPOCH_TICK_MS;
-            store.set_epoch_deadline(ticks.max(1));
-            store.epoch_deadline_trap();
-        }
-        store
+        Ok(self.lint_linker.get_or_init(|| linker))
     }
 
     /// Contract 5 lint call. See
@@ -459,29 +441,13 @@ impl WasmPluginAdapter {
             handle,
             "LintArena must carry the ctx handle it was constructed with"
         );
-        let mut store = self.create_store_with_lint_arena(arena);
+        let mut state = PluginState::new();
+        state.lint_arena = Some(arena);
+        let mut store = self.create_store_with_state(state);
 
-        let linker = self.build_lint_linker()?;
-        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
-            anyhow!(
-                "LINT001: failed to instantiate plugin `{}` for lint: {}",
-                self.name,
-                e
-            )
-        })?;
-
-        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
-            anyhow!(
-                "LINT001: plugin `{}` does not export memory (lint pass)",
-                self.name
-            )
-        })?;
-
-        // Advance the plugin's heap pointer past the static data section,
-        // same trick as `call_expand_typed` — plugins allocate returned
-        // strings from the heap, and if the heap starts inside the data
-        // section every returned pointer collides with a static literal.
-        relocate_default_heap_pointer(&mut store, &instance);
+        let (instance, memory) = self
+            .instantiate(&mut store, self.lint_linker()?, "lint")
+            .map_err(|e| anyhow!("LINT001: {}", e))?;
 
         // Build the project-context JSON (spec §3.1) and write it into
         // plugin memory as an LP string.
@@ -496,7 +462,7 @@ impl WasmPluginAdapter {
              \"config\":{{\"level\":\"{}\"}}}}",
             handle, compiler_version, level
         );
-        let input_ptr = self.find_or_write_string(&mut store, &memory, &ctx_json)?;
+        let input_ptr = self.find_or_write_string(&mut store, &instance, &memory, &ctx_json)?;
 
         // Call the plugin's `lint_project(input_lp) -> output_lp`.
         let lint_fn: TypedFunc<i32, i32> = instance
@@ -539,136 +505,46 @@ impl WasmPluginAdapter {
     }
 
     /// Plugin Contracts v3 typed expansion. Called when
-    /// `dispatch.version >= 3` in `call_expand` or `call_expand_full`.
+    /// `dispatch.version >= 3` in `call_expand_full`.
     ///
-    /// Allocates an `EmitArena`, installs it into the store, instantiates the
-    /// plugin with the typed-emission linker, calls `expand_block_typed`, drains
-    /// the arena, routes diagnostics, and returns the accumulated `PluginExpansion`.
+    /// Invokes `expand_block_typed(ctx, block_name_lp, attrs_lp, body_lp) -> i32`
+    /// with a fresh `EmitArena` and returns the accumulated `PluginExpansion`.
     fn call_expand_typed(
         &self,
-        block: &FrameworkBlock,
         export_name: &str,
-        block_name_str: &str,
-        attributes_str: &str,
-        body_str: &str,
+        block_name: &str,
+        attributes: &str,
+        body: &str,
     ) -> Result<PluginExpansion> {
+        let what = format!("typed emission of block `{}`", block_name);
         let ctx = self.next_ctx_handle();
         let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
-        let mut store = self.create_store_with_arena(arena);
-
-        let linker = self.build_typed_emission_linker()?;
-        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
-            anyhow!(
-                "typed-emission: failed to instantiate plugin `{}`: {}",
-                self.name,
-                e
-            )
+        let (arena, status) = self.run_typed_call(&what, arena, |store, instance, memory| {
+            let block_name_ptr = self.find_or_write_string(store, instance, memory, block_name)?;
+            let attributes_ptr = self.find_or_write_string(store, instance, memory, attributes)?;
+            let body_ptr = self.find_or_write_string(store, instance, memory, body)?;
+            let expand: TypedFunc<(i32, i32, i32, i32), i32> = instance
+                .get_typed_func(&mut *store, export_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "typed-emission: plugin `{}` does not export `{}`: {}",
+                        self.name,
+                        export_name,
+                        e
+                    )
+                })?;
+            Ok(expand.call(&mut *store, (ctx, block_name_ptr, attributes_ptr, body_ptr)))
         })?;
-
-        // Obtain and fix the heap pointer (same as v1 path).
-        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
-            anyhow!(
-                "typed-emission: plugin `{}` does not export memory",
-                self.name
-            )
-        })?;
-
-        relocate_default_heap_pointer(&mut store, &instance);
-
-        // Write LP-strings into plugin WASM memory.
-        let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name_str)?;
-        let attributes_ptr = self.find_or_write_string(&mut store, &memory, attributes_str)?;
-        let body_ptr = self.find_or_write_string(&mut store, &memory, body_str)?;
-
-        // Call the plugin's `expand_block_typed(ctx, block_name_lp, attrs_lp, body_lp) -> i32`.
-        let expand: TypedFunc<(i32, i32, i32, i32), i32> = instance
-            .get_typed_func(&mut store, export_name)
-            .map_err(|e| {
-                anyhow!(
-                    "typed-emission: plugin `{}` does not export `{}`: {}",
-                    self.name,
-                    export_name,
-                    e
-                )
-            })?;
-
-        let plugin_return = expand
-            .call(&mut store, (ctx, block_name_ptr, attributes_ptr, body_ptr))
-            .map_err(|e| {
-                let oom = store.data().oom_during_call.clone();
-                anyhow!(
-                    "PLUGIN009: plugin `{}` trapped during typed emission of block `{}`: {}{}",
-                    self.name,
-                    block.name.trim_end_matches(':'),
-                    e,
-                    oom.as_deref()
-                        .map(|s| format!(" [OOM: {}]", s))
-                        .unwrap_or_default(),
-                )
-            })?;
-
-        // Drain the arena.
-        let arena = store.data_mut().emit_arena.take().expect(
-            "typed-emission: arena was taken during expansion — cross-call arena reuse detected",
-        );
-
-        let (expansion, diagnostics, saw_error) = arena.finish();
-
-        // Route diagnostics to the compiler diagnostic channel.
-        for diag in &diagnostics {
-            if diag.severity >= 2 {
-                tracing::error!(
-                    target: "compiler::plugins::typed_emission",
-                    plugin = %self.name,
-                    block = block.name.trim_end_matches(':'),
-                    code = %diag.code,
-                    message = %diag.message,
-                    span = %diag.span_json,
-                    "plugin typed-emission error"
-                );
-            } else {
-                tracing::warn!(
-                    target: "compiler::plugins::typed_emission",
-                    plugin = %self.name,
-                    block = block.name.trim_end_matches(':'),
-                    code = %diag.code,
-                    message = %diag.message,
-                    span = %diag.span_json,
-                    "plugin typed-emission warning"
-                );
-            }
-        }
-
-        if plugin_return != 0 || saw_error {
-            let error_summary = diagnostics
-                .iter()
-                .filter(|d| d.severity >= 2)
-                .map(|d| format!("[{}] {}", d.code, d.message))
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(anyhow!(
-                "plugin `{}` failed typed emission of block `{}` (return={}, errors: {})",
-                self.name,
-                block.name.trim_end_matches(':'),
-                plugin_return,
-                if error_summary.is_empty() {
-                    "(none)"
-                } else {
-                    &error_summary
-                }
-            ));
-        }
-
+        let expansion = self.finish_typed_expansion(&what, arena, status)?;
         tracing::debug!(
             target: "compiler::plugins::arena",
             plugin = %self.name,
-            block = block.name.trim_end_matches(':'),
+            block = block_name,
             functions = expansion.functions.len(),
             classes = expansion.classes.len(),
             externals = expansion.externals.len(),
             "typed-emission: expansion complete"
         );
-
         Ok(expansion)
     }
 
@@ -732,12 +608,10 @@ impl WasmPluginAdapter {
 
     /// Shared typed-emission call shape for exports taking `(ctx, json_lp) -> i32`.
     ///
-    /// A per-call `EmitArena` is installed under a fresh ctx handle, the
-    /// plugin is instantiated with the typed-emission linker, the export is
-    /// called with the JSON input written into plugin memory, diagnostics are
-    /// routed, and the accumulated `PluginExpansion` is returned. A non-zero
-    /// return or any error-severity diagnostic fails the call. `what` names
-    /// the call in diagnostics (e.g. "lifecycle slot `program_init`").
+    /// The export is called with the JSON input written into plugin memory
+    /// under a fresh `EmitArena`, and the accumulated `PluginExpansion` is
+    /// returned. `what` names the call in diagnostics (e.g. "lifecycle slot
+    /// `program_init`").
     fn call_typed_json_export(
         &self,
         what: &str,
@@ -746,63 +620,96 @@ impl WasmPluginAdapter {
     ) -> Result<PluginExpansion> {
         let ctx = self.next_ctx_handle();
         let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
-        let mut store = self.create_store_with_arena(arena);
-
-        let linker = self.build_typed_emission_linker()?;
-        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
-            anyhow!(
-                "typed-emission: failed to instantiate plugin `{}` for {}: {}",
-                self.name,
-                what,
-                e
-            )
+        let (arena, status) = self.run_typed_call(what, arena, |store, instance, memory| {
+            let input_ptr = self.find_or_write_string(store, instance, memory, input_json)?;
+            let export: TypedFunc<(i32, i32), i32> = instance
+                .get_typed_func(&mut *store, export_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "typed-emission: plugin `{}` does not export {} as `{}(ctx, json) -> i32`: {}",
+                        self.name,
+                        what,
+                        export_name,
+                        e
+                    )
+                })?;
+            Ok(export.call(&mut *store, (ctx, input_ptr)))
         })?;
+        self.finish_typed_expansion(what, arena, status)
+    }
 
-        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
-            anyhow!(
-                "typed-emission: plugin `{}` does not export memory",
-                self.name
-            )
-        })?;
-
-        // Heap pointer fix — same convention as call_expand_typed.
-        relocate_default_heap_pointer(&mut store, &instance);
-
-        let input_ptr = self.find_or_write_string(&mut store, &memory, input_json)?;
-
-        let export: TypedFunc<(i32, i32), i32> = instance
-            .get_typed_func(&mut store, export_name)
-            .map_err(|e| {
-            anyhow!(
-                "typed-emission: plugin `{}` does not export {} as `{}(ctx, json) -> i32`: {}",
-                self.name,
-                what,
-                export_name,
-                e
-            )
-        })?;
-
-        let plugin_return = export.call(&mut store, (ctx, input_ptr)).map_err(|e| {
+    /// Run one typed-emission export call in a fresh store holding `arena`.
+    ///
+    /// The plugin is instantiated with the typed-emission linker and `call`
+    /// writes the inputs into plugin memory (the outer `Result`) and invokes
+    /// the export (the inner `Result`, carrying its status). A trap is
+    /// reported as PLUGIN009 with the trap kind and any host-bridge OOM
+    /// context. Returns the arena (with everything the plugin
+    /// emitted into it) and the export's status.
+    fn run_typed_call(
+        &self,
+        what: &str,
+        arena: crate::plugins::typed_emission::EmitArena,
+        call: impl FnOnce(
+            &mut Store<PluginState>,
+            &wasmtime::Instance,
+            &Memory,
+        ) -> Result<wasmtime::Result<i32>>,
+    ) -> Result<(crate::plugins::typed_emission::EmitArena, i32)> {
+        let mut state = PluginState::new();
+        state.emit_arena = Some(arena);
+        let mut store = self.create_store_with_state(state);
+        let (instance, memory) = self
+            .instantiate(&mut store, self.typed_emission_linker()?, what)
+            .map_err(|e| anyhow!("typed-emission: {}", e))?;
+        let status = call(&mut store, &instance, &memory)?.map_err(|e| {
             let oom = store.data().oom_during_call.clone();
             anyhow!(
-                "PLUGIN009: plugin `{}`: {}{}",
+                "PLUGIN009: plugin `{}`: {}",
                 self.name,
-                describe_plugin_trap(&e, &format!("typed {}", what)),
-                oom.as_deref()
-                    .map(|s| format!(" [OOM: {}]", s))
-                    .unwrap_or_default(),
+                describe_plugin_trap_with_oom(&e, &format!("typed {}", what), oom.as_deref())
             )
         })?;
+        let arena = store.data_mut().emit_arena.take().ok_or_else(|| {
+            anyhow!(
+                "typed-emission: the emit arena was taken during {} — cross-call arena reuse",
+                what
+            )
+        })?;
+        Ok((arena, status))
+    }
 
-        let arena = store
-            .data_mut()
-            .emit_arena
-            .take()
-            .expect("typed-emission: arena must be present after the typed call");
-
+    /// Drain a typed-emission arena into its `PluginExpansion`, routing the
+    /// plugin's diagnostics. A non-zero export status or any error-severity
+    /// diagnostic fails the call.
+    fn finish_typed_expansion(
+        &self,
+        what: &str,
+        arena: crate::plugins::typed_emission::EmitArena,
+        status: i32,
+    ) -> Result<PluginExpansion> {
         let (expansion, diagnostics, saw_error) = arena.finish();
+        let error_summary = self.route_typed_diagnostics(what, &diagnostics);
+        if status != 0 || saw_error {
+            return Err(anyhow!(
+                "plugin `{}` failed typed {} (return={}, errors: {})",
+                self.name,
+                what,
+                status,
+                error_summary.as_deref().unwrap_or("(none)")
+            ));
+        }
+        Ok(expansion)
+    }
 
-        for diag in &diagnostics {
+    /// Log a typed-emission call's diagnostics on the compiler diagnostic
+    /// channel and return the joined error-severity messages, if any.
+    fn route_typed_diagnostics(
+        &self,
+        what: &str,
+        diagnostics: &[crate::plugins::typed_emission::error::EmitDiagnostic],
+    ) -> Option<String> {
+        for diag in diagnostics {
             if diag.severity >= 2 {
                 tracing::error!(
                     target: "compiler::plugins::typed_emission",
@@ -810,6 +717,7 @@ impl WasmPluginAdapter {
                     call = what,
                     code = %diag.code,
                     message = %diag.message,
+                    span = %diag.span_json,
                     "plugin typed-emission error"
                 );
             } else {
@@ -819,32 +727,17 @@ impl WasmPluginAdapter {
                     call = what,
                     code = %diag.code,
                     message = %diag.message,
+                    span = %diag.span_json,
                     "plugin typed-emission warning"
                 );
             }
         }
-
-        if plugin_return != 0 || saw_error {
-            let error_summary = diagnostics
-                .iter()
-                .filter(|d| d.severity >= 2)
-                .map(|d| format!("[{}] {}", d.code, d.message))
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(anyhow!(
-                "plugin `{}` failed typed {} (return={}, errors: {})",
-                self.name,
-                what,
-                plugin_return,
-                if error_summary.is_empty() {
-                    "(none)"
-                } else {
-                    &error_summary
-                }
-            ));
-        }
-
-        Ok(expansion)
+        let errors: Vec<String> = diagnostics
+            .iter()
+            .filter(|d| d.severity >= 2)
+            .map(|d| format!("[{}] {}", d.code, d.message))
+            .collect();
+        (!errors.is_empty()).then(|| errors.join("; "))
     }
 
     /// Register all stdlib host functions that any plugin (v1 or v3) may import.
@@ -869,33 +762,33 @@ impl WasmPluginAdapter {
     /// - `register_math_functions` SHARED: Math.sin/cos/sqrt/pow/random/etc.
     /// - `register_http_auth_stubs` SHARED (stubs): _req_cookie/_http_redirect/_session_*, return 0
     /// - `register_build_state_bridges` SHARED: _build_state_set/_build_state_get (Plugin Contracts v2+)
-    fn register_plugin_stdlib_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_plugin_stdlib_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // Core I/O and conversions (print, float_to_string, string.concat, etc.)
-        self.register_env_core_functions(linker)?;
+        Self::register_env_core_functions(linker)?;
         // string.* dot-namespace functions (slice, substring, indexOf, replace, …)
-        self.register_string_dot_functions(linker)?;
+        Self::register_string_dot_functions(linker)?;
         // string_* underscore-namespace functions (string_compare, _str_eq, …)
-        self.register_string_underscore_functions(linker)?;
+        Self::register_string_underscore_functions(linker)?;
         // list.* functions (push_f64, …)
-        self.register_list_functions(linker)?;
+        Self::register_list_functions(linker)?;
         // Memory / allocator runtime helpers
-        self.register_memory_runtime_functions(linker)?;
+        Self::register_memory_runtime_functions(linker)?;
         // Outbound HTTP client (http_get/post/…)
-        self.register_http_client_functions(linker)?;
+        Self::register_http_client_functions(linker)?;
         // HTTP server stubs (_http_route, _http_listen — zero returns)
-        self.register_http_server_functions(linker)?;
+        Self::register_http_server_functions(linker)?;
         // Dev capture stub (_dev_snapshot — LP empty string, real impl in clean-server)
-        self.register_dev_capture_functions(linker)?;
+        Self::register_dev_capture_functions(linker)?;
         // Request context stubs (_req_param, _req_query, … — zero/empty returns)
-        self.register_request_context_functions(linker)?;
+        Self::register_request_context_functions(linker)?;
         // File I/O stubs
-        self.register_file_functions(linker)?;
+        Self::register_file_functions(linker)?;
         // Math namespace (Math.sin, Math.cos, Math.sqrt, Math.random, …)
-        self.register_math_functions(linker)?;
+        Self::register_math_functions(linker)?;
         // Auth / session / redirect stubs (_req_cookie, _http_redirect, _session_*, …)
-        self.register_http_auth_stubs(linker)?;
+        Self::register_http_auth_stubs(linker)?;
         // Build-state bridges (_build_state_set, _build_state_get — Plugin Contracts v2+)
-        self.register_build_state_bridges(linker)?;
+        register_build_state_bridges(linker)?;
         Ok(())
     }
 
@@ -909,15 +802,15 @@ impl WasmPluginAdapter {
     /// canonical catalog authored in Phase D S2. Any drift (missing or extra
     /// bridge) fails plugin adapter construction with a diagnostic pointing
     /// at the offending name(s).
-    fn setup_linker(&self) -> Result<Linker<PluginState>> {
-        let mut linker = Linker::new(&self.engine);
-        self.register_plugin_stdlib_functions(&mut linker)?;
+    fn setup_linker(engine: &Engine) -> Result<Linker<PluginState>> {
+        let mut linker = Linker::new(engine);
+        Self::register_plugin_stdlib_functions(&mut linker)?;
 
         // Parity gate: verify the registered bridge surface matches
         // runtime-abi/v1.toml. Uses an ephemeral store solely for
         // `Linker::iter` (wasmtime 10 requires it) — the store is dropped
         // immediately after.
-        let mut ephemeral = Store::new(&self.engine, PluginState::new());
+        let mut ephemeral = Store::new(engine, PluginState::new());
         let registered: Vec<(String, String)> = linker
             .iter(&mut ephemeral)
             .map(|(module, name, _)| (module.to_string(), name.to_string()))
@@ -934,11 +827,11 @@ impl WasmPluginAdapter {
             ));
         }
 
-        // v1 calls (process_html, lifecycle hooks, v1 expansion) instantiate
-        // plugins that may also export expand_block_typed / lint_project and
-        // therefore import those bridge surfaces. Stub them (after the ABI
-        // parity gate, which covers only the v1 surface) so instantiation
-        // succeeds; a call from the wrong context traps with
+        // v1 calls (process_html, v1 lifecycle slots, v1 expansion)
+        // instantiate plugins that may also export expand_block_typed /
+        // lint_project and therefore import those bridge surfaces. Stub them
+        // (after the ABI parity gate, which covers only the v1 surface) so
+        // instantiation succeeds; a call from the wrong context traps with
         // BRIDGE-WRONG-CONTEXT.
         crate::plugins::bridge_stubs::register_typed_emission_stubs(&mut linker, "v1 plugin call")?;
         crate::plugins::bridge_stubs::register_lint_stubs(&mut linker, "v1 plugin call")?;
@@ -946,17 +839,10 @@ impl WasmPluginAdapter {
         Ok(linker)
     }
 
-    /// Plugin Contracts v2 — register the `_build_state_set` /
-    /// `_build_state_get` bridges that plugins use to communicate state
-    /// across calls within one build. See `lifecycle.md` §2.5.
-    fn register_build_state_bridges(&self, linker: &mut Linker<PluginState>) -> Result<()> {
-        register_build_state_bridges(linker, &self.build_state)
-    }
-
     // =========================================
     // ENV NAMESPACE - Core I/O and conversions
     // =========================================
-    fn register_env_core_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_env_core_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // env.print - Print without newline
         linker.func_wrap(
             "env",
@@ -1016,8 +902,7 @@ impl WasmPluginAdapter {
             "input",
             |mut caller: Caller<'_, PluginState>, _prompt_ptr: i32| -> i32 {
                 // Return empty string - allocate string in memory
-                let state = caller.data_mut();
-                state.allocate(8) as i32 // Return pointer to empty string area
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -1061,20 +946,8 @@ impl WasmPluginAdapter {
             |mut caller: Caller<'_, PluginState>, value: i32| -> i32 {
                 let s = value.to_string();
                 let bytes = s.as_bytes();
-                let len = bytes.len();
 
-                let state = caller.data_mut();
-                let ptr = state.allocate(4 + len);
-
-                if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    // Write length prefix
-                    let len_bytes = (len as u32).to_le_bytes();
-                    let _ = memory.write(&mut caller, ptr, &len_bytes);
-                    // Write string data
-                    let _ = memory.write(&mut caller, ptr + 4, bytes);
-                }
-
-                ptr as i32
+                write_clean_string(&mut caller, bytes)
             },
         )?;
 
@@ -1085,18 +958,8 @@ impl WasmPluginAdapter {
             |mut caller: Caller<'_, PluginState>, value: f64| -> i32 {
                 let s = value.to_string();
                 let bytes = s.as_bytes();
-                let len = bytes.len();
 
-                let state = caller.data_mut();
-                let ptr = state.allocate(4 + len);
-
-                if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    let len_bytes = (len as u32).to_le_bytes();
-                    let _ = memory.write(&mut caller, ptr, &len_bytes);
-                    let _ = memory.write(&mut caller, ptr + 4, bytes);
-                }
-
-                ptr as i32
+                write_clean_string(&mut caller, bytes)
             },
         )?;
 
@@ -1107,18 +970,8 @@ impl WasmPluginAdapter {
             |mut caller: Caller<'_, PluginState>, value: i32| -> i32 {
                 let s = if value != 0 { "true" } else { "false" };
                 let bytes = s.as_bytes();
-                let len = bytes.len();
 
-                let state = caller.data_mut();
-                let ptr = state.allocate(4 + len);
-
-                if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    let len_bytes = (len as u32).to_le_bytes();
-                    let _ = memory.write(&mut caller, ptr, &len_bytes);
-                    let _ = memory.write(&mut caller, ptr + 4, bytes);
-                }
-
-                ptr as i32
+                write_clean_string(&mut caller, bytes)
             },
         )?;
 
@@ -1160,99 +1013,21 @@ impl WasmPluginAdapter {
                     None => return 0,
                 };
 
+                // Read both length-prefixed strings; an unreadable pointer
+                // yields 0 (null result) rather than a host panic.
                 let data = memory.data(&caller);
-
-                // Read first string (length-prefixed)
-                let ptr1 = str1_ptr as usize;
-                if ptr1 + 4 > data.len() {
+                let (Some(s1), Some(s2)) = (
+                    read_lp_from_data(data, str1_ptr),
+                    read_lp_from_data(data, str2_ptr),
+                ) else {
                     return 0;
-                }
-                let len1 = u32::from_le_bytes([
-                    data[ptr1],
-                    data[ptr1 + 1],
-                    data[ptr1 + 2],
-                    data[ptr1 + 3],
-                ]) as usize;
-                let content1_start = ptr1 + 4;
-                let content1_end = content1_start + len1;
-                let s1 = if content1_end <= data.len() {
-                    data[content1_start..content1_end].to_vec()
-                } else {
-                    Vec::new()
                 };
-
-                // Read second string (length-prefixed)
-                let ptr2 = str2_ptr as usize;
-                if ptr2 + 4 > data.len() {
-                    return 0;
-                }
-                let len2 = u32::from_le_bytes([
-                    data[ptr2],
-                    data[ptr2 + 1],
-                    data[ptr2 + 2],
-                    data[ptr2 + 3],
-                ]) as usize;
-                let content2_start = ptr2 + 4;
-                let content2_end = content2_start + len2;
-                let s2 = if content2_end <= data.len() {
-                    data[content2_start..content2_end].to_vec()
-                } else {
-                    Vec::new()
-                };
-
-                // Concatenate
-                let mut result = s1;
-                result.extend(s2);
-                let result_len = result.len();
-                let total_size = 4 + result_len;
+                let mut result = Vec::with_capacity(s1.len() + s2.len());
+                result.extend_from_slice(s1);
+                result.extend_from_slice(s2);
 
                 // Allocate and write result (length-prefixed)
-                let state = caller.data_mut();
-                let ptr = state.allocate(total_size);
-                if ptr == 0 && state.oom_during_call.is_none() {
-                    state.oom_during_call = Some(format!(
-                        "string.concat: bridge bump allocator exhausted (>= {} MiB \
-                         consumed) requesting {} bytes",
-                        i32::MAX as usize / (1024 * 1024),
-                        total_size,
-                    ));
-                }
-
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-
-                // Check if we need to grow memory
-                let current_size = memory.data_size(&caller);
-                let required_size = ptr + total_size;
-                if required_size > current_size {
-                    let pages_needed = (required_size - current_size).div_ceil(65536);
-                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
-                        let current_mb = current_size / (1024 * 1024);
-                        let state = caller.data_mut();
-                        if state.oom_during_call.is_none() {
-                            state.oom_during_call = Some(format!(
-                                "string.concat: memory.grow failed at {} MiB current \
-                                 (plugin host-cap 1 GiB), requested {} byte result \
-                                 ({} additional pages)",
-                                current_mb, result_len, pages_needed,
-                            ));
-                        }
-                        return 0; // Allocation failed
-                    }
-                }
-
-                // Write length and data
-                let len_bytes = (result_len as u32).to_le_bytes();
-                if memory.write(&mut caller, ptr, &len_bytes).is_err() {
-                    return 0;
-                }
-                if memory.write(&mut caller, ptr + 4, &result).is_err() {
-                    return 0;
-                }
-
-                ptr as i32
+                write_clean_string(&mut caller, &result)
             },
         )?;
 
@@ -1312,7 +1087,11 @@ impl WasmPluginAdapter {
                 let data_size = count * 4;
                 let total = header_size + data_size;
 
-                let list_ptr = caller.data_mut().allocate(total);
+                let heap = SharedHeap::of_caller(&mut caller);
+                let list_ptr = host_allocate(&mut caller, heap, total, PluginState::allocate);
+                if list_ptr == 0 {
+                    return 0;
+                }
 
                 let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                     Some(m) => m,
@@ -1408,7 +1187,7 @@ impl WasmPluginAdapter {
     // DOT-NOTATION TRIM ALIASES + string dot-methods
     // For compatibility with WASM modules using dot notation
     // =========================================
-    fn register_string_dot_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_string_dot_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // =========================================
         // DOT-NOTATION TRIM ALIASES
         // For compatibility with WASM modules using dot notation
@@ -1522,33 +1301,7 @@ impl WasmPluginAdapter {
 
                 // Allocate and write result
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let total_size = result_len + 4;
-                let state = caller.data_mut();
-                let ptr = state.allocate(total_size);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-
-                // Check if we need to grow memory
-                let current_size = memory.data_size(&caller);
-                let required_size = ptr + total_size;
-                if required_size > current_size {
-                    let pages_needed = (required_size - current_size).div_ceil(65536);
-                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
-                        return 0;
-                    }
-                }
-
-                let len_bytes = (result_len as u32).to_le_bytes();
-                if memory.write(&mut caller, ptr, &len_bytes).is_err() {
-                    return 0;
-                }
-                if memory.write(&mut caller, ptr + 4, result_bytes).is_err() {
-                    return 0;
-                }
-                ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -1564,48 +1317,16 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = str_ptr as usize;
-                    if len_start + 4 > data.len() {
+                    let Some(bytes) = read_lp_from_data(data, str_ptr) else {
                         return 0;
-                    }
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    if data_start + len > data.len() {
-                        return 0;
-                    }
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    };
+                    String::from_utf8_lossy(bytes).to_string()
                 };
 
                 let repeat_count = count.max(0) as usize;
                 let result = string_val.repeat(repeat_count);
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let total_size = result_len + 4;
-                let state = caller.data_mut();
-                let ptr = state.allocate(total_size);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-
-                let current_size = memory.data_size(&caller);
-                let required_size = ptr + total_size;
-                if required_size > current_size {
-                    let pages_needed = (required_size - current_size).div_ceil(65536);
-                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
-                        return 0;
-                    }
-                }
-
-                let len_bytes = (result_len as u32).to_le_bytes();
-                if memory.write(&mut caller, ptr, &len_bytes).is_err() {
-                    return 0;
-                }
-                if memory.write(&mut caller, ptr + 4, result_bytes).is_err() {
-                    return 0;
-                }
-                ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -1625,17 +1346,10 @@ impl WasmPluginAdapter {
                     .get_export("memory")
                     .and_then(|e| e.into_memory())
                     .unwrap();
-                let data = memory.data(&caller).to_vec();
-                let ptr = str_ptr as usize;
-                if ptr + 4 > data.len() {
-                    return 0;
-                }
-                let len = u32::from_le_bytes(data[ptr..ptr + 4].try_into().unwrap()) as usize;
-                let s = if ptr + 4 + len <= data.len() {
-                    String::from_utf8_lossy(&data[ptr + 4..ptr + 4 + len]).to_string()
-                } else {
+                let Some(bytes) = read_lp_from_data(memory.data(&caller), str_ptr) else {
                     return 0;
                 };
+                let s = String::from_utf8_lossy(bytes).to_string();
                 let matched = match pattern_id {
                     0 => {
                         let p: Vec<&str> = s.splitn(2, '@').collect();
@@ -1725,17 +1439,7 @@ impl WasmPluginAdapter {
 
                 // Allocate and write result
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, ptr, &len_bytes);
-                let _ = memory.write(&mut caller, ptr + 4, result_bytes);
-                ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -1752,58 +1456,19 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    if len_start + 4 > data.len() {
+                    let Some(bytes) = read_lp_from_data(data, ptr) else {
                         return 0;
-                    }
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    if data_start + len > data.len() {
-                        return 0;
-                    }
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    };
+                    bytes.to_vec()
                 };
 
+                // Byte offsets, clamped to the string and ordered. Slicing bytes
+                // (not a `str`) means an offset inside a multi-byte character
+                // cannot panic.
                 let str_len = string_val.len() as i32;
-                let actual_start = start.max(0).min(str_len) as usize;
-                let actual_end = end.max(0).min(str_len) as usize;
-                let actual_end = actual_end.max(actual_start);
-
-                let substring = &string_val[actual_start..actual_end];
-
-                // Allocate and write result
-                let result_bytes = substring.as_bytes();
-                let result_len = result_bytes.len();
-                let total_size = result_len + 4;
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(total_size);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-
-                // Check if we need to grow memory
-                let current_size = memory.data_size(&caller);
-                let required_size = result_ptr + total_size;
-                if required_size > current_size {
-                    let pages_needed = (required_size - current_size).div_ceil(65536);
-                    if memory.grow(&mut caller, pages_needed as u64).is_err() {
-                        return 0;
-                    }
-                }
-
-                let len_bytes = (result_len as u32).to_le_bytes();
-                if memory.write(&mut caller, result_ptr, &len_bytes).is_err() {
-                    return 0;
-                }
-                if memory
-                    .write(&mut caller, result_ptr + 4, result_bytes)
-                    .is_err()
-                {
-                    return 0;
-                }
-                result_ptr as i32
+                let actual_start = start.clamp(0, str_len) as usize;
+                let actual_end = (end.clamp(0, str_len) as usize).max(actual_start);
+                write_clean_string(&mut caller, &string_val[actual_start..actual_end])
             },
         )?;
 
@@ -1817,15 +1482,7 @@ impl WasmPluginAdapter {
                     None => return 0,
                 };
                 let data = memory.data(&caller);
-                let len_start = ptr as usize;
-                if len_start + 4 > data.len() {
-                    return 0;
-                }
-                let len_bytes: [u8; 4] = match data[len_start..len_start + 4].try_into() {
-                    Ok(b) => b,
-                    Err(_) => return 0,
-                };
-                u32::from_le_bytes(len_bytes) as i32
+                read_lp_from_data(data, ptr).map_or(0, |bytes| bytes.len() as i32)
             },
         )?;
 
@@ -1910,17 +1567,7 @@ impl WasmPluginAdapter {
                 };
 
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2049,17 +1696,7 @@ impl WasmPluginAdapter {
 
                 let result = string_val.to_uppercase();
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2079,17 +1716,7 @@ impl WasmPluginAdapter {
 
                 let result = string_val.to_lowercase();
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2124,17 +1751,7 @@ impl WasmPluginAdapter {
 
                 let result = string_val.replacen(&search, &replace, 1);
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2160,17 +1777,7 @@ impl WasmPluginAdapter {
                 let count = count.max(0) as usize;
                 let result = string_val.repeat(count);
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2190,17 +1797,7 @@ impl WasmPluginAdapter {
 
                 let result: String = string_val.chars().rev().collect();
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2211,7 +1808,7 @@ impl WasmPluginAdapter {
     // UNDERSCORE-STYLE STRING ALIASES
     // For compatibility with different WASM naming conventions
     // =========================================
-    fn register_string_underscore_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_string_underscore_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // env.string_substring - Alias for string.substring
         linker.func_wrap(
             "env",
@@ -2223,38 +1820,17 @@ impl WasmPluginAdapter {
                         .and_then(|e| e.into_memory())
                         .unwrap();
                     let data = memory.data(&caller);
-                    let len_start = ptr as usize;
-                    if len_start + 4 > data.len() {
+                    let Some(bytes) = read_lp_from_data(data, ptr) else {
                         return 0;
-                    }
-                    let len_bytes: [u8; 4] = data[len_start..len_start + 4].try_into().unwrap();
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let data_start = len_start + 4;
-                    if data_start + len > data.len() {
-                        return 0;
-                    }
-                    String::from_utf8_lossy(&data[data_start..data_start + len]).to_string()
+                    };
+                    bytes.to_vec()
                 };
 
+                // Byte offsets, as in `string.substring`.
                 let str_len = string_val.len() as i32;
-                let actual_start = start.max(0).min(str_len) as usize;
-                let actual_end = end.max(0).min(str_len) as usize;
-                let actual_end = actual_end.max(actual_start);
-
-                let substring = &string_val[actual_start..actual_end];
-
-                let result_bytes = substring.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                let actual_start = start.clamp(0, str_len) as usize;
+                let actual_end = (end.clamp(0, str_len) as usize).max(actual_start);
+                write_clean_string(&mut caller, &string_val[actual_start..actual_end])
             },
         )?;
 
@@ -2268,15 +1844,7 @@ impl WasmPluginAdapter {
                     None => return 0,
                 };
                 let data = memory.data(&caller);
-                let len_start = ptr as usize;
-                if len_start + 4 > data.len() {
-                    return 0;
-                }
-                let len_bytes: [u8; 4] = match data[len_start..len_start + 4].try_into() {
-                    Ok(b) => b,
-                    Err(_) => return 0,
-                };
-                u32::from_le_bytes(len_bytes) as i32
+                read_lp_from_data(data, ptr).map_or(0, |bytes| bytes.len() as i32)
             },
         )?;
 
@@ -2333,17 +1901,7 @@ impl WasmPluginAdapter {
                 };
 
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2385,17 +1943,7 @@ impl WasmPluginAdapter {
 
                 let result = string_val.to_uppercase();
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2415,17 +1963,7 @@ impl WasmPluginAdapter {
 
                 let result = string_val.to_lowercase();
                 let result_bytes = result.as_bytes();
-                let result_len = result_bytes.len();
-                let state = caller.data_mut();
-                let result_ptr = state.allocate(result_len + 4);
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
-                let len_bytes = (result_len as u32).to_le_bytes();
-                let _ = memory.write(&mut caller, result_ptr, &len_bytes);
-                let _ = memory.write(&mut caller, result_ptr + 4, result_bytes);
-                result_ptr as i32
+                write_clean_string(&mut caller, result_bytes)
             },
         )?;
 
@@ -2435,7 +1973,7 @@ impl WasmPluginAdapter {
     // =========================================
     // LIST NAMESPACE - List/array operations
     // =========================================
-    fn register_list_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_list_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // env.list.push_f64 - Push an f64 element to a list
         // List header: [length: i32, capacity: i32, type_tag: i32, flags: i32] (16 bytes)
         // Data starts at offset 16, each f64 element is 8 bytes
@@ -2491,7 +2029,7 @@ impl WasmPluginAdapter {
     // =========================================
     // MEMORY_RUNTIME NAMESPACE - Memory management
     // =========================================
-    fn register_memory_runtime_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_memory_runtime_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // memory_runtime.mem_alloc(type_id: i32, size: i32) -> i32
         //
         // Signature per foundation/spec bridge contract and the compiler
@@ -2515,8 +2053,9 @@ impl WasmPluginAdapter {
                 }
                 let size = size as usize;
 
+                let heap = SharedHeap::of_caller(&mut caller);
+                let ptr = host_allocate(&mut caller, heap, size, PluginState::allocate);
                 let state = caller.data_mut();
-                let ptr = state.allocate(size);
                 if ptr == 0 && state.oom_during_call.is_none() {
                     state.oom_during_call = Some(format!(
                         "mem_alloc: bridge bump allocator exhausted (>= {} MiB \
@@ -2570,60 +2109,43 @@ impl WasmPluginAdapter {
 
         // memory_runtime.mem_scope_push - Push scope mark for arena allocation.
         //
-        // Mirrors `wasmtime_runner`'s implementation: save the current
-        // host bump-allocator offset AND the WASM-side `__heap_ptr` global.
-        // Without saving `__heap_ptr`, the paired `mem_scope_pop` cannot
-        // rewind WASM-side `malloc` allocations, and later reads of arena
-        // objects (list<string> elements, substrings, etc.) hit stale
-        // pointers whose backing memory has been reused — corrupting output
-        // silently, or producing `substring(start > end)` traps at wasm
-        // function 207 when the reused bytes decode as a bogus length.
+        // Mirrors `wasmtime_runner`'s implementation: save the host bump
+        // pointer AND the WASM-side `__heap_ptr` global. Without saving
+        // `__heap_ptr`, the paired `mem_scope_pop` cannot rewind WASM-side
+        // `malloc` allocations, and later reads of arena objects
+        // (list<string> elements, substrings, etc.) hit stale pointers whose
+        // backing memory has been reused — corrupting output silently, or
+        // producing `substring(start > end)` traps at wasm function 207 when
+        // the reused bytes decode as a bogus length.
         // PLG001 (fp 81ee7e44) / framework fp d9f480ae.
         linker.func_wrap(
             "memory_runtime",
             "mem_scope_push",
             |mut caller: Caller<'_, PluginState>| {
-                let alloc_offset = caller.data().alloc_offset;
-                let wasm_heap =
-                    if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
-                        heap_global.get(&mut caller).i32().unwrap_or(0) as usize
-                    } else {
-                        alloc_offset
-                    };
+                let host_mark = open_heap_scope(&mut caller);
+                let heap_mark = match SharedHeap::of_caller(&mut caller) {
+                    Some(heap) => heap.top(&mut caller.as_context_mut()),
+                    None => host_mark,
+                };
                 caller
                     .data_mut()
                     .mem_scope_marks
-                    .push((alloc_offset, wasm_heap));
+                    .push((host_mark, heap_mark));
             },
         )?;
 
         // memory_runtime.mem_scope_pop - Pop the top scope mark and rewind
-        // both the host arena bump pointer and the WASM `__heap_ptr` global
-        // to the saved values, reclaiming every allocation made between the
-        // paired push and pop. Defensive: no-op if the stack is empty
-        // (e.g. a plugin trap mid-scope left it unbalanced).
+        // both the host bump pointer and the WASM `__heap_ptr` global to the
+        // saved values, reclaiming every allocation made between the paired
+        // push and pop. Defensive: no-op if the stack is empty (e.g. a
+        // plugin trap mid-scope left it unbalanced).
         // PLG001 (fp 81ee7e44) / framework fp d9f480ae.
         linker.func_wrap(
             "memory_runtime",
             "mem_scope_pop",
             |mut caller: Caller<'_, PluginState>| {
-                let mark = caller.data_mut().mem_scope_marks.pop();
-                if let Some((saved_alloc, saved_heap)) = mark {
-                    // Rewind host arena — only if the mark is above the
-                    // stable zone and not above the current top. Mirrors
-                    // the guard in `arena_reset` (release-build safe).
-                    let state = caller.data_mut();
-                    if saved_alloc >= state.stable_zone_end && saved_alloc <= state.alloc_offset {
-                        state.alloc_offset = saved_alloc;
-                    }
-                    // Rewind WASM-side `__heap_ptr` if the export exists.
-                    if let Some(Extern::Global(heap_global)) = caller.get_export("__heap_ptr") {
-                        let current = heap_global.get(&mut caller).i32().unwrap_or(0) as usize;
-                        if saved_heap <= current {
-                            let _ =
-                                heap_global.set(&mut caller, wasmtime::Val::I32(saved_heap as i32));
-                        }
-                    }
+                if let Some((host_mark, heap_mark)) = caller.data_mut().mem_scope_marks.pop() {
+                    close_heap_scope(&mut caller, host_mark, heap_mark);
                 }
             },
         )?;
@@ -2635,13 +2157,16 @@ impl WasmPluginAdapter {
         //
         // Called by HIR-rewritten loops to bracket per-iteration scratch
         // allocations. Every allocation made between a push and the
-        // corresponding pop is reclaimed in O(1) by pop.
+        // corresponding pop — by a host bridge or by the plugin's own
+        // allocator, which share one heap — is reclaimed in O(1) by pop,
+        // as in `wasmtime_runner`.
         linker.func_wrap(
             "env",
             "_arena_scope_push",
             |mut caller: Caller<'_, PluginState>| -> i32 {
+                open_heap_scope(&mut caller);
                 let state = caller.data_mut();
-                // Push current alloc_offset onto the mark stack.
+                // Push the (joined) bump pointer onto the mark stack.
                 let _mark = state.arena_mark();
                 let depth = state.arena_marks.len() as i32;
                 // Trace-level: high-volume in hot loops, gated by trace filter.
@@ -2679,20 +2204,17 @@ impl WasmPluginAdapter {
                 // Pop marks until we reach the depth at the time of the push.
                 // In the happy path exactly one mark is popped. The loop
                 // handles mis-matched push/pop gracefully (e.g. plugin trap
-                // mid-scope) by truncating.
+                // mid-scope) by truncating; the outermost popped mark wins.
+                let mut reset_to = None;
                 while state.arena_marks.len() > target_depth {
-                    if let Some(saved_offset) = state.arena_marks.pop() {
-                        // Use arena_reset only when the saved offset is a valid
-                        // reset point (above stable zone, not above current top).
-                        if saved_offset >= state.stable_zone_end
-                            && saved_offset <= state.alloc_offset
-                        {
-                            state.arena_reset(ArenaMark(saved_offset));
-                        }
-                    }
+                    reset_to = state.arena_marks.pop();
+                }
+                if let Some(mark) = reset_to {
+                    close_heap_scope(&mut caller, mark, mark);
                 }
                 // Trace-level: emit reclaim trajectory so Bug A's diagnosis
                 // can see whether mark/reset actually shrinks the arena.
+                let state = caller.data();
                 tracing::trace!(
                     target: "compiler::plugins::arena",
                     event = "scope_pop",
@@ -2713,15 +2235,14 @@ impl WasmPluginAdapter {
     // =========================================
     // HTTP NAMESPACE - Network operations (stubs)
     // =========================================
-    fn register_http_client_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_http_client_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // env.http_get
         linker.func_wrap(
             "env",
             "http_get",
             |mut caller: Caller<'_, PluginState>, _url_ptr: i32, _url_len: i32| -> i32 {
                 // Return empty response
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -2734,10 +2255,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _body_ptr: i32,
              _body_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_put
@@ -2749,10 +2267,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _body_ptr: i32,
              _body_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_patch
@@ -2764,10 +2279,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _body_ptr: i32,
              _body_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_delete
@@ -2775,8 +2287,7 @@ impl WasmPluginAdapter {
             "env",
             "http_delete",
             |mut caller: Caller<'_, PluginState>, _url_ptr: i32, _url_len: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -2785,8 +2296,7 @@ impl WasmPluginAdapter {
             "env",
             "http_head",
             |mut caller: Caller<'_, PluginState>, _url_ptr: i32, _url_len: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -2795,8 +2305,7 @@ impl WasmPluginAdapter {
             "env",
             "http_options",
             |mut caller: Caller<'_, PluginState>, _url_ptr: i32, _url_len: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -2809,10 +2318,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _headers_ptr: i32,
              _headers_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_post_with_headers
@@ -2826,10 +2332,7 @@ impl WasmPluginAdapter {
              _body_len: i32,
              _headers_ptr: i32,
              _headers_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_post_json
@@ -2841,10 +2344,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _json_ptr: i32,
              _json_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_put_json
@@ -2856,10 +2356,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _json_ptr: i32,
              _json_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_patch_json
@@ -2871,10 +2368,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _json_ptr: i32,
              _json_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_post_form
@@ -2886,10 +2380,7 @@ impl WasmPluginAdapter {
              _url_len: i32,
              _form_ptr: i32,
              _form_len: i32|
-             -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+             -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env.http_set_user_agent
@@ -2956,8 +2447,7 @@ impl WasmPluginAdapter {
             "env",
             "http_build_query",
             |mut caller: Caller<'_, PluginState>, _params_ptr: i32, _params_len: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -2968,7 +2458,7 @@ impl WasmPluginAdapter {
     // HTTP SERVER NAMESPACE - Server functions (stubs)
     // These are for Frame runtime, stubbed for plugin execution
     // =========================================
-    fn register_http_server_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_http_server_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // env._http_route - Register route handler (stub)
         linker.func_wrap(
             "env",
@@ -3003,14 +2493,11 @@ impl WasmPluginAdapter {
     // cleanly. See foundation/platform-architecture/function-registry.toml
     // category=dev_capture and SERVER_EXTENSIONS.md §Dev-mode Capture.
     // =========================================
-    fn register_dev_capture_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_dev_capture_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         linker.func_wrap(
             "env",
             "_dev_snapshot",
-            |mut caller: Caller<'_, PluginState>| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
         )?;
         Ok(())
     }
@@ -3018,15 +2505,14 @@ impl WasmPluginAdapter {
     // =========================================
     // REQUEST CONTEXT ACCESS - Stubs for plugins
     // =========================================
-    fn register_request_context_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_request_context_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // env._req_param - Get path parameter (stub)
         linker.func_wrap(
             "env",
             "_req_param",
             |mut caller: Caller<'_, PluginState>, _name_ptr: i32, _name_len: i32| -> i32 {
                 // Return empty string (stub)
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -3035,8 +2521,7 @@ impl WasmPluginAdapter {
             "env",
             "_req_query",
             |mut caller: Caller<'_, PluginState>, _name_ptr: i32, _name_len: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -3044,10 +2529,7 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "_req_body",
-            |mut caller: Caller<'_, PluginState>| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env._req_body_bytes - Get request body as opaque byte handle (stub).
@@ -3056,10 +2538,7 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "_req_body_bytes",
-            |mut caller: Caller<'_, PluginState>| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env._req_header - Get request header (stub)
@@ -3067,8 +2546,7 @@ impl WasmPluginAdapter {
             "env",
             "_req_header",
             |mut caller: Caller<'_, PluginState>, _name_ptr: i32, _name_len: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -3076,20 +2554,14 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "_req_method",
-            |mut caller: Caller<'_, PluginState>| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         // env._req_path - Get request path (stub)
         linker.func_wrap(
             "env",
             "_req_path",
-            |mut caller: Caller<'_, PluginState>| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
-            },
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
         )?;
 
         Ok(())
@@ -3098,7 +2570,7 @@ impl WasmPluginAdapter {
     // =========================================
     // FILE NAMESPACE - File operations (stubs)
     // =========================================
-    fn register_file_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_file_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // env.file_write
         linker.func_wrap(
             "env",
@@ -3123,8 +2595,7 @@ impl WasmPluginAdapter {
              _buf_ptr: i32|
              -> i32 {
                 // Return empty content
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -3186,8 +2657,7 @@ impl WasmPluginAdapter {
             "env",
             "_crypto_sha256_bytes",
             |mut caller: Caller<'_, PluginState>, _handle: i32| -> i32 {
-                let state = caller.data_mut();
-                state.allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -3198,7 +2668,7 @@ impl WasmPluginAdapter {
     // MATH NAMESPACE - Math operations
     // Required by compiled WASM modules for stdlib functions
     // =========================================
-    fn register_math_functions(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_math_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // math_pow - Power function (base^exp)
         linker.func_wrap(
             "env",
@@ -3367,13 +2837,13 @@ impl WasmPluginAdapter {
     // ADDITIONAL HTTP/AUTH STUBS - These are functions that plugins generate
     // as OUTPUT but don't actually call. Only add ones not already defined above.
     // =========================================
-    fn register_http_auth_stubs(&self, linker: &mut Linker<PluginState>) -> Result<()> {
+    fn register_http_auth_stubs(linker: &mut Linker<PluginState>) -> Result<()> {
         // Additional HTTP request stubs (not defined above)
         linker.func_wrap(
             "env",
             "_req_cookie",
             |mut caller: Caller<'_, PluginState>, _: i32, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
         linker.func_wrap("env", "_req_form", |_: Caller<'_, PluginState>| -> i32 {
@@ -3420,7 +2890,7 @@ impl WasmPluginAdapter {
             "env",
             "_session_store",
             |mut caller: Caller<'_, PluginState>, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
         // _session_create: same signature as _session_store (old API name used by frame.data <=2.0.0)
@@ -3428,7 +2898,7 @@ impl WasmPluginAdapter {
             "env",
             "_session_create",
             |mut caller: Caller<'_, PluginState>, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
         // _session_get: () -> i32 (no params - returns session JSON pointer)
@@ -3540,47 +3010,25 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, _: i32| -> i32 { 0 },
         )?;
 
-        // JSON stubs. Both the legacy (`_json_encode` / `_json_decode`) and
-        // the Delivery-2 (`_json_encode_v2` / `_json_encode_pretty_v2` /
-        // `_json_decode_v2`) shapes are stubbed so a plugin compiled with
-        // 0.33.138+ (which emits the _v2 names when the plugin was authored
-        // with --enable-json-bridge) can still load into the in-process
-        // wasmtime adapter for expansion. The stubs return zero-length
-        // allocations — plugin expansion code that actually needs to encode
-        // or decode JSON at build time must not rely on these paths.
+        // JSON bridges (stdlib-reference §8): the real implementation, so a
+        // plugin can parse and serialize JSON while it expands a block.
+        crate::runtime::json_bridge::register_json_bridges(linker, json_bridge_alloc)?;
+        // The pre-Delivery-2 `_json_encode` / `_json_decode` names stay
+        // catalogued in runtime-abi/v1.toml until the [P5] post-soak
+        // cleanup; no compiler emits them, so the sandbox keeps them as
+        // empty-result stubs that only satisfy the import.
         linker.func_wrap(
             "env",
             "_json_encode",
             |mut caller: Caller<'_, PluginState>, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
         linker.func_wrap(
             "env",
             "_json_decode",
             |mut caller: Caller<'_, PluginState>, _: i32, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
-            },
-        )?;
-        linker.func_wrap(
-            "env",
-            "_json_encode_v2",
-            |mut caller: Caller<'_, PluginState>, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
-            },
-        )?;
-        linker.func_wrap(
-            "env",
-            "_json_encode_pretty_v2",
-            |mut caller: Caller<'_, PluginState>, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
-            },
-        )?;
-        linker.func_wrap(
-            "env",
-            "_json_decode_v2",
-            |mut caller: Caller<'_, PluginState>, _: i32| -> i32 {
-                caller.data_mut().allocate(4) as i32
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
@@ -3654,7 +3102,6 @@ impl WasmPluginAdapter {
             let (extra_attrs, actual_body) = extract_inline_attrs(&block.content);
             let attributes_str = build_attributes_json(&block.attributes, extra_attrs);
             return self.call_expand_typed(
-                block,
                 &dispatch.export,
                 block_name,
                 &attributes_str,
@@ -3677,20 +3124,14 @@ impl WasmPluginAdapter {
         let (binding_header, effective_content) = split_binding_header(block_name, &block.content);
 
         let mut store = self.create_store();
-        let linker = self.get_linker()?;
+        let (instance, memory) = self.instantiate(
+            &mut store,
+            &self.linker,
+            &format!("expand block `{}`", block_name),
+        )?;
 
-        let instance = linker
-            .instantiate(&mut store, &self.module)
-            .map_err(|e| anyhow!("Failed to instantiate plugin module: {}", e))?;
-
-        // Get memory
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
-
-        relocate_default_heap_pointer(&mut store, &instance);
-
-        let block_name_ptr = self.find_or_write_string(&mut store, &memory, block_name)?;
+        let block_name_ptr =
+            self.find_or_write_string(&mut store, &instance, &memory, block_name)?;
 
         // Extract inline key="value" pairs from the first line of content
         // e.g., content = 'tag="site-header"\n\thtml:\n...' → attrs: {"tag":"site-header"}, body: '\thtml:\n...'
@@ -3699,8 +3140,9 @@ impl WasmPluginAdapter {
         // Format attributes as JSON object for plugin consumption
         // Plugins expect: {"tag":"site-header","client":"off"}
         let attributes_str = build_attributes_json(&block.attributes, extra_attrs);
-        let attributes_ptr = self.find_or_write_string(&mut store, &memory, &attributes_str)?;
-        let body_ptr = self.find_or_write_string(&mut store, &memory, &actual_body)?;
+        let attributes_ptr =
+            self.find_or_write_string(&mut store, &instance, &memory, &attributes_str)?;
+        let body_ptr = self.find_or_write_string(&mut store, &instance, &memory, &actual_body)?;
 
         let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
@@ -3931,6 +3373,7 @@ impl WasmPluginAdapter {
     fn find_or_write_string(
         &self,
         store: &mut Store<PluginState>,
+        instance: &wasmtime::Instance,
         memory: &Memory,
         s: &str,
     ) -> Result<i32> {
@@ -3963,7 +3406,7 @@ impl WasmPluginAdapter {
         }
 
         // No match found, write a new string
-        self.write_clean_string(store, memory, s)
+        self.write_clean_string(store, instance, memory, s)
     }
 
     /// Write a Clean string to WASM memory
@@ -3976,6 +3419,7 @@ impl WasmPluginAdapter {
     fn write_clean_string(
         &self,
         store: &mut Store<PluginState>,
+        instance: &wasmtime::Instance,
         memory: &Memory,
         s: &str,
     ) -> Result<i32> {
@@ -3986,7 +3430,8 @@ impl WasmPluginAdapter {
         // Align to 8 bytes for safety
         let total_size = (4 + len).div_ceil(8) * 8;
 
-        let ptr = store.data_mut().allocate(total_size);
+        let heap = SharedHeap::of_instance(store, instance);
+        let ptr = host_allocate(store, heap, total_size, PluginState::allocate);
         if ptr == 0 {
             // Allocator exhausted — never write over address 0.
             return Err(anyhow!(
@@ -4052,23 +3497,11 @@ impl WasmPluginAdapter {
         );
 
         let mut store = self.create_store();
-        let linker = self.get_linker()?;
-
-        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
-            anyhow!(
-                "Failed to instantiate plugin module for lifecycle slot `{}`: {}",
-                slot_name,
-                e
-            )
-        })?;
-
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
-
-        // Same heap-pointer fix as call_expand_full — keeps plugin allocator
-        // from colliding with the WASM data section.
-        relocate_default_heap_pointer(&mut store, &instance);
+        let (instance, memory) = self.instantiate(
+            &mut store,
+            &self.linker,
+            &format!("lifecycle slot `{}`", slot_name),
+        )?;
 
         // Serialize the build context to JSON and write to plugin memory.
         let context_json = serde_json::to_string(context).map_err(|e| {
@@ -4078,7 +3511,8 @@ impl WasmPluginAdapter {
                 e
             )
         })?;
-        let context_ptr = self.find_or_write_string(&mut store, &memory, &context_json)?;
+        let context_ptr =
+            self.find_or_write_string(&mut store, &instance, &memory, &context_json)?;
 
         // Call the slot — signature `(param i32) -> i32`.
         let slot: TypedFunc<i32, i32> =
@@ -4137,7 +3571,7 @@ impl WasmPluginAdapter {
                 "Failed to parse lifecycle slot `{}` response as JSON: {} — raw: {}",
                 slot_name,
                 e,
-                &response_str[..response_str.len().min(256)]
+                diagnostic_prefix(response_str)
             )
         })?;
         if let Some(err) = response.error {
@@ -4174,7 +3608,7 @@ impl WasmPluginAdapter {
                          even when wrapped in a `start:` block: {} — raw: {}",
                         slot_name,
                         e,
-                        &response.statements[..response.statements.len().min(256)]
+                        diagnostic_prefix(&response.statements)
                     )
                 })?
             }
@@ -4224,24 +3658,18 @@ impl WasmPluginAdapter {
         companion_json: &str,
     ) -> Result<String> {
         let mut store = self.create_store();
-        let linker = self.get_linker()?;
+        let (instance, memory) = self.instantiate(
+            &mut store,
+            &self.linker,
+            &format!("process_html for `{}`", path),
+        )?;
 
-        let instance = linker
-            .instantiate(&mut store, &self.module)
-            .map_err(|e| anyhow!("Failed to instantiate plugin module: {}", e))?;
-
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
-
-        // Same heap-pointer fix as call_expand_full — keeps the plugin's
-        // bump allocator from colliding with the WASM data section.
-        relocate_default_heap_pointer(&mut store, &instance);
-
-        let html_ptr = self.find_or_write_string(&mut store, &memory, html)?;
-        let path_ptr = self.find_or_write_string(&mut store, &memory, path)?;
-        let registry_ptr = self.find_or_write_string(&mut store, &memory, registry_json)?;
-        let companion_ptr = self.find_or_write_string(&mut store, &memory, companion_json)?;
+        let html_ptr = self.find_or_write_string(&mut store, &instance, &memory, html)?;
+        let path_ptr = self.find_or_write_string(&mut store, &instance, &memory, path)?;
+        let registry_ptr =
+            self.find_or_write_string(&mut store, &instance, &memory, registry_json)?;
+        let companion_ptr =
+            self.find_or_write_string(&mut store, &instance, &memory, companion_json)?;
 
         let process: TypedFunc<(i32, i32, i32, i32), i32> = instance
             .get_typed_func(&mut store, export_name)
@@ -4270,155 +3698,150 @@ impl WasmPluginAdapter {
         Ok(generated.to_string())
     }
 
-    /// Call a no-argument lifecycle hook that returns a length-prefixed JSON
-    /// string pointer and deserialise it into `T`.
-    ///
-    /// This is the common pattern shared by all four lifecycle hooks:
-    /// `register_server`, `register_cli`, `register_data`, `register_build`.
-    fn call_lifecycle_hook<T>(&self, export_name: &str) -> Result<T>
-    where
-        T: DeserializeOwned + Default,
-    {
-        let mut store = self.create_store();
-        let linker = self.get_linker()?;
+    /// Call the plugin's `assemble` export. Its signature was validated at
+    /// load time (`validate_assemble_export_signature`): either the v1
+    /// `assemble(input_lp) -> output_lp` or the v3
+    /// `assemble_typed(ctx, input_lp) -> status`.
+    fn call_assemble(
+        &self,
+        export_name: &str,
+        input: &crate::plugins::plugin_abi::AssembleInput,
+    ) -> Result<crate::plugins::plugin_abi::AssembleOutput> {
+        use crate::plugins::plugin_abi::AssembleOutput;
 
-        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
-            anyhow!(
-                "Failed to instantiate plugin module for lifecycle hook: {}",
-                e
-            )
-        })?;
+        let input_json = serde_json::to_string(input)
+            .map_err(|e| anyhow!("Failed to serialize AssembleInput: {}", e))?;
 
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| anyhow!("Plugin does not export memory"))?;
+        // v3 plugins may import typed-emission bridges (`_emit_class_full`,
+        // `batch.*`, etc.) at the module level even when a specific export
+        // (like assemble) doesn't call them at runtime. WASM instantiation
+        // requires ALL imports to resolve, so assemble always runs under the
+        // typed-emission linker, with a per-call arena installed for the
+        // bridges to reach.
+        //
+        // Bug: frame.ui 3.0.0 assemble hook failed instantiation at client-mode
+        // build with `unknown import: env::_emit_class_full` before this fix.
+        //
+        // Slot discriminator: the arena is created for `AssembleTyped` so
+        // structural bridges refuse with PLUGIN018 and only
+        // `_inject_source_file` / `_transform_source_file` succeed. See
+        // `foundation/spec/plugins/contracts/assemble.md` §6.
+        let ctx = self.next_ctx_handle();
+        let mut state = PluginState::new();
+        state.emit_arena = Some(crate::plugins::typed_emission::EmitArena::new_assemble_typed(ctx));
+        let mut store = self.create_store_with_state(state);
+        let (instance, memory) =
+            self.instantiate(&mut store, self.typed_emission_linker()?, "assemble")?;
+        let input_ptr = self
+            .find_or_write_string(&mut store, &instance, &memory, &input_json)
+            .map_err(|e| anyhow!("Failed to write input to WASM memory: {}", e))?;
 
-        let hook: TypedFunc<(), i32> =
-            instance
-                .get_typed_func(&mut store, export_name)
-                .map_err(|e| {
-                    anyhow!(
-                        "Plugin does not export lifecycle hook '{}': {}",
-                        export_name,
-                        e
-                    )
-                })?;
+        if let Ok(assemble_typed) =
+            instance.get_typed_func::<(i32, i32), i32>(&mut store, export_name)
+        {
+            let status = assemble_typed
+                .call(&mut store, (ctx, input_ptr))
+                .map_err(|e| anyhow!("{}", describe_plugin_trap(&e, "assemble_typed")))?;
+            if let Some(error) = store.data().last_error.clone() {
+                return Err(anyhow!("Plugin error in assemble: {}", error));
+            }
 
-        let result_ptr = hook.call(&mut store, ()).map_err(|e| {
-            anyhow!(
-                "{}",
-                describe_plugin_trap(&e, &format!("lifecycle hook `{}`", export_name))
-            )
-        })?;
+            // Drain the arena and consume its `injected_sources` +
+            // `transformed_sources`, populated by `_inject_source_file` and
+            // `_transform_source_file` — the two legal typed-emission
+            // bridges inside `assemble_typed` per
+            // `foundation/spec/plugins/contracts/assemble.md` §6.1.
+            //
+            // Structural bridges refuse with PLUGIN018 upstream (see the
+            // `refuse_if_assemble_typed!` gate at the entry of every
+            // structural bridge in `typed_emission/bridges.rs`) and trip the
+            // sticky-error flag, which `saw_error` catches below.
+            let mut arena = store
+                .data_mut()
+                .emit_arena
+                .take()
+                .ok_or_else(|| anyhow!("the emit arena was taken during assemble_typed"))?;
+            let injected_sources = std::mem::take(&mut arena.injected_sources);
+            let transformed_sources = std::mem::take(&mut arena.transformed_sources);
+            let (_expansion, diagnostics, saw_error) = arena.finish();
+            let errors = self.route_typed_diagnostics("assemble", &diagnostics);
+            if status != 0 {
+                return Err(anyhow!(
+                    "assemble_typed returned non-zero status: {} (errors: {})",
+                    status,
+                    errors.as_deref().unwrap_or("(none)")
+                ));
+            }
+            if saw_error {
+                return Err(anyhow!(
+                    "assemble_typed emitted typed-emission errors: {}",
+                    errors.unwrap_or_default()
+                ));
+            }
+            return Ok(AssembleOutput {
+                injected_sources,
+                transformed_sources,
+            });
+        }
 
+        // v1 assemble signature: (input_lp) -> output_lp
+        let assemble_fn: TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, export_name)
+            .map_err(|e| {
+                anyhow!(
+                    "Plugin does not export assemble function '{}': {}",
+                    export_name,
+                    e
+                )
+            })?;
+        let result_ptr = assemble_fn
+            .call(&mut store, input_ptr)
+            .map_err(|e| anyhow!("{}", describe_plugin_trap(&e, "assemble")))?;
         if let Some(error) = store.data().last_error.clone() {
-            return Err(anyhow!(
-                "Plugin error in lifecycle hook '{}': {}",
-                export_name,
-                error
-            ));
+            return Err(anyhow!("Plugin error in assemble: {}", error));
         }
 
-        let result_bytes = self.read_result(&store, &memory, result_ptr)?;
+        let result_bytes = self
+            .read_result(&store, &memory, result_ptr)
+            .map_err(|e| anyhow!("Failed to read assemble result: {}", e))?;
 
-        // Empty result → use the Default value so callers never see an error
-        // for hooks that return an empty JSON document or a zero-length string.
         if result_bytes.is_empty() {
-            return Ok(T::default());
+            // Empty result from a non-trivial input is almost always the
+            // signature of an out-of-memory failure inside the plugin:
+            // `mem_alloc` returns 0 once `memory.grow()` can't extend further
+            // (capped by the plugin's `[memory]` max), the plugin propagates
+            // that 0 through its accumulator strings, and the final result
+            // pointer is also 0 — which we then read as zero bytes. Without
+            // a warning the failure is invisible (downstream SEM007 makes it
+            // look like the plugin "just didn't emit the renamed function")
+            // and bisecting takes hours. Surface it the first time we see it.
+            //
+            // The 0-input edge case (no source files at all) is legitimately
+            // empty — only warn if we sent the plugin something to chew on.
+            if input_json.len() > 256 {
+                eprintln!(
+                    "warning: plugin '{}' assemble() returned 0 bytes for {}-byte input. \
+                     This almost always means the plugin exhausted its WASM memory \
+                     (`memory.grow()` failed). If you control the plugin, rebuild it with \
+                     `--target=plugin` so it gets the 1 GB plugin tier instead of the \
+                     32 MB standard tier. If you don't, please report this — the host can't \
+                     safely fall back to anything useful here.",
+                    self.name,
+                    input_json.len()
+                );
+            }
+            return Ok(AssembleOutput::default());
         }
 
-        let json_str = std::str::from_utf8(&result_bytes).map_err(|e| {
-            anyhow!(
-                "Non-UTF-8 response from lifecycle hook '{}': {}",
-                export_name,
-                e
-            )
-        })?;
-
+        let json_str = std::str::from_utf8(&result_bytes)
+            .map_err(|e| anyhow!("Non-UTF-8 response from assemble: {}", e))?;
         serde_json::from_str(json_str).map_err(|e| {
             anyhow!(
-                "Failed to parse JSON response from lifecycle hook '{}': {} — raw: {}",
-                export_name,
+                "Failed to parse assemble JSON response: {} — raw: {}",
                 e,
-                &json_str[..json_str.len().min(256)]
+                diagnostic_prefix(json_str)
             )
         })
-    }
-
-    /// Call the `register_server` lifecycle hook and return the parsed
-    /// `ServerRegistration`.  Returns `None` if the plugin does not declare
-    /// this hook in its manifest.
-    pub fn call_register_server(&self) -> Option<super::plugin_abi::ServerRegistration> {
-        let export_name = self.manifest.exports.register_server.as_ref()?;
-        match self.call_lifecycle_hook::<super::plugin_abi::ServerRegistration>(export_name) {
-            Ok(reg) => Some(reg),
-            Err(e) => {
-                tracing::warn!(
-                    plugin = %self.name,
-                    export = %export_name,
-                    error = %e,
-                    "register_server lifecycle hook failed"
-                );
-                None
-            }
-        }
-    }
-
-    /// Call the `register_cli` lifecycle hook and return the parsed
-    /// `CliRegistration`.  Returns `None` if the plugin does not declare this
-    /// hook in its manifest.
-    pub fn call_register_cli(&self) -> Option<super::plugin_abi::CliRegistration> {
-        let export_name = self.manifest.exports.register_cli.as_ref()?;
-        match self.call_lifecycle_hook::<super::plugin_abi::CliRegistration>(export_name) {
-            Ok(reg) => Some(reg),
-            Err(e) => {
-                tracing::warn!(
-                    plugin = %self.name,
-                    export = %export_name,
-                    error = %e,
-                    "register_cli lifecycle hook failed"
-                );
-                None
-            }
-        }
-    }
-
-    /// Call the `register_data` lifecycle hook and return the parsed
-    /// `DataRegistration`.  Returns `None` if the plugin does not declare this
-    /// hook in its manifest.
-    pub fn call_register_data(&self) -> Option<super::plugin_abi::DataRegistration> {
-        let export_name = self.manifest.exports.register_data.as_ref()?;
-        match self.call_lifecycle_hook::<super::plugin_abi::DataRegistration>(export_name) {
-            Ok(reg) => Some(reg),
-            Err(e) => {
-                tracing::warn!(
-                    plugin = %self.name,
-                    export = %export_name,
-                    error = %e,
-                    "register_data lifecycle hook failed"
-                );
-                None
-            }
-        }
-    }
-
-    /// Call the `register_build` lifecycle hook and return the parsed
-    /// `BuildRegistration`.  Returns `None` if the plugin does not declare
-    /// this hook in its manifest.
-    pub fn call_register_build(&self) -> Option<super::plugin_abi::BuildRegistration> {
-        let export_name = self.manifest.exports.register_build.as_ref()?;
-        match self.call_lifecycle_hook::<super::plugin_abi::BuildRegistration>(export_name) {
-            Ok(reg) => Some(reg),
-            Err(e) => {
-                tracing::warn!(
-                    plugin = %self.name,
-                    export = %export_name,
-                    error = %e,
-                    "register_build lifecycle hook failed"
-                );
-                None
-            }
-        }
     }
 }
 
@@ -4428,8 +3851,7 @@ impl FrameworkPlugin for WasmPluginAdapter {
     }
 
     fn handles(&self) -> &'static [&'static str] {
-        // This is safe because we pre-allocated in new()
-        Box::leak(self.handles_cache.clone().into_boxed_slice())
+        self.handles_cache
     }
 
     fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
@@ -4585,278 +4007,16 @@ impl FrameworkPlugin for WasmPluginAdapter {
         &self,
         input: &crate::plugins::plugin_abi::AssembleInput,
     ) -> crate::plugins::PluginResult<crate::plugins::plugin_abi::AssembleOutput> {
-        use crate::plugins::plugin_abi::AssembleOutput;
-
-        let export_name = match self.manifest.exports.assemble.as_deref() {
-            Some(name) => name.to_owned(),
-            None => return Ok(AssembleOutput::default()),
+        let Some(export_name) = self.manifest.exports.assemble.as_deref() else {
+            return Ok(crate::plugins::plugin_abi::AssembleOutput::default());
         };
-
-        let input_json = serde_json::to_string(input).map_err(|e| {
-            crate::plugins::PluginError::ExpansionFailed {
+        self.call_assemble(export_name, input)
+            .map_err(|e| PluginError::ExpansionFailed {
                 plugin_name: self.name.clone(),
                 block_name: "assemble".to_string(),
-                message: format!("Failed to serialize AssembleInput: {}", e),
+                message: e.to_string(),
                 location: None,
-            }
-        })?;
-
-        // v3 plugins may import typed-emission bridges (`_emit_class_full`,
-        // `batch.*`, etc.) at the module level even when a specific export
-        // (like assemble) doesn't call them at runtime. WASM instantiation
-        // requires ALL imports to resolve, so we must build a linker that
-        // provides typed-emission bridges even for non-typed-emission exports.
-        //
-        // Install a per-call arena so the bridge closures have something to
-        // reference. The arena is unused by assemble but the closures capture
-        // `store.data_mut().emit_arena` and would panic on `.expect(...)` if
-        // it's absent. See `call_lifecycle_slot_typed` for the same pattern.
-        //
-        // Bug: frame.ui 3.0.0 assemble hook failed instantiation at client-mode
-        // build with `unknown import: env::_emit_class_full` before this fix.
-        //
-        // Slot discriminator: the arena is created for `AssembleTyped` so
-        // structural bridges refuse with PLUGIN018 and only
-        // `_inject_source_file` succeeds. See
-        // `foundation/spec/plugins/contracts/assemble.md` §6.
-        let ctx = self.next_ctx_handle();
-        let arena = crate::plugins::typed_emission::EmitArena::new_assemble_typed(ctx);
-        let mut store = self.create_store_with_arena(arena);
-
-        let linker = self.build_typed_emission_linker().map_err(|e| {
-            crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!("Failed to build assemble linker: {}", e),
-                location: None,
-            }
-        })?;
-
-        let instance = linker.instantiate(&mut store, &self.module).map_err(|e| {
-            crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!("Failed to instantiate plugin: {}", e),
-                location: None,
-            }
-        })?;
-
-        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
-            crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: "Plugin does not export memory".to_string(),
-                location: None,
-            }
-        })?;
-
-        let input_ptr = self
-            .find_or_write_string(&mut store, &memory, &input_json)
-            .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!("Failed to write input to WASM memory: {}", e),
-                location: None,
-            })?;
-
-        // v3 plugins may export assemble as a typed-emission-style function
-        // `(ctx: i32, input_lp: i32) -> i32`. Frame.ui 3.0.0's `assemble_typed`
-        // has this shape, but internally it calls `_emit_stmt_from_source`
-        // which emits AST statements into the arena rather than injecting
-        // source files — the wrong bridge for the assemble semantics.
-        //
-        // Until a typed-emission "inject source file" bridge is designed
-        // (post-plan follow-up), v3 assemble hooks with (ctx, input) -> int
-        // signature are wired to instantiate correctly (typed-emission linker
-        // above satisfies the imports) but their runtime behaviour is a no-op
-        // at the assemble output — they emit into the arena, we drain and
-        // discard.
-        //
-        // We detect the signature and route accordingly.
-        let assemble_v3: Result<wasmtime::TypedFunc<(i32, i32), i32>, _> =
-            instance.get_typed_func(&mut store, &export_name);
-
-        let result_ptr = if let Ok(fn_v3) = assemble_v3 {
-            let status = fn_v3.call(&mut store, (ctx, input_ptr)).map_err(|e| {
-                crate::plugins::PluginError::ExpansionFailed {
-                    plugin_name: self.name.clone(),
-                    block_name: "assemble".to_string(),
-                    message: format!("assemble_typed() call failed: {}", e),
-                    location: None,
-                }
-            })?;
-
-            if let Some(error) = store.data().last_error.clone() {
-                return Err(crate::plugins::PluginError::ExpansionFailed {
-                    plugin_name: self.name.clone(),
-                    block_name: "assemble".to_string(),
-                    message: format!("Plugin error in assemble: {}", error),
-                    location: None,
-                });
-            }
-
-            if status != 0 {
-                return Err(crate::plugins::PluginError::ExpansionFailed {
-                    plugin_name: self.name.clone(),
-                    block_name: "assemble".to_string(),
-                    message: format!("assemble_typed returned non-zero status: {}", status),
-                    location: None,
-                });
-            }
-
-            // Drain the arena and consume its `injected_sources` +
-            // `transformed_sources`, populated by `_inject_source_file` and
-            // `_transform_source_file` — the two legal typed-emission
-            // bridges inside `assemble_typed` per
-            // `foundation/spec/plugins/contracts/assemble.md` §6.1.
-            //
-            // Structural bridges refuse with PLUGIN018 upstream (see the
-            // `refuse_if_assemble_typed!` gate at the entry of every
-            // structural bridge in `typed_emission/bridges.rs`), so on a
-            // successful call the arena's `expansion` fields are guaranteed
-            // to be empty. If anything landed in `expansion` despite the
-            // gate, the sticky-error flag will already have been tripped
-            // and `saw_error` catches it below.
-            let mut arena = store.data_mut().emit_arena.take().expect(
-                "typed-emission: arena was taken during assemble_typed — cross-call arena reuse detected",
-            );
-            let injected = std::mem::take(&mut arena.injected_sources);
-            let transformed = std::mem::take(&mut arena.transformed_sources);
-            let (_expansion, diagnostics, saw_error) = arena.finish();
-
-            for diag in &diagnostics {
-                if diag.severity >= 2 {
-                    tracing::error!(
-                        target: "compiler::plugins::typed_emission",
-                        plugin = %self.name,
-                        block = "assemble",
-                        code = %diag.code,
-                        message = %diag.message,
-                        "plugin typed-emission error"
-                    );
-                } else {
-                    tracing::warn!(
-                        target: "compiler::plugins::typed_emission",
-                        plugin = %self.name,
-                        block = "assemble",
-                        code = %diag.code,
-                        message = %diag.message,
-                        "plugin typed-emission warning"
-                    );
-                }
-            }
-
-            if saw_error {
-                let error_summary = diagnostics
-                    .iter()
-                    .filter(|d| d.severity >= 2)
-                    .map(|d| format!("[{}] {}", d.code, d.message))
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                return Err(crate::plugins::PluginError::ExpansionFailed {
-                    plugin_name: self.name.clone(),
-                    block_name: "assemble".to_string(),
-                    message: format!(
-                        "assemble_typed emitted typed-emission errors: {}",
-                        error_summary
-                    ),
-                    location: None,
-                });
-            }
-
-            return Ok(AssembleOutput {
-                injected_sources: injected,
-                transformed_sources: transformed,
-            });
-        } else {
-            // v1 assemble signature: (input_lp) -> output_lp
-            let assemble_fn: wasmtime::TypedFunc<i32, i32> = instance
-                .get_typed_func(&mut store, &export_name)
-                .map_err(|e| crate::plugins::PluginError::ExpansionFailed {
-                    plugin_name: self.name.clone(),
-                    block_name: "assemble".to_string(),
-                    message: format!(
-                        "Plugin does not export assemble function '{}': {}",
-                        export_name, e
-                    ),
-                    location: None,
-                })?;
-
-            assemble_fn.call(&mut store, input_ptr).map_err(|e| {
-                crate::plugins::PluginError::ExpansionFailed {
-                    plugin_name: self.name.clone(),
-                    block_name: "assemble".to_string(),
-                    message: format!("assemble() call failed: {}", e),
-                    location: None,
-                }
-            })?
-        };
-
-        if let Some(error) = store.data().last_error.clone() {
-            return Err(crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!("Plugin error in assemble: {}", error),
-                location: None,
-            });
-        }
-
-        let result_bytes = self.read_result(&store, &memory, result_ptr).map_err(|e| {
-            crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!("Failed to read assemble result: {}", e),
-                location: None,
-            }
-        })?;
-
-        if result_bytes.is_empty() {
-            // Empty result from a non-trivial input is almost always the
-            // signature of an out-of-memory failure inside the plugin:
-            // `mem_alloc` returns 0 once `memory.grow()` can't extend further
-            // (capped by the plugin's `[memory]` max), the plugin propagates
-            // that 0 through its accumulator strings, and the final result
-            // pointer is also 0 — which we then read as zero bytes. Without
-            // a warning the failure is invisible (downstream SEM007 makes it
-            // look like the plugin "just didn't emit the renamed function")
-            // and bisecting takes hours. Surface it the first time we see it.
-            //
-            // The 0-input edge case (no source files at all) is legitimately
-            // empty — only warn if we sent the plugin something to chew on.
-            if input_json.len() > 256 {
-                eprintln!(
-                    "warning: plugin '{}' assemble() returned 0 bytes for {}-byte input. \
-                     This almost always means the plugin exhausted its WASM memory \
-                     (`memory.grow()` failed). If you control the plugin, rebuild it with \
-                     `--target=plugin` so it gets the 1 GB plugin tier instead of the \
-                     32 MB standard tier. If you don't, please report this — the host can't \
-                     safely fall back to anything useful here.",
-                    self.name,
-                    input_json.len()
-                );
-            }
-            return Ok(AssembleOutput::default());
-        }
-
-        let json_str = std::str::from_utf8(&result_bytes).map_err(|e| {
-            crate::plugins::PluginError::ExpansionFailed {
-                plugin_name: self.name.clone(),
-                block_name: "assemble".to_string(),
-                message: format!("Non-UTF-8 response from assemble: {}", e),
-                location: None,
-            }
-        })?;
-
-        serde_json::from_str(json_str).map_err(|e| crate::plugins::PluginError::ExpansionFailed {
-            plugin_name: self.name.clone(),
-            block_name: "assemble".to_string(),
-            message: format!(
-                "Failed to parse assemble JSON response: {} — raw: {}",
-                e,
-                &json_str[..json_str.len().min(256)]
-            ),
-            location: None,
-        })
+            })
     }
 }
 
@@ -4930,6 +4090,14 @@ pub(crate) struct PluginState {
     /// call path other than lint — the 4 `_ast_*` accessor bridges refuse
     /// (returning a `NOT-IN-LINT-CALL` JSON error) when this field is None.
     pub(crate) lint_arena: Option<crate::plugins::lint::LintArena>,
+    /// Plugin Contracts v2 per-build keystore read and written by the
+    /// `_build_state_set` / `_build_state_get` bridges. The adapter hands
+    /// every store its shared registry-wide state (`create_store_with_state`).
+    build_state: crate::plugins::BuildState,
+    /// True once the host allocator has joined the plugin's own bump heap
+    /// (`SharedHeap::join`). From then on host allocations come from that
+    /// heap's top instead of the separate region starting at 512 KiB.
+    heap_joined: bool,
 }
 
 /// Emit arena telemetry on every store drop — including trap/error paths.
@@ -4976,7 +4144,7 @@ impl Drop for PluginState {
 }
 
 impl PluginState {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             // Start allocations at 512KB to avoid collision with WASM data section
             // and the module's internal heap which can grow from lower addresses.
@@ -4992,6 +4160,18 @@ impl PluginState {
             oom_during_call: None,
             emit_arena: None,
             lint_arena: None,
+            build_state: crate::plugins::new_build_state(),
+            heap_joined: false,
+        }
+    }
+
+    /// Raise the bump pointer to `top` (8-byte aligned, capped at
+    /// `i32::MAX`); never lowers it.
+    fn raise_alloc_offset(&mut self, top: usize) {
+        let top = top.min(i32::MAX as usize);
+        if top > self.alloc_offset {
+            self.alloc_offset = top;
+            self.peak_alloc_offset = self.peak_alloc_offset.max(top);
         }
     }
 
@@ -5202,9 +4382,17 @@ mod arena_tests {
     }
 }
 
-/// Helper to write a UTF-8 string as a Clean length-prefixed allocation
-/// and return its pointer. Wraps `write_clean_string` with a `Result`-style
-/// signature that yields `None` on memory failure rather than a sentinel 0.
+/// The first 256 bytes of plugin output for an error message, cut back to
+/// a UTF-8 character boundary so a multi-byte character straddling the
+/// limit cannot make the slice panic.
+fn diagnostic_prefix(s: &str) -> &str {
+    let mut end = s.len().min(256);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Format a wasmtime `.call()` error with the trap kind (when available)
 /// prepended to the default backtrace. Lets the framework see, e.g.,
 /// "out of bounds memory access at wasm function 276" instead of the bare
@@ -5309,7 +4497,8 @@ fn read_lp_from_data(data: &[u8], ptr: i32) -> Option<&[u8]> {
 }
 
 /// Plugin Contracts v2 — register the `_build_state_set` / `_build_state_get`
-/// bridges on the given linker, sharing the provided `BuildState` store.
+/// bridges on the given linker. Both operate on the calling store's
+/// `PluginState::build_state`, so the linker itself holds no build state.
 ///
 /// **Calling convention:** both bridges follow the canonical contract in
 /// `foundation/platform-architecture/function-registry.toml`, which the
@@ -5318,14 +4507,10 @@ fn read_lp_from_data(data: &[u8], ptr: i32) -> Option<&[u8]> {
 /// nothing. The compiler emits an unpacking wrapper on the plugin side, so
 /// plugins can still call these bridges with a Clean `string` value; the
 /// host just sees the unpacked pair.
-fn register_build_state_bridges(
-    linker: &mut Linker<PluginState>,
-    build_state: &crate::plugins::BuildState,
-) -> Result<()> {
+fn register_build_state_bridges(linker: &mut Linker<PluginState>) -> Result<()> {
     // `_build_state_set(key_ptr, key_len, value_ptr, value_len)` — stores a
     // value under a key in the per-build state. `void` return per the
     // canonical contract; the WASM import has no result.
-    let state_for_set = std::sync::Arc::clone(build_state);
     linker.func_wrap(
         "env",
         "_build_state_set",
@@ -5343,7 +4528,7 @@ fn register_build_state_bridges(
             let Some(value) = read_raw_string(&mut caller, value_ptr, value_len) else {
                 return;
             };
-            if let Ok(mut guard) = state_for_set.lock() {
+            if let Ok(mut guard) = caller.data().build_state.lock() {
                 guard.insert(key, value);
             }
         },
@@ -5353,7 +4538,6 @@ fn register_build_state_bridges(
     // pointer to the value, or an LP-pointer to a cached empty string when
     // the key is absent. The empty-string LP pointer is cached in
     // `PluginState` so warmup-time misses don't churn the bump allocator.
-    let state_for_get = std::sync::Arc::clone(build_state);
     linker.func_wrap(
         "env",
         "_build_state_get",
@@ -5361,7 +4545,9 @@ fn register_build_state_bridges(
             let Some(key) = read_raw_string(&mut caller, key_ptr, key_len) else {
                 return 0;
             };
-            let value = state_for_get
+            let value = caller
+                .data()
+                .build_state
                 .lock()
                 .ok()
                 .and_then(|g| g.get(&key).cloned())
@@ -5442,38 +4628,7 @@ pub(crate) fn read_clean_string(caller: &mut Caller<'_, PluginState>, ptr: i32) 
 ///
 /// Returns the pointer on success or 0 on failure.
 fn write_clean_string_stable(caller: &mut Caller<'_, PluginState>, data: &[u8]) -> i32 {
-    let data_len = data.len();
-    let total_size = 4 + data_len;
-
-    // Allocate from the stable zone.
-    let ptr = caller.data_mut().allocate_stable(total_size);
-    if ptr == 0 {
-        return 0;
-    }
-
-    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-        Some(m) => m,
-        None => return 0,
-    };
-
-    let current_size = memory.data_size(&mut *caller);
-    let required_size = ptr + total_size;
-    if required_size > current_size {
-        let pages_needed = (required_size - current_size).div_ceil(65536);
-        if memory.grow(&mut *caller, pages_needed as u64).is_err() {
-            return 0;
-        }
-    }
-
-    let len_bytes = (data_len as u32).to_le_bytes();
-    if memory.write(&mut *caller, ptr, &len_bytes).is_err() {
-        return 0;
-    }
-    if memory.write(&mut *caller, ptr + 4, data).is_err() {
-        return 0;
-    }
-
-    ptr as i32
+    write_lp_string(caller, data, PluginState::allocate_stable)
 }
 
 /// Helper to write a byte slice as a Clean length-prefixed string into WASM memory.
@@ -5484,42 +4639,227 @@ fn write_clean_string_stable(caller: &mut Caller<'_, PluginState>, data: &[u8]) 
 /// Returns the pointer on success or 0 if the allocator is exhausted or memory
 /// cannot be obtained / grown. Plugins treat 0 as an empty response.
 pub(crate) fn write_clean_string(caller: &mut Caller<'_, PluginState>, data: &[u8]) -> i32 {
-    let data_len = data.len();
-    let total_size = 4 + data_len;
+    write_lp_string(caller, data, PluginState::allocate)
+}
 
-    // Allocate via the bump allocator. 0 means exhaustion — never write
-    // over address 0.
-    let ptr = caller.data_mut().allocate(total_size);
-    if ptr == 0 {
-        return 0;
+/// A plugin's own bump heap: its exported `__heap_ptr` global (the top of
+/// the heap, MEMORY_MODEL.md "The Heap Pointer") and its memory.
+#[derive(Clone, Copy)]
+struct SharedHeap {
+    heap_ptr: wasmtime::Global,
+    memory: Memory,
+}
+
+impl SharedHeap {
+    /// The calling plugin's heap. `None` for modules that export no
+    /// `__heap_ptr`; the host then allocates from its own region alone.
+    fn of_caller(caller: &mut Caller<'_, PluginState>) -> Option<Self> {
+        Some(Self {
+            heap_ptr: caller.get_export("__heap_ptr")?.into_global()?,
+            memory: caller.get_export("memory")?.into_memory()?,
+        })
     }
 
-    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-        Some(m) => m,
-        None => return 0,
-    };
+    /// The heap of an instantiated plugin, for host writes made from outside
+    /// a bridge call (the inputs written before an export is invoked).
+    fn of_instance(store: &mut Store<PluginState>, instance: &wasmtime::Instance) -> Option<Self> {
+        Some(Self {
+            heap_ptr: instance.get_global(&mut *store, "__heap_ptr")?,
+            memory: instance.get_memory(&mut *store, "memory")?,
+        })
+    }
 
-    // Grow the module's linear memory if the allocation extends past the current limit.
-    // Use reborrows (&mut *caller) so the borrow-checker knows we re-use the same caller.
-    let current_size = memory.data_size(&mut *caller);
-    let required_size = ptr + total_size;
-    if required_size > current_size {
-        let pages_needed = (required_size - current_size).div_ceil(65536);
-        if memory.grow(&mut *caller, pages_needed as u64).is_err() {
-            return 0;
+    fn top(&self, cx: &mut wasmtime::StoreContextMut<'_, PluginState>) -> usize {
+        self.heap_ptr.get(&mut *cx).i32().unwrap_or(0).max(0) as usize
+    }
+
+    fn set_top(&self, cx: &mut wasmtime::StoreContextMut<'_, PluginState>, top: usize) {
+        let _ = self.heap_ptr.set(
+            &mut *cx,
+            wasmtime::Val::I32(top.min(i32::MAX as usize) as i32),
+        );
+    }
+
+    /// Bring the host pointer up to the plugin's current heap top.
+    ///
+    /// The plugin's `__malloc` bumps `__heap_ptr` upward from the end of its
+    /// data section, so host data must never sit in memory that pointer can
+    /// still reach. Per MEMORY_MODEL.md the host shares that bump heap
+    /// instead of keeping a separate region: on first contact the host
+    /// region moves to the heap top, and every host allocation advances
+    /// `__heap_ptr` past itself (`host_allocate`).
+    ///
+    /// First contact also reserves the stable empty LP string the
+    /// `_build_state_get` bridge hands out. It sits below every save-point
+    /// the plugin can take afterwards, so neither a host scope pop nor the
+    /// plugin's own `__scope_pop` can hand its bytes out again.
+    fn join(&self, cx: &mut wasmtime::StoreContextMut<'_, PluginState>) {
+        let top = (self.top(cx) + 7) & !7;
+        if cx.data().heap_joined {
+            cx.data_mut().raise_alloc_offset(top);
+            return;
+        }
+        let empty_lp = top;
+        let end = empty_lp + 8;
+        let size = self.memory.data_size(&mut *cx);
+        if end > size
+            && self
+                .memory
+                .grow(&mut *cx, (end - size).div_ceil(65536) as u64)
+                .is_err()
+        {
+            // Out of memory: leave the host on its own region and let the
+            // first allocation report the failure.
+            cx.data_mut().raise_alloc_offset(top);
+            return;
+        }
+        let _ = self.memory.write(&mut *cx, empty_lp, &[0u8; 4]);
+        let state = cx.data_mut();
+        state.heap_joined = true;
+        state.alloc_offset = end;
+        state.stable_zone_end = end;
+        state.peak_alloc_offset = state.peak_alloc_offset.max(end);
+        state.cached_empty_lp_ptr = Some(empty_lp as i32);
+        self.set_top(cx, end);
+    }
+}
+
+/// Allocate `size` bytes of plugin memory for data the host writes, with
+/// `allocate` choosing the zone. When the plugin has its own heap the block
+/// is taken at that heap's top and `__heap_ptr` is advanced past it, so the
+/// plugin's later allocations start after the host data (see
+/// `SharedHeap::join`).
+fn host_allocate<C: wasmtime::AsContextMut<Data = PluginState>>(
+    ctx: &mut C,
+    heap: Option<SharedHeap>,
+    size: usize,
+    allocate: fn(&mut PluginState, usize) -> usize,
+) -> usize {
+    let mut cx = ctx.as_context_mut();
+    if let Some(heap) = heap {
+        heap.join(&mut cx);
+    }
+    let ptr = allocate(cx.data_mut(), size);
+    if ptr != 0 {
+        if let Some(heap) = heap {
+            let end = cx.data().alloc_offset;
+            heap.set_top(&mut cx, end);
         }
     }
+    ptr
+}
+
+/// Open a reclamation scope on the shared heap and return its mark.
+/// Everything allocated after the mark, by the host or by the plugin, lies
+/// above it.
+fn open_heap_scope(caller: &mut Caller<'_, PluginState>) -> usize {
+    if let Some(heap) = SharedHeap::of_caller(caller) {
+        heap.join(&mut caller.as_context_mut());
+    }
+    caller.data().alloc_offset
+}
+
+/// Close a reclamation scope: rewind the host pointer to `host_mark` and the
+/// plugin's `__heap_ptr` to `heap_mark`, reclaiming every allocation made
+/// since the matching `open_heap_scope`. Neither pointer is rewound into the
+/// stable zone or moved upward.
+fn close_heap_scope(caller: &mut Caller<'_, PluginState>, host_mark: usize, heap_mark: usize) {
+    let state = caller.data_mut();
+    let host_target = host_mark.max(state.stable_zone_end);
+    if host_target <= state.alloc_offset {
+        state.arena_reset(ArenaMark(host_target));
+    }
+    let heap_target = heap_mark.max(caller.data().stable_zone_end);
+    if let Some(heap) = SharedHeap::of_caller(caller) {
+        let mut cx = caller.as_context_mut();
+        if heap_target < heap.top(&mut cx) {
+            heap.set_top(&mut cx, heap_target);
+        }
+    }
+}
+/// Allocate `4 + data.len()` bytes with `allocate`, grow linear memory to
+/// cover them and write `[4-byte LE length][data]`. Returns the pointer, or
+/// 0 on any failure — never writing over address 0. An allocation or growth
+/// failure is recorded in `oom_during_call` so a later trap is reported with
+/// its out-of-memory cause (`describe_plugin_trap_with_oom`).
+fn write_lp_string(
+    caller: &mut Caller<'_, PluginState>,
+    data: &[u8],
+    allocate: fn(&mut PluginState, usize) -> usize,
+) -> i32 {
+    let Some((memory, ptr)) = host_allocate_in_memory(caller, 4 + data.len(), allocate) else {
+        return 0;
+    };
 
     // Write length header then content.
-    let len_bytes = (data_len as u32).to_le_bytes();
-    if memory.write(&mut *caller, ptr, &len_bytes).is_err() {
-        return 0;
-    }
-    if memory.write(&mut *caller, ptr + 4, data).is_err() {
+    let len_bytes = (data.len() as u32).to_le_bytes();
+    if memory.write(&mut *caller, ptr, &len_bytes).is_err()
+        || memory.write(&mut *caller, ptr + 4, data).is_err()
+    {
         return 0;
     }
 
     ptr as i32
+}
+
+/// Allocate `size` bytes on the shared heap with `allocate` and grow the
+/// module's linear memory to cover them. Returns the memory and the address,
+/// or `None` on failure — recording an allocation or growth failure in
+/// `oom_during_call` so a later trap is reported with its cause.
+fn host_allocate_in_memory(
+    caller: &mut Caller<'_, PluginState>,
+    size: usize,
+    allocate: fn(&mut PluginState, usize) -> usize,
+) -> Option<(Memory, usize)> {
+    let heap = SharedHeap::of_caller(caller);
+    let ptr = host_allocate(caller, heap, size, allocate);
+    if ptr == 0 {
+        let state = caller.data_mut();
+        if state.oom_during_call.is_none() {
+            state.oom_during_call = Some(format!(
+                "host bridge result: bump allocator exhausted (>= {} MiB consumed) \
+                 requesting {} bytes",
+                i32::MAX as usize / (1024 * 1024),
+                size,
+            ));
+        }
+        return None;
+    }
+
+    let memory = caller.get_export("memory").and_then(|e| e.into_memory())?;
+
+    // Grow the module's linear memory if the allocation extends past the current limit.
+    // Use reborrows (&mut *caller) so the borrow-checker knows we re-use the same caller.
+    let current_size = memory.data_size(&mut *caller);
+    let required_size = ptr + size;
+    if required_size > current_size {
+        let pages_needed = (required_size - current_size).div_ceil(65536);
+        if memory.grow(&mut *caller, pages_needed as u64).is_err() {
+            let state = caller.data_mut();
+            if state.oom_during_call.is_none() {
+                state.oom_during_call = Some(format!(
+                    "host bridge result: memory.grow failed at {} MiB current \
+                     (plugin host-cap 1 GiB), requested a {} byte result \
+                     ({} additional pages)",
+                    current_size / (1024 * 1024),
+                    size,
+                    pages_needed,
+                ));
+            }
+            return None;
+        }
+    }
+
+    Some((memory, ptr))
+}
+
+/// Allocator for the JSON bridges (`runtime::json_bridge`): the shared bump
+/// heap, the same one every other host result is written to.
+fn json_bridge_alloc(caller: &mut Caller<'_, PluginState>, size: i32) -> Result<i32, String> {
+    let size = usize::try_from(size).map_err(|_| format!("negative allocation size {size}"))?;
+    host_allocate_in_memory(caller, size, PluginState::allocate)
+        .and_then(|(_, ptr)| i32::try_from(ptr).ok())
+        .ok_or_else(|| format!("plugin host allocator could not provide {size} bytes"))
 }
 
 /// Wrap statement-level slot output in a synthetic `start:` block so the
@@ -5640,8 +4980,8 @@ fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
 
     let trimmed = first_line.trim();
 
-    // Check if the first line contains key="value" patterns (not indented block content)
-    if trimmed.is_empty() || trimmed.starts_with('\t') || trimmed.starts_with('<') {
+    // Check if the first line contains key="value" patterns (not markup)
+    if trimmed.is_empty() || trimmed.starts_with('<') {
         return (Vec::new(), content.to_string());
     }
 
@@ -5799,6 +5139,257 @@ mod tests {
         ));
     }
 
+    /// Plugin output quoted in an error message is cut at 256 bytes. A
+    /// multi-byte character straddling that limit used to panic the
+    /// compiler (byte-index slice through a char) instead of reporting the
+    /// plugin's malformed response.
+    #[test]
+    fn diagnostic_prefix_cuts_at_a_char_boundary() {
+        let s = format!("{}é tail", "a".repeat(255));
+        assert_eq!(diagnostic_prefix(&s), "a".repeat(255));
+        assert_eq!(diagnostic_prefix("short"), "short");
+        let long = "b".repeat(300);
+        assert_eq!(diagnostic_prefix(&long).len(), 256);
+    }
+
+    /// Instantiate a one-page WAT module against one host-bridge group and
+    /// return the store, instance and memory.
+    fn instantiate_with(
+        wat: &str,
+        register: fn(&mut Linker<PluginState>) -> Result<()>,
+    ) -> (Store<PluginState>, wasmtime::Instance, Memory) {
+        let engine = Engine::default();
+        let module = Module::new(&engine, wat).expect("compile WAT");
+        let mut linker: Linker<PluginState> = Linker::new(&engine);
+        register(&mut linker).expect("register bridges");
+        let mut store = Store::new(&engine, PluginState::new());
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let memory = instance.get_memory(&mut store, "memory").expect("memory");
+        (store, instance, memory)
+    }
+
+    fn call_and_read(wat: &str, register: fn(&mut Linker<PluginState>) -> Result<()>) -> Vec<u8> {
+        let (mut store, instance, memory) = instantiate_with(wat, register);
+        let run: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "run").unwrap();
+        let ptr = run.call(&mut store, ()).expect("bridge call must not trap");
+        read_lp_from_data(memory.data(&store), ptr)
+            .expect("bridge result must be a readable LP string")
+            .to_vec()
+    }
+
+    /// `string.substring` takes byte offsets. An offset inside a multi-byte
+    /// character used to panic the compiler (char-boundary slice).
+    #[test]
+    fn substring_bridge_slices_bytes_without_panicking() {
+        let wat = r#"
+            (module
+              (import "env" "string.substring" (func $sub (param i32 i32 i32) (result i32)))
+              (memory (export "memory") 1)
+              (data (i32.const 16) "\03\00\00\00a\c3\a9")
+              (func (export "run") (result i32)
+                i32.const 16
+                i32.const 0
+                i32.const 2
+                call $sub))
+        "#;
+        let bytes = call_and_read(wat, WasmPluginAdapter::register_string_dot_functions);
+        assert_eq!(bytes, vec![b'a', 0xc3]);
+    }
+
+    /// Bridge results are written at the host bump pointer (512 KiB up),
+    /// beyond a small plugin's initial memory. `float_to_string` wrote there
+    /// without growing memory, silently dropped the failed write and
+    /// returned a pointer past the end of memory.
+    #[test]
+    fn conversion_bridge_grows_memory_for_its_result() {
+        let wat = r#"
+            (module
+              (import "env" "float_to_string" (func $f2s (param f64) (result i32)))
+              (memory (export "memory") 1)
+              (func (export "run") (result i32)
+                f64.const 1.5
+                call $f2s))
+        "#;
+        let bytes = call_and_read(wat, WasmPluginAdapter::register_env_core_functions);
+        assert_eq!(bytes, b"1.5");
+    }
+
+    /// Stub bridges return an empty string. They used to hand back a bare
+    /// bump allocation: never zeroed (stale bytes after an arena reset) and
+    /// never backed by grown memory.
+    #[test]
+    fn stub_bridge_returns_a_readable_empty_string() {
+        let wat = r#"
+            (module
+              (import "env" "http_get" (func $get (param i32 i32) (result i32)))
+              (memory (export "memory") 1)
+              (func (export "run") (result i32)
+                i32.const 0
+                i32.const 0
+                call $get))
+        "#;
+        let bytes = call_and_read(wat, WasmPluginAdapter::register_http_client_functions);
+        assert!(bytes.is_empty());
+    }
+
+    /// A plugin-like module: exports `memory` and a `__heap_ptr` bump heap
+    /// starting at 70 000 (where a real plugin's heap begins, just past its
+    /// data section), plus `$malloc`, which bumps that heap and grows memory
+    /// like the compiler's native allocator.
+    fn plugin_heap_wat(imports: &str, body: &str) -> String {
+        format!(
+            r#"
+            (module
+              {imports}
+              (memory (export "memory") 2)
+              (global $heap (export "__heap_ptr") (mut i32) (i32.const 70000))
+              (func $malloc (param $size i32) (result i32)
+                (local $ptr i32) (local $end i32) (local $need i32)
+                global.get $heap
+                local.set $ptr
+                local.get $ptr
+                local.get $size
+                i32.add
+                local.set $end
+                local.get $end
+                i32.const 65535
+                i32.add
+                i32.const 16
+                i32.shr_u
+                memory.size
+                i32.sub
+                local.tee $need
+                i32.const 0
+                i32.gt_s
+                if
+                  local.get $need
+                  memory.grow
+                  drop
+                end
+                local.get $end
+                global.set $heap
+                local.get $ptr)
+              {body})
+            "#
+        )
+    }
+
+    /// Fill `size` freshly allocated plugin bytes with 0xAA — what a plugin
+    /// building a large page does to its heap.
+    const FILL_600K: &str =
+        "i32.const 600000 call $malloc i32.const 170 i32.const 600000 memory.fill";
+
+    /// A host bridge result must survive the plugin allocating well past
+    /// 400 KB afterwards. The host used to write results at 512 KiB in its
+    /// own region while the plugin's heap grew up from ~70 KB into it.
+    #[test]
+    fn bridge_result_survives_plugin_heap_growth() {
+        let wat = plugin_heap_wat(
+            r#"(import "env" "float_to_string" (func $f2s (param f64) (result i32)))"#,
+            &format!(
+                r#"(func (export "run") (result i32) (local $s i32)
+                     f64.const 1.5
+                     call $f2s
+                     local.set $s
+                     {FILL_600K}
+                     local.get $s)"#
+            ),
+        );
+        let bytes = call_and_read(&wat, WasmPluginAdapter::register_env_core_functions);
+        assert_eq!(bytes, b"1.5");
+    }
+
+    /// The inputs the host writes before invoking a plugin export must
+    /// survive the plugin allocating well past 400 KB during the call.
+    #[test]
+    fn expand_inputs_survive_plugin_heap_growth() {
+        let wat = plugin_heap_wat(
+            "",
+            &format!(
+                r#"(func (export "expand") (param $name i32) (param $attrs i32) (param $body i32) (result i32)
+                     {FILL_600K}
+                     local.get $body)"#
+            ),
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, wat).expect("compile plugin");
+        let manifest: PluginManifest = toml::from_str(
+            "[plugin]\nname = \"test.heap\"\nversion = \"1.0.0\"\ndescription = \"\"\n\
+             author = \"\"\n\n[handles]\nblocks = [\"heapblock\"]\n",
+        )
+        .expect("manifest");
+        let adapter = WasmPluginAdapter::new("test.heap".to_string(), manifest, module, engine)
+            .expect("adapter");
+        let block = FrameworkBlock {
+            name: "heapblock:".to_string(),
+            content: "print(\"hello from the input\")".to_string(),
+            attributes: Vec::new(),
+            location: None,
+        };
+        let statements = adapter
+            .call_expand(&block)
+            .expect("the plugin returns its intact input");
+        assert!(
+            format!("{statements:?}").contains("hello from the input"),
+            "input was overwritten by the plugin heap: {statements:?}"
+        );
+    }
+
+    /// Per-call reclamation spans the shared heap: an arena scope reclaims
+    /// both host bridge allocations and the plugin's own allocations, so a
+    /// scope run repeatedly leaves the heap where it started.
+    #[test]
+    fn arena_scope_reclaims_host_and_plugin_allocations() {
+        let wat = plugin_heap_wat(
+            r#"(import "env" "float_to_string" (func $f2s (param f64) (result i32)))
+               (import "env" "_arena_scope_push" (func $push (result i32)))
+               (import "env" "_arena_scope_pop" (func $pop (param i32)))"#,
+            r#"(func (export "run") (result i32) (local $h i32)
+                 call $push
+                 local.set $h
+                 f64.const 1.5
+                 call $f2s
+                 drop
+                 i32.const 4096
+                 call $malloc
+                 drop
+                 local.get $h
+                 call $pop
+                 global.get $heap)"#,
+        );
+        let (mut store, instance, _memory) = instantiate_with(&wat, |linker| {
+            WasmPluginAdapter::register_env_core_functions(linker)?;
+            WasmPluginAdapter::register_memory_runtime_functions(linker)
+        });
+        let run: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "run").unwrap();
+        let first = run.call(&mut store, ()).expect("first run");
+        let second = run.call(&mut store, ()).expect("second run");
+        let third = run.call(&mut store, ()).expect("third run");
+        assert_eq!(first, second, "a scope run must not grow the heap");
+        assert_eq!(second, third, "a scope run must not grow the heap");
+    }
+
+    /// A negative LP pointer passed to `string.concat` used to overflow the
+    /// bounds check and panic on the slice; it now yields a null result.
+    #[test]
+    fn concat_bridge_rejects_a_negative_pointer() {
+        let wat = r#"
+            (module
+              (import "env" "string.concat" (func $cat (param i32 i32) (result i32)))
+              (memory (export "memory") 1)
+              (func (export "run") (result i32)
+                i32.const -1
+                i32.const -1
+                call $cat))
+        "#;
+        let (mut store, instance, _memory) =
+            instantiate_with(wat, WasmPluginAdapter::register_env_core_functions);
+        let run: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "run").unwrap();
+        assert_eq!(run.call(&mut store, ()).expect("no trap"), 0);
+    }
+
     #[test]
     fn test_plugin_state_allocation() {
         let mut state = PluginState::new();
@@ -5942,15 +5533,16 @@ mod tests {
         "#;
 
         let module = Module::new(&engine, wat).expect("compile mini plugin");
-        let mut store = Store::new(&engine, PluginState::new());
+        let mut state = PluginState::new();
+        state.build_state = std::sync::Arc::clone(&build_state);
+        let mut store = Store::new(&engine, state);
         let mut linker: Linker<PluginState> = Linker::new(&engine);
 
         // Exercise the production code path. If the signature here drifts
         // away from what plugins import, instantiation will fail with the
         // exact "incompatible import type for `env::_build_state_set`" error
         // that bit frame.ui 2.12.36.
-        super::register_build_state_bridges(&mut linker, &build_state)
-            .expect("register_build_state_bridges");
+        super::register_build_state_bridges(&mut linker).expect("register_build_state_bridges");
 
         let instance = linker
             .instantiate(&mut store, &module)
@@ -6464,8 +6056,8 @@ mod lint_signature_validation_tests {
 /// two fake diagnostics.
 ///
 /// This bypasses `WasmPluginAdapter::new` (which requires a full
-/// PluginManifest) and drives `build_lint_linker` + `LintArena` +
-/// `create_store_with_lint_arena` + `read_lp_from_data` directly — the
+/// PluginManifest) and drives the lint bridges + `LintArena` +
+/// a lint-arena store + `read_lp_from_data` directly — the
 /// same production code path a real plugin would exercise.
 #[cfg(test)]
 mod lint_e2e_tests {
@@ -6518,7 +6110,7 @@ mod lint_e2e_tests {
         state.lint_arena = Some(arena);
         let mut store = Store::new(&engine, state);
 
-        // Build a lint linker manually (mirrors WasmPluginAdapter::build_lint_linker
+        // Build a lint linker manually (mirrors WasmPluginAdapter::lint_linker
         // without going through the manifest-bound adapter).
         let mut linker: Linker<PluginState> = Linker::new(&engine);
         crate::plugins::lint::register_lint_bridges(&mut linker).expect("register lint bridges");

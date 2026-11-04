@@ -5,53 +5,22 @@ use crate::error::CompilerError;
 use pest::iterators::Pair;
 
 pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
-    let parser_location = get_location(&pair);
-    let ast_location = parser_location.clone();
+    let ast_location = get_location(&pair);
 
-    // Handle both direct type rules and type_ wrapper
-    let type_rule = if pair.as_rule() == Rule::type_ {
-        pair.clone().into_inner().next().ok_or_else(|| {
-            CompilerError::parse_error(
-                "Empty type declaration".to_string(),
-                Some(parser_location.clone()),
-                Some("Type declarations must specify a type".to_string()),
-            )
-        })?
-    } else if pair.as_rule() == Rule::variable_type {
-        pair.clone().into_inner().next().ok_or_else(|| {
-            CompilerError::parse_error(
-                "Empty variable type declaration".to_string(),
-                Some(parser_location.clone()),
-                Some("Variable type declarations must specify a type".to_string()),
-            )
-        })?
-    } else if pair.as_rule() == Rule::function_return_type {
-        // function_return_type is a wrapper, extract the inner type
-        pair.clone().into_inner().next().ok_or_else(|| {
-            CompilerError::parse_error(
-                "Empty function return type declaration".to_string(),
-                Some(parser_location.clone()),
-                Some("Function return type declarations must specify a type".to_string()),
-            )
-        })?
-    } else {
-        pair.clone()
-    };
-
-    match type_rule.as_rule() {
-        Rule::input_type => {
-            // input_type is a wrapper, extract the inner type
-            let inner_type = type_rule.into_inner().next().ok_or_else(|| {
+    match pair.as_rule() {
+        // Wrapper rules around a single concrete type.
+        Rule::type_ | Rule::variable_type | Rule::function_return_type | Rule::input_type => {
+            let inner_type = pair.into_inner().next().ok_or_else(|| {
                 CompilerError::parse_error(
-                    "Empty input type declaration".to_string(),
-                    Some(ast_location.clone()),
-                    Some("Input type declarations must specify a type".to_string()),
+                    "Empty type declaration".to_string(),
+                    Some(ast_location),
+                    Some("Type declarations must specify a type".to_string()),
                 )
             })?;
             parse_type(inner_type)
         }
         Rule::core_type => {
-            let type_str = type_rule.as_str();
+            let type_str = pair.as_str();
             match type_str {
                 "boolean" => Ok(Type::Boolean),
                 "integer" => Ok(Type::Integer),
@@ -69,65 +38,17 @@ pub fn parse_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
                 )),
             }
         }
-        Rule::sized_type => parse_sized_type(type_rule),
-        Rule::generic_type => parse_generic_type(type_rule),
-        Rule::type_parameter => {
-            let type_name = type_rule.as_str().to_string();
-            // Handle all type parameters uniformly
-            Ok(Type::TypeParameter(type_name))
-        }
-        Rule::identifier => parse_basic_type(type_rule),
-        Rule::matrix_type => parse_matrix_type(type_rule),
-        Rule::list_type => parse_list_type(type_rule),
-        Rule::pairs_type => parse_pairs_type(type_rule),
-        Rule::function_type => {
-            // function_type contains one of: sized_type, core_type, matrix_type, array_type, pairs_type, generic_type, type_parameter
-            let inner_type = type_rule.into_inner().next().ok_or_else(|| {
-                CompilerError::parse_error(
-                    "Empty function type declaration".to_string(),
-                    Some(parser_location.clone()),
-                    Some("Function type declarations must specify a type".to_string()),
-                )
-            })?;
-
-            match inner_type.as_rule() {
-                Rule::core_type => {
-                    let type_str = inner_type.as_str();
-                    match type_str {
-                        "boolean" => Ok(Type::Boolean),
-                        "integer" => Ok(Type::Integer),
-                        "number" => Ok(Type::Number),
-                        "string" => Ok(Type::String),
-                        "void" => Ok(Type::Void),
-                        "any" => Ok(Type::Any),
-                        _ => Err(CompilerError::parse_error(
-                            format!("Unknown core type: {type_str}"),
-                            None,
-                            Some(
-                                "Valid core types are: boolean, integer, number, string, void, any"
-                                    .to_string(),
-                            ),
-                        )),
-                    }
-                }
-                Rule::sized_type => {
-                    // Since sized_type is atomic (@), parse the entire string manually
-                    parse_sized_type(inner_type)
-                }
-                Rule::matrix_type => parse_matrix_type(inner_type),
-                Rule::list_type => parse_list_type(inner_type),
-                Rule::pairs_type => parse_pairs_type(inner_type),
-                Rule::generic_type => parse_generic_type(inner_type),
-                Rule::type_parameter => Ok(Type::TypeParameter(inner_type.as_str().to_string())),
-                _ => Err(CompilerError::parse_error(
-                    format!("Unexpected function type: {:?}", inner_type.as_rule()),
-                    Some(ast_location),
-                    Some("Function type declarations must specify a valid type".to_string()),
-                )),
-            }
-        }
+        Rule::sized_type => parse_sized_type(pair),
+        Rule::generic_type => parse_generic_type(pair),
+        Rule::type_parameter => Ok(Type::TypeParameter(pair.as_str().to_string())),
+        // A named type (grammar `identifier` excludes the type keywords): a
+        // class or other user-defined type, as the token parser builds it.
+        Rule::identifier => Ok(Type::Object(pair.as_str().to_string())),
+        Rule::matrix_type => parse_matrix_type(pair),
+        Rule::list_type => parse_list_type(pair),
+        Rule::pairs_type => parse_pairs_type(pair),
         _ => Err(CompilerError::parse_error(
-            format!("Unexpected type: {:?}", type_rule.as_rule()),
+            format!("Unexpected type: {:?}", pair.as_rule()),
             Some(ast_location),
             Some("Type declarations must specify a valid type".to_string()),
         )),
@@ -164,21 +85,6 @@ fn parse_generic_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
 
     let boxed_base_type = Box::new(Type::Object(base_type));
     Ok(Type::Generic(boxed_base_type, type_arguments))
-}
-
-fn parse_basic_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
-    let parser_location = get_location(&pair);
-    let _ast_location = parser_location.clone();
-
-    let type_name = pair.as_str();
-    match type_name {
-        "int" => Ok(Type::Integer),
-        "number" => Ok(Type::Number), // number maps to Number type
-        "bool" => Ok(Type::Boolean),
-        "string" => Ok(Type::String),
-        "void" => Ok(Type::Void),
-        _ => Ok(Type::Object(type_name.to_string())),
-    }
 }
 
 fn parse_matrix_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {

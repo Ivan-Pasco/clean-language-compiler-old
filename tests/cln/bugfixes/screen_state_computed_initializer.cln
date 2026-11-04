@@ -1,0 +1,37 @@
+// Test: bugfixes/screen_state_computed_initializer
+// Grammar: screen_block (grammar.ebnf §6.10), state_block
+// Semantic: SEM001 — a screen state variable holds its declared initial value
+//   (spec §23 "State in Screens"), also when the initializer is computed
+// Regression: only app-level state initializers that are not literals were
+//   evaluated at the start of the program; a screen's `string tag =
+//   "home".toUpperCase()` stayed empty and its integer stayed 0.
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   tag=HOME
+//   size=4
+//   count=1
+
+start:
+	printl(Home.describe())
+	printl(Home.size())
+	Home.bump()
+	printl(Home.count())
+
+screen Home:
+	state:
+		string tag = "home".toUpperCase()
+		integer total = tag.length()
+		integer clicks = 0
+
+	functions:
+		string describe()
+			return "tag=" + tag
+
+		string size()
+			return "size=" + total.toString()
+
+		void bump()
+			clicks = clicks + 1
+
+		string count()
+			return "count=" + clicks.toString()

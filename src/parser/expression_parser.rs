@@ -172,9 +172,6 @@ pub fn parse_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
         Rule::unary_expression => {
             parse_unary_expression(pair)
         }
-        Rule::arithmetic_expression => {
-            parse_arithmetic_expression(pair)
-        }
         Rule::additive_expression => {
             parse_additive_expression(pair)
         }
@@ -523,21 +520,6 @@ pub fn parse_unary_expression(pair: Pair<Rule>) -> Result<Expression, CompilerEr
     }
 
     Ok(result)
-}
-
-pub fn parse_arithmetic_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
-    // For backward compatibility, just delegate to additive_expression
-    for item in pair.into_inner() {
-        if item.as_rule() == Rule::additive_expression {
-            return parse_additive_expression(item);
-        }
-    }
-
-    Err(CompilerError::parse_error(
-        "Empty arithmetic expression".to_string(),
-        None,
-        Some("Arithmetic expression must contain an additive expression".to_string()),
-    ))
 }
 
 pub fn parse_additive_expression(pair: Pair<Rule>) -> Result<Expression, CompilerError> {

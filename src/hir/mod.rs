@@ -48,7 +48,6 @@ pub struct HirScreenBlock {
     pub name: String,
     pub state: Option<HirStateBlock>,
     pub watch_blocks: Vec<HirWatchBlock>,
-    pub functions: Vec<HirFunction>,
     pub location: SourceLocation,
 }
 

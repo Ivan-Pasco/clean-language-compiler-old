@@ -1,61 +1,10 @@
 use crate::error::CompilerError;
 use wasmtime::{Config, Engine};
 
-/// Centralized wasmtime configuration for consistent runtime behavior
-/// across all Clean Language components (development, release, cleanc, wasmtime_runner)
+/// Wasmtime engine construction for the `wasmtime_runner` dev binary.
 pub struct CleanWasmtimeConfig;
 
 impl CleanWasmtimeConfig {
-    /// Create a standardized wasmtime configuration for Clean Language
-    /// This ensures consistent behavior between development and release builds
-    pub fn create_config() -> Config {
-        let mut config = Config::new();
-
-        // Enable features required for Clean Language runtime
-        config.async_support(false); // Disable async for sync execution
-        config.wasm_threads(true); // Required for threading support
-        config.wasm_bulk_memory(true); // Required for memory operations
-        config.wasm_reference_types(true); // Required for reference handling
-
-        // Optimization settings
-        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
-
-        // Memory settings for better performance.
-        // wasmtime 21 → 46 renamed:
-        //   static_memory_maximum_size → memory_reservation
-        //   dynamic_memory_guard_size  → memory_guard_size
-        config.memory_reservation(1024 * 1024 * 64); // 64MB reservation
-        config.memory_guard_size(1024 * 1024); // 1MB guard
-
-        // Enable debugging info in development builds
-        #[cfg(debug_assertions)]
-        {
-            config.debug_info(true);
-            config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-        }
-
-        // Disable debugging info in release builds for performance
-        #[cfg(not(debug_assertions))]
-        {
-            config.debug_info(false);
-            config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
-        }
-
-        config
-    }
-
-    /// Create a standardized wasmtime engine for Clean Language
-    pub fn create_engine() -> Result<Engine, CompilerError> {
-        let config = Self::create_config();
-        Engine::new(&config).map_err(|e| {
-            CompilerError::runtime_error(
-                format!("Failed to create Clean Language WebAssembly engine: {e}"),
-                None,
-                None,
-            )
-        })
-    }
-
     /// Create an engine with minimal configuration for testing/validation
     pub fn create_minimal_engine() -> Result<Engine, CompilerError> {
         let mut config = Config::new();
@@ -77,15 +26,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_wasmtime_config_creation() {
-        let config = CleanWasmtimeConfig::create_config();
-        // Test that config was created successfully
-        assert!(Engine::new(&config).is_ok());
-    }
-
-    #[test]
-    fn test_wasmtime_engine_creation() {
-        let engine = CleanWasmtimeConfig::create_engine();
-        assert!(engine.is_ok());
+    fn test_minimal_engine_creation() {
+        assert!(CleanWasmtimeConfig::create_minimal_engine().is_ok());
     }
 }

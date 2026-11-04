@@ -1,17 +1,17 @@
-//! List runtime functions that are not method implementations: allocation,
-//! raw push/pop helpers used by list literals and the `list_*` builtins, and
-//! the late registration hook for `ListClass` / `StringClass` functions that
-//! need the native allocator.
+//! List runtime functions that are not method implementations (literal
+//! allocation, length, the `list_*` builtin aliases) and the late
+//! registration hook for `ListClass` / `StringClass` functions that need the
+//! native allocator.
 
 use crate::codegen::native_stdlib::HEAP_PTR_GLOBAL;
 use crate::codegen::CodeGenerator;
 use crate::codegen::LIST_TYPE_ID;
 use crate::error::CompilerError;
-use crate::stdlib::list_class::ListClass;
+use crate::stdlib::list_class::{missing, ListClass};
 use crate::stdlib::register_stdlib_function;
 use crate::stdlib::string_class::StringClass;
 use crate::types::WasmType;
-use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
+use wasm_encoder::{Instruction, MemArg};
 
 pub struct ListManager;
 
@@ -28,113 +28,39 @@ impl ListManager {
 
     /// Registered after the native memory operations, so `__malloc` exists.
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        tracing::debug!("DEBUG LIST_OPS: Starting list function registration");
-
-        // NOTE: Register list.push as import functions with proper type signatures
-        // list.push for i32 elements (integers, booleans, pointers)
-        tracing::debug!("DEBUG LIST_OPS: Registering list.push...");
-        let idx1 = codegen.register_import_function(
-            "env",
-            "list.push",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-        )?;
-        tracing::debug!("DEBUG LIST_OPS: list.push registered at index {}", idx1);
-
-        // NOTE: list.push_f64 for f64 elements (floats, numbers)
-        // This is needed for float array literals like [1.1, 2.2, 3.3]
-        // It is reachability-gated (Import Minimality Rule): only emitted when
-        // the program contains float array literals. The u32::MAX sentinel means
-        // the import was tree-shaken; skip the alias so nothing maps to a bogus index.
-        tracing::debug!("DEBUG LIST_OPS: Registering list.push_f64...");
-        let idx2 = codegen.register_import_function(
-            "env",
-            "list.push_f64",
-            &[WasmType::I32, WasmType::F64],
-            Some(WasmType::I32),
-        )?;
-        tracing::debug!("DEBUG LIST_OPS: list.push_f64 registered at index {}", idx2);
-
-        // Add alias list_push_f64 -> list.push_f64 for MIR codegen compatibility.
-        // Skip when the import was tree-shaken (sentinel u32::MAX) so we do not
-        // insert a bogus index that would generate invalid Call instructions.
-        if idx2 != u32::MAX {
-            codegen.add_function_alias("list_push_f64", idx2);
-            tracing::debug!(
-                "DEBUG LIST_OPS: list_push_f64 alias added at index {}",
-                idx2
-            );
-        } else {
-            tracing::debug!(
-                "DEBUG LIST_OPS: list.push_f64 tree-shaken (not reachable), skipping alias"
-            );
-        }
-
-        // Register list allocation function
+        // List literals: `list.allocate(capacity)` then in-place `list.push`.
         register_stdlib_function(
             codegen,
             "list.allocate",
-            &[WasmType::I32],    // Size
-            Some(WasmType::I32), // Pointer
+            &[WasmType::I32],
+            Some(WasmType::I32),
             self.generate_list_allocate(),
         )?;
 
-        // Register list allocation function
-        register_stdlib_function(
-            codegen,
-            "list.allocate",
-            &[WasmType::I32],    // Size
-            Some(WasmType::I32), // Pointer
-            self.generate_list_allocate(),
-        )?;
-
-        let length = self.generate_list_length();
-        register_stdlib_function(
+        let length = register_stdlib_function(
             codegen,
             "list.length",
             &[WasmType::I32],
             Some(WasmType::I32),
-            length.clone(),
+            self.generate_list_length(),
         )?;
-        register_stdlib_function(
-            codegen,
-            "list_length",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            length,
-        )?;
+        codegen.add_function_alias("list_length", length);
 
-        // In-place append without a capacity check, used by list literals
-        // whose capacity is sized up front.
-        register_stdlib_function(
-            codegen,
-            "list_push",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_list_push(),
-        )?;
-
-        register_stdlib_function(
-            codegen,
-            "list_pop",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            self.generate_list_pop(),
-        )?;
-
-        // `list_contains` / `list_index_of` builtins share the native bodies.
-        for (alias, target) in [
-            ("list_contains", "list.contains"),
-            ("list_index_of", "list.indexOf"),
-        ] {
-            if let Some(idx) = codegen.get_function_index(target) {
-                codegen.add_function_alias(alias, idx);
-            }
-        }
+        // Snake-case builtin `list_push` is the in-place literal append.
+        let push = codegen
+            .get_function_index("__list_push_i32")
+            .ok_or_else(|| missing("__list_push_i32"))?;
+        codegen.add_function_alias("list_push", push);
 
         // Method implementations that allocate (sort, slice, join, charAt, ...).
         ListClass::new().register_functions(codegen)?;
         StringClass::new().register_heap_operations(codegen)?;
+
+        // Snake-case builtin `list_pop` is `.pop()`: halts on an empty list.
+        let pop = codegen
+            .get_function_index("list.removeLast")
+            .ok_or_else(|| missing("list.removeLast"))?;
+        codegen.add_function_alias("list_pop", pop);
 
         Ok(())
     }
@@ -223,111 +149,6 @@ impl ListManager {
                 align: 2,
                 memory_index: 0,
             }),
-        ]
-    }
-
-    fn generate_list_push(&self) -> Vec<Instruction> {
-        // Implementation of list push - adds element to end of list
-        // Parameters: list_ptr (0), item (1)
-        // Returns: list pointer (modified in place)
-        vec![
-            // Get current size
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // size
-            // Calculate position for new element (size * 4 + 16)
-            Instruction::I32Const(4), // element size (4 bytes for i32)
-            Instruction::I32Mul,
-            Instruction::I32Const(16), // header size
-            Instruction::I32Add,
-            // Add base address
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Add,      // storage address
-            // Store the new item
-            Instruction::LocalGet(1), // item
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Increment list size
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // current size
-            Instruction::I32Const(1),
-            Instruction::I32Add, // new size
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Return list pointer
-            Instruction::LocalGet(0),
-        ]
-    }
-
-    fn generate_list_pop(&self) -> Vec<Instruction> {
-        // Implementation of list pop - removes and returns last element
-        // Parameters: list_ptr (0)
-        // Returns: popped element (0 if empty)
-        vec![
-            // Get current size
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // size
-            // Check if empty
-            Instruction::I32Const(0),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // Return 0 if empty
-            Instruction::Else,
-            // Get last element before decrementing size
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // size
-            Instruction::I32Const(1),
-            Instruction::I32Sub,      // size - 1
-            Instruction::I32Const(4), // element size (4 bytes for i32)
-            Instruction::I32Mul,
-            Instruction::I32Const(16), // header size
-            Instruction::I32Add,
-            Instruction::I32Add, // calculate address
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // load element value to stack
-            // Decrement size (but keep element value on stack)
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::LocalGet(0), // list_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // size
-            Instruction::I32Const(1),
-            Instruction::I32Sub, // new size
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Element value is still on stack as return value
-            Instruction::End,
         ]
     }
 }

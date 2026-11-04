@@ -29,9 +29,8 @@ use std::path::Path;
 ///
 /// The algorithm:
 ///   1. Find the *last* `pages/` segment in the path and keep only what
-///      comes after it. (Choosing the last occurrence is intentional:
-///      `app/pages/blog/pages.cln` should give `pages_pages`, not
-///      `pages_blog_pages` — frame.ui matches on the segment.)
+///      comes after it, so a `pages/` directory above the project (the
+///      compiler passes absolute paths) does not leak into the name.
 ///   2. Strip the `.cln` extension.
 ///   3. Flatten the rest with `/` → `_`, drop the brackets around dynamic
 ///      segments (`[slug]` → `slug`), and rewrite identifier-invalid

@@ -129,6 +129,15 @@ pub enum SubmitResult {
 }
 
 impl SubmitResult {
+    /// True when the backend accepted the report (new, known or already
+    /// fixed); false when it was queued locally or could not be stored.
+    pub fn is_delivered(&self) -> bool {
+        matches!(
+            self,
+            Self::Submitted { .. } | Self::AlreadyFixed { .. } | Self::Known { .. }
+        )
+    }
+
     /// Extract the fingerprint from any variant that carries one
     pub fn fingerprint(&self) -> Option<&str> {
         match self {
@@ -173,22 +182,19 @@ pub fn submit_report(report: &ErrorReport) -> SubmitResult {
     match http_result {
         Ok(result) => result,
         Err(reason) => {
-            // Backend unreachable or rate-limiting — log visibly and queue locally.
-            // Prior behavior silently dropped the error which made upload bugs
-            // invisible for days; surface the reason on stderr so users know
-            // a retry will happen later (see MCP_UPLOAD_BROKEN lineage).
+            // Backend unreachable or rate-limiting: the report is saved
+            // locally and sent when connectivity returns (offline-first,
+            // ERROR_REPORTING_SPECIFICATION.md §10). Nothing is printed here:
+            // a background submission after every failed compile must not
+            // add noise to the user's terminal. The returned variant tells
+            // interactive callers (`cln report`, the MCP tool) what happened,
+            // and `cln telemetry flush` prints one line when the service is
+            // still unavailable.
+            tracing::debug!(reason = %reason, "error report not delivered; queued locally");
             if let Some(retry_after) = parse_rate_limited_reason(&reason) {
-                eprintln!(
-                    "[telemetry] server rate-limited error reports (retry_after={}s); queued locally.",
-                    retry_after
-                );
                 return queue_for_rate_limit(report, retry_after);
             }
-            eprintln!(
-                "[telemetry] error report upload failed ({}); queued locally for retry.",
-                reason
-            );
-            queue_for_retry(report, &reason)
+            queue_for_retry(report)
         }
     }
 }
@@ -262,7 +268,7 @@ mod tests {
 
 /// Helper: enqueue a report for later retry. Used by both the rate-limit path
 /// and the generic network-failure path so the disk state is identical.
-fn queue_for_retry(report: &ErrorReport, _reason: &str) -> SubmitResult {
+fn queue_for_retry(report: &ErrorReport) -> SubmitResult {
     let report_id = report.report_id.clone();
     match PendingQueue::new() {
         Some(queue) => match queue.enqueue(report) {
@@ -376,10 +382,12 @@ fn batch_check_inner(compiler_version: &str, reports: &[ReportVerification]) -> 
             }
             Vec::new()
         }
-        _ => {
-            // Backend unreachable — fall back to legacy per-report check
-            check_statuses_legacy(reports)
-        }
+        // The batch endpoint answered with an error status (older backend
+        // without it): fall back to the per-report status endpoint.
+        Ok(_) => check_statuses_legacy(reports),
+        // Backend unreachable: one request per report would only repeat the
+        // same connection failure, each after its own timeout.
+        Err(_) => Vec::new(),
     }
 }
 

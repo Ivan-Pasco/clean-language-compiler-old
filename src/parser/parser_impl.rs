@@ -329,17 +329,6 @@ pub fn parse_functions_block_traditional(
                             Err(_) => continue, // Recovery: skip failed function
                         }
                     }
-                    Rule::function_line => {
-                        // function_line contains function_in_block inside
-                        for inner_item in func_item.into_inner() {
-                            if inner_item.as_rule() == Rule::function_in_block {
-                                match parse_function_in_block(inner_item) {
-                                    Ok(func) => functions.push(func),
-                                    Err(_) => continue, // Recovery: skip failed function
-                                }
-                            }
-                        }
-                    }
                     Rule::class_function_line => {
                         // Handle the new class_function_line rule
                         for inner in func_item.into_inner() {
@@ -564,9 +553,9 @@ fn parse_parameters_from_input_block(
 
 /// Parses a function declared inside a functions block.
 ///
-/// According to the grammar, a function_in_block has the following structure:
-///   function_in_block = { function_type? ~ identifier ~ "(" ~ ")" ~ function_body }
-///   function_body = { (setup_block ~ indented_block) | indented_block }
+/// grammar.pest `function_in_block`: an optional return type (a class name,
+/// `function_return_type` or `void`), the function name, a parameter list and
+/// a `function_body_in_block` (an optional setup_block, then the statements).
 ///
 /// - setup_block may contain a description_block and/or input_block (for parameters)
 /// - indented_block contains the function body statements
@@ -597,7 +586,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
     // Parse the function signature and body
     for item in func_pair.into_inner() {
         match item.as_rule() {
-            Rule::function_type | Rule::function_return_type => {
+            Rule::function_return_type => {
                 let parsed_type = parse_type(item)?;
                 return_type = Some(parsed_type.clone());
 
@@ -616,7 +605,7 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
                 let params = parse_parameter_list(item)?;
                 parameters.extend(params);
             }
-            Rule::function_body | Rule::function_body_in_block => {
+            Rule::function_body_in_block => {
                 // function_body = (setup_block ~ indented_block) | indented_block | empty
                 let mut found_body = false;
                 let mut _found_setup = false;
@@ -1725,72 +1714,6 @@ mod tests {
             Err(_) => {
                 // Grammar rejected it - also fine
             }
-        }
-    }
-
-    #[test]
-    fn debug_parse_tree_for_function_in_block() {
-        let source = "integer add()\n\tinput\n\t\tinteger a\n\t\tinteger b\n\t\n\treturn a + b";
-        let mut pairs = <CleanParser as Parser<Rule>>::parse(Rule::function_in_block, source)
-            .expect("test: parse should succeed");
-        let pair = pairs.next().expect("test: pair should exist");
-        println!("Parse tree: {:#?}", pair);
-    }
-
-    #[test]
-    fn debug_iterate_with_nested_if_parsing() {
-        // This test traces how iterate with nested if is parsed - matches debug_iterate_with_if.cln
-        let source = "start()\n\tlist<integer> nums = [5, 15, 25]\n\tprint(\"Before iterate\")\n\titerate item in nums\n\t\tif item > 10\n\t\t\tprint(\"Large\")\n\tprint(\"After iterate\")\n";
-
-        println!("=== Input with explicit characters ===");
-        for c in source.chars() {
-            if c == '\t' {
-                print!("→");
-            } else if c == '\n' {
-                println!("↵");
-            } else {
-                print!("{}", c);
-            }
-        }
-        println!("\n");
-
-        let result = <CleanParser as Parser<Rule>>::parse(Rule::program, source);
-        match result {
-            Ok(pairs) => {
-                println!("=== Parse tree ===");
-                for pair in pairs {
-                    print_pair(&pair, 0);
-                }
-            }
-            Err(e) => {
-                println!("Parse error: {}", e);
-            }
-        }
-    }
-
-    fn print_pair(pair: &pest::iterators::Pair<Rule>, indent: usize) {
-        let rule = pair.as_rule();
-        let span = pair.as_str();
-        let indent_str = "  ".repeat(indent);
-
-        // Show rule and first 80 chars of content
-        let preview: String = span
-            .chars()
-            .take(80)
-            .map(|c| {
-                if c == '\n' {
-                    '↵'
-                } else if c == '\t' {
-                    '→'
-                } else {
-                    c
-                }
-            })
-            .collect();
-        println!("{}{:?}: '{}'", indent_str, rule, preview);
-
-        for inner in pair.clone().into_inner() {
-            print_pair(&inner, indent + 1);
         }
     }
 }

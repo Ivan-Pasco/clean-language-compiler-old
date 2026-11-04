@@ -1102,12 +1102,12 @@ impl MirCodeGenerator<'_> {
         sorted_globals.sort_by_key(|(symbol_id, _)| symbol_id.0);
 
         // State variable globals start at WASM global index
-        // RESERVED_GLOBAL_COUNT (currently 6):
+        // RESERVED_GLOBAL_COUNT (currently 5):
         //   global 0 = __heap_ptr
-        //   global 1-3 = __json_get cache (src ptr, parsed ptr, heap floor)
-        //   global 4-5 = transient arena (pool base, bump pointer)
-        // See utilities.rs's global-section emission, the json.get shim
-        // in src/stdlib/json_class.rs, and transient_arena.rs for layout.
+        //   global 1-2 = transient arena (pool base, bump pointer)
+        //   global 3-4 = carryover slot pools
+        // See utilities.rs's global-section emission, transient_arena.rs
+        // and carryover.rs for layout.
         let reserved = crate::codegen::native_stdlib::RESERVED_GLOBAL_COUNT;
         for (next_global_index, (symbol_id, global)) in (reserved..).zip(sorted_globals) {
             self.state_global_indices

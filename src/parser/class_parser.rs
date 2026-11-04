@@ -9,7 +9,6 @@ use pest::iterators::Pair;
 
 pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
     let mut name = String::new();
-    let mut type_parameters = Vec::new();
     let mut description = None;
     let mut base_class = None;
     let mut base_class_type_args = Vec::new();
@@ -22,13 +21,6 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
     for item in pair.into_inner() {
         match item.as_rule() {
             Rule::identifier => name = item.as_str().to_string(),
-            Rule::type_parameters => {
-                for param in item.into_inner() {
-                    if param.as_rule() == Rule::type_parameter {
-                        type_parameters.push(param.as_str().to_string());
-                    }
-                }
-            }
             Rule::indented_class_body => {
                 for class_item in item.into_inner() {
                     // The class_item is actually class_body_item, we need to look at its inner content
@@ -134,7 +126,8 @@ pub fn parse_class(pair: Pair<Rule>) -> Result<Class, CompilerError> {
 
     Ok(Class {
         name,
-        type_parameters,
+        // The legacy grammar has no generic class header.
+        type_parameters: Vec::new(),
         description,
         base_class,
         base_class_type_args,

@@ -258,9 +258,9 @@ impl MultiFileCompiler {
                                 let ep_canonical = ep.canonicalize().unwrap_or_else(|_| ep.clone());
                                 (Some(info), src, ep_canonical)
                             }
-                            Err(_) => {
-                                // Entry file not found — fall back to compiling the manifest itself
-                                (Some(info), manifest_source, manifest_canonical)
+                            Err(e) => {
+                                let msg = format!("Package entry {}: {}", ep.display(), e);
+                                return Err(vec![CompilerError::io_error(msg, None, None)]);
                             }
                         }
                     }

@@ -12,7 +12,9 @@ impl MirBuilder {
     pub(super) fn get_any_type_tag(concrete_type: &ConcreteType) -> AnyTypeTag {
         match concrete_type {
             ConcreteType::Integer => AnyTypeTag::Integer,
-            ConcreteType::Number => AnyTypeTag::Number,
+            ConcreteType::Number | ConcreteType::NumberSized { .. } => AnyTypeTag::Number,
+            // Boxed as a `number` (see `emit_box_value`).
+            ConcreteType::IntegerSized { bits: 64, .. } => AnyTypeTag::Number,
             ConcreteType::Boolean => AnyTypeTag::Boolean,
             ConcreteType::String => AnyTypeTag::String,
             ConcreteType::Array(_) | ConcreteType::Matrix(_) => AnyTypeTag::List,
@@ -26,11 +28,11 @@ impl MirBuilder {
     /// Box a value to any type - emits a BoxAny instruction.
     ///
     /// For native Clean collections (`List<T>` / `Pairs<K,V>`) the raw value
-    /// pointer can't be stored directly in the box: `__json_stringify_value`
-    /// and friends expect their `List`-tagged and `Object`-tagged payloads
-    /// to follow the JSON-tree layout (`[count][boxed_elem]…` /
-    /// `[count][key,boxed_val]…`), but Clean's typed-collection heap stores
-    /// raw elements at a different stride. Normalize the value at box time
+    /// pointer can't be stored directly in the box: `List`-tagged and
+    /// `Object`-tagged payloads follow the JSON-tree layout
+    /// (`[count][boxed_elem]…` / `[count][key,boxed_val]…`,
+    /// BOXED_ANY_ABI §3), but Clean's typed-collection heap stores raw
+    /// elements at a different stride. Normalize the value at box time
     /// by routing it through `__json_from_cln_list` / `__json_from_cln_pairs`
     /// — the box's payload is then a real JSON tree node, and every Any
     /// consumer (json.encode, json.dataToText, embedded `any` object
@@ -51,13 +53,13 @@ impl MirBuilder {
         let normalized_value_id = match source_type {
             ConcreteType::Array(elem_type) => {
                 let elem_tag = Self::get_any_type_tag(elem_type) as i64;
-                self.emit_cln_collection_to_json(
-                    context,
-                    value_id,
-                    "__json_from_cln_list",
-                    elem_tag,
-                    location,
-                )
+                let converter =
+                    if matches!(**elem_type, ConcreteType::IntegerSized { bits: 64, .. }) {
+                        "__json_from_cln_list_i64"
+                    } else {
+                        "__json_from_cln_list"
+                    };
+                self.emit_cln_collection_to_json(context, value_id, converter, elem_tag, location)
             }
             ConcreteType::Pairs(_key_type, val_type) => {
                 let val_tag = Self::get_any_type_tag(val_type) as i64;
@@ -127,12 +129,237 @@ impl MirBuilder {
         result_id
     }
 
+    /// Lower a `json.*` call to its Layer 2 host bridge
+    /// (foundation/spec/stdlib-reference.md §8):
+    ///
+    /// | Call | Bridge |
+    /// |------|--------|
+    /// | `json.textToData` / `json.decode` | `_json_decode_v2`, raising on the 0 sentinel |
+    /// | `json.tryTextToData` | `_json_decode_v2`, null on the 0 sentinel |
+    /// | `json.dataToText` / `json.encode` | `_json_encode_v2` |
+    /// | `json.prettyDataToText` | `_json_encode_pretty_v2` |
+    /// | `json.get` | `_json_get` |
+    ///
+    /// Values handed to the encoders and to `json.get` are boxed to `any`
+    /// first. Returns `None` when the call is not one of these.
+    pub(super) fn build_json_bridge_call(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        name: Option<&str>,
+        arguments: &[TastExpression],
+        location: &SourceLocation,
+    ) -> Result<Option<ValueId>, Vec<CompilerError>> {
+        let Some(name) = name else {
+            return Ok(None);
+        };
+        let text_type = MirType::Ptr(Box::new(MirType::U8));
+        match (name, arguments) {
+            ("json.textToData" | "json.decode" | "json.tryTextToData", [text]) => {
+                let text_id = self.build_expression(context, text)?;
+                // The result is a boxed `any` (or the 0 sentinel): typing it
+                // `any` makes `== null`, printing and string conversion
+                // dispatch on the box's tag instead of reading it as text.
+                let raw_id = self.emit_named_call(
+                    context,
+                    "_json_decode_v2",
+                    vec![MirOperand::Value(text_id)],
+                    MirType::Any,
+                    location,
+                );
+                // Sentinel handling (D5): the bridge returns 0 on a parse
+                // failure. json.tryTextToData substitutes a null; the other
+                // decoders raise.
+                let checked_id = if name == "json.tryTextToData" {
+                    self.emit_json_try_decode_v2_wrapper(context, raw_id, location)
+                } else {
+                    self.emit_json_decode_v2_or_raise_wrapper(context, raw_id, location)
+                };
+                Ok(Some(checked_id))
+            }
+            ("json.dataToText" | "json.encode" | "json.prettyDataToText", [value]) => {
+                let boxed_id = self.build_json_value(context, value, location)?;
+                let bridge = if name == "json.prettyDataToText" {
+                    "_json_encode_pretty_v2"
+                } else {
+                    "_json_encode_v2"
+                };
+                Ok(Some(self.emit_named_call(
+                    context,
+                    bridge,
+                    vec![MirOperand::Value(boxed_id)],
+                    text_type,
+                    location,
+                )))
+            }
+            ("json.get", [source, path]) => {
+                let source_id = self.build_json_value(context, source, location)?;
+                let path_id = self.build_expression(context, path)?;
+                Ok(Some(self.emit_named_call(
+                    context,
+                    "_json_get",
+                    vec![MirOperand::Value(source_id), MirOperand::Value(path_id)],
+                    MirType::Any,
+                    location,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Lower a built-in `db.*` call (stdlib-reference §9) to the canonical
+    /// bridge import the function registry lists it under (e.g. `db.query`
+    /// → `_db_query`). Returns `None` for any other call.
+    pub(super) fn build_db_bridge_call(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        name: Option<&str>,
+        arguments: &[TastExpression],
+        result_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Result<Option<ValueId>, Vec<CompilerError>> {
+        const DB_BUILTINS: &[&str] = &[
+            "db.query",
+            "db.execute",
+            "db.begin",
+            "db.commit",
+            "db.rollback",
+        ];
+        let Some(name) = name.filter(|n| DB_BUILTINS.contains(n)) else {
+            return Ok(None);
+        };
+        let Some(bridge) = crate::plugins::registry_loader::RegistryIndex::load()
+            .ok()
+            .and_then(|registry| registry.lookup(name).map(|f| f.name.clone()))
+        else {
+            return Ok(None);
+        };
+        let mut operands = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            operands.push(MirOperand::Value(self.build_expression(context, argument)?));
+        }
+        let mir_type = self.convert_concrete_type(result_type);
+        Ok(Some(self.emit_named_call(
+            context, &bridge, operands, mir_type, location,
+        )))
+    }
+
+    /// Evaluate `value` as a boxed-Any pointer for a JSON bridge. A class
+    /// instance becomes the JSON object of its fields (`__json_tree_Class`);
+    /// any other typed value is boxed (`emit_box_any`).
+    fn build_json_value(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value: &TastExpression,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        let value_id = self.build_expression(context, value)?;
+        if let Some(tree_fn) = self.class_json_tree_fn(context, &value.expr_type) {
+            return Ok(self.emit_class_json_tree(context, tree_fn, value_id, location));
+        }
+        Ok(match &value.expr_type {
+            ConcreteType::Any => value_id,
+            other => self.emit_box_any(context, value_id, other, location),
+        })
+    }
+
+    /// The `__json_tree_Class` builder for a class-typed value, if any.
+    pub(super) fn class_json_tree_fn(
+        &self,
+        context: &FunctionBuildContext,
+        value_type: &ConcreteType,
+    ) -> Option<SymbolId> {
+        let ConcreteType::Class { symbol_id, .. } = value_type else {
+            return None;
+        };
+        let class = context
+            .all_classes
+            .iter()
+            .find(|c| c.symbol_id == *symbol_id)?;
+        self.class_json_tree_ids.get(&class.name).copied()
+    }
+
+    /// Call a class's `__json_tree_Class` builder on `instance_id`; returns
+    /// the boxed JSON object.
+    fn emit_class_json_tree(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        tree_fn: SymbolId,
+        instance_id: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, MirType::Any, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Call {
+                    function: MirOperand::Function(tree_fn),
+                    arguments: vec![MirOperand::Value(instance_id)],
+                },
+                location: location.clone(),
+            },
+        );
+        result_id
+    }
+
+    /// The compact JSON text of a class instance: its `__json_tree_Class`
+    /// object encoded by `_json_encode_v2`. Used where a class instance is
+    /// passed for a string (bridge arguments, `later` calls).
+    pub(super) fn emit_class_json_text(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        tree_fn: SymbolId,
+        instance_id: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let tree_id = self.emit_class_json_tree(context, tree_fn, instance_id, location);
+        self.emit_named_call(
+            context,
+            "_json_encode_v2",
+            vec![MirOperand::Value(tree_id)],
+            MirType::Ptr(Box::new(MirType::I8)),
+            location,
+        )
+    }
+
+    /// Emit a call to the function or bridge named `name` into a fresh
+    /// temporary of type `result_type`.
+    fn emit_named_call(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        name: &str,
+        arguments: Vec<MirOperand>,
+        result_type: MirType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, result_type, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name: name.to_string(),
+                        symbol_id: SymbolId(0),
+                    },
+                    arguments,
+                },
+                location: location.clone(),
+            },
+        );
+        result_id
+    }
+
     /// Emit a Call to the `__json_try_decode_v2` WASM wrapper. The wrapper
     /// null-checks its argument and, on 0 (parse failure per D5), substitutes
     /// a freshly-allocated null-tag boxed-Any pointer; otherwise it returns
-    /// the argument unchanged. Used by `json.tryTextToData` under
-    /// `--enable-json-bridge` to translate the raw sentinel into the null
-    /// tag the surrounding `json.dataToText`/etc. expect.
+    /// the argument unchanged. Used by `json.tryTextToData` to translate the
+    /// raw sentinel into the null tag the surrounding `json.dataToText`/etc.
+    /// expect.
     pub(super) fn emit_json_try_decode_v2_wrapper(
         &mut self,
         context: &mut FunctionBuildContext,
@@ -141,12 +368,7 @@ impl MirBuilder {
     ) -> ValueId {
         let result_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
-        self.register_temp_local(
-            context,
-            result_id,
-            MirType::Ptr(Box::new(MirType::U8)),
-            location.clone(),
-        );
+        self.register_temp_local(context, result_id, MirType::Any, location.clone());
 
         let instruction = MirInstruction {
             dest: Some(result_id),
@@ -167,8 +389,7 @@ impl MirBuilder {
     /// wrapper null-checks its argument and, on 0 (parse failure per D5),
     /// traps with unreachable (the runtime signals a parse error to the
     /// host); otherwise it returns the argument unchanged. Used by
-    /// `json.textToData` under `--enable-json-bridge` per D5's raise
-    /// semantics.
+    /// `json.textToData` per D5's raise semantics.
     pub(super) fn emit_json_decode_v2_or_raise_wrapper(
         &mut self,
         context: &mut FunctionBuildContext,
@@ -177,12 +398,7 @@ impl MirBuilder {
     ) -> ValueId {
         let result_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
-        self.register_temp_local(
-            context,
-            result_id,
-            MirType::Ptr(Box::new(MirType::U8)),
-            location.clone(),
-        );
+        self.register_temp_local(context, result_id, MirType::Any, location.clone());
 
         let instruction = MirInstruction {
             dest: Some(result_id),
@@ -196,6 +412,72 @@ impl MirBuilder {
             location: location.clone(),
         };
         self.add_instruction(context, instruction);
+        result_id
+    }
+
+    /// Give a numeric value the MIR type of the memory slot it is stored into.
+    ///
+    /// A field store writes as many bytes as the stored value's type has, so
+    /// `p.r = 200` into an `integer:8u` field must store a one-byte value and
+    /// `a.total = 5` into an `integer:64` field an eight-byte one. Without the
+    /// conversion an `integer` value overwrote the next field or left half of
+    /// an `integer:64` field stale. The Copy into a local of the slot's type
+    /// performs the widening (`emit_numeric_coercion`).
+    pub(super) fn coerce_to_slot_type(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        slot_type: &MirType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let is_numeric = |t: &MirType| {
+            matches!(
+                t,
+                MirType::I8
+                    | MirType::I16
+                    | MirType::I32
+                    | MirType::I64
+                    | MirType::U8
+                    | MirType::U16
+                    | MirType::U32
+                    | MirType::U64
+                    | MirType::F64
+            )
+        };
+        let Some(value_type) = context
+            .function
+            .locals
+            .get(&value_id)
+            .map(|l| l.local_type.clone())
+        else {
+            return value_id;
+        };
+        // `number` only converts to and from `integer` and `integer:64`
+        // (type-system.md §5); narrower targets are rejected by the type checker.
+        let float_pair_unsupported = (value_type == MirType::F64 || *slot_type == MirType::F64)
+            && ![&value_type, slot_type]
+                .iter()
+                .all(|t| matches!(t, MirType::F64 | MirType::I32 | MirType::I64 | MirType::U64));
+        if value_type == *slot_type
+            || !is_numeric(&value_type)
+            || !is_numeric(slot_type)
+            || float_pair_unsupported
+        {
+            return value_id;
+        }
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, slot_type.clone(), location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Copy {
+                    source: MirOperand::Value(value_id),
+                },
+                location: location.clone(),
+            },
+        );
         result_id
     }
 
@@ -241,6 +523,28 @@ impl MirBuilder {
         target_type: &ConcreteType,
         location: &SourceLocation,
     ) -> ValueId {
+        // `integer:64` is boxed as a `number` (see `emit_box_value`): unbox
+        // the f64 and convert it to the 64-bit target.
+        if matches!(target_type, ConcreteType::IntegerSized { bits: 64, .. }) {
+            let number_id = self.emit_unbox_any(context, value_id, &ConcreteType::Number, location);
+            let result_id = ValueId(context.function.next_value_id);
+            context.function.next_value_id += 1;
+            let target_type = self.convert_concrete_type(target_type);
+            self.register_temp_local(context, result_id, target_type.clone(), location.clone());
+            self.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(result_id),
+                    operation: MirOperation::Cast {
+                        value: MirOperand::Value(number_id),
+                        target_type,
+                    },
+                    location: location.clone(),
+                },
+            );
+            return result_id;
+        }
+
         let result_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
 
@@ -337,7 +641,7 @@ impl MirBuilder {
     ) -> MirConstant {
         match literal {
             TastLiteral::Integer(i) => {
-                if Self::is_i64_target(expr_type) {
+                if Self::is_i64_literal(*i, expr_type) {
                     MirConstant::Integer64(*i)
                 } else {
                     MirConstant::Integer(*i)
@@ -362,8 +666,8 @@ impl MirBuilder {
         expr_type: &ConcreteType,
     ) -> MirType {
         match literal {
-            TastLiteral::Integer(_) => {
-                if Self::is_i64_target(expr_type) {
+            TastLiteral::Integer(i) => {
+                if Self::is_i64_literal(*i, expr_type) {
                     MirType::I64
                 } else {
                     MirType::I32 // Default integer type
@@ -375,6 +679,15 @@ impl MirBuilder {
             TastLiteral::Null => MirType::Ptr(Box::new(MirType::Void)),
             TastLiteral::Undefined => MirType::Void,
         }
+    }
+
+    /// True when an integer literal is emitted as an i64: its expression is
+    /// typed `integer:64`, or its value does not fit an i32. The second case
+    /// covers a literal whose type stayed the unsized `integer` next to an
+    /// `integer:64` operand or parameter (`a.total * 3000000000`,
+    /// `acc.add(3000000000)`): as an i32 constant it wrapped before widening.
+    fn is_i64_literal(value: i64, expr_type: &ConcreteType) -> bool {
+        Self::is_i64_target(expr_type) || i32::try_from(value).is_err()
     }
 
     /// True when the expression's inferred type indicates a 64-bit signed integer destination.

@@ -25,8 +25,10 @@ pub fn decode_handle_array(json: &str) -> Result<Vec<i32>> {
     raw.iter()
         .map(|v| {
             v.as_i64()
-                .ok_or_else(|| anyhow!("typed-emission: handle must be integer, got {:?}", v))
-                .map(|n| n as i32)
+                .and_then(|n| i32::try_from(n).ok())
+                .ok_or_else(|| {
+                    anyhow!("typed-emission: handle must be an i32 integer, got {:?}", v)
+                })
         })
         .collect()
 }
@@ -120,4 +122,18 @@ pub use ParamDesc as StateFieldDesc;
 
 pub fn decode_state_fields(json: &str) -> Result<Vec<StateFieldDesc>> {
     decode_param_array(json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A handle outside the i32 range used to be truncated (`as i32`) into
+    /// an unrelated, possibly live, handle instead of being rejected.
+    #[test]
+    fn handle_array_rejects_out_of_range_handles() {
+        assert_eq!(decode_handle_array("[1, 2]").unwrap(), vec![1, 2]);
+        assert!(decode_handle_array("[4294967297]").is_err());
+        assert!(decode_handle_array("[\"x\"]").is_err());
+    }
 }

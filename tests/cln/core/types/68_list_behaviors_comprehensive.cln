@@ -17,8 +17,8 @@ start:
 functions:
 	void testQueueBehavior()
 		print("=== Queue Behavior (FIFO - First In, First Out) ===")
-		list<string> tasks = []
-		tasks.type = "line"
+		// Fixed: was list<string> tasks = [] + tasks.type = "line", spec requires list<string>.line tasks = []
+		list<string>.line tasks = []
 
 		// Add tasks to the back
 		tasks.add("Task 1")
@@ -32,8 +32,8 @@ functions:
 
 	void testStackBehavior()
 		print("=== Stack Behavior (LIFO - Last In, First Out) ===")
-		list<string> actions = []
-		actions.type = "pile"
+		// Fixed: was list<string> actions = [] + actions.type = "pile", spec requires list<string>.pile actions = []
+		list<string>.pile actions = []
 
 		// Perform actions (add to top)
 		actions.add("Create file")
@@ -47,8 +47,8 @@ functions:
 
 	void testUniqueBehavior()
 		print("=== Unique Behavior (Set - No Duplicates) ===")
-		list<string> visitors = []
-		visitors.type = "unique"
+		// Fixed: was list<string> visitors = [] + visitors.type = "unique", spec requires list<string>.unique visitors = []
+		list<string>.unique visitors = []
 
 		// Add visitors (duplicates should be ignored)
 		visitors.add("Alice")     // Added
@@ -78,8 +78,8 @@ functions:
 		print("=== Combined Behaviors ===")
 
 		// Unique queue - FIFO with no duplicates
-		list<string> uniqueQueue = []
-		uniqueQueue.type = "line-unique"
+		// Fixed: was list<string> uniqueQueue = [] + uniqueQueue.type = "line-unique", spec requires list<string>.line.unique uniqueQueue = []
+		list<string>.line.unique uniqueQueue = []
 		uniqueQueue.add("First")
 		uniqueQueue.add("Second")
 		uniqueQueue.add("First")    // Should be ignored
@@ -87,8 +87,8 @@ functions:
 		print("Unique queue size: " + uniqueQueue.length().toString())
 
 		// Unique stack - LIFO with no duplicates
-		list<integer> uniqueStack = []
-		uniqueStack.type = "pile-unique"
+		// Fixed: was list<integer> uniqueStack = [] + uniqueStack.type = "pile-unique", spec requires list<integer>.unique.pile uniqueStack = []
+		list<integer>.unique.pile uniqueStack = []
 		uniqueStack.add(10)
 		uniqueStack.add(20)
 		uniqueStack.add(10)         // Should be ignored
@@ -97,21 +97,20 @@ functions:
 
 	void testBehaviorSwitching()
 		print("=== Dynamic Behavior Switching ===")
-		list<integer> dynamicList = [1]
+		// Fixed: was list<integer> dynamicList = [1] + dynamicList.type = "unique" then dynamicList.type = "pile" (runtime switching), spec requires behavior declared with the type: list<integer>.unique.pile dynamicList = [1]
+		list<integer>.unique.pile dynamicList = [1]
 
 		// Start as default list (already has 1)
 		dynamicList.add(2)
 		dynamicList.add(3)
 		print("Default list size: " + dynamicList.length().toString())
 
-		// Switch to unique behavior
-		dynamicList.type = "unique"
+		// Unique behavior comes from the declaration
 		dynamicList.add(3)          // Should be ignored (duplicate)
 		dynamicList.add(4)          // Should be added
 		print("After switching to unique: " + dynamicList.length().toString())
 
-		// Switch to stack behavior
-		dynamicList.type = "pile"
+		// Stack behavior comes from the declaration
 		dynamicList.add(5)
 		integer top = dynamicList.remove()  // Should get 5 (LIFO)
 		print("Removed from stack: " + top.toString())

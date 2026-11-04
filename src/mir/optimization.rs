@@ -510,8 +510,9 @@ impl DeadCodeEliminationPass {
             MirOperation::UnboxAnyToBoolean { value } => {
                 self.mark_operand_live(value, function);
             }
-            MirOperation::Store { .. } => {
-                // Store is handled separately in optimize_function
+            MirOperation::Store { destination, value } => {
+                self.mark_operand_live(destination, function);
+                self.mark_operand_live(value, function);
             }
             MirOperation::Select {
                 condition,
@@ -594,33 +595,13 @@ impl OptimizationPass for DeadCodeEliminationPass {
                 _ => {}
             }
 
-            // Instructions with side effects are live
+            // Instructions with side effects are live, with everything they read.
             for instruction in &block.instructions {
-                match &instruction.operation {
-                    MirOperation::Store { destination, value } => {
-                        // Store instructions are always live (side effect)
-                        if let Some(dest_id) = instruction.dest {
-                            self.mark_live(dest_id, function);
-                        }
-                        self.mark_operand_live(destination, function);
-                        self.mark_operand_live(value, function);
+                if has_side_effects(&instruction.operation) {
+                    if let Some(dest_id) = instruction.dest {
+                        self.mark_live(dest_id, function);
                     }
-                    MirOperation::GlobalStore { value, .. } => {
-                        // GlobalStore instructions are always live (side effect - modifies global state)
-                        if let Some(dest_id) = instruction.dest {
-                            self.mark_live(dest_id, function);
-                        }
-                        self.mark_operand_live(value, function);
-                    }
-                    MirOperation::Call { .. } => {
-                        // Function calls are always live (potential side effects)
-                        if let Some(dest_id) = instruction.dest {
-                            self.mark_live(dest_id, function);
-                        }
-                        // NOTE: Mark all operands (function and arguments) as live
-                        self.mark_operands_live(&instruction.operation, function);
-                    }
-                    _ => {}
+                    self.mark_operands_live(&instruction.operation, function);
                 }
             }
         }
@@ -644,6 +625,28 @@ impl OptimizationPass for DeadCodeEliminationPass {
 
     fn is_enabled(&self, config: &MirConfig) -> bool {
         config.dead_code_elimination
+    }
+}
+
+/// Whether executing `operation` can have an effect beyond producing its
+/// destination value, so it must stay even when that value is unused: memory
+/// and global writes, every kind of call (including dynamic capability
+/// dispatch and the async host calls), and a short-circuit `and`/`or` whose
+/// right-hand side contains one of those.
+fn has_side_effects(operation: &MirOperation) -> bool {
+    match operation {
+        MirOperation::Store { .. }
+        | MirOperation::GlobalStore { .. }
+        | MirOperation::Call { .. }
+        | MirOperation::CallCapability { .. }
+        | MirOperation::AsyncFireCall { .. }
+        | MirOperation::AsyncAwaitCall { .. } => true,
+        MirOperation::LogicalShortCircuit {
+            rhs_instructions, ..
+        } => rhs_instructions
+            .iter()
+            .any(|instruction| has_side_effects(&instruction.operation)),
+        _ => false,
     }
 }
 

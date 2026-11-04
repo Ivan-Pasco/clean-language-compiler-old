@@ -3,7 +3,7 @@ use super::get_location;
 use super::parser_impl::parse_validate_check_stmt;
 use super::type_parser::parse_type;
 use super::Rule;
-use crate::ast::{AssignmentTarget, Expression, ResetTarget, Statement};
+use crate::ast::{AssignmentTarget, ResetTarget, Statement};
 use crate::error::CompilerError;
 use pest::iterators::Pair;
 
@@ -176,117 +176,29 @@ fn parse_assignment_statement(
     let target_part = parts.next().expect("invariant: assignment target child");
     let value = parse_expression(parts.next().expect("invariant: assignment value child"))?;
 
-    // Check if this is an assignment_target with property access or array access
-    if target_part.as_rule() == Rule::assignment_target {
-        let target_parts: Vec<_> = target_part.clone().into_inner().collect();
+    // grammar.ebnf `assignment_target`: identifier, then an optional single
+    // index or a property path — the same targets the token parser builds.
+    let mut target_parts = target_part.into_inner();
+    let identifier = target_parts
+        .next()
+        .expect("invariant: assignment target identifier")
+        .as_str()
+        .to_string();
+    let rest: Vec<_> = target_parts.collect();
+    let target = match rest.first() {
+        None => AssignmentTarget::Variable(identifier),
+        Some(index) if index.as_rule() == Rule::additive_expression => AssignmentTarget::Index {
+            collection: identifier,
+            index: Box::new(parse_expression(index.clone())?),
+        },
+        Some(_) => AssignmentTarget::Property {
+            object: identifier,
+            path: rest.iter().map(|p| p.as_str().to_string()).collect(),
+        },
+    };
 
-        // If we have more than just an identifier (i.e., we have property access or array access)
-        if target_parts.len() > 1 {
-            let identifier = target_parts[0].as_str().to_string();
-
-            // Check if it's a property access (second part is an identifier)
-            // Lowered as a real field assignment (grammar.ebnf `assignment_target`);
-            // `Expression::PropertyAssignment` has no HIR lowering and the write
-            // was silently dropped.
-            if target_parts[1..]
-                .iter()
-                .all(|p| p.as_rule() == Rule::identifier)
-            {
-                let path = target_parts[1..]
-                    .iter()
-                    .map(|p| p.as_str().to_string())
-                    .collect();
-                return Ok(Statement::Assignment {
-                    target: AssignmentTarget::Property {
-                        object: identifier,
-                        path,
-                    },
-                    value,
-                    location: Some(ast_location),
-                });
-            }
-            // Check if it's an array access (second part is an expression for the index)
-            else if target_parts[1].as_rule() == Rule::additive_expression {
-                let index = parse_expression(target_parts[1].clone())?;
-
-                return Ok(Statement::Expression {
-                    expr: Expression::ListAssignment {
-                        list: Box::new(Expression::Variable(identifier)),
-                        index: Box::new(index),
-                        value: Box::new(value),
-                        location: ast_location.clone(),
-                    },
-                    location: Some(ast_location),
-                });
-            }
-        }
-    }
-
-    // Check if this is a property assignment (e.g., list.type = "line")
-    if target_part.as_rule() == Rule::property_access {
-        // Parse as property assignment expression
-        let property_expr = super::expression_parser::parse_property_access(target_part)?;
-        if let Expression::PropertyAccess {
-            object,
-            property,
-            location,
-        } = property_expr
-        {
-            if let Expression::Variable(name) = object.as_ref() {
-                return Ok(Statement::Assignment {
-                    target: AssignmentTarget::Property {
-                        object: name.clone(),
-                        path: vec![property],
-                    },
-                    value,
-                    location: Some(ast_location),
-                });
-            }
-            return Ok(Statement::Expression {
-                expr: Expression::PropertyAssignment {
-                    object,
-                    property,
-                    value: Box::new(value),
-                    location,
-                },
-                location: Some(ast_location),
-            });
-        }
-        // If we get here, something went wrong with property parsing
-        return Err(CompilerError::parse_error(
-            "Failed to parse property assignment".to_string(),
-            Some(ast_location),
-            Some("Property assignment parsing failed".to_string()),
-        ));
-    }
-
-    // Check if this is a list assignment (e.g., numbers[0] = 99)
-    if target_part.as_rule() == Rule::list_access {
-        // Parse as list assignment expression
-        let list_expr = super::expression_parser::parse_list_access(target_part)?;
-        if let Expression::ListAccess(list, index) = list_expr {
-            return Ok(Statement::Expression {
-                expr: Expression::ListAssignment {
-                    list,
-                    index,
-                    value: Box::new(value),
-                    location: ast_location.clone(),
-                },
-                location: Some(ast_location),
-            });
-        }
-        // If we get here, something went wrong with list access parsing
-        return Err(CompilerError::parse_error(
-            "Failed to parse list assignment".to_string(),
-            Some(ast_location),
-            Some("List assignment parsing failed".to_string()),
-        ));
-    }
-
-    // Regular variable assignment — foundation/spec/grammar.ebnf `assignment_target`
-    let target_str = target_part.as_str().trim().to_string();
     Ok(Statement::Assignment {
-        target: AssignmentTarget::Variable(target_str),
+        target,
         value,
         location: Some(ast_location),
     })
@@ -598,27 +510,25 @@ fn parse_standalone_on_error_statement(
     pair: Pair<Rule>,
     ast_location: crate::ast::SourceLocation,
 ) -> Result<Statement, CompilerError> {
-    let mut inner = pair.into_inner();
-
-    // Skip "onError" and ":" tokens
-    inner.next(); // "onError"
-    inner.next(); // ":"
-
-    // Parse the indented block
-    let block_pair = inner.next().ok_or_else(|| CompilerError::Syntax {
-        context: Box::new(crate::error::ErrorContext {
-            message: "Expected block after onError:".to_string(),
-            location: Some(ast_location.clone()),
-            help: Some("Add indented statements after onError:".to_string()),
-            error_type: crate::error::ErrorType::Syntax,
-            suggestions: vec!["Add indented statements after onError:".to_string()],
-            source_snippet: None,
-            stack_trace: Vec::new(),
-            severity: crate::error::ErrorSeverity::Error,
-            error_code: Some("P001".to_string()),
-            related_errors: Vec::new(),
-        }),
-    })?;
+    // `"onError" ~ ":" ~ indented_block`: the literals produce no pairs, so the
+    // block is the only child.
+    let block_pair = pair
+        .into_inner()
+        .next()
+        .ok_or_else(|| CompilerError::Syntax {
+            context: Box::new(crate::error::ErrorContext {
+                message: "Expected block after onError:".to_string(),
+                location: Some(ast_location.clone()),
+                help: Some("Add indented statements after onError:".to_string()),
+                error_type: crate::error::ErrorType::Syntax,
+                suggestions: vec!["Add indented statements after onError:".to_string()],
+                source_snippet: None,
+                stack_trace: Vec::new(),
+                severity: crate::error::ErrorSeverity::Error,
+                error_code: Some("P001".to_string()),
+                related_errors: Vec::new(),
+            }),
+        })?;
 
     let mut block = Vec::new();
     parse_indented_block_statements(block_pair, &mut block)?;

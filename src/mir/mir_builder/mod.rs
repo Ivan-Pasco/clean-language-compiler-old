@@ -13,12 +13,11 @@ use crate::mir::mir_types::{
     MirParameter, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::symbol_table::{
-    SYM_BUILTIN_INT_TO_STRING, SYM_BUILTIN_JSON_QUOTE_STRING, SYM_BUILTIN_LIST_ADD,
-    SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH,
+    SYM_BUILTIN_LIST_ADD, SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ADD_I64,
+    SYM_BUILTIN_LIST_ADD_STRING, SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH,
     SYM_BUILTIN_LIST_PUSH_F64, SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64,
-    SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_NUMBER_TO_STRING, SYM_BUILTIN_STRING_CONCAT,
-    SYM_BUILTIN_STRING_CONCAT_TRANSIENT, SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE,
-    SYM_WATCH_HANDLER_BASE,
+    SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_STRING_CONCAT, SYM_BUILTIN_STRING_CONCAT_TRANSIENT,
+    SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE, SYM_WATCH_HANDLER_BASE,
 };
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
@@ -131,7 +130,7 @@ pub struct MirBuilder {
     pub(super) next_computed_symbol_id: usize,
 
     /// Maps class name → synthetic SymbolId for its JSON serializer function.
-    pub(super) class_serializer_ids: HashMap<String, SymbolId>,
+    pub(super) class_json_tree_ids: HashMap<String, SymbolId>,
 
     /// Counter for synthetic SymbolIds for class serializer functions (starts at 5000).
     pub(super) next_serializer_symbol_id: usize,
@@ -260,7 +259,7 @@ impl MirBuilder {
             next_watch_symbol_id: SYM_WATCH_HANDLER_BASE,
             computed_properties: HashMap::new(),
             next_computed_symbol_id: SYM_COMPUTED_GETTER_BASE,
-            class_serializer_ids: HashMap::new(),
+            class_json_tree_ids: HashMap::new(),
             next_serializer_symbol_id: SYM_CLASS_SERIALIZER_BASE,
             class_ids: HashMap::new(),
             next_class_id: 1, // 0 reserved for "unset"
@@ -289,7 +288,7 @@ impl MirBuilder {
         for class in &tast.classes {
             let sym_id = SymbolId(self.next_serializer_symbol_id);
             self.next_serializer_symbol_id += 1;
-            self.class_serializer_ids.insert(class.name.clone(), sym_id);
+            self.class_json_tree_ids.insert(class.name.clone(), sym_id);
 
             let class_id = self.next_class_id;
             self.next_class_id += 1;
@@ -307,6 +306,18 @@ impl MirBuilder {
 
         // Store state rules and guards for runtime enforcement
         if let Some(ref state_block) = tast.state {
+            // Loads and stores of a state variable must use the type of its
+            // global (built from the same declaration below), so `print(name)`
+            // on a `string` state prints the text, not the pointer.
+            for decl in &state_block.declarations {
+                self.state_variables.insert(
+                    decl.name.clone(),
+                    (
+                        decl.symbol_id,
+                        MirType::from_concrete_type(&decl.state_type),
+                    ),
+                );
+            }
             self.state_rules = state_block.rules.clone();
             if !self.state_rules.is_empty() {
                 debug!(
@@ -531,17 +542,12 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SYM_BUILTIN_LIST_ADD_F64, "list.add_f64".to_string());
-        // Synthetic symbols for class JSON serialization helpers
         mir_program
             .symbol_name_map
-            .insert(SYM_BUILTIN_INT_TO_STRING, "int_to_string".to_string());
+            .insert(SYM_BUILTIN_LIST_ADD_I64, "list.add_i64".to_string());
         mir_program
             .symbol_name_map
-            .insert(SYM_BUILTIN_NUMBER_TO_STRING, "number_to_string".to_string());
-        mir_program.symbol_name_map.insert(
-            SYM_BUILTIN_JSON_QUOTE_STRING,
-            "__json_quote_string".to_string(),
-        );
+            .insert(SYM_BUILTIN_LIST_ADD_STRING, "list.add.string".to_string());
 
         // NOTE: Add common name variations for builtin functions
         // Check symbol_name_map for variations and add correct WASM names
@@ -649,13 +655,14 @@ impl MirBuilder {
             return Err(class_errors);
         }
 
-        // Generate JSON serializer functions for all classes.
-        // These synthetic `__serialize_ClassName(this: i32) -> i32` functions are emitted
-        // for every class so that `json.encode(classInstance)` can delegate to them.
+        // Generate the JSON object builder of every class.
+        // These synthetic `__json_tree_ClassName(this: i32) -> any` functions are emitted
+        // for every class so that `json.encode(classInstance)` and class arguments
+        // passed for strings can hand the object to the JSON bridges.
         let all_classes_snapshot = self.all_classes.clone();
         for class in &all_classes_snapshot {
-            if let Some(&sym_id) = self.class_serializer_ids.get(&class.name) {
-                let mir_fn = self.build_class_serializer(sym_id, class, &all_classes_snapshot);
+            if let Some(&sym_id) = self.class_json_tree_ids.get(&class.name) {
+                let mir_fn = self.build_class_json_tree(sym_id, class, &all_classes_snapshot);
                 debug!(
                     class_name = %class.name,
                     symbol_id = sym_id.0,
@@ -875,6 +882,9 @@ impl MirBuilder {
                 // Note: MirConstant::Integer takes i64, codegen handles i32 truncation
                 let initializer = match (&const_val, &mir_type) {
                     (ConstValue::Integer(n), MirType::I32) => Some(MirConstant::Integer(*n)),
+                    (ConstValue::Integer(n), MirType::I64 | MirType::U64) => {
+                        Some(MirConstant::Integer64(*n))
+                    }
                     (ConstValue::Integer(n), MirType::F64) => Some(MirConstant::Float(*n as f64)),
                     (ConstValue::Float(f), MirType::F64) => Some(MirConstant::Float(*f)),
                     (ConstValue::Float(f), MirType::I32) => Some(MirConstant::Integer(*f as i64)),
@@ -891,6 +901,9 @@ impl MirBuilder {
                         Some(MirConstant::Integer(0))
                     }
                     (ConstValue::NotConst, MirType::F64) => Some(MirConstant::Float(0.0)),
+                    (ConstValue::NotConst, MirType::I64 | MirType::U64) => {
+                        Some(MirConstant::Integer64(0))
+                    }
                     // Default case (strings as Ptr, etc)
                     _ => Some(MirConstant::Integer(0)),
                 };

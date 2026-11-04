@@ -51,20 +51,17 @@ impl OutputConfig {
     }
 
     fn error_to_json(&self, error: &CompilerError) -> serde_json::Value {
-        let (severity, message, location, code) = match error {
-            CompilerError::Syntax { context } => (
-                "error",
+        self.diagnostic_to_json(error, "error")
+    }
+
+    fn diagnostic_to_json(&self, error: &CompilerError, severity: &str) -> serde_json::Value {
+        let (message, location, code) = match error.context() {
+            Some(context) => (
                 context.message.clone(),
                 context.location.clone(),
                 context.error_code.clone(),
             ),
-            CompilerError::Type { context } => (
-                "error",
-                context.message.clone(),
-                context.location.clone(),
-                context.error_code.clone(),
-            ),
-            _ => ("error", error.to_string(), None, None),
+            None => (error.to_string(), None, None),
         };
 
         let file = location.as_ref().map(|l| l.file.as_str()).unwrap_or("");
@@ -236,19 +233,6 @@ enum Commands {
         /// See `foundation/spec/plugins/plugin-contract.md` §11.
         #[arg(long = "plugin-override", value_name = "NAME=PATH")]
         plugin_override: Vec<String>,
-
-        /// Fall back to the pre-Delivery-2 pure-WASM JSON stdlib path
-        /// (legacy). Use during Delivery-2 soak if the bridge path
-        /// misbehaves in production. This flag will be removed in [P5].
-        ///
-        /// Default (flag unset): dispatch json.textToData /
-        /// json.tryTextToData / json.dataToText / json.prettyDataToText
-        /// through the Layer 2 host bridge (`_json_decode_v2`,
-        /// `_json_encode_v2`, `_json_encode_pretty_v2`).
-        ///
-        /// See `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`.
-        #[arg(long)]
-        enable_legacy_json_wasm: bool,
     },
     /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
     Test {
@@ -551,17 +535,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // when the default flips in Phase D.
             no_lint: _,
             plugin_override,
-            enable_legacy_json_wasm,
         } => {
-            // Publish the JSON stdlib dispatch selector on the current
-            // thread. As of 0.33.139 / [P4c] the default is bridge (ON);
-            // `--enable-legacy-json-wasm` opts out to the pre-Delivery-2
-            // pure-WASM path in src/stdlib/json_class.rs. Reset after the
-            // call so the flag doesn't leak into downstream compiles
-            // sharing this thread. See
-            // foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md.
-            clean_language_compiler::set_enable_json_bridge_override(!enable_legacy_json_wasm);
-            let compile_result = handle_compile(
+            handle_compile(
                 input,
                 output,
                 opt_level,
@@ -574,9 +549,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 plugin_override,
                 &output_config,
             )
-            .await;
-            clean_language_compiler::set_enable_json_bridge_override(true);
-            compile_result?
+            .await?
         }
         Commands::Test { dirs, files } => handle_test(args.verbose > 0, dirs, files).await?,
         Commands::SimpleTest {} => handle_simple_test(args.verbose > 0).await?,
@@ -889,10 +862,19 @@ async fn handle_watch(
                             "functions": result.function_count,
                             "types": result.type_count,
                             "duration_ms": duration_ms,
-                            "diagnostics": []
+                            "diagnostics": result
+                                .diagnostics
+                                .iter()
+                                .map(|w| output_config.diagnostic_to_json(w, "warning"))
+                                .collect::<Vec<_>>()
                         })
                     );
                 } else if !output_config.quiet {
+                    for warning in &result.diagnostics {
+                        if let Some(text) = clean_language_compiler::render_warning(warning) {
+                            eprintln!("{text}");
+                        }
+                    }
                     let green = if output_config.use_colors {
                         "\x1b[32m"
                     } else {
@@ -1207,13 +1189,22 @@ async fn handle_check(
                     "functions": result.function_count,
                     "types": result.type_count,
                     "duration_ms": duration.as_millis() as u64,
-                    "diagnostics": []
+                    "diagnostics": result
+                        .diagnostics
+                        .iter()
+                        .map(|w| output_config.diagnostic_to_json(w, "warning"))
+                        .collect::<Vec<_>>()
                 });
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&json).unwrap_or_default()
                 );
             } else if !output_config.quiet {
+                for warning in &result.diagnostics {
+                    if let Some(text) = clean_language_compiler::render_warning(warning) {
+                        eprintln!("{text}");
+                    }
+                }
                 let green = if output_config.use_colors {
                     "\x1b[32m"
                 } else {

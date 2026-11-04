@@ -14,6 +14,13 @@ mod tests {
         }
 
         #[test]
+        fn test_token_parser_doesnt_panic_on_random_input(s in "[\\x20-\\x7E\\t\\n]*") {
+            // The token-driven parser (source files, LSP, `cln check`) must
+            // report errors, never panic.
+            let _ = crate::parse_to_ast(&s, "proptest.cln");
+        }
+
+        #[test]
         fn test_empty_and_whitespace_only(s in "\\s*") {
             // Whitespace-only inputs should either parse successfully or fail gracefully
             let result = CleanParser::parse_program(&s);

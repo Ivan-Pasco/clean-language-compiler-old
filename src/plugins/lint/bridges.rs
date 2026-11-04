@@ -11,7 +11,7 @@
 ///   - Fetching the arena from `PluginState.lint_arena`
 ///   - Writing the returned JSON back into plugin memory as an LP string
 ///
-/// The linker is built by `WasmPluginAdapter::build_lint_linker` and driven by
+/// The linker is built by `WasmPluginAdapter::lint_linker` and driven by
 /// `call_lint_project`.
 use anyhow::Result;
 use wasmtime::{Caller, Linker};
@@ -41,7 +41,7 @@ fn arena_or_error(caller: &mut Caller<'_, PluginState>) -> Result<i32, i32> {
 
 /// Register the 4 lint accessor bridges on the supplied linker.
 ///
-/// Called by `WasmPluginAdapter::build_lint_linker`. The linker is separate
+/// Called by `WasmPluginAdapter::lint_linker`. The linker is separate
 /// from the v1 / typed-emission linkers so a lint call gets exactly the
 /// lint surface plus stdlib.
 pub fn register_lint_bridges(linker: &mut Linker<PluginState>) -> Result<()> {

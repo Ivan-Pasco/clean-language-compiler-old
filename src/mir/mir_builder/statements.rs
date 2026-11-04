@@ -611,6 +611,20 @@ impl MirBuilder {
                         };
                         self.add_instruction(context, gep_instruction);
 
+                        // Store with the width of the field, not of the value.
+                        let declared_type = object_class_symbol.and_then(|class_symbol| {
+                            self.field_declared_type(context, class_symbol, property_symbol)
+                        });
+                        let field_mir_type = self.convert_concrete_type(
+                            declared_type.as_ref().unwrap_or(&target.expr_type),
+                        );
+                        let final_value_id = self.coerce_to_slot_type(
+                            context,
+                            final_value_id,
+                            &field_mir_type,
+                            &target.location,
+                        );
+
                         // Generate Store instruction to write the value to the field
                         let store_instruction = MirInstruction {
                             dest: None, // Store doesn't produce a value
@@ -628,12 +642,73 @@ impl MirBuilder {
                         }
                     }
                     TastExpressionKind::ArrayAccess { array, index } => {
-                        // Handle array index assignments like arr[i] = value
-                        let _array_value = self.build_expression(context, array)?;
-                        let _index_value = self.build_expression(context, index)?;
-
-                        // Array element assignment handled at runtime via list_set
-                        tracing::warn!("Array index assignment not fully implemented");
+                        // `list[i] = v` is `list.set(i, v)` and `map[k] = v` is
+                        // `map.set(k, v)` (07-statements.md "List element
+                        // assignment"). Both were previously evaluated and then
+                        // dropped, so the element never changed.
+                        let array_id = self.build_expression(context, array)?;
+                        let index_id = self.build_expression(context, index)?;
+                        match &array.expr_type {
+                            ConcreteType::Array(element_type) => {
+                                let element_type = (**element_type).clone();
+                                let value_id = self.unbox_any_argument(
+                                    context,
+                                    value_id,
+                                    &value.expr_type,
+                                    Some(&element_type),
+                                    location,
+                                );
+                                let value_id = self.coerce_list_element_arg(
+                                    context,
+                                    value_id,
+                                    &element_type,
+                                    location,
+                                );
+                                let function_name = Self::list_method_variant("set", &element_type)
+                                    .expect("list.set has a variant for every element type");
+                                self.add_instruction(
+                                    context,
+                                    MirInstruction {
+                                        dest: None,
+                                        operation: MirOperation::Call {
+                                            function: MirOperand::NamedFunction {
+                                                name: function_name,
+                                                symbol_id: SymbolId(0),
+                                            },
+                                            arguments: vec![
+                                                MirOperand::Value(array_id),
+                                                MirOperand::Value(index_id),
+                                                MirOperand::Value(value_id),
+                                            ],
+                                        },
+                                        location: location.clone(),
+                                    },
+                                );
+                            }
+                            ConcreteType::Pairs(_, value_type) => {
+                                let value_type = (**value_type).clone();
+                                let value_id = self.unbox_any_argument(
+                                    context,
+                                    value_id,
+                                    &value.expr_type,
+                                    Some(&value_type),
+                                    location,
+                                );
+                                self.emit_pairs_set(
+                                    context, array, array_id, index_id, value_id, location,
+                                )?;
+                            }
+                            other => {
+                                return Err(vec![CompilerError::validation_error(
+                                    format!(
+                                        "Index assignment is not supported on a value of type {:?}; \
+                                         only list and pairs elements can be assigned",
+                                        other
+                                    ),
+                                    target.location.clone(),
+                                )]);
+                            }
+                        }
                     }
                     _ => {
                         // Handle any other complex assignment targets
@@ -861,121 +936,14 @@ impl MirBuilder {
                 // Build the expression to print
                 let value_id = self.build_expression(context, expression)?;
 
-                // AUTO-CONVERSION: Convert non-string types to string before printing
-                use crate::typechecker::tast::ConcreteType;
-                let string_value_id = match &expression.expr_type {
-                    ConcreteType::String => {
-                        // Already a string, use directly
-                        value_id
-                    }
-                    ConcreteType::Integer => {
-                        // Convert integer to string using int_to_string
-                        let converted_id = ValueId(context.function.next_value_id);
-                        context.function.next_value_id += 1;
-
-                        // Register the converted_id as Ptr(U8) — int_to_string returns a string
-                        // pointer, not an integer. Using I32 here causes load_string_argument_for_print
-                        // to call int_to_string AGAIN on the pointer address, producing garbage output.
-                        self.register_temp_local(
-                            context,
-                            converted_id,
-                            MirType::Ptr(Box::new(MirType::U8)),
-                            location.clone(),
-                        );
-
-                        let symbol_id = self
-                            .symbol_table
-                            .lookup_symbol("int_to_string")
-                            .unwrap_or_else(|| {
-                                warn!(
-                                    "int_to_string not found in symbol table, using SymbolId(166)"
-                                );
-                                SymbolId(166)
-                            });
-
-                        let conversion_instruction = MirInstruction {
-                            dest: Some(converted_id),
-                            operation: MirOperation::Call {
-                                function: MirOperand::Function(symbol_id),
-                                arguments: vec![MirOperand::Value(value_id)],
-                            },
-                            location: location.clone(),
-                        };
-                        self.add_instruction(context, conversion_instruction);
-                        converted_id
-                    }
-                    ConcreteType::Number => {
-                        // Convert float to string using float_to_string
-                        let converted_id = ValueId(context.function.next_value_id);
-                        context.function.next_value_id += 1;
-
-                        // Register as Ptr(U8) - float_to_string returns a string pointer
-                        self.register_temp_local(
-                            context,
-                            converted_id,
-                            MirType::Ptr(Box::new(MirType::U8)),
-                            location.clone(),
-                        );
-
-                        let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
-                            .unwrap_or_else(|| {
-                                warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                                SymbolId(167)
-                            });
-
-                        let conversion_instruction = MirInstruction {
-                            dest: Some(converted_id),
-                            operation: MirOperation::Call {
-                                function: MirOperand::Function(symbol_id),
-                                arguments: vec![MirOperand::Value(value_id)],
-                            },
-                            location: location.clone(),
-                        };
-                        self.add_instruction(context, conversion_instruction);
-                        converted_id
-                    }
-                    ConcreteType::Boolean => {
-                        // Convert boolean to string using bool_to_string
-                        let converted_id = ValueId(context.function.next_value_id);
-                        context.function.next_value_id += 1;
-
-                        // Register the converted_id as Ptr(U8) — bool_to_string returns a string
-                        // pointer, not an integer. Using I32 here causes load_string_argument_for_print
-                        // to call int_to_string on the pointer address, producing garbage output.
-                        self.register_temp_local(
-                            context,
-                            converted_id,
-                            MirType::Ptr(Box::new(MirType::U8)),
-                            location.clone(),
-                        );
-
-                        let symbol_id = self
-                            .symbol_table
-                            .lookup_symbol("bool_to_string")
-                            .unwrap_or_else(|| {
-                                warn!(
-                                    "bool_to_string not found in symbol table, using SymbolId(165)"
-                                );
-                                SymbolId(165)
-                            });
-
-                        let conversion_instruction = MirInstruction {
-                            dest: Some(converted_id),
-                            operation: MirOperation::Call {
-                                function: MirOperand::Function(symbol_id),
-                                arguments: vec![MirOperand::Value(value_id)],
-                            },
-                            location: location.clone(),
-                        };
-                        self.add_instruction(context, conversion_instruction);
-                        converted_id
-                    }
-                    _ => {
-                        // For other types (objects, arrays, etc.), use the value as-is for now
-                        // In a complete implementation, these would also have toString() methods
-                        value_id
-                    }
-                };
+                // AUTO-CONVERSION: non-string values are converted the same way
+                // as `print(...)` call arguments (including `integer:64`).
+                let string_value_id = self.convert_value_to_string(
+                    context,
+                    value_id,
+                    &expression.expr_type,
+                    location,
+                )?;
 
                 // NOTE: Use correct function based on newline flag
                 // SymbolId(0) = print (no newline), SymbolId(1) = printl (with newline)
@@ -1925,29 +1893,14 @@ impl MirBuilder {
                                     .find(|c| c.symbol_id == class_sym)
                                     .map(|c| c.name.clone());
                                 if let Some(ref name) = class_name {
-                                    if let Some(&serializer_id) =
-                                        self.class_serializer_ids.get(name)
+                                    if let Some(&json_tree_fn) = self.class_json_tree_ids.get(name)
                                     {
-                                        let result_id = ValueId(context.function.next_value_id);
-                                        context.function.next_value_id += 1;
-                                        self.register_temp_local(
+                                        self.emit_class_json_text(
                                             context,
-                                            result_id,
-                                            MirType::Ptr(Box::new(MirType::I8)),
-                                            arg.location.clone(),
-                                        );
-                                        self.add_instruction(
-                                            context,
-                                            MirInstruction {
-                                                dest: Some(result_id),
-                                                operation: MirOperation::Call {
-                                                    function: MirOperand::Function(serializer_id),
-                                                    arguments: vec![MirOperand::Value(arg_id)],
-                                                },
-                                                location: arg.location.clone(),
-                                            },
-                                        );
-                                        result_id
+                                            json_tree_fn,
+                                            arg_id,
+                                            &arg.location,
+                                        )
                                     } else {
                                         arg_id
                                     }
@@ -2168,14 +2121,6 @@ impl MirBuilder {
 
                 // Switch to continue block for subsequent statements
                 self.current_block = Some(continue_block_id);
-            }
-
-            _ => {
-                // Unsupported statement type - return error with details
-                return Err(vec![CompilerError::validation_error(
-                    format!("Statement type not yet implemented: {:?}", statement),
-                    SourceLocation::default(),
-                )]);
             }
         }
 

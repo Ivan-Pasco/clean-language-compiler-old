@@ -301,9 +301,7 @@ impl MirBuilder {
             ConcreteType::Function { .. } => 4,    // Pointer
             ConcreteType::Class { .. } => 4,       // Pointer
             ConcreteType::Interface { .. } => 4,   // Pointer
-            ConcreteType::Tuple(_) => 4,           // Pointer
             ConcreteType::Union(_) => 4,           // Pointer (boxed)
-            ConcreteType::Intersection(_) => 4,    // Pointer (boxed)
             ConcreteType::Generic { .. } => 4,     // Treat as pointer
             ConcreteType::Unknown => 4,            // Default
             ConcreteType::Never => 0,              // Never returns
@@ -353,6 +351,13 @@ impl MirBuilder {
                 }
                 _ => format!("list.{}.f64", method),
             }),
+            // `list<integer:64>`: 8-byte i64 elements.
+            ConcreteType::IntegerSized { bits: 64, .. } => Some(match method {
+                "first" | "last" | "peek" | "get" | "remove" | "removeAt" | "removeLast" => {
+                    format!("__list_{}_i64", method)
+                }
+                _ => format!("list.{}.i64", method),
+            }),
             _ => match method {
                 "indexOf" | "contains" | "peek" => None,
                 "sort" | "lastIndexOf" if matches!(element, ConcreteType::String) => {
@@ -361,6 +366,80 @@ impl MirBuilder {
                 _ => Some(format!("list.{}", method)),
             },
         }
+    }
+
+    /// The `list.add` implementation for a list of `element`: 8-byte
+    /// `number` and `integer:64` elements have their own bodies, and strings
+    /// compare by bytes on a `.unique` list.
+    pub(super) fn list_add_symbol(element: &ConcreteType) -> SymbolId {
+        match element {
+            ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
+            ConcreteType::IntegerSized { bits: 64, .. } => SYM_BUILTIN_LIST_ADD_I64,
+            ConcreteType::String => SYM_BUILTIN_LIST_ADD_STRING,
+            _ => SYM_BUILTIN_LIST_ADD,
+        }
+    }
+
+    /// True for the `list.add` symbols of [`Self::list_add_symbol`].
+    pub(super) fn is_list_add_symbol(symbol: SymbolId) -> bool {
+        [
+            SYM_BUILTIN_LIST_ADD,
+            SYM_BUILTIN_LIST_ADD_F64,
+            SYM_BUILTIN_LIST_ADD_I64,
+            SYM_BUILTIN_LIST_ADD_STRING,
+        ]
+        .contains(&symbol)
+    }
+
+    /// Position of the element-value argument of a list method, if it has
+    /// one (`add(value)`, `set(index, value)`, ...).
+    pub(super) fn list_element_arg_index(method: &str) -> Option<usize> {
+        match method {
+            "add" | "push" | "indexOf" | "lastIndexOf" | "contains" => Some(0),
+            "set" | "insert" => Some(1),
+            _ => None,
+        }
+    }
+
+    /// Widen an `integer` value passed as an element of a `list<integer:64>`
+    /// or `list<number>` (`items.add(3)`), as an assignment to that type does.
+    pub(super) fn coerce_list_element_arg(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        arg_id: ValueId,
+        element: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let target = self.convert_concrete_type(element);
+        if !matches!(target, MirType::I64 | MirType::U64 | MirType::F64) {
+            return arg_id;
+        }
+        let source = context
+            .function
+            .locals
+            .get(&arg_id)
+            .map(|local| local.local_type.clone());
+        if !matches!(
+            source,
+            Some(MirType::I32 | MirType::I8 | MirType::I16 | MirType::U8 | MirType::U16)
+        ) {
+            return arg_id;
+        }
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, target.clone(), location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Cast {
+                    value: MirOperand::Value(arg_id),
+                    target_type: target,
+                },
+                location: location.clone(),
+            },
+        );
+        result_id
     }
 
     /// Store the list pointer returned by `list.add` back into the receiver.
@@ -470,6 +549,74 @@ impl MirBuilder {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Emit `pairs.set(map, key, value)` and write the map pointer it returns
+    /// back into `receiver`. Like `list.add`, `pairs.set` moves a full map to
+    /// a larger block, so the receiver must follow the returned address.
+    pub(super) fn emit_pairs_set(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        receiver: &TastExpression,
+        map_id: ValueId,
+        key_id: ValueId,
+        value_id: ValueId,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, MirType::I32, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name: "pairs.set".to_string(),
+                        symbol_id: SymbolId(0),
+                    },
+                    arguments: vec![
+                        MirOperand::Value(map_id),
+                        MirOperand::Value(key_id),
+                        MirOperand::Value(value_id),
+                    ],
+                },
+                location: location.clone(),
+            },
+        );
+        self.write_back_list_receiver(context, receiver, result_id, location)?;
+        Ok(result_id)
+    }
+
+    /// The declared type of a field, looked up through the class hierarchy.
+    ///
+    /// The field's declaration decides its size in the instance (see
+    /// `calculate_field_byte_offset`), so loads and stores must use it: the
+    /// type of an `obj.field` expression can be the unsized `integer` for an
+    /// `integer:8` or `integer:64` field.
+    pub(super) fn field_declared_type(
+        &self,
+        context: &FunctionBuildContext,
+        class_symbol: SymbolId,
+        property_symbol: &SymbolId,
+    ) -> Option<ConcreteType> {
+        let mut class = context
+            .all_classes
+            .iter()
+            .find(|c| c.symbol_id == class_symbol);
+        while let Some(current) = class {
+            if let Some(field) = current
+                .fields
+                .iter()
+                .find(|f| f.symbol_id == *property_symbol)
+            {
+                return Some(field.field_type.clone());
+            }
+            class = current
+                .parent_class
+                .and_then(|parent| context.all_classes.iter().find(|c| c.symbol_id == parent));
+        }
+        None
     }
 
     /// Calculate the byte offset of a field within a class hierarchy
@@ -609,20 +756,6 @@ impl MirBuilder {
                     out.insert(*iterator);
                     Self::collect_inner_decls(&body.statements, out);
                 }
-                TastStatement::Try {
-                    body,
-                    catch_clause,
-                    finally_clause,
-                    ..
-                } => {
-                    Self::collect_inner_decls(&body.statements, out);
-                    if let Some(c) = catch_clause {
-                        Self::collect_inner_decls(&c.body.statements, out);
-                    }
-                    if let Some(f) = finally_clause {
-                        Self::collect_inner_decls(&f.statements, out);
-                    }
-                }
                 _ => {}
             }
         }
@@ -671,10 +804,9 @@ impl MirBuilder {
                         return true;
                     }
                 }
-                // `throw` unwinds past the body-end pop the same way
-                // `return` does. `background` fires off a closure that
-                // retains body-local pointers across the pop.
-                TastStatement::Throw { .. } | TastStatement::Background { .. } => return true,
+                // `background` fires off a closure that retains body-local
+                // pointers across the pop.
+                TastStatement::Background { .. } => return true,
                 TastStatement::If {
                     then_block,
                     else_block,
@@ -697,26 +829,6 @@ impl MirBuilder {
                 TastStatement::For { body, .. } => {
                     if Self::body_escapes_or_returns(&body.statements, inner) {
                         return true;
-                    }
-                }
-                TastStatement::Try {
-                    body,
-                    catch_clause,
-                    finally_clause,
-                    ..
-                } => {
-                    if Self::body_escapes_or_returns(&body.statements, inner) {
-                        return true;
-                    }
-                    if let Some(c) = catch_clause {
-                        if Self::body_escapes_or_returns(&c.body.statements, inner) {
-                            return true;
-                        }
-                    }
-                    if let Some(f) = finally_clause {
-                        if Self::body_escapes_or_returns(&f.statements, inner) {
-                            return true;
-                        }
                     }
                 }
                 _ => {}
@@ -763,12 +875,9 @@ impl MirBuilder {
             | ConcreteType::Pairs(_, _)
             | ConcreteType::Class { .. }
             | ConcreteType::Interface { .. }
-            | ConcreteType::Tuple(_)
             | ConcreteType::Any => true,
             ConcreteType::Optional(inner) => Self::is_arena_alloc_type(inner),
-            ConcreteType::Union(parts) | ConcreteType::Intersection(parts) => {
-                parts.iter().any(Self::is_arena_alloc_type)
-            }
+            ConcreteType::Union(parts) => parts.iter().any(Self::is_arena_alloc_type),
             _ => false,
         }
     }

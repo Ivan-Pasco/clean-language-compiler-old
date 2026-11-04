@@ -1,0 +1,41 @@
+// Test: bugfixes/state_declaration_full_type_syntax
+// Grammar: state_declaration (type , identifier , "=" , single_line_expression), list_type, sized_type
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   2
+//   b
+//   3
+//   5000000000
+//   5000000001
+//   -5000000000
+//   7
+//   7000000000
+//
+// `state_declaration` takes the full `type` production, but the parser read
+// a single identifier: `list<string> items = [...]` failed with "Expected
+// variable name in state declaration" and `integer:64 big = ...` did not
+// parse. An `integer:64` state also needs an i64 global.
+
+start:
+	print(items.size())
+	print(items[1])
+	items.add("c")
+	print(items.size())
+	print(big)
+	big = big + 1
+	print(big)
+	print(low)
+	small = 7
+	print(small)
+	scale()
+	print(small)
+
+state:
+	list<string> items = ["a", "b"]
+	integer:64 big = 5000000000
+	integer:64 low = -5000000000
+	integer:64 small = 1
+
+functions:
+	void scale()
+		small = small * 1000000000

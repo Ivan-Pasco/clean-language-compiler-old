@@ -40,15 +40,6 @@
 WHITESPACE = _{ " " | "\r" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
-// Trivia rules for handling comments in indented contexts
-// LINE_TRIVIA handles single-line comments with proper indentation preservation
-LINE_TRIVIA = _{ INDENT* ~ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) }
-// BLOCK_TRIVIA handles multi-line comments
-BLOCK_TRIVIA = _{ INDENT* ~ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
-// Empty line with optional whitespace (for clean whitespace handling)
-EMPTY_LINE_TRIVIA = _{ INDENT* ~ NEWLINE }
-// Combined trivia rule for any comment or empty line with indentation
-TRIVIA = _{ LINE_TRIVIA | BLOCK_TRIVIA | EMPTY_LINE_TRIVIA }
 
 // Keywords and identifiers
 // Hard reserved words — can never be used as identifiers.
@@ -151,7 +142,6 @@ pairs_type = ${ "pairs" ~ ("<" ~ " "* ~ type_ ~ " "* ~ "," ~ " "* ~ type_ ~ " "*
 // Generic types
 generic_type = { identifier ~ "<" ~ type_arguments ~ ">" }
 type_parameter = @{ identifier }
-type_parameters = { "<" ~ type_parameter ~ ("," ~ type_parameter)* ~ ">" }
 type_arguments = { type_ ~ ("," ~ type_)* }
 
 // Type definition - Order matters: sized types before core types to prioritize precision modifiers
@@ -170,24 +160,8 @@ type_ = {
 INDENT = _{ "\t" }
 NEWLINE = _{ "\n" | "\r\n" }
 empty_line = _{ INDENT* ~ NEWLINE }
-comment_line = _{ INDENT* ~ ("/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)*) ~ NEWLINE? }
-trivia_line = _{ empty_line | comment_line }
 // Comments in function bodies are handled by the global COMMENT rule automatically
 
-// Stack-based context-aware indentation for functions blocks
-indent_context = { PUSH(INDENT*) }
-indent_match = { PEEK_ALL }
-indent_end = { DROP }
-
-// Context-aware indented block for functions blocks
-context_indented_block = { 
-    NEWLINE ~ (empty_line)* ~ 
-    PUSH(INDENT+) ~ 
-    PEEK_ALL ~ function_in_block ~ 
-    ((NEWLINE ~ (empty_line)*) ~ PEEK_ALL ~ function_in_block)* ~ 
-    (NEWLINE ~ (empty_line)*)? ~
-    DROP 
-}
 
 // Smart indented block - uses different strategies based on context
 indented_block = { simple_indented_block | function_nested_block }
@@ -274,7 +248,6 @@ input_declaration = { input_type ~ identifier ~ ("=" ~ expression)? }
 standalone_input_declaration = { "input" ~ input_type ~ identifier ~ ("=" ~ expression)? }
 input_block = { "input" ~ indented_input_block }
 indented_input_block = { NEWLINE ~ (empty_line)* ~ INDENT+ ~ input_declaration ~ (NEWLINE ~ (empty_line)* ~ INDENT+ ~ input_declaration)* }
-indented_block_with_declarations = { NEWLINE ~ INDENT+ ~ input_declaration ~ (NEWLINE ~ INDENT+ ~ input_declaration)* }
 
 setup_block = { (description_block ~ NEWLINE ~ input_block) | (input_block ~ NEWLINE ~ description_block) | input_block | description_block }
 
@@ -465,8 +438,6 @@ multiline_power_expression = { multiline_unary_expression ~ (multiline_whitespac
 multiline_unary_expression = { (unary_op ~ (WHITESPACE | NEWLINE | INDENT)*)* ~ multiline_primary }
 multiline_primary = { primary }
 
-// Legacy arithmetic_expression for backward compatibility
-arithmetic_expression = { additive_expression }
 base_expression = { conditional_expr | logical_expression }
 expression = { on_error_block | on_error_expr | base_expression }
 
@@ -488,8 +459,6 @@ unary_op = { unary_op_not | "-" }
 additive_op = { "+" | "-" }
 multiplicative_op = { "*" | "/" | "%" }
 power_op = { "^" }
-// Legacy arithmetic_op for backward compatibility
-arithmetic_op = { additive_op | multiplicative_op | power_op }
 
 // Lists, Matrices, and Pairs
 list_literal = { "[" ~ (list_element ~ ("," ~ " "* ~ list_element)*)? ~ "]" }
@@ -637,17 +606,8 @@ class_function_line = {
     INDENT+ ~ function_in_block
 }
 
-// Legacy function_line rule - maintained for backward compatibility
-function_line = {
-    INDENT+ ~ function_in_block
-}
 
-
-
-// Function header (declaration without body) inside functions block
-function_header = { function_type? ~ " "* ~ function_name ~ " "* ~ "(" ~ parameter_list? ~ ")" ~ " "* }
-
-// Function return type - like function_type but WITHOUT plain identifier and class_name to avoid ambiguity
+// Function return type - excludes plain identifier and class_name to avoid ambiguity
 // class_name is handled separately in function_in_block
 function_return_type = {
     matrix_type |
@@ -671,14 +631,6 @@ function_in_block = {
 function_name = { lowercase_identifier | "start" | "stop" | "toString" | "input" | "error" | "test" | "from" | "to" | "step" }
 lowercase_identifier = @{ !keyword ~ ('a'..'z' | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
-// Function body can have setup blocks (description and input) or just statements
-// Also supports single-line function bodies and empty functions
-function_body = {
-    (NEWLINE ~ function_body_statements ~ EOI) |
-    (NEWLINE ~ INDENT+ ~ setup_block ~ (NEWLINE)? ~ function_body_statements ~ EOI) |
-    (NEWLINE ~ INDENT+ ~ setup_block ~ EOI) |
-    (NEWLINE ~ EOI) // Allow empty function body with newline
-}
 
 // Function body for functions inside blocks (no EOI required)
 // Allow multiple empty lines after function declaration for flexible formatting
@@ -699,27 +651,6 @@ function_body_statements = {
 // Function body statements must be indented relative to the function declaration
 function_body_statement = { INDENT+ ~ statement }
 
-// Helper rule to detect the start of a new function
-function_declaration_start = { INDENT ~ (function_type | "void") ~ " " }
-
-// Helper rule to detect the start of a new function in functions: blocks
-// Matches either: 1) function with return type, 2) void function
-// Uses lookahead to match function signature without consuming parameters
-function_start = { &function_signature }
-
-// Function return type (includes identifiers for custom class types)
-// Order matters: sized types before core types to prioritize precision modifiers  
-function_type = { 
-    matrix_type |
-    list_type |
-    pairs_type |
-    generic_type |
-    sized_type |
-    core_type |
-    identifier
-}
-
-// Private blocks (removed duplicate - defined later in async/import section)
 
 // Tests block
 tests_block = { "tests" ~ ":" ~ indented_tests_block }

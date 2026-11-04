@@ -1,0 +1,23 @@
+// Test: bugfixes/stdlib_list_fill_number
+// Semantic: stdlib-reference.md §5 — `list.fill(size, value)` creates a list
+//   of the value's element type; `number` lists use 8-byte elements.
+// Fixed in: compiler 0.33.168
+// Regression: `list<number> f = list.fill(3, 1.5)` failed to compile
+//   ("generated WebAssembly is invalid: type mismatch: expected i32, found
+//   f64"): `list.fill` only had an i32 body, so the f64 value was passed
+//   to an i32 parameter.
+// Expected output:
+//   3:1.5
+//   4:2.25
+//   0
+//   2:7
+
+start:
+	list<number> f = list.fill(3, 1.5)
+	print(f.length().toString() + ":" + f[2].toString())
+	f.add(2.25)
+	print(f.length().toString() + ":" + f.last().toString())
+	list<number> empty = list.fill(0, 4.5)
+	print(empty.length().toString())
+	list<integer> ints = list.fill(2, 7)
+	print(ints.length().toString() + ":" + ints[1].toString())

@@ -1,9 +1,9 @@
 //! Fuzz target: the parser must never panic on arbitrary input.
 //!
-//! Parsing happens in two layers in this compiler: the pest grammar
-//! (`CleanParser::parse_program`) and the hand-rolled token parser. We exercise
-//! the public entry that downstream tools (LSP, MCP server, `cln check`) use,
-//! so a crash here is a crash users can hit.
+//! Parsing happens in two layers in this compiler: the token-driven parser
+//! behind `parse_to_ast` (source files, LSP, MCP server, `cln check`) and the
+//! pest grammar (`CleanParser::parse_program`, plugin fragments). Both are
+//! exercised, so a crash here is a crash users can hit.
 
 #![no_main]
 
@@ -18,6 +18,7 @@ fuzz_target!(|data: &[u8]| {
         // We do not care about Ok/Err — only that this returns without
         // panicking or recursing forever. Timeouts surface in libfuzzer's
         // own time-limit handling.
+        let _ = clean_language_compiler::parse_to_ast(source, "fuzz.cln");
         let _ = CleanParser::parse_program(source);
     }
 });

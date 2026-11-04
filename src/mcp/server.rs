@@ -8,7 +8,9 @@
 use super::protocol::{error_codes, JsonRpcRequest, JsonRpcResponse, Tool, ToolInputSchema};
 use crate::plugins::PluginDiscovery;
 use crate::resolver::symbol_table::{GlobalSymbolTable, SymbolKind};
-use crate::{compile_source_with_detected_plugins, parse_to_ast, type_check, VERSION};
+use crate::{
+    compile_source_with_detected_plugins, parse_to_ast, type_check_with_external_plugins, VERSION,
+};
 use lazy_static::lazy_static;
 use serde_json::json;
 use std::sync::Mutex;
@@ -684,8 +686,11 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // Handle Content-Length framed messages (MCP stdio transport spec)
-        let json_body = if trimmed.starts_with("Content-Length:") {
+        // MCP stdio messages are newline-delimited JSON. Content-Length
+        // framed messages (LSP style) are accepted too, and each response
+        // uses the framing of the request it answers.
+        let framed = trimmed.starts_with("Content-Length:");
+        let json_body = if framed {
             let content_length: usize = match trimmed
                 .strip_prefix("Content-Length:")
                 .and_then(|s| s.trim().parse().ok())
@@ -734,7 +739,7 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
                     error_codes::PARSE_ERROR,
                     format!("Parse error: {}", e),
                 );
-                write_response(&mut stdout, &error_response).await?;
+                write_response(&mut stdout, &error_response, framed).await?;
                 continue;
             }
         };
@@ -750,22 +755,29 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
 
         // Handle the request (has id, expects a response)
         let response = handle_request(request).await;
-        write_response(&mut stdout, &response).await?;
+        write_response(&mut stdout, &response, framed).await?;
     }
 
     Ok(())
 }
 
-/// Write a JSON-RPC response to stdout with Content-Length framing (MCP stdio transport spec)
+/// Write a JSON-RPC response to stdout: one JSON line (MCP stdio transport),
+/// or with a `Content-Length` header when the request was framed that way.
 async fn write_response(
     stdout: &mut tokio::io::Stdout,
     response: &JsonRpcResponse,
+    framed: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let json = serde_json::to_string(response)?;
     eprintln!("[MCP] -> {}", json);
-    // Write header + body as a single buffer to avoid partial flush delays
-    // Content-Length counts only the JSON body; trailing \n is a transport separator
-    let message = format!("Content-Length: {}\r\n\r\n{}\n", json.len(), json);
+    // Header + body go out as a single buffer to avoid partial flush delays.
+    // Content-Length counts only the JSON body; the trailing \n separates
+    // messages.
+    let message = if framed {
+        format!("Content-Length: {}\r\n\r\n{}\n", json.len(), json)
+    } else {
+        format!("{}\n", json)
+    };
     stdout.write_all(message.as_bytes()).await?;
     stdout.flush().await?;
     Ok(())
@@ -1597,10 +1609,13 @@ fn tool_check(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespons
 
     let lint_warnings = lint_endpoint_organization(source, file_path);
 
-    match type_check(source, file_path) {
+    match type_check_with_external_plugins(source, file_path) {
         Ok(result) => {
-            let mut diagnostics: Vec<serde_json::Value> =
-                result.diagnostics.iter().map(error_to_json).collect();
+            let mut diagnostics: Vec<serde_json::Value> = result
+                .diagnostics
+                .iter()
+                .map(|w| diagnostic_to_json(w, "warning"))
+                .collect();
             diagnostics.extend(lint_warnings);
             JsonRpcResponse::success(
                 id,
@@ -1743,8 +1758,15 @@ fn tool_diagnostics(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcR
     let lint_warnings = lint_endpoint_organization(source, file_path);
 
     let (success, mut all_diagnostics): (bool, Vec<serde_json::Value>) =
-        match type_check(source, file_path) {
-            Ok(_result) => (true, Vec::new()),
+        match type_check_with_external_plugins(source, file_path) {
+            Ok(result) => (
+                true,
+                result
+                    .diagnostics
+                    .iter()
+                    .map(|w| diagnostic_to_json(w, "warning"))
+                    .collect(),
+            ),
             Err(errors) => (false, errors.iter().map(error_to_json).collect()),
         };
     all_diagnostics.extend(lint_warnings);
@@ -2364,7 +2386,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Authentication guard integration",
                 "Database migration blocks (migrate:)",
                 "Multi-tenant request routing",
-                "Plugin lifecycle hooks (register_server, register_cli, register_build)",
+                "Plugin lifecycle slot (module_helpers)",
                 "Permission enforcement — only declared bridge functions may be called",
             ],
             bridge_function_count: 52,
@@ -2395,7 +2417,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Raw SQL queries (db.query:, db.queryAs)",
                 "Database migrations (migrate: block)",
                 "Field validation constraints (required, min, max, pattern, unique)",
-                "Plugin lifecycle hooks (register_data, register_build)",
+                "Plugin lifecycle slot (module_helpers)",
                 "Permission enforcement — only declared bridge functions may be called",
             ],
             bridge_function_count: 8,
@@ -2426,7 +2448,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Environment variable access for secrets",
                 "Multi-tenant auth (tenant: sub-block)",
                 "Tenant isolation and per-tenant role configuration",
-                "Plugin lifecycle hooks (register_server)",
+                "Plugin lifecycle slot (module_helpers)",
                 "Permission enforcement — only declared bridge functions may be called",
             ],
             bridge_function_count: 24,
@@ -2462,7 +2484,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Two-way data binding",
                 "State management for components",
                 "Global UI theming (ui: block)",
-                "Plugin lifecycle hooks (register_server, register_build)",
+                "Plugin lifecycle slots (module_helpers, client_init)",
                 "Permission enforcement — only declared bridge functions may be called",
             ],
             bridge_function_count: 14,
@@ -2498,7 +2520,7 @@ fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
                 "Camera and viewport control",
                 "20 easing functions",
                 "Scene management",
-                "Plugin lifecycle hooks (register_server, register_build)",
+                "Plugin lifecycle slot (module_helpers)",
                 "Permission enforcement — only declared bridge functions may be called",
             ],
             bridge_function_count: 134,
@@ -4117,9 +4139,11 @@ fn tool_get_architecture(id: serde_json::Value, args: &serde_json::Value) -> Jso
 - `crypto_random_bytes(len: i32) -> i32` — Generate random bytes
 - `crypto_uuid() -> i32` — Generate UUID
 
-### JSON
-- `json_parse(ptr, len) -> i32` — Parse JSON string to internal representation
-- `json_stringify(ptr, len) -> i32` — Serialize to JSON string
+### JSON (stdlib-reference §8 — the compiler embeds no JSON parser)
+- `_json_decode_v2(ptr, len) -> any` — Parse JSON text to a boxed-Any tree (0 on a parse failure)
+- `_json_encode_v2(any) -> string` — Compact JSON text of a boxed-Any value
+- `_json_encode_pretty_v2(any) -> string` — 2-space indented JSON text
+- `_json_get(any, path) -> any` — Value at a dot-separated path (null-tag on a miss)
 
 ### WAT Spec Compliance
 - String parameters: `(ptr: i32, len: i32)` pairs
@@ -5330,7 +5354,7 @@ fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse 
     let start = SystemTime::now();
 
     // Step 1: Type-check
-    let type_check_result = type_check(source, file_path);
+    let type_check_result = type_check_with_external_plugins(source, file_path);
     let type_check_ok = type_check_result.is_ok();
     let type_errors: Vec<serde_json::Value> = match &type_check_result {
         Ok(_) => vec![],
@@ -5678,27 +5702,22 @@ fn top_level_segment(path: &str) -> String {
 }
 
 fn error_to_json(error: &crate::error::CompilerError) -> serde_json::Value {
-    use crate::error::CompilerError;
+    diagnostic_to_json(error, "error")
+}
 
-    match error {
-        CompilerError::Syntax { context } => json!({
-            "severity": "error",
+/// JSON form of a diagnostic with the given severity (`error` or `warning`).
+fn diagnostic_to_json(error: &crate::error::CompilerError, severity: &str) -> serde_json::Value {
+    match error.context() {
+        Some(context) => json!({
+            "severity": severity,
             "code": context.error_code,
             "message": context.message,
             "file": context.location.as_ref().map(|l| l.file.as_str()).unwrap_or(""),
             "line": context.location.as_ref().map(|l| l.line).unwrap_or(0),
             "column": context.location.as_ref().map(|l| l.column).unwrap_or(0),
         }),
-        CompilerError::Type { context } => json!({
-            "severity": "error",
-            "code": context.error_code,
-            "message": context.message,
-            "file": context.location.as_ref().map(|l| l.file.as_str()).unwrap_or(""),
-            "line": context.location.as_ref().map(|l| l.line).unwrap_or(0),
-            "column": context.location.as_ref().map(|l| l.column).unwrap_or(0),
-        }),
-        _ => json!({
-            "severity": "error",
+        None => json!({
+            "severity": severity,
             "message": error.to_string(),
         }),
     }

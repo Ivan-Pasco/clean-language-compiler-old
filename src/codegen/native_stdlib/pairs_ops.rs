@@ -198,21 +198,26 @@ pub(crate) fn gen_pairs_new_impl(malloc_idx: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
-/// Generate WASM instructions for __pairs_set(map_ptr: i32, key_ptr: i32, val_ptr: i32) -> void
+/// Generate WASM instructions for
+/// __pairs_set(map_ptr: i32, key_ptr: i32, val_ptr: i32) -> i32
 ///
-/// Sets (or inserts) a key/value pair in the map.
-/// If the key already exists (by byte-equality), the value is updated in place.
-/// If not found and count < capacity, appends a new entry.
+/// Sets (or inserts) a key/value pair in the map and returns the map's
+/// address. If the key already exists (by byte-equality), the value is updated
+/// in place. Otherwise the entry is appended; a full map is first moved to a
+/// block with double the capacity (minimum 8), so the returned address may
+/// differ from `map_ptr` and the caller must keep using the returned one.
 ///
 /// Parameters:
-///   local 0 = map_ptr (i32)
+///   local 0 = map_ptr (i32) — replaced by the new block when the map grows
 ///   local 1 = key_ptr (i32)
 ///   local 2 = val_ptr (i32)
 ///
 /// Extra locals (declared via register_function_with_locals):
 ///   local 3 = count     (i32)
-///   local 4 = i         (i32) — loop counter
+///   local 4 = i         (i32) — loop counter (scan, then copy offset)
 ///   local 5 = entry_ptr (i32)
+///   local 6 = new_cap   (i32)
+///   local 7 = new_ptr   (i32)
 ///
 /// Block structure:
 ///   block $outer (void)          -- early exit; depth from inside: 0=this
@@ -224,9 +229,15 @@ pub(crate) fn gen_pairs_new_impl(malloc_idx: u32) -> Vec<Instruction<'static>> {
 ///         ... (if i >= count: br 1 to $scan_outer, fall through to append)
 ///       end
 ///     end
-///     ... append logic ...
+///     ... grow when full, then append ...
 ///   end
-pub fn gen_pairs_set(str_eq_idx: u32) -> Vec<Instruction<'static>> {
+///   map_ptr
+pub fn gen_pairs_set(str_eq_idx: u32, malloc_idx: u32) -> Vec<Instruction<'static>> {
+    let word = |offset: u32| MemArg {
+        offset: offset as u64,
+        align: 2,
+        memory_index: 0,
+    };
     vec![
         // count = mem[map_ptr + PAIRS_COUNT_OFFSET]
         Instruction::LocalGet(0),
@@ -289,20 +300,74 @@ pub fn gen_pairs_set(str_eq_idx: u32) -> Vec<Instruction<'static>> {
         Instruction::End,   // end $scan loop
         Instruction::End,   // end $scan_outer
         // --- Append new entry (key not found in scan) ---
-        // if count >= capacity, skip append (map is full) — br to $outer
-        // WASM i32.ge_s: pops [LHS, RHS], returns LHS >= RHS.
-        // Push count first (LHS), then capacity (RHS) so we get count >= capacity.
-        Instruction::LocalGet(3), // push count
-        Instruction::LocalGet(0), // push map_ptr
-        Instruction::I32Load(MemArg {
-            offset: PAIRS_CAPACITY_OFFSET as u64,
-            align: 2,
-            memory_index: 0,
-        }), // push capacity = mem[map_ptr + PAIRS_CAPACITY_OFFSET]
+        // A full map (count >= capacity) moves to a block with
+        // new_cap = max(capacity * 2, 8) entries before the append.
+        Instruction::LocalGet(3), // count
+        Instruction::LocalGet(0),
+        Instruction::I32Load(word(PAIRS_CAPACITY_OFFSET)), // capacity
         Instruction::I32GeS,
+        Instruction::If(BlockType::Empty), // grow
+        // new_cap = max(capacity * 2, 8)
+        Instruction::LocalGet(0),
+        Instruction::I32Load(word(PAIRS_CAPACITY_OFFSET)),
+        Instruction::I32Const(2),
+        Instruction::I32Mul,
+        Instruction::LocalTee(6),
+        Instruction::I32Const(8),
+        Instruction::I32LtS,
         Instruction::If(BlockType::Empty),
-        Instruction::Br(1), // break to $outer (0=if, 1=outer)
+        Instruction::I32Const(8),
+        Instruction::LocalSet(6),
         Instruction::End,
+        // new_ptr = malloc(8 + new_cap * 8)
+        Instruction::I32Const(PAIRS_HEADER_SIZE as i32),
+        Instruction::LocalGet(6),
+        Instruction::I32Const(PAIRS_ENTRY_SIZE as i32),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::Call(malloc_idx),
+        Instruction::LocalTee(7),
+        // Memory cannot grow: trap instead of losing the entry.
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::Unreachable,
+        Instruction::End,
+        // Copy the header and the `count` entries word by word:
+        // for (i = 0; i < 8 + count * 8; i += 4) new_ptr[i] = map_ptr[i]
+        Instruction::I32Const(0),
+        Instruction::LocalSet(4),
+        Instruction::Block(BlockType::Empty), // $copy_done
+        Instruction::Loop(BlockType::Empty),  // $copy
+        Instruction::LocalGet(4),
+        Instruction::I32Const(PAIRS_HEADER_SIZE as i32),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(PAIRS_ENTRY_SIZE as i32),
+        Instruction::I32Mul,
+        Instruction::I32Add,
+        Instruction::I32GeS,
+        Instruction::BrIf(1), // to $copy_done
+        Instruction::LocalGet(7),
+        Instruction::LocalGet(4),
+        Instruction::I32Add,
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(4),
+        Instruction::I32Add,
+        Instruction::I32Load(word(0)),
+        Instruction::I32Store(word(0)),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(4),
+        Instruction::I32Add,
+        Instruction::LocalSet(4),
+        Instruction::Br(0), // continue $copy
+        Instruction::End,   // end $copy
+        Instruction::End,   // end $copy_done
+        // mem[new_ptr + PAIRS_CAPACITY_OFFSET] = new_cap; continue with new_ptr
+        Instruction::LocalGet(7),
+        Instruction::LocalGet(6),
+        Instruction::I32Store(word(PAIRS_CAPACITY_OFFSET)),
+        Instruction::LocalGet(7),
+        Instruction::LocalSet(0),
+        Instruction::End, // end grow
         // entry_ptr = map_ptr + 8 + count * 8
         Instruction::LocalGet(0),
         Instruction::I32Const(PAIRS_HEADER_SIZE as i32),
@@ -338,7 +403,8 @@ pub fn gen_pairs_set(str_eq_idx: u32) -> Vec<Instruction<'static>> {
             align: 2,
             memory_index: 0,
         }),
-        Instruction::End, // end $outer
+        Instruction::End,         // end $outer
+        Instruction::LocalGet(0), // the (possibly moved) map
     ]
 }
 

@@ -644,20 +644,23 @@ impl HirBuilder {
     /// A state initializer the WASM global section can hold directly: a
     /// numeric, boolean or string literal (strings point into the data section).
     fn is_constant_state_initializer(init: &Expression) -> bool {
+        matches!(init, Expression::Literal(value) if Self::is_constant_state_value(value))
+    }
+
+    /// A literal value a WASM global can be initialized with directly.
+    pub(crate) fn is_constant_state_value(value: &Value) -> bool {
         matches!(
-            init,
-            Expression::Literal(
-                Value::Integer(_)
-                    | Value::Number(_)
-                    | Value::Boolean(_)
-                    | Value::String(_)
-                    | Value::Integer8(_)
-                    | Value::Integer8u(_)
-                    | Value::Integer16(_)
-                    | Value::Integer16u(_)
-                    | Value::Integer32(_)
-                    | Value::Integer64(_)
-            )
+            value,
+            Value::Integer(_)
+                | Value::Number(_)
+                | Value::Boolean(_)
+                | Value::String(_)
+                | Value::Integer8(_)
+                | Value::Integer8u(_)
+                | Value::Integer16(_)
+                | Value::Integer16u(_)
+                | Value::Integer32(_)
+                | Value::Integer64(_)
         )
     }
 
@@ -1007,26 +1010,22 @@ impl HirBuilder {
                     .iter()
                     .map(|wb| self.build_watch_block(wb))
                     .collect::<Result<Vec<_>, _>>()?;
-                let mut hir_fns = screen_fns
-                    .iter()
-                    .map(|f| self.build_function(f))
-                    .collect::<Result<Vec<_>, _>>()?;
                 // A screen's functions live in the screen's own namespace
                 // (`Screen.fn`), so two screens may both declare `render()`.
                 // owner_screen lets the resolver enforce SCOPE005 and resolve
                 // unqualified names inside the body against the screen first.
-                // The functions are promoted to the global function list so
-                // they are compiled and callable as `Screen.fn(...)`.
-                for hir_fn in hir_fns.iter_mut() {
+                // The functions join the global function list so they are
+                // compiled and callable as `Screen.fn(...)`.
+                for screen_fn in screen_fns {
+                    let mut hir_fn = self.build_function(screen_fn)?;
                     hir_fn.name = format!("{}.{}", name, hir_fn.name);
                     hir_fn.owner_screen = Some(name.clone());
-                    functions.push(hir_fn.clone());
+                    functions.push(hir_fn);
                 }
                 screen_blocks.push(crate::hir::HirScreenBlock {
                     name: name.clone(),
                     state: hir_state,
                     watch_blocks: hir_watches,
-                    functions: hir_fns,
                     location: location.clone().unwrap_or_default(),
                 });
             }
@@ -2618,9 +2617,8 @@ impl HirBuilder {
 
             // For unsupported expressions we lower to a void literal rather than
             // erroring, because some upstream rewrites legitimately leave behind
-            // transient nodes that are pruned later (e.g. PropertyAssignment is
-            // consumed at the statement level for list.setFlags). Logged at trace
-            // so the silent path is observable when debugging but doesn't pollute
+            // transient nodes that are pruned later. Logged at trace so the
+            // silent path is observable when debugging but doesn't pollute
             // normal compilation output.
             other => {
                 tracing::trace!(

@@ -18,8 +18,8 @@ start:
 functions:
 	void testQueueBehavior()
 		print("=== Testing Queue (FIFO) Behavior ===")
-		list<string> taskQueue
-		taskQueue.type = "line"
+		// Fixed: was list<string> taskQueue + taskQueue.type = "line", spec requires list<string>.line taskQueue
+		list<string>.line taskQueue
 
 		taskQueue.add("Task 1")
 		taskQueue.add("Task 2")
@@ -41,8 +41,8 @@ functions:
 
 	void testStackBehavior()
 		print("=== Testing Stack (LIFO) Behavior ===")
-		list<string> undoStack
-		undoStack.type = "pile"
+		// Fixed: was list<string> undoStack + undoStack.type = "pile", spec requires list<string>.pile undoStack
+		list<string>.pile undoStack
 
 		undoStack.add("Operation 1")
 		undoStack.add("Operation 2")
@@ -63,8 +63,8 @@ functions:
 
 	void testUniqueBehavior()
 		print("=== Testing Unique (Set) Behavior ===")
-		list<integer> uniqueNumbers
-		uniqueNumbers.type = "unique"
+		// Fixed: was list<integer> uniqueNumbers + uniqueNumbers.type = "unique", spec requires list<integer>.unique uniqueNumbers
+		list<integer>.unique uniqueNumbers
 
 		uniqueNumbers.add(5)
 		uniqueNumbers.add(10)
@@ -85,8 +85,8 @@ functions:
 	void testCombinedBehaviors()
 		print("=== Testing Combined Behaviors ===")
 
-		list<string> uniqueQueue
-		uniqueQueue.type = "line-unique"
+		// Fixed: was list<string> uniqueQueue + uniqueQueue.type = "line-unique", spec requires list<string>.line.unique uniqueQueue
+		list<string>.line.unique uniqueQueue
 
 		uniqueQueue.add("First")
 		uniqueQueue.add("Second")

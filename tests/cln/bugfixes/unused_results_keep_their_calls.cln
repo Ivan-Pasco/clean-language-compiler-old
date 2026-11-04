@@ -1,0 +1,46 @@
+// Test: bugfixes/unused_results_keep_their_calls
+// Grammar: variable_declaration_with_assignment, logical and_expression
+// Semantic: dynamic dispatch on a capability-typed receiver
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   bumped
+//   bumped
+//   2
+//   noisy
+//   end
+//
+// Regression: dead-code elimination removed an instruction whose result was
+// never read even when it had side effects. A capability method call stored
+// in an unused local and an `and` whose right-hand side calls a function
+// were deleted, so the method never ran and nothing was printed.
+
+start:
+	Counter c = Counter()
+	poke(c)
+	poke(c)
+	printl(c.n.toString())
+	integer z = 1
+	boolean unused = z > 0 and noisy()
+	printl("end")
+
+can Bump:
+	integer bump()
+
+class Counter can Bump
+	public:
+		integer n = 0
+
+	functions:
+		public:
+			integer bump()
+				n = n + 1
+				printl("bumped")
+				return n
+
+functions:
+	poke(Bump b)
+		integer ignored = b.bump()
+
+	boolean noisy()
+		printl("noisy")
+		return true

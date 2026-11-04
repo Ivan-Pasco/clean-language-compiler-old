@@ -1,0 +1,33 @@
+// Test: bugfixes/state_string_variable_reads_text
+// Grammar: state_block, state_declaration, print_parenthesized_statement
+// Semantic: STATE001
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   Ann
+//   Hi Ann
+//   Ann
+//   Bob
+//   Bob!
+//
+// A `string` state variable was loaded with the integer type, so
+// `print(name)` and a copy into a `string` local printed the pointer
+// address. Concatenation happened to read it as a string.
+
+start:
+	print(name)
+	print("Hi " + name)
+	string copy = name
+	print(copy)
+	rename("Bob")
+	print(name)
+	print(shout())
+
+state:
+	string name = "Ann"
+
+functions:
+	void rename(string next)
+		name = next
+
+	string shout()
+		return name + "!"

@@ -1,0 +1,61 @@
+// Test: bugfixes/sized_integer_fields_keep_their_width
+// Grammar: class_field, sized_type, assignment_target ("." identifier)
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   200
+//   7
+//   -3
+//   1000
+//   42
+//   5
+//   15000000000
+//   9
+//   6000000000
+//
+// Regression: field loads and stores always moved 4 bytes, typed by the
+// `obj.field` expression rather than the field declaration. An `integer:64`
+// field (8 bytes) was read with an i32 load and its class serializer passed
+// the i64 to `int_to_string`, so the module failed WASM validation. An integer
+// literal outside the i32 range next to an `integer:64` value
+// (`a.total * 3000000000`, `c.add(3000000000)`) was also emitted as a wrapped
+// i32 constant before being widened. Narrow fields must keep their neighbors.
+
+start:
+	Pix p = Pix()
+	p.r = 200
+	p.g = 7
+	p.b = -3
+	p.w = 1000
+	printl(p.r.toString())
+	printl(p.g.toString())
+	printl(p.b.toString())
+	printl(p.w.toString())
+	printl(p.tail.toString())
+	Acc a = Acc()
+	a.total = 5
+	printl(a.total.toString())
+	a.total = a.total * 3000000000
+	printl(a.total.toString())
+	printl(a.after.toString())
+	Acc c = Acc()
+	c.add(3000000000)
+	c.add(3000000000)
+	printl(c.total.toString())
+
+class Pix
+	public:
+		integer:8u r = 0
+		integer:8u g = 0
+		integer:8 b = 0
+		integer:16 w = 0
+		integer tail = 42
+
+class Acc
+	public:
+		integer:64 total = 0
+		integer after = 9
+
+	functions:
+		public:
+			void add(integer:64 v)
+				total = total + v

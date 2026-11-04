@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::error::CompilerError;
+use crate::hir::hir_builder::HirBuilder;
 
 /// Name resolver that transforms HIR to Resolved HIR
 pub struct NameResolver {
@@ -111,7 +112,7 @@ impl NameResolver {
         let resolved_functions = self.resolve_functions(&hir.functions)?;
         let resolved_classes = self.resolve_classes(&hir.classes)?;
 
-        let resolved_start_function = if let Some(start_fn) = hir.start_function {
+        let mut resolved_start_function = if let Some(start_fn) = hir.start_function {
             Some(self.resolve_function(start_fn)?)
         } else {
             None
@@ -176,6 +177,7 @@ impl NameResolver {
         // become globals with their declared initial values, and its watch
         // blocks join the program watch blocks. The screen's functions were
         // promoted to `hir.functions` as `Screen.fn` and are resolved there.
+        let mut screen_state_init: Vec<ResolvedHirStatement> = Vec::new();
         for screen in &hir.screen_blocks {
             self.current_screen = Some(screen.name.clone());
             if let Some(ref screen_state) = screen.state {
@@ -187,6 +189,32 @@ impl NameResolver {
                     computed.name = format!("{}.{}", screen.name, computed.name);
                 }
                 let resolved_screen_state = self.resolve_state_block(&qualified_state)?;
+                // A computed initializer cannot live in the WASM global's
+                // constant initializer; evaluate it at the top of start, the
+                // same way app-level state is initialized. The initializer was
+                // resolved inside the screen, so it may read the screen's own
+                // state declared before it.
+                screen_state_init.extend(
+                    resolved_screen_state
+                        .declarations
+                        .iter()
+                        .filter(|decl| {
+                            !matches!(
+                                &decl.initializer,
+                                ResolvedHirExpression::Literal { value, .. }
+                                    if HirBuilder::is_constant_state_value(value)
+                            )
+                        })
+                        .map(|decl| ResolvedHirStatement::Assignment {
+                            target: ResolvedHirLValue::Variable {
+                                name: decl.name.clone(),
+                                symbol_id: decl.symbol_id,
+                                location: decl.location.clone(),
+                            },
+                            value: decl.initializer.clone(),
+                            location: decl.location.clone(),
+                        }),
+                );
                 match resolved_state {
                     Some(ref mut app_state) => {
                         app_state
@@ -213,7 +241,7 @@ impl NameResolver {
                                         "Watch target '{}' is not a state variable of screen '{}'",
                                         target, screen.name
                                     ),
-                                    "SCOPE001",
+                                    "SCOPE004",
                                     watch.location.clone(),
                                 );
                                 continue;
@@ -232,6 +260,10 @@ impl NameResolver {
                 });
             }
             self.current_screen = None;
+        }
+        if let Some(ref mut start_fn) = resolved_start_function {
+            screen_state_init.append(&mut start_fn.body.statements);
+            start_fn.body.statements = screen_state_init;
         }
 
         // Surface any SCOPE003 (max nesting depth exceeded) errors accumulated
@@ -2384,59 +2416,21 @@ impl NameResolver {
             }
         }
 
-        // If no local variable/parameter found, check for class fields (implicit field access)
+        // If no local variable/parameter found, check for class fields (implicit
+        // field access), including fields inherited from any ancestor.
         if let Some(current_class_id) = self.current_class {
-            if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
-                if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
-                    // Check current class fields
-                    for &field_id in fields {
-                        if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
-                            if field_symbol.name == name {
-                                // Convert variable access to field access
-                                return Ok(ResolvedHirExpression::FieldAccess {
-                                    object: Box::new(ResolvedHirExpression::This {
-                                        class_symbol_id: current_class_id,
-                                        location: location.clone(),
-                                    }),
-                                    field: name.to_string(),
-                                    field_symbol_id: field_id,
-                                    location: location.clone(),
-                                });
-                            }
-                        }
-                    }
-
-                    // Check parent class fields if inheritance is involved
-                    if let Some(parent_class_id) = parent {
-                        if let Some(parent_symbol) = self.symbol_table.get_symbol(*parent_class_id)
-                        {
-                            if let SymbolKind::Class {
-                                fields: parent_fields,
-                                ..
-                            } = &parent_symbol.kind
-                            {
-                                for &parent_field_id in parent_fields {
-                                    if let Some(parent_field_symbol) =
-                                        self.symbol_table.get_symbol(parent_field_id)
-                                    {
-                                        if parent_field_symbol.name == name {
-                                            // Convert variable access to inherited field access
-                                            return Ok(ResolvedHirExpression::FieldAccess {
-                                                object: Box::new(ResolvedHirExpression::This {
-                                                    class_symbol_id: current_class_id,
-                                                    location: location.clone(),
-                                                }),
-                                                field: name.to_string(),
-                                                field_symbol_id: parent_field_id,
-                                                location: location.clone(),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Some((field_id, _)) =
+                self.symbol_table.lookup_class_field(current_class_id, name)
+            {
+                return Ok(ResolvedHirExpression::FieldAccess {
+                    object: Box::new(ResolvedHirExpression::This {
+                        class_symbol_id: current_class_id,
+                        location: location.clone(),
+                    }),
+                    field: name.to_string(),
+                    field_symbol_id: field_id,
+                    location: location.clone(),
+                });
             }
         }
 
@@ -3477,88 +3471,30 @@ impl NameResolver {
         // NOTE: Check if the "namespace" is actually a field (method call on field)
         // This handles cases like x.toString() where 'x' is a field, not a namespace
         if let Some(current_class_id) = self.current_class {
-            if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
-                if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
-                    // Check current class fields
-                    for &field_id in fields {
-                        if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
-                            if field_symbol.name == namespace {
-                                // Create field access for the receiver
-                                let receiver = ResolvedHirExpression::FieldAccess {
-                                    object: Box::new(ResolvedHirExpression::This {
-                                        class_symbol_id: current_class_id,
-                                        location: location.clone(),
-                                    }),
-                                    field: namespace.to_string(),
-                                    field_symbol_id: field_id,
-                                    location: location.clone(),
-                                };
-
-                                // Resolve arguments
-                                let mut resolved_arguments = Vec::new();
-                                for arg in arguments {
-                                    resolved_arguments.push(self.resolve_expression(arg)?);
-                                }
-
-                                // Return as a method call
-                                return Ok(ResolvedHirExpression::MethodCall {
-                                    receiver: Box::new(receiver),
-                                    method: function.to_string(),
-                                    method_symbol_id: None,
-                                    arguments: resolved_arguments,
-                                    location: location.clone(),
-                                });
-                            }
-                        }
-                    }
-
-                    // Check parent class fields if inheritance is involved
-                    if let Some(parent_class_id) = parent {
-                        if let Some(parent_symbol) = self.symbol_table.get_symbol(*parent_class_id)
-                        {
-                            if let SymbolKind::Class {
-                                fields: parent_fields,
-                                ..
-                            } = &parent_symbol.kind
-                            {
-                                for &field_id in parent_fields {
-                                    if let Some(field_symbol) =
-                                        self.symbol_table.get_symbol(field_id)
-                                    {
-                                        if field_symbol.name == namespace {
-                                            // Create field access for the receiver
-                                            let receiver = ResolvedHirExpression::FieldAccess {
-                                                object: Box::new(ResolvedHirExpression::This {
-                                                    class_symbol_id: current_class_id,
-                                                    location: location.clone(),
-                                                }),
-                                                field: namespace.to_string(),
-                                                field_symbol_id: field_id,
-                                                location: location.clone(),
-                                            };
-
-                                            // Resolve arguments
-                                            let mut resolved_arguments = Vec::new();
-                                            for arg in arguments {
-                                                resolved_arguments
-                                                    .push(self.resolve_expression(arg)?);
-                                            }
-
-                                            // Return as a method call
-                                            return Ok(ResolvedHirExpression::MethodCall {
-                                                receiver: Box::new(receiver),
-                                                method: function.to_string(),
-                                                method_symbol_id: None,
-                                                arguments: resolved_arguments,
-                                                location: location.clone(),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            if let Some((field_id, _)) = self
+                .symbol_table
+                .lookup_class_field(current_class_id, namespace)
+            {
+                let receiver = ResolvedHirExpression::FieldAccess {
+                    object: Box::new(ResolvedHirExpression::This {
+                        class_symbol_id: current_class_id,
+                        location: location.clone(),
+                    }),
+                    field: namespace.to_string(),
+                    field_symbol_id: field_id,
+                    location: location.clone(),
+                };
+                let mut resolved_arguments = Vec::new();
+                for arg in arguments {
+                    resolved_arguments.push(self.resolve_expression(arg)?);
                 }
+                return Ok(ResolvedHirExpression::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: function.to_string(),
+                    method_symbol_id: None,
+                    arguments: resolved_arguments,
+                    location: location.clone(),
+                });
             }
         }
 
@@ -3915,71 +3851,18 @@ impl NameResolver {
             HirLValue::Variable { name, location } => {
                 // If we're in a class method, check for class fields first (implicit field access)
                 if let Some(current_class_id) = self.current_class {
-                    if let Some(class_symbol) = self.symbol_table.get_symbol(current_class_id) {
-                        if let SymbolKind::Class { fields, parent, .. } = &class_symbol.kind {
-                            tracing::debug!(
-                                "resolve_lvalue: Looking for field '{}' in class {} ({:?}), fields: {:?}",
-                                name, class_symbol.name, current_class_id, fields
-                            );
-                            // Check current class fields
-                            for &field_id in fields {
-                                if let Some(field_symbol) = self.symbol_table.get_symbol(field_id) {
-                                    tracing::debug!(
-                                        "  Checking field {:?}: name='{}' vs target='{}'",
-                                        field_id,
-                                        field_symbol.name,
-                                        name
-                                    );
-                                    if field_symbol.name == *name {
-                                        tracing::debug!("  MATCH FOUND - returning FieldAccess");
-                                        // Convert variable assignment to field assignment
-                                        return Ok(ResolvedHirLValue::FieldAccess {
-                                            object: Box::new(ResolvedHirExpression::This {
-                                                class_symbol_id: current_class_id,
-                                                location: location.clone(),
-                                            }),
-                                            field: name.clone(),
-                                            field_symbol_id: field_id,
-                                            location: location.clone(),
-                                        });
-                                    }
-                                }
-                            }
-
-                            // Check parent class fields if inheritance is involved
-                            if let Some(parent_class_id) = parent {
-                                if let Some(parent_symbol) =
-                                    self.symbol_table.get_symbol(*parent_class_id)
-                                {
-                                    if let SymbolKind::Class {
-                                        fields: parent_fields,
-                                        ..
-                                    } = &parent_symbol.kind
-                                    {
-                                        for &parent_field_id in parent_fields {
-                                            if let Some(parent_field_symbol) =
-                                                self.symbol_table.get_symbol(parent_field_id)
-                                            {
-                                                if parent_field_symbol.name == *name {
-                                                    // Convert variable assignment to inherited field assignment
-                                                    return Ok(ResolvedHirLValue::FieldAccess {
-                                                        object: Box::new(
-                                                            ResolvedHirExpression::This {
-                                                                class_symbol_id: current_class_id,
-                                                                location: location.clone(),
-                                                            },
-                                                        ),
-                                                        field: name.clone(),
-                                                        field_symbol_id: parent_field_id,
-                                                        location: location.clone(),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if let Some((field_id, _)) =
+                        self.symbol_table.lookup_class_field(current_class_id, name)
+                    {
+                        return Ok(ResolvedHirLValue::FieldAccess {
+                            object: Box::new(ResolvedHirExpression::This {
+                                class_symbol_id: current_class_id,
+                                location: location.clone(),
+                            }),
+                            field: name.clone(),
+                            field_symbol_id: field_id,
+                            location: location.clone(),
+                        });
                     }
                 }
 
@@ -5542,7 +5425,6 @@ mod scope_tests {
             name: "Home".to_string(),
             state: Some(screen_state),
             watch_blocks: vec![],
-            functions: vec![],
             location: loc(),
         };
 

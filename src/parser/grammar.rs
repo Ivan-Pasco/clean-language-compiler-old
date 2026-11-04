@@ -38,15 +38,6 @@ impl CleanParser {
         parser.parse_program()
     }
 
-    /// Static method for parsing program with file path for better error reporting
-    pub fn parse_program_with_file(
-        source: &str,
-        file_path: &str,
-    ) -> Result<Program, CompilerError> {
-        let mut parser = ErrorRecoveringParser::new(source, file_path);
-        parser.parse_program()
-    }
-
     /// Parse a Clean-source fragment as a single statement (or a small sequence
     /// which is flattened into a synthetic block). Used by the v3 typed-emission
     /// bridge `_emit_stmt_from_source` (typed-emission.md §3.11).
@@ -73,7 +64,7 @@ impl CleanParser {
             };
         }
 
-        // Indent every non-empty line by 4 spaces so it lives under `start:`.
+        // Indent every non-empty line by one tab so it lives under `start:`.
         let mut indented = String::with_capacity(trimmed.len() + 16);
         for (i, line) in trimmed.lines().enumerate() {
             if i > 0 {
@@ -357,8 +348,6 @@ fn is_statement_shaped_expression(expr: &crate::ast::Expression) -> bool {
             | E::StaticMethodCall { .. }
             | E::NamespaceCall { .. }
             | E::PropertyAccess { .. }
-            | E::PropertyAssignment { .. }
-            | E::ListAssignment { .. }
     )
 }
 

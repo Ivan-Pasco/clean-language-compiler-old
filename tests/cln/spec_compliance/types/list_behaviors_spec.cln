@@ -5,8 +5,8 @@
 
 start:
 	// Test 1: Line behavior (FIFO queue)
-	list<integer> queue = []
-	queue.type = "line"
+	// Fixed: was list<integer> queue = [] + queue.type = "line", spec requires list<integer>.line queue = []
+	list<integer>.line queue = []
 	queue.add(1)
 	queue.add(2)
 	queue.add(3)
@@ -14,8 +14,8 @@ start:
 	print("FIFO queue first element: " + first.toString())
 
 	// Test 2: Pile behavior (LIFO stack)
-	list<integer> stack = []
-	stack.type = "pile"
+	// Fixed: was list<integer> stack = [] + stack.type = "pile", spec requires list<integer>.pile stack = []
+	list<integer>.pile stack = []
 	stack.add(10)
 	stack.add(20)
 	stack.add(30)
@@ -23,8 +23,8 @@ start:
 	print("LIFO stack top element: " + top.toString())
 
 	// Test 3: Unique behavior (set)
-	list<integer> uniqueSet = []
-	uniqueSet.type = "unique"
+	// Fixed: was list<integer> uniqueSet = [] + uniqueSet.type = "unique", spec requires list<integer>.unique uniqueSet = []
+	list<integer>.unique uniqueSet = []
 	uniqueSet.add(5)
 	uniqueSet.add(10)
 	uniqueSet.add(5)

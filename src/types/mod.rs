@@ -1,4 +1,3 @@
-use crate::ast::Type as AstType;
 use wasm_encoder::ValType;
 
 /// WebAssembly value types
@@ -22,18 +21,6 @@ impl WasmType {
             WasmType::F64 => ValType::F64,
             WasmType::V128 => ValType::V128,
             WasmType::Unit => ValType::I32, // Map Unit to I32 for WebAssembly compatibility
-        }
-    }
-
-    /// Get the size in bytes for this type
-    pub fn size_in_bytes(&self) -> usize {
-        match self {
-            WasmType::I32 => 4,
-            WasmType::I64 => 8,
-            WasmType::F32 => 4,
-            WasmType::F64 => 8,
-            WasmType::V128 => 16,
-            WasmType::Unit => 0,
         }
     }
 
@@ -65,29 +52,6 @@ impl From<ValType> for WasmType {
             ValType::F64 => WasmType::F64,
             ValType::V128 => WasmType::V128,
             _ => WasmType::I32, // Default fallback for unsupported types
-        }
-    }
-}
-
-impl From<&AstType> for WasmType {
-    fn from(ast_type: &AstType) -> Self {
-        match ast_type {
-            AstType::Integer | AstType::Boolean => WasmType::I32,
-            AstType::Number => WasmType::F64,
-            AstType::String => WasmType::I32,     // String pointers
-            AstType::Void => WasmType::I32,       // Void represented as I32
-            AstType::List(_, _) => WasmType::I32, // List pointers
-            AstType::Matrix(_) => WasmType::I32,  // Matrix pointers
-            AstType::Pairs(_, _) => WasmType::I32, // Pairs are represented as pointers to heap-allocated structures
-            AstType::Object(_) => WasmType::I32,   // Object pointers
-            AstType::Generic(_, _) => WasmType::I32, // Generic type pointers
-            AstType::TypeParameter(_) => WasmType::I32, // Type parameter pointers
-            // Sized types
-            AstType::IntegerSized { bits: 8..=32, .. } => WasmType::I32,
-            AstType::IntegerSized { bits: 64, .. } => WasmType::I64,
-            AstType::NumberSized { bits: 32 } => WasmType::F32,
-            AstType::NumberSized { bits: 64 } => WasmType::F64,
-            _ => WasmType::I32, // Default for other types
         }
     }
 }

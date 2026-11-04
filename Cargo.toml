@@ -1,6 +1,6 @@
 [package]
 name = "clean-language-compiler"
-version = "0.33.167"
+version = "0.33.168"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
@@ -22,6 +22,7 @@ lazy_static = "1.5"
 wasm-encoder = "0.35"
 wasmparser = "0.121"
 wat = "1.0.71"
+wasmprinter = "0.251"
 
 # WebAssembly Runtimes (feature-gated)  
 wasmtime = { version = "46.0", optional = true }
@@ -33,7 +34,8 @@ anyhow = "1.0"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# preserve_order: JSON objects keep insertion order (stdlib-reference §8, D3).
+serde_json = { version = "1.0", features = ["preserve_order"] }
 toml = "0.8"
 base64 = "0.21"
 

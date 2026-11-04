@@ -14,7 +14,6 @@ pub struct TastProgram {
     pub functions: Vec<TastFunction>,
     pub classes: Vec<TastClass>,
     pub start_function: Option<TastFunction>,
-    pub imports: Vec<TastImport>,
     pub tests: Vec<TastTest>,
     pub state: Option<TastStateBlock>,
     /// Top-level watch blocks (reactive state observers)
@@ -157,16 +156,6 @@ pub enum TastStatement {
         body: TastBlock,
         location: SourceLocation,
     },
-    Try {
-        body: TastBlock,
-        catch_clause: Option<TastCatchClause>,
-        finally_clause: Option<TastBlock>,
-        location: SourceLocation,
-    },
-    Throw {
-        expression: TastExpression,
-        location: SourceLocation,
-    },
     Break {
         location: SourceLocation,
     },
@@ -268,12 +257,6 @@ pub enum TastExpressionKind {
     ObjectLiteral {
         fields: Vec<TastObjectField>,
     },
-    Lambda {
-        parameters: Vec<TastParameter>,
-        body: TastBlock,
-        return_type: ConcreteType,
-        captures: Vec<SymbolId>,
-    },
     Cast {
         expression: Box<TastExpression>,
         target_type: ConcreteType,
@@ -285,9 +268,6 @@ pub enum TastExpressionKind {
     },
     Await {
         expression: Box<TastExpression>,
-    },
-    AsyncBlock {
-        body: TastBlock,
     },
     OnError {
         expression: Box<TastExpression>,
@@ -327,33 +307,6 @@ pub struct TastObjectField {
     pub key: String,
     pub value: TastExpression,
     pub location: SourceLocation,
-}
-
-/// Type-checked catch clause
-#[derive(Debug, Clone, PartialEq)]
-pub struct TastCatchClause {
-    pub exception_symbol: SymbolId,
-    pub exception_type: ConcreteType,
-    pub body: TastBlock,
-    pub location: SourceLocation,
-}
-
-/// Type-checked import statement
-#[derive(Debug, Clone, PartialEq)]
-pub struct TastImport {
-    pub module_name: String,
-    pub imported_symbols: Vec<TastImportedSymbol>,
-    pub alias: Option<String>,
-    pub location: SourceLocation,
-}
-
-/// Type-checked imported symbol
-#[derive(Debug, Clone, PartialEq)]
-pub struct TastImportedSymbol {
-    pub name: String,
-    pub alias: Option<String>,
-    pub symbol_id: SymbolId,
-    pub symbol_type: ConcreteType,
 }
 
 /// Type-checked test definition
@@ -491,14 +444,8 @@ pub enum ConcreteType {
         type_args: Vec<ConcreteType>,
     },
 
-    /// Tuple type
-    Tuple(Vec<ConcreteType>),
-
     /// Union type (sum type)
     Union(Vec<ConcreteType>),
-
-    /// Intersection type
-    Intersection(Vec<ConcreteType>),
 
     /// Generic type parameter
     Generic {
@@ -551,21 +498,6 @@ pub enum TypeConstraint {
     Subtype {
         subtype: ConcreteType,
         supertype: ConcreteType,
-        location: SourceLocation,
-    },
-
-    /// Type must implement interface
-    Implements {
-        type_: ConcreteType,
-        interface: ConcreteType,
-        location: SourceLocation,
-    },
-
-    /// Type must have specific member
-    HasMember {
-        type_: ConcreteType,
-        member_name: String,
-        member_type: ConcreteType,
         location: SourceLocation,
     },
 }
@@ -630,8 +562,6 @@ pub enum UnaryOperator {
 pub enum Visibility {
     Public,
     Private,
-    Protected,
-    Internal,
 }
 
 impl ConcreteType {
@@ -729,9 +659,6 @@ impl ConcreteType {
 
             // Union types on left (can assign from union if all members are assignable to target)
             (ConcreteType::Union(types), t) => types.iter().all(|ut| ut.is_assignable_to(t)),
-
-            // Intersection types (can assign from intersection if all members are assignable)
-            (ConcreteType::Intersection(types), t) => types.iter().all(|it| it.is_assignable_to(t)),
 
             // Unknown type is assignable to anything (for error recovery)
             (ConcreteType::Unknown, _) | (_, ConcreteType::Unknown) => true,
@@ -907,28 +834,12 @@ impl std::fmt::Display for ConcreteType {
                     write!(f, "Interface#{}<{}>", symbol_id.0, args)
                 }
             }
-            ConcreteType::Tuple(types) => {
-                let types_str = types
-                    .iter()
-                    .map(|t| t.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", types_str)
-            }
             ConcreteType::Union(types) => {
                 let types_str = types
                     .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
                     .join(" | ");
-                write!(f, "{}", types_str)
-            }
-            ConcreteType::Intersection(types) => {
-                let types_str = types
-                    .iter()
-                    .map(|t| t.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" & ");
                 write!(f, "{}", types_str)
             }
             ConcreteType::Generic { name, bounds } => {

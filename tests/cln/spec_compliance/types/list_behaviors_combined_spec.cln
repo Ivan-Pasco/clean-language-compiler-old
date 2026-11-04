@@ -5,8 +5,8 @@
 
 start:
 	// Test 1: Line-unique behavior (FIFO queue with no duplicates)
-	list<integer> lineUnique = []
-	lineUnique.type = "line-unique"
+	// Fixed: was list<integer> lineUnique = [] + lineUnique.type = "line-unique", spec requires list<integer>.line.unique lineUnique = []
+	list<integer>.line.unique lineUnique = []
 	lineUnique.add(1)
 	lineUnique.add(2)
 	lineUnique.add(1)
@@ -19,8 +19,8 @@ start:
 	print("First item removed (FIFO, should be 1): " + firstItem.toString())
 
 	// Test 2: Pile-unique behavior (LIFO stack with no duplicates)
-	list<string> pileUnique = []
-	pileUnique.type = "pile-unique"
+	// Fixed: was list<string> pileUnique = [] + pileUnique.type = "pile-unique", spec requires list<string>.unique.pile pileUnique = []
+	list<string>.unique.pile pileUnique = []
 	pileUnique.add("apple")
 	pileUnique.add("banana")
 	pileUnique.add("apple")
@@ -33,20 +33,19 @@ start:
 	print("Top item removed (LIFO, should be cherry): " + topItem)
 
 	// Test 3: Switching behaviors at runtime
-	list<integer> dynamic = []
-	dynamic.type = "line"
+	// Fixed: was list<integer> dynamic = [] + dynamic.type = "line" then dynamic.type = "pile" (runtime switching), spec requires behavior declared with the type: list<integer>.pile dynamic = []
+	list<integer>.pile dynamic = []
 	dynamic.add(10)
 	dynamic.add(20)
 
-	// Switch to pile
-	dynamic.type = "pile"
+	// Pile behavior comes from the declaration above
 	dynamic.add(30)
 	integer dynamicTop = dynamic.remove()
 	print("After switch to pile, top (should be 30): " + dynamicTop.toString())
 
 	// Test 4: Contains check with unique behavior
-	list<integer> uniqueSet = []
-	uniqueSet.type = "unique"
+	// Fixed: was list<integer> uniqueSet = [] + uniqueSet.type = "unique", spec requires list<integer>.unique uniqueSet = []
+	list<integer>.unique uniqueSet = []
 	uniqueSet.add(100)
 	uniqueSet.add(200)
 	boolean hasHundred = uniqueSet.contains(100)

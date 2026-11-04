@@ -16,13 +16,13 @@
 //! Reference: cross-component prompt `f9ee2728-8597-11f1-9d55-da25a95a496b`.
 
 use anyhow::Result;
-use wasmtime::{Caller, Linker};
+use wasmtime::{FuncType, Linker, ValType};
 
 use crate::plugins::wasm_adapter::PluginState;
 
 /// Register trap stubs for every typed-emission bridge on `linker`.
 ///
-/// Called from `build_lint_linker` so a plugin that also exports
+/// Called from `lint_linker` so a plugin that also exports
 /// `expand_block_typed` (and therefore imports the typed-emission
 /// surface) can still instantiate for a lint pass. Any bridge invoked
 /// from the wrong context traps with a diagnostic naming the specific
@@ -39,7 +39,7 @@ pub fn register_typed_emission_stubs(
 
 /// Register trap stubs for every lint bridge on `linker`.
 ///
-/// Called from `build_typed_emission_linker` so a plugin that also
+/// Called from `typed_emission_linker` so a plugin that also
 /// exports `lint_project` (and therefore imports the lint surface) can
 /// still instantiate for an expand pass.
 pub fn register_lint_stubs(linker: &mut Linker<PluginState>, context: &'static str) -> Result<()> {
@@ -49,70 +49,28 @@ pub fn register_lint_stubs(linker: &mut Linker<PluginState>, context: &'static s
     Ok(())
 }
 
+/// Register `name` as an `(i32 × arity) -> i32` import whose every call
+/// fails with a `BRIDGE-WRONG-CONTEXT` trap. The error is returned from the
+/// host function (a wasm trap the caller reports), never raised as a panic:
+/// wasmtime resumes a host-function panic in the caller, which would crash
+/// the compiler instead of producing the diagnostic.
 fn register_trap_stub(
     linker: &mut Linker<PluginState>,
     name: &'static str,
     arity: usize,
     context: &'static str,
 ) -> Result<()> {
-    match arity {
-        1 => linker.func_wrap(
-            "env",
-            name,
-            move |_: Caller<'_, PluginState>, _: i32| -> i32 { trap(name, context) },
-        )?,
-        2 => linker.func_wrap(
-            "env",
-            name,
-            move |_: Caller<'_, PluginState>, _: i32, _: i32| -> i32 { trap(name, context) },
-        )?,
-        3 => linker.func_wrap(
-            "env",
-            name,
-            move |_: Caller<'_, PluginState>, _: i32, _: i32, _: i32| -> i32 {
-                trap(name, context)
-            },
-        )?,
-        4 => linker.func_wrap(
-            "env",
-            name,
-            move |_: Caller<'_, PluginState>, _: i32, _: i32, _: i32, _: i32| -> i32 {
-                trap(name, context)
-            },
-        )?,
-        5 => linker.func_wrap(
-            "env",
-            name,
-            move |_: Caller<'_, PluginState>, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
-                trap(name, context)
-            },
-        )?,
-        6 => linker.func_wrap(
-            "env",
-            name,
-            move |_: Caller<'_, PluginState>,
-                  _: i32,
-                  _: i32,
-                  _: i32,
-                  _: i32,
-                  _: i32,
-                  _: i32|
-                  -> i32 { trap(name, context) },
-        )?,
-        _ => {
-            return Err(anyhow::anyhow!(
-                "unsupported trap-stub arity {arity} for bridge `{name}`"
-            ));
-        }
-    };
+    let ty = FuncType::new(
+        linker.engine(),
+        std::iter::repeat_n(ValType::I32, arity),
+        [ValType::I32],
+    );
+    linker.func_new("env", name, ty, move |_caller, _params, _results| {
+        Err(wasmtime::Error::msg(format!(
+            "BRIDGE-WRONG-CONTEXT: `{name}` called during {context} pass"
+        )))
+    })?;
     Ok(())
-}
-
-fn trap(name: &'static str, context: &'static str) -> i32 {
-    // wasmtime turns a Rust panic in a host func into a WASM trap; the
-    // panic message is what the caller (call_expand_typed /
-    // call_lint_project) surfaces to the user via anyhow.
-    panic!("BRIDGE-WRONG-CONTEXT: `{name}` called during {context} pass");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,8 +78,8 @@ fn trap(name: &'static str, context: &'static str) -> i32 {
 //
 // These MUST stay in sync with the real registrations in
 // `plugins::typed_emission::bridges`, `plugins::typed_emission::batch_builders`,
-// and `plugins::lint::bridges`. The test at the bottom of this file guards
-// against drift by locking arities.
+// and `plugins::lint::bridges`. The `*_stubs_match_real_bridges` tests at the
+// bottom of this file compare every name and arity against those linkers.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LINT_BRIDGES: &[(&str, usize)] = &[
@@ -145,12 +103,14 @@ const TYPED_EMISSION_BRIDGES: &[(&str, usize)] = &[
     ("batch.ident", 2),
     ("batch.field", 3),
     ("batch.call", 3),
+    ("batch.methodCall", 4),
     ("batch.binop", 4),
     ("batch.unop", 3),
     ("batch.index", 3),
     ("batch.arrayLit", 2),
     ("batch.objectLit", 2),
     ("batch.stmtCall", 3),
+    ("batch.stmtMethodCall", 4),
     ("batch.stmtAssign", 3),
     ("batch.stmtVarDecl", 4),
     ("batch.stmtIf", 4),
@@ -181,12 +141,14 @@ const TYPED_EMISSION_BRIDGES: &[(&str, usize)] = &[
     ("_batch_ident", 2),
     ("_batch_field", 3),
     ("_batch_call", 3),
+    ("_batch_methodCall", 4),
     ("_batch_binop", 4),
     ("_batch_unop", 3),
     ("_batch_index", 3),
     ("_batch_arrayLit", 2),
     ("_batch_objectLit", 2),
     ("_batch_stmtCall", 3),
+    ("_batch_stmtMethodCall", 4),
     ("_batch_stmtAssign", 3),
     ("_batch_stmtVarDecl", 4),
     ("_batch_stmtIf", 4),
@@ -229,6 +191,7 @@ const TYPED_EMISSION_BRIDGES: &[(&str, usize)] = &[
     // Statement constructors
     ("_stmt_call", 3),
     ("_stmt_assign", 3),
+    ("_stmt_var_decl", 4),
     ("_stmt_if", 4),
     ("_stmt_while", 3),
     ("_stmt_for", 4),
@@ -275,6 +238,124 @@ mod tests {
 
         let mut linker: Linker<PluginState> = Linker::new(&engine);
         register_lint_stubs(&mut linker, "expand").expect("lint stubs register cleanly");
+    }
+
+    /// `(name, param count, all-i32 -> i32 shape)` of every `env` function
+    /// a linker registers.
+    fn registered_surface(
+        register: impl FnOnce(&mut Linker<PluginState>) -> Result<()>,
+    ) -> std::collections::BTreeMap<String, (usize, bool)> {
+        let engine = Engine::default();
+        let mut linker: Linker<PluginState> = Linker::new(&engine);
+        register(&mut linker).expect("bridges register cleanly");
+        let mut store = wasmtime::Store::new(&engine, PluginState::new());
+        let entries: Vec<(String, wasmtime::Extern)> = linker
+            .iter(&mut store)
+            .filter(|(module, _, _)| *module == "env")
+            .map(|(_, name, ext)| (name.to_string(), ext))
+            .collect();
+        entries
+            .into_iter()
+            .filter_map(|(name, ext)| match ext.ty(&store) {
+                wasmtime::ExternType::Func(ft) => {
+                    let params: Vec<_> = ft.params().collect();
+                    let results: Vec<_> = ft.results().collect();
+                    let i32_shape = params.iter().all(|t| matches!(t, wasmtime::ValType::I32))
+                        && results.len() == 1
+                        && matches!(results[0], wasmtime::ValType::I32);
+                    Some((name, (params.len(), i32_shape)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The stub lists must name exactly the real bridges with their real
+    /// arity. A real bridge missing from a list makes a plugin that imports
+    /// it fail to instantiate in the other context ("unknown import"); a
+    /// wrong arity fails it with an import type mismatch.
+    fn assert_stubs_match(
+        surface: &str,
+        real: std::collections::BTreeMap<String, (usize, bool)>,
+        stubs: &[(&str, usize)],
+    ) {
+        let stubbed: std::collections::BTreeMap<String, (usize, bool)> = stubs
+            .iter()
+            .map(|(n, a)| (n.to_string(), (*a, true)))
+            .collect();
+        let missing: Vec<_> = real
+            .iter()
+            .filter(|(n, _)| !stubbed.contains_key(*n))
+            .map(|(n, sig)| format!("{n} {sig:?}"))
+            .collect();
+        let extra: Vec<_> = stubbed
+            .keys()
+            .filter(|n| !real.contains_key(*n))
+            .cloned()
+            .collect();
+        let mismatched: Vec<_> = stubbed
+            .iter()
+            .filter_map(|(n, stub)| match real.get(n) {
+                Some(sig) if sig != stub => Some(format!("{n}: real {sig:?}, stub {stub:?}")),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            missing.is_empty() && extra.is_empty() && mismatched.is_empty(),
+            "{surface} stub list drifted from the real bridges:\n  missing: {missing:?}\n  \
+             extra: {extra:?}\n  mismatched: {mismatched:?}"
+        );
+    }
+
+    #[test]
+    fn typed_emission_stubs_match_real_bridges() {
+        let real = registered_surface(|l| {
+            crate::plugins::typed_emission::register_typed_emission_bridges(l)
+        });
+        assert_stubs_match("typed-emission", real, TYPED_EMISSION_BRIDGES);
+    }
+
+    #[test]
+    fn lint_stubs_match_real_bridges() {
+        let real = registered_surface(crate::plugins::lint::register_lint_bridges);
+        assert_stubs_match("lint", real, LINT_BRIDGES);
+    }
+
+    /// Calling a wrong-context bridge must fail the plugin call with the
+    /// BRIDGE-WRONG-CONTEXT trap, not panic the host.
+    #[test]
+    fn wrong_context_call_traps_without_panicking() {
+        let engine = Engine::default();
+        let module = wasmtime::Module::new(
+            &engine,
+            r#"
+            (module
+              (import "env" "_emit_function"
+                (func $emit (param i32 i32 i32 i32 i32 i32) (result i32)))
+              (func (export "run") (result i32)
+                i32.const 0 i32.const 0 i32.const 0
+                i32.const 0 i32.const 0 i32.const 0
+                call $emit))
+            "#,
+        )
+        .expect("compile probe");
+        let mut linker: Linker<PluginState> = Linker::new(&engine);
+        register_typed_emission_stubs(&mut linker, "lint").expect("stubs register");
+        let mut store = wasmtime::Store::new(&engine, PluginState::new());
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let run = instance
+            .get_typed_func::<(), i32>(&mut store, "run")
+            .expect("run export");
+        let err = run
+            .call(&mut store, ())
+            .expect_err("a wrong-context call must trap");
+        assert!(
+            format!("{err:?}")
+                .contains("BRIDGE-WRONG-CONTEXT: `_emit_function` called during lint"),
+            "unexpected error: {err:?}"
+        );
     }
 
     /// The two surfaces must stay disjoint — an overlap would mean one

@@ -1,0 +1,41 @@
+// Test: bugfixes/field_inherited_from_grandparent
+// Grammar: class_declaration (grammar.ebnf), inheritance `is`
+// Semantic: SEM006 — a public field is inherited through every level of the
+//   class chain, not only from the direct parent
+// Regression: field lookup only searched the class and its direct parent, so
+//   `c.x` and an unqualified `x` inside a grandchild's method were rejected
+//   ("Field 'x' not found in class 'C'" / SCOPE001).
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   7
+//   14
+//   9
+//   18
+
+start:
+	Leaf c = Leaf(7)
+	printl(c.x.toString())
+	printl(c.twice().toString())
+	c.x = 9
+	printl(c.x.toString())
+	printl(c.twice().toString())
+
+class Root
+	public:
+		integer x
+
+	constructor(integer v)
+		x = v
+
+class Middle is Root
+	constructor(integer v)
+		base(v)
+
+class Leaf is Middle
+	constructor(integer v)
+		base(v)
+
+	functions:
+		public:
+			integer twice()
+				return x * 2

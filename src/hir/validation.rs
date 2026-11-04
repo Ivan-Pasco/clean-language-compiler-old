@@ -431,11 +431,6 @@ impl HirValidator {
                 Self::scan_block_for_route_registrations(context, &method.body);
             }
         }
-        for screen in &hir.screen_blocks {
-            for function in &screen.functions {
-                Self::scan_block_for_route_registrations(context, &function.body);
-            }
-        }
         for test in &hir.tests {
             Self::scan_block_for_route_registrations(context, &test.body);
         }
@@ -860,23 +855,26 @@ impl HirValidator {
         context.current_class = old_class;
     }
 
-    /// Check for circular inheritance
+    /// True when following the parent chain from `start_class`'s parent never
+    /// ends: it reaches `start_class` again or enters a cycle further up
+    /// (A is B, B is C, C is B). Each class is visited at most once, so the
+    /// walk terminates on any input.
     fn has_circular_inheritance(
         classes: &HashMap<String, HirClass>,
         start_class: &str,
-        current_parent: &str,
+        parent: &str,
     ) -> bool {
-        if current_parent == start_class {
-            return true;
-        }
-
-        if let Some(parent_class) = classes.get(current_parent) {
-            if let Some(grandparent) = &parent_class.parent {
-                return Self::has_circular_inheritance(classes, start_class, grandparent);
+        let mut visited: HashSet<&str> = HashSet::from([start_class]);
+        let mut current = parent;
+        loop {
+            if !visited.insert(current) {
+                return true;
+            }
+            match classes.get(current).and_then(|c| c.parent.as_deref()) {
+                Some(next) => current = next,
+                None => return false,
             }
         }
-
-        false
     }
 
     /// Validate a field

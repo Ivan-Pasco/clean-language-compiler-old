@@ -1,0 +1,76 @@
+// Test: bugfixes/integer64_in_any_and_lists
+// Grammar: list_type, sized_type, list_literal
+// Semantic: type-system.md §9 (any), §5 (integer widening)
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   5000000000
+//   a=5000000000
+//   5000000000
+//   -12
+//   4
+//   5000000000
+//   -1
+//   true
+//   false
+//   1
+//   6000000000
+//   2
+//   5000000000
+//   6000000000
+//   11000000000
+//   2
+//   9000000000
+//   [5000000000.0,2.0]
+//   2
+//   3
+//
+// Boxing an `integer:64` into `any` and every `list<integer:64>` operation
+// produced invalid WASM (an i64 where an i32 was expected). An `integer:64`
+// is boxed as a number; a `list<integer:64>` stores 8-byte elements.
+// `list<number>` literals of integers were laid out as 4-byte elements.
+
+start:
+	integer:64 big = 5000000000
+	any a = big
+	print(a)
+	print("a=" + a.toString())
+	integer:64 back = a
+	print(back)
+	any small = -12
+	integer:64 wide = small
+	print(wide)
+
+	list<integer:64> xs = [3, (0 - 1), big]
+	xs.add(7)
+	print(xs.size())
+	print(xs[2])
+	print(xs.get(1))
+	print(xs.contains(big))
+	print(xs.contains(4))
+	print(xs.indexOf(0 - 1))
+	xs.set(0, 6000000000)
+	print(xs[0])
+	xs[1] = 2
+	print(xs[1])
+	list<integer:64> sorted = xs.sort()
+	print(sorted[2])
+	print(sorted.last())
+	xs.removeLast()
+	integer:64 total = 0
+	iterate v in xs
+		total = total + v
+	print(total - 2)
+	list<integer:64>.unique seen = []
+	seen.add(big)
+	seen.add(big)
+	seen.add(1)
+	print(seen.size())
+	print(list.fill(2, 9000000000).last())
+	list<integer:64> pair = [5000000000, 2]
+	any boxed = pair
+	print(json.dataToText(boxed))
+
+	list<number> ns = [1, 2]
+	print(ns.get(1))
+	ns.add(3)
+	print(ns.get(2))

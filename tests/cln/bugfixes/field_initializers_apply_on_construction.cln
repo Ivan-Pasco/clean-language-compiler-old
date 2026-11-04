@@ -1,0 +1,59 @@
+// Test: bugfixes/field_initializers_apply_on_construction
+// Grammar: class_field (type identifier "=" expression)
+// Semantic: class fields (specification 15-classes-and-objects.md)
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   5 42 tag
+//   6 42 tag
+//   1 x
+//   3 base 2
+//   2
+//
+// Regression: a field's declared initializer was type-checked but never
+// lowered, so `integer w = 5` started at 0 (and a string field at an empty
+// pointer) whether or not the class declared a constructor.
+
+start:
+	Plain p = Plain()
+	printl(p.w.toString() + " " + p.tail.toString() + " " + p.label)
+	Built b = Built()
+	printl(b.w.toString() + " " + b.tail.toString() + " " + b.label)
+	Bag g = Bag()
+	g.items.add("x")
+	g.counts.set("a", 1)
+	printl(g.counts.get("a").toString() + " " + g.items.get(1))
+	Child c = Child()
+	printl(c.size.toString() + " " + c.name + " " + c.depth.toString())
+	printl(g.items.length().toString())
+
+class Plain
+	public:
+		integer w = 5
+		integer tail = 42
+		string label = "tag"
+
+class Built
+	public:
+		integer w = 5
+		integer tail = 42
+		string label = "tag"
+
+	constructor()
+		w = w + 1
+
+class Bag
+	public:
+		list<string> items = ["first"]
+		pairs<string, integer> counts = {}
+
+class Base
+	public:
+		string name = "base"
+		integer size = 1
+
+class Child is Base
+	public:
+		integer depth = 2
+
+	constructor()
+		size = size + depth

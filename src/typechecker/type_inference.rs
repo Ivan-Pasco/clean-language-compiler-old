@@ -15,8 +15,9 @@ use crate::error::CompilerError;
 use crate::hir::{HirBinaryOp, HirStateScope, HirType, HirUnaryOp};
 use crate::resolver::{
     GlobalSymbolTable, ResolvedHirBlock, ResolvedHirClass, ResolvedHirExpression,
-    ResolvedHirFunction, ResolvedHirLValue, ResolvedHirMethod, ResolvedHirProgram,
-    ResolvedHirStateBlock, ResolvedHirStatement, ResolvedHirWatchBlock, SymbolId, SymbolKind,
+    ResolvedHirFunction, ResolvedHirLValue, ResolvedHirMethod, ResolvedHirParameter,
+    ResolvedHirProgram, ResolvedHirStateBlock, ResolvedHirStatement, ResolvedHirWatchBlock,
+    SymbolId, SymbolKind,
 };
 use std::collections::HashMap;
 
@@ -1222,7 +1223,6 @@ impl<'a> TypeInference<'a> {
             functions: tast_functions,
             classes: tast_classes,
             start_function: tast_start_function,
-            imports: Vec::new(), // Would convert imports here
             tests: tast_tests,
             state: tast_state,
             watch_blocks: tast_watch_blocks,
@@ -1337,21 +1337,8 @@ impl<'a> TypeInference<'a> {
 
     /// Register method signature in type environment
     fn register_method_signature(&mut self, method: &ResolvedHirMethod) {
-        let param_types: Vec<ConcreteType> = method
-            .parameters
-            .iter()
-            .map(|p| self.hir_type_to_concrete(&p.param_type))
-            .collect();
-
         let return_type = self.hir_type_to_concrete(&method.return_type);
-
-        let function_type = ConcreteType::Function {
-            parameters: param_types,
-            return_type: Box::new(return_type),
-            is_background: false, // Methods are not async by default
-        };
-
-        self.type_env.insert(method.symbol_id, function_type);
+        self.register_callable_signature(method.symbol_id, &method.parameters, return_type);
     }
 
     /// Register class signature in type environment
@@ -1372,6 +1359,96 @@ impl<'a> TypeInference<'a> {
         // Register method signatures
         for method in &class.methods {
             self.register_method_signature(method);
+        }
+
+        // An explicit constructor's signature checks `Class(args)` calls. A
+        // parameterless constructor is not checked: entity classes (frame.data
+        // `data` blocks) declare one and are built positionally from their
+        // fields, `Widget(1, "x")`.
+        if let Some(constructor) = class
+            .constructor
+            .as_ref()
+            .filter(|c| !c.parameters.is_empty())
+        {
+            self.register_callable_signature(
+                constructor.symbol_id,
+                &constructor.parameters,
+                ConcreteType::Class {
+                    symbol_id: class.symbol_id,
+                    type_args: Vec::new(),
+                },
+            );
+        }
+    }
+
+    /// Record the parameter types and the number of required (no default)
+    /// parameters of a method or constructor, keyed by its symbol.
+    fn register_callable_signature(
+        &mut self,
+        symbol_id: SymbolId,
+        parameters: &[ResolvedHirParameter],
+        return_type: ConcreteType,
+    ) {
+        let function_type = ConcreteType::Function {
+            parameters: parameters
+                .iter()
+                .map(|p| self.hir_type_to_concrete(&p.param_type))
+                .collect(),
+            return_type: Box::new(return_type),
+            is_background: false,
+        };
+        self.type_env.insert(symbol_id, function_type);
+        let required = parameters
+            .iter()
+            .filter(|p| p.default_value.is_none())
+            .count();
+        self.required_param_counts.insert(symbol_id, required);
+    }
+
+    /// FUNC002 / SEM001: check the arguments of a constructor or method call
+    /// against the callee's registered signature. Callees without a
+    /// registered signature (built-ins, implicit constructors) are skipped.
+    fn check_call_arguments(
+        &mut self,
+        callee: SymbolId,
+        callee_name: &str,
+        arguments: &[TastExpression],
+        location: &SourceLocation,
+    ) {
+        let Some(ConcreteType::Function { parameters, .. }) = self.type_env.get(&callee).cloned()
+        else {
+            return;
+        };
+        let required = self
+            .required_param_counts
+            .get(&callee)
+            .copied()
+            .unwrap_or(parameters.len());
+        if arguments.len() < required || arguments.len() > parameters.len() {
+            let expected = if required == parameters.len() {
+                required.to_string()
+            } else {
+                format!("{} to {}", required, parameters.len())
+            };
+            self.errors.push(CompilerError::semantic_error_with_code(
+                format!(
+                    "'{}' expects {} argument(s), got {}",
+                    callee_name,
+                    expected,
+                    arguments.len()
+                ),
+                None,
+                Some(location.clone()),
+                "FUNC002",
+            ));
+            return;
+        }
+        for (param_type, arg) in parameters.iter().zip(arguments) {
+            self.add_constraint(TypeConstraint::Equality {
+                left: arg.expr_type.clone(),
+                right: param_type.clone(),
+                location: arg.location.clone(),
+            });
         }
     }
 
@@ -2905,6 +2982,26 @@ impl<'a> TypeInference<'a> {
                         // Handle field assignments like obj.field = value
                         let tast_object = self.infer_expression(object)?;
 
+                        // SEM004: a list has no assignable properties. Its behavior
+                        // (`.line`, `.pile`, `.unique`) is part of the type, declared
+                        // with the variable (type-system: "Behavior Declaration").
+                        if let ConcreteType::Array(element_type) = &tast_object.expr_type {
+                            return Err(CompilerError::Type {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!("Cannot assign to '{}' on a list", field),
+                                        Some(format!(
+                                            "List behavior is part of the type: declare the list as `list<{}>.unique name = []` (or `.line`, `.pile`)",
+                                            element_type
+                                        )),
+                                        crate::error::ErrorType::Type,
+                                        Some(field_location.clone()),
+                                    )
+                                    .with_error_code("SEM004"),
+                                ),
+                            });
+                        }
+
                         // The resolver leaves `obj.field` l-values unbound
                         // (SymbolId(0)) because the field depends on the
                         // object's type; bind it here the same way field reads
@@ -2917,6 +3014,31 @@ impl<'a> TypeInference<'a> {
                         } else {
                             (target_type, *field_symbol_id)
                         };
+
+                        // SEM005: a private field is written only inside its class
+                        // (or a class derived from it).
+                        let field_owner = match self
+                            .symbol_table
+                            .get_symbol(field_symbol_id)
+                            .map(|s| &s.kind)
+                        {
+                            Some(SymbolKind::Field { class_id, .. }) => Some(*class_id),
+                            _ => None,
+                        };
+                        let inside_owner_hierarchy = match (self.current_class, field_owner) {
+                            (Some(current), Some(owner)) => {
+                                self.class_is_subclass_of(current, owner)
+                            }
+                            _ => false,
+                        };
+                        if field_symbol_id.0 != 0 && !inside_owner_hierarchy {
+                            self.check_private_member_access(
+                                field_symbol_id,
+                                field,
+                                None,
+                                field_location,
+                            );
+                        }
 
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
@@ -3634,7 +3756,20 @@ impl<'a> TypeInference<'a> {
                 | ConcreteType::Class { .. }
                 | ConcreteType::Interface { .. }
                 | ConcreteType::Function { .. }
-                | ConcreteType::Tuple(_)
+        )
+    }
+
+    /// A fully-known scalar or string type: two such types that are not
+    /// assignable either way can never hold the same value.
+    fn is_primitive_value_type(t: &ConcreteType) -> bool {
+        matches!(
+            t,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::NumberSized { .. }
+                | ConcreteType::String
+                | ConcreteType::Boolean
         )
     }
 
@@ -3959,6 +4094,57 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        // SEM004: joining a list is a namespace utility (`list.join(items, sep)`);
+        // the method form is not part of the language (method-style syntax:
+        // "every operation has one name").
+        if matches!(resolved_receiver_type, ConcreteType::Array(_)) && method == "join" {
+            self.errors.push(CompilerError::Type {
+                context: Box::new(
+                    crate::error::ErrorContext::new(
+                        "`join` is not a list method".to_string(),
+                        Some(
+                            "Join a list with the namespace function: `list.join(items, sep)`"
+                                .to_string(),
+                        ),
+                        crate::error::ErrorType::Type,
+                        Some(location.clone()),
+                    )
+                    .with_error_code("SEM004"),
+                ),
+            });
+        }
+
+        // SEM001: a value added to a typed list must have the element type.
+        if let (ConcreteType::Array(element_type), "add" | "push", [value]) =
+            (&resolved_receiver_type, method, tast_arguments.as_slice())
+        {
+            if Self::is_primitive_value_type(element_type)
+                && Self::is_primitive_value_type(&value.expr_type)
+                && !value.expr_type.is_assignable_to(element_type)
+            {
+                self.errors.push(CompilerError::type_error(
+                    format!(
+                        "Cannot add a value of type {} to a list of {}",
+                        value.expr_type, element_type
+                    ),
+                    None,
+                    Some(value.location.clone()),
+                ));
+            }
+        }
+
+        // FUNC002 / SEM001: a class method's arguments must match its parameters.
+        if matches!(resolved_receiver_type, ConcreteType::Class { .. })
+            && matches!(
+                self.symbol_table
+                    .get_symbol(resolved_method_symbol)
+                    .map(|s| &s.kind),
+                Some(SymbolKind::Method { .. })
+            )
+        {
+            self.check_call_arguments(resolved_method_symbol, method, &tast_arguments, location);
+        }
+
         // SEM005: Private method access check.
         if resolved_method_symbol.0 != 0 {
             self.check_private_member_access(
@@ -4148,6 +4334,31 @@ impl<'a> TypeInference<'a> {
             _ => self.hir_type_to_concrete(element_type),
         };
 
+        // SEM001: the elements of a list literal share one type. Only
+        // primitive element types are compared here; class and capability
+        // elements are checked where the list is used.
+        if let Some(first) = tast_elements.first() {
+            let first_type = first.expr_type.clone();
+            for element in &tast_elements[1..] {
+                let element_type = &element.expr_type;
+                if Self::is_primitive_value_type(&first_type)
+                    && Self::is_primitive_value_type(element_type)
+                    && !element_type.is_assignable_to(&first_type)
+                    && !first_type.is_assignable_to(element_type)
+                {
+                    self.errors.push(CompilerError::type_error(
+                        format!(
+                            "List elements must share one type: found {} and {}",
+                            first_type, element_type
+                        ),
+                        None,
+                        Some(element.location.clone()),
+                    ));
+                    break;
+                }
+            }
+        }
+
         let array_type = ConcreteType::Array(Box::new(concrete_element_type.clone()));
 
         Ok((
@@ -4224,6 +4435,12 @@ impl<'a> TypeInference<'a> {
         for arg in arguments {
             tast_arguments.push(self.infer_expression(arg)?);
         }
+        self.check_call_arguments(
+            *constructor_symbol_id,
+            class_name,
+            &tast_arguments,
+            location,
+        );
 
         // The constructor returns an instance of the class
         let instance_type = ConcreteType::Class {
@@ -4449,10 +4666,39 @@ impl<'a> TypeInference<'a> {
     ///
     /// Non-literal initializers (e.g. arithmetic results) are not retagged here — they keep
     /// their inferred type and rely on the existing assignment-side cast logic.
+    ///
+    /// A list literal of integers declared as `list<number>` or
+    /// `list<integer:64>` takes the declared element type, so the MIR builder
+    /// lays its elements out as 8-byte values and converts each one.
     fn widen_literal_to_declared_type(
         tast_init: &mut TastExpression,
         declared_type: &ConcreteType,
     ) {
+        if let (
+            TastExpressionKind::ArrayLiteral {
+                elements,
+                element_type,
+            },
+            ConcreteType::Array(declared_element),
+        ) = (&mut tast_init.kind, declared_type)
+        {
+            let widens = matches!(
+                **declared_element,
+                ConcreteType::Number
+                    | ConcreteType::IntegerSized {
+                        bits: 64,
+                        unsigned: false
+                    }
+            ) && matches!(element_type, ConcreteType::Integer);
+            if widens {
+                for element in elements.iter_mut() {
+                    Self::widen_literal_to_declared_type(element, declared_element);
+                }
+                *element_type = (**declared_element).clone();
+                tast_init.expr_type = declared_type.clone();
+            }
+            return;
+        }
         if !matches!(
             tast_init.kind,
             TastExpressionKind::Literal {
@@ -4478,6 +4724,16 @@ impl<'a> TypeInference<'a> {
     /// Infer type for a literal
     fn infer_literal(&self, literal: &crate::ast::Value) -> (TastLiteral, ConcreteType) {
         match literal {
+            // `integer` is 32-bit (type-system.md §2): a literal outside its
+            // range is an `integer:64` value, which is how the MIR builder
+            // already emits it.
+            crate::ast::Value::Integer(value) if i32::try_from(*value).is_err() => (
+                TastLiteral::Integer(*value),
+                ConcreteType::IntegerSized {
+                    bits: 64,
+                    unsigned: false,
+                },
+            ),
             crate::ast::Value::Integer(value) => {
                 (TastLiteral::Integer(*value), ConcreteType::Integer)
             }
@@ -5807,12 +6063,26 @@ impl<'a> TypeInference<'a> {
         &self,
         operator: &HirUnaryOp,
         operand_type: &ConcreteType,
-        _location: &SourceLocation,
+        location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
         match operator {
             HirUnaryOp::Negate => match operand_type {
-                ConcreteType::Integer => Ok(ConcreteType::Integer),
-                ConcreteType::Number => Ok(ConcreteType::Number),
+                ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::NumberSized { .. } => Ok(operand_type.clone()),
+                // SEM004: unary minus is defined for numbers only.
+                ConcreteType::Boolean
+                | ConcreteType::String
+                | ConcreteType::Array(_)
+                | ConcreteType::Matrix(_)
+                | ConcreteType::Pairs(_, _)
+                | ConcreteType::Class { .. } => Err(CompilerError::semantic_error_with_code(
+                    format!("Unary '-' cannot be applied to a value of type {operand_type}"),
+                    Some("Negation is defined for integer and number values".to_string()),
+                    Some(location.clone()),
+                    "SEM004",
+                )),
                 _ => Ok(ConcreteType::Unknown),
             },
             HirUnaryOp::Not => match operand_type {
@@ -5857,90 +6127,30 @@ impl<'a> TypeInference<'a> {
                 Ok((ConcreteType::Integer, SymbolId(0)))
             }
 
-            // NOTE: For class types, look up the field in the class definition
+            // A class field is declared by the class or any of its ancestors.
             ConcreteType::Class {
                 symbol_id,
                 type_args: _,
             } => {
-                // Look up the class symbol to get its fields
-                if let Some(class_symbol) = self.symbol_table.get_symbol(*symbol_id) {
-                    if let SymbolKind::Class {
-                        fields,
-                        methods: _,
-                        parent,
-                    } = &class_symbol.kind
-                    {
-                        // Search for the field with the matching name in this class
-                        for field_symbol_id in fields {
-                            if let Some(field_symbol) =
-                                self.symbol_table.get_symbol(*field_symbol_id)
-                            {
-                                if field_symbol.name == field_name {
-                                    // Found the field! Return its type and symbol ID
-                                    if let SymbolKind::Field {
-                                        class_id: _,
-                                        field_type,
-                                    } = &field_symbol.kind
-                                    {
-                                        return Ok((
-                                            self.hir_type_to_concrete(field_type),
-                                            *field_symbol_id,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-
-                        // Field not found in this class - check parent class if exists
-                        if let Some(parent_symbol_id) = parent {
-                            if let Some(parent_symbol) =
-                                self.symbol_table.get_symbol(*parent_symbol_id)
-                            {
-                                if let SymbolKind::Class {
-                                    fields: parent_fields,
-                                    ..
-                                } = &parent_symbol.kind
-                                {
-                                    // Search for the field in parent class
-                                    for field_symbol_id in parent_fields {
-                                        if let Some(field_symbol) =
-                                            self.symbol_table.get_symbol(*field_symbol_id)
-                                        {
-                                            if field_symbol.name == field_name {
-                                                // Found the field in parent class!
-                                                if let SymbolKind::Field {
-                                                    class_id: _,
-                                                    field_type,
-                                                } = &field_symbol.kind
-                                                {
-                                                    return Ok((
-                                                        self.hir_type_to_concrete(field_type),
-                                                        *field_symbol_id,
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Field not found in class or parent class
-                        return Err(CompilerError::type_error(
-                            format!(
-                                "Field '{}' not found in class '{}'",
-                                field_name, class_symbol.name
-                            ),
-                            None,
-                            None,
-                        ));
-                    }
+                let Some(class_symbol) = self.symbol_table.get_symbol(*symbol_id) else {
+                    return Err(CompilerError::type_error(
+                        format!(
+                            "Cannot resolve class type for field access '{}'",
+                            field_name
+                        ),
+                        None,
+                        None,
+                    ));
+                };
+                if let Some((field_id, field_type)) =
+                    self.symbol_table.lookup_class_field(*symbol_id, field_name)
+                {
+                    return Ok((self.hir_type_to_concrete(field_type), field_id));
                 }
-                // Class symbol not found - return error
                 Err(CompilerError::type_error(
                     format!(
-                        "Cannot resolve class type for field access '{}'",
-                        field_name
+                        "Field '{}' not found in class '{}'",
+                        field_name, class_symbol.name
                     ),
                     None,
                     None,
@@ -6296,26 +6506,6 @@ impl<'a> TypeInference<'a> {
                         }
                     }
                 }
-                TastStatement::Try {
-                    body,
-                    catch_clause,
-                    finally_clause,
-                    ..
-                } => {
-                    if Self::block_has_none_return(body) {
-                        return true;
-                    }
-                    if let Some(catch) = catch_clause {
-                        if Self::block_has_none_return(&catch.body) {
-                            return true;
-                        }
-                    }
-                    if let Some(finally) = finally_clause {
-                        if Self::block_has_none_return(finally) {
-                            return true;
-                        }
-                    }
-                }
                 TastStatement::While { body, .. } | TastStatement::For { body, .. }
                     if Self::block_has_none_return(body) =>
                 {
@@ -6360,26 +6550,6 @@ impl<'a> TypeInference<'a> {
                         }
                     }
                 }
-                TastStatement::Try {
-                    body,
-                    catch_clause,
-                    finally_clause,
-                    ..
-                } => {
-                    if Self::block_has_non_none_return(body) {
-                        return true;
-                    }
-                    if let Some(catch) = catch_clause {
-                        if Self::block_has_non_none_return(&catch.body) {
-                            return true;
-                        }
-                    }
-                    if let Some(finally) = finally_clause {
-                        if Self::block_has_non_none_return(finally) {
-                            return true;
-                        }
-                    }
-                }
                 TastStatement::While { body, .. } | TastStatement::For { body, .. }
                     if Self::block_has_non_none_return(body) =>
                 {
@@ -6407,16 +6577,6 @@ impl<'a> TypeInference<'a> {
             Some(TastStatement::If {
                 else_block: None, ..
             }) => false,
-            Some(TastStatement::Try {
-                body, catch_clause, ..
-            }) => {
-                // Conservatively: both try body and catch clause must return.
-                let catch_returns = catch_clause
-                    .as_ref()
-                    .map(|c| Self::block_definitely_returns(&c.body))
-                    .unwrap_or(false);
-                Self::block_definitely_returns(body) && catch_returns
-            }
             _ => false,
         }
     }

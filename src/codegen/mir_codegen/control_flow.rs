@@ -87,6 +87,19 @@ impl MirCodeGenerator<'_> {
             return false;
         };
 
+        // The MIR builder labels the block of a source `else` clause "else"
+        // and the merge block of an `if` "continue" (mir_builder/statements.rs,
+        // If), so the label decides when present. An "else" block is an else
+        // clause whatever its shape: with a then-arm ending in `break`, the
+        // checks below took `if c: break else: x` for `if c: break` followed
+        // by `x`, emitted `x` as the if's continuation and dropped the
+        // statements after the if/else.
+        match false_blk.label.as_deref() {
+            Some("else") => return false,
+            Some("continue") => return true,
+            _ => {}
+        }
+
         // Check #1: Empty block with simple terminator
         if false_blk.instructions.is_empty() {
             match &false_blk.terminator {
@@ -174,7 +187,27 @@ impl MirCodeGenerator<'_> {
         false
     }
 
+    /// Whether a Jump to `block_id` leaves the current iteration of a loop
+    /// being emitted: `continue` (to the loop header, or to the increment
+    /// block of an `iterate` loop) or `break` (to the loop exit). Such a
+    /// Jump is emitted as a `br` and never names a merge block.
+    pub(super) fn ends_loop_iteration(&self, block_id: BasicBlockId) -> bool {
+        self.loop_context_stack.iter().any(|l| {
+            l.header_block_id == block_id
+                || l.exit_block_id == block_id
+                || l.continue_target.is_some_and(|(c, _)| c == block_id)
+        })
+    }
+
     /// Helper to check if a block eventually jumps to a target block (following Jump terminators).
+    ///
+    /// The walk stays inside the current iteration of the enclosing loops: a
+    /// Jump to a loop header, to a loop's increment block (`continue`) or to
+    /// a loop exit (`break`) leaves the region. Following the back edge
+    /// reached every block of the loop body again, so an if/else whose
+    /// then-arm ends in `continue` looked like it flowed into its own else
+    /// arm; the else arm was then emitted as the if's continuation and the
+    /// statements after the if/else were dropped.
     pub(super) fn block_eventually_jumps_to(
         &self,
         function: &MirFunction,
@@ -199,8 +232,10 @@ impl MirCodeGenerator<'_> {
                     if *target == target_block {
                         return true;
                     }
-                    // Follow the jump
-                    to_visit.push(*target);
+                    // Follow the jump, unless it ends this loop iteration
+                    if !self.ends_loop_iteration(*target) {
+                        to_visit.push(*target);
+                    }
                 }
                 MirTerminator::Branch {
                     true_block,
@@ -418,6 +453,15 @@ impl MirCodeGenerator<'_> {
 
         match &block.terminator {
             MirTerminator::Jump { target } => {
+                // `break` and `continue` of a loop being emitted leave the
+                // region like `return` does and name no merge block. Counting
+                // a `break` made an if/else whose other arm reaches the real
+                // merge report two candidates (no continuation); following a
+                // `continue` to the header like a jump into a nested loop
+                // below picked the loop's exit as the merge.
+                if self.ends_loop_iteration(*target) {
+                    return;
+                }
                 // A jump into a loop is not a continuation: the loop is part
                 // of this path, which continues where the loop exits (the
                 // header's false branch, as generate_structured_blocks lays

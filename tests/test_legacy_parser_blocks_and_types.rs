@@ -119,6 +119,32 @@ fn list_matrix_pairs_keep_their_type_arguments() {
     );
 }
 
+/// grammar.ebnf `standalone_on_error = "onError" , ":" , indented_block`.
+/// The `"onError"` and `":"` literals produce no pest pairs, but the parser
+/// skipped two children before reading the block, so every standalone
+/// `onError:` failed with "Expected block after onError:".
+#[test]
+fn standalone_on_error_block_keeps_its_body() {
+    let body = start_body("start:\n\tonError:\n\t\tprint(\"failed\")\n");
+    match &body[0] {
+        Statement::StandaloneErrorHandler { body, .. } => assert_eq!(body.len(), 1),
+        other => panic!("expected a standalone onError handler, got {other:?}"),
+    }
+}
+
+/// A syntax error within 50 bytes of a multi-byte character (`—` in a
+/// comment) used to panic while building the error's context snippet
+/// ("byte index is not a char boundary") instead of reporting the error.
+#[test]
+fn syntax_error_near_multibyte_character_is_reported() {
+    let mut parser = ErrorRecoveringParser::new(
+        // The error is at the final `/`, 50 bytes past the middle of `—`.
+        "// Test: core/capabilities — capability names may appear as parameter types\n/",
+        "<legacy-parser-test>",
+    );
+    assert!(parser.parse_program().is_err());
+}
+
 #[test]
 fn list_element_access_keeps_element_type_in_declaration() {
     let body = start_body("start:\n\tlist<string> xs = [\"a\"]\n\tstring s = xs[0]\n");

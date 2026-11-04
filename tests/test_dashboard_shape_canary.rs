@@ -203,47 +203,24 @@ fn export_index(wat: &str, export_name: &str) -> Option<u32> {
 /// Slice out the body of a specific function (identified by its WASM
 /// function index) from the WAT.
 ///
-/// The wasm2wat output has two distinct `(func ...)` forms:
-/// - `  (func (type N))` inside the function section — these are the
-///   forward declarations that pin each function's type index. They are
-///   NOT bodies and must be skipped.
-/// - `  (func` followed by `(local ...)` lines and then the actual
-///   instruction stream — these ARE the bodies.
-///
-/// This function walks the WAT line-by-line, identifies the Nth
-/// body-form `(func` (where N = defined_index = func_idx - import_count),
-/// and returns everything up to the matching closing `  )` line at the
-/// same indentation.
+/// `wasm2wat` prints every defined function as a header line carrying its
+/// absolute index, `  (func (;N;) (type T) ...`, followed by its locals and
+/// instructions and a closing `  )` at the same indentation. Imported
+/// functions are printed inside their `(import ...)` line and never match.
 fn function_body_by_index(wat: &str, func_idx: u32) -> String {
-    let import_count = wat.matches("  (import ").count();
-    let defined_index = (func_idx as usize).saturating_sub(import_count);
-
+    let header = format!("  (func (;{};)", func_idx);
     let lines: Vec<&str> = wat.lines().collect();
-    let mut body_starts: Vec<usize> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        // A body starts with exactly `  (func` (no extra tokens). The
-        // function-section declarations `  (func (type N))` are on a
-        // single line with the trailing `))` — they do not start a body.
-        if line.trim_end() == "  (func" {
-            body_starts.push(i);
-        }
-    }
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with(&header))
+        .unwrap_or_else(|| panic!("function body #{} not found in WAT", func_idx));
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| line.trim_end() == "  )")
+        .map(|offset| start + 1 + offset)
+        .unwrap_or_else(|| panic!("function body #{} is not closed in WAT", func_idx));
 
-    let start = body_starts.get(defined_index).copied().unwrap_or_else(|| {
-        panic!(
-            "function body #{} not found in WAT (defined_index={}, imports={}, total_body_starts={})",
-            func_idx,
-            defined_index,
-            import_count,
-            body_starts.len()
-        )
-    });
-    let end = body_starts
-        .get(defined_index + 1)
-        .copied()
-        .unwrap_or(lines.len());
-
-    lines[start..end].join("\n")
+    lines[start..=end].join("\n")
 }
 
 /// Count occurrences of `call N` (as a whole word) in a function body.

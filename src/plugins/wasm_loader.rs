@@ -150,22 +150,24 @@ impl WasmPluginLoader {
         plugin_names: &[String],
         build_state: super::BuildState,
     ) -> Result<PluginRegistry> {
-        let mut registry = self.load_plugins_inner(plugin_names, Some(build_state.clone()))?;
+        let mut registry = self.load_plugins_inner(plugin_names, &build_state)?;
         registry.set_build_state(build_state);
         Ok(registry)
     }
 
-    /// Backward-compatible plugin loader — creates a fresh, isolated build
-    /// state for the returned registry. Callers that want to surface build
-    /// state into the manifest should use `load_plugins_with_build_state`.
+    /// Load plugins with a fresh build state of their own. The plugins and
+    /// the returned registry still share that one state, so writes a plugin
+    /// makes during expansion are visible to the other plugins and to the
+    /// lifecycle-slot snapshots. Callers that want to surface build state
+    /// into the manifest should use `load_plugins_with_build_state`.
     pub fn load_plugins(&mut self, plugin_names: &[String]) -> Result<PluginRegistry> {
-        self.load_plugins_inner(plugin_names, None)
+        self.load_plugins_with_build_state(plugin_names, super::new_build_state())
     }
 
     fn load_plugins_inner(
         &mut self,
         plugin_names: &[String],
-        shared_state: Option<super::BuildState>,
+        build_state: &super::BuildState,
     ) -> Result<PluginRegistry> {
         let mut builder = PluginRegistry::builder();
 
@@ -184,10 +186,6 @@ impl WasmPluginLoader {
                 );
                 builder = builder.add_bridge_functions(&manifest.bridge);
             }
-
-            // Register default lifecycle entries based on what the manifest declares.
-            // The actual values are populated below once the adapter is instantiated.
-            builder = builder.add_registration(plugin_name, &manifest);
 
             // Store the full manifest so language_to_bridge_map() can resolve
             // dot-notation aliases (e.g. "req.query" → "_req_query").
@@ -251,55 +249,10 @@ impl WasmPluginLoader {
                 module,
                 self.engine.clone(),
             )?;
-            // Plugin Contracts v2 — if a shared build state was supplied,
-            // wire it into the adapter so its `_build_state_*` bridge stubs
-            // operate on the registry-wide keystore. Re-linking is required
-            // because the linker captures the Arc by clone at setup time.
-            // See contracts/lifecycle.md §2.5.
-            if let Some(ref shared) = shared_state {
-                adapter.set_build_state(shared.clone())?;
-            }
-
-            // Call the lifecycle hooks and update the registrations that were
-            // added above with the actual values returned by the WASM module.
-            if let Some(server_reg) = adapter.call_register_server() {
-                tracing::info!(
-                    plugin = plugin_name,
-                    middleware_count = server_reg.middleware.len(),
-                    "Plugin registered server lifecycle hooks"
-                );
-                // Replace the default entry written by add_registration with the
-                // real one.  Linear search is acceptable here — plugin counts are small.
-                builder = builder.update_server_registration(plugin_name, server_reg);
-            }
-
-            if let Some(cli_reg) = adapter.call_register_cli() {
-                tracing::info!(
-                    plugin = plugin_name,
-                    command_count = cli_reg.commands.len(),
-                    "Plugin registered CLI commands"
-                );
-                builder = builder.update_cli_registration(plugin_name, cli_reg);
-            }
-
-            if let Some(data_reg) = adapter.call_register_data() {
-                tracing::info!(
-                    plugin = plugin_name,
-                    type_count = data_reg.types.len(),
-                    "Plugin registered data lifecycle hooks"
-                );
-                builder = builder.update_data_registration(plugin_name, data_reg);
-            }
-
-            if let Some(build_reg) = adapter.call_register_build() {
-                tracing::info!(
-                    plugin = plugin_name,
-                    pre_build_count = build_reg.pre_build.len(),
-                    post_build_count = build_reg.post_build.len(),
-                    "Plugin registered build lifecycle hooks"
-                );
-                builder = builder.update_build_registration(plugin_name, build_reg);
-            }
+            // Plugin Contracts v2 — wire the shared build state into the
+            // adapter so its `_build_state_*` bridges operate on the
+            // registry-wide keystore. See contracts/lifecycle.md §2.5.
+            adapter.set_build_state(std::sync::Arc::clone(build_state));
 
             builder = builder.add(adapter);
         }

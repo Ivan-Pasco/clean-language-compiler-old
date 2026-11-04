@@ -52,9 +52,8 @@ pub const SYM_BUILTIN_LIST_PUSH_F64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE 
 pub const SYM_BUILTIN_LIST_SIZE: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 6);
 pub const SYM_BUILTIN_LIST_ADD: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 7);
 pub const SYM_BUILTIN_LIST_ADD_F64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 8);
-pub const SYM_BUILTIN_INT_TO_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 9);
-pub const SYM_BUILTIN_NUMBER_TO_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 10);
-pub const SYM_BUILTIN_JSON_QUOTE_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 11);
+// SYNTHETIC_BUILTIN_BASE + 9..=11 were the string helpers of the removed
+// in-WASM class JSON serializer; class JSON now goes through the bridges.
 /// String concat that allocates the result through `__transient_alloc`
 /// instead of `__malloc`. Used by the MIR builder when a `+`/`StringConcat`
 /// result will be consumed inside an accumulator-rewritten loop body's
@@ -68,6 +67,10 @@ pub const SYM_BUILTIN_JSON_QUOTE_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_B
 /// result escapes the scope (e.g. is stored in an outer-scope variable),
 /// it will dangle on the next `__transient_scope_exit`.
 pub const SYM_BUILTIN_STRING_CONCAT_TRANSIENT: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 12);
+/// `list.add` for `list<integer:64>` (8-byte i64 elements).
+pub const SYM_BUILTIN_LIST_ADD_I64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 13);
+/// `list.add` for `list<string>` (a `.unique` list compares strings by bytes).
+pub const SYM_BUILTIN_LIST_ADD_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 14);
 
 /// Base for MIR-synthesized watch handler IDs (one per watch block target).
 pub const SYM_WATCH_HANDLER_BASE: usize = 0x4001_0000;
@@ -133,9 +136,6 @@ pub enum SymbolKind {
     Constructor {
         class_id: SymbolId,
         parameters: Vec<HirType>,
-    },
-    Module {
-        exported_symbols: Vec<SymbolId>,
     },
     Namespace {
         functions: Vec<SymbolId>,
@@ -607,6 +607,39 @@ impl GlobalSymbolTable {
                     return self.lookup_class_member(*parent_id, member_name);
                 }
             }
+        }
+        None
+    }
+
+    /// Find a field declared by `class_id` or any of its ancestors, nearest
+    /// class first. Returns the field's symbol and declared type.
+    pub fn lookup_class_field(
+        &self,
+        class_id: SymbolId,
+        field_name: &str,
+    ) -> Option<(SymbolId, &HirType)> {
+        let mut visited = std::collections::HashSet::new();
+        let mut current = Some(class_id);
+        while let Some(id) = current {
+            if !visited.insert(id) {
+                return None;
+            }
+            let SymbolKind::Class { fields, parent, .. } = &self.symbols.get(&id)?.kind else {
+                return None;
+            };
+            for &field_id in fields {
+                if let Some(Symbol {
+                    name,
+                    kind: SymbolKind::Field { field_type, .. },
+                    ..
+                }) = self.symbols.get(&field_id)
+                {
+                    if name == field_name {
+                        return Some((field_id, field_type));
+                    }
+                }
+            }
+            current = *parent;
         }
         None
     }
@@ -1122,6 +1155,22 @@ impl GlobalSymbolTable {
                 vec![HirType::Any, HirType::String],
                 HirType::Any,
             ),
+            // Database namespace (stdlib-reference §9, Layer 2 host bridges).
+            // Typed here so the calls keep their types without the frame.data
+            // plugin; a plugin declaration with a specific type replaces them.
+            (
+                "db.query",
+                vec![HirType::String, HirType::String],
+                HirType::String,
+            ),
+            (
+                "db.execute",
+                vec![HirType::String, HirType::String],
+                HirType::Integer,
+            ),
+            ("db.begin", vec![], HirType::Boolean),
+            ("db.commit", vec![], HirType::Boolean),
+            ("db.rollback", vec![], HirType::Boolean),
             // Input namespace functions (input(), input.integer(), input.yesNo(), etc.)
             ("input", vec![HirType::String], HirType::String),
             ("input_string", vec![HirType::String], HirType::String),

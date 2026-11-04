@@ -323,9 +323,7 @@ impl MirCodeGenerator<'_> {
                         .push(Instruction::Call(float_to_string_idx));
 
                     // Now we have a string pointer on the stack, expand it
-                    let temp_local = self.next_local_index;
-                    self.next_local_index += 1;
-                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    let temp_local = self.alloc_temp_local(ValType::I32);
                     self.current_instructions
                         .push(Instruction::LocalSet(temp_local));
 
@@ -355,9 +353,7 @@ impl MirCodeGenerator<'_> {
                     self.load_operand(operand)?;
 
                     // Allocate a temporary local to hold the pointer
-                    let temp_local = self.next_local_index;
-                    self.next_local_index += 1;
-                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    let temp_local = self.alloc_temp_local(ValType::I32);
 
                     // Store pointer to temp local
                     self.current_instructions
@@ -401,9 +397,7 @@ impl MirCodeGenerator<'_> {
                         .push(Instruction::Call(int_to_string_idx));
 
                     // Now we have a string pointer on the stack, expand it
-                    let temp_local = self.next_local_index;
-                    self.next_local_index += 1;
-                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    let temp_local = self.alloc_temp_local(ValType::I32);
                     self.current_instructions
                         .push(Instruction::LocalSet(temp_local));
 
@@ -447,9 +441,7 @@ impl MirCodeGenerator<'_> {
                         .push(Instruction::Call(bool_to_string_idx));
 
                     // Now we have a string pointer on the stack, expand it
-                    let temp_local = self.next_local_index;
-                    self.next_local_index += 1;
-                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    let temp_local = self.alloc_temp_local(ValType::I32);
                     self.current_instructions
                         .push(Instruction::LocalSet(temp_local));
 
@@ -475,9 +467,7 @@ impl MirCodeGenerator<'_> {
                     self.load_operand(operand)?;
                     self.emit_any_to_string()?;
                     // emit_any_to_string leaves a string pointer on the stack
-                    let temp_local = self.next_local_index;
-                    self.next_local_index += 1;
-                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    let temp_local = self.alloc_temp_local(ValType::I32);
                     self.current_instructions
                         .push(Instruction::LocalSet(temp_local));
                     // content_ptr = str_ptr + 4
@@ -511,11 +501,8 @@ impl MirCodeGenerator<'_> {
                     self.load_operand(operand)?;
 
                     // Allocate a temporary local to hold the pointer
-                    let temp_local = self.next_local_index;
-                    debug_mir!(" LOAD_STRING: Allocated temp_local={}", temp_local);
-                    self.next_local_index += 1;
                     // Track type: string pointers are i32
-                    self.temp_local_types.insert(temp_local, ValType::I32);
+                    let temp_local = self.alloc_temp_local(ValType::I32);
 
                     // Store pointer to temp local
                     debug_mir!(" LOAD_STRING: Storing pointer to temp_local");
@@ -619,10 +606,8 @@ impl MirCodeGenerator<'_> {
                 // We need to expand this to (content_ptr, length) for printl
 
                 // Allocate a temporary local to hold the pointer
-                let temp_local = self.next_local_index;
-                self.next_local_index += 1;
                 // Track type: string pointers are i32
-                self.temp_local_types.insert(temp_local, ValType::I32);
+                let temp_local = self.alloc_temp_local(ValType::I32);
 
                 // Store pointer to temp local
                 self.current_instructions
@@ -725,6 +710,15 @@ impl MirCodeGenerator<'_> {
                 )),
             })
         }
+    }
+
+    /// Allocate a scratch WASM local of type `ty` in the function being
+    /// generated and return its index.
+    pub(super) fn alloc_temp_local(&mut self, ty: ValType) -> u32 {
+        let index = self.next_local_index;
+        self.next_local_index += 1;
+        self.temp_local_types.insert(index, ty);
+        index
     }
 
     /// Store value to local without type conversion (backward compatibility wrapper).

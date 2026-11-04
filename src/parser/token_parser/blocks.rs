@@ -2021,21 +2021,6 @@ impl TokenParser {
         })
     }
 
-    /// Convert a type-name string to the corresponding AST `Type` variant.
-    ///
-    /// Handles the four primitive types (`integer`, `number`, `string`, `boolean`) and
-    /// falls back to `Type::Object` for user-defined class names.  This is a pure
-    /// mapping with no parser state side-effects.
-    fn parse_state_type(type_str: &str) -> crate::ast::Type {
-        match type_str {
-            "integer" => crate::ast::Type::Integer,
-            "number" => crate::ast::Type::Number,
-            "string" => crate::ast::Type::String,
-            "boolean" => crate::ast::Type::Boolean,
-            other => crate::ast::Type::Object(other.to_string()),
-        }
-    }
-
     /// Parse one state declaration of the form `type_name var_name = initializer [guard]`.
     ///
     /// The caller must ensure that the current token is `TokenKind::Identifier(type_name)`.
@@ -2057,16 +2042,16 @@ impl TokenParser {
         use crate::ast::StateDeclaration;
 
         let location = self.current().location.clone();
-        let type_str = if let TokenKind::Identifier(n) = self.current_kind() {
-            n.clone()
-        } else {
+        if !matches!(self.current_kind(), TokenKind::Identifier(_)) {
             return Err(CompilerError::parse_error(
                 format!("Expected type identifier in {} declaration", context_label),
                 Some(self.current().location.clone()),
                 None,
             ));
-        };
-        self.bump(); // consume type identifier
+        }
+        // grammar.ebnf: state_declaration = type , identifier , "=" , ...
+        // The full `type` production: `list<string>`, `integer:64`, `T?`, ...
+        let type_ = self.parse_type()?;
         self.skip_whitespace();
 
         let var_name = if let TokenKind::Identifier(name) = self.current_kind() {
@@ -2086,7 +2071,6 @@ impl TokenParser {
         self.skip_whitespace();
 
         let initializer = self.parse_expression()?;
-        let type_ = Self::parse_state_type(&type_str);
         let guard = self.try_parse_guard_clause(guard_level)?;
 
         Ok(StateDeclaration {

@@ -384,6 +384,9 @@ pub fn flush_pending_telemetry(verbose: bool) {
     //    Capped at 10 per cycle with a 200ms gap between submissions to avoid
     //    hitting the dashboard with a sudden burst when a long backlog drains.
     let mut queue_sent = 0usize;
+    // Set once a submission fails: the service is unreachable or refusing
+    // reports, so nothing else is attempted this cycle.
+    let mut service_unavailable = false;
     if let Some(queue) = PendingQueue::new() {
         if queue.count() > 0 {
             let mut store = ReportStore::load();
@@ -398,12 +401,10 @@ pub fn flush_pending_telemetry(verbose: bool) {
                     store.update_fingerprint(&report.report_id, fp);
                     store_dirty = true;
                 }
-                let ok = matches!(
-                    result,
-                    SubmitResult::Submitted { .. }
-                        | SubmitResult::AlreadyFixed { .. }
-                        | SubmitResult::Known { .. }
-                );
+                let ok = result.is_delivered();
+                if !ok {
+                    service_unavailable = true;
+                }
                 if ok {
                     sent_this_cycle += 1;
                     // Small gap so the dashboard doesn't see a wall of reports
@@ -427,7 +428,7 @@ pub fn flush_pending_telemetry(verbose: bool) {
     let mut retry_confirmed = 0usize;
     let store = ReportStore::load();
     let unposted = store.unposted_report_ids();
-    if !unposted.is_empty() {
+    if !unposted.is_empty() && !service_unavailable {
         let mut store = store;
         for report_id in unposted {
             let tracked = match store
@@ -494,6 +495,10 @@ pub fn flush_pending_telemetry(verbose: bool) {
                 store.update_fingerprint(&tracked.report_id, fp);
                 retry_confirmed += 1;
             }
+            if !result.is_delivered() {
+                service_unavailable = true;
+                break;
+            }
         }
         if retry_confirmed > 0 {
             let _ = store.save();
@@ -501,6 +506,13 @@ pub fn flush_pending_telemetry(verbose: bool) {
     }
 
     if verbose {
+        if service_unavailable {
+            let pending = PendingQueue::new().map(|q| q.count()).unwrap_or(0);
+            eprintln!(
+                "[telemetry] error service unavailable; {} report(s) stay queued for a later retry.",
+                pending
+            );
+        }
         if queue_sent > 0 {
             eprintln!(
                 "Sent {} queued error report(s) to the Clean Language team.",

@@ -1,0 +1,101 @@
+// Test: bugfixes/statement_after_if_else_whose_arm_continues
+// Grammar: while_statement, iterate_statement, if_statement, continue_statement
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   o|eo|e
+//   o|eo|e
+//   o13|eo13|eo1|eo
+//   oe|oe|
+//   o|co|B
+//   o|o|B
+//
+// Regression: inside a loop, an if/else whose then-arm ends in `continue`
+// dropped every statement after the if/else. Following the loop's back edge
+// made the then-arm look like it flowed into its own else arm, so the else
+// arm was emitted as the if's continuation and the real merge was lost; the
+// loop in the third case also never reached its `break`. An else arm after a
+// then-arm ending in `break` (`else if q == 4 ... break else ...`) was
+// mistaken for the code after `if c: break` the same way.
+
+start:
+	integer i = 0
+	string a = ""
+	while i < 4
+		i = i + 1
+		if i % 2 == 0
+			a = a + "e"
+			continue
+		else
+			a = a + "o"
+		a = a + "|"
+	printl(a)
+
+	string b = ""
+	iterate k in 1 to 4
+		if k % 2 == 0
+			b = b + "e"
+			continue
+		else
+			b = b + "o"
+		b = b + "|"
+	printl(b)
+
+	integer n = 0
+	string c = ""
+	while n < 8
+		n = n + 1
+		if n % 2 == 0
+			c = c + "e"
+			continue
+		else
+			c = c + "o"
+		if n == 7
+			break
+		integer j = 0
+		while j < 3
+			j = j + 1
+			if j == 2
+				if n > 3
+					break
+				else
+					continue
+			c = c + j.toString()
+		c = c + "|"
+	printl(c)
+
+	integer m = 0
+	string d = ""
+	while m < 4
+		m = m + 1
+		if m % 2 == 0
+			d = d + "e"
+		else
+			d = d + "o"
+			continue
+		d = d + "|"
+	printl(d)
+
+	string g = ""
+	iterate q in 1 to 6
+		if q == 2
+			g = g + "c"
+			continue
+		else if q == 4
+			g = g + "B"
+			break
+		else
+			g = g + "o"
+		g = g + "|"
+	printl(g)
+
+	integer t = 0
+	string h = ""
+	while t < 9
+		t = t + 1
+		if t == 3
+			h = h + "B"
+			break
+		else
+			h = h + "o"
+		h = h + "|"
+	printl(h)

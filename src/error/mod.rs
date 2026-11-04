@@ -734,20 +734,29 @@ impl CompilerError {
         }
     }
 
+    /// The structured context (message, location, code) carried by every
+    /// variant except lexer and plugin errors.
+    pub fn context(&self) -> Option<&ErrorContext> {
+        match self {
+            CompilerError::Syntax { context }
+            | CompilerError::Type { context }
+            | CompilerError::Memory { context }
+            | CompilerError::Codegen { context }
+            | CompilerError::IO { context }
+            | CompilerError::Runtime { context }
+            | CompilerError::Validation { context }
+            | CompilerError::Module { context }
+            | CompilerError::Testing { context } => Some(context),
+            CompilerError::LexError(_) | CompilerError::PluginError { .. } => None,
+        }
+    }
+
     /// Get the error message
     pub fn message(&self) -> &str {
         match self {
-            CompilerError::Syntax { context } => &context.message,
-            CompilerError::Type { context } => &context.message,
-            CompilerError::Memory { context } => &context.message,
-            CompilerError::Codegen { context } => &context.message,
-            CompilerError::IO { context } => &context.message,
-            CompilerError::Runtime { context } => &context.message,
-            CompilerError::Validation { context } => &context.message,
-            CompilerError::Module { context } => &context.message,
-            CompilerError::Testing { context } => &context.message,
             CompilerError::LexError(_lex_error) => "Lexical error",
             CompilerError::PluginError { message, .. } => message,
+            _ => self.context().map_or("", |context| &context.message),
         }
     }
 }
@@ -1216,13 +1225,28 @@ impl ErrorUtils {
             Rule::statement => "statement".to_string(),
             Rule::type_ => "type annotation".to_string(),
             Rule::parameter => "parameter".to_string(),
-            Rule::function_body => "function body".to_string(),
+            Rule::function_body_in_block => "function body".to_string(),
             Rule::indented_block => "indented block".to_string(),
             Rule::NEWLINE => "newline".to_string(),
             Rule::INDENT => "indentation".to_string(),
             Rule::EOI => "end of input".to_string(),
             _ => format!("{rule:?}").to_lowercase(),
         }
+    }
+
+    /// The source text from `radius` bytes before the error span to `radius`
+    /// bytes after it, widened to char boundaries so a multi-byte character
+    /// near the error cannot split the slice.
+    fn context_window(source: &str, error_span: (usize, usize), radius: usize) -> &str {
+        let mut start = error_span.0.saturating_sub(radius).min(source.len());
+        while !source.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut end = (error_span.1 + radius).min(source.len()).max(start);
+        while !source.is_char_boundary(end) {
+            end += 1;
+        }
+        &source[start..end]
     }
 
     /// Get context-specific suggestions based on expected rules and surrounding code
@@ -1235,7 +1259,7 @@ impl ErrorUtils {
 
         // Get the context around the error
         let context = if error_span.0 > 0 && error_span.0 <= source.len() {
-            &source[error_span.0.saturating_sub(50)..std::cmp::min(error_span.1 + 50, source.len())]
+            Self::context_window(source, error_span, 50)
         } else {
             ""
         };
@@ -1293,8 +1317,7 @@ impl ErrorUtils {
 
     /// Get contextual help based on the error message and surrounding code
     fn get_contextual_help(message: &str, source: &str, error_span: (usize, usize)) -> String {
-        let error_context = &source
-            [error_span.0.saturating_sub(20)..std::cmp::min(error_span.1 + 20, source.len())];
+        let error_context = Self::context_window(source, error_span, 20);
 
         if error_context.contains("function") {
             "Try checking the function declaration syntax".to_string()
@@ -1318,11 +1341,7 @@ impl ErrorUtils {
         let mut suggestions = Vec::new();
 
         // Get the context around the error
-        let error_context = if error_span.1 < source.len() {
-            &source[error_span.0.saturating_sub(50)..std::cmp::min(error_span.1 + 50, source.len())]
-        } else {
-            &source[error_span.0.saturating_sub(50)..]
-        };
+        let error_context = Self::context_window(source, error_span, 50);
 
         // Add syntax-specific recovery suggestions based on context
         if error_context.contains("func ") {

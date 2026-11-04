@@ -1825,66 +1825,6 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Assemble the registered functions into a standalone WASM module with
-    /// every function exported. Test-only: production modules are assembled
-    /// by `MirCodeGenerator::finalize_module`.
-    #[cfg(test)]
-    pub fn generate_test_module_without_imports(&mut self) -> Result<Vec<u8>, CompilerError> {
-        use wasm_encoder::{ConstExpr, GlobalSection, GlobalType, MemorySection, Module, ValType};
-
-        let mut memory_section = MemorySection::new();
-        memory_section.memory(wasm_encoder::MemoryType {
-            minimum: 32,
-            maximum: Some(super::DEFAULT_MAX_MEMORY_PAGES),
-            memory64: false,
-            shared: false,
-        });
-
-        // Reserved globals: __heap_ptr followed by the zero-initialised
-        // compiler-owned globals (see native_stdlib::RESERVED_GLOBAL_COUNT).
-        let mut global_section = GlobalSection::new();
-        let global_type = GlobalType {
-            val_type: ValType::I32,
-            mutable: true,
-        };
-        global_section.global(
-            global_type,
-            &ConstExpr::i32_const(super::native_stdlib::HEAP_START as i32),
-        );
-        for _ in 1..super::native_stdlib::RESERVED_GLOBAL_COUNT {
-            global_section.global(global_type, &ConstExpr::i32_const(0));
-        }
-
-        // Export all registered functions.
-        // Sort by name for deterministic export ordering (matches the fix
-        // in `mir_codegen/utilities.rs::finalize_module`).
-        let mut sorted: Vec<(&String, &u32)> = self.function_map.iter().collect();
-        sorted.sort_by(|a, b| a.0.cmp(b.0));
-        for (func_name, &func_index) in sorted {
-            self.export_section
-                .export(func_name, wasm_encoder::ExportKind::Func, func_index);
-        }
-        self.export_section
-            .export("memory", wasm_encoder::ExportKind::Memory, 0);
-
-        let mut module = Module::new();
-        module.section(&self.type_manager.clone_type_section());
-        if self.include_runtime_imports {
-            module.section(&self.import_section);
-        }
-        if self.function_count > 0 {
-            module.section(&self.function_section);
-        }
-        module.section(&memory_section);
-        module.section(&global_section);
-        module.section(&self.export_section);
-        if self.function_count > 0 {
-            module.section(&self.code_section);
-        }
-        module.section(self.memory_utils.get_data_section());
-        Ok(module.finish())
-    }
-
     pub fn register_function_with_locals(
         &mut self,
         name: &str,
@@ -2014,46 +1954,5 @@ impl super::CodeGenerator {
     pub fn record_wasm_return_type(&mut self, name: &str, return_type: Option<WasmType>) {
         self.wasm_function_return_types
             .insert(name.to_string(), return_type);
-    }
-
-    pub fn register_function_multi(
-        &mut self,
-        name: &str,
-        params: &[WasmType],
-        return_types: &[WasmType],
-        instructions: &[Instruction],
-    ) -> Result<u32, CompilerError> {
-        let function_index = self.function_count;
-        let type_index = self.add_function_type_multi(params, return_types)?;
-        self.function_section.function(type_index);
-        let max_local_index = instructions
-            .iter()
-            .filter_map(|inst| match inst {
-                Instruction::LocalGet(idx)
-                | Instruction::LocalSet(idx)
-                | Instruction::LocalTee(idx) => Some(*idx),
-                _ => None,
-            })
-            .max()
-            .unwrap_or(0);
-        let param_count = params.len() as u32;
-        let locals_needed: Vec<(u32, wasm_encoder::ValType)> = if max_local_index >= param_count {
-            let additional_locals = max_local_index - param_count + 1;
-            (0..additional_locals)
-                .map(|_| (1u32, wasm_encoder::ValType::I32))
-                .collect()
-        } else {
-            vec![]
-        };
-        let mut func = Function::new(locals_needed);
-        for inst in instructions {
-            func.instruction(inst);
-        }
-        func.instruction(&Instruction::End);
-        self.code_section.function(&func);
-        self.function_names.push(name.to_string());
-        self.function_map.insert(name.to_string(), function_index);
-        self.function_count += 1;
-        Ok(function_index)
     }
 }

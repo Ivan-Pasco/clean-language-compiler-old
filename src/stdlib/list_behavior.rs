@@ -21,7 +21,7 @@ pub struct ListBehaviorManager;
 // Behavior flag bits
 pub(crate) const BEHAVIOR_LINE: i32 = 0x01; // FIFO queue behavior
 const BEHAVIOR_PILE: i32 = 0x02; // LIFO stack behavior
-const BEHAVIOR_UNIQUE: i32 = 0x04; // Unique elements only
+pub(crate) const BEHAVIOR_UNIQUE: i32 = 0x04; // Unique elements only
 
 impl ListBehaviorManager {
     pub fn new() -> Self {
@@ -70,16 +70,22 @@ impl ListBehaviorManager {
 
         // `list<number>.add`: same contract as `list.add`, for 8-byte f64
         // elements (list layout: 16-byte header, elements at +16, stride 8).
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.add_f64",
-            &[WasmType::I32, WasmType::F64], // list_ptr, value
-            Some(WasmType::I32),             // Returns the (possibly moved) list pointer
-            // Local 2: loop_i / copy_index, 3: new_capacity, 4: new_list_ptr,
-            // 5: end of the new block
-            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
-            self.generate_list_add_f64(),
-        )?;
+        // `list<integer:64>.add`: the same 8-byte layout with i64 elements.
+        for (name, value_type) in [
+            ("list.add_f64", WasmType::F64),
+            ("list.add_i64", WasmType::I64),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &[WasmType::I32, value_type], // list_ptr, value
+                Some(WasmType::I32),          // Returns the (possibly moved) list pointer
+                // Local 2: loop_i / copy_index, 3: new_capacity, 4: new_list_ptr,
+                // 5: end of the new block
+                &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
+                self.generate_list_add_8byte(value_type == WasmType::I64),
+            )?;
+        }
 
         register_stdlib_function_with_locals(
             codegen,
@@ -292,7 +298,9 @@ impl ListBehaviorManager {
     /// as `list.allocate` and the list-literal builder size it. The list is
     /// full when `size * 2 + 2 > capacity`; it then moves to a block of
     /// `max(capacity * 2, 16)` slots.
-    fn generate_list_add_f64(&self) -> Vec<Instruction<'static>> {
+    /// `i64` selects the `list<integer:64>` variant (i64 elements compared
+    /// with `i64.eq`); otherwise the elements are `number` (f64).
+    fn generate_list_add_8byte(&self, i64: bool) -> Vec<Instruction<'static>> {
         let size = || {
             Instruction::I32Load(MemArg {
                 offset: 0,
@@ -336,13 +344,25 @@ impl ListBehaviorManager {
         ]);
         code.extend(element_addr(2));
         code.extend([
-            Instruction::F64Load(MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
+            if i64 {
+                Instruction::I64Load(MemArg {
+                    offset: 0,
+                    align: 3,
+                    memory_index: 0,
+                })
+            } else {
+                Instruction::F64Load(MemArg {
+                    offset: 0,
+                    align: 3,
+                    memory_index: 0,
+                })
+            },
             Instruction::LocalGet(1),
-            Instruction::F64Eq,
+            if i64 {
+                Instruction::I64Eq
+            } else {
+                Instruction::F64Eq
+            },
             Instruction::If(BlockType::Empty),
             Instruction::LocalGet(0),
             Instruction::Return,
@@ -482,13 +502,18 @@ impl ListBehaviorManager {
         // Append: element[size] = value; size += 1; return list_ptr.
         code.extend([Instruction::LocalGet(0), size(), Instruction::LocalSet(2)]);
         code.extend(element_addr(2));
+        let store = MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        };
         code.extend([
             Instruction::LocalGet(1),
-            Instruction::F64Store(MemArg {
-                offset: 0,
-                align: 3,
-                memory_index: 0,
-            }),
+            if i64 {
+                Instruction::I64Store(store)
+            } else {
+                Instruction::F64Store(store)
+            },
             Instruction::LocalGet(0),
             Instruction::LocalGet(2),
             Instruction::I32Const(1),
@@ -842,10 +867,6 @@ impl ListBehaviorManager {
             Instruction::I32Ne,
         ]
     }
-
-    // List operations are fully implemented via WASM instructions above.
-    // Additional helper functions can be added here if needed for complex operations
-    // that require multiple function calls (e.g., array growth, element shifting).
 }
 
 /// Convert behavior to string

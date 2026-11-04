@@ -58,6 +58,27 @@ impl MirCodeGenerator<'_> {
                 );
             }
 
+            MirOperation::BinaryOp { op, left, right }
+                if self.any_null_comparison(op, left, right).is_some() =>
+            {
+                // `value == null` / `value != null` on an `any`: a null
+                // pointer and a null-tag box (a JSON `null`, a `_json_get`
+                // miss) are both null.
+                let any_side = self
+                    .any_null_comparison(op, left, right)
+                    .expect("guarded by the match arm");
+                self.load_operand(any_side)?;
+                self.emit_any_is_null();
+                if matches!(op, MirBinaryOp::Ne) {
+                    self.current_instructions.push(Instruction::I32Eqz);
+                }
+                if let Some(dest) = instruction.dest {
+                    self.store_to_local(dest)?;
+                } else {
+                    self.current_instructions.push(Instruction::Drop);
+                }
+            }
+
             MirOperation::BinaryOp { op, left, right } => {
                 // NOTE: Type-aware binary operations with automatic conversions
                 let left_is_float = self.is_float_operand(left);
@@ -192,46 +213,14 @@ impl MirCodeGenerator<'_> {
 
                 // Add memory load instruction based on destination type
                 if let Some(dest) = instruction.dest {
-                    // Get the type of the destination to determine which load instruction to use
+                    // The destination type decides the width of the load.
                     let dest_type = self
                         .value_to_type
                         .get(&dest)
                         .cloned()
                         .unwrap_or(MirType::I32);
-
-                    match dest_type {
-                        MirType::F64 => {
-                            self.current_instructions.push(Instruction::F64Load(
-                                wasm_encoder::MemArg {
-                                    offset: 0,
-                                    align: 3, // f64 alignment is 8 bytes (2^3)
-                                    memory_index: 0,
-                                },
-                            ));
-                            debug_mir!("Added F64Load instruction");
-                        }
-                        MirType::F32 => {
-                            self.current_instructions.push(Instruction::F32Load(
-                                wasm_encoder::MemArg {
-                                    offset: 0,
-                                    align: 2, // f32 alignment is 4 bytes (2^2)
-                                    memory_index: 0,
-                                },
-                            ));
-                            debug_mir!("Added F32Load instruction");
-                        }
-                        _ => {
-                            // Default to I32Load for integer types and pointers
-                            self.current_instructions.push(Instruction::I32Load(
-                                wasm_encoder::MemArg {
-                                    offset: 0,
-                                    align: 2, // i32 alignment is 4 bytes (2^2)
-                                    memory_index: 0,
-                                },
-                            ));
-                            debug_mir!("Added I32Load instruction");
-                        }
-                    }
+                    self.current_instructions
+                        .push(memory_load_instruction(&dest_type));
 
                     match self.store_to_local(dest) {
                         Ok(_) => debug_mir!("Load operation completed successfully"),
@@ -243,11 +232,7 @@ impl MirCodeGenerator<'_> {
                 } else {
                     // No destination - use I32Load as default and drop the loaded value
                     self.current_instructions
-                        .push(Instruction::I32Load(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 2,
-                            memory_index: 0,
-                        }));
+                        .push(memory_load_instruction(&MirType::I32));
                     self.current_instructions.push(Instruction::Drop);
                 }
             }
@@ -257,46 +242,14 @@ impl MirCodeGenerator<'_> {
                 self.load_operand(destination)?;
                 self.load_operand(value)?;
 
-                // Determine store instruction based on value type
-                let value_type = if let MirOperand::Value(value_id) = value {
-                    self.value_to_type
-                        .get(value_id)
-                        .cloned()
-                        .unwrap_or(MirType::I32)
-                } else {
-                    MirType::I32 // Default for constants and other operands
-                };
-
-                match value_type {
-                    MirType::F64 => {
-                        self.current_instructions.push(Instruction::F64Store(
-                            wasm_encoder::MemArg {
-                                offset: 0,
-                                align: 3, // f64 alignment is 8 bytes (2^3)
-                                memory_index: 0,
-                            },
-                        ));
-                    }
-                    MirType::F32 => {
-                        self.current_instructions.push(Instruction::F32Store(
-                            wasm_encoder::MemArg {
-                                offset: 0,
-                                align: 2, // f32 alignment is 4 bytes (2^2)
-                                memory_index: 0,
-                            },
-                        ));
-                    }
-                    _ => {
-                        // Default to I32Store for integer types and pointers
-                        self.current_instructions.push(Instruction::I32Store(
-                            wasm_encoder::MemArg {
-                                offset: 0,
-                                align: 2, // i32 alignment is 4 bytes (2^2)
-                                memory_index: 0,
-                            },
-                        ));
-                    }
+                // The value type decides the width of the store.
+                let value_type = match value {
+                    MirOperand::Value(value_id) => self.value_to_type.get(value_id).cloned(),
+                    other => self.get_operand_mir_type(other),
                 }
+                .unwrap_or(MirType::I32);
+                self.current_instructions
+                    .push(memory_store_instruction(&value_type));
             }
 
             MirOperation::Call {
@@ -564,9 +517,7 @@ impl MirCodeGenerator<'_> {
                 //                       collection coercions are out of scope)
 
                 // Save the pointer to a temp so we can read tag AND value1.
-                let ptr_local = self.next_local_index;
-                self.next_local_index += 1;
-                self.temp_local_types.insert(ptr_local, ValType::I32);
+                let ptr_local = self.alloc_temp_local(ValType::I32);
 
                 self.load_operand(value)?;
                 self.current_instructions
@@ -628,9 +579,7 @@ impl MirCodeGenerator<'_> {
                 // This is intentionally strict: only lowercase "true" → 1;
                 // any other string → 0. Matches the conservative behaviour
                 // string.toBoolean uses on non-recognisable inputs elsewhere.
-                let strptr_local = self.next_local_index;
-                self.next_local_index += 1;
-                self.temp_local_types.insert(strptr_local, ValType::I32);
+                let strptr_local = self.alloc_temp_local(ValType::I32);
                 self.current_instructions
                     .push(Instruction::LocalGet(ptr_local));
                 self.current_instructions
@@ -965,8 +914,12 @@ impl MirCodeGenerator<'_> {
 
                 // Look up the global index for this state variable
                 if let Some(&global_index) = self.state_global_indices.get(global_id) {
-                    // Load the value to store
+                    // Load the value to store, converted to the global's type
+                    // (an `integer` literal stored into an `integer:64` state).
                     self.load_operand(value)?;
+                    if let Some(src) = self.get_operand_mir_type(value) {
+                        self.emit_numeric_coercion(&src, global_type);
+                    }
 
                     // Store to global
                     self.current_instructions
@@ -2075,8 +2028,6 @@ impl MirCodeGenerator<'_> {
                                     | Some("list.set")
                                     | Some("list.clear")
                                     | Some("list.setFlags")
-                                    | Some("pairs.set")
-                                    | Some("__pairs_set")
                                     | Some("mem_release")
                                     | Some("mem_retain")
                                     | Some("mem_scope_push")
@@ -2172,8 +2123,6 @@ impl MirCodeGenerator<'_> {
                         | Some("list.set")
                         | Some("list.clear")
                         | Some("list.setFlags")
-                        | Some("pairs.set")
-                        | Some("__pairs_set")
                         | Some("mem_release")
                         | Some("mem_retain")
                         | Some("mem_scope_push")
@@ -2400,9 +2349,7 @@ impl MirCodeGenerator<'_> {
         };
 
         // Allocate an i32 scratch local to tee the returned pointer into.
-        let scratch = self.next_local_index;
-        self.next_local_index += 1;
-        self.temp_local_types.insert(scratch, ValType::I32);
+        let scratch = self.alloc_temp_local(ValType::I32);
 
         // Assign this callsite an id. Sidecar order matches emission order.
         let callsite_id: u32 = (self.probe_callsites.len() as u32) + 1;
@@ -2542,9 +2489,7 @@ impl MirCodeGenerator<'_> {
             Some(crate::types::WasmType::I32) => {
                 // Tee the returned pointer so it stays on the stack for the
                 // caller, and pass a copy to the probe.
-                let scratch = self.next_local_index;
-                self.next_local_index += 1;
-                self.temp_local_types.insert(scratch, ValType::I32);
+                let scratch = self.alloc_temp_local(ValType::I32);
                 self.current_instructions
                     .push(Instruction::LocalTee(scratch));
                 self.current_instructions
@@ -2685,9 +2630,7 @@ impl MirCodeGenerator<'_> {
         // Stash receiver in a local so we can load it once per arm without
         // re-evaluating side effects.
         self.load_operand(receiver)?;
-        let receiver_local = self.next_local_index;
-        self.next_local_index += 1;
-        self.temp_local_types.insert(receiver_local, ValType::I32);
+        let receiver_local = self.alloc_temp_local(ValType::I32);
         self.current_instructions
             .push(Instruction::LocalSet(receiver_local));
 
@@ -3084,9 +3027,21 @@ impl MirCodeGenerator<'_> {
             }
             MirBinaryOp::Rem => {
                 if is_float {
-                    // F64 doesn't have remainder, use modulo semantics (not perfect but functional)
-                    // For proper implementation, this should call a helper function
-                    Instruction::I32RemS // Fallback - this will cause type errors on f64
+                    // WASM has no f64 remainder: a % b = a - trunc(a / b) * b
+                    // (sign of the dividend, like the integer `rem_s`).
+                    let divisor = self.alloc_temp_local(ValType::F64);
+                    let dividend = self.alloc_temp_local(ValType::F64);
+                    self.current_instructions.extend([
+                        Instruction::LocalSet(divisor),
+                        Instruction::LocalTee(dividend),
+                        Instruction::LocalGet(dividend),
+                        Instruction::LocalGet(divisor),
+                        Instruction::F64Div,
+                        Instruction::F64Trunc,
+                        Instruction::LocalGet(divisor),
+                        Instruction::F64Mul,
+                    ]);
+                    Instruction::F64Sub
                 } else {
                     Instruction::I32RemS
                 }
@@ -3224,12 +3179,21 @@ impl MirCodeGenerator<'_> {
         operand_type: Option<&MirType>,
     ) -> Result<(), CompilerError> {
         let is_f64 = matches!(operand_type, Some(MirType::F64));
+        let is_i64 = matches!(operand_type, Some(MirType::I64 | MirType::U64));
         match op {
             MirUnaryOp::Neg => {
                 if is_f64 {
                     // F64Neg is a single-instruction float negation and
                     // preserves IEEE-754 sign correctly (e.g. -0.0, -NaN).
                     self.current_instructions.push(Instruction::F64Neg);
+                } else if is_i64 {
+                    // `integer:64`: the same two's complement, in i64.
+                    self.current_instructions.extend([
+                        Instruction::I64Const(-1),
+                        Instruction::I64Xor,
+                        Instruction::I64Const(1),
+                        Instruction::I64Add,
+                    ]);
                 } else {
                     // Integer negate via two's complement: -x = ~x + 1.
                     // Stackless — no temp local required, and avoids the
@@ -3248,8 +3212,13 @@ impl MirCodeGenerator<'_> {
             }
             MirUnaryOp::BitNot => {
                 // Bitwise not: x ^ -1
-                self.current_instructions.push(Instruction::I32Const(-1));
-                self.current_instructions.push(Instruction::I32Xor);
+                if is_i64 {
+                    self.current_instructions.push(Instruction::I64Const(-1));
+                    self.current_instructions.push(Instruction::I64Xor);
+                } else {
+                    self.current_instructions.push(Instruction::I32Const(-1));
+                    self.current_instructions.push(Instruction::I32Xor);
+                }
             }
             // BOOK: required-operator - Required is handled specially in MirOperation::UnaryOp
             MirUnaryOp::Required => {
@@ -3277,6 +3246,25 @@ impl MirCodeGenerator<'_> {
     ) -> Result<(), CompilerError> {
         debug_mir!(?tag, ?source_type, "Boxing value to any type");
 
+        // The box payload is an i32, an i64 or an f64. `integer:64` and
+        // `number:32` values are stored as a `number` (tag 3), the same as a
+        // JSON number — unless the caller asks for an `integer` box, which
+        // holds the full i64 (BOXED_ANY_ABI §2; class JSON values).
+        let widened = match source_type {
+            MirType::I64 if tag == AnyTypeTag::Integer => None,
+            MirType::I64 => Some(Instruction::F64ConvertI64S),
+            MirType::U64 => Some(Instruction::F64ConvertI64U),
+            MirType::F32 => Some(Instruction::F64PromoteF32),
+            _ => None,
+        };
+        let (tag, source_type) = match widened {
+            Some(instruction) => {
+                self.current_instructions.push(instruction);
+                (AnyTypeTag::Number, &MirType::F64)
+            }
+            None => (tag, source_type),
+        };
+
         // Get mem_alloc function index
         let mem_alloc_idx = *self
             .wasm_generator
@@ -3294,23 +3282,14 @@ impl MirCodeGenerator<'_> {
         // The value to box is already on the stack
         // We need to save it to a temporary local first
 
-        // Create a temporary local for the value
-        let temp_local = self.next_local_index;
-        self.next_local_index += 1;
-
-        // Store the value to the temp local
-        match source_type {
-            MirType::F64 => {
-                self.current_instructions
-                    .push(Instruction::LocalSet(temp_local));
-                self.temp_local_types.insert(temp_local, ValType::F64);
-            }
-            _ => {
-                self.current_instructions
-                    .push(Instruction::LocalSet(temp_local));
-                self.temp_local_types.insert(temp_local, ValType::I32);
-            }
-        }
+        // Store the value to a temporary local
+        let temp_local = self.alloc_temp_local(match source_type {
+            MirType::F64 => ValType::F64,
+            MirType::I64 => ValType::I64,
+            _ => ValType::I32,
+        });
+        self.current_instructions
+            .push(Instruction::LocalSet(temp_local));
 
         // Allocate 12 bytes for the boxed structure
         // mem_alloc(type_id=0, size=12)
@@ -3320,9 +3299,7 @@ impl MirCodeGenerator<'_> {
             .push(Instruction::Call(mem_alloc_idx));
 
         // Save the pointer to another temp local
-        let ptr_local = self.next_local_index;
-        self.next_local_index += 1;
-        self.temp_local_types.insert(ptr_local, ValType::I32);
+        let ptr_local = self.alloc_temp_local(ValType::I32);
         self.current_instructions
             .push(Instruction::LocalTee(ptr_local));
 
@@ -3374,6 +3351,17 @@ impl MirCodeGenerator<'_> {
                         memory_index: 0,
                     }));
             }
+            MirType::I64 => {
+                // An `integer` box of an `integer:64`: the i64 spans offsets 4..12.
+                self.current_instructions
+                    .push(Instruction::LocalGet(temp_local));
+                self.current_instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 4,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+            }
             _ => {
                 // For i32 types (integer, boolean, string pointer, etc.)
                 self.current_instructions
@@ -3385,10 +3373,20 @@ impl MirCodeGenerator<'_> {
                         memory_index: 0,
                     }));
 
-                // Store 0 in value2 at offset 8
+                // value2 at offset 8: an integer's payload is the full i64
+                // (BOXED_ANY_ABI §2), so it holds the sign extension of a
+                // signed i32; every other i32 payload leaves it 0.
+                let unsigned = matches!(source_type, MirType::U8 | MirType::U16 | MirType::U32);
                 self.current_instructions
                     .push(Instruction::LocalGet(ptr_local));
-                self.current_instructions.push(Instruction::I32Const(0));
+                if tag == AnyTypeTag::Integer && !unsigned {
+                    self.current_instructions
+                        .push(Instruction::LocalGet(temp_local));
+                    self.current_instructions.push(Instruction::I32Const(31));
+                    self.current_instructions.push(Instruction::I32ShrS);
+                } else {
+                    self.current_instructions.push(Instruction::I32Const(0));
+                }
                 self.current_instructions
                     .push(Instruction::I32Store(wasm_encoder::MemArg {
                         offset: 8,
@@ -3404,6 +3402,61 @@ impl MirCodeGenerator<'_> {
 
         debug_mir!(?tag, "Boxing complete, pointer on stack");
         Ok(())
+    }
+
+    /// For `a == b` / `a != b` where one side is an `any` and the other the
+    /// `null` literal, the `any` side; `None` for every other comparison.
+    pub(super) fn any_null_comparison<'a>(
+        &self,
+        op: &MirBinaryOp,
+        left: &'a MirOperand,
+        right: &'a MirOperand,
+    ) -> Option<&'a MirOperand> {
+        if !matches!(op, MirBinaryOp::Eq | MirBinaryOp::Ne) {
+            return None;
+        }
+        let is_null = |operand: &MirOperand| match operand {
+            MirOperand::Constant(MirConstant::Null) => true,
+            MirOperand::Value(_) => matches!(
+                self.get_operand_mir_type(operand),
+                Some(MirType::Ptr(inner)) if *inner == MirType::Void
+            ),
+            _ => false,
+        };
+        let is_any =
+            |operand: &MirOperand| self.get_operand_mir_type(operand) == Some(MirType::Any);
+        if is_any(left) && is_null(right) {
+            Some(left)
+        } else if is_any(right) && is_null(left) {
+            Some(right)
+        } else {
+            None
+        }
+    }
+
+    /// With a boxed `any` pointer on the stack, leave 1 when it is null — a
+    /// null pointer or a null-tag box (BOXED_ANY_ABI §1) — and 0 otherwise.
+    pub(super) fn emit_any_is_null(&mut self) {
+        let ptr_local = self.alloc_temp_local(ValType::I32);
+        self.current_instructions
+            .push(Instruction::LocalTee(ptr_local));
+        self.current_instructions.push(Instruction::I32Eqz);
+        self.current_instructions
+            .push(Instruction::If(BlockType::Result(ValType::I32)));
+        self.current_instructions.push(Instruction::I32Const(1));
+        self.current_instructions.push(Instruction::Else);
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.current_instructions
+            .push(Instruction::I32Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+        self.current_instructions
+            .push(Instruction::I32Const(AnyTypeTag::Null.as_i32()));
+        self.current_instructions.push(Instruction::I32Eq);
+        self.current_instructions.push(Instruction::End);
     }
 
     /// Emit code to unbox a value from an `any` type to i32.
@@ -3434,9 +3487,7 @@ impl MirCodeGenerator<'_> {
             })?;
 
         // Save pointer to a temp local so we can read both tag and value
-        let ptr_local = self.next_local_index;
-        self.next_local_index += 1;
-        self.temp_local_types.insert(ptr_local, ValType::I32);
+        let ptr_local = self.alloc_temp_local(ValType::I32);
 
         self.current_instructions
             .push(Instruction::LocalSet(ptr_local));
@@ -3569,9 +3620,7 @@ impl MirCodeGenerator<'_> {
             })?;
 
         // Save pointer to temp
-        let ptr_local = self.next_local_index;
-        self.next_local_index += 1;
-        self.temp_local_types.insert(ptr_local, ValType::I32);
+        let ptr_local = self.alloc_temp_local(ValType::I32);
         self.current_instructions
             .push(Instruction::LocalSet(ptr_local));
 
@@ -3678,19 +3727,6 @@ impl MirCodeGenerator<'_> {
         debug_mir!("Converting any value to string with type dispatch");
 
         // Get function indices for conversion functions
-        let int_to_string_idx = *self
-            .wasm_generator
-            .function_map
-            .get("int_to_string")
-            .ok_or_else(|| CompilerError::Codegen {
-                context: Box::new(crate::error::ErrorContext::new(
-                    "int_to_string function not found".to_string(),
-                    None,
-                    crate::error::ErrorType::Codegen,
-                    None,
-                )),
-            })?;
-
         let float_to_string_idx = *self
             .wasm_generator
             .function_map
@@ -3717,17 +3753,42 @@ impl MirCodeGenerator<'_> {
                 )),
             })?;
 
+        let int64_to_string_idx = *self
+            .wasm_generator
+            .function_map
+            .get("int64_to_string")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "int64_to_string function not found".to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
+
+        // Arrays and objects stringify through the JSON bridge. The import
+        // is registered whenever an `AnyToString` is reachable (see
+        // `collect_used_function_names_from_mir`).
+        let json_encode_idx = *self
+            .wasm_generator
+            .function_map
+            .get("_json_encode_v2")
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "_json_encode_v2 bridge import not registered for any-to-string".to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    None,
+                )),
+            })?;
+
         // Save the boxed pointer to a local
-        let ptr_local = self.next_local_index;
-        self.next_local_index += 1;
-        self.temp_local_types.insert(ptr_local, ValType::I32);
+        let ptr_local = self.alloc_temp_local(ValType::I32);
         self.current_instructions
             .push(Instruction::LocalSet(ptr_local));
 
         // Create a result local
-        let result_local = self.next_local_index;
-        self.next_local_index += 1;
-        self.temp_local_types.insert(result_local, ValType::I32);
+        let result_local = self.alloc_temp_local(ValType::I32);
 
         // Null-guard the boxed pointer BEFORE reading the tag. `json.get`,
         // `__json_get_path`, and other Any-returning bridges return 0 on
@@ -3740,9 +3801,25 @@ impl MirCodeGenerator<'_> {
         // then compares against garbage-length strings and either loops
         // forever (OOM/stack trap) or terminates non-deterministically.
         // See WASM-TRAP-JSON-ARRAY-ITER fp 156e745b63d9.
+        //
+        // A null-tag box (tag 0) — what `_json_get` returns on a miss and
+        // what a JSON `null` decodes to — is null too: the common shape
+        // `while item != "": item = json.get(arr, i.toString())` depends on
+        // a missing element reading as `""`.
         self.current_instructions
             .push(Instruction::LocalGet(ptr_local));
         self.current_instructions.push(Instruction::I32Eqz);
+        self.current_instructions
+            .push(Instruction::If(BlockType::Result(ValType::I32)));
+        self.current_instructions.push(Instruction::I32Const(1));
+        self.current_instructions.push(Instruction::Else);
+        self.current_instructions
+            .push(Instruction::LocalGet(ptr_local));
+        self.emit_read_any_tag()?;
+        self.current_instructions
+            .push(Instruction::I32Const(AnyTypeTag::Null.as_i32()));
+        self.current_instructions.push(Instruction::I32Eq);
+        self.current_instructions.push(Instruction::End);
         self.current_instructions
             .push(Instruction::If(BlockType::Empty));
         {
@@ -3789,12 +3866,18 @@ impl MirCodeGenerator<'_> {
         self.current_instructions
             .push(Instruction::If(BlockType::Empty));
         {
-            // Integer case: call int_to_string
+            // Integer case: the payload is the full i64 (BOXED_ANY_ABI §2) —
+            // a decoded JSON integer can exceed the i32 range.
             self.current_instructions
                 .push(Instruction::LocalGet(ptr_local));
-            self.emit_unbox_to_i32()?;
             self.current_instructions
-                .push(Instruction::Call(int_to_string_idx));
+                .push(Instruction::I64Load(wasm_encoder::MemArg {
+                    offset: 4,
+                    align: 2,
+                    memory_index: 0,
+                }));
+            self.current_instructions
+                .push(Instruction::Call(int64_to_string_idx));
             self.current_instructions
                 .push(Instruction::LocalSet(result_local));
         }
@@ -3876,102 +3959,21 @@ impl MirCodeGenerator<'_> {
                     }
                     self.current_instructions.push(Instruction::Else);
                     {
-                        // Default case: Null (ptr==0), Array (tag 5),
-                        // Object (tag 6), or any other tag.
-                        //
-                        // Null → empty length-prefixed string. The
-                        // common shape `while catJ != "": catJ =
-                        // json.get(arr, i.toString())` depends on
-                        // out-of-bounds / missing-key lookups yielding
-                        // `""` to terminate the walk. Returning the
-                        // literal text "null" (what json.dataToText
-                        // would emit) breaks termination.
-                        //
-                        // Array / Object → call `json.dataToText` to
-                        // produce the canonical JSON text. The legacy
-                        // emission (`int_to_string(ptr+4)`) treated the
-                        // inner pointer as an integer, producing
-                        // nonsensical decimal output or — far worse —
-                        // garbage when a downstream consumer read those
-                        // bytes as a length-prefixed Clean string. That
-                        // is the SSR empty-content root cause surfaced
-                        // by 0.30.379's CMP-SSR-MALLOC-OOM-PAGE-RENDER
-                        // fix: `string catJ = json.get(catJson, "0")`
-                        // on an array of objects unboxed to the inner
-                        // object header pointer, and the next read of
-                        // catJ.length / catJ[0] returned header bytes,
-                        // not the JSON text.
+                        // Default case: Array (tag 5), Object (tag 6) —
+                        // null was handled by the guard above. Produce the
+                        // canonical JSON text through the `_json_encode_v2`
+                        // bridge. Reading the inner pointer as an integer or
+                        // a string (the legacy emission) yields nonsense, and
+                        // worse, a downstream consumer reading header bytes
+                        // as a length-prefixed string: the SSR empty-content
+                        // root cause behind `string catJ = json.get(catJson,
+                        // "0")` on an array of objects.
                         self.current_instructions
                             .push(Instruction::LocalGet(ptr_local));
-                        self.current_instructions.push(Instruction::I32Eqz);
                         self.current_instructions
-                            .push(Instruction::If(BlockType::Empty));
-                        {
-                            // Null: allocate a fresh 4-byte empty
-                            // length-prefixed string (length=0 at
-                            // offset 0, no data bytes).
-                            if let Some(&malloc_idx) =
-                                self.wasm_generator.function_map.get("malloc")
-                            {
-                                let empty_local = self.next_local_index;
-                                self.next_local_index += 1;
-                                self.temp_local_types.insert(empty_local, ValType::I32);
-                                self.current_instructions.push(Instruction::I32Const(4));
-                                self.current_instructions
-                                    .push(Instruction::Call(malloc_idx));
-                                self.current_instructions
-                                    .push(Instruction::LocalTee(empty_local));
-                                self.current_instructions.push(Instruction::I32Const(0));
-                                self.current_instructions.push(Instruction::I32Store(
-                                    wasm_encoder::MemArg {
-                                        offset: 0,
-                                        align: 2,
-                                        memory_index: 0,
-                                    },
-                                ));
-                                self.current_instructions
-                                    .push(Instruction::LocalGet(empty_local));
-                                self.current_instructions
-                                    .push(Instruction::LocalSet(result_local));
-                            } else {
-                                // No malloc available (shouldn't happen
-                                // in practice — malloc is always
-                                // registered). Last-resort: a null
-                                // pointer. Downstream string ops will
-                                // trap, which is fine because this
-                                // branch is unreachable.
-                                self.current_instructions.push(Instruction::I32Const(0));
-                                self.current_instructions
-                                    .push(Instruction::LocalSet(result_local));
-                            }
-                        }
-                        self.current_instructions.push(Instruction::Else);
-                        {
-                            // Non-null Array/Object/other: stringify via
-                            // json.dataToText (registered as a stdlib
-                            // export; see `src/stdlib/json_class.rs`).
-                            if let Some(&data_to_text_idx) =
-                                self.wasm_generator.function_map.get("json.dataToText")
-                            {
-                                self.current_instructions
-                                    .push(Instruction::LocalGet(ptr_local));
-                                self.current_instructions
-                                    .push(Instruction::Call(data_to_text_idx));
-                                self.current_instructions
-                                    .push(Instruction::LocalSet(result_local));
-                            } else {
-                                // Fallback (no json.dataToText
-                                // available — stripped build).
-                                self.current_instructions
-                                    .push(Instruction::LocalGet(ptr_local));
-                                self.emit_unbox_to_i32()?;
-                                self.current_instructions
-                                    .push(Instruction::Call(int_to_string_idx));
-                                self.current_instructions
-                                    .push(Instruction::LocalSet(result_local));
-                            }
-                        }
-                        self.current_instructions.push(Instruction::End); // End null check
+                            .push(Instruction::Call(json_encode_idx));
+                        self.current_instructions
+                            .push(Instruction::LocalSet(result_local));
                     }
                     self.current_instructions.push(Instruction::End); // End String if
                 }
@@ -3988,6 +3990,47 @@ impl MirCodeGenerator<'_> {
 
         debug_mir!("any.toString() dispatch complete");
         Ok(())
+    }
+}
+
+/// The load that reads a value of type `ty` from linear memory. Sized
+/// integers occupy their own width (`integer:8` is one byte, see
+/// `get_type_byte_size`), so they are read with the matching narrow load and
+/// sign- or zero-extended; `integer:64` and `number` use 8-byte loads.
+fn memory_load_instruction(ty: &MirType) -> Instruction<'static> {
+    let arg = |align| wasm_encoder::MemArg {
+        offset: 0,
+        align,
+        memory_index: 0,
+    };
+    match ty {
+        MirType::F64 => Instruction::F64Load(arg(3)),
+        MirType::F32 => Instruction::F32Load(arg(2)),
+        MirType::I64 | MirType::U64 => Instruction::I64Load(arg(3)),
+        MirType::I8 => Instruction::I32Load8S(arg(0)),
+        MirType::U8 => Instruction::I32Load8U(arg(0)),
+        MirType::I16 => Instruction::I32Load16S(arg(1)),
+        MirType::U16 => Instruction::I32Load16U(arg(1)),
+        _ => Instruction::I32Load(arg(2)),
+    }
+}
+
+/// The store that writes a value of type `ty` to linear memory, the
+/// counterpart of [`memory_load_instruction`]. A narrow integer is written
+/// with a narrow store so it does not overwrite the bytes of the next field.
+fn memory_store_instruction(ty: &MirType) -> Instruction<'static> {
+    let arg = |align| wasm_encoder::MemArg {
+        offset: 0,
+        align,
+        memory_index: 0,
+    };
+    match ty {
+        MirType::F64 => Instruction::F64Store(arg(3)),
+        MirType::F32 => Instruction::F32Store(arg(2)),
+        MirType::I64 | MirType::U64 => Instruction::I64Store(arg(3)),
+        MirType::I8 | MirType::U8 => Instruction::I32Store8(arg(0)),
+        MirType::I16 | MirType::U16 => Instruction::I32Store16(arg(1)),
+        _ => Instruction::I32Store(arg(2)),
     }
 }
 

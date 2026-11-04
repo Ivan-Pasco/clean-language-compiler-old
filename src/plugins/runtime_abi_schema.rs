@@ -139,10 +139,12 @@ mod tests {
         // Bumped 154 → 157 on 2026-07-24 for the Delivery-2 JSON bridges
         // (_json_encode_v2 / _json_encode_pretty_v2 / _json_decode_v2) added
         // in [P2-cont-2b]. Legacy _json_encode / _json_decode remain.
+        // Bumped 157 → 158 for _json_get: every json.get call lowers to the
+        // bridge (stdlib-reference §8), so plugins can import it too.
         assert_eq!(
             bridges.len(),
-            157,
-            "v1.toml must catalogue exactly 157 bridges (matches \
+            158,
+            "v1.toml must catalogue exactly 158 bridges (matches \
              `grep -c 'func_wrap(' src/plugins/wasm_adapter.rs` at authoring \
              time). Update this assertion AND wasm_adapter.rs together when \
              adding entries."

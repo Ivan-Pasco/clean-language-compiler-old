@@ -1,0 +1,35 @@
+// Test: bugfixes/index_assignment_updates_list_and_pairs
+// Grammar: assignment_target ("[" additive_expression "]")
+// Semantic: list element assignment (specification 07-statements.md)
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   1 20 3
+//   z b
+//   2.5 9.25
+//   1
+//   5
+//   6
+//   2
+//
+// Regression: `list[i] = v` and `map[key] = v` were evaluated and then
+// dropped, so the element never changed, and reading `map[key]` treated the
+// map as a list and the key pointer as an element index.
+
+start:
+	list<integer> xs = [1, 2, 3]
+	xs[1] = 20
+	printl(xs[0].toString() + " " + xs[1].toString() + " " + xs[2].toString())
+	list<string> ss = ["a", "b"]
+	ss[0] = "z"
+	printl(ss[0] + " " + ss[1])
+	list<number> ns = [2.5, 4.0]
+	integer i = 1
+	ns[i] = 9.25
+	printl(ns[0].toString() + " " + ns[1].toString())
+	pairs<string, integer> m = {"a": 1}
+	printl(m["a"].toString())
+	m["a"] = 5
+	m["b"] = 6
+	printl(m["a"].toString())
+	printl(m["b"].toString())
+	printl(m.len().toString())

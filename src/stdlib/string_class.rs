@@ -17,7 +17,7 @@ use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
 use crate::stdlib::register_stdlib_function;
 use crate::types::WasmType;
-use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
+use wasm_encoder::{BlockType, Instruction, MemArg};
 
 /// String class implementation for Clean Language
 pub struct StringClass;
@@ -64,7 +64,7 @@ impl StringClass {
             "string.charCodeAt",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            self.generate_char_code_at(),
+            Self::gen_char_code_at(),
         )?;
 
         // string.isEmpty(text) -> boolean
@@ -125,7 +125,7 @@ impl StringClass {
             "string.padStart",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            Self::gen_pad_start(malloc),
+            Self::gen_pad(malloc, true),
         )?;
 
         // string.padEnd(text, width, pad) -> string
@@ -134,104 +134,64 @@ impl StringClass {
             "string.padEnd",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            Self::gen_pad_end(malloc),
+            Self::gen_pad(malloc, false),
         )?;
 
         Ok(())
     }
 
-    /// `string.charAt(text, index)`: a new one-byte string holding the byte at
-    /// `index`. Halts when `index` is out of bounds (stdlib-reference.md §4).
-    /// params (text, index); local 2 = new string pointer.
-    fn gen_char_at(malloc_func: u32) -> Vec<Instruction<'static>> {
+    /// Halt unless `0 <= index < length` (stdlib-reference.md §4:
+    /// `.charAt` and `.charCodeAt` halt on an out-of-bounds index).
+    /// params (text, index).
+    fn emit_halt_if_out_of_bounds() -> Vec<Instruction<'static>> {
         vec![
             Instruction::LocalGet(1),
             Instruction::I32Const(0),
             Instruction::I32LtS,
             Instruction::LocalGet(1),
             Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::I32Load(word(0)),
             Instruction::I32GeS,
             Instruction::I32Or,
             Instruction::If(BlockType::Empty),
             Instruction::Unreachable,
             Instruction::End,
+        ]
+    }
+
+    /// `string.charAt(text, index)`: a new one-byte string holding the byte at
+    /// `index`. params (text, index); local 2 = new string pointer.
+    fn gen_char_at(malloc_func: u32) -> Vec<Instruction<'static>> {
+        let mut v = Self::emit_halt_if_out_of_bounds();
+        v.extend([
             Instruction::I32Const(5),
             Instruction::Call(malloc_func),
             Instruction::LocalSet(2),
             Instruction::LocalGet(2),
             Instruction::I32Const(1),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::I32Store(word(0)),
             Instruction::LocalGet(2),
             Instruction::LocalGet(0),
             Instruction::LocalGet(1),
             Instruction::I32Add,
-            Instruction::I32Load8U(MemArg {
-                offset: 4,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Store8(MemArg {
-                offset: 4,
-                align: 0,
-                memory_index: 0,
-            }),
+            Instruction::I32Load8U(byte(DATA_OFFSET)),
+            Instruction::I32Store8(byte(DATA_OFFSET)),
             Instruction::LocalGet(2),
-        ]
+        ]);
+        v
     }
 
-    fn generate_char_code_at(&self) -> Vec<Instruction<'static>> {
-        // Full string.charCodeAt implementation with proper control flow
-        // According to spec: Returns character code (integer) at specified index
-        // Parameters: text string, index
-        // Returns: character code as integer (or 0 if out of bounds)
-        vec![
-            // Get text string and index
-            Instruction::LocalGet(0), // text_ptr
-            Instruction::LocalSet(2), // save text_ptr
-            Instruction::LocalGet(1), // index
-            Instruction::LocalSet(3), // save index
-            // Get text length
-            Instruction::LocalGet(2), // text_ptr
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(4), // save text_length
-            // Check if index is out of bounds (index < 0 OR index >= length)
-            Instruction::LocalGet(3), // index
-            Instruction::I32Const(0),
-            Instruction::I32LtS,      // index < 0
-            Instruction::LocalGet(3), // index
-            Instruction::LocalGet(4), // text_length
-            Instruction::I32GeU,      // index >= text_length
-            Instruction::I32Or,       // out_of_bounds = (index < 0) OR (index >= length)
-            Instruction::If(BlockType::Result(ValType::I32)),
-            // Index is out of bounds, return 0
-            Instruction::I32Const(0),
-            Instruction::Else,
-            // Index is valid, load and return character code
-            Instruction::LocalGet(2), // text_ptr
-            Instruction::I32Const(4), // offset past length field
+    /// `string.charCodeAt(text, index)`: the byte value at `index`.
+    /// params (text, index).
+    fn gen_char_code_at() -> Vec<Instruction<'static>> {
+        let mut v = Self::emit_halt_if_out_of_bounds();
+        v.extend([
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(1),
             Instruction::I32Add,
-            Instruction::LocalGet(3), // index
-            Instruction::I32Add,      // character address = text_ptr + 4 + index
-            Instruction::I32Load8U(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }), // load character as unsigned byte
-            Instruction::End,
-        ]
+            Instruction::I32Load8U(byte(DATA_OFFSET)),
+        ]);
+        v
     }
 
     /// `string.isBlank(text)`: true when every byte is ASCII whitespace
@@ -285,343 +245,146 @@ impl StringClass {
             Instruction::I32Const(1),
         ]
     }
-    /// Generate WASM instructions for string.padStart.
+    /// `string.padStart(text, width, pad)` / `string.padEnd(text, width, pad)`:
+    /// `text` extended to `width` bytes by repeating `pad` before (`at_start`)
+    /// or after it. Returns `text` itself when it is already `width` long or
+    /// `pad` is empty.
     ///
-    /// String memory layout: [4-byte length][content bytes]
-    ///
-    /// Parameters (locals 0-2):
-    ///   - local 0: str_ptr    — source string pointer
-    ///   - local 1: width      — target output length
-    ///   - local 2: pad_ptr    — pad string pointer
-    ///
-    /// Returns: i32 — pointer to result string, or original str_ptr when no padding needed.
-    ///
-    /// Additional locals (3-8):
-    ///   - local 3: str_len    — source string length
-    ///   - local 4: pad_len    — pad string length (guard against zero-length pad)
-    ///   - local 5: pad_needed — bytes to prepend (width - str_len)
-    ///   - local 6: new_ptr    — newly allocated result buffer pointer
-    ///   - local 7: i          — loop counter
-    ///   - local 8: pad_i      — cyclic index into pad string (i mod pad_len)
-    fn gen_pad_start(malloc_func: u32) -> Vec<Instruction<'static>> {
-        // Data bytes start 4 bytes after the string pointer (length prefix occupies first 4 bytes).
-        const DATA_OFFSET: i32 = 4;
-
-        vec![
-            // Load str_len = mem[str_ptr + 0]
+    /// params (text, width, pad); locals 3 = text_len, 4 = pad_len,
+    /// 5 = pad_needed, 6 = result, 7 = i, 8 = pad source pointer, 9 = text
+    /// destination pointer.
+    fn gen_pad(malloc_func: u32, at_start: bool) -> Vec<Instruction<'static>> {
+        let mut v = vec![
             Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::I32Load(word(0)),
             Instruction::LocalSet(3),
-            // Load pad_len = mem[pad_ptr + 0]
             Instruction::LocalGet(2),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::I32Load(word(0)),
             Instruction::LocalSet(4),
-            // Early-out: if str_len >= width OR pad_len == 0, return str_ptr unchanged.
             Instruction::LocalGet(3),
             Instruction::LocalGet(1),
             Instruction::I32GeS,
             Instruction::LocalGet(4),
             Instruction::I32Eqz,
             Instruction::I32Or,
-            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::If(BlockType::Empty),
             Instruction::LocalGet(0),
-            Instruction::Else,
-            // pad_needed = width - str_len
+            Instruction::Return,
+            Instruction::End,
+            // pad_needed = width - text_len; result = malloc(4 + width)
             Instruction::LocalGet(1),
             Instruction::LocalGet(3),
             Instruction::I32Sub,
             Instruction::LocalSet(5),
-            // Allocate new buffer: malloc(DATA_OFFSET + width)
             Instruction::LocalGet(1),
-            Instruction::I32Const(DATA_OFFSET),
+            Instruction::I32Const(DATA_OFFSET as i32),
             Instruction::I32Add,
             Instruction::Call(malloc_func),
-            Instruction::LocalSet(6),
-            // OOM guard: if malloc returned 0, return original str_ptr.
-            Instruction::LocalGet(6),
+            Instruction::LocalTee(6),
+            // Allocation failure: keep the text unpadded.
             Instruction::I32Eqz,
-            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::If(BlockType::Empty),
             Instruction::LocalGet(0),
-            Instruction::Else,
-            // Store result length = width at new_ptr[0].
+            Instruction::Return,
+            Instruction::End,
             Instruction::LocalGet(6),
             Instruction::LocalGet(1),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Phase 1: fill pad_needed bytes at new_ptr[DATA_OFFSET..DATA_OFFSET+pad_needed].
-            // Each byte cycles through the pad string: pad_i = i mod pad_len.
-            Instruction::I32Const(0),
-            Instruction::LocalSet(7), // i = 0
-            Instruction::Block(BlockType::Empty),
-            Instruction::Loop(BlockType::Empty),
-            // Exit when i >= pad_needed.
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(5),
-            Instruction::I32GeU,
-            Instruction::BrIf(1),
-            // Compute pad_i = i mod pad_len  =>  i - (i / pad_len) * pad_len
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(4),
-            Instruction::I32DivU,
-            Instruction::LocalGet(4),
-            Instruction::I32Mul,
-            Instruction::I32Sub,
-            Instruction::LocalSet(8),
-            // Destination address: new_ptr + DATA_OFFSET + i
-            Instruction::LocalGet(6),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(7),
-            Instruction::I32Add,
-            // Source byte: pad_ptr[DATA_OFFSET + pad_i]
-            Instruction::LocalGet(2),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(8),
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Store8(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            // i++
-            Instruction::LocalGet(7),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(7),
-            Instruction::Br(0),
-            Instruction::End, // end loop
-            Instruction::End, // end block
-            // Phase 2: copy original string bytes to new_ptr[DATA_OFFSET+pad_needed..].
-            Instruction::I32Const(0),
-            Instruction::LocalSet(7), // i = 0
-            Instruction::Block(BlockType::Empty),
-            Instruction::Loop(BlockType::Empty),
-            // Exit when i >= str_len.
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(3),
-            Instruction::I32GeU,
-            Instruction::BrIf(1),
-            // Destination: new_ptr[DATA_OFFSET + pad_needed + i]
-            Instruction::LocalGet(6),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(5),
-            Instruction::I32Add,
-            Instruction::LocalGet(7),
-            Instruction::I32Add,
-            // Source: str_ptr[DATA_OFFSET + i]
-            Instruction::LocalGet(0),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(7),
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Store8(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            // i++
-            Instruction::LocalGet(7),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(7),
-            Instruction::Br(0),
-            Instruction::End, // end loop
-            Instruction::End, // end block
-            // Return new_ptr.
-            Instruction::LocalGet(6),
-            Instruction::End, // end OOM if/else
-            Instruction::End, // end early-out if/else
-        ]
+            Instruction::I32Store(word(0)),
+        ];
+        // The padding goes at result[0..pad_needed] (start) or
+        // result[text_len..width] (end); the text fills the rest.
+        let (pad_base, text_base) = if at_start {
+            (None, Some(5))
+        } else {
+            (Some(3), None)
+        };
+        // pad source: result + pad_base; text destination: result + text_base
+        v.push(Instruction::LocalGet(6));
+        if let Some(offset) = pad_base {
+            v.extend([Instruction::LocalGet(offset), Instruction::I32Add]);
+        }
+        v.push(Instruction::LocalSet(8));
+        v.push(Instruction::LocalGet(6));
+        if let Some(offset) = text_base {
+            v.extend([Instruction::LocalGet(offset), Instruction::I32Add]);
+        }
+        v.push(Instruction::LocalSet(9));
+        // Padding: dst[i] = pad[i % pad_len] for i in 0..pad_needed.
+        v.extend(emit_byte_loop(5, |v| {
+            v.extend([
+                Instruction::LocalGet(8),
+                Instruction::LocalGet(7),
+                Instruction::I32Add,
+                Instruction::LocalGet(2),
+                Instruction::LocalGet(7),
+                Instruction::LocalGet(4),
+                Instruction::I32RemU,
+                Instruction::I32Add,
+                Instruction::I32Load8U(byte(DATA_OFFSET)),
+                Instruction::I32Store8(byte(DATA_OFFSET)),
+            ]);
+        }));
+        // Text: dst[i] = text[i] for i in 0..text_len.
+        v.extend(emit_byte_loop(3, |v| {
+            v.extend([
+                Instruction::LocalGet(9),
+                Instruction::LocalGet(7),
+                Instruction::I32Add,
+                Instruction::LocalGet(0),
+                Instruction::LocalGet(7),
+                Instruction::I32Add,
+                Instruction::I32Load8U(byte(DATA_OFFSET)),
+                Instruction::I32Store8(byte(DATA_OFFSET)),
+            ]);
+        }));
+        v.push(Instruction::LocalGet(6));
+        v
     }
+}
 
-    /// Generate WASM instructions for string.padEnd.
-    ///
-    /// String memory layout: [4-byte length][content bytes]
-    ///
-    /// Parameters (locals 0-2):
-    ///   - local 0: str_ptr    — source string pointer
-    ///   - local 1: width      — target output length
-    ///   - local 2: pad_ptr    — pad string pointer
-    ///
-    /// Returns: i32 — pointer to result string, or original str_ptr when no padding needed.
-    ///
-    /// Additional locals (3-8):
-    ///   - local 3: str_len    — source string length
-    ///   - local 4: pad_len    — pad string length (guard against zero-length pad)
-    ///   - local 5: pad_needed — bytes to append (width - str_len)
-    ///   - local 6: new_ptr    — newly allocated result buffer pointer
-    ///   - local 7: i          — loop counter
-    ///   - local 8: pad_i      — cyclic index into pad string (i mod pad_len)
-    fn gen_pad_end(malloc_func: u32) -> Vec<Instruction<'static>> {
-        const DATA_OFFSET: i32 = 4;
+/// Byte offset of a string's content.
+const DATA_OFFSET: u64 = 4;
 
-        vec![
-            // Load str_len
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
-            // Load pad_len
-            Instruction::LocalGet(2),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(4),
-            // Early-out: if str_len >= width OR pad_len == 0, return str_ptr unchanged.
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(1),
-            Instruction::I32GeS,
-            Instruction::LocalGet(4),
-            Instruction::I32Eqz,
-            Instruction::I32Or,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::LocalGet(0),
-            Instruction::Else,
-            // pad_needed = width - str_len
-            Instruction::LocalGet(1),
-            Instruction::LocalGet(3),
-            Instruction::I32Sub,
-            Instruction::LocalSet(5),
-            // Allocate new buffer: malloc(DATA_OFFSET + width)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::Call(malloc_func),
-            Instruction::LocalSet(6),
-            // OOM guard.
-            Instruction::LocalGet(6),
-            Instruction::I32Eqz,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::LocalGet(0),
-            Instruction::Else,
-            // Store result length = width at new_ptr[0].
-            Instruction::LocalGet(6),
-            Instruction::LocalGet(1),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Phase 1: copy original string bytes to new_ptr[DATA_OFFSET..DATA_OFFSET+str_len].
-            Instruction::I32Const(0),
-            Instruction::LocalSet(7),
-            Instruction::Block(BlockType::Empty),
-            Instruction::Loop(BlockType::Empty),
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(3),
-            Instruction::I32GeU,
-            Instruction::BrIf(1),
-            // Destination: new_ptr[DATA_OFFSET + i]
-            Instruction::LocalGet(6),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(7),
-            Instruction::I32Add,
-            // Source: str_ptr[DATA_OFFSET + i]
-            Instruction::LocalGet(0),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(7),
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Store8(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(7),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(7),
-            Instruction::Br(0),
-            Instruction::End, // end loop
-            Instruction::End, // end block
-            // Phase 2: fill pad_needed bytes at new_ptr[DATA_OFFSET+str_len..].
-            Instruction::I32Const(0),
-            Instruction::LocalSet(7),
-            Instruction::Block(BlockType::Empty),
-            Instruction::Loop(BlockType::Empty),
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(5),
-            Instruction::I32GeU,
-            Instruction::BrIf(1),
-            // pad_i = i mod pad_len
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(4),
-            Instruction::I32DivU,
-            Instruction::LocalGet(4),
-            Instruction::I32Mul,
-            Instruction::I32Sub,
-            Instruction::LocalSet(8),
-            // Destination: new_ptr[DATA_OFFSET + str_len + i]
-            Instruction::LocalGet(6),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(3),
-            Instruction::I32Add,
-            Instruction::LocalGet(7),
-            Instruction::I32Add,
-            // Source: pad_ptr[DATA_OFFSET + pad_i]
-            Instruction::LocalGet(2),
-            Instruction::I32Const(DATA_OFFSET),
-            Instruction::I32Add,
-            Instruction::LocalGet(8),
-            Instruction::I32Add,
-            Instruction::I32Load8U(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::I32Store8(MemArg {
-                offset: 0,
-                align: 0,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(7),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(7),
-            Instruction::Br(0),
-            Instruction::End, // end loop
-            Instruction::End, // end block
-            // Return new_ptr.
-            Instruction::LocalGet(6),
-            Instruction::End, // end OOM if/else
-            Instruction::End, // end early-out if/else
-        ]
+fn word(offset: u64) -> MemArg {
+    MemArg {
+        offset,
+        align: 2,
+        memory_index: 0,
     }
+}
+
+fn byte(offset: u64) -> MemArg {
+    MemArg {
+        offset,
+        align: 0,
+        memory_index: 0,
+    }
+}
+
+/// `for i (local 7) in 0..count_local { body }`.
+fn emit_byte_loop(
+    count_local: u32,
+    body: impl FnOnce(&mut Vec<Instruction<'static>>),
+) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::I32Const(0),
+        Instruction::LocalSet(7),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(7),
+        Instruction::LocalGet(count_local),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+    ];
+    body(&mut v);
+    v.extend([
+        Instruction::LocalGet(7),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(7),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+    ]);
+    v
 }

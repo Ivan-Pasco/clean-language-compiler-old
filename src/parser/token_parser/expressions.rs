@@ -399,13 +399,11 @@ impl TokenParser {
                 TokenKind::Bang => {
                     // Postfix `!` (required / non-null assertion) — spec grammar.ebnf line 235.
                     // `value!` traps at runtime if value is null; otherwise returns value unchanged.
-                    let bang_location = self.current().location.clone();
                     self.bump(); // consume !
                     expr = Expression::Unary(
                         crate::ast::UnaryOperator::RequiredAssert,
                         Box::new(expr),
                     );
-                    let _ = bang_location; // location captured in outer expression
                 }
                 TokenKind::Colon => {
                     // Detect ORM block form: `Model.verb:` followed by an indented body of

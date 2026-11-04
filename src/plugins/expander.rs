@@ -430,6 +430,19 @@ fn capability_signature_matches(a: &crate::ast::Capability, b: &crate::ast::Capa
     true
 }
 
+/// The PLUGIN002 error for a plugin-emitted capability whose signature
+/// conflicts with an existing declaration of the same name.
+fn capability_conflict(name: String) -> PluginError {
+    PluginError::ValidationFailed {
+        plugin_name: "(plugin-emitted capability)".to_string(),
+        message: format!(
+            "PLUGIN002: capability `{}` was emitted by a plugin with a signature that conflicts with the existing declaration (same name, different method set or types).",
+            name
+        ),
+        location: None,
+    }
+}
+
 /// Merge `incoming` capability into `program.capabilities`. Silent no-op when
 /// an entry with the same name and matching signature already exists.
 /// Returns `Err(name)` on signature conflict; caller emits PLUGIN002.
@@ -624,62 +637,7 @@ impl<'a> PluginExpander<'a> {
         // Expand statements in classes
         program.classes = self.expand_classes(program.classes)?;
 
-        // Merge pending start function into program
-        if let Some(start_fn) = self.pending_start.take() {
-            if program.start_function.is_none() {
-                program.start_function = Some(start_fn);
-            } else {
-                // Merge: append plugin start function body to existing start function
-                if let Some(ref mut existing) = program.start_function {
-                    existing.body.extend(start_fn.body);
-                }
-            }
-        }
-
-        // Merge pending functions into program. Plugin-emitted functions
-        // (endpoint handlers, helpers) can contain framework blocks of their
-        // own — an `html:` page inside a route handler — so they are expanded
-        // before merging.
-        self.merge_pending_functions(&mut program)?;
-
-        // Merge pending classes into program (e.g., ORM models from frame.data)
-        program.classes.append(&mut self.pending_classes);
-
-        // Merge pending capabilities into program with dedup. Identical
-        // signatures across plugins/files are silently coalesced; a name
-        // clash with a different signature raises PLUGIN002.
-        // See foundation/spec/plugins/contracts/typed-emission.md §3.18.
-        for cap in self.pending_capabilities.drain(..) {
-            if let Err(name) = merge_capability(&mut program, cap) {
-                return Err(PluginError::ValidationFailed {
-                    plugin_name: "(plugin-emitted capability)".to_string(),
-                    message: format!(
-                        "PLUGIN002: capability `{}` was emitted by a plugin with a signature that conflicts with the existing declaration (same name, different method set or types).",
-                        name
-                    ),
-                    location: None,
-                });
-            }
-        }
-
-        // Merge pending externals into program (deduplicate by name)
-        for ext in self.pending_externals.drain(..) {
-            if !program.externals.iter().any(|e| e.name == ext.name) {
-                program.externals.push(ext);
-            }
-        }
-
-        // Merge pending state into program. Plugin-contributed declarations
-        // come first (accumulated in pending_state); the user's existing
-        // state block (if any) is appended after. Keeping that order makes
-        // user code able to read plugin-emitted instance globals during its
-        // own start: body without ordering surprises.
-        if self.pending_state.is_some() {
-            let plugin_state = self.pending_state.take();
-            let user_state = program.state.take();
-            program.state = plugin_state;
-            merge_state_block(&mut program.state, user_state);
-        }
+        self.merge_pending_into(&mut program)?;
 
         // Plugin Contracts v2 — dispatch lifecycle slots.
         // See foundation/spec/plugins/contracts/lifecycle.md §3.
@@ -799,16 +757,7 @@ impl<'a> PluginExpander<'a> {
             // silently coalesce; a name clash with a different signature
             // raises PLUGIN002. See typed-emission.md §3.18.
             for cap in expansion.capabilities {
-                if let Err(name) = merge_capability(program, cap) {
-                    return Err(PluginError::ValidationFailed {
-                        plugin_name: "(plugin-emitted capability)".to_string(),
-                        message: format!(
-                            "PLUGIN002: capability `{}` was emitted by a plugin with a signature that conflicts with the existing declaration (same name, different method set or types).",
-                            name
-                        ),
-                        location: None,
-                    });
-                }
+                merge_capability(program, cap).map_err(capability_conflict)?;
             }
             for ext in expansion.externals {
                 if !program.externals.iter().any(|e| e.name == ext.name) {
@@ -854,6 +803,53 @@ impl<'a> PluginExpander<'a> {
             }
             accumulator.extend(stmts);
         }
+    }
+
+    /// Merge everything the plugin expansions queued into `program`: the
+    /// start-function body, the emitted functions (expanded first), classes,
+    /// capabilities, externals and the `state:` block.
+    fn merge_pending_into(&mut self, program: &mut Program) -> Result<(), PluginError> {
+        if let Some(start_fn) = self.pending_start.take() {
+            match program.start_function {
+                // Append the plugin start body to the existing start function.
+                Some(ref mut existing) => existing.body.extend(start_fn.body),
+                None => program.start_function = Some(start_fn),
+            }
+        }
+
+        // Plugin-emitted functions (endpoint handlers, helpers) can contain
+        // framework blocks and ORM queries of their own — an `html:` page
+        // inside a route handler — so they are expanded before merging.
+        self.merge_pending_functions(program)?;
+
+        // Plugin-emitted classes (e.g. ORM models from frame.data).
+        program.classes.append(&mut self.pending_classes);
+
+        // Capabilities merge with dedup: identical signatures across
+        // plugins/files are silently coalesced; a name clash with a different
+        // signature raises PLUGIN002.
+        // See foundation/spec/plugins/contracts/typed-emission.md §3.18.
+        for cap in self.pending_capabilities.drain(..) {
+            merge_capability(program, cap).map_err(capability_conflict)?;
+        }
+
+        // Externals are deduplicated by name.
+        for ext in self.pending_externals.drain(..) {
+            if !program.externals.iter().any(|e| e.name == ext.name) {
+                program.externals.push(ext);
+            }
+        }
+
+        // Plugin-contributed state declarations come first; the user's own
+        // state block (if any) is appended after, so user code can read
+        // plugin-emitted instance globals during its own start: body.
+        if self.pending_state.is_some() {
+            let plugin_state = self.pending_state.take();
+            let user_state = program.state.take();
+            program.state = plugin_state;
+            merge_state_block(&mut program.state, user_state);
+        }
+        Ok(())
     }
 
     /// Expand plugin-emitted functions and merge them into `program`.
@@ -902,48 +898,7 @@ impl<'a> PluginExpander<'a> {
         program.screen_blocks = self.expand_screen_blocks(program.screen_blocks)?;
         program.classes = self.expand_classes(program.classes)?;
 
-        if let Some(start_fn) = self.pending_start.take() {
-            if program.start_function.is_none() {
-                program.start_function = Some(start_fn);
-            } else if let Some(ref mut existing) = program.start_function {
-                existing.body.extend(start_fn.body);
-            }
-        }
-
-        // Plugin-emitted functions (endpoint handlers) carry framework blocks
-        // and ORM queries of their own in every module, not only the entry one.
-        self.merge_pending_functions(&mut program)?;
-        program.classes.append(&mut self.pending_classes);
-
-        // Mirror expand_program's PLUGIN002 dedup for plugin-emitted `can`
-        // capabilities. See merge_capability + §3.18 of typed-emission.md.
-        for cap in self.pending_capabilities.drain(..) {
-            if let Err(name) = merge_capability(&mut program, cap) {
-                return Err(PluginError::ValidationFailed {
-                    plugin_name: "(plugin-emitted capability)".to_string(),
-                    message: format!(
-                        "PLUGIN002: capability `{}` was emitted by a plugin with a signature that conflicts with the existing declaration (same name, different method set or types).",
-                        name
-                    ),
-                    location: None,
-                });
-            }
-        }
-
-        for ext in self.pending_externals.drain(..) {
-            if !program.externals.iter().any(|e| e.name == ext.name) {
-                program.externals.push(ext);
-            }
-        }
-
-        // Mirror expand_program: plugin-contributed state goes first, user
-        // state appended. See the equivalent block there for rationale.
-        if self.pending_state.is_some() {
-            let plugin_state = self.pending_state.take();
-            let user_state = program.state.take();
-            program.state = plugin_state;
-            merge_state_block(&mut program.state, user_state);
-        }
+        self.merge_pending_into(&mut program)?;
 
         emit_event_handler_shims(&mut program);
 
@@ -1368,7 +1323,7 @@ impl<'a> PluginExpander<'a> {
     ///   f5f2a9954225);
     /// - the inline statements are checked against the plugin's declared
     ///   `[bridge]` functions; violations are collected for the caller
-    ///   (`take_permission_errors`);
+    ///   (`check_permissions`);
     /// - functions, classes, capabilities, externals and the `state:` block
     ///   are queued for merging into the program;
     /// - the start-function body is merged into the program start function

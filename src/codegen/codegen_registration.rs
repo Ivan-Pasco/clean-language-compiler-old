@@ -56,8 +56,10 @@ impl super::CodeGenerator {
         Ok(())
     }
 
-    /// Register JSON operations for parsing and stringifying JSON
-    /// BOOK: json-module - pure WASM JSON implementation
+    /// Register the boxed-Any JSON helpers (member/element access, typed
+    /// collection boxing, decode sentinel checks). JSON parsing and
+    /// serialization are host bridges — see `stdlib/json_class.rs`.
+    /// BOOK: json-module
     pub fn register_json_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::JsonClass;
 
@@ -672,74 +674,8 @@ impl super::CodeGenerator {
             self.add_function_alias("string.toNumber", stf_idx);
         }
 
-        // NATIVE: list_get_i32 - get element from i32 list
-        // Parameters: list_ptr (i32), index (i32)
-        // Returns: element (i32)
-        let list_get_i32_instructions = native_stdlib::list_ops::gen_get_i32();
-        self.register_function(
-            "__list_get_i32",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &list_get_i32_instructions,
-        )?;
-        if let Some(lg_idx) = self.get_function_index("__list_get_i32") {
-            self.add_function_alias("list.get", lg_idx);
-        }
-
-        // NATIVE: list_set_i32 - set element in i32 list
-        // Parameters: list_ptr (i32), index (i32), value (i32)
-        // Returns: list_ptr (i32) for chaining
-        let list_set_i32_instructions = native_stdlib::list_ops::gen_set_i32();
-        self.register_function(
-            "__list_set_i32",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &list_set_i32_instructions,
-        )?;
-        if let Some(ls_idx) = self.get_function_index("__list_set_i32") {
-            self.add_function_alias("list.set", ls_idx);
-        }
-
-        // NATIVE: list_pop_i32 - remove and return last element
-        // Parameters: list_ptr (i32)
-        // Returns: element (i32)
-        let list_pop_i32_instructions = native_stdlib::list_ops::gen_pop_i32();
-        self.register_function(
-            "__list_pop_i32",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            &list_pop_i32_instructions,
-        )?;
-        if let Some(lp_idx) = self.get_function_index("__list_pop_i32") {
-            self.add_function_alias("list.pop", lp_idx);
-        }
-
-        // NATIVE: list_index_of_i32 - find index of element
-        // Parameters: list_ptr (i32), value (i32)
-        // Returns: index (i32) or -1 if not found
-        let list_index_of_i32_instructions = native_stdlib::list_ops::gen_index_of_i32();
-        let list_index_of_idx = self.register_function(
-            "__list_index_of_i32",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &list_index_of_i32_instructions,
-        )?;
-        self.add_function_alias("list.indexOf", list_index_of_idx);
-
-        // NATIVE: list_contains_i32 - check if list contains element
-        // Parameters: list_ptr (i32), value (i32)
-        // Returns: boolean (i32)
-        let list_contains_i32_instructions =
-            native_stdlib::list_ops::gen_contains_i32(list_index_of_idx);
-        self.register_function(
-            "__list_contains_i32",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &list_contains_i32_instructions,
-        )?;
-        if let Some(lc_idx) = self.get_function_index("__list_contains_i32") {
-            self.add_function_alias("list.contains", lc_idx);
-        }
+        // List methods (get, set, pop, indexOf, contains, ...) are registered
+        // by `ListManager` in `register_list_operations`.
 
         // NATIVE: list_push_i32 - add element to end of list (IN-PLACE MUTATION)
         // This mutates the list in place - no reallocation, no new pointer.
@@ -1289,15 +1225,17 @@ impl super::CodeGenerator {
         self.add_function_alias("pairs.new", pairs_new_idx);
         self.add_function_alias("pairs.allocate", pairs_new_idx);
 
-        // __pairs_set(map_ptr: i32, key_ptr: i32, val_ptr: i32) -> void
-        // Inserts or updates a key/value pair.
-        // Needs 3 extra locals: count, i, entry_ptr.
-        let pairs_set_instructions = native_stdlib::pairs_ops::gen_pairs_set(str_eq_idx);
+        // __pairs_set(map_ptr: i32, key_ptr: i32, val_ptr: i32) -> i32
+        // Inserts or updates a key/value pair and returns the map's address,
+        // which moves when a full map grows.
+        // Needs 5 extra locals: count, i, entry_ptr, new_cap, new_ptr.
+        let pairs_set_instructions =
+            native_stdlib::pairs_ops::gen_pairs_set(str_eq_idx, malloc_idx);
         let pairs_set_idx = self.register_function_with_locals(
             "__pairs_set",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
-            None,                                           // void return
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // count, i, entry_ptr
+            Some(WasmType::I32),
+            &[WasmType::I32; 5], // count, i, entry_ptr, new_cap, new_ptr
             &pairs_set_instructions,
         )?;
         self.add_function_alias("pairs.set", pairs_set_idx);
@@ -1339,40 +1277,6 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("pairs.len", pairs_len_idx);
         self.add_function_alias("pairs.size", pairs_len_idx);
-
-        // NATIVE: list_index_of_string / list_contains_string — byte-comparing
-        // variants for `list<string>`. The default `__list_contains_i32`
-        // compares element slots with `I32Eq`, which for string lists compares
-        // LP-pointer values (heap addresses), so byte-identical strings
-        // allocated at different offsets return `contains = false`. These
-        // variants dispatch through `__pairs_str_eq` to compare bytes.
-        //
-        // Registered here (in the pairs block) rather than in
-        // `register_list_operations` because the latter runs before
-        // `__pairs_str_eq` exists. See prompt baf3ccc5.
-        //
-        // MIR dispatch in `mir/mir_builder/expressions.rs` picks these when
-        // the receiver's element type is `ConcreteType::String`; other
-        // element types keep using `list.contains` / `list.indexOf`.
-        let list_index_of_string_instructions =
-            native_stdlib::list_ops::gen_index_of_string(str_eq_idx);
-        let list_index_of_string_idx = self.register_function(
-            "__list_index_of_string",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &list_index_of_string_instructions,
-        )?;
-        self.add_function_alias("list.indexOf.string", list_index_of_string_idx);
-
-        let list_contains_string_instructions =
-            native_stdlib::list_ops::gen_contains_string(list_index_of_string_idx);
-        let list_contains_string_idx = self.register_function(
-            "__list_contains_string",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &list_contains_string_instructions,
-        )?;
-        self.add_function_alias("list.contains.string", list_contains_string_idx);
 
         Ok(())
     }

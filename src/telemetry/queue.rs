@@ -131,7 +131,10 @@ impl PendingQueue {
         Ok(())
     }
 
-    /// Attempt to flush all pending reports via the submit function.
+    /// Submit pending reports one by one until a submission fails. A failure
+    /// almost always means the error service is unreachable or refusing
+    /// reports, so the rest stay queued for a later flush instead of each
+    /// waiting out its own network timeout.
     /// Returns how many were sent, failed, and remain.
     pub fn flush<F>(&self, mut submit_fn: F) -> FlushResult
     where
@@ -147,6 +150,7 @@ impl PendingQueue {
                 sent += 1;
             } else {
                 failed += 1;
+                break;
             }
         }
 
@@ -247,6 +251,34 @@ mod tests {
         assert_eq!(result.sent, 1);
         assert_eq!(result.failed, 1);
         assert_eq!(result.remaining, 1);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn flush_stops_at_first_failed_submission() {
+        // When the error service is unreachable every submission fails the
+        // same way; trying the rest of the queue only multiplies network
+        // timeouts and failure messages.
+        let temp_dir = std::env::temp_dir().join("cln_test_flush_stops");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let queue = PendingQueue {
+            queue_dir: temp_dir.clone(),
+        };
+        for id in ["stop-001", "stop-002", "stop-003"] {
+            queue.enqueue(&make_test_report(id)).unwrap();
+        }
+
+        let mut attempts = 0;
+        let result = queue.flush(|_| {
+            attempts += 1;
+            false
+        });
+
+        assert_eq!(attempts, 1, "flush must stop after the first failure");
+        assert_eq!(result.sent, 0);
+        assert_eq!(result.remaining, 3);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

@@ -1,0 +1,25 @@
+// Test: bugfixes/unique_string_list_compares_text
+// Grammar: list_type, list_behavior
+// Semantic: type-system.md "List Behaviors" (.unique — no duplicates)
+// Fixed in: compiler 0.33.168
+// Expected output:
+//   2
+//   true
+//   1
+//
+// A `list<string>.unique` compared element pointers, so an equal string
+// built at run time was added a second time. It now compares the text,
+// as `list<integer>.unique` compares values.
+
+start:
+	list<string>.unique tags = []
+	tags.add("red")
+	string built = "re" + "d"
+	tags.add(built)
+	tags.add("blue")
+	print(tags.size())
+	print(tags.contains(built))
+	list<integer>.unique ids = []
+	ids.add(4)
+	ids.add(4)
+	print(ids.size())

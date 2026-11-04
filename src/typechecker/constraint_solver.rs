@@ -182,19 +182,6 @@ impl<'a> ConstraintSolver<'a> {
                 supertype,
                 location,
             } => self.check_subtype(&subtype, &supertype, &location),
-
-            TypeConstraint::Implements {
-                type_,
-                interface,
-                location,
-            } => self.check_implements(&type_, &interface, &location),
-
-            TypeConstraint::HasMember {
-                type_,
-                member_name,
-                member_type,
-                location,
-            } => self.check_has_member(&type_, &member_name, &member_type, &location),
         }
     }
 
@@ -433,23 +420,6 @@ impl<'a> ConstraintSolver<'a> {
                 }
             }
 
-            // Tuple unification
-            (ConcreteType::Tuple(t1), ConcreteType::Tuple(t2)) => {
-                if t1.len() != t2.len() {
-                    return Err(CompilerError::type_error(
-                        format!("Tuple size mismatch: {} vs {}", t1.len(), t2.len()),
-                        None,
-                        Some(location.clone()),
-                    ));
-                }
-
-                for (type1, type2) in t1.iter().zip(t2.iter()) {
-                    self.unify(type1, type2, location)?;
-                }
-
-                Ok(())
-            }
-
             // Union type handling (simplified)
             (ConcreteType::Union(types), t) | (t, ConcreteType::Union(types)) => {
                 // Check if t is assignable to any type in the union
@@ -593,84 +563,6 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
-    /// Check interface implementation
-    fn check_implements(
-        &mut self,
-        type_: &ConcreteType,
-        interface: &ConcreteType,
-        location: &SourceLocation,
-    ) -> Result<(), CompilerError> {
-        // Simplified implementation - would need full interface checking
-        match (type_, interface) {
-            (ConcreteType::Class { .. }, ConcreteType::Interface { .. }) => {
-                // Would check if class implements all interface methods
-                Ok(())
-            }
-            _ => Err(CompilerError::type_error(
-                format!("Type {} does not implement interface {}", type_, interface),
-                None,
-                Some(location.clone()),
-            )),
-        }
-    }
-
-    /// Check if type has specific member
-    fn check_has_member(
-        &mut self,
-        type_: &ConcreteType,
-        member_name: &str,
-        member_type: &ConcreteType,
-        location: &SourceLocation,
-    ) -> Result<(), CompilerError> {
-        let type_ = self.apply_substitution(type_);
-
-        match &type_ {
-            ConcreteType::Array(_) => {
-                // Built-in array methods
-                match member_name {
-                    "length" => self.unify(&ConcreteType::Integer, member_type, location),
-                    "push" | "pop" | "shift" | "unshift" => {
-                        // Would need more sophisticated method type checking
-                        Ok(())
-                    }
-                    _ => Err(CompilerError::type_error(
-                        format!("Array type does not have member: {}", member_name),
-                        None,
-                        Some(location.clone()),
-                    )),
-                }
-            }
-
-            ConcreteType::String => {
-                // Built-in string methods
-                match member_name {
-                    "length" => self.unify(&ConcreteType::Integer, member_type, location),
-                    "substring" | "charAt" | "indexOf" => {
-                        // Would need more sophisticated method type checking
-                        Ok(())
-                    }
-                    _ => Err(CompilerError::type_error(
-                        format!("String type does not have member: {}", member_name),
-                        None,
-                        Some(location.clone()),
-                    )),
-                }
-            }
-
-            ConcreteType::Class { .. } => {
-                // Would look up class definition and check members
-                // For now, assume all member accesses are valid
-                Ok(())
-            }
-
-            _ => Err(CompilerError::type_error(
-                format!("Type {} does not have member: {}", type_, member_name),
-                None,
-                Some(location.clone()),
-            )),
-        }
-    }
-
     /// Bind a type variable to a concrete type
     fn bind_type_var(
         &mut self,
@@ -757,17 +649,9 @@ impl<'a> ConstraintSolver<'a> {
                     .collect(),
             },
 
-            ConcreteType::Tuple(types) => {
-                ConcreteType::Tuple(types.iter().map(|t| self.apply_substitution(t)).collect())
-            }
-
             ConcreteType::Union(types) => {
                 ConcreteType::Union(types.iter().map(|t| self.apply_substitution(t)).collect())
             }
-
-            ConcreteType::Intersection(types) => ConcreteType::Intersection(
-                types.iter().map(|t| self.apply_substitution(t)).collect(),
-            ),
 
             ConcreteType::Optional(inner) => {
                 ConcreteType::Optional(Box::new(self.apply_substitution(inner)))
@@ -806,9 +690,7 @@ impl<'a> ConstraintSolver<'a> {
                 type_args.iter().any(|t| self.occurs_check(var, t))
             }
 
-            ConcreteType::Tuple(types)
-            | ConcreteType::Union(types)
-            | ConcreteType::Intersection(types) => types.iter().any(|t| self.occurs_check(var, t)),
+            ConcreteType::Union(types) => types.iter().any(|t| self.occurs_check(var, t)),
 
             ConcreteType::Optional(inner) => self.occurs_check(var, inner),
 
@@ -840,18 +722,6 @@ impl<'a> ConstraintSolver<'a> {
                 } => {
                     self.collect_type_vars(subtype, &mut unconstrained_vars);
                     self.collect_type_vars(supertype, &mut unconstrained_vars);
-                }
-                TypeConstraint::Implements {
-                    type_, interface, ..
-                } => {
-                    self.collect_type_vars(type_, &mut unconstrained_vars);
-                    self.collect_type_vars(interface, &mut unconstrained_vars);
-                }
-                TypeConstraint::HasMember {
-                    type_, member_type, ..
-                } => {
-                    self.collect_type_vars(type_, &mut unconstrained_vars);
-                    self.collect_type_vars(member_type, &mut unconstrained_vars);
                 }
             }
         }
@@ -899,9 +769,7 @@ impl<'a> ConstraintSolver<'a> {
                     self.collect_type_vars(arg, vars);
                 }
             }
-            ConcreteType::Tuple(types)
-            | ConcreteType::Union(types)
-            | ConcreteType::Intersection(types) => {
+            ConcreteType::Union(types) => {
                 for t in types {
                     self.collect_type_vars(t, vars);
                 }

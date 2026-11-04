@@ -315,21 +315,6 @@ pub enum Expression {
         location: SourceLocation,
     },
 
-    // Property assignment (for list.type = behavior)
-    PropertyAssignment {
-        object: Box<Expression>,
-        property: String,
-        value: Box<Expression>,
-        location: SourceLocation,
-    },
-
-    // List assignment (for list[index] = value)
-    ListAssignment {
-        list: Box<Expression>,
-        index: Box<Expression>,
-        value: Box<Expression>,
-        location: SourceLocation,
-    },
     MethodCall {
         object: Box<Expression>,
         method: String,
@@ -1108,23 +1093,6 @@ impl StateDeclaration {
             location,
         }
     }
-
-    /// Create a private state declaration with no guard clause.
-    pub fn new_private(
-        name: String,
-        type_: Type,
-        initializer: Expression,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        Self {
-            name,
-            type_,
-            initializer,
-            guard: None,
-            is_private: true,
-            location,
-        }
-    }
 }
 
 /// Guard clause - validates state before mutation
@@ -1197,15 +1165,6 @@ pub enum ResetTarget {
 // - require: preconditions in functions/methods (always checked)
 // - rules: state invariants (configurable via build: block)
 // ============================================================================
-
-/// Require statement - declares a precondition that must be true
-/// Can only appear inside functions or class methods
-/// Always checked at runtime (cannot be disabled)
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct RequireStatement {
-    pub condition: Expression,
-    pub location: Option<SourceLocation>,
-}
 
 /// Rules block - declares state invariants that must always be true
 /// Must appear inside state: block, after all state declarations
@@ -1464,23 +1423,6 @@ impl ExternalFunction {
             location,
         }
     }
-
-    /// Create an external function declaration with an explicit WASM module name.
-    pub fn new_in_module(
-        name: String,
-        parameters: Vec<Parameter>,
-        return_type: Type,
-        module: String,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        Self {
-            name,
-            parameters,
-            return_type,
-            module,
-            location,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -1663,12 +1605,6 @@ impl fmt::Display for Value {
                 write!(f, "}}")
             }
         }
-    }
-}
-
-impl Type {
-    pub fn as_type_ref(&self) -> &Type {
-        self
     }
 }
 

@@ -817,7 +817,22 @@ impl MirBuilder {
                 context.function.next_value_id += 1;
 
                 // Register the result as a temporary local for codegen
-                let result_type = self.infer_unary_operation_type(&operand.expr_type);
+                // A numeric operand keeps its built width: an integer literal
+                // outside the i32 range is built as an `integer:64` constant even
+                // though the checker typed it `integer`, and `-5000000000`
+                // must negate in i64.
+                let operand_mir_type = context
+                    .function
+                    .locals
+                    .get(&operand_id)
+                    .map(|local| local.local_type.clone());
+                let result_type = match (operator, operand_mir_type) {
+                    (
+                        UnaryOperator::Negate,
+                        Some(t @ (MirType::I64 | MirType::U64 | MirType::F64)),
+                    ) => t,
+                    _ => self.infer_unary_operation_type(&operand.expr_type),
+                };
                 self.register_temp_local(
                     context,
                     result_id,
@@ -883,6 +898,48 @@ impl MirBuilder {
                         };
                         return self.build_expression(context, &method_call);
                     }
+                }
+
+                // `list.fill(size, value)` with a `number` or `integer:64`
+                // value builds a list of 8-byte elements
+                // (src/stdlib/list_class.rs).
+                if function_name_opt.as_deref() == Some("list.fill")
+                    && arguments.len() == 2
+                    && matches!(
+                        arguments[1].expr_type,
+                        ConcreteType::Number | ConcreteType::IntegerSized { bits: 64, .. }
+                    )
+                {
+                    let fill_name = Self::list_method_variant("fill", &arguments[1].expr_type)
+                        .expect("8-byte elements have a fill variant");
+                    let mut args = Vec::with_capacity(2);
+                    for arg in arguments {
+                        args.push(MirOperand::Value(self.build_expression(context, arg)?));
+                    }
+                    let result_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    let result_type = self.convert_concrete_type(&expression.expr_type);
+                    self.register_temp_local(
+                        context,
+                        result_id,
+                        result_type,
+                        expression.location.clone(),
+                    );
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: Some(result_id),
+                            operation: MirOperation::Call {
+                                function: MirOperand::NamedFunction {
+                                    name: fill_name,
+                                    symbol_id: SymbolId(0),
+                                },
+                                arguments: args,
+                            },
+                            location: expression.location.clone(),
+                        },
+                    );
+                    return Ok(result_id);
                 }
 
                 // NOTE: Handle standalone toString(any) function calls
@@ -985,318 +1042,29 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
-                // JSON stdlib migration (Option B, [P2-cont]/[P4c]) — bridge dispatch.
-                //
-                // As of 0.33.139 / [P4c], the default is bridge (ON). The four
-                // spec'd JSON functions dispatch to the Layer 2 host bridges
-                // declared in `foundation/spec/platform/runtime-abi/v1.toml`:
-                //
-                //   json.textToData / json.decode    -> _json_decode_v2
-                //   json.tryTextToData               -> _json_decode_v2 wrapped
-                //                                       in the sentinel-check
-                //                                       null-on-error wrapper
-                //                                       (see [P2-cont-2b] and
-                //                                       stdlib-reference.md §8)
-                //   json.dataToText / json.encode    -> _json_encode_v2
-                //   json.prettyDataToText            -> _json_encode_pretty_v2
-                //
-                // Argument-shape exceptions kept on the LEGACY path even under
-                // the bridge default (per orchestrator A4 and JSON_MIGRATION_DELIVERY2.md):
-                //
-                //   * Class-typed arg -> `__serialize_ClassName` helper. Class
-                //                       serialization migration is scheduled
-                //                       for a later delivery ([P5]/[P6]).
-                //
-                // List<T> and Pairs<K,V> DO go through the bridge — `emit_box_any`
-                // normalizes them into the JSON-tree layout that _json_encode_v2
-                // expects (per [P2-cont-2b]).
-                //
-                // `--enable-legacy-json-wasm` opts out to the pre-Delivery-2
-                // pure-WASM parser in src/stdlib/json_class.rs. Escape hatch
-                // during Delivery-2 soak; removed in [P5].
-                let json_bridge_enabled = crate::enable_json_bridge_override();
-                if json_bridge_enabled
-                    && arguments.len() == 1
-                    && matches!(
-                        function_name_opt.as_deref(),
-                        Some("json.textToData")
-                            | Some("json.tryTextToData")
-                            | Some("json.dataToText")
-                            | Some("json.prettyDataToText")
-                            | Some("json.encode")
-                            | Some("json.decode")
-                    )
-                {
-                    // [P2-cont-2b] Under --enable-json-bridge the four spec'd
-                    // JSON entry points dispatch to the Delivery-2 host bridges
-                    // (`_json_encode_v2` / `_json_encode_pretty_v2` /
-                    // `_json_decode_v2`) declared in the corrected function
-                    // registry (see foundation/spec/platform/function-registry.toml
-                    // and BOXED_ANY_ABI.md §3.2/§3.3).
-                    //
-                    // Class-typed arguments still hit `__serialize_ClassName`
-                    // (kept per orchestrator A4 until [P5]/[P6]) — skip the
-                    // bridge for those. List<T> and Pairs<K,V> now GO through
-                    // the bridge: we reuse `emit_box_any` (which already
-                    // routes typed collections through `__json_from_cln_list`
-                    // / `__json_from_cln_pairs`) to normalize them into the
-                    // JSON-tree layout that `_json_encode_v2` expects.
-                    let arg_ty = &arguments[0].expr_type;
-                    let is_class = matches!(arg_ty, ConcreteType::Class { .. });
-
-                    let encode_shaped = matches!(
-                        function_name_opt.as_deref(),
-                        Some("json.dataToText")
-                            | Some("json.prettyDataToText")
-                            | Some("json.encode")
-                    );
-                    let skip_bridge_for_shape = encode_shaped && is_class;
-
-                    if !skip_bridge_for_shape {
-                        let is_try =
-                            matches!(function_name_opt.as_deref(), Some("json.tryTextToData"));
-                        let is_decode_variant = matches!(
-                            function_name_opt.as_deref(),
-                            Some("json.textToData")
-                                | Some("json.tryTextToData")
-                                | Some("json.decode")
-                        );
-
-                        let bridge_name = match function_name_opt.as_deref() {
-                            Some("json.textToData")
-                            | Some("json.tryTextToData")
-                            | Some("json.decode") => "_json_decode_v2",
-                            Some("json.prettyDataToText") => "_json_encode_pretty_v2",
-                            Some("json.dataToText") | Some("json.encode") => "_json_encode_v2",
-                            _ => unreachable!(),
-                        };
-
-                        // Evaluate the argument.
-                        let raw_arg_id = self.build_expression(context, &arguments[0])?;
-
-                        // For encode variants that receive a typed collection or
-                        // any non-Any scalar, box it to Any first. `emit_box_any`
-                        // already handles the List<T> / Pairs<K,V> marshalling by
-                        // routing through `__json_from_cln_list` /
-                        // `__json_from_cln_pairs`, then wrapping in a 12-byte
-                        // boxed-Any per BOXED_ANY_ABI.md.
-                        let call_arg_id = if !is_decode_variant {
-                            // Encode variants (encode / dataToText / prettyDataToText)
-                            // expect a boxed-Any pointer. If the source is already
-                            // Any (Ptr(U8)/Any MIR type from a prior box), pass it
-                            // through; otherwise box it.
-                            match arg_ty {
-                                // Any already boxed — pass through.
-                                ConcreteType::Any => raw_arg_id,
-                                _ => self.emit_box_any(
-                                    context,
-                                    raw_arg_id,
-                                    arg_ty,
-                                    &expression.location,
-                                ),
-                            }
-                        } else {
-                            // Decode variants take a string pointer as-is.
-                            raw_arg_id
-                        };
-
-                        let call_result_id = ValueId(context.function.next_value_id);
-                        context.function.next_value_id += 1;
-                        self.register_temp_local(
-                            context,
-                            call_result_id,
-                            MirType::Ptr(Box::new(MirType::U8)),
-                            expression.location.clone(),
-                        );
-
-                        let call_instr = MirInstruction {
-                            dest: Some(call_result_id),
-                            operation: MirOperation::Call {
-                                function: MirOperand::NamedFunction {
-                                    name: bridge_name.to_string(),
-                                    symbol_id: SymbolId(0),
-                                },
-                                arguments: vec![MirOperand::Value(call_arg_id)],
-                            },
-                            location: expression.location.clone(),
-                        };
-                        self.add_instruction(context, call_instr);
-
-                        trace!(
-                            bridge = %bridge_name,
-                            fn_name = ?function_name_opt.as_deref(),
-                            "JSON call dispatched to Layer 2 bridge (v2, Delivery 2)"
-                        );
-
-                        // Sentinel handling for _json_decode_v2 (D5). The bridge
-                        // returns 0 on parse failure. json.tryTextToData
-                        // substitutes a null_boxed_any singleton; json.textToData
-                        // raises. Both paths go through the compiler-registered
-                        // WASM wrapper (see json_class.rs) that owns the check
-                        // — this keeps the MIR simple and avoids per-call-site
-                        // block-splitting.
-                        if is_decode_variant && is_try {
-                            let wrapped_id = self.emit_json_try_decode_v2_wrapper(
-                                context,
-                                call_result_id,
-                                &expression.location,
-                            );
-                            return Ok(wrapped_id);
-                        }
-                        if is_decode_variant && !is_try {
-                            let wrapped_id = self.emit_json_decode_v2_or_raise_wrapper(
-                                context,
-                                call_result_id,
-                                &expression.location,
-                            );
-                            return Ok(wrapped_id);
-                        }
-
-                        return Ok(call_result_id);
-                    }
+                // JSON calls lower to the Layer 2 host bridges
+                // (foundation/spec/stdlib-reference.md §8); the compiler
+                // embeds no JSON parser or serializer.
+                if let Some(result_id) = self.build_json_bridge_call(
+                    context,
+                    function_name_opt.as_deref(),
+                    arguments,
+                    &expression.location,
+                )? {
+                    return Ok(result_id);
                 }
 
-                // json.encode / json.dataToText — call-site dispatch by source type.
-                // The generic `json.dataToText(any)` only knows how to walk values that
-                // are already in the JSON-tagged tree format produced by `json.decode`
-                // and `ObjectLiteral`. Typed Clean collections (List<T>, Pairs<K,V>)
-                // use native heap layouts whose elements are raw — not boxed Any — so
-                // walking them through `dataToText` corrupts the output. Dispatch on
-                // the argument's source type and call a specialized encoder when one
-                // exists; fall back to `dataToText` for `any`/`object`/`json` values.
-                if matches!(
+                // Built-in `db.*` calls lower to their canonical bridge
+                // import (stdlib-reference §9), so they resolve with or
+                // without the frame.data plugin's language aliases.
+                if let Some(result_id) = self.build_db_bridge_call(
+                    context,
                     function_name_opt.as_deref(),
-                    Some("json.encode") | Some("json.dataToText") | Some("json.prettyDataToText")
-                ) && arguments.len() == 1
-                {
-                    // (a) Class-typed argument → compiler-generated __serialize_ClassName.
-                    if let ConcreteType::Class {
-                        symbol_id: class_sym,
-                        ..
-                    } = &arguments[0].expr_type
-                    {
-                        let class_sym = *class_sym;
-                        let class_name = context
-                            .all_classes
-                            .iter()
-                            .find(|c| c.symbol_id == class_sym)
-                            .map(|c| c.name.clone());
-
-                        if let Some(ref name) = class_name {
-                            if let Some(&serializer_id) = self.class_serializer_ids.get(name) {
-                                // Evaluate the argument expression to get the class pointer.
-                                let arg_id = self.build_expression(context, &arguments[0])?;
-
-                                let result_id = ValueId(context.function.next_value_id);
-                                context.function.next_value_id += 1;
-                                self.register_temp_local(
-                                    context,
-                                    result_id,
-                                    MirType::Ptr(Box::new(MirType::I8)),
-                                    expression.location.clone(),
-                                );
-
-                                let call_instr = MirInstruction {
-                                    dest: Some(result_id),
-                                    operation: MirOperation::Call {
-                                        function: MirOperand::Function(serializer_id),
-                                        arguments: vec![MirOperand::Value(arg_id)],
-                                    },
-                                    location: expression.location.clone(),
-                                };
-                                self.add_instruction(context, call_instr);
-
-                                trace!(
-                                    class_name = %name,
-                                    serializer_id = serializer_id.0,
-                                    "json.encode dispatched to class serializer"
-                                );
-
-                                return Ok(result_id);
-                            }
-                        }
-                    }
-
-                    // (b) Pairs<K, V> → __json_encode_cln_pairs(pairs_ptr, val_tag).
-                    // Pairs entries are 4-byte i32 slots, so the value tag covers
-                    // Integer / Boolean / String (and "null" as a safe fallback for
-                    // anything we don't specialize). Nested values (Pairs/List/Class)
-                    // would need a recursive encoder — for now they fall through to
-                    // "null" inside the helper rather than producing malformed bytes.
-                    if let ConcreteType::Pairs(_key_type, val_type) = &arguments[0].expr_type {
-                        let val_tag = Self::get_any_type_tag(val_type) as i64;
-                        let arg_id = self.build_expression(context, &arguments[0])?;
-
-                        let result_id = ValueId(context.function.next_value_id);
-                        context.function.next_value_id += 1;
-                        self.register_temp_local(
-                            context,
-                            result_id,
-                            MirType::Ptr(Box::new(MirType::U8)),
-                            expression.location.clone(),
-                        );
-
-                        let call_instr = MirInstruction {
-                            dest: Some(result_id),
-                            operation: MirOperation::Call {
-                                function: MirOperand::NamedFunction {
-                                    name: "__json_encode_cln_pairs".to_string(),
-                                    symbol_id: SymbolId(0),
-                                },
-                                arguments: vec![
-                                    MirOperand::Value(arg_id),
-                                    MirOperand::Constant(MirConstant::Integer(val_tag)),
-                                ],
-                            },
-                            location: expression.location.clone(),
-                        };
-                        self.add_instruction(context, call_instr);
-
-                        trace!(
-                            val_tag = val_tag,
-                            "json.encode dispatched to __json_encode_cln_pairs"
-                        );
-
-                        return Ok(result_id);
-                    }
-
-                    // (c) Array<T>/List<T> → __json_encode_cln_list(list_ptr, elem_tag).
-                    if let ConcreteType::Array(elem_type) = &arguments[0].expr_type {
-                        let elem_tag = Self::get_any_type_tag(elem_type) as i64;
-                        let arg_id = self.build_expression(context, &arguments[0])?;
-
-                        let result_id = ValueId(context.function.next_value_id);
-                        context.function.next_value_id += 1;
-                        self.register_temp_local(
-                            context,
-                            result_id,
-                            MirType::Ptr(Box::new(MirType::U8)),
-                            expression.location.clone(),
-                        );
-
-                        let call_instr = MirInstruction {
-                            dest: Some(result_id),
-                            operation: MirOperation::Call {
-                                function: MirOperand::NamedFunction {
-                                    name: "__json_encode_cln_list".to_string(),
-                                    symbol_id: SymbolId(0),
-                                },
-                                arguments: vec![
-                                    MirOperand::Value(arg_id),
-                                    MirOperand::Constant(MirConstant::Integer(elem_tag)),
-                                ],
-                            },
-                            location: expression.location.clone(),
-                        };
-                        self.add_instruction(context, call_instr);
-
-                        trace!(
-                            elem_tag = elem_tag,
-                            "json.encode dispatched to __json_encode_cln_list"
-                        );
-
-                        return Ok(result_id);
-                    }
+                    arguments,
+                    &expression.expr_type,
+                    &expression.location,
+                )? {
+                    return Ok(result_id);
                 }
 
                 // Build argument operands
@@ -1470,7 +1238,8 @@ impl MirBuilder {
                         let param_type_opt = param_types.get(arg_idx);
 
                         // When a class instance is passed where a string is expected,
-                        // auto-serialize it to JSON via the compiler-generated __serialize_ClassName.
+                        // auto-serialize it to JSON text: its compiler-generated __json_tree_ClassName
+                        // object encoded by the _json_encode_v2 bridge.
                         // This enables api.post(url, classInstance) without explicit json.encode().
                         let needs_class_serialize =
                             matches!(param_type_opt, Some(ConcreteType::String))
@@ -1495,27 +1264,13 @@ impl MirBuilder {
                                     .map(|c| c.name.clone());
 
                                 if let Some(ref name) = class_name {
-                                    if let Some(&serializer_id) =
-                                        self.class_serializer_ids.get(name)
+                                    if let Some(&json_tree_fn) = self.class_json_tree_ids.get(name)
                                     {
-                                        let result_id = ValueId(context.function.next_value_id);
-                                        context.function.next_value_id += 1;
-                                        self.register_temp_local(
+                                        let result_id = self.emit_class_json_text(
                                             context,
-                                            result_id,
-                                            MirType::Ptr(Box::new(MirType::I8)),
-                                            arg.location.clone(),
-                                        );
-                                        self.add_instruction(
-                                            context,
-                                            MirInstruction {
-                                                dest: Some(result_id),
-                                                operation: MirOperation::Call {
-                                                    function: MirOperand::Function(serializer_id),
-                                                    arguments: vec![MirOperand::Value(arg_id)],
-                                                },
-                                                location: arg.location.clone(),
-                                            },
+                                            json_tree_fn,
+                                            arg_id,
+                                            &arg.location,
                                         );
                                         trace!(
                                             class_name = %name,
@@ -1934,11 +1689,21 @@ impl MirBuilder {
                 // NOTE: Handle IntegerSized{64}.toString() EARLY — bypass the regular
                 // `integer.toString` dispatch which lowers to native `int_to_string(i32)` and
                 // would corrupt the high bits. Route to `int64_to_string` which takes i64.
-                if matches!(
+                // The receiver's MIR type decides too: an `integer:64` field read
+                // (`obj.total`) can carry the unsized `integer` type in the TAST
+                // while its value is loaded as an i64.
+                let receiver_is_i64 = matches!(
                     &receiver_actual_type,
                     ConcreteType::IntegerSized { bits: 64, .. }
-                ) && method_name == "toString"
-                {
+                ) || matches!(
+                    context
+                        .function
+                        .locals
+                        .get(&receiver_id)
+                        .map(|l| &l.local_type),
+                    Some(MirType::I64 | MirType::U64)
+                );
+                if receiver_is_i64 && method_name == "toString" {
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
@@ -2158,14 +1923,17 @@ impl MirBuilder {
                                 expression.location.clone(),
                             );
 
-                            let add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
-                                _ => SYM_BUILTIN_LIST_ADD,
-                            };
+                            let add_symbol = Self::list_add_symbol(element_type);
 
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
+                                let arg_id = self.coerce_list_element_arg(
+                                    context,
+                                    arg_id,
+                                    element_type,
+                                    &arg.location,
+                                );
                                 args.push(MirOperand::Value(arg_id));
                             }
 
@@ -2199,14 +1967,17 @@ impl MirBuilder {
                                 expression.location.clone(),
                             );
 
-                            let add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
-                                _ => SYM_BUILTIN_LIST_ADD,
-                            };
+                            let add_symbol = Self::list_add_symbol(element_type);
 
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
+                                let arg_id = self.coerce_list_element_arg(
+                                    context,
+                                    arg_id,
+                                    element_type,
+                                    &arg.location,
+                                );
                                 args.push(MirOperand::Value(arg_id));
                             }
 
@@ -2317,7 +2088,11 @@ impl MirBuilder {
                         // `list<number>.get(index)`.
                         "remove" | "pop" | "removeLast" | "set" | "get"
                             if method_name != "get"
-                                || matches!(**element_type, ConcreteType::Number) =>
+                                || matches!(
+                                    **element_type,
+                                    ConcreteType::Number
+                                        | ConcreteType::IntegerSized { bits: 64, .. }
+                                ) =>
                         {
                             let variant = match method_name.as_str() {
                                 "remove" if arguments.len() == 1 => "removeAt",
@@ -2343,8 +2118,16 @@ impl MirBuilder {
                                 expression.location.clone(),
                             );
                             let mut args = vec![MirOperand::Value(receiver_id)];
-                            for arg in arguments {
-                                let arg_id = self.build_expression(context, arg)?;
+                            for (index, arg) in arguments.iter().enumerate() {
+                                let mut arg_id = self.build_expression(context, arg)?;
+                                if Self::list_element_arg_index(method_name) == Some(index) {
+                                    arg_id = self.coerce_list_element_arg(
+                                        context,
+                                        arg_id,
+                                        element_type,
+                                        &arg.location,
+                                    );
+                                }
                                 args.push(MirOperand::Value(arg_id));
                             }
                             self.add_instruction(
@@ -2391,8 +2174,16 @@ impl MirBuilder {
                                 expression.location.clone(),
                             );
                             let mut args = vec![MirOperand::Value(receiver_id)];
-                            for arg in arguments {
-                                let arg_id = self.build_expression(context, arg)?;
+                            for (index, arg) in arguments.iter().enumerate() {
+                                let mut arg_id = self.build_expression(context, arg)?;
+                                if Self::list_element_arg_index(method_name) == Some(index) {
+                                    arg_id = self.coerce_list_element_arg(
+                                        context,
+                                        arg_id,
+                                        element_type,
+                                        &arg.location,
+                                    );
+                                }
                                 args.push(MirOperand::Value(arg_id));
                             }
                             self.add_instruction(
@@ -3212,26 +3003,32 @@ impl MirBuilder {
                         }
                         (ConcreteType::Array(element_type), "add") => {
                             // CRITICAL: list.add modifies IN-PLACE - use SymbolId(1007/1008)
-                            let list_add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
-                                _ => SYM_BUILTIN_LIST_ADD,
-                            };
+                            let list_add_symbol = Self::list_add_symbol(element_type);
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
+                                let arg_id = self.coerce_list_element_arg(
+                                    context,
+                                    arg_id,
+                                    element_type,
+                                    &arg.location,
+                                );
                                 args.push(MirOperand::Value(arg_id));
                             }
                             (list_add_symbol, args)
                         }
                         (ConcreteType::Array(element_type), "push") => {
                             // list.push is an alias for list.add (in-place append)
-                            let list_add_symbol = match element_type.as_ref() {
-                                ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
-                                _ => SYM_BUILTIN_LIST_ADD,
-                            };
+                            let list_add_symbol = Self::list_add_symbol(element_type);
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
+                                let arg_id = self.coerce_list_element_arg(
+                                    context,
+                                    arg_id,
+                                    element_type,
+                                    &arg.location,
+                                );
                                 args.push(MirOperand::Value(arg_id));
                             }
                             (list_add_symbol, args)
@@ -3726,11 +3523,13 @@ impl MirBuilder {
                     "Method call type check"
                 );
 
-                // list.add may move a full list to a larger block and returns the
-                // list's (possibly new) address, which is written back into the
-                // receiver after the call — so its result is never discarded.
-                let writes_back_list = function_symbol == SYM_BUILTIN_LIST_ADD
-                    || function_symbol == SYM_BUILTIN_LIST_ADD_F64;
+                // list.add and pairs.set may move a full collection to a larger
+                // block and return its (possibly new) address, which is written
+                // back into the receiver after the call — so their result is
+                // never discarded.
+                let writes_back_list = Self::is_list_add_symbol(function_symbol)
+                    || (matches!(receiver_actual_type, ConcreteType::Pairs(_, _))
+                        && method_name == "set");
                 let (is_void, result_type) = if writes_back_list {
                     (false, MirType::I32)
                 } else {
@@ -3896,27 +3695,13 @@ impl MirBuilder {
                             .find(|c| c.symbol_id == class_sym)
                             .map(|c| c.name.clone());
                         if let Some(ref name) = class_name {
-                            if let Some(&serializer_id) = self.class_serializer_ids.get(name) {
-                                let result_id = ValueId(context.function.next_value_id);
-                                context.function.next_value_id += 1;
-                                self.register_temp_local(
+                            if let Some(&json_tree_fn) = self.class_json_tree_ids.get(name) {
+                                self.emit_class_json_text(
                                     context,
-                                    result_id,
-                                    MirType::Ptr(Box::new(MirType::I8)),
-                                    arg.location.clone(),
-                                );
-                                self.add_instruction(
-                                    context,
-                                    MirInstruction {
-                                        dest: Some(result_id),
-                                        operation: MirOperation::Call {
-                                            function: MirOperand::Function(serializer_id),
-                                            arguments: vec![MirOperand::Value(arg_id)],
-                                        },
-                                        location: arg.location.clone(),
-                                    },
-                                );
-                                result_id
+                                    json_tree_fn,
+                                    arg_id,
+                                    &arg.location,
+                                )
                             } else {
                                 arg_id
                             }
@@ -4106,9 +3891,13 @@ impl MirBuilder {
                 let load_result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                // Add Load result to locals
-                // Use the actual field type from the expression instead of hardcoding I32
-                let field_type = self.convert_concrete_type(&expression.expr_type);
+                // Add Load result to locals, typed by the field's declaration
+                // (it decides the width of the load), else by the expression.
+                let declared_type = object_class_symbol.and_then(|class_symbol| {
+                    self.field_declared_type(context, class_symbol, property_symbol)
+                });
+                let field_type = self
+                    .convert_concrete_type(declared_type.as_ref().unwrap_or(&expression.expr_type));
                 let load_local = MirLocal {
                     name: Some(format!("field_{}", property_name)),
                     local_type: field_type,
@@ -4180,6 +3969,39 @@ impl MirBuilder {
                         };
 
                         self.add_instruction(context, instruction);
+                        Ok(result_id)
+                    }
+
+                    // `map[key]` reads like `map.get(key)`. Treating the map as a
+                    // list and the key pointer as an element index read memory
+                    // past the map.
+                    ConcreteType::Pairs(_, value_type) => {
+                        let result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        let result_type = self.convert_concrete_type(value_type);
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            result_type,
+                            expression.location.clone(),
+                        );
+                        self.add_instruction(
+                            context,
+                            MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::Call {
+                                    function: MirOperand::NamedFunction {
+                                        name: "pairs.get".to_string(),
+                                        symbol_id: SymbolId(0),
+                                    },
+                                    arguments: vec![
+                                        MirOperand::Value(array_id),
+                                        MirOperand::Value(index_id),
+                                    ],
+                                },
+                                location: expression.location.clone(),
+                            },
+                        );
                         Ok(result_id)
                     }
 
@@ -4438,8 +4260,13 @@ impl MirBuilder {
                 // i32/f64 allocators, but the byte budget is what matters at runtime.
                 let element_is_f64 = matches!(
                     expression.expr_type,
-                    ConcreteType::Array(ref t) if matches!(**t, ConcreteType::Number)
+                    ConcreteType::Array(ref t)
+                        if matches!(**t, ConcreteType::Number | ConcreteType::IntegerSized { bits: 64, .. })
                 );
+                let list_element_type = match &expression.expr_type {
+                    ConcreteType::Array(t) => Some((**t).clone()),
+                    _ => None,
+                };
                 // Empty list literals (`[]`) must reserve some capacity or the
                 // first `list.push`/`list.add` writes past the allocation and
                 // clobbers the next heap allocation (bump-allocated adjacent
@@ -4497,8 +4324,17 @@ impl MirBuilder {
                 for (idx, element) in elements.iter().enumerate() {
                     trace!(element_index = idx, "Adding array literal element");
 
-                    // Build the element expression
-                    let element_value_id = self.build_expression(context, element)?;
+                    // Build the element expression, converted to the list's
+                    // element type (`[1, 2]` as a `list<number>`).
+                    let mut element_value_id = self.build_expression(context, element)?;
+                    if let Some(list_element_type) = &list_element_type {
+                        element_value_id = self.coerce_list_element_arg(
+                            context,
+                            element_value_id,
+                            list_element_type,
+                            &element.location,
+                        );
+                    }
 
                     // NOTE: Detect element type and use appropriate list.push function
                     // For F64 elements, use list.push_f64 (SymbolId(1005))
@@ -4515,6 +4351,7 @@ impl MirBuilder {
                             trace!(element_index = idx, "Element is F64, using list.push_f64");
                             SYM_BUILTIN_LIST_PUSH_F64
                         }
+                        MirType::I64 | MirType::U64 => SYM_BUILTIN_LIST_ADD_I64,
                         _ => {
                             trace!(element_index = idx, element_type = ?element_type, "Element using list.push");
                             SYM_BUILTIN_LIST_PUSH
@@ -4611,10 +4448,11 @@ impl MirBuilder {
                         // pairs.set(map_ptr, key_ptr, val_ptr) — value is the raw V (i32
                         // representation for the user's V type). No boxing — pairs.get
                         // returns the raw V, and json.encode walks the pairs natively.
+                        // It returns the map's (possibly moved) address.
                         self.add_instruction(
                             context,
                             MirInstruction {
-                                dest: None,
+                                dest: Some(pairs_ptr_id),
                                 operation: MirOperation::Call {
                                     function: MirOperand::NamedFunction {
                                         name: "pairs.set".to_string(),

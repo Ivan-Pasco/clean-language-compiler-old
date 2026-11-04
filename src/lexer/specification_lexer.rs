@@ -140,6 +140,13 @@ impl<'a> SpecificationLexer<'a> {
             });
         }
 
+        // A CRLF line ending (grammar.ebnf `NEWLINE = LF | CR , LF`): drop the
+        // CR so a blank CRLF line is an `empty_line` like a blank LF line and
+        // does not close the enclosing block.
+        if self.peek_chars(2).is_some_and(|c| c == ['\r', '\n']) {
+            self.advance();
+        }
+
         // Check if this is an empty line or comment-only line
         if let Some(&'\n') = self.peek() {
             // Skip empty lines for indentation purposes - advance to next line and continue
@@ -1372,7 +1379,6 @@ impl<'a> SpecificationLexer<'a> {
     }
 
     fn peek_chars(&mut self, count: usize) -> Option<Vec<char>> {
-        // This is a simplified version - in practice would need proper lookahead
         let mut chars = Vec::new();
         let mut temp_input = self.input.clone();
 
@@ -1545,6 +1551,20 @@ mod regression_tests {
             tokenize("Page?").is_ok(),
             "`?` after class name must not be a lex error",
         );
+    }
+
+    /// Regression: a blank line in a CRLF file (`\r\n`) is an `empty_line`
+    /// (grammar.ebnf `NEWLINE = LF | CR , LF`). The lexer only recognised a
+    /// bare LF as blank, so the CR made it an unindented line that emitted a
+    /// Dedent and closed the enclosing block — statements after the blank line
+    /// fell out of `start:` and failed to parse.
+    #[test]
+    fn crlf_blank_line_keeps_block_open() {
+        let lf = "start:\n\tinteger a = 1\n\n\tprint(a)\n";
+        let crlf = lf.replace('\n', "\r\n");
+        assert_eq!(kinds(&crlf), kinds(lf));
+        let tabbed = "start:\r\n\tinteger a = 1\r\n\t\r\n\tprint(a)\r\n";
+        assert_eq!(kinds(tabbed), kinds(&tabbed.replace("\r\n", "\n")));
     }
 
     fn kinds(input: &str) -> Vec<TokenKind> {

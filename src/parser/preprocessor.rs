@@ -104,21 +104,11 @@ impl FunctionPreprocessor {
             } else if indentation > base_indentation && !current_function_lines.is_empty() {
                 // This line belongs to the current function body
                 current_function_lines.push(line.to_string());
-            } else if indentation <= base_indentation && !current_function_lines.is_empty() {
-                // This line might start a new function or end the functions block
-                if self.is_function_declaration_line(line) {
-                    // Save current function and start new one
-                    segments.push(current_function_lines.join("\n"));
-                    current_function_lines.clear();
-                    base_indentation = indentation;
-                    current_function_lines.push(line.to_string());
-                } else if trimmed.is_empty() {
-                    // Empty line at base level - might be separating functions, add to current function
-                    current_function_lines.push(line.to_string());
-                } else {
-                    // Non-empty line that's not a function declaration - end of functions block
-                    break;
-                }
+            } else if !current_function_lines.is_empty() {
+                // A non-blank line at or below the base indentation that does not
+                // declare a function (blank lines and declarations are handled
+                // above) ends the functions block.
+                break;
             }
         }
 

@@ -1,14 +1,11 @@
-//! End-to-end runtime tests for the Delivery-2 JSON bridges under
-//! `--enable-json-bridge` ([P2-cont-2b]).
+//! End-to-end runtime tests for the Delivery-2 JSON bridges ([P2-cont-2b]).
 //!
 //! Each test:
-//!   1. Compiles a small Clean program with `--enable-json-bridge` via the
-//!      library API.
+//!   1. Compiles a small Clean program via the library API.
 //!   2. Runs the produced WASM through the `wasmtime_runner` binary — which
-//!      as of 0.33.138 registers stub implementations of `_json_encode_v2` /
-//!      `_json_encode_pretty_v2` / `_json_decode_v2` bridges backed by
-//!      serde_json + the BOXED_ANY_ABI tree walker (see the `json_v2`
-//!      module at the end of `src/bin/wasmtime_runner.rs`).
+//!      registers the JSON bridges (`_json_encode_v2` /
+//!      `_json_encode_pretty_v2` / `_json_decode_v2` / `_json_get`) from the
+//!      crate's shared host implementation (`src/runtime/json_bridge.rs`).
 //!   3. Diffs the captured stdout against expected serialization.
 //!
 //! Covers:
@@ -20,9 +17,7 @@
 //! Reference:
 //!   * `foundation/spec/platform/BOXED_ANY_ABI.md`
 //!   * `foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md`
-//!   * `tests/common/json_stub_host.rs` — reference in-process implementation
-//!     (kept for future direct-linker tests; runner-based tests use the same
-//!     algorithm mirrored inside the runner).
+//!   * `src/runtime/json_bridge.rs` — the host implementation the runner uses.
 
 #![cfg(feature = "wasmtime-runtime")]
 
@@ -43,7 +38,6 @@ fn compile_with_bridge(source: &str, out_path: &Path) {
     let main = tmp.path().join("repro.cln");
     fs::write(&main, source).expect("write repro.cln");
 
-    clean_language_compiler::set_enable_json_bridge_override(true);
     let result = clean_language_compiler::compile_multi_file_with_memory_tier(
         &main,
         vec![tmp.path().to_path_buf()],
@@ -52,13 +46,12 @@ fn compile_with_bridge(source: &str, out_path: &Path) {
         MemoryTier::Standard,
         false,
     );
-    clean_language_compiler::set_enable_json_bridge_override(false);
 
     let (wasm, _state) = result.unwrap_or_else(|errors| {
         for e in &errors {
             eprintln!("compile error: {e}");
         }
-        panic!("runtime test must compile under --enable-json-bridge");
+        panic!("runtime test must compile");
     });
 
     fs::write(out_path, &wasm).expect("write wasm");

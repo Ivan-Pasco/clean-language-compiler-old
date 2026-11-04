@@ -168,6 +168,9 @@ impl MirBuilder {
         let is_constructor = context.class_context.is_some() && tast_function.name == "constructor";
         let has_non_void_return =
             !matches!(tast_function.return_type, ConcreteType::Undefined) && !is_constructor;
+        if is_constructor && !tast_function.is_static {
+            self.initialize_field_defaults(&mut context, &tast_function.location)?;
+        }
         self.build_function_body(&mut context, &tast_function.body, has_non_void_return)?;
 
         // Inject state rules checking at operation boundaries (start:, frame:)
@@ -203,6 +206,75 @@ impl MirBuilder {
         }
 
         Ok(context.function)
+    }
+
+    /// Store every field's declared initializer (`integer count = 5`, grammar
+    /// `class_field`) into the new instance before the constructor body runs,
+    /// parent class fields first. The initializers were type-checked but never
+    /// lowered, so such fields started at zero whatever they declared.
+    fn initialize_field_defaults(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        location: &SourceLocation,
+    ) -> Result<(), Vec<CompilerError>> {
+        let Some(class) = context.class_context.clone() else {
+            return Ok(());
+        };
+        let mut hierarchy = vec![class];
+        while let Some(parent) = hierarchy.last().and_then(|c| c.parent_class) {
+            match context.all_classes.iter().find(|c| c.symbol_id == parent) {
+                Some(parent_class) => hierarchy.push(parent_class.clone()),
+                None => break,
+            }
+        }
+        let this_type = ConcreteType::Class {
+            symbol_id: hierarchy[0].symbol_id,
+            type_args: Vec::new(),
+        };
+        for class in hierarchy.iter().rev() {
+            for field in &class.fields {
+                let Some(initializer) = &field.default_value else {
+                    continue;
+                };
+                // The type checker turns every empty `[]` / `{}` field
+                // initializer into an empty list literal; a `pairs` field needs
+                // an empty map (the pairs layout, not the list layout).
+                let initializer = match (&field.field_type, &initializer.kind) {
+                    (
+                        ConcreteType::Pairs(_, _),
+                        TastExpressionKind::ArrayLiteral { elements, .. },
+                    ) if elements.is_empty() => TastExpression {
+                        kind: TastExpressionKind::ObjectLiteral { fields: Vec::new() },
+                        expr_type: field.field_type.clone(),
+                        location: initializer.location.clone(),
+                    },
+                    _ => initializer.clone(),
+                };
+                let this = TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: SymbolId(0),
+                        name: "this".to_string(),
+                    },
+                    expr_type: this_type.clone(),
+                    location: location.clone(),
+                };
+                let assignment = TastStatement::Assignment {
+                    target: TastExpression {
+                        kind: TastExpressionKind::PropertyAccess {
+                            object: Box::new(this),
+                            property_name: field.name.clone(),
+                            property_symbol: field.symbol_id,
+                        },
+                        expr_type: field.field_type.clone(),
+                        location: field.location.clone(),
+                    },
+                    value: initializer,
+                    location: field.location.clone(),
+                };
+                self.build_statement(context, &assignment)?;
+            }
+        }
+        Ok(())
     }
 
     /// Build MIR class functions (constructor and methods).
@@ -376,35 +448,57 @@ impl MirBuilder {
     }
 
     // -------------------------------------------------------------------------
-    // Class JSON serialization
+    // Class JSON values
     // -------------------------------------------------------------------------
 
-    /// Generate a `__serialize_ClassName(this: i32) -> Ptr(I8)` MIR function.
+    /// Generate a `__json_tree_ClassName(this: i32) -> any` MIR function.
     ///
-    /// The function walks every field in the class hierarchy (parent fields first)
-    /// and builds a JSON object string by concatenating key/value fragments via
-    /// `string.concat` (SymbolId 1000).  String values are quoted via
-    /// `__json_quote_string` (SymbolId 1011).  Integer/Boolean values are
-    /// converted via `int_to_string` (SymbolId 1009).  Number values are
-    /// converted via `number_to_string` (SymbolId 1010).
-    pub(super) fn build_class_serializer(
+    /// It builds the boxed JSON object of a class instance — one member per
+    /// field, parent fields first — in the JSON-tree layout of
+    /// BOXED_ANY_ABI §3.3, so `json.encode(instance)` and the other JSON
+    /// bridges serialize it like any other `any` object. Each member value
+    /// is boxed by its field type: primitives directly, nested classes
+    /// through their own `__json_tree_*`, lists and pairs of primitives
+    /// through the typed-collection converters. A field with no JSON
+    /// representation (a list of class instances, an `any`) is `null`.
+    pub(super) fn build_class_json_tree(
         &mut self,
         symbol_id: SymbolId,
         class: &crate::typechecker::tast::TastClass,
         all_classes: &[crate::typechecker::tast::TastClass],
     ) -> MirFunction {
-        use crate::typechecker::tast::{ConcreteType, TastField};
+        use crate::typechecker::tast::TastField;
 
-        let fn_name = format!("__serialize_{}", class.name);
+        let fn_name = format!("__json_tree_{}", class.name);
         let loc = SourceLocation::default();
 
         // Collect all fields, root-first, for correct byte-offset calculation.
         let fields: Vec<&TastField> = self.collect_serializer_fields(class, all_classes);
 
-        // We build the instruction list and locals directly — no closure needed.
         let mut locals: HashMap<ValueId, MirLocal> = HashMap::new();
         let mut instructions: Vec<MirInstruction> = Vec::new();
         let mut next_vid: usize = 1; // ValueId(0) is the `this` parameter
+        let mut new_local = |locals: &mut HashMap<ValueId, MirLocal>, name: String, ty: MirType| {
+            let vid = ValueId(next_vid);
+            next_vid += 1;
+            locals.insert(
+                vid,
+                MirLocal {
+                    name: Some(name),
+                    local_type: ty,
+                    is_mutable: false,
+                    location: SourceLocation::default(),
+                },
+            );
+            vid
+        };
+        let push = |instructions: &mut Vec<MirInstruction>, dest: Option<ValueId>, operation| {
+            instructions.push(MirInstruction {
+                dest,
+                operation,
+                location: SourceLocation::default(),
+            });
+        };
 
         // `this` parameter — i32 pointer to the class instance.
         let this_id = ValueId(0);
@@ -418,278 +512,199 @@ impl MirBuilder {
             },
         );
 
-        // --- Emit GEP + Load + conversion for each field ---
+        // The object fragment: [count:i32][(key_ptr, val_ptr) × count].
+        let object_vid = new_local(&mut locals, "object".to_string(), MirType::I32);
+        push(
+            &mut instructions,
+            Some(object_vid),
+            MirOperation::Call {
+                function: MirOperand::NamedFunction {
+                    name: "mem_alloc".to_string(),
+                    symbol_id: SymbolId(0),
+                },
+                arguments: vec![
+                    MirOperand::Constant(MirConstant::Integer(0)),
+                    MirOperand::Constant(MirConstant::Integer((4 + 8 * fields.len()) as i64)),
+                ],
+            },
+        );
+        push(
+            &mut instructions,
+            None,
+            MirOperation::Store {
+                destination: MirOperand::Value(object_vid),
+                value: MirOperand::Constant(MirConstant::Integer(fields.len() as i64)),
+            },
+        );
 
-        struct FieldFragment {
-            frag_vid: ValueId,
-            field_name: String,
-        }
-
-        let mut fragments: Vec<FieldFragment> = Vec::new();
         // Start past the per-instance object header (class-id at offset 0).
         // See `helpers.rs::OBJECT_HEADER_SIZE`.
         let mut byte_offset: usize = Self::OBJECT_HEADER_SIZE;
 
-        for field in &fields {
+        for (index, field) in fields.iter().enumerate() {
             let field_size = self.get_type_byte_size(&field.field_type);
 
-            // GEP: ptr = this + byte_offset
-            let ptr_vid = ValueId(next_vid);
-            next_vid += 1;
-            locals.insert(
-                ptr_vid,
-                MirLocal {
-                    name: Some(format!("ptr_{}", field.name)),
-                    local_type: MirType::I32,
-                    is_mutable: false,
-                    location: loc.clone(),
-                },
-            );
-            instructions.push(MirInstruction {
-                dest: Some(ptr_vid),
-                operation: MirOperation::GetElementPtr {
+            // val = *(this + byte_offset)
+            let ptr_vid = new_local(&mut locals, format!("ptr_{}", field.name), MirType::I32);
+            push(
+                &mut instructions,
+                Some(ptr_vid),
+                MirOperation::GetElementPtr {
                     base: MirOperand::Value(this_id),
                     indices: vec![MirOperand::Constant(MirConstant::Integer(
                         byte_offset as i64,
                     ))],
                     is_array: false,
                 },
-                location: loc.clone(),
-            });
-
-            // Load: val = *ptr
-            let field_mir_type = MirType::from_concrete_type(&field.field_type);
-            let val_vid = ValueId(next_vid);
-            next_vid += 1;
-            locals.insert(
-                val_vid,
-                MirLocal {
-                    name: Some(format!("val_{}", field.name)),
-                    local_type: field_mir_type.clone(),
-                    is_mutable: false,
-                    location: loc.clone(),
-                },
             );
-            instructions.push(MirInstruction {
-                dest: Some(val_vid),
-                operation: MirOperation::Load {
+            let field_mir_type = MirType::from_concrete_type(&field.field_type);
+            let val_vid = new_local(
+                &mut locals,
+                format!("val_{}", field.name),
+                field_mir_type.clone(),
+            );
+            push(
+                &mut instructions,
+                Some(val_vid),
+                MirOperation::Load {
                     source: MirOperand::Value(ptr_vid),
                 },
-                location: loc.clone(),
-            });
-
-            // Convert field value to a JSON fragment string.
-            let frag_vid = ValueId(next_vid);
-            next_vid += 1;
-            let frag_type = MirType::Ptr(Box::new(MirType::I8));
-            locals.insert(
-                frag_vid,
-                MirLocal {
-                    name: Some(format!("frag_{}", field.name)),
-                    local_type: frag_type,
-                    is_mutable: false,
-                    location: loc.clone(),
-                },
             );
 
-            let convert_op: MirOperation = match &field.field_type {
-                ConcreteType::String => MirOperation::Call {
-                    function: MirOperand::Function(SYM_BUILTIN_JSON_QUOTE_STRING),
-                    arguments: vec![MirOperand::Value(val_vid)],
+            // The member's boxed JSON value.
+            let member_vid = new_local(&mut locals, format!("json_{}", field.name), MirType::Any);
+            let null_box = MirOperation::BoxAny {
+                value: MirOperand::Constant(MirConstant::Integer(0)),
+                type_tag: AnyTypeTag::Null,
+                source_type: MirType::I32,
+            };
+            let is_primitive = |t: &ConcreteType| {
+                matches!(
+                    t,
+                    ConcreteType::String
+                        | ConcreteType::Boolean
+                        | ConcreteType::Integer
+                        | ConcreteType::IntegerSized { .. }
+                        | ConcreteType::Number
+                        | ConcreteType::NumberSized { .. }
+                )
+            };
+            let member_op = match &field.field_type {
+                // An `integer:64` field keeps its exact value: a tag-1 box
+                // holds a full i64 (BOXED_ANY_ABI §2).
+                ConcreteType::IntegerSized { bits: 64, .. } => MirOperation::BoxAny {
+                    value: MirOperand::Value(val_vid),
+                    type_tag: AnyTypeTag::Integer,
+                    source_type: field_mir_type,
                 },
-                ConcreteType::Integer
-                | ConcreteType::IntegerSized { .. }
-                | ConcreteType::Boolean => MirOperation::Call {
-                    function: MirOperand::Function(SYM_BUILTIN_INT_TO_STRING),
-                    arguments: vec![MirOperand::Value(val_vid)],
-                },
-                ConcreteType::Number | ConcreteType::NumberSized { .. } => MirOperation::Call {
-                    function: MirOperand::Function(SYM_BUILTIN_NUMBER_TO_STRING),
-                    arguments: vec![MirOperand::Value(val_vid)],
+                t if is_primitive(t) => MirOperation::BoxAny {
+                    value: MirOperand::Value(val_vid),
+                    type_tag: Self::get_any_type_tag(t),
+                    source_type: field_mir_type,
                 },
                 ConcreteType::Class {
                     symbol_id: nested_sym,
                     ..
-                } => {
-                    // Look up the nested class by SymbolId then find its serializer.
-                    let maybe_serializer = all_classes
-                        .iter()
-                        .find(|c| c.symbol_id == *nested_sym)
-                        .and_then(|c| self.class_serializer_ids.get(&c.name).copied());
-                    if let Some(nested_sid) = maybe_serializer {
-                        MirOperation::Call {
-                            function: MirOperand::Function(nested_sid),
-                            arguments: vec![MirOperand::Value(val_vid)],
-                        }
-                    } else {
-                        // Nested class serializer not available — emit "null".
-                        let null_idx = self.get_string_index("null".to_string());
-                        MirOperation::Copy {
-                            source: MirOperand::Constant(MirConstant::String(null_idx)),
-                        }
+                } => match all_classes
+                    .iter()
+                    .find(|c| c.symbol_id == *nested_sym)
+                    .and_then(|c| self.class_json_tree_ids.get(&c.name).copied())
+                {
+                    Some(nested_tree) => MirOperation::Call {
+                        function: MirOperand::Function(nested_tree),
+                        arguments: vec![MirOperand::Value(val_vid)],
+                    },
+                    None => null_box,
+                },
+                ConcreteType::Array(element) if is_primitive(element) => {
+                    let converter =
+                        if matches!(**element, ConcreteType::IntegerSized { bits: 64, .. }) {
+                            "__json_from_cln_list_i64"
+                        } else {
+                            "__json_from_cln_list"
+                        };
+                    let tree_vid =
+                        new_local(&mut locals, format!("tree_{}", field.name), MirType::I32);
+                    push(
+                        &mut instructions,
+                        Some(tree_vid),
+                        Self::collection_tree_call(converter, val_vid, element),
+                    );
+                    MirOperation::BoxAny {
+                        value: MirOperand::Value(tree_vid),
+                        type_tag: AnyTypeTag::List,
+                        source_type: MirType::I32,
                     }
                 }
-                _ => {
-                    // Array and other complex types — emit "null" as a safe fallback.
-                    let null_idx = self.get_string_index("null".to_string());
-                    MirOperation::Copy {
-                        source: MirOperand::Constant(MirConstant::String(null_idx)),
+                ConcreteType::Pairs(_, value) if is_primitive(value) => {
+                    let tree_vid =
+                        new_local(&mut locals, format!("tree_{}", field.name), MirType::I32);
+                    push(
+                        &mut instructions,
+                        Some(tree_vid),
+                        Self::collection_tree_call("__json_from_cln_pairs", val_vid, value),
+                    );
+                    MirOperation::BoxAny {
+                        value: MirOperand::Value(tree_vid),
+                        type_tag: AnyTypeTag::Object,
+                        source_type: MirType::I32,
                     }
                 }
+                _ => null_box,
             };
+            push(&mut instructions, Some(member_vid), member_op);
 
-            instructions.push(MirInstruction {
-                dest: Some(frag_vid),
-                operation: convert_op,
-                location: loc.clone(),
-            });
+            // key_ptr at object + 4 + 8·i, val_ptr at object + 8 + 8·i.
+            let key_idx = self.get_string_index(field.name.clone());
+            let key_vid = new_local(&mut locals, format!("key_{}", field.name), MirType::I32);
+            push(
+                &mut instructions,
+                Some(key_vid),
+                MirOperation::Copy {
+                    source: MirOperand::Constant(MirConstant::String(key_idx)),
+                },
+            );
+            for (slot, value_vid) in [(4, key_vid), (8, member_vid)] {
+                let slot_vid = new_local(
+                    &mut locals,
+                    format!("slot_{}_{}", field.name, slot),
+                    MirType::I32,
+                );
+                push(
+                    &mut instructions,
+                    Some(slot_vid),
+                    MirOperation::BinaryOp {
+                        op: MirBinaryOp::Add,
+                        left: MirOperand::Value(object_vid),
+                        right: MirOperand::Constant(MirConstant::Integer(
+                            (slot + 8 * index) as i64,
+                        )),
+                    },
+                );
+                push(
+                    &mut instructions,
+                    None,
+                    MirOperation::Store {
+                        destination: MirOperand::Value(slot_vid),
+                        value: MirOperand::Value(value_vid),
+                    },
+                );
+            }
 
-            fragments.push(FieldFragment {
-                frag_vid,
-                field_name: field.name.clone(),
-            });
             byte_offset += field_size;
         }
 
-        // --- Build the JSON string by concatenating key/value pairs ---
-
-        let result_vid: ValueId = if fragments.is_empty() {
-            // No fields → return "{}"
-            let empty_idx = self.get_string_index("{}".to_string());
-            let vid = ValueId(next_vid);
-            next_vid += 1;
-            locals.insert(
-                vid,
-                MirLocal {
-                    name: Some("result".to_string()),
-                    local_type: MirType::Ptr(Box::new(MirType::I8)),
-                    is_mutable: false,
-                    location: loc.clone(),
-                },
-            );
-            instructions.push(MirInstruction {
-                dest: Some(vid),
-                operation: MirOperation::Copy {
-                    source: MirOperand::Constant(MirConstant::String(empty_idx)),
-                },
-                location: loc.clone(),
-            });
-            vid
-        } else {
-            // Iteratively build the JSON string: "{" + "\"key\":" + frag + "," + ...  + "}"
-            let mut current_vid: Option<ValueId> = None;
-
-            for (i, frag) in fragments.iter().enumerate() {
-                let escaped = frag.field_name.replace('\\', "\\\\").replace('"', "\\\"");
-                let key_str = if i == 0 {
-                    format!("{{\"{}\":", escaped)
-                } else {
-                    format!(",\"{}\":", escaped)
-                };
-                let key_idx = self.get_string_index(key_str);
-
-                // Prepend the key to whatever we have so far.
-                let before_frag_vid = if let Some(prev_vid) = current_vid {
-                    // concat(prev, key)
-                    let vid = ValueId(next_vid);
-                    next_vid += 1;
-                    locals.insert(
-                        vid,
-                        MirLocal {
-                            name: Some(format!("concat_key_{}", i)),
-                            local_type: MirType::Ptr(Box::new(MirType::I8)),
-                            is_mutable: false,
-                            location: loc.clone(),
-                        },
-                    );
-                    instructions.push(MirInstruction {
-                        dest: Some(vid),
-                        operation: MirOperation::Call {
-                            function: MirOperand::Function(SYM_BUILTIN_STRING_CONCAT), // string.concat
-                            arguments: vec![
-                                MirOperand::Value(prev_vid),
-                                MirOperand::Constant(MirConstant::String(key_idx)),
-                            ],
-                        },
-                        location: loc.clone(),
-                    });
-                    vid
-                } else {
-                    // First field: copy the key constant directly.
-                    let vid = ValueId(next_vid);
-                    next_vid += 1;
-                    locals.insert(
-                        vid,
-                        MirLocal {
-                            name: Some("open_brace".to_string()),
-                            local_type: MirType::Ptr(Box::new(MirType::I8)),
-                            is_mutable: false,
-                            location: loc.clone(),
-                        },
-                    );
-                    instructions.push(MirInstruction {
-                        dest: Some(vid),
-                        operation: MirOperation::Copy {
-                            source: MirOperand::Constant(MirConstant::String(key_idx)),
-                        },
-                        location: loc.clone(),
-                    });
-                    vid
-                };
-
-                // concat(before_frag, frag_value)
-                let after_frag_vid = ValueId(next_vid);
-                next_vid += 1;
-                locals.insert(
-                    after_frag_vid,
-                    MirLocal {
-                        name: Some(format!("after_frag_{}", i)),
-                        local_type: MirType::Ptr(Box::new(MirType::I8)),
-                        is_mutable: false,
-                        location: loc.clone(),
-                    },
-                );
-                instructions.push(MirInstruction {
-                    dest: Some(after_frag_vid),
-                    operation: MirOperation::Call {
-                        function: MirOperand::Function(SYM_BUILTIN_STRING_CONCAT),
-                        arguments: vec![
-                            MirOperand::Value(before_frag_vid),
-                            MirOperand::Value(frag.frag_vid),
-                        ],
-                    },
-                    location: loc.clone(),
-                });
-
-                current_vid = Some(after_frag_vid);
-            }
-
-            // Append closing "}"
-            let close_idx = self.get_string_index("}".to_string());
-            let result_vid = ValueId(next_vid);
-            next_vid += 1;
-            locals.insert(
-                result_vid,
-                MirLocal {
-                    name: Some("result".to_string()),
-                    local_type: MirType::Ptr(Box::new(MirType::I8)),
-                    is_mutable: false,
-                    location: loc.clone(),
-                },
-            );
-            instructions.push(MirInstruction {
-                dest: Some(result_vid),
-                operation: MirOperation::Call {
-                    function: MirOperand::Function(SYM_BUILTIN_STRING_CONCAT),
-                    arguments: vec![
-                        MirOperand::Value(current_vid.unwrap()),
-                        MirOperand::Constant(MirConstant::String(close_idx)),
-                    ],
-                },
-                location: loc.clone(),
-            });
-            result_vid
-        };
+        // Box the fragment as an object.
+        let result_vid = new_local(&mut locals, "result".to_string(), MirType::Any);
+        push(
+            &mut instructions,
+            Some(result_vid),
+            MirOperation::BoxAny {
+                value: MirOperand::Value(object_vid),
+                type_tag: AnyTypeTag::Object,
+                source_type: MirType::I32,
+            },
+        );
 
         // --- Assemble the single entry basic block ---
         let entry_block_id = BasicBlockId(0);
@@ -718,7 +733,7 @@ impl MirBuilder {
                 param_type: MirType::I32,
                 location: loc.clone(),
             }],
-            return_type: MirType::Ptr(Box::new(MirType::I8)),
+            return_type: MirType::Any,
             blocks,
             entry_block: entry_block_id,
             locals,
@@ -731,6 +746,27 @@ impl MirBuilder {
                 exported: false,
             },
             location: loc,
+        }
+    }
+
+    /// The call that converts a typed list or pairs field into its JSON tree
+    /// fragment (`__json_from_cln_list` / `__json_from_cln_pairs`).
+    fn collection_tree_call(
+        converter: &str,
+        collection_vid: ValueId,
+        element_type: &ConcreteType,
+    ) -> MirOperation {
+        MirOperation::Call {
+            function: MirOperand::NamedFunction {
+                name: converter.to_string(),
+                symbol_id: SymbolId(0),
+            },
+            arguments: vec![
+                MirOperand::Value(collection_vid),
+                MirOperand::Constant(MirConstant::Integer(
+                    Self::get_any_type_tag(element_type) as i64
+                )),
+            ],
         }
     }
 

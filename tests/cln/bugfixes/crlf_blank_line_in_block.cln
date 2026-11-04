@@ -1,0 +1,19 @@
+// Test: bugfixes/crlf_blank_line_in_block
+// Grammar: NEWLINE = LF | CR , LF ; empty_line = { INDENT } , NEWLINE ;
+// Fixed in: compiler 0.33.168
+// This file uses CRLF line endings on purpose. A blank CRLF line inside a
+// block used to be lexed as an unindented line: it closed the block and the
+// statements after it failed with "Unexpected token at top level".
+// Expected output:
+//   1
+//   2
+//   3
+
+start:
+	integer a = 1
+
+	print(a)
+	if a > 0
+		print(2)
+
+		print(3)

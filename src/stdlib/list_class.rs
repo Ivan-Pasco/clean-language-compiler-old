@@ -22,11 +22,10 @@
 //! `__list_*_f64` name so the `list.` namespace return-type heuristic (i32)
 //! never applies to them.
 
-use crate::codegen::native_stdlib::list_ops::{gen_reverse_i32, gen_slice_i32};
 use crate::codegen::CodeGenerator;
 use crate::codegen::LIST_TYPE_ID;
 use crate::error::CompilerError;
-use crate::stdlib::list_behavior::BEHAVIOR_LINE;
+use crate::stdlib::list_behavior::{BEHAVIOR_LINE, BEHAVIOR_UNIQUE};
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
@@ -49,6 +48,8 @@ pub(crate) enum Elem {
     I32,
     /// 8-byte `number`.
     F64,
+    /// 8-byte `integer:64`, compared as signed i64.
+    I64,
     /// 4-byte pointer to a length-prefixed string, compared by bytes.
     Str,
 }
@@ -56,7 +57,7 @@ pub(crate) enum Elem {
 impl Elem {
     fn stride(self) -> i32 {
         match self {
-            Elem::F64 => 8,
+            Elem::F64 | Elem::I64 => 8,
             Elem::I32 | Elem::Str => 4,
         }
     }
@@ -64,6 +65,7 @@ impl Elem {
     fn wasm(self) -> WasmType {
         match self {
             Elem::F64 => WasmType::F64,
+            Elem::I64 => WasmType::I64,
             Elem::I32 | Elem::Str => WasmType::I32,
         }
     }
@@ -71,6 +73,7 @@ impl Elem {
     fn load(self) -> Instruction<'static> {
         match self {
             Elem::F64 => Instruction::F64Load(mem(DATA as u64, 3)),
+            Elem::I64 => Instruction::I64Load(mem(DATA as u64, 3)),
             Elem::I32 | Elem::Str => Instruction::I32Load(mem(DATA as u64, 2)),
         }
     }
@@ -78,6 +81,7 @@ impl Elem {
     fn store(self) -> Instruction<'static> {
         match self {
             Elem::F64 => Instruction::F64Store(mem(DATA as u64, 3)),
+            Elem::I64 => Instruction::I64Store(mem(DATA as u64, 3)),
             Elem::I32 | Elem::Str => Instruction::I32Store(mem(DATA as u64, 2)),
         }
     }
@@ -138,11 +142,16 @@ fn emit_alloc_like(
 }
 
 /// Allocate a fresh list (type id `LIST_TYPE_ID`, no behavior flags) holding
-/// `len_local` i32 elements.
-fn emit_alloc_fresh_i32(malloc: u32, len_local: u32, dst_local: u32) -> Vec<Instruction<'static>> {
+/// `len_local` elements of `stride` bytes; capacity is the slot count.
+fn emit_alloc_fresh(
+    malloc: u32,
+    len_local: u32,
+    dst_local: u32,
+    stride: i32,
+) -> Vec<Instruction<'static>> {
     vec![
         Instruction::LocalGet(len_local),
-        Instruction::I32Const(4),
+        Instruction::I32Const(stride),
         Instruction::I32Mul,
         Instruction::I32Const(DATA),
         Instruction::I32Add,
@@ -153,6 +162,8 @@ fn emit_alloc_fresh_i32(malloc: u32, len_local: u32, dst_local: u32) -> Vec<Inst
         Instruction::I32Store(mem(0, 2)),
         Instruction::LocalGet(dst_local),
         Instruction::LocalGet(len_local),
+        Instruction::I32Const(stride / 4),
+        Instruction::I32Mul,
         Instruction::I32Store(mem(4, 2)),
         Instruction::LocalGet(dst_local),
         Instruction::I32Const(LIST_TYPE_ID as i32),
@@ -242,21 +253,26 @@ fn gen_end_element(elem: Elem, last: bool) -> Vec<Instruction<'static>> {
     v
 }
 
-/// `peek` for `list<number>`: the front element of a `.line` list, otherwise
-/// the last element (mirrors the i32 `list.peek` in `list_behavior.rs`).
-/// Halts on an empty list. params (list); local 1 = len.
-fn gen_peek_f64() -> Vec<Instruction<'static>> {
+/// `peek` for 8-byte element lists (`list<number>`, `list<integer:64>`): the
+/// front element of a `.line` list, otherwise the last element (mirrors the
+/// i32 `list.peek` in `list_behavior.rs`). Halts on an empty list.
+/// params (list); local 1 = len.
+fn gen_peek_8byte(elem: Elem) -> Vec<Instruction<'static>> {
+    let result = match elem {
+        Elem::I64 => ValType::I64,
+        _ => ValType::F64,
+    };
     let mut v = emit_halt_if_empty(0, 1);
     v.extend([
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(12, 2)),
         Instruction::I32Const(BEHAVIOR_LINE),
         Instruction::I32And,
-        Instruction::If(BlockType::Result(ValType::F64)),
+        Instruction::If(BlockType::Result(result)),
     ]);
-    v.extend(gen_end_element(Elem::F64, false).into_iter().skip(7));
+    v.extend(gen_end_element(elem, false).into_iter().skip(7));
     v.push(Instruction::Else);
-    v.extend(gen_end_element(Elem::F64, true).into_iter().skip(7));
+    v.extend(gen_end_element(elem, true).into_iter().skip(7));
     v.push(Instruction::End);
     v
 }
@@ -267,6 +283,7 @@ fn emit_equals_needle(elem: Elem, str_cmp: Option<u32>) -> Vec<Instruction<'stat
     match elem {
         Elem::I32 => vec![Instruction::LocalGet(1), Instruction::I32Eq],
         Elem::F64 => vec![Instruction::LocalGet(1), Instruction::F64Eq],
+        Elem::I64 => vec![Instruction::LocalGet(1), Instruction::I64Eq],
         Elem::Str => vec![
             Instruction::LocalGet(1),
             Instruction::Call(str_cmp.expect("string comparison helper registered")),
@@ -343,14 +360,16 @@ fn gen_contains_via(index_of: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
-/// `reverse` for 8-byte elements: params (list); locals 1 = len, 2 = dst, 3 = i.
-fn gen_reverse_f64(malloc: u32) -> Vec<Instruction<'static>> {
+/// `reverse`: returns a new list with the elements in reverse order.
+/// params (list); locals 1 = len, 2 = dst, 3 = i.
+fn gen_reverse(malloc: u32, elem: Elem) -> Vec<Instruction<'static>> {
+    let stride = elem.stride();
     let mut v = vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(0, 2)),
         Instruction::LocalSet(1),
     ];
-    v.extend(emit_alloc_like(malloc, 0, 1, 2, 8));
+    v.extend(emit_alloc_like(malloc, 0, 1, 2, stride));
     v.extend([
         Instruction::I32Const(0),
         Instruction::LocalSet(3),
@@ -360,23 +379,21 @@ fn gen_reverse_f64(malloc: u32) -> Vec<Instruction<'static>> {
         Instruction::LocalGet(1),
         Instruction::I32GeS,
         Instruction::BrIf(1),
-        // dst[i] = src[len - 1 - i] (bit copy)
-        Instruction::LocalGet(2),
-        Instruction::LocalGet(3),
-        Instruction::I32Const(8),
-        Instruction::I32Mul,
-        Instruction::I32Add,
+    ]);
+    // dst[i] = src[len - 1 - i]
+    v.extend(elem_addr(2, 3, elem));
+    v.extend([
         Instruction::LocalGet(0),
         Instruction::LocalGet(1),
         Instruction::I32Const(1),
         Instruction::I32Sub,
         Instruction::LocalGet(3),
         Instruction::I32Sub,
-        Instruction::I32Const(8),
+        Instruction::I32Const(stride),
         Instruction::I32Mul,
         Instruction::I32Add,
-        Instruction::I64Load(mem(DATA as u64, 3)),
-        Instruction::I64Store(mem(DATA as u64, 3)),
+        elem.load(),
+        elem.store(),
         Instruction::LocalGet(3),
         Instruction::I32Const(1),
         Instruction::I32Add,
@@ -428,9 +445,12 @@ fn emit_clamp_range(len_local: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
-/// `slice` for 8-byte elements: params (list, start, end);
+/// `slice(start, end)`: a new list holding elements `start..end`, with
+/// `start` clamped to `0..=len` and `end` to `start..=len`.
+/// params (list, start, end);
 /// locals 3 = len / new_len, 4 = dst, 5 = i (word counter), 6 = words, 7 = src_base.
-fn gen_slice_f64(malloc: u32) -> Vec<Instruction<'static>> {
+fn gen_slice(malloc: u32, elem: Elem) -> Vec<Instruction<'static>> {
+    let stride = elem.stride();
     let mut v = vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(0, 2)),
@@ -443,16 +463,16 @@ fn gen_slice_f64(malloc: u32) -> Vec<Instruction<'static>> {
         Instruction::I32Sub,
         Instruction::LocalSet(3),
     ]);
-    v.extend(emit_alloc_like(malloc, 0, 3, 4, 8));
+    v.extend(emit_alloc_like(malloc, 0, 3, 4, stride));
     v.extend([
-        // words = new_len * 2; src_base = list + start * 8
+        // words = new_len * slots per element; src_base = list + start * stride
         Instruction::LocalGet(3),
-        Instruction::I32Const(2),
+        Instruction::I32Const(stride / 4),
         Instruction::I32Mul,
         Instruction::LocalSet(6),
         Instruction::LocalGet(0),
         Instruction::LocalGet(1),
-        Instruction::I32Const(8),
+        Instruction::I32Const(stride),
         Instruction::I32Mul,
         Instruction::I32Add,
         Instruction::LocalSet(7),
@@ -467,6 +487,7 @@ fn emit_greater(elem: Elem, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
     match elem {
         Elem::I32 => vec![Instruction::I32GtS],
         Elem::F64 => vec![Instruction::F64Gt],
+        Elem::I64 => vec![Instruction::I64GtS],
         Elem::Str => vec![
             Instruction::Call(str_cmp.expect("string comparison helper registered")),
             Instruction::I32Const(0),
@@ -669,6 +690,7 @@ fn gen_remove(elem: Elem, at: RemoveAt) -> Vec<Instruction<'static>> {
             ]);
             v.push(match elem {
                 Elem::F64 => Instruction::F64Const(0.0),
+                Elem::I64 => Instruction::I64Const(0),
                 Elem::I32 | Elem::Str => Instruction::I32Const(0),
             });
             v.extend([
@@ -824,7 +846,7 @@ fn gen_range(malloc: u32) -> Vec<Instruction<'static>> {
         Instruction::Select,
         Instruction::LocalSet(2),
     ];
-    v.extend(emit_alloc_fresh_i32(malloc, 2, 3));
+    v.extend(emit_alloc_fresh(malloc, 2, 3, 4));
     v.extend([
         Instruction::I32Const(0),
         Instruction::LocalSet(4),
@@ -853,9 +875,9 @@ fn gen_range(malloc: u32) -> Vec<Instruction<'static>> {
     v
 }
 
-/// `list.fill(size, value)` for i32 elements: params (size, value);
-/// locals 2 = len, 3 = dst, 4 = i.
-fn gen_fill(malloc: u32) -> Vec<Instruction<'static>> {
+/// `list.fill(size, value)`: a new list of `max(size, 0)` copies of `value`.
+/// params (size, value); locals 2 = len, 3 = dst, 4 = i.
+fn gen_fill(malloc: u32, elem: Elem) -> Vec<Instruction<'static>> {
     let mut v = vec![
         // len = max(size, 0)
         Instruction::LocalGet(0),
@@ -866,7 +888,7 @@ fn gen_fill(malloc: u32) -> Vec<Instruction<'static>> {
         Instruction::Select,
         Instruction::LocalSet(2),
     ];
-    v.extend(emit_alloc_fresh_i32(malloc, 2, 3));
+    v.extend(emit_alloc_fresh(malloc, 2, 3, elem.stride()));
     v.extend([
         Instruction::I32Const(0),
         Instruction::LocalSet(4),
@@ -877,10 +899,10 @@ fn gen_fill(malloc: u32) -> Vec<Instruction<'static>> {
         Instruction::I32GeS,
         Instruction::BrIf(1),
     ]);
-    v.extend(elem_addr(3, 4, Elem::I32));
+    v.extend(elem_addr(3, 4, elem));
     v.extend([
         Instruction::LocalGet(1),
-        Elem::I32.store(),
+        elem.store(),
         Instruction::LocalGet(4),
         Instruction::I32Const(1),
         Instruction::I32Add,
@@ -1118,6 +1140,30 @@ impl Default for ListClass {
     }
 }
 
+/// `list<string>.add`: params (list, value). On a `.unique` list holding a
+/// string equal to `value` the list is returned unchanged; otherwise the
+/// value is appended through `list.add`.
+fn gen_add_unique_string(contains_string: u32, list_add: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(12, 2)),
+        Instruction::I32Const(BEHAVIOR_UNIQUE),
+        Instruction::I32And,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::Call(contains_string),
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::Return,
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(1),
+        Instruction::Call(list_add),
+    ]
+}
+
 impl ListClass {
     pub fn new() -> Self {
         Self
@@ -1125,11 +1171,10 @@ impl ListClass {
 
     /// Register every list method implementation. Must run after the native
     /// memory operations (`__malloc`) and `list_behavior.rs` (`list.add`).
-    /// `list.length`, `list.size`, `list.isEmpty`, `list.isNotEmpty`,
-    /// `list.get`, `list.contains`, `list.indexOf`, `list.add` and
-    /// `list.peek` are registered by `list_behavior.rs` and the native aliases
-    /// in `codegen_registration.rs`; `list.set`, `list.pop` and the remove
-    /// family are (re)registered here.
+    /// `list.size`, `list.isEmpty`, `list.isNotEmpty`, `list.add` and the
+    /// i32 `list.peek` are registered by `list_behavior.rs`, `list.length` and
+    /// `list.allocate` by `list_ops.rs`; every other list method is
+    /// registered here.
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         let malloc = codegen
             .get_function_index("__malloc")
@@ -1140,6 +1185,9 @@ impl ListClass {
         let list_add_f64 = codegen
             .get_function_index("list.add_f64")
             .ok_or_else(|| missing("list.add_f64"))?;
+        let list_add_i64 = codegen
+            .get_function_index("list.add_i64")
+            .ok_or_else(|| missing("list.add_i64"))?;
 
         let i32x = |n: usize| vec![WasmType::I32; n];
 
@@ -1164,30 +1212,52 @@ impl ListClass {
                 gen_end_element(Elem::I32, last),
             )?;
         }
-        for (name, body) in [
-            ("__list_first_f64", gen_end_element(Elem::F64, false)),
-            ("__list_last_f64", gen_end_element(Elem::F64, true)),
-            ("__list_peek_f64", gen_peek_f64()),
+        for (name, elem, body) in [
+            (
+                "__list_first_f64",
+                Elem::F64,
+                gen_end_element(Elem::F64, false),
+            ),
+            (
+                "__list_last_f64",
+                Elem::F64,
+                gen_end_element(Elem::F64, true),
+            ),
+            ("__list_peek_f64", Elem::F64, gen_peek_8byte(Elem::F64)),
+            (
+                "__list_first_i64",
+                Elem::I64,
+                gen_end_element(Elem::I64, false),
+            ),
+            (
+                "__list_last_i64",
+                Elem::I64,
+                gen_end_element(Elem::I64, true),
+            ),
+            ("__list_peek_i64", Elem::I64, gen_peek_8byte(Elem::I64)),
         ] {
             register_stdlib_function_with_locals(
                 codegen,
                 name,
                 &i32x(1),
-                Some(WasmType::F64),
+                Some(elem.wasm()),
                 &i32x(1),
                 body,
             )?;
-            codegen.record_wasm_return_type(name, Some(WasmType::F64));
+            codegen.record_wasm_return_type(name, Some(elem.wasm()));
         }
 
-        // indexOf / lastIndexOf / contains. `list.indexOf`, `list.contains`
-        // (i32) and `list.indexOf.string` / `list.contains.string` already
-        // have native implementations.
+        // indexOf / lastIndexOf / contains. Strings compare by bytes, so
+        // equal strings at different addresses match.
         for (name, elem, from_end) in [
+            ("list.indexOf", Elem::I32, false),
+            ("list.indexOf.string", Elem::Str, false),
+            ("list.indexOf.f64", Elem::F64, false),
+            ("list.indexOf.i64", Elem::I64, false),
             ("list.lastIndexOf", Elem::I32, true),
             ("list.lastIndexOf.string", Elem::Str, true),
-            ("list.indexOf.f64", Elem::F64, false),
             ("list.lastIndexOf.f64", Elem::F64, true),
+            ("list.lastIndexOf.i64", Elem::I64, true),
         ] {
             register_stdlib_function_with_locals(
                 codegen,
@@ -1198,59 +1268,90 @@ impl ListClass {
                 gen_search(elem, from_end, Some(str_cmp)),
             )?;
         }
-        let index_of_f64 = codegen
-            .get_function_index("list.indexOf.f64")
-            .ok_or_else(|| missing("list.indexOf.f64"))?;
+        for (name, index_of, elem) in [
+            ("list.contains", "list.indexOf", Elem::I32),
+            ("list.contains.string", "list.indexOf.string", Elem::Str),
+            ("list.contains.f64", "list.indexOf.f64", Elem::F64),
+            ("list.contains.i64", "list.indexOf.i64", Elem::I64),
+        ] {
+            let index_of = codegen
+                .get_function_index(index_of)
+                .ok_or_else(|| missing(index_of))?;
+            register_stdlib_function(
+                codegen,
+                name,
+                &[WasmType::I32, elem.wasm()],
+                Some(WasmType::I32),
+                gen_contains_via(index_of),
+            )?;
+        }
+        // `list<string>.add`: a `.unique` list skips a string equal (by
+        // bytes) to one it already holds; `list.add`'s own check compares
+        // the pointers only.
+        let contains_string = codegen
+            .get_function_index("list.contains.string")
+            .ok_or_else(|| missing("list.contains.string"))?;
         register_stdlib_function(
             codegen,
-            "list.contains.f64",
-            &[WasmType::I32, WasmType::F64],
+            "list.add.string",
+            &i32x(2),
             Some(WasmType::I32),
-            gen_contains_via(index_of_f64),
+            gen_add_unique_string(contains_string, list_add),
         )?;
+        for (alias, target) in [
+            ("list_index_of", "list.indexOf"),
+            ("list_contains", "list.contains"),
+        ] {
+            let idx = codegen
+                .get_function_index(target)
+                .ok_or_else(|| missing(target))?;
+            codegen.add_function_alias(alias, idx);
+        }
 
-        // reverse
-        let reverse = register_stdlib_function_with_locals(
-            codegen,
-            "list.reverse",
-            &i32x(1),
-            Some(WasmType::I32),
-            &i32x(3),
-            gen_reverse_i32(malloc),
-        )?;
-        codegen.add_function_alias("list_reverse", reverse);
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.reverse.f64",
-            &i32x(1),
-            Some(WasmType::I32),
-            &i32x(3),
-            gen_reverse_f64(malloc),
-        )?;
-
-        // slice
-        let slice = register_stdlib_function_with_locals(
-            codegen,
-            "list.slice",
-            &i32x(3),
-            Some(WasmType::I32),
-            &i32x(3),
-            gen_slice_i32(malloc),
-        )?;
-        codegen.add_function_alias("list_slice", slice);
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.slice.f64",
-            &i32x(3),
-            Some(WasmType::I32),
-            &i32x(5),
-            gen_slice_f64(malloc),
-        )?;
+        // reverse / slice return a new list.
+        for (name, elem) in [
+            ("list.reverse", Elem::I32),
+            ("list.reverse.f64", Elem::F64),
+            ("list.reverse.i64", Elem::I64),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(1),
+                Some(WasmType::I32),
+                &i32x(3),
+                gen_reverse(malloc, elem),
+            )?;
+        }
+        for (name, elem) in [
+            ("list.slice", Elem::I32),
+            ("list.slice.f64", Elem::F64),
+            ("list.slice.i64", Elem::I64),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(3),
+                Some(WasmType::I32),
+                &i32x(5),
+                gen_slice(malloc, elem),
+            )?;
+        }
+        for (alias, target) in [
+            ("list_reverse", "list.reverse"),
+            ("list_slice", "list.slice"),
+        ] {
+            let idx = codegen
+                .get_function_index(target)
+                .ok_or_else(|| missing(target))?;
+            codegen.add_function_alias(alias, idx);
+        }
 
         // sort
         for (name, elem) in [
             ("list.sort", Elem::I32),
             ("list.sort.f64", Elem::F64),
+            ("list.sort.i64", Elem::I64),
             ("list.sort.string", Elem::Str),
         ] {
             let idx = register_stdlib_function_with_locals(
@@ -1283,25 +1384,31 @@ impl ListClass {
             gen_insert(Elem::I32, list_add),
         )?;
         codegen.add_function_alias("list_insert", insert);
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.insert.f64",
-            &[WasmType::I32, WasmType::I32, WasmType::F64],
-            Some(WasmType::I32),
-            &i32x(4),
-            gen_insert(Elem::F64, list_add_f64),
-        )?;
+        for (name, elem, add) in [
+            ("list.insert.f64", Elem::F64, list_add_f64),
+            ("list.insert.i64", Elem::I64, list_add_i64),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &[WasmType::I32, WasmType::I32, elem.wasm()],
+                Some(WasmType::I32),
+                &i32x(4),
+                gen_insert(elem, add),
+            )?;
+        }
 
         // remove(index), pop/removeLast and the behavior-aware `.remove()`.
-        let i32_locals = i32x(3);
-        let f64_locals = [WasmType::I32, WasmType::I32, WasmType::F64];
         for (name, elem, at) in [
             ("list.removeAt", Elem::I32, RemoveAt::Index),
             ("__list_removeAt_f64", Elem::F64, RemoveAt::Index),
+            ("__list_removeAt_i64", Elem::I64, RemoveAt::Index),
             ("list.removeLast", Elem::I32, RemoveAt::Last),
             ("__list_removeLast_f64", Elem::F64, RemoveAt::Last),
+            ("__list_removeLast_i64", Elem::I64, RemoveAt::Last),
             ("list.remove", Elem::I32, RemoveAt::Behavior),
             ("__list_remove_f64", Elem::F64, RemoveAt::Behavior),
+            ("__list_remove_i64", Elem::I64, RemoveAt::Behavior),
         ] {
             let params = if at == RemoveAt::Index {
                 i32x(2)
@@ -1314,11 +1421,8 @@ impl ListClass {
             } else {
                 vec![WasmType::I32]
             };
-            locals.extend_from_slice(if elem == Elem::F64 {
-                &f64_locals
-            } else {
-                &i32_locals
-            });
+            // Locals 2, 3 = i32; 4 = the removed element.
+            locals.extend_from_slice(&[WasmType::I32, WasmType::I32, elem.wasm()]);
             register_stdlib_function_with_locals(
                 codegen,
                 name,
@@ -1327,8 +1431,8 @@ impl ListClass {
                 &locals,
                 gen_remove(elem, at),
             )?;
-            if elem == Elem::F64 {
-                codegen.record_wasm_return_type(name, Some(WasmType::F64));
+            if elem != Elem::I32 {
+                codegen.record_wasm_return_type(name, Some(elem.wasm()));
             }
         }
         let pop = codegen
@@ -1338,15 +1442,22 @@ impl ListClass {
 
         // get / set with bounds checks; `list.set` replaces the earlier
         // registration in `list_ops.rs`.
-        register_stdlib_function_with_locals(
-            codegen,
-            "__list_get_f64",
-            &i32x(2),
-            Some(WasmType::F64),
-            &i32x(1),
-            gen_get(Elem::F64),
-        )?;
+        for (name, elem) in [
+            ("list.get", Elem::I32),
+            ("__list_get_f64", Elem::F64),
+            ("__list_get_i64", Elem::I64),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(2),
+                Some(elem.wasm()),
+                &i32x(1),
+                gen_get(elem),
+            )?;
+        }
         codegen.record_wasm_return_type("__list_get_f64", Some(WasmType::F64));
+        codegen.record_wasm_return_type("__list_get_i64", Some(WasmType::I64));
         let set = register_stdlib_function_with_locals(
             codegen,
             "list.set",
@@ -1356,15 +1467,17 @@ impl ListClass {
             gen_set(Elem::I32),
         )?;
         codegen.add_function_alias("list_set", set);
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.set.f64",
-            &[WasmType::I32, WasmType::I32, WasmType::F64],
-            None,
-            &i32x(1),
-            gen_set(Elem::F64),
-        )?;
-        for name in ["list.set", "list.set.f64"] {
+        for (name, elem) in [("list.set.f64", Elem::F64), ("list.set.i64", Elem::I64)] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &[WasmType::I32, WasmType::I32, elem.wasm()],
+                None,
+                &i32x(1),
+                gen_set(elem),
+            )?;
+        }
+        for name in ["list.set", "list.set.f64", "list.set.i64"] {
             codegen.record_wasm_return_type(name, None);
         }
 
@@ -1378,14 +1491,19 @@ impl ListClass {
             gen_concat(malloc, Elem::I32),
         )?;
         codegen.add_function_alias("list_concat", concat);
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.concat.f64",
-            &i32x(2),
-            Some(WasmType::I32),
-            &i32x(7),
-            gen_concat(malloc, Elem::F64),
-        )?;
+        for (name, elem) in [
+            ("list.concat.f64", Elem::F64),
+            ("list.concat.i64", Elem::I64),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(2),
+                Some(WasmType::I32),
+                &i32x(7),
+                gen_concat(malloc, elem),
+            )?;
+        }
 
         // range / fill
         register_stdlib_function_with_locals(
@@ -1396,14 +1514,20 @@ impl ListClass {
             &i32x(3),
             gen_range(malloc),
         )?;
-        register_stdlib_function_with_locals(
-            codegen,
-            "list.fill",
-            &i32x(2),
-            Some(WasmType::I32),
-            &i32x(3),
-            gen_fill(malloc),
-        )?;
+        for (name, elem) in [
+            ("list.fill", Elem::I32),
+            ("list.fill.f64", Elem::F64),
+            ("list.fill.i64", Elem::I64),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &[WasmType::I32, elem.wasm()],
+                Some(WasmType::I32),
+                &i32x(3),
+                gen_fill(malloc, elem),
+            )?;
+        }
 
         // join — `list.join(items, sep)` and `string.join(items, sep)` are
         // the same operation (stdlib-reference.md §5).
@@ -1422,7 +1546,7 @@ impl ListClass {
     }
 }
 
-fn missing(name: &str) -> CompilerError {
+pub(crate) fn missing(name: &str) -> CompilerError {
     CompilerError::codegen_error(
         format!(
             "list stdlib registration requires `{}` to be registered first",

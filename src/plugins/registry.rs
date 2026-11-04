@@ -12,10 +12,7 @@ use super::{
     PluginLspContext,
 };
 use crate::ast::{SourceLocation, Statement};
-use crate::plugins::plugin_abi::{
-    BridgeFunction, BuildRegistration, CliRegistration, DataRegistration, PluginManifest,
-    ServerRegistration,
-};
+use crate::plugins::plugin_abi::{BridgeFunction, PluginManifest};
 
 /// Error type for plugin operations
 #[derive(Debug, Clone)]
@@ -126,23 +123,6 @@ impl fmt::Display for PluginError {
 
 impl std::error::Error for PluginError {}
 
-/// Aggregated lifecycle registrations collected from all loaded plugins.
-///
-/// Each entry is a `(plugin_name, registration)` pair so that callers can
-/// attribute registrations back to the originating plugin for diagnostics
-/// and ordering.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct PluginRegistrations {
-    /// Server lifecycle registrations — middleware, startup, and shutdown hooks.
-    pub server: Vec<(String, ServerRegistration)>,
-    /// CLI lifecycle registrations — custom command-line commands.
-    pub cli: Vec<(String, CliRegistration)>,
-    /// Data lifecycle registrations — custom types, validators, and query extensions.
-    pub data: Vec<(String, DataRegistration)>,
-    /// Build lifecycle registrations — pre/post-build hooks and asset processors.
-    pub build: Vec<(String, BuildRegistration)>,
-}
-
 /// Registry for framework plugins
 ///
 /// Maintains a mapping from block identifiers to plugin handlers.
@@ -177,15 +157,14 @@ pub struct PluginRegistry {
     bridge_functions: Vec<BridgeFunction>,
     /// Full plugin manifests for enforcement rules and path detection
     manifests: IndexMap<String, PluginManifest>,
-    /// Lifecycle registrations collected from all loaded plugins
-    registrations: PluginRegistrations,
     /// Plugin name → set of bridge function names that plugin is allowed to call.
     ///
     /// Populated from each plugin's `[bridge] functions` declarations.  A plugin
     /// that declares no bridge functions will have an empty set here, meaning it
-    /// may not call any bridge function.  Plugins that were registered via the
-    /// deprecated mutable API (which lacks manifest information) are absent from
-    /// this map and are therefore exempt from permission checking.
+    /// may not call any bridge function.  Plugins registered without a
+    /// manifest are absent from this map and likewise may call no bridge
+    /// function (`validate_plugin_permissions` treats a missing entry as an
+    /// empty allowlist).
     plugin_permissions: HashMap<String, HashSet<String>>,
     /// Plugin Contracts v2 — shared per-build keystore. Bridge stubs in the
     /// loaded plugins' WASM sandboxes mutate this store; the build orchestrator
@@ -231,7 +210,6 @@ impl PluginRegistry {
             registered_plugins: Vec::new(),
             bridge_functions: Vec::new(),
             manifests: IndexMap::new(),
-            registrations: PluginRegistrations::default(),
             plugin_permissions: HashMap::new(),
             build_state: super::new_build_state(),
         }
@@ -617,15 +595,6 @@ impl PluginRegistry {
         &self.build_state
     }
 
-    /// Plugin Contracts v2 — take a snapshot of the build state as a plain
-    /// BTreeMap for serialization into `build-manifest.json`.
-    pub fn build_state_snapshot(&self) -> std::collections::BTreeMap<String, String> {
-        self.build_state
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
-    }
-
     /// Plugin Contracts v2 — true when any loaded plugin's manifest declares
     /// the given lifecycle slot. Used by the build orchestration to decide
     /// whether a slot's downstream effects should fire (e.g. preserving the
@@ -770,24 +739,24 @@ impl PluginRegistry {
     /// reports a configuration error rather than silently feeding raw HTML
     /// into the Clean parser (which produced `SYN001` historically).
     pub fn find_html_processor(&self) -> Option<&Arc<dyn FrameworkPlugin>> {
-        // Plugins are registered once per block they handle, so the same
-        // Arc may appear under multiple keys in `handlers`. Pick the first
-        // plugin whose manifest declares the export, in deterministic order
-        // (Vec preserves registration order).
-        for plugin_name in &self.registered_plugins {
-            let manifest = self.manifests.get(plugin_name)?;
-            if manifest.exports.process_html.is_some() {
-                // Find any handler entry for this plugin and return that Arc.
-                if let Some(arc) = self
-                    .handlers
+        // Plugins are registered once per block or expression pattern they
+        // handle, so the same Arc may appear under several keys. Pick the
+        // first plugin whose manifest declares the export, in deterministic
+        // order (Vec preserves registration order). A plugin registered
+        // without a manifest declares no exports and is skipped.
+        self.registered_plugins
+            .iter()
+            .filter(|name| {
+                self.manifests
+                    .get(name.as_str())
+                    .is_some_and(|m| m.exports.process_html.is_some())
+            })
+            .find_map(|name| {
+                self.handlers
                     .values()
-                    .find(|p| p.name() == plugin_name.as_str())
-                {
-                    return Some(arc);
-                }
-            }
-        }
-        None
+                    .chain(self.expression_handlers.values())
+                    .find(|p| p.name() == name.as_str())
+            })
     }
 
     /// Resolve the highest memory tier declared by any active plugin.
@@ -822,11 +791,6 @@ impl PluginRegistry {
         }
 
         Ok(max_tier)
-    }
-
-    /// Get all lifecycle registrations collected from loaded plugins.
-    pub fn registrations(&self) -> &PluginRegistrations {
-        &self.registrations
     }
 
     // ========================================================================
@@ -901,33 +865,6 @@ impl PluginRegistry {
             // e.g. "_http_respond" → "http.respond", "_json_get" → "json.get"
             // Also generate camelCase variants: "_auth_get_session" → "auth.getSession"
             // Skip if already mapped in phase 1.
-            //
-            // GEN004 (updated for JSON stdlib migration [P2-cont-2a]):
-            //
-            // The four JSON encode/decode names have historically been
-            // excluded from auto-derivation because they are implemented as
-            // pure WASM in `src/stdlib/json_class.rs`. Redirecting them to
-            // `_json_encode` / `_json_decode` bridges before the host
-            // bridges exist produces WASM that traps at instantiation with
-            // "unknown import env._json_*".
-            //
-            // 0.33.135 flipped this default to allow auto-derivation
-            // ([P2-cont]), 0.33.137 flipped it back ([P2-cont-2a]), and
-            // 0.33.139 / [P4c] flipped it again — bridge is the default
-            // now. The exclusion is gated on the ENABLE_JSON_BRIDGE
-            // thread-local:
-            //   * bridge ON  (default) → auto-derive `json.encode` →
-            //                            `_json_encode`, etc.
-            //   * bridge OFF (--enable-legacy-json-wasm) → exclude the
-            //                            mapping so the pure-WASM path in
-            //                            json_class.rs handles those names.
-            //
-            // The MIR builder's json-dispatch site (see
-            // `src/mir/mir_builder/expressions.rs`) branches on the same
-            // flag; both must agree for a consistent build.
-            let json_bridge_enabled = crate::enable_json_bridge_override();
-            const WASM_ONLY_FUNCTIONS: &[&str] =
-                &["json.encode", "json.dataToText", "json.prettyDataToText"];
             for bf in &manifest.bridge.functions {
                 if let Some(stripped) = bf.name.strip_prefix('_') {
                     if let Some(underscore_pos) = stripped.find('_') {
@@ -935,20 +872,11 @@ impl PluginRegistry {
                         let method = &stripped[underscore_pos + 1..];
                         // snake_case variant: "auth.get_session"
                         let dot_name = format!("{}.{}", namespace, method);
-                        if !json_bridge_enabled && WASM_ONLY_FUNCTIONS.contains(&dot_name.as_str())
-                        {
-                            continue;
-                        }
                         map.entry(dot_name).or_insert_with(|| bf.name.clone());
                         // camelCase variant: "auth.getSession"
                         if method.contains('_') {
                             let camel_method = snake_to_camel(method);
                             let camel_dot_name = format!("{}.{}", namespace, camel_method);
-                            if !json_bridge_enabled
-                                && WASM_ONLY_FUNCTIONS.contains(&camel_dot_name.as_str())
-                            {
-                                continue;
-                            }
                             map.entry(camel_dot_name).or_insert_with(|| bf.name.clone());
                         }
                     }
@@ -969,22 +897,9 @@ impl PluginRegistry {
         // registry copy (the plugin manifest is authoritative for anything it
         // covers). Load failures are silently ignored — a missing registry is
         // reported through the separate validation path.
-        // Same GEN004 rule as Phase 2 (see above): as of 0.33.139 / [P4c],
-        // the bridge is the default and the encode/decode aliases DO map
-        // onto their `_json_*` bridges. `--enable-legacy-json-wasm` flips
-        // the ENABLE_JSON_BRIDGE thread-local to false, which reinstates
-        // the exclusion so the pure-WASM path in json_class.rs handles
-        // those names.
-        let json_bridge_enabled_phase3 = crate::enable_json_bridge_override();
-        const WASM_ONLY_FUNCTIONS: &[&str] =
-            &["json.encode", "json.dataToText", "json.prettyDataToText"];
         if let Ok(idx) = crate::plugins::registry_loader::RegistryIndex::load() {
             for reg_fn in idx.functions() {
                 for alias in &reg_fn.aliases {
-                    if !json_bridge_enabled_phase3 && WASM_ONLY_FUNCTIONS.contains(&alias.as_str())
-                    {
-                        continue;
-                    }
                     map.entry(alias.clone())
                         .or_insert_with(|| reg_fn.name.clone());
                 }
@@ -1056,39 +971,6 @@ impl PluginRegistry {
     // ========================================================================
     // Language Server Protocol (LSP) Aggregation Methods
     // ========================================================================
-
-    /// Get all keywords from all registered plugins
-    ///
-    /// Returns a combined list of keywords from all plugins for syntax highlighting.
-    /// Also includes the block names themselves (e.g., "endpoints", "data").
-    ///
-    /// # Example
-    /// ```ignore
-    /// let registry = PluginRegistry::builder()
-    ///     .add(WebPlugin::new())
-    ///     .build()?;
-    ///
-    /// let keywords = registry.get_all_keywords();
-    /// // Returns: ["endpoints", "GET", "POST", "PUT", "DELETE", ...]
-    /// ```
-    pub fn get_all_keywords(&self) -> Vec<&str> {
-        let mut keywords: Vec<&str> = Vec::new();
-
-        // Add block names as keywords
-        for block_name in self.handlers.keys() {
-            keywords.push(block_name.as_str());
-        }
-
-        // Add keywords from each unique plugin
-        let mut seen_plugins = std::collections::HashSet::new();
-        for plugin in self.handlers.values() {
-            if seen_plugins.insert(plugin.name()) {
-                keywords.extend(plugin.get_keywords());
-            }
-        }
-
-        keywords
-    }
 
     /// Get all block keywords that plugins handle
     ///
@@ -1270,7 +1152,6 @@ pub struct PluginRegistryBuilder {
     plugins: Vec<Arc<dyn FrameworkPlugin>>,
     bridge_functions: Vec<BridgeFunction>,
     manifests: IndexMap<String, PluginManifest>,
-    registrations: PluginRegistrations,
     /// Accumulated permission allowlists (plugin name → allowed bridge function names)
     plugin_permissions: HashMap<String, HashSet<String>>,
     /// Override for the registry-conformance validation policy. `None` means
@@ -1285,7 +1166,6 @@ impl PluginRegistryBuilder {
             plugins: Vec::new(),
             bridge_functions: Vec::new(),
             manifests: IndexMap::new(),
-            registrations: PluginRegistrations::default(),
             plugin_permissions: HashMap::new(),
             validation_policy: None,
         }
@@ -1356,116 +1236,6 @@ impl PluginRegistryBuilder {
             .collect();
         self.plugin_permissions.insert(name.clone(), allowed);
         self.manifests.insert(name, manifest);
-        self
-    }
-
-    /// Inspect a plugin manifest and, for every lifecycle export that is
-    /// declared, record a default registration entry.
-    ///
-    /// The entries are placeholders with default field values.  The actual
-    /// values are populated later by `WasmPluginAdapter` when it calls the
-    /// corresponding WASM export.  This two-phase approach keeps the builder
-    /// ordering-independent: callers may add registrations before or after
-    /// the WASM adapter is loaded.
-    ///
-    /// # Arguments
-    /// * `plugin_name` - The plugin name used as the key in each entry
-    /// * `manifest`    - The parsed `plugin.toml` manifest
-    ///
-    /// # Returns
-    /// Self for method chaining
-    pub fn add_registration(mut self, plugin_name: &str, manifest: &PluginManifest) -> Self {
-        if manifest.exports.register_server.is_some() {
-            self.registrations
-                .server
-                .push((plugin_name.to_string(), ServerRegistration::default()));
-        }
-        if manifest.exports.register_cli.is_some() {
-            self.registrations
-                .cli
-                .push((plugin_name.to_string(), CliRegistration::default()));
-        }
-        if manifest.exports.register_data.is_some() {
-            self.registrations
-                .data
-                .push((plugin_name.to_string(), DataRegistration::default()));
-        }
-        if manifest.exports.register_build.is_some() {
-            self.registrations
-                .build
-                .push((plugin_name.to_string(), BuildRegistration::default()));
-        }
-        self
-    }
-
-    /// Replace the `ServerRegistration` for `plugin_name` with `reg`.
-    ///
-    /// If no entry for `plugin_name` exists (which should not normally happen
-    /// because `add_registration` is called first), the entry is appended.
-    pub fn update_server_registration(
-        mut self,
-        plugin_name: &str,
-        reg: ServerRegistration,
-    ) -> Self {
-        if let Some(entry) = self
-            .registrations
-            .server
-            .iter_mut()
-            .find(|(name, _)| name == plugin_name)
-        {
-            entry.1 = reg;
-        } else {
-            self.registrations
-                .server
-                .push((plugin_name.to_string(), reg));
-        }
-        self
-    }
-
-    /// Replace the `CliRegistration` for `plugin_name` with `reg`.
-    pub fn update_cli_registration(mut self, plugin_name: &str, reg: CliRegistration) -> Self {
-        if let Some(entry) = self
-            .registrations
-            .cli
-            .iter_mut()
-            .find(|(name, _)| name == plugin_name)
-        {
-            entry.1 = reg;
-        } else {
-            self.registrations.cli.push((plugin_name.to_string(), reg));
-        }
-        self
-    }
-
-    /// Replace the `DataRegistration` for `plugin_name` with `reg`.
-    pub fn update_data_registration(mut self, plugin_name: &str, reg: DataRegistration) -> Self {
-        if let Some(entry) = self
-            .registrations
-            .data
-            .iter_mut()
-            .find(|(name, _)| name == plugin_name)
-        {
-            entry.1 = reg;
-        } else {
-            self.registrations.data.push((plugin_name.to_string(), reg));
-        }
-        self
-    }
-
-    /// Replace the `BuildRegistration` for `plugin_name` with `reg`.
-    pub fn update_build_registration(mut self, plugin_name: &str, reg: BuildRegistration) -> Self {
-        if let Some(entry) = self
-            .registrations
-            .build
-            .iter_mut()
-            .find(|(name, _)| name == plugin_name)
-        {
-            entry.1 = reg;
-        } else {
-            self.registrations
-                .build
-                .push((plugin_name.to_string(), reg));
-        }
         self
     }
 
@@ -1633,7 +1403,6 @@ This is a compiler build issue, not a plugin issue."
             bridge_functions: self.bridge_functions,
             manifests: self.manifests,
             build_state: super::new_build_state(),
-            registrations: self.registrations,
             plugin_permissions: self.plugin_permissions,
         })
     }
@@ -1886,21 +1655,11 @@ mod tests {
     }
 
     #[test]
-    fn test_language_to_bridge_map_excludes_wasm_only_functions() {
-        // GEN004 (updated for [P4c] in 0.33.139):
-        //
-        // The exclusion of `json.encode` / `json.dataToText` /
-        // `json.prettyDataToText` from bridge auto-derivation is CONDITIONAL
-        // on the ENABLE_JSON_BRIDGE thread-local flag.
-        //
-        //   * bridge ON  (default): the exclusion is lifted and these keys
-        //                DO map onto their `_json_*` bridges.
-        //   * bridge OFF (--enable-legacy-json-wasm): the historical
-        //                exclusion holds — the map does NOT contain these
-        //                keys, so the resolver falls through to `json_class.rs`.
-        //
-        // This test asserts both branches on the same manifest to prove the
-        // guard is flag-driven.
+    fn test_language_to_bridge_map_routes_json_names_to_bridges() {
+        // JSON is Layer 2 (stdlib-reference §8): `json.encode` and the other
+        // JSON names auto-derive onto their `_json_*` bridges like every
+        // other `_namespace_method` bridge — there is no pure-WASM path to
+        // exclude them for.
         use crate::plugins::plugin_abi::{
             BridgeFunction, PluginBridge, PluginCompatibility, PluginExports, PluginHandles,
             PluginInfo, PluginLanguage, PluginManifest,
@@ -1981,38 +1740,11 @@ mod tests {
             .build()
             .expect("Failed to build registry");
 
-        // Semantics as of 0.33.139 / [P4c]: the default is bridge (ON),
-        // and `--enable-legacy-json-wasm` opts OUT to the pre-Delivery-2
-        // pure-WASM path. This test still directly manipulates the
-        // thread-local, so both branches are exercised regardless of the
-        // process-wide default. Save/restore the thread-local so a
-        // mid-test panic doesn't leak state into other tests on this
-        // thread.
-        let previous_flag = crate::enable_json_bridge_override();
-
-        // -------- Branch 1: --enable-legacy-json-wasm — legacy pure-WASM path --------
-        crate::set_enable_json_bridge_override(false);
-        let map_default = registry.language_to_bridge_map();
-
-        // _req_body auto-derives to req.body — this is fine (unaffected by flag)
-        assert_eq!(map_default.get("req.body"), Some(&"_req_body".to_string()));
-        // With the legacy opt-out, the pre-migration exclusion holds:
-        // _json_encode must NOT auto-derive to json.encode/json.dataToText/json.prettyDataToText.
-        assert!(
-            !map_default.contains_key("json.encode"),
-            "json.encode must not map to _json_encode bridge under --enable-legacy-json-wasm"
-        );
-        assert!(!map_default.contains_key("json.dataToText"));
-        assert!(!map_default.contains_key("json.prettyDataToText"));
-
-        // -------- Branch 2: default (bridge ON) --------
-        crate::set_enable_json_bridge_override(true);
         let map_bridge = registry.language_to_bridge_map();
 
         // _req_body auto-derives unchanged.
         assert_eq!(map_bridge.get("req.body"), Some(&"_req_body".to_string()));
-        // With the flag ON, the JSON encode/decode names ARE allowed to
-        // map to the bridge. Since [P2-cont-2b] the primary emission target
+        // The JSON encode/decode names map to the bridge. Since [P2-cont-2b] the primary emission target
         // is the Delivery-2 `_json_encode_v2` bridge. The manifest declares
         // both `_json_encode` (legacy, for 2.9.5 back-compat) and
         // `_json_encode_v2` (Delivery-2). The embedded registry's Phase-3
@@ -2023,10 +1755,10 @@ mod tests {
         // outcome is a valid v2-migration state so we accept both.
         let json_encode_target = map_bridge
             .get("json.encode")
-            .expect("json.encode must resolve under bridge default");
+            .expect("json.encode must resolve to a JSON bridge");
         assert!(
             json_encode_target == "_json_encode_v2" || json_encode_target == "_json_encode",
-            "json.encode must map to _json_encode_v2 (preferred) or _json_encode (legacy) under bridge default; got {json_encode_target:?}"
+            "json.encode must map to _json_encode_v2 (preferred) or _json_encode (legacy); got {json_encode_target:?}"
         );
         // Note: `json.dataToText` and `json.prettyDataToText` don't auto-derive
         // from `_json_encode` alone (they aren't `_json_dataToText` /
@@ -2035,9 +1767,6 @@ mod tests {
         // function-registry.toml's `aliases = ["json.dataToText"]` entries.
         // This test uses a minimal manifest so Phase 3 aliases aren't
         // exercised here; a separate integration test covers the full path.
-
-        // Restore prior thread-local state.
-        crate::set_enable_json_bridge_override(previous_flag);
     }
 
     /// FRAME-AUTH-JWT-HELPERS-UNREACHABLE regression: a `[[language.functions]]`
@@ -2331,5 +2060,35 @@ mod tests {
             Some("{tagname}_render")
         );
         assert_eq!(callbacks[0].fallback, "passthrough");
+    }
+
+    /// A plugin registered without a manifest (no exports) ahead of the
+    /// HTML processor must not hide it: the lookup used to return `None` on
+    /// the first plugin it found no manifest for.
+    #[test]
+    fn find_html_processor_skips_plugins_without_a_manifest() {
+        use v2_callback_helpers::manifest_with_callback;
+
+        let mut html_manifest = manifest_with_callback("test.html", "_html_probe", None);
+        html_manifest.exports.process_html = Some("process_html".to_string());
+
+        let registry = PluginRegistryBuilder::new()
+            .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off)
+            .add(TestPlugin {
+                name: "test.plain",
+                handles: &["plain"],
+            })
+            .add(TestPlugin {
+                name: "test.html",
+                handles: &["test_html"],
+            })
+            .add_manifest("test.html".to_string(), html_manifest)
+            .build()
+            .expect("registry builds");
+
+        let processor = registry
+            .find_html_processor()
+            .expect("the HTML processor is found past the manifest-less plugin");
+        assert_eq!(processor.name(), "test.html");
     }
 }
