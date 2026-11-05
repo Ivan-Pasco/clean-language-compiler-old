@@ -1,0 +1,80 @@
+// Test: bugfixes/if_else_arm_ending_with_if_in_loop
+// Grammar: while_statement, if_statement
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   then
+//   else
+//   [AB]
+//   [disabled class]
+//
+// Regression: inside a while loop, an if/else whose arms each end with an
+// inner if/else followed by a single-arm `if` lost the then-arm's trailing
+// `if` (the merge of the outer if/else was guessed from the CFG shape and
+// the wrong block was taken). The MIR builder now records the merge block of
+// every `if` and codegen uses it.
+
+start:
+	printl("[" + run() + "]")
+	printl("[" + attrs("disabled class") + "]")
+
+functions:
+	string run()
+		string result = ""
+		integer i = 0
+		while i < 2
+			boolean second = i == 1
+			if second == false
+				printl("then")
+				string a = "?"
+				if i == 5
+					a = ""
+				else
+					a = "A"
+				if a.length() > 0
+					result = result + a
+			else
+				printl("else")
+				string b = "?"
+				if i == 7
+					b = ""
+				else
+					if i == 8
+						b = "x"
+					else
+						b = "B"
+				if b.length() > 0
+					result = result + b
+			i = i + 1
+		return result
+
+	string attrs(string text)
+		string result = ""
+		string remaining = text
+		while remaining.length() > 0
+			integer next_space = remaining.indexOf(" ")
+			boolean has_value = remaining.indexOf("=") != -1
+			if not has_value
+				string name = remaining
+				if next_space == -1
+					remaining = ""
+				else
+					name = remaining.substring(0, next_space)
+					remaining = remaining.substring(next_space + 1, remaining.length())
+				if name.length() > 0
+					if result == ""
+						result = name
+					else
+						result = result + " " + name
+			else
+				string value = ""
+				if remaining.startsWith("x")
+					value = "x"
+				else
+					if remaining.startsWith("y")
+						value = "y"
+					else
+						value = "z"
+				if value != ""
+					result = result + value
+				remaining = ""
+		return result

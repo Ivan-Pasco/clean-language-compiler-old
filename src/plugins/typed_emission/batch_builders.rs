@@ -1079,6 +1079,7 @@ fn register_func_class_builders(linker: &mut Linker<PluginState>) -> Result<()> 
                 name,
                 ty,
                 visibility: None,
+                default: None,
             }))
         },
     )?;
@@ -1795,6 +1796,7 @@ mod tests {
                 name: "x".to_string(),
                 ty: "integer".to_string(),
                 visibility: None,
+                default: None,
             }],
             methods: Vec::new(),
         }));

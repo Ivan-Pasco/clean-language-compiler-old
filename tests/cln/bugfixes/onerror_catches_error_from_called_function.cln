@@ -1,0 +1,113 @@
+// Test: bugfixes/onerror_catches_error_from_called_function
+// Grammar: on_error_expression, standalone_on_error, on_error_block
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   direct: fallback
+//   nested: fallback
+//   block: recovered
+//   statement: handled
+//   begin
+//   step 1
+//   step 2
+//   rollback
+//   r=outer caught
+//   begin
+//   step 1
+//   step 2
+//   step 3
+//   commit
+//   ok=done
+//   n=-7
+//   after=10
+//   brk=1e
+//
+// Regression: `onError` did not catch an error() raised in a called
+// function — the program trapped at the first call. The expression form
+// evaluated only the expression, and the `onError:` block forms (standalone
+// after statements, and `expression onError:`) were dropped altogether. An
+// error raised inside an onError region now unwinds through the callers to
+// the region's handler; a handler that raises again reaches the next
+// enclosing region (the frame.data transaction shape: rollback, then
+// error("transaction failed")).
+
+start:
+	string d = inner() onError "fallback"
+	printl("direct: " + d)
+	string n = outer() onError "fallback"
+	printl("nested: " + n)
+	blockForm()
+	inner() onError:
+		printl("statement: handled")
+	string r = tx(3) onError "outer caught"
+	printl("r=" + r)
+	string ok = tx(0) onError "unused"
+	printl("ok=" + ok)
+	integer total = loopy() onError -7
+	printl("n=" + total.toString())
+	printl("after=" + afterReturn(1).toString())
+	printl("brk=" + breaker())
+
+functions:
+	string inner()
+		error("NOT_FOUND")
+		return "value"
+
+	string outer()
+		string v = inner()
+		return v
+
+	blockForm()
+		string v = inner()
+		printl("unreachable: " + v)
+		onError:
+			printl("block: recovered")
+
+	string tx(integer failAt)
+		printl("begin")
+		integer i = 0
+		while i < 3
+			i = i + 1
+			if i == failAt
+				doStep(i)
+			printl("step " + i.toString())
+		printl("commit")
+		return "done"
+		onError:
+			printl("rollback")
+			error("transaction failed")
+
+	doStep(integer i)
+		error("bad step " + i.toString())
+
+	integer loopy()
+		integer sum = 0
+		iterate k in 1 to 4
+			sum = sum + k
+			if k == 3
+				error("loop error")
+		return sum
+
+	integer afterReturn(integer x)
+		integer v = 0
+		if x > 0
+			return 10
+		v = 5
+		return v
+		onError:
+			printl("not reached")
+
+	string breaker()
+		string out = ""
+		integer i = 0
+		while i < 3
+			i = i + 1
+			string piece = fails(i) onError "e"
+			out = out + piece
+			if i == 2
+				break
+		return out
+
+	string fails(integer i)
+		if i == 2
+			error("two")
+		return i.toString()

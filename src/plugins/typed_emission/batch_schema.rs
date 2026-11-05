@@ -624,6 +624,12 @@ pub struct BatchField {
     /// `"public"` without needing extra accessor methods.
     #[serde(default)]
     pub visibility: Option<String>,
+    /// Optional default value: the source text of a Clean expression
+    /// (`"2"`, `"\"draft\""`, `"[]"`), parsed like an `_emit_expr_from_source`
+    /// fragment. A constructed instance starts with this value, as a class
+    /// field written `integer visits = 2` does (typed-emission.md §3.13).
+    #[serde(default)]
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1181,6 +1187,9 @@ pub fn class_to_ast(
                 f.visibility = Visibility::Public;
             }
         }
+        if let Some(source) = field.default.as_deref() {
+            f.default_value = Some(parse_field_default(&f.name, source)?);
+        }
         class.fields.push(f);
     }
 
@@ -1198,6 +1207,28 @@ pub fn class_to_ast(
     }
 
     Ok(class)
+}
+
+/// Parse a class-spec field's `default` (Clean expression source text).
+fn parse_field_default(field: &str, source: &str) -> Result<Expression, BatchSchemaError> {
+    use crate::parser::grammar::{CleanParser, SingleExpressionParse};
+    match CleanParser::parse_single_expression(source) {
+        SingleExpressionParse::Expression(expr) => Ok(expr),
+        SingleExpressionParse::StatementNotExpression => Err(BatchSchemaError::Json {
+            message: format!(
+                "default of field `{}` is a statement, not an expression: `{}`",
+                field, source
+            ),
+            byte_offset: None,
+        }),
+        SingleExpressionParse::ParseError { message, .. } => Err(BatchSchemaError::Json {
+            message: format!(
+                "default of field `{}` is not a valid Clean expression (`{}`): {}",
+                field, source, message
+            ),
+            byte_offset: None,
+        }),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1365,6 +1396,41 @@ mod tests {
         assert_eq!(spec.methods.len(), 1);
         assert_eq!(spec.methods[0].body_handle, Some(7));
         assert!(spec.methods[0].body.is_none());
+    }
+
+    /// A class-spec field's `default` becomes the field's initial value.
+    #[test]
+    fn class_spec_field_default_sets_field_initializer() {
+        let json = r#"{
+            "name": "Counter",
+            "fields": [
+                {"name":"visits","type":"integer","default":"2"},
+                {"name":"label","type":"string","default":"\"draft\""},
+                {"name":"id","type":"integer"}
+            ],
+            "methods": []
+        }"#;
+        let spec = parse_class_spec(json).unwrap();
+        let class = class_to_ast(spec, Vec::new(), false).unwrap();
+        assert_eq!(
+            class.fields[0].default_value,
+            Some(Expression::Literal(crate::ast::Value::Integer(2)))
+        );
+        assert_eq!(
+            class.fields[1].default_value,
+            Some(Expression::Literal(crate::ast::Value::String(
+                "draft".to_string()
+            )))
+        );
+        assert_eq!(class.fields[2].default_value, None);
+
+        let bad = r#"{"name":"C","fields":[{"name":"x","type":"integer","default":"1 +"}]}"#;
+        let err = class_to_ast(parse_class_spec(bad).unwrap(), Vec::new(), false).unwrap_err();
+        assert!(
+            err.message().contains("default of field `x`"),
+            "{}",
+            err.message()
+        );
     }
 
     #[test]

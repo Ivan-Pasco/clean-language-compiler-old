@@ -965,6 +965,9 @@ impl MirCodeGenerator<'_> {
                     .push(Instruction::If(wasm_encoder::BlockType::Result(
                         wasm_encoder::ValType::I32,
                     )));
+                // A branch emitted by the rhs instructions (an `onError`
+                // unwinding check) counts this `if` as a label.
+                self.current_block_depth += 1;
 
                 if is_and {
                     // `and`: when lhs is true, evaluate rhs; else push 0.
@@ -983,6 +986,7 @@ impl MirCodeGenerator<'_> {
                     }
                     self.load_operand(&rhs_value)?;
                 }
+                self.current_block_depth -= 1;
                 self.current_instructions.push(Instruction::End);
 
                 // Store the result in the dest local.
@@ -991,6 +995,51 @@ impl MirCodeGenerator<'_> {
                 } else {
                     self.current_instructions.push(Instruction::Drop);
                 }
+            }
+
+            // `onError` unwinding after a call that may raise: while an error
+            // is pending, branch to the exit of the innermost `onError` region
+            // of this function (emitted as a loop, so the exit is a loop exit
+            // label) or return the zero value of the function's type.
+            MirOperation::ErrorCheck { region_exit } => {
+                self.current_instructions.push(Instruction::GlobalGet(
+                    crate::codegen::native_stdlib::ERROR_PENDING_GLOBAL,
+                ));
+                self.current_instructions
+                    .push(Instruction::If(BlockType::Empty));
+                self.current_block_depth += 1;
+                match region_exit {
+                    Some(exit) => {
+                        let region_depth = self
+                            .loop_context_stack
+                            .iter()
+                            .rev()
+                            .find(|l| l.exit_block_id == *exit)
+                            .map(|l| l.block_depth)
+                            .ok_or_else(|| {
+                                CompilerError::codegen_error(
+                                    format!(
+                                        "onError region exit {:?} is not an enclosing loop exit",
+                                        exit
+                                    ),
+                                    None,
+                                    None,
+                                )
+                            })?;
+                        self.current_instructions
+                            .push(Instruction::Br(self.current_block_depth - region_depth));
+                    }
+                    None => {
+                        let return_type = self
+                            .current_function
+                            .as_ref()
+                            .map(|f| f.return_type.clone());
+                        self.push_zero_for_return_type(&return_type);
+                        self.current_instructions.push(Instruction::Return);
+                    }
+                }
+                self.current_block_depth -= 1;
+                self.current_instructions.push(Instruction::End);
             }
 
             // Async host bridge: background someFunc(args)
@@ -2943,22 +2992,29 @@ impl MirCodeGenerator<'_> {
 
         // Handle string comparison specially - call string_compare function
         if is_string && matches!(op, MirBinaryOp::Eq | MirBinaryOp::Ne) {
-            // Get the string_compare function index
-            if let Some(compare_idx) = self.wasm_generator.get_function_index("string_compare") {
-                // Call string_compare(left, right) - operands are already on stack
-                // string_compare returns 0 for equal, non-zero for not-equal
-                self.current_instructions
-                    .push(Instruction::Call(compare_idx));
-                // For Equal: string_compare returns 0 when equal, but WASM `if` needs
-                // non-zero for true, so we invert with i32.eqz (0 → 1, non-zero → 0)
-                if matches!(op, MirBinaryOp::Eq) {
-                    self.current_instructions.push(Instruction::I32Eqz);
-                }
-                // For NotEqual: string_compare already returns non-zero when not equal,
-                // which is exactly what WASM `if` expects — no inversion needed
-                return Ok(());
+            // Strings compare by content. Comparing the pointers would make two
+            // equal strings built at runtime unequal, so a missing import is a
+            // compiler error (the reachability scan must have kept it).
+            let compare_idx = self
+                .wasm_generator
+                .get_function_index("string_compare")
+                .ok_or_else(|| {
+                    CompilerError::codegen_error(
+                        "string equality comparison requires the string_compare import, \
+                         which was not registered"
+                            .to_string(),
+                        None,
+                        None,
+                    )
+                })?;
+            // string_compare returns 0 for equal, non-zero otherwise.
+            self.current_instructions
+                .push(Instruction::Call(compare_idx));
+            // `==` inverts (0 -> 1); `!=` uses the non-zero result as is.
+            if matches!(op, MirBinaryOp::Eq) {
+                self.current_instructions.push(Instruction::I32Eqz);
             }
-            // Fall through to pointer comparison if string_compare not available
+            return Ok(());
         }
 
         // Relational operators on strings order them lexicographically:

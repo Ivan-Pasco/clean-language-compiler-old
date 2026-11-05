@@ -132,6 +132,10 @@ pub struct MirBuilder {
     /// Maps class name → synthetic SymbolId for its JSON serializer function.
     pub(super) class_json_tree_ids: HashMap<String, SymbolId>,
 
+    /// Maps class name → synthetic SymbolId of `__json_tree_list_ClassName`,
+    /// the JSON array builder of a `list<ClassName>`.
+    pub(super) class_json_list_ids: HashMap<String, SymbolId>,
+
     /// Counter for synthetic SymbolIds for class serializer functions (starts at 5000).
     pub(super) next_serializer_symbol_id: usize,
 
@@ -158,6 +162,11 @@ pub struct MirBuilder {
     /// Set via the `--release` CLI flag.  In release mode `pending_class_invariants`
     /// is cleared immediately after being set so no invariant WASM is emitted.
     pub(super) release_mode: bool,
+
+    /// Whether the program has an `onError` region. Without one every
+    /// `error(...)` traps on the spot, so the unwinding checks emitted after
+    /// calls are removed when the program is built.
+    pub(super) uses_error_regions: bool,
 }
 
 /// Context for building a single function
@@ -190,6 +199,21 @@ pub(super) struct FunctionBuildContext {
     ///
     /// Only populated in debug / `--contracts` builds; empty in release builds.
     pub(super) ensure_conditions: Vec<TastExpression>,
+
+    /// `onError` regions being built in this function, innermost last.
+    pub(super) error_regions: Vec<ErrorRegion>,
+}
+
+/// An `onError` region of the function being built: the protected
+/// statements run inside a loop that executes once, so an error check can
+/// leave the region with a branch to the loop exit (`exit_block`).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ErrorRegion {
+    /// Where the region's statements end, normally or by an error.
+    pub(super) exit_block: BasicBlockId,
+    /// `loop_stack.len()` when the region started: a `break` / `continue`
+    /// of a loop entered before the region leaves the region.
+    pub(super) loop_depth: usize,
 }
 
 /// Loop context for break/continue statements
@@ -260,11 +284,13 @@ impl MirBuilder {
             computed_properties: HashMap::new(),
             next_computed_symbol_id: SYM_COMPUTED_GETTER_BASE,
             class_json_tree_ids: HashMap::new(),
+            class_json_list_ids: HashMap::new(),
             next_serializer_symbol_id: SYM_CLASS_SERIALIZER_BASE,
             class_ids: HashMap::new(),
             next_class_id: 1, // 0 reserved for "unset"
             pending_class_invariants: Vec::new(),
             release_mode: false,
+            uses_error_regions: false,
         }
     }
 
@@ -289,6 +315,10 @@ impl MirBuilder {
             let sym_id = SymbolId(self.next_serializer_symbol_id);
             self.next_serializer_symbol_id += 1;
             self.class_json_tree_ids.insert(class.name.clone(), sym_id);
+            let list_sym_id = SymbolId(self.next_serializer_symbol_id);
+            self.next_serializer_symbol_id += 1;
+            self.class_json_list_ids
+                .insert(class.name.clone(), list_sym_id);
 
             let class_id = self.next_class_id;
             self.next_class_id += 1;
@@ -674,6 +704,14 @@ impl MirBuilder {
                     .insert(sym_id, mir_fn.name.clone());
                 mir_program.functions.insert(sym_id, mir_fn);
                 self.stats.functions_lowered += 1;
+                if let Some(&list_sym_id) = self.class_json_list_ids.get(&class.name) {
+                    let list_fn = Self::build_class_json_list(list_sym_id, &class.name, sym_id);
+                    mir_program
+                        .symbol_name_map
+                        .insert(list_sym_id, list_fn.name.clone());
+                    mir_program.functions.insert(list_sym_id, list_fn);
+                    self.stats.functions_lowered += 1;
+                }
             }
         }
 
@@ -950,6 +988,18 @@ impl MirBuilder {
                     mir_type = ?mir_type,
                     "Added state variable to MirProgram.globals (legacy path)"
                 );
+            }
+        }
+
+        // Without an `onError` region every `error(...)` traps where it is
+        // raised, so no call needs an unwinding check.
+        if !self.uses_error_regions {
+            for function in mir_program.functions.values_mut() {
+                for block in function.blocks.values_mut() {
+                    block
+                        .instructions
+                        .retain(|i| !matches!(i.operation, MirOperation::ErrorCheck { .. }));
+                }
             }
         }
 

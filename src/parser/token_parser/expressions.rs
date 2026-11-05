@@ -368,12 +368,13 @@ impl TokenParser {
                 }
                 TokenKind::Dot => {
                     // Member access: expr.property (might be followed by () for method call)
-                    // Allow keywords as property/method names (e.g., logical.and, logical.or)
+                    // Any keyword is a property/method name after `.`
+                    // (grammar.ebnf `member_name`: `logical.and`, `x.require()`).
                     let dot_location = self.current().location.clone();
                     self.bump(); // consume .
                     self.skip_whitespace();
 
-                    let property_token = self.expect_name()?;
+                    let property_token = self.expect_member_name()?;
                     let property = property_token.text.clone();
 
                     // Create PropertyAccess for now
@@ -435,19 +436,49 @@ impl TokenParser {
                     if is_block_form {
                         // Only handle the simple `Variable.property:` form — anything more
                         // complex is left for the outer statement parser.
-                        let orm_query = if let Expression::PropertyAccess {
-                            ref object,
-                            ref property,
-                            ref location,
-                        } = expr
-                        {
-                            if let Expression::Variable(ref model_name) = **object {
-                                Some((model_name.clone(), property.clone(), location.clone()))
-                            } else {
-                                None
+                        // `Variable.property:` (`User.find:`, `db.query:`) and the
+                        // call form `Variable.method(Type, ...):` whose arguments
+                        // are type names (`db.queryAs(Item):`, frame-data.ebnf §8);
+                        // the call form's verb keeps its arguments:
+                        // `queryAs(Item)`.
+                        let orm_query = match &expr {
+                            Expression::PropertyAccess {
+                                object,
+                                property,
+                                location,
+                            } => match object.as_ref() {
+                                Expression::Variable(model_name) => {
+                                    Some((model_name.clone(), property.clone(), location.clone()))
+                                }
+                                _ => None,
+                            },
+                            Expression::MethodCall {
+                                object,
+                                method,
+                                arguments,
+                                location,
+                            } => {
+                                let type_names: Option<Vec<&str>> = arguments
+                                    .iter()
+                                    .map(|a| match a {
+                                        Expression::Variable(name) => Some(name.as_str()),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                match (object.as_ref(), type_names) {
+                                    (Expression::Variable(model_name), Some(names))
+                                        if !names.is_empty() =>
+                                    {
+                                        Some((
+                                            model_name.clone(),
+                                            format!("{}({})", method, names.join(", ")),
+                                            location.clone(),
+                                        ))
+                                    }
+                                    _ => None,
+                                }
                             }
-                        } else {
-                            None
+                            _ => None,
                         };
 
                         if let Some((model, verb, loc)) = orm_query {

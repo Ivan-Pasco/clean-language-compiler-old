@@ -24,7 +24,8 @@ endpoints:
 		boolean never = false
 		if never
 			string sess = auth.getSession()
-			boolean canRead = auth.can("read")
+			// Fixed: was auth.can("read"), frame-auth.ebnf auth_ns_can_call requires auth.can(user, permission)
+			boolean canRead = auth.can(sess, "read")
 			boolean hasRole = auth.hasAnyRole("admin")
 			boolean setOk = auth.setSession("{\"k\":\"v\"}")
 			boolean cleared = auth.clearSession()

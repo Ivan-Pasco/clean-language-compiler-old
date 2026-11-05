@@ -504,6 +504,62 @@ impl WasmPluginAdapter {
         }
     }
 
+    /// Run the plugin's `[exports].validate` on a block (plugin-contract.md
+    /// §5.2). The export takes the same `(block_name, attributes, body)`
+    /// strings as the block's expand export and returns a string: empty when
+    /// the block is valid, otherwise the error message. Returns `None` when
+    /// the block is valid or the plugin declares no validate export.
+    fn call_validate(&self, block: &FrameworkBlock) -> Result<Option<String>> {
+        let Some(export_name) = self.manifest.exports.validate.as_deref() else {
+            return Ok(None);
+        };
+        let block_name = block.name.trim_end_matches(':');
+        let dispatch_version = self.manifest.resolve_block_dispatch(block_name).version;
+        // The same body and attributes the expand export receives.
+        let (_, content) = split_binding_header(block_name, &block.content);
+        let (extra_attrs, body) = extract_inline_attrs(content);
+        let attributes = build_attributes_json(&block.attributes, extra_attrs);
+        let (attributes, body) = (attributes.as_str(), body.as_str());
+        let what = format!("validate block `{}`", block_name);
+        let mut message = String::new();
+        let mut run = |store: &mut Store<PluginState>,
+                       instance: &wasmtime::Instance,
+                       memory: &Memory|
+         -> Result<wasmtime::Result<i32>> {
+            let validate: TypedFunc<(i32, i32, i32), i32> = instance
+                .get_typed_func(&mut *store, export_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "plugin `{}` declares [exports].validate = \"{}\" but does not export \
+                         it as (block_name, attributes, body) -> string: {}",
+                        self.name,
+                        export_name,
+                        e
+                    )
+                })?;
+            let block_name_ptr = self.find_or_write_string(store, instance, memory, block_name)?;
+            let attributes_ptr = self.find_or_write_string(store, instance, memory, attributes)?;
+            let body_ptr = self.find_or_write_string(store, instance, memory, body)?;
+            let result = validate.call(&mut *store, (block_name_ptr, attributes_ptr, body_ptr));
+            if let Ok(ptr) = result {
+                let bytes = self.read_result(store, memory, ptr)?;
+                message = String::from_utf8_lossy(&bytes).trim().to_string();
+            }
+            Ok(result.map(|_| 0))
+        };
+        if dispatch_version >= 3 {
+            let ctx = self.next_ctx_handle();
+            let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
+            self.run_typed_call(&what, arena, run)?;
+        } else {
+            let mut store = self.create_store();
+            let (instance, memory) = self.instantiate(&mut store, &self.linker, &what)?;
+            run(&mut store, &instance, &memory)?
+                .map_err(|e| anyhow!("{}", describe_plugin_trap_with_oom(&e, &what, None)))?;
+        }
+        Ok((!message.is_empty()).then_some(message))
+    }
+
     /// Plugin Contracts v3 typed expansion. Called when
     /// `dispatch.version >= 3` in `call_expand_full`.
     ///
@@ -3872,6 +3928,22 @@ impl FrameworkPlugin for WasmPluginAdapter {
                 message: e.to_string(),
                 location: block.location.clone(),
             })
+    }
+
+    /// plugin-contract.md §5.2: the declared `[exports].validate` runs once
+    /// before the block is expanded (`PluginRegistry::expand_full`); a
+    /// non-empty result is the developer-facing error.
+    fn validate(&self, block: &FrameworkBlock) -> PluginResult<()> {
+        let to_error = |message: String| PluginError::ValidationFailed {
+            plugin_name: self.name.clone(),
+            message,
+            location: block.location.clone(),
+        };
+        match self.call_validate(block) {
+            Ok(None) => Ok(()),
+            Ok(Some(message)) => Err(to_error(message)),
+            Err(e) => Err(to_error(e.to_string())),
+        }
     }
 
     fn process_html(

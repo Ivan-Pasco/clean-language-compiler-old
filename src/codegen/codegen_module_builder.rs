@@ -32,7 +32,21 @@ impl super::CodeGenerator {
                 return false;
             }
         }
+        // One import per host function: a field already imported (by
+        // `register_import_function` or an earlier `emit_import`) keeps its
+        // index. The host provides a single signature per name, so a second
+        // import of it is dead weight.
+        if self.imported_functions.contains(field) {
+            tracing::debug!(function = field, "Import already emitted, not duplicating");
+            return false;
+        }
         self.import_section.import(module, field, entity);
+        self.imported_functions.insert(field.to_string());
+        // Callers give the import the next function index; record it under
+        // its own name so `register_import_function` reuses it.
+        self.function_map
+            .entry(field.to_string())
+            .or_insert(self.function_count);
         true
     }
 

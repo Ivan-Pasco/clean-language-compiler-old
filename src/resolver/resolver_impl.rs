@@ -4298,6 +4298,32 @@ impl NameResolver {
         //   made in between in O(1).
         // These are host bridge imports (env module), not native WASM stdlib.
         // The host implementation lives in src/plugins/wasm_adapter.rs.
+        // Error-handling runtime (14-error-handling.md): `error(msg)` lowers
+        // to `__err_raise(msg)`; an `onError` handler's region is bracketed
+        // by `__err_region_begin()` / `__err_region_end()` and the handler
+        // runs when `__err_take()` reports an error reached it. Inserted by
+        // the HIR builder; the MIR builder lowers the region markers.
+        self.register_builtin_fn(
+            "__err_raise",
+            vec![HirType::String],
+            Some(HirType::Void),
+            builtin_location.clone(),
+        );
+        for marker in ["__err_region_begin", "__err_region_end"] {
+            self.register_builtin_fn(
+                marker,
+                vec![],
+                Some(HirType::Void),
+                builtin_location.clone(),
+            );
+        }
+        self.register_builtin_fn(
+            "__err_take",
+            vec![],
+            Some(HirType::Boolean),
+            builtin_location.clone(),
+        );
+
         self.register_builtin_fn(
             "_arena_scope_push",
             vec![],
@@ -4814,6 +4840,13 @@ impl NameResolver {
         for (lang_name, bridge_name) in language_to_bridge {
             if let Some(bf) = effective_bridge_by_name.get(bridge_name.as_str()) {
                 let lang_def = self.pending_language_fn_defs.get(lang_name.as_str());
+                let declares_params = lang_def.is_some_and(|def| def.params.is_some());
+                let raw_ptr = bf.raw_ptr_param_positions();
+                if !declares_params && !raw_ptr.is_empty() {
+                    self.symbol_table
+                        .raw_ptr_params
+                        .insert(lang_name.clone(), raw_ptr);
+                }
 
                 // Use the language def's param types if declared, else bridge params
                 let parameters: Vec<HirType> = if let Some(def) = lang_def {
@@ -4823,13 +4856,13 @@ impl NameResolver {
                             .map(|s| Self::parse_bridge_hir_type(s))
                             .collect()
                     } else {
-                        bf.get_param_types()
+                        bf.get_language_param_types()
                             .iter()
                             .map(Self::builtin_type_to_hir_type)
                             .collect()
                     }
                 } else {
-                    bf.get_param_types()
+                    bf.get_language_param_types()
                         .iter()
                         .map(Self::builtin_type_to_hir_type)
                         .collect()
@@ -5170,9 +5203,15 @@ impl NameResolver {
         };
 
         for func in bridge_functions {
+            let raw_ptr = func.raw_ptr_param_positions();
+            if !raw_ptr.is_empty() {
+                self.symbol_table
+                    .raw_ptr_params
+                    .insert(func.name.clone(), raw_ptr);
+            }
             // Convert BuiltinType to HirType for parameters
             let parameters: Vec<HirType> = func
-                .get_param_types()
+                .get_language_param_types()
                 .iter()
                 .map(Self::builtin_type_to_hir_type)
                 .collect();

@@ -1,0 +1,17 @@
+// Test: bugfixes/local_variable_shadows_request_namespace
+// Grammar: variable_declaration, method_call
+// Semantic: CONC002
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   true
+//   req-local
+//
+// Regression: a local variable named after a request-context namespace
+// (`session`, `req`) was still treated as that namespace, so a method call
+// on it outside a request handler raised CONC002.
+
+start:
+	string session = "cookie = 1"
+	printl(session.contains("cookie"))
+	string req = "req-local"
+	printl(req.trim())

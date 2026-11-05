@@ -43,6 +43,7 @@ impl MirBuilder {
             locals: HashMap::new(),
             next_value_id: 0,
             next_block_id: 1, // Block 0 is entry block
+            if_merges: Default::default(),
             attributes: MirFunctionAttributes {
                 inline: false,
                 pure: false,
@@ -68,6 +69,7 @@ impl MirBuilder {
             // ensure_conditions: starts with any class always: conditions, then grows as
             // Ensure statements are encountered in the function body.
             ensure_conditions: initial_ensure_conditions,
+            error_regions: Vec::new(),
         };
 
         // For class methods and constructors, add implicit 'this' parameter as the first parameter
@@ -459,8 +461,9 @@ impl MirBuilder {
     /// bridges serialize it like any other `any` object. Each member value
     /// is boxed by its field type: primitives directly, nested classes
     /// through their own `__json_tree_*`, lists and pairs of primitives
-    /// through the typed-collection converters. A field with no JSON
-    /// representation (a list of class instances, an `any`) is `null`.
+    /// through the typed-collection converters, lists of class instances
+    /// through `__json_tree_list_*`, and an `any` field is its boxed value.
+    /// A field with no JSON representation is `null`.
     pub(super) fn build_class_json_tree(
         &mut self,
         symbol_id: SymbolId,
@@ -616,6 +619,49 @@ impl MirBuilder {
                     },
                     None => null_box,
                 },
+                // An `any` field already holds a boxed value (0 → null).
+                ConcreteType::Any => MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name: "__json_try_decode_v2".to_string(),
+                        symbol_id: SymbolId(0),
+                    },
+                    arguments: vec![MirOperand::Value(val_vid)],
+                },
+                ConcreteType::Array(element)
+                    if matches!(**element, ConcreteType::Any | ConcreteType::Class { .. }) =>
+                {
+                    let class_list_fn = match &**element {
+                        ConcreteType::Class {
+                            symbol_id: element_sym,
+                            ..
+                        } => all_classes
+                            .iter()
+                            .find(|c| c.symbol_id == *element_sym)
+                            .and_then(|c| self.class_json_list_ids.get(&c.name).copied()),
+                        _ => None,
+                    };
+                    let tree_vid =
+                        new_local(&mut locals, format!("tree_{}", field.name), MirType::I32);
+                    push(
+                        &mut instructions,
+                        Some(tree_vid),
+                        MirOperation::Call {
+                            function: match class_list_fn {
+                                Some(list_fn) => MirOperand::Function(list_fn),
+                                None => MirOperand::NamedFunction {
+                                    name: "__json_from_cln_list_boxed".to_string(),
+                                    symbol_id: SymbolId(0),
+                                },
+                            },
+                            arguments: vec![MirOperand::Value(val_vid)],
+                        },
+                    );
+                    MirOperation::BoxAny {
+                        value: MirOperand::Value(tree_vid),
+                        type_tag: AnyTypeTag::List,
+                        source_type: MirType::I32,
+                    }
+                }
                 ConcreteType::Array(element) if is_primitive(element) => {
                     let converter =
                         if matches!(**element, ConcreteType::IntegerSized { bits: 64, .. }) {
@@ -739,6 +785,203 @@ impl MirBuilder {
             locals,
             next_value_id: next_vid,
             next_block_id: 1,
+            if_merges: Default::default(),
+            attributes: MirFunctionAttributes {
+                inline: false,
+                pure: true,
+                entry_point: false,
+                exported: false,
+            },
+            location: loc,
+        }
+    }
+
+    /// `__json_tree_list_ClassName(list: i32) -> i32` — the JSON-tree array
+    /// (`[count][boxed_elem_ptr]…`, BOXED_ANY_ABI §3.2) of a
+    /// `list<ClassName>`: every element goes through the class's
+    /// `__json_tree_ClassName` builder.
+    pub(super) fn build_class_json_list(
+        symbol_id: SymbolId,
+        class_name: &str,
+        tree_fn: SymbolId,
+    ) -> MirFunction {
+        const LIST_DATA_OFFSET: i64 = 16;
+        let loc = SourceLocation::default();
+        let mut locals: HashMap<ValueId, MirLocal> = HashMap::new();
+        let mut next_vid: usize = 0;
+        let mut new_local = |name: &str| {
+            let vid = ValueId(next_vid);
+            next_vid += 1;
+            locals.insert(
+                vid,
+                MirLocal {
+                    name: Some(name.to_string()),
+                    local_type: MirType::I32,
+                    is_mutable: true,
+                    location: SourceLocation::default(),
+                },
+            );
+            vid
+        };
+        let list = new_local("list");
+        let count = new_local("count");
+        let bytes = new_local("bytes");
+        let array = new_local("array");
+        let index = new_local("i");
+        let more = new_local("more");
+        let offset = new_local("offset");
+        let source = new_local("source");
+        let element = new_local("element");
+        let tree = new_local("tree");
+        let dest = new_local("dest");
+        let instruction = |dest: Option<ValueId>, operation| MirInstruction {
+            dest,
+            operation,
+            location: SourceLocation::default(),
+        };
+        let value = MirOperand::Value;
+        let int = |n: i64| MirOperand::Constant(MirConstant::Integer(n));
+        let binary = |op, left, right| MirOperation::BinaryOp { op, left, right };
+
+        let entry = vec![
+            instruction(
+                Some(count),
+                MirOperation::Load {
+                    source: value(list),
+                },
+            ),
+            instruction(Some(bytes), binary(MirBinaryOp::Mul, value(count), int(4))),
+            instruction(Some(bytes), binary(MirBinaryOp::Add, value(bytes), int(4))),
+            instruction(
+                Some(array),
+                MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name: "mem_alloc".to_string(),
+                        symbol_id: SymbolId(0),
+                    },
+                    arguments: vec![int(0), value(bytes)],
+                },
+            ),
+            instruction(
+                None,
+                MirOperation::Store {
+                    destination: value(array),
+                    value: value(count),
+                },
+            ),
+            instruction(Some(index), MirOperation::Copy { source: int(0) }),
+        ];
+        let header = vec![instruction(
+            Some(more),
+            binary(MirBinaryOp::Lt, value(index), value(count)),
+        )];
+        let body = vec![
+            instruction(Some(offset), binary(MirBinaryOp::Mul, value(index), int(4))),
+            instruction(
+                Some(source),
+                binary(MirBinaryOp::Add, value(list), value(offset)),
+            ),
+            instruction(
+                Some(source),
+                binary(MirBinaryOp::Add, value(source), int(LIST_DATA_OFFSET)),
+            ),
+            instruction(
+                Some(element),
+                MirOperation::Load {
+                    source: value(source),
+                },
+            ),
+            instruction(
+                Some(tree),
+                MirOperation::Call {
+                    function: MirOperand::Function(tree_fn),
+                    arguments: vec![value(element)],
+                },
+            ),
+            instruction(
+                Some(dest),
+                binary(MirBinaryOp::Add, value(array), value(offset)),
+            ),
+            instruction(Some(dest), binary(MirBinaryOp::Add, value(dest), int(4))),
+            instruction(
+                None,
+                MirOperation::Store {
+                    destination: value(dest),
+                    value: value(tree),
+                },
+            ),
+            instruction(Some(index), binary(MirBinaryOp::Add, value(index), int(1))),
+        ];
+
+        let (entry_id, header_id, body_id, exit_id) = (
+            BasicBlockId(0),
+            BasicBlockId(1),
+            BasicBlockId(2),
+            BasicBlockId(3),
+        );
+        let mut blocks: HashMap<BasicBlockId, MirBasicBlock> = HashMap::new();
+        for (id, label, instructions, terminator) in [
+            (
+                entry_id,
+                None,
+                entry,
+                MirTerminator::Jump { target: header_id },
+            ),
+            (
+                header_id,
+                Some("while_header"),
+                header,
+                MirTerminator::Branch {
+                    condition: value(more),
+                    true_block: body_id,
+                    false_block: exit_id,
+                },
+            ),
+            (
+                body_id,
+                Some("while_body"),
+                body,
+                MirTerminator::Jump { target: header_id },
+            ),
+            (
+                exit_id,
+                Some("while_exit"),
+                Vec::new(),
+                MirTerminator::Return {
+                    value: Some(value(array)),
+                },
+            ),
+        ] {
+            blocks.insert(
+                id,
+                MirBasicBlock {
+                    id,
+                    label: label.map(str::to_string),
+                    instructions,
+                    terminator,
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: loc.clone(),
+                },
+            );
+        }
+
+        MirFunction {
+            symbol_id,
+            name: format!("__json_tree_list_{}", class_name),
+            parameters: vec![MirParameter {
+                value_id: list,
+                name: "list".to_string(),
+                param_type: MirType::I32,
+                location: loc.clone(),
+            }],
+            return_type: MirType::I32,
+            blocks,
+            entry_block: entry_id,
+            locals,
+            next_value_id: next_vid,
+            next_block_id: 4,
+            if_merges: Default::default(),
             attributes: MirFunctionAttributes {
                 inline: false,
                 pure: true,

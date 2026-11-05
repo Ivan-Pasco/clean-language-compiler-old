@@ -1,0 +1,24 @@
+// Test: bugfixes/keywords_as_member_names
+// Grammar: member_name, property_access, assignment_target
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   1
+//   s
+//   t
+//   true
+//   e
+//   3
+//
+// After `.` any keyword is an ordinary member name (grammar.ebnf
+// member_name): `d.require`, `d.state`, `d.start`, ... Before, a keyword
+// after the dot was a syntax error, so plugin functions such as frame.auth's
+// `auth.tenant.require()` could not be called.
+
+start:
+	any d = json.textToData("{\"require\":1,\"state\":\"s\",\"type\":\"t\",\"start\":true,\"error\":\"e\",\"input\":3}")
+	printl(d.require.toString())
+	printl(d.state.toString())
+	printl(d.type.toString())
+	printl(d.start.toString())
+	printl(d.error.toString())
+	printl(d.input.toString())

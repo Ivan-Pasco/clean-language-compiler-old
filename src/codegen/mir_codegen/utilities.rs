@@ -421,6 +421,7 @@ impl MirCodeGenerator<'_> {
                 locals: HashMap::new(),
                 next_value_id: 0,
                 next_block_id: 0,
+                if_merges: Default::default(),
                 attributes: MirFunctionAttributes {
                     inline: false,
                     pure: false,
@@ -1542,6 +1543,31 @@ impl MirCodeGenerator<'_> {
             )
         }
 
+        /// Return true if this comparison operand is a string: a string
+        /// constant, a string local, or a string parameter. Parameters are not
+        /// in `locals`, so a comparison of two `string` parameters must be
+        /// recognised through the parameter list.
+        fn is_string_operand(
+            func: &crate::mir::mir_types::MirFunction,
+            operand: &MirOperand,
+        ) -> bool {
+            match operand {
+                MirOperand::Constant(crate::mir::mir_types::MirConstant::String(_)) => true,
+                MirOperand::Value(vid) => func
+                    .locals
+                    .get(vid)
+                    .map(|l| is_string_type(&l.local_type))
+                    .or_else(|| {
+                        func.parameters
+                            .iter()
+                            .find(|p| p.value_id == *vid)
+                            .map(|p| is_string_type(&p.param_type))
+                    })
+                    .unwrap_or(false),
+                _ => false,
+            }
+        }
+
         // Build a name→SymbolId reverse map so NamedFunction calls can be
         // resolved to their MIR body even when symbol_id is the shared
         // SymbolId(0) placeholder used for all stdlib namespace functions.
@@ -1789,23 +1815,9 @@ impl MirCodeGenerator<'_> {
                             left,
                             right,
                         } => {
-                            let left_is_string = match left {
-                                MirOperand::Value(vid) => current_func
-                                    .locals
-                                    .get(vid)
-                                    .map(|l| is_string_type(&l.local_type))
-                                    .unwrap_or(false),
-                                _ => false,
-                            };
-                            let right_is_string = match right {
-                                MirOperand::Value(vid) => current_func
-                                    .locals
-                                    .get(vid)
-                                    .map(|l| is_string_type(&l.local_type))
-                                    .unwrap_or(false),
-                                _ => false,
-                            };
-                            if left_is_string || right_is_string {
+                            if is_string_operand(current_func, left)
+                                || is_string_operand(current_func, right)
+                            {
                                 names.insert("string_compare".to_string());
                                 names.insert("string.compare".to_string());
                             }
@@ -1884,23 +1896,9 @@ impl MirCodeGenerator<'_> {
                             left,
                             right,
                         } => {
-                            let left_str = match left {
-                                MirOperand::Value(vid) => function
-                                    .locals
-                                    .get(vid)
-                                    .map(|l| is_string_type(&l.local_type))
-                                    .unwrap_or(false),
-                                _ => false,
-                            };
-                            let right_str = match right {
-                                MirOperand::Value(vid) => function
-                                    .locals
-                                    .get(vid)
-                                    .map(|l| is_string_type(&l.local_type))
-                                    .unwrap_or(false),
-                                _ => false,
-                            };
-                            if left_str || right_str {
+                            if is_string_operand(function, left)
+                                || is_string_operand(function, right)
+                            {
                                 names.insert("string_compare".to_string());
                                 names.insert("string.compare".to_string());
                             }

@@ -44,6 +44,18 @@ impl MirBuilder {
         source_type: &ConcreteType,
         location: &SourceLocation,
     ) -> ValueId {
+        // A value that is already a boxed `any` at the MIR level (a JSON
+        // bridge result typed from its context by the checker) is not boxed
+        // a second time.
+        if context
+            .function
+            .locals
+            .get(&value_id)
+            .is_some_and(|local| local.local_type == MirType::Any)
+        {
+            return value_id;
+        }
+
         let type_tag = Self::get_any_type_tag(source_type);
         let mir_source_type = self.convert_concrete_type(source_type);
 
@@ -51,6 +63,25 @@ impl MirBuilder {
         // boxing. The converter result is stored in a fresh local (i32) and
         // becomes the BoxAny payload. For primitive sources we skip this step.
         let normalized_value_id = match source_type {
+            // Elements that are already boxed (`list<any>`) or that box
+            // through their class's JSON builder.
+            ConcreteType::Array(elem_type)
+                if matches!(**elem_type, ConcreteType::Any | ConcreteType::Class { .. }) =>
+            {
+                let operation = self.json_list_tree_call(context, value_id, elem_type);
+                let result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(context, result_id, MirType::I32, location.clone());
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: Some(result_id),
+                        operation,
+                        location: location.clone(),
+                    },
+                );
+                result_id
+            }
             ConcreteType::Array(elem_type) => {
                 let elem_tag = Self::get_any_type_tag(elem_type) as i64;
                 let converter =
@@ -262,6 +293,79 @@ impl MirBuilder {
         })
     }
 
+    /// The call that builds the JSON-tree array of a list whose elements are
+    /// `any` (copied, `__json_from_cln_list_boxed`) or class instances
+    /// (`__json_tree_list_Class`).
+    pub(super) fn json_list_tree_call(
+        &self,
+        context: &FunctionBuildContext,
+        list_id: ValueId,
+        element_type: &ConcreteType,
+    ) -> MirOperation {
+        let class_list_fn = match element_type {
+            ConcreteType::Class { symbol_id, .. } => context
+                .all_classes
+                .iter()
+                .find(|c| c.symbol_id == *symbol_id)
+                .and_then(|c| self.class_json_list_ids.get(&c.name).copied()),
+            _ => None,
+        };
+        MirOperation::Call {
+            function: match class_list_fn {
+                Some(list_fn) => MirOperand::Function(list_fn),
+                None => MirOperand::NamedFunction {
+                    name: "__json_from_cln_list_boxed".to_string(),
+                    symbol_id: SymbolId(0),
+                },
+            },
+            arguments: vec![MirOperand::Value(list_id)],
+        }
+    }
+
+    /// Convert one branch of `expr onError fallback` to the type of the whole
+    /// expression: box into `any`, widen an `integer` to `number` or
+    /// `integer:64`.
+    pub(super) fn coerce_on_error_branch(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        branch: &TastExpression,
+        result_type: &ConcreteType,
+    ) -> ValueId {
+        if matches!(result_type, ConcreteType::Any) {
+            if matches!(branch.expr_type, ConcreteType::Any | ConcreteType::Null) {
+                return value_id;
+            }
+            return self.emit_box_any(context, value_id, &branch.expr_type, &branch.location);
+        }
+        let target = self.convert_concrete_type(result_type);
+        let source = context
+            .function
+            .locals
+            .get(&value_id)
+            .map(|local| local.local_type.clone());
+        let widens =
+            matches!(target, MirType::F64 | MirType::I64) && matches!(source, Some(MirType::I32));
+        if !widens {
+            return value_id;
+        }
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, target.clone(), branch.location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Cast {
+                    value: MirOperand::Value(value_id),
+                    target_type: target,
+                },
+                location: branch.location.clone(),
+            },
+        );
+        result_id
+    }
+
     /// The `__json_tree_Class` builder for a class-typed value, if any.
     pub(super) fn class_json_tree_fn(
         &self,
@@ -280,7 +384,7 @@ impl MirBuilder {
 
     /// Call a class's `__json_tree_Class` builder on `instance_id`; returns
     /// the boxed JSON object.
-    fn emit_class_json_tree(
+    pub(super) fn emit_class_json_tree(
         &mut self,
         context: &mut FunctionBuildContext,
         tree_fn: SymbolId,

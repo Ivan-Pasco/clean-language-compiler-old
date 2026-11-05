@@ -1245,8 +1245,15 @@ impl MirBuilder {
                             matches!(param_type_opt, Some(ConcreteType::String))
                                 && matches!(&arg.expr_type, ConcreteType::Class { .. });
 
+                        // A plugin `ptr` parameter takes the string or byte
+                        // handle as is (type-system.md §9b), never a box.
+                        let raw_ptr_param = function_name_opt
+                            .as_deref()
+                            .is_some_and(|name| self.symbol_table.is_raw_ptr_param(name, arg_idx));
+
                         // Check if parameter type is Any and argument type is not Any.
                         let needs_boxing = !needs_class_serialize
+                            && !raw_ptr_param
                             && matches!(param_type_opt, Some(ConcreteType::Any))
                             && !matches!(arg.expr_type, ConcreteType::Any);
 
@@ -1931,6 +1938,7 @@ impl MirBuilder {
                                 let arg_id = self.coerce_list_element_arg(
                                     context,
                                     arg_id,
+                                    &arg.expr_type,
                                     element_type,
                                     &arg.location,
                                 );
@@ -1975,6 +1983,7 @@ impl MirBuilder {
                                 let arg_id = self.coerce_list_element_arg(
                                     context,
                                     arg_id,
+                                    &arg.expr_type,
                                     element_type,
                                     &arg.location,
                                 );
@@ -2124,6 +2133,7 @@ impl MirBuilder {
                                     arg_id = self.coerce_list_element_arg(
                                         context,
                                         arg_id,
+                                        &arg.expr_type,
                                         element_type,
                                         &arg.location,
                                     );
@@ -2180,6 +2190,7 @@ impl MirBuilder {
                                     arg_id = self.coerce_list_element_arg(
                                         context,
                                         arg_id,
+                                        &arg.expr_type,
                                         element_type,
                                         &arg.location,
                                     );
@@ -3010,6 +3021,7 @@ impl MirBuilder {
                                 let arg_id = self.coerce_list_element_arg(
                                     context,
                                     arg_id,
+                                    &arg.expr_type,
                                     element_type,
                                     &arg.location,
                                 );
@@ -3026,6 +3038,7 @@ impl MirBuilder {
                                 let arg_id = self.coerce_list_element_arg(
                                     context,
                                     arg_id,
+                                    &arg.expr_type,
                                     element_type,
                                     &arg.location,
                                 );
@@ -4077,10 +4090,88 @@ impl MirBuilder {
 
             TastExpressionKind::OnError {
                 expression: expr,
-                fallback: _,
+                fallback,
             } => {
-                // Evaluate main expression (fallback requires WASM exception handling)
-                self.build_expression(context, expr)
+                // `expr onError fallback` (14-error-handling.md): evaluate
+                // `expr` in an `onError` region; when an error raised inside
+                // it reaches the region, the value is `fallback`.
+                let location = expression.location.clone();
+                let result_type = self.convert_concrete_type(&expression.expr_type);
+                let result_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(context, result_id, result_type, location.clone());
+
+                self.begin_error_region(context, &location);
+                let value_id = self.build_expression(context, expr)?;
+                let value_id =
+                    self.coerce_on_error_branch(context, value_id, expr, &expression.expr_type);
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Copy {
+                            source: MirOperand::Value(value_id),
+                        },
+                        location: location.clone(),
+                    },
+                );
+                self.end_error_region(context, &location)?;
+
+                let took = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(context, took, MirType::I32, location.clone());
+                self.emit_error_runtime_call(context, "__err_take", Some(took), &location);
+
+                // if took: result = fallback
+                let base = context.function.next_block_id;
+                context.function.next_block_id += 2;
+                let (fallback_block, merge) = (BasicBlockId(base), BasicBlockId(base + 1));
+                for (id, label) in [(fallback_block, "then"), (merge, "continue")] {
+                    context.function.blocks.insert(
+                        id,
+                        MirBasicBlock {
+                            id,
+                            label: Some(label.to_string()),
+                            instructions: Vec::new(),
+                            terminator: MirTerminator::Unreachable,
+                            predecessors: HashSet::new(),
+                            successors: HashSet::new(),
+                            location: location.clone(),
+                        },
+                    );
+                }
+                if let Some(branch_block) = self.current_block {
+                    context.function.if_merges.insert(branch_block, merge);
+                }
+                self.set_block_terminator(
+                    context,
+                    MirTerminator::Branch {
+                        condition: MirOperand::Value(took),
+                        true_block: fallback_block,
+                        false_block: merge,
+                    },
+                );
+                self.current_block = Some(fallback_block);
+                let fallback_id = self.build_expression(context, fallback)?;
+                let fallback_id = self.coerce_on_error_branch(
+                    context,
+                    fallback_id,
+                    fallback,
+                    &expression.expr_type,
+                );
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: Some(result_id),
+                        operation: MirOperation::Copy {
+                            source: MirOperand::Value(fallback_id),
+                        },
+                        location: location.clone(),
+                    },
+                );
+                self.set_block_terminator(context, MirTerminator::Jump { target: merge });
+                self.current_block = Some(merge);
+                Ok(result_id)
             }
 
             TastExpressionKind::Conditional {
@@ -4331,6 +4422,7 @@ impl MirBuilder {
                         element_value_id = self.coerce_list_element_arg(
                             context,
                             element_value_id,
+                            &element.expr_type,
                             list_element_type,
                             &element.location,
                         );

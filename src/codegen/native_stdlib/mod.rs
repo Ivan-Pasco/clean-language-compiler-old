@@ -95,8 +95,14 @@ pub const TRANSIENT_BASE_GLOBAL: u32 = 1;
 pub const TRANSIENT_PTR_GLOBAL: u32 = 2;
 pub const CARRYOVER_A_BASE_GLOBAL: u32 = 3;
 pub const CARRYOVER_B_BASE_GLOBAL: u32 = 4;
+/// 5-6: `onError` state (`codegen_registration.rs`,
+/// `register_error_handling_operations`). `ERROR_DEPTH_GLOBAL` counts the
+/// `onError` regions being evaluated; `ERROR_PENDING_GLOBAL` is 1 while an
+/// `error(...)` raised inside one is unwinding to its handler.
+pub const ERROR_DEPTH_GLOBAL: u32 = 5;
+pub const ERROR_PENDING_GLOBAL: u32 = 6;
 
 /// Number of reserved compiler-owned globals (heap ptr + transient arena +
-/// carryover pool bases). User-level state globals are assigned indices
-/// starting at `RESERVED_GLOBAL_COUNT`.
-pub const RESERVED_GLOBAL_COUNT: u32 = 5;
+/// carryover pool bases + error state). User-level state globals are
+/// assigned indices starting at `RESERVED_GLOBAL_COUNT`.
+pub const RESERVED_GLOBAL_COUNT: u32 = 7;

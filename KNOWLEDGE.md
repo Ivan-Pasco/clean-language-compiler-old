@@ -253,3 +253,17 @@ A Jump to a loop header, to an `iterate` loop's increment block or to a loop exi
 - `run_single_source_frontend` — used by the registry-driven library API (`compile`, `compile_with_plugins*`, `type_check*`) and `compile_with_target` (plugin builds).
 
 **Watch for:** Adding a stage to one entry point only — put it in the front end. A `package:` `target:` sets the thread-local host-class override for the build; the library wrappers and `type_check_project` restore the caller's value afterwards so it does not leak into later compiles on the same thread.
+
+## 18. If/else Merge Blocks Are Recorded, Not Guessed
+
+**What:** The MIR builder records the merge (`continue`) block of every source `if` in `MirFunction::if_merges`, keyed by the block whose Branch tests the condition. `generate_branch_block` and `generate_structured_blocks` use the recorded merge (`recorded_if_merge`, valid while the block still ends in that `if`'s Branch) to decide whether there is an `else` arm and which block follows the `if`; the CFG heuristics of §13 (`find_eventual_continuation`, `resolve_if_merge`, `is_continuation_not_else`) remain only for branches without a recorded merge. A merge with no incoming edge (every arm returns, breaks or continues) is not emitted.
+
+**Watch for:** New MIR builder code that lowers an `if`-shaped construct should insert into `if_merges` too. Code that rewrites a block's terminator must keep the entry consistent. Regression: `tests/cln/bugfixes/if_else_arm_ending_with_if_in_loop.cln`.
+
+## 19. `onError` Regions and Error Unwinding
+
+**What:** `error(msg)` lowers to the native `__err_raise(msg)`: with no `onError` region active (`ERROR_DEPTH_GLOBAL == 0`) it prints the message and traps; inside one it sets `ERROR_PENDING_GLOBAL`. The HIR builder brackets each protected part with `__err_region_begin()` / `__err_region_end()` followed by `if __err_take(): <handler>` (standalone `onError:` covers the statements since the block start or the previous handler; `expr onError:` covers the expression). The MIR builder turns a region into a loop that runs once (`begin_error_region`), and after every call to a Clean function or `__err_raise` emits `MirOperation::ErrorCheck`: while an error is pending it branches to the innermost region's exit (a loop exit label) or returns the zero value, so callers unwind to the region. `expr onError fallback` is the same region plus `if __err_take(): result = fallback`. Programs without any region get no checks (they are stripped after the build).
+
+**Where:** `src/hir/hir_builder.rs` (`build_block_inner`), `src/mir/mir_builder/helpers.rs` (`add_instruction`, `begin_error_region`, `end_error_region`, `leave_error_regions`), `src/codegen/mir_codegen/instructions.rs` (`ErrorCheck`), `src/codegen/codegen_registration.rs` (`register_error_handling_operations`), globals 5-6 in `native_stdlib/mod.rs`.
+
+**Watch for:** `return`, `break` and `continue` out of a region must call `__err_leave` for each region they leave (`leave_error_regions`), or the depth count leaks and later errors are swallowed instead of trapping. A WASM `br` emitted inside nested instructions (short-circuit rhs) must count the enclosing `if` in `current_block_depth`. The `error` variable inside a handler is not implemented yet. Regression: `tests/cln/bugfixes/onerror_catches_error_from_called_function.cln`.

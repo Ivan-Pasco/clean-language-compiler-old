@@ -546,7 +546,7 @@ impl TokenParser {
         let mut method_chain = Vec::new();
         while self.eat(&TokenKind::Dot) {
             self.skip_whitespace();
-            method_chain.push(self.expect_identifier()?.text.clone());
+            method_chain.push(self.expect_member_name()?.text.clone());
             self.skip_whitespace();
         }
 

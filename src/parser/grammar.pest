@@ -53,6 +53,9 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 keyword = { ("return" | "if" | "else" | "then" | "iterate" | "in" | "to" | "step" | "tests" | "error" | "function" | "functions" | "input" | "description" | "class" | "constructor" | "is" | "and" | "or" | "not" | "true" | "false" | "none" | "null" | "default" | "onError" | "constant" | "private" | "base" | "list" | "matrix" | "pairs" | "integer" | "number" | "boolean" | "string" | "void" | "any" | "import" | "from" | "as" | "later" | "background" | "start" | "print" | "break" | "continue" | "while") ~ !(ASCII_ALPHANUMERIC | "_") }
 // Identifiers can start with letter or underscore (underscore prefix for internal/bridge functions)
 identifier = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+// A name after "." (grammar.ebnf member_name): an identifier or any keyword,
+// so `auth.tenant.require()` and `item.type` parse.
+member_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Soft-keyword identifiers — the type-name keywords (`number`, `string`,
 // `boolean`, `list`, `matrix`, `pairs`, `void`, `any`) are also valid variable
@@ -206,7 +209,7 @@ variable_assignment = { identifier ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ single_li
 
 // Method apply-blocks: array.push: item1, item2, item3 (object.method before generic identifiers)
 method_apply_block = { method_call_chain ~ ":" ~ indented_expressions }
-method_call_chain = { identifier ~ ("." ~ identifier)+ }
+method_call_chain = { identifier ~ ("." ~ member_name)+ }
 
 // Function apply-blocks: print: "Hello", "World" (catch-all for identifiers and specific keywords)
 function_name_in_apply_block = { "print" | identifier }
@@ -220,7 +223,7 @@ indented_expressions = {
 }
 
 // Helper rule to detect the start of a new apply-block
-apply_block_start = { (sized_type | core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ identifier)+ ~ ":" | "constant" ~ ":" | function_name_in_apply_block ~ ":" }
+apply_block_start = { (sized_type | core_type | matrix_type | list_type | pairs_type) ~ ":" | identifier ~ ("." ~ member_name)+ ~ ":" | "constant" ~ ":" | function_name_in_apply_block ~ ":" }
 
 // Framework blocks for DSL plugins (endpoints:, data, component, screen, etc.)
 // Captures raw content without parsing - plugins handle their own DSL syntax
@@ -291,7 +294,7 @@ function_call = { identifier ~ type_arguments? ~ "(" ~ (WHITESPACE | NEWLINE | I
 // FIXED: Simplified method chaining using existing proven approach
 // Method call syntax for value.method() patterns
 method_call_base = { builtin_class_name | string | number | boolean | identifier | "(" ~ single_line_expression ~ ")" }
-method_name = { identifier | "greaterThan" | "lessThan" | "equal" | "greaterEqual" | "lessEqual" | "number" | "integer" | "boolean" | "string" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" | "and" | "or" | "not" | "start" | "stop" }
+method_name = { member_name | "greaterThan" | "lessThan" | "equal" | "greaterEqual" | "lessEqual" | "number" | "integer" | "boolean" | "string" | "length" | "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty" | "mustBeTrue" | "mustBeFalse" | "mustBeEqual" | "mustNotBeEqual" | "toString" | "toInteger" | "toNumber" | "toBoolean" | "keepBetween" | "yesNo" | "prompt" | "and" | "or" | "not" | "start" | "stop" }
 method_call_segment = { "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
 
 // FIXED: Use atomic postfix repetition to avoid left recursion
@@ -313,22 +316,22 @@ method_call = { method_call_base ~ method_call_segment }
 parenthesized_method_call = { "(" ~ parenthesized_expr ~ ")" ~ method_call_segment+ }
 
 // Three-level chained method call: namespace.class.method() patterns (most specific)
-three_level_method_call = { identifier ~ "." ~ identifier ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+three_level_method_call = { identifier ~ "." ~ member_name ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
 
 // Chained property method call: property.access.method() patterns (two+ levels)
-property_method_call = { identifier ~ ("." ~ identifier) ~ ("." ~ identifier)+ ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+property_method_call = { identifier ~ ("." ~ member_name) ~ ("." ~ member_name)+ ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
 
 // Static method call syntax for ClassName.method() patterns (single level)
 static_method_call = { static_class_name ~ "." ~ method_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
 
 // Namespace function call with optional method chaining (e.g., math.sqrt(x).toString())
-namespace_method_chain = { namespace_identifier ~ "." ~ identifier ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" ~ method_call_segment+ }
+namespace_method_chain = { namespace_identifier ~ "." ~ member_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" ~ method_call_segment+ }
 
 // Namespace function call syntax for namespace.function() patterns (e.g., math.sin)
-namespace_function_call = { namespace_identifier ~ "." ~ identifier ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
+namespace_function_call = { namespace_identifier ~ "." ~ member_name ~ "(" ~ (WHITESPACE | NEWLINE | INDENT)* ~ argument_list? ~ (WHITESPACE | NEWLINE | INDENT)* ~ ")" }
 
 // Property access and list access
-property_access = { identifier ~ ("." ~ identifier)+ }
+property_access = { identifier ~ ("." ~ member_name)+ }
 list_access = { identifier ~ ("[" ~ additive_expression ~ "]")+ }
 
 // Primary expressions (basic terms without circular dependencies)
@@ -528,7 +531,7 @@ print_bare_stmt = { "print" ~ !(ASCII_ALPHANUMERIC | "_" | ":") ~ WHITESPACE* ~ 
 // Assignment
 assignment = { assignment_target ~ WHITESPACE* ~ "=" ~ WHITESPACE* ~ expression }
 assignment_target = {
-    identifier ~ (("[" ~ additive_expression ~ "]") | ("." ~ identifier)+)?
+    identifier ~ (("[" ~ additive_expression ~ "]") | ("." ~ member_name)+)?
 }
 
 // Error statement (function call syntax)

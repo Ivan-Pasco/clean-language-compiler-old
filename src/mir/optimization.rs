@@ -498,6 +498,7 @@ impl DeadCodeEliminationPass {
             MirOperation::BoxAny { value, .. } => {
                 self.mark_operand_live(value, function);
             }
+            MirOperation::ErrorCheck { .. } => {}
             MirOperation::AnyToString { value } => {
                 self.mark_operand_live(value, function);
             }
@@ -640,7 +641,8 @@ fn has_side_effects(operation: &MirOperation) -> bool {
         | MirOperation::Call { .. }
         | MirOperation::CallCapability { .. }
         | MirOperation::AsyncFireCall { .. }
-        | MirOperation::AsyncAwaitCall { .. } => true,
+        | MirOperation::AsyncAwaitCall { .. }
+        | MirOperation::ErrorCheck { .. } => true,
         MirOperation::LogicalShortCircuit {
             rhs_instructions, ..
         } => rhs_instructions
@@ -796,6 +798,7 @@ mod tests {
             locals: HashMap::new(),
             next_value_id: 0,
             next_block_id: block_count,
+            if_merges: Default::default(),
             attributes: MirFunctionAttributes {
                 inline: false,
                 pure: false,

@@ -18,11 +18,209 @@ impl MirBuilder {
             trace!(current_block = ?self.current_block, "Adding Load to body block");
         }
 
+        // A call to a Clean function (or `error(...)`) may raise: follow it
+        // with the `onError` unwinding check (removed again when the program
+        // has no `onError` region).
+        let may_raise = match &instruction.operation {
+            MirOperation::Call {
+                function: MirOperand::Function(_),
+                ..
+            } => true,
+            MirOperation::Call {
+                function: MirOperand::NamedFunction { name, .. },
+                ..
+            } => name == "__err_raise",
+            _ => false,
+        };
         if let Some(block_id) = self.current_block {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
+                let location = instruction.location.clone();
                 block.instructions.push(instruction);
+                if may_raise {
+                    block.instructions.push(MirInstruction {
+                        dest: None,
+                        operation: MirOperation::ErrorCheck {
+                            region_exit: context.error_regions.last().map(|r| r.exit_block),
+                        },
+                        location,
+                    });
+                }
             }
         }
+    }
+
+    /// Emit a call to an error-handling runtime function
+    /// (`codegen_registration.rs`, `register_error_handling_operations`).
+    pub(super) fn emit_error_runtime_call(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        name: &str,
+        dest: Option<ValueId>,
+        location: &SourceLocation,
+    ) {
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest,
+                operation: MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name: name.to_string(),
+                        symbol_id: SymbolId(0),
+                    },
+                    arguments: Vec::new(),
+                },
+                location: location.clone(),
+            },
+        );
+    }
+
+    /// Leave the `onError` regions a `return` (`keep = 0`) or a
+    /// `break` / `continue` of the innermost loop (`keep` = that loop's
+    /// depth) jumps out of: each one's depth count is released.
+    pub(super) fn leave_error_regions(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        keep_loop_depth: Option<usize>,
+        location: &SourceLocation,
+    ) {
+        let leaving = context
+            .error_regions
+            .iter()
+            .filter(|r| keep_loop_depth.is_none_or(|depth| r.loop_depth >= depth))
+            .count();
+        for _ in 0..leaving {
+            self.emit_error_runtime_call(context, "__err_leave", None, location);
+        }
+    }
+
+    /// Start an `onError` region: the following statements run inside a loop
+    /// that executes once, whose exit is where the region ends — normally or
+    /// when an error check branches out (`MirOperation::ErrorCheck`).
+    ///
+    /// ```text
+    /// current: __err_enter(); first = 1; jump header
+    /// header:  branch first -> pre, exit
+    /// pre:     once = first; first = 0; branch once -> body, back
+    /// back:    jump header          (never taken; makes `header` a loop)
+    /// body:    <region statements>; jump exit
+    /// ```
+    pub(super) fn begin_error_region(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        location: &SourceLocation,
+    ) {
+        self.uses_error_regions = true;
+        self.emit_error_runtime_call(context, "__err_enter", None, location);
+
+        let first = ValueId(context.function.next_value_id);
+        let once = ValueId(context.function.next_value_id + 1);
+        context.function.next_value_id += 2;
+        self.register_temp_local(context, first, MirType::I32, location.clone());
+        self.register_temp_local(context, once, MirType::I32, location.clone());
+
+        let base = context.function.next_block_id;
+        context.function.next_block_id += 5;
+        let [header, pre, back, body, exit] =
+            [0, 1, 2, 3, 4].map(|offset| BasicBlockId(base + offset));
+        for (id, label) in [
+            (header, "onerror_header"),
+            (pre, "onerror_once"),
+            (back, "else"),
+            (body, "onerror_body"),
+            (exit, "onerror_exit"),
+        ] {
+            context.function.blocks.insert(
+                id,
+                MirBasicBlock {
+                    id,
+                    label: Some(label.to_string()),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable,
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: location.clone(),
+                },
+            );
+        }
+        let copy = |dest, source| MirInstruction {
+            dest: Some(dest),
+            operation: MirOperation::Copy { source },
+            location: location.clone(),
+        };
+
+        self.add_instruction(
+            context,
+            copy(first, MirOperand::Constant(MirConstant::Integer(1))),
+        );
+        self.set_block_terminator(context, MirTerminator::Jump { target: header });
+
+        self.current_block = Some(header);
+        self.set_block_terminator(
+            context,
+            MirTerminator::Branch {
+                condition: MirOperand::Value(first),
+                true_block: pre,
+                false_block: exit,
+            },
+        );
+
+        self.current_block = Some(pre);
+        self.add_instruction(context, copy(once, MirOperand::Value(first)));
+        self.add_instruction(
+            context,
+            copy(first, MirOperand::Constant(MirConstant::Integer(0))),
+        );
+        self.set_block_terminator(
+            context,
+            MirTerminator::Branch {
+                condition: MirOperand::Value(once),
+                true_block: body,
+                false_block: back,
+            },
+        );
+
+        self.current_block = Some(back);
+        self.set_block_terminator(context, MirTerminator::Jump { target: header });
+
+        self.current_block = Some(body);
+        context.error_regions.push(ErrorRegion {
+            exit_block: exit,
+            loop_depth: context.loop_stack.len(),
+        });
+    }
+
+    /// End the innermost `onError` region: continue at its exit and release
+    /// its depth count. The caller then runs the handler when `__err_take()`
+    /// reports an error.
+    pub(super) fn end_error_region(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        location: &SourceLocation,
+    ) -> Result<(), Vec<CompilerError>> {
+        let region = context.error_regions.pop().ok_or_else(|| {
+            vec![CompilerError::validation_error(
+                "onError region ends without a matching start",
+                location.clone(),
+            )]
+        })?;
+        let open = self.current_block.is_some_and(|id| {
+            context
+                .function
+                .blocks
+                .get(&id)
+                .is_some_and(|b| matches!(b.terminator, MirTerminator::Unreachable))
+        });
+        if open {
+            self.set_block_terminator(
+                context,
+                MirTerminator::Jump {
+                    target: region.exit_block,
+                },
+            );
+        }
+        self.current_block = Some(region.exit_block);
+        self.emit_error_runtime_call(context, "__err_leave", None, location);
+        Ok(())
     }
 
     /// Set terminator for current basic block
@@ -402,14 +600,23 @@ impl MirBuilder {
     }
 
     /// Widen an `integer` value passed as an element of a `list<integer:64>`
-    /// or `list<number>` (`items.add(3)`), as an assignment to that type does.
+    /// or `list<number>` (`items.add(3)`), as an assignment to that type does,
+    /// and box a typed value stored into a `list<any>`, so every element of a
+    /// `list<any>` is a boxed value.
     pub(super) fn coerce_list_element_arg(
         &mut self,
         context: &mut FunctionBuildContext,
         arg_id: ValueId,
+        arg_type: &ConcreteType,
         element: &ConcreteType,
         location: &SourceLocation,
     ) -> ValueId {
+        if matches!(element, ConcreteType::Any) {
+            if matches!(arg_type, ConcreteType::Any) {
+                return arg_id;
+            }
+            return self.emit_box_any(context, arg_id, arg_type, location);
+        }
         let target = self.convert_concrete_type(element);
         if !matches!(target, MirType::I64 | MirType::U64 | MirType::F64) {
             return arg_id;

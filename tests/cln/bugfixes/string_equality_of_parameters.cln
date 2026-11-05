@@ -1,0 +1,36 @@
+// Test: bugfixes/string_equality_of_parameters
+// Grammar: comparison_expression, function_definition
+// Semantic: strings compare by content
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   same: true
+//   different: false
+//   viaIf=true
+//
+// Regression: when the only string comparisons in a program compared two
+// `string` parameters, the string_compare import was tree-shaken (the
+// reachability scan looked for string operands in the function's locals
+// only) and `==` / `!=` silently fell back to comparing the pointers, so
+// two equal strings built at runtime compared unequal.
+
+start:
+	printl("same: " + same("ab", "a" + "b").toString())
+	printl("different: " + different("ab", "a" + "b").toString())
+	string s = "xabc".substring(1, 4)
+	printl("viaIf=" + sameNe(s, "abc").toString())
+
+functions:
+	boolean same(string p, string q)
+		if p == q
+			return true
+		return false
+
+	boolean different(string p, string q)
+		if p != q
+			return true
+		return false
+
+	boolean sameNe(string a, string b)
+		if a != b
+			return false
+		return true

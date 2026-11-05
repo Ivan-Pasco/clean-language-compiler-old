@@ -120,6 +120,13 @@ pub struct MirFunction {
     /// Next basic block ID
     pub next_block_id: usize,
 
+    /// Merge block of every source `if` statement, keyed by the block whose
+    /// Branch terminator tests the condition. The MIR builder records it when
+    /// it lowers the `if`, so codegen does not have to recover the merge from
+    /// the shape of the CFG. For an `if` without `else` the merge is the
+    /// Branch's false target.
+    pub if_merges: HashMap<BasicBlockId, BasicBlockId>,
+
     /// Function attributes
     pub attributes: MirFunctionAttributes,
 
@@ -310,6 +317,13 @@ pub enum MirOperation {
         fn_name: String,
         arguments: Vec<MirOperand>,
     },
+
+    /// After a call that may raise: when an `error(...)` raised inside an
+    /// `onError` region is unwinding (the pending flag is set), leave the
+    /// innermost region of this function — branch to its exit block
+    /// `region_exit` — or, outside any region, return the zero value of the
+    /// function's type so the caller's check continues the unwinding.
+    ErrorCheck { region_exit: Option<BasicBlockId> },
 
     /// Box a value into an `any` type with runtime type tag
     /// Memory layout: [tag:i32][value1:i32][value2:i32] = 12 bytes

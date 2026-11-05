@@ -1281,6 +1281,81 @@ impl super::CodeGenerator {
         Ok(())
     }
 
+    /// The runtime of `error(...)` and `onError` (14-error-handling.md).
+    ///
+    /// - `__err_enter()` / `__err_leave()` — an `onError` region starts and
+    ///   ends (`ERROR_DEPTH_GLOBAL` counts the active ones).
+    /// - `__err_raise(message)` — `error(message)`. Outside every region the
+    ///   message is printed and execution traps (an unhandled error). Inside
+    ///   one, `ERROR_PENDING_GLOBAL` is set and the caller unwinds to the
+    ///   region (`MirOperation::ErrorCheck`).
+    /// - `__err_take() -> boolean` — whether an error reached the region
+    ///   that just ended; clears the pending flag.
+    pub(crate) fn register_error_handling_operations(&mut self) -> Result<(), CompilerError> {
+        use native_stdlib::{ERROR_DEPTH_GLOBAL, ERROR_PENDING_GLOBAL};
+        use wasm_encoder::{BlockType, Instruction, MemArg};
+
+        for (name, delta) in [("__err_enter", 1), ("__err_leave", -1)] {
+            self.register_function(
+                name,
+                &[],
+                None,
+                &[
+                    Instruction::GlobalGet(ERROR_DEPTH_GLOBAL),
+                    Instruction::I32Const(delta),
+                    Instruction::I32Add,
+                    Instruction::GlobalSet(ERROR_DEPTH_GLOBAL),
+                ],
+            )?;
+        }
+
+        let printl = self.get_function_index("printl").ok_or_else(|| {
+            CompilerError::codegen_error(
+                "error handling requires the printl import, which was not registered".to_string(),
+                None,
+                None,
+            )
+        })?;
+        self.register_function(
+            "__err_raise",
+            &[WasmType::I32],
+            None,
+            &[
+                Instruction::GlobalGet(ERROR_DEPTH_GLOBAL),
+                Instruction::I32Eqz,
+                Instruction::If(BlockType::Empty),
+                // Unhandled: print the message, then trap.
+                Instruction::LocalGet(0),
+                Instruction::I32Const(4),
+                Instruction::I32Add,
+                Instruction::LocalGet(0),
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+                Instruction::Call(printl),
+                Instruction::Unreachable,
+                Instruction::End,
+                Instruction::I32Const(1),
+                Instruction::GlobalSet(ERROR_PENDING_GLOBAL),
+            ],
+        )?;
+
+        self.register_function(
+            "__err_take",
+            &[],
+            Some(WasmType::I32),
+            &[
+                Instruction::GlobalGet(ERROR_PENDING_GLOBAL),
+                Instruction::I32Const(0),
+                Instruction::GlobalSet(ERROR_PENDING_GLOBAL),
+            ],
+        )?;
+        // `register_function` appends each body's final `end`.
+        Ok(())
+    }
+
     pub(crate) fn register_conditional_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::list_behavior::ListBehaviorManager;
         use crate::stdlib::method_style::MethodStyleManager;

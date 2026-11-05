@@ -249,6 +249,12 @@ pub struct GlobalSymbolTable {
 
     /// Accumulated SCOPE003 errors (scope depth exceeded). Drained by the resolver.
     pub(crate) scope_depth_errors: Mutex<Vec<String>>,
+
+    /// Plugin functions (bridge and language names) with `ptr` parameters,
+    /// and those parameters' positions. A `ptr` argument is passed as is —
+    /// a string or an integer byte handle (type-system.md §9b) — never
+    /// boxed, although the parameter type-checks as `any`.
+    pub(crate) raw_ptr_params: HashMap<String, Vec<usize>>,
 }
 
 impl Clone for GlobalSymbolTable {
@@ -264,11 +270,20 @@ impl Clone for GlobalSymbolTable {
             current_module: self.current_module,
             builtins: self.builtins.clone(),
             scope_depth_errors: Mutex::new(self.scope_depth_errors.lock().unwrap().clone()),
+            raw_ptr_params: self.raw_ptr_params.clone(),
         }
     }
 }
 
 impl GlobalSymbolTable {
+    /// Whether argument `index` of the plugin function `name` is a `ptr`
+    /// parameter (see `raw_ptr_params`).
+    pub fn is_raw_ptr_param(&self, name: &str, index: usize) -> bool {
+        self.raw_ptr_params
+            .get(name)
+            .is_some_and(|positions| positions.contains(&index))
+    }
+
     /// Create a new global symbol table with built-in symbols
     pub fn new() -> Self {
         let mut table = Self {
@@ -282,6 +297,7 @@ impl GlobalSymbolTable {
             current_module: None,
             builtins: HashSet::new(),
             scope_depth_errors: Mutex::new(Vec::new()),
+            raw_ptr_params: HashMap::new(),
         };
 
         // Create global scope

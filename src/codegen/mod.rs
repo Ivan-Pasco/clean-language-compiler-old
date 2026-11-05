@@ -194,6 +194,7 @@ impl CodeGenerator {
             .import(module, field, EntityType::Function(type_index));
         let func_index = self.function_count;
         self.function_map.insert(field.to_string(), func_index);
+        self.imported_functions.insert(field.to_string());
         self.function_names.push(field.to_string());
         self.wasm_function_return_types
             .insert(field.to_string(), return_type);

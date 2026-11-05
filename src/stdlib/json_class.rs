@@ -11,6 +11,8 @@
 //! - `__json_from_cln_list` / `__json_from_cln_list_i64` /
 //!   `__json_from_cln_pairs` — build the boxed-Any tree of a typed Clean
 //!   list or pairs map when it is boxed to `any`;
+//! - `__json_from_cln_list_boxed` — the same for a list whose elements are
+//!   already boxed (`list<any>`, mapped lists of class instances);
 //! - `__json_try_decode_v2` / `__json_decode_v2_or_raise` — the sentinel
 //!   checks after a `_json_decode_v2` call (D5).
 //!
@@ -131,6 +133,27 @@ impl JsonClass {
                 WasmType::I32, // 1: null_box_ptr
             ],
             Self::generate_json_try_decode_v2_instructions(malloc_index),
+        )?;
+
+        // __json_from_cln_list_boxed(list_ptr: i32) -> i32
+        // The JSON-tree array of a native Clean list whose elements are
+        // already boxed-Any pointers (`list<any>`, or a list of class
+        // instances mapped through their `__json_tree_*` builder). Each
+        // element pointer is copied; a 0 element becomes a null box.
+        let null_or_box_index = codegen
+            .get_function_index("__json_try_decode_v2")
+            .expect("__json_try_decode_v2 is registered above");
+        register_stdlib_function_with_locals(
+            codegen,
+            "__json_from_cln_list_boxed",
+            &[WasmType::I32],    // list_ptr
+            Some(WasmType::I32), // returns json_array_ptr
+            &[
+                WasmType::I32, // 1: count
+                WasmType::I32, // 2: i
+                WasmType::I32, // 3: json_array_ptr
+            ],
+            Self::generate_from_cln_list_boxed_instructions(malloc_index, null_or_box_index),
         )?;
 
         // __json_decode_v2_or_raise(raw: i32) -> i32
@@ -908,6 +931,70 @@ impl JsonClass {
             }),
             // return null_box_ptr
             Instruction::LocalGet(1),
+        ]
+    }
+
+    /// Generate WASM body for `__json_from_cln_list_boxed(list_ptr: i32) -> i32`.
+    ///
+    /// The Clean list keeps its 4-byte elements from offset 16; each one is a
+    /// boxed-Any pointer and goes into the JSON array `[count][elem_ptr]…`
+    /// unchanged, except that 0 becomes a null box (`__json_try_decode_v2`).
+    fn generate_from_cln_list_boxed_instructions(
+        malloc_idx: u32,
+        null_or_box_idx: u32,
+    ) -> Vec<Instruction<'static>> {
+        let word = |offset: u64| MemArg {
+            offset,
+            align: 2,
+            memory_index: 0,
+        };
+        vec![
+            // count = mem[list_ptr]
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(0)),
+            Instruction::LocalSet(1),
+            // json_array_ptr = malloc(4 + count * 4); json_array_ptr[0] = count
+            Instruction::LocalGet(1),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::Call(malloc_idx),
+            Instruction::LocalSet(3),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(1),
+            Instruction::I32Store(word(0)),
+            // for i in 0..count
+            Instruction::I32Const(0),
+            Instruction::LocalSet(2),
+            Instruction::Block(wasm_encoder::BlockType::Empty),
+            Instruction::Loop(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(1),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // json_array_ptr[4 + i*4] = box_or_null(mem[list_ptr + 16 + i*4])
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(word(16)),
+            Instruction::Call(null_or_box_idx),
+            Instruction::I32Store(word(4)),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(2),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(3),
         ]
     }
 

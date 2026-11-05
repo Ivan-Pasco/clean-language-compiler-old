@@ -293,8 +293,19 @@ impl PluginRegistry {
     ///   e.g., pattern `"*.find:"` matches `"User.find"`, `"Order.find"`, etc.
     ///
     /// Both the name and pattern may optionally include a trailing `:`.
+    /// The name an expression block is matched under: without the trailing
+    /// `:`, and for the call form (`db.queryAs(Item)`) without its argument
+    /// list, so a plugin declaring `db.queryAs` handles `db.queryAs(Item):`.
+    fn expression_pattern_name(name: &str) -> &str {
+        let name = name.trim_end_matches(':');
+        match name.find('(') {
+            Some(open) if name.ends_with(')') => &name[..open],
+            _ => name,
+        }
+    }
+
     pub fn handles_as_expression(&self, name: &str) -> bool {
-        let name_clean = name.trim_end_matches(':');
+        let name_clean = Self::expression_pattern_name(name);
 
         // Exact match (strip trailing colon from both sides)
         if self
@@ -323,7 +334,7 @@ impl PluginRegistry {
     ///
     /// Uses the same pattern-matching rules as [`handles_as_expression`].
     pub fn get_expression_handler(&self, name: &str) -> Option<&Arc<dyn FrameworkPlugin>> {
-        let name_clean = name.trim_end_matches(':');
+        let name_clean = Self::expression_pattern_name(name);
 
         // Exact match first
         for (pattern, handler) in &self.expression_handlers {
@@ -376,13 +387,15 @@ impl PluginRegistry {
             })?;
 
         // Validate first
-        handler
-            .validate(block)
-            .map_err(|e| PluginError::ValidationFailed {
+        handler.validate(block).map_err(|e| match e {
+            // Already names the plugin and location.
+            PluginError::ValidationFailed { .. } => e,
+            other => PluginError::ValidationFailed {
                 plugin_name: handler.name().to_string(),
-                message: e.to_string(),
+                message: other.to_string(),
                 location: block.location.clone(),
-            })?;
+            },
+        })?;
 
         // Then expand
         handler
@@ -414,13 +427,15 @@ impl PluginRegistry {
             })?;
 
         // Validate first
-        handler
-            .validate(block)
-            .map_err(|e| PluginError::ValidationFailed {
+        handler.validate(block).map_err(|e| match e {
+            // Already names the plugin and location.
+            PluginError::ValidationFailed { .. } => e,
+            other => PluginError::ValidationFailed {
                 plugin_name: handler.name().to_string(),
-                message: e.to_string(),
+                message: other.to_string(),
                 location: block.location.clone(),
-            })?;
+            },
+        })?;
 
         // Then expand with full result
         handler
@@ -500,10 +515,7 @@ impl PluginRegistry {
     /// `hir::validation::ValidationContext::collect_plugin_registered_handlers`
     /// to recognize plugin-emitted route handlers as legitimate
     /// request-context sites (CONC002). Empty when no loaded plugin declares
-    /// any such bridge — in that case the HIR validator falls back to its
-    /// historical hardcoded recognition of frame.server's `_http_route` /
-    /// `_http_route_protected` so existing installs keep working while
-    /// framework maintainers add the metadata to plugin.toml.
+    /// any such bridge.
     ///
     /// Fixes ARCH-CONC002-HARDCODES-HTTP-ROUTE (dashboard fp 12ce9f522815).
     pub fn handler_registering_bridges(&self) -> Vec<(String, usize)> {
@@ -1417,6 +1429,24 @@ impl Default for PluginRegistryBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plugin declaring the expression `db.queryAs` handles the call form
+    /// `db.queryAs(Item):` (frame-data.ebnf §8 `typed_raw_query`).
+    #[test]
+    fn expression_pattern_name_drops_call_arguments() {
+        assert_eq!(
+            PluginRegistry::expression_pattern_name("db.queryAs(Item):"),
+            "db.queryAs"
+        );
+        assert_eq!(
+            PluginRegistry::expression_pattern_name("db.query:"),
+            "db.query"
+        );
+        assert_eq!(
+            PluginRegistry::expression_pattern_name("User.find"),
+            "User.find"
+        );
+    }
     use crate::plugins::PluginResult;
 
     struct TestPlugin {

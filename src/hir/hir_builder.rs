@@ -1453,9 +1453,45 @@ impl HirBuilder {
     }
 
     /// Inner implementation of build_block, called after scope_depth has been incremented.
+    /// A statement calling one of the error-handling runtime functions
+    /// (`__err_raise`, `__err_region_begin`, `__err_region_end`).
+    fn error_runtime_call(
+        function: &str,
+        arguments: Vec<HirExpression>,
+        location: &SourceLocation,
+    ) -> HirStatement {
+        HirStatement::Expression {
+            expression: HirExpression::Call {
+                function: function.to_string(),
+                arguments,
+                location: location.clone(),
+            },
+            location: location.clone(),
+        }
+    }
+
+    /// `if __err_take(): <handler>` — runs an `onError` handler when an
+    /// error reached the region that just ended.
+    fn error_handler_if(handler: HirBlock, location: &SourceLocation) -> HirStatement {
+        HirStatement::If {
+            condition: HirExpression::Call {
+                function: "__err_take".to_string(),
+                arguments: Vec::new(),
+                location: location.clone(),
+            },
+            then_branch: handler,
+            else_branch: None,
+            location: location.clone(),
+        }
+    }
+
     fn build_block_inner(&mut self, statements: &[Statement]) -> Result<HirBlock, CompilerError> {
         let mut hir_statements = Vec::new();
         let mut stmt_idx = 0;
+        // Start (in `hir_statements`) of the statements a standalone
+        // `onError:` handler covers: those since the block start or the
+        // previous standalone handler.
+        let mut error_region_start = 0;
 
         while stmt_idx < statements.len() {
             let stmt = &statements[stmt_idx];
@@ -1706,20 +1742,61 @@ impl HirBuilder {
                 // COMPILER-SYNTHETIC-MODULE-START-BLOCK-DROPPED (the
                 // dropped synthetic module's start: body was just
                 // `error("diagnostic fired!")`, which lowered to nothing).
+                //
+                // `error("msg")` is `__err_raise("msg")`: outside every
+                // `onError` region it prints the message and traps; inside
+                // one the error unwinds to the region's handler
+                // (14-error-handling.md).
                 let loc = location.clone().unwrap_or_default();
                 let message_expr = self.build_expression(message)?;
-                hir_statements.push(HirStatement::Print {
-                    expression: message_expr,
-                    newline: true,
+                hir_statements.push(Self::error_runtime_call(
+                    "__err_raise",
+                    vec![message_expr],
+                    &loc,
+                ));
+            } else if let Statement::StandaloneErrorHandler { body, location } = stmt {
+                // `onError:` after statements handles an error raised by any
+                // of them (those since the block start or the previous
+                // standalone handler).
+                let loc = location.clone().unwrap_or_default();
+                hir_statements.insert(
+                    error_region_start,
+                    Self::error_runtime_call("__err_region_begin", Vec::new(), &loc),
+                );
+                hir_statements.push(Self::error_runtime_call(
+                    "__err_region_end",
+                    Vec::new(),
+                    &loc,
+                ));
+                let handler = self.build_block(body)?;
+                hir_statements.push(Self::error_handler_if(handler, &loc));
+                error_region_start = hir_statements.len();
+            } else if let Statement::OnErrorBlock {
+                expression,
+                error_block,
+                location,
+            } = stmt
+            {
+                // `expression onError:` + block: the block handles an error
+                // raised while evaluating the expression.
+                let loc = location.clone().unwrap_or_default();
+                let expression = self.build_expression(expression)?;
+                hir_statements.push(Self::error_runtime_call(
+                    "__err_region_begin",
+                    Vec::new(),
+                    &loc,
+                ));
+                hir_statements.push(HirStatement::Expression {
+                    expression,
                     location: loc.clone(),
                 });
-                hir_statements.push(HirStatement::Require {
-                    condition: HirExpression::Literal {
-                        value: Value::Boolean(false),
-                        location: loc.clone(),
-                    },
-                    location: loc,
-                });
+                hir_statements.push(Self::error_runtime_call(
+                    "__err_region_end",
+                    Vec::new(),
+                    &loc,
+                ));
+                let handler = self.build_block(error_block)?;
+                hir_statements.push(Self::error_handler_if(handler, &loc));
             } else if let Statement::PrintBlock {
                 expressions,
                 newline,

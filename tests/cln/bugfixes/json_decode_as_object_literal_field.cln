@@ -1,0 +1,22 @@
+// Test: bugfixes/json_decode_as_object_literal_field
+// Grammar: object_literal, property_access
+// Semantic: json.decode returns a boxed any value
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   {"v":"x"}
+//
+// Regression: a json.decode call written directly as an object-literal field
+// value was boxed a second time, so reading it back through a parameter with
+// a chained member access (r.headers.host) followed a pointer to the box and
+// trapped.
+
+start:
+	printl(rc())
+
+functions:
+	any get(any r)
+		return { v: r.headers.host }
+
+	string rc()
+		any o = { headers: json.decode("{\"host\":\"x\"}") }
+		return json.encode(get(o))

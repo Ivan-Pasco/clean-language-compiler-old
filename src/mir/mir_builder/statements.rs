@@ -661,6 +661,7 @@ impl MirBuilder {
                                 let value_id = self.coerce_list_element_arg(
                                     context,
                                     value_id,
+                                    &value.expr_type,
                                     &element_type,
                                     location,
                                 );
@@ -718,6 +719,31 @@ impl MirBuilder {
                         );
                         // Don't error out, just ignore the assignment for now
                     }
+                }
+            }
+
+            TastStatement::Expression {
+                expression:
+                    TastExpression {
+                        kind: TastExpressionKind::FunctionCall { function, .. },
+                        location,
+                        ..
+                    },
+                ..
+            } if matches!(
+                &function.kind,
+                TastExpressionKind::Variable { name, .. }
+                    if name == "__err_region_begin" || name == "__err_region_end"
+            ) =>
+            {
+                // `onError` region markers inserted by the HIR builder.
+                if matches!(
+                    &function.kind,
+                    TastExpressionKind::Variable { name, .. } if name == "__err_region_begin"
+                ) {
+                    self.begin_error_region(context, location);
+                } else {
+                    self.end_error_region(context, location)?;
                 }
             }
 
@@ -840,6 +866,9 @@ impl MirBuilder {
                     trace!("Void return (no value)");
                     None
                 };
+
+                // A `return` inside `onError` regions leaves them.
+                self.leave_error_regions(context, None, location);
 
                 // If the function has any `ensure` postconditions (or class invariants),
                 // inject the checks before the return:
@@ -1020,6 +1049,12 @@ impl MirBuilder {
                         false_block: continue_block_id,
                     }
                 };
+                if let Some(branch_block) = self.current_block {
+                    context
+                        .function
+                        .if_merges
+                        .insert(branch_block, continue_block_id);
+                }
                 self.set_block_terminator(context, branch);
 
                 // Build then block
@@ -2016,6 +2051,10 @@ impl MirBuilder {
                     .last()
                     .map(|ctx| (ctx.break_block, ctx.has_iter_scope));
 
+                // Leave the `onError` regions entered inside this loop.
+                let loop_depth = context.loop_stack.len();
+                self.leave_error_regions(context, Some(loop_depth), location);
+
                 if let Some((target_block, has_iter_scope)) = loop_info {
                     if has_iter_scope {
                         self.emit_mem_scope_pop(context, location.clone());
@@ -2044,6 +2083,10 @@ impl MirBuilder {
                     .loop_stack
                     .last()
                     .map(|ctx| (ctx.continue_block, ctx.has_iter_scope));
+
+                // Leave the `onError` regions entered inside this loop.
+                let loop_depth = context.loop_stack.len();
+                self.leave_error_regions(context, Some(loop_depth), location);
 
                 if let Some((target_block, has_iter_scope)) = loop_info {
                     if has_iter_scope {

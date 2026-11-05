@@ -959,6 +959,11 @@ impl MirCodeGenerator<'_> {
                 .register_conditional_operations()
                 .map_err(|e| vec![e])?;
 
+            debug_mir!("DEBUG MIR: Registering error handling operations");
+            self.wasm_generator
+                .register_error_handling_operations()
+                .map_err(|e| vec![e])?;
+
             debug_mir!("DEBUG MIR: Registering HTTP operations");
             self.wasm_generator
                 .register_http_operations()
@@ -1102,10 +1107,11 @@ impl MirCodeGenerator<'_> {
         sorted_globals.sort_by_key(|(symbol_id, _)| symbol_id.0);
 
         // State variable globals start at WASM global index
-        // RESERVED_GLOBAL_COUNT (currently 5):
+        // RESERVED_GLOBAL_COUNT (currently 7):
         //   global 0 = __heap_ptr
         //   global 1-2 = transient arena (pool base, bump pointer)
         //   global 3-4 = carryover slot pools
+        //   global 5-6 = onError depth and pending flag
         // See utilities.rs's global-section emission, transient_arena.rs
         // and carryover.rs for layout.
         let reserved = crate::codegen::native_stdlib::RESERVED_GLOBAL_COUNT;

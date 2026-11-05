@@ -1638,7 +1638,7 @@ pub fn parse_property_method_call(pair: Pair<Rule>) -> Result<Expression, Compil
 
     for child in &all_children[1..] {
         match child.as_rule() {
-            Rule::identifier => segments.push(child.as_str().to_string()),
+            Rule::identifier | Rule::member_name => segments.push(child.as_str().to_string()),
             Rule::method_name => method_name = child.as_str().to_string(),
             Rule::argument_list => {
                 // Parse argument list - contains argument_expression items

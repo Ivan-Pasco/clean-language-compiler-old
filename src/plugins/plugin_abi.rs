@@ -406,9 +406,9 @@ pub struct BridgeFunction {
     ///
     /// HIR validation (CONC002 request-context check) uses this to identify
     /// plugin-emitted handler functions so their body counts as a legitimate
-    /// request-context site. Without it, the compiler falls back to hardcoded
-    /// recognition of `_http_route` / `_http_route_protected` (see
-    /// `ValidationContext::collect_plugin_registered_handlers`). Any plugin
+    /// request-context site, and the plugin expander keeps those functions
+    /// alive. It is the only source of that knowledge: the compiler has no
+    /// built-in list of handler-registering bridges. Any plugin
     /// adding a new handler-registering bridge (WebSocket, GraphQL
     /// subscription, etc.) can opt in by declaring this field on its bridge
     /// entry — no compiler change needed.
@@ -809,6 +809,30 @@ impl BridgeFunction {
     /// Get parameter types as `BuiltinType` values from the builtins registry.
     pub fn get_param_types(&self) -> Vec<crate::builtins::registry::BuiltinType> {
         self.params.iter().map(|p| Self::parse_type(p)).collect()
+    }
+
+    /// Parameter types as Clean code sees them. A `ptr` parameter takes a
+    /// string or the opaque byte handle (`integer`) a bytes-producing bridge
+    /// such as `req.body_bytes()` returns (type-system.md §9b), so it
+    /// type-checks as `any`; the argument is passed unboxed
+    /// (`GlobalSymbolTable::raw_ptr_params`).
+    pub fn get_language_param_types(&self) -> Vec<crate::builtins::registry::BuiltinType> {
+        (0..self.params.len())
+            .map(|i| {
+                if self.param_is_raw_ptr(i) {
+                    crate::builtins::registry::BuiltinType::Any
+                } else {
+                    Self::parse_type(&self.params[i])
+                }
+            })
+            .collect()
+    }
+
+    /// Positions of the `ptr` parameters.
+    pub fn raw_ptr_param_positions(&self) -> Vec<usize> {
+        (0..self.params.len())
+            .filter(|&i| self.param_is_raw_ptr(i))
+            .collect()
     }
 
     /// Get return type as BuiltinType

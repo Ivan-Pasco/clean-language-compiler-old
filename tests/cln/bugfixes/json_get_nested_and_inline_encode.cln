@@ -1,0 +1,30 @@
+// Test: bugfixes/json_get_nested_and_inline_encode
+// Grammar: function_call, method_call
+// Semantic: json.get returns a boxed any value
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   via var: 7
+//   nested:  7
+//   inline=[3]
+//   viavar=[3]
+//   rows=[{"count":7}]
+//
+// Regression: a json.get call used directly as the argument of another
+// json.get or of json.encode was boxed a second time (the checker typed the
+// inner call from its context), so the bridge received a pointer to the box
+// instead of the JSON value: the nested lookup returned an empty result and
+// json.encode printed a heap address.
+
+start:
+	string doc = "{\"data\":{\"rows\":[{\"count\":7}]}}"
+	string d = json.get(doc, "data")
+	string r = json.get(d, "rows")
+	string row = json.get(r, "0")
+	printl("via var: " + json.get(row, "count"))
+	string nrow = json.get(json.get(json.get(doc, "data"), "rows"), "0")
+	printl("nested:  " + json.get(nrow, "count"))
+	any data = json.textToData("{\"i\":3}")
+	printl("inline=[" + json.encode(json.get(data, "i")) + "]")
+	any v = json.get(data, "i")
+	printl("viavar=[" + json.encode(v) + "]")
+	printl("rows=" + json.encode(json.get(json.get(doc, "data"), "rows")))

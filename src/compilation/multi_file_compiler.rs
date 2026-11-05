@@ -210,11 +210,15 @@ impl MultiFileCompiler {
 
         let (manifest_info, entry_source, canonical_path) =
             if let Some(ref manifest_dir) = manifest_root {
-                let (info, manifest_errors) = Self::parse_manifest_info(
+                let (info, mut manifest_errors) = Self::parse_manifest_info(
                     &manifest_source,
                     manifest_dir,
                     self.config.plugin_registry.as_ref(),
                 );
+                manifest_errors.extend(Self::code_after_manifest_error(
+                    &manifest_source,
+                    entry_path,
+                ));
 
                 // Migration diagnostics (e.g. BLD-LAYOUT) abort the build
                 // before any file walking so the developer sees the layout
@@ -342,10 +346,29 @@ impl MultiFileCompiler {
                 })
                 .collect();
 
-            let shared_paths: HashSet<PathBuf> = shared_files
+            let mut shared_paths: HashSet<PathBuf> = shared_files
                 .iter()
                 .map(|(p, _, _)| p.canonicalize().unwrap_or_else(|_| p.clone()))
                 .collect();
+
+            // Every other file in a plugin-owned folder that matches the
+            // owning plugin's `[paths].patterns` (plugin-contract.md §1.2) —
+            // `.html` pages, for example — is passed to `assemble` with its
+            // content. These files are inputs of the assemble step only; they
+            // are never parsed as Clean modules.
+            if let Some(ref registry) = self.config.plugin_registry {
+                for (path, content) in
+                    Self::collect_plugin_pattern_files(registry, manifest_dir, &info.shared_folders)
+                {
+                    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                    if shared_paths.insert(canonical) {
+                        source_files.push(crate::plugins::AssembleSourceFile {
+                            path: path.to_string_lossy().into_owned(),
+                            content,
+                        });
+                    }
+                }
+            }
 
             for module in unit.modules.values() {
                 let module_canonical = module
@@ -712,6 +735,43 @@ impl MultiFileCompiler {
             .is_some_and(|line| line.starts_with("package:"))
     }
 
+    /// BLD-MANIFEST: a `package:` manifest holds build configuration only;
+    /// its settings are indented under the `package:` line. A second
+    /// top-level line (`start:`, `functions:`, ...) is Clean code the build
+    /// would never compile, so it is reported instead of silently dropped.
+    fn code_after_manifest_error(source: &str, manifest_path: &Path) -> Option<CompilerError> {
+        let (line_index, line) = source
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let trimmed = line.trim();
+                !trimmed.is_empty() && !trimmed.starts_with("//")
+            })
+            .filter(|(_, line)| !line.starts_with([' ', '\t']))
+            .nth(1)?;
+        let message = format!(
+            "`{}` follows the `package:` manifest. A manifest file holds only build \
+             configuration; code after it is never compiled.",
+            line.trim()
+        );
+        let location = SourceLocation {
+            line: line_index + 1,
+            column: 1,
+            file: manifest_path.display().to_string(),
+            ..Default::default()
+        };
+        Some(CompilerError::Validation {
+            context: Box::new(
+                ErrorContext::new(message, None, ErrorType::Validation, Some(location))
+                    .with_error_code("BLD-MANIFEST")
+                    .with_suggestion(
+                        "Move the code into the module named by `entry:` (or another module \
+                         of the project).",
+                    ),
+            ),
+        })
+    }
+
     /// Extract entry: and shared: declarations from a manifest file, then
     /// expand `shared_folders` with every directory that the active plugins
     /// declare ownership of via `[paths].owns` in their plugin.toml.
@@ -903,6 +963,99 @@ impl MultiFileCompiler {
             }
         }
         shared_files
+    }
+
+    /// Non-`.cln` files the loaded plugins declare through `[paths]`: every
+    /// file under one of a plugin's `owns` folders (when that folder is part
+    /// of this build, i.e. in `shared_folders`) whose name matches one of the
+    /// plugin's `patterns`. `.cln` files are already collected as modules.
+    /// Sorted by path so the assemble input is deterministic.
+    fn collect_plugin_pattern_files(
+        registry: &PluginRegistry,
+        manifest_dir: &Path,
+        shared_folders: &[PathBuf],
+    ) -> Vec<(PathBuf, String)> {
+        let mut files: Vec<(PathBuf, String)> = Vec::new();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        let mut manifests: Vec<_> = registry.loaded_manifests().iter().collect();
+        manifests.sort_by(|a, b| a.0.cmp(b.0));
+        for (_, manifest) in manifests {
+            let patterns: Vec<&str> = manifest
+                .paths
+                .patterns
+                .iter()
+                .map(String::as_str)
+                .filter(|p| !Self::file_name_matches(p, "x.cln"))
+                .collect();
+            if patterns.is_empty() {
+                continue;
+            }
+            for owned in &manifest.paths.owns {
+                let dir = manifest_dir.join(owned.trim_end_matches('/'));
+                if !shared_folders.contains(&dir) {
+                    continue;
+                }
+                for path in Self::collect_files(&dir) {
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if name.ends_with(".cln")
+                        || !patterns.iter().any(|p| Self::file_name_matches(p, name))
+                    {
+                        continue;
+                    }
+                    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                    if !seen.insert(canonical) {
+                        continue;
+                    }
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        files.push((path, content));
+                    }
+                }
+            }
+        }
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        files
+    }
+
+    /// Whether `name` matches a `[paths].patterns` entry: a file-name glob in
+    /// which `*` stands for any run of characters (`*.html`, `index.*`).
+    fn file_name_matches(pattern: &str, name: &str) -> bool {
+        let parts: Vec<&str> = pattern.split('*').collect();
+        if parts.len() == 1 {
+            return pattern == name;
+        }
+        let (first, last) = (parts[0], parts[parts.len() - 1]);
+        if !name.starts_with(first)
+            || !name.ends_with(last)
+            || name.len() < first.len() + last.len()
+        {
+            return false;
+        }
+        let Some(mut rest) = name.get(first.len()..name.len() - last.len()) else {
+            return false;
+        };
+        for middle in &parts[1..parts.len() - 1] {
+            match rest.find(middle) {
+                Some(at) => rest = &rest[at + middle.len()..],
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Recursively collect every file under a directory.
+    fn collect_files(dir: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    files.extend(Self::collect_files(&path));
+                } else {
+                    files.push(path);
+                }
+            }
+        }
+        files
     }
 
     /// Recursively collect all .cln files under a directory.
@@ -1666,13 +1819,24 @@ start:
     /// pairs. Each manifest is otherwise minimal — only `plugin.paths.owns`
     /// matters for folder discovery.
     fn registry_with_owns(entries: &[(&str, &[&str])]) -> Arc<crate::plugins::PluginRegistry> {
+        let with_patterns: Vec<(&str, &[&str], &[&str])> = entries
+            .iter()
+            .map(|(name, owns)| (*name, *owns, &[][..]))
+            .collect();
+        registry_with_paths(&with_patterns)
+    }
+
+    /// Like [`registry_with_owns`], with each plugin's `[paths].patterns`.
+    fn registry_with_paths(
+        entries: &[(&str, &[&str], &[&str])],
+    ) -> Arc<crate::plugins::PluginRegistry> {
         use crate::plugins::plugin_abi::{
             PluginCompatibility, PluginHandles, PluginInfo, PluginManifest, PluginPaths,
         };
 
         let mut builder = crate::plugins::PluginRegistry::builder()
             .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off);
-        for (name, owns) in entries {
+        for (name, owns, patterns) in entries {
             let manifest = PluginManifest {
                 plugin: PluginInfo {
                     name: (*name).to_string(),
@@ -1692,7 +1856,7 @@ start:
                 paths: PluginPaths {
                     owns: owns.iter().map(|s| (*s).to_string()).collect(),
                     auto_create: false,
-                    patterns: vec![],
+                    patterns: patterns.iter().map(|s| (*s).to_string()).collect(),
                     implicit_import: false,
                 },
                 enforcement: Default::default(),
@@ -2043,6 +2207,79 @@ start:
     /// the BLD-LAYOUT migration anchor strings (the literal `"app/web"`
     /// directory path used to detect the legacy layout), which are explicitly
     /// scoped to the migration diagnostic.
+    /// Every file a plugin's `[paths].patterns` match in a folder it owns —
+    /// here `.html` pages — reaches `assemble`; `.cln` files are modules and
+    /// folders outside the build are skipped.
+    #[test]
+    fn test_assemble_input_includes_plugin_pattern_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let pages = root.join("app/ui/web/pages");
+        std::fs::create_dir_all(pages.join("about")).unwrap();
+        std::fs::write(pages.join("about/index.html"), "<p>about</p>").unwrap();
+        std::fs::write(pages.join("home.cln"), "functions:\n").unwrap();
+        std::fs::write(pages.join("notes.txt"), "x").unwrap();
+        let other = root.join("app/other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("skip.html"), "<p>skip</p>").unwrap();
+        let registry = registry_with_paths(&[(
+            "frame.test",
+            &["app/ui/web/pages", "app/other"],
+            &["*.cln", "*.html"],
+        )]);
+        let files = MultiFileCompiler::collect_plugin_pattern_files(
+            &registry,
+            root,
+            std::slice::from_ref(&pages),
+        );
+        assert_eq!(
+            files.len(),
+            1,
+            "only the page under the built folder: {:?}",
+            files
+        );
+        assert!(files[0].0.ends_with("about/index.html"));
+        assert_eq!(files[0].1, "<p>about</p>");
+    }
+
+    #[test]
+    fn test_plugin_file_patterns_match_file_names() {
+        assert!(MultiFileCompiler::file_name_matches("*.html", "index.html"));
+        assert!(MultiFileCompiler::file_name_matches("*.html", "a.b.html"));
+        assert!(!MultiFileCompiler::file_name_matches("*.html", "index.cln"));
+        assert!(!MultiFileCompiler::file_name_matches("*.html", "html"));
+        assert!(MultiFileCompiler::file_name_matches("index.*", "index.css"));
+        assert!(MultiFileCompiler::file_name_matches("a*b*c", "axxbyyc"));
+        assert!(!MultiFileCompiler::file_name_matches("a*b*c", "axxc"));
+        assert!(MultiFileCompiler::file_name_matches(
+            "theme.css",
+            "theme.css"
+        ));
+    }
+
+    /// BLD-MANIFEST: code written after a `package:` manifest was dropped
+    /// without a diagnostic.
+    #[test]
+    fn test_code_after_manifest_is_reported() {
+        let manifest = "// project\npackage: T1\n\tversion: \"1.0.0\"\n\n\ttarget: browser\n\t\tentry: index.html\n\nstart:\n\tprintl(\"hello\")\n";
+        let error = MultiFileCompiler::code_after_manifest_error(manifest, Path::new("main.cln"))
+            .expect("code after the manifest must be reported");
+        let text = error.to_string();
+        assert!(text.contains("start:"), "message names the line: {}", text);
+        let location = error
+            .context()
+            .and_then(|c| c.location.clone())
+            .expect("the error carries a location");
+        assert_eq!(location.line, 8);
+
+        let plain =
+            "package: T1\n\tversion: \"1.0.0\"\n\t// note\n\ttarget: server\n\t\tentry: app.cln\n";
+        assert!(
+            MultiFileCompiler::code_after_manifest_error(plain, Path::new("main.cln")).is_none(),
+            "a manifest with only indented settings is valid"
+        );
+    }
+
     #[test]
     fn test_no_hardcoded_folder_names_in_discovery() {
         // Forbidden literal segments. These names should ONLY come from plugin

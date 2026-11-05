@@ -1,0 +1,35 @@
+// Test: bugfixes/class_instance_round_trips_through_any
+// Grammar: function_definition, class_definition
+// Semantic: a class instance boxed into `any` unboxes to the same instance
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   C
+//   3
+//
+// Guards the frame.data shape where a model travels through an `any` value
+// and back (`Post? latest()` returning a query result): boxing must keep the
+// instance, not convert it to a JSON object, or the unboxed record reads
+// garbage.
+
+start:
+	Post p = Post("C", 3)
+	Post back = unwrap(wrap(p))
+	printl(back.title)
+	printl(back.views.toString())
+
+class Post
+	public:
+		string title
+		integer views
+
+	constructor(string titleParam, integer viewsParam)
+		title = titleParam
+		views = viewsParam
+
+functions:
+	any wrap(any value)
+		return value
+
+	Post unwrap(any value)
+		Post post = value
+		return post

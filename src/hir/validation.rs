@@ -56,16 +56,14 @@ pub struct ValidationContext {
     /// Request handlers are identified by: a parameter named `req` or `request`,
     /// a parameter whose type is named `Request`, a function whose name starts
     /// with `__route_handler_` (the compiler-generated route handler prefix), or
-    /// a function whose name appears as the third argument of an `_http_route`
-    /// or `_http_route_protected` call anywhere in the program (plugins register
-    /// handlers this way — see [[fix_conc002_plugin_handlers]]).
+    /// a function a plugin's handler-registering bridge names (see
+    /// `handler_bridges`).
     /// Any use of request-context builtins (req.*, session.*, res.*) outside a
     /// request handler triggers CONC002.
     pub inside_request_handler: bool,
 
-    /// Function names that are registered as request handlers by an
-    /// `_http_route(_, _, handler)` or `_http_route_protected(_, _, handler, _)`
-    /// call anywhere in the program. Populated in a pre-pass before validation
+    /// Function names that are registered as request handlers by a call to a
+    /// handler-registering bridge anywhere in the program. Populated in a pre-pass before validation
     /// so that both user-written and plugin-emitted handlers are recognised.
     pub plugin_registered_handlers: HashSet<String>,
 
@@ -73,8 +71,7 @@ pub struct ValidationContext {
     /// specific argument position. Each `(bridge_name, handler_arg_index)`
     /// pair comes from a plugin.toml `[[bridge]]` entry with
     /// `registers_handler_at_arg = <n>`. Empty when no loaded plugin declares
-    /// any — in that case the pre-pass falls back to hardcoded recognition
-    /// of `_http_route` / `_http_route_protected`. See
+    /// any. See
     /// [`HirValidator::validate_with_handler_bridges`].
     pub handler_bridges: Vec<(String, usize)>,
 
@@ -226,11 +223,10 @@ pub struct HirValidator;
 impl HirValidator {
     /// Validate a complete HIR program.
     ///
-    /// Uses the historical hardcoded set of handler-registering bridges
-    /// (`_http_route`, `_http_route_protected`). Prefer
+    /// No bridge registers request handlers. Use
     /// [`validate_with_handler_bridges`] when the plugin registry is
-    /// available so any plugin declaring
-    /// `registers_handler_at_arg` in plugin.toml is honored.
+    /// available so every plugin declaring `registers_handler_at_arg` in
+    /// plugin.toml is honored.
     ///
     /// On success returns the warnings found (FUNC005, FUNC007, CLASS004, ...);
     /// on failure returns the errors.
@@ -238,8 +234,8 @@ impl HirValidator {
         Self::validate_with_handler_bridges(hir, &[])
     }
 
-    /// Same as [`validate`] but consults an explicit list of
-    /// handler-registering bridges alongside the historical hardcoded set.
+    /// Same as [`validate`] but consults the list of handler-registering
+    /// bridges the loaded plugins declare.
     ///
     /// `extra_handler_bridges` comes from
     /// `PluginRegistry::handler_registering_bridges()` — each entry is a
@@ -274,11 +270,10 @@ impl HirValidator {
         Self::collect_definitions(&mut context, hir);
 
         // Pre-pass for CONC002: walk every function body (plus start, screen
-        // functions, class methods, and tests) looking for
-        // `_http_route(method, path, handler)` and
-        // `_http_route_protected(method, path, handler, role)` calls. Any
-        // function whose name appears as the third argument is a
-        // plugin-registered request handler. This is how framework plugins
+        // functions, class methods, and tests) looking for calls to the
+        // handler-registering bridges the plugins declare
+        // (`registers_handler_at_arg`). Any function named at the declared
+        // argument is a plugin-registered request handler. This is how framework plugins
         // (frame.server, frame.pages, …) attach handlers at compile time;
         // without walking these calls, plugin-emitted handlers appear to the
         // validator as ordinary functions and every `req.*` call inside them
@@ -403,11 +398,11 @@ impl HirValidator {
         }
     }
 
-    /// Walk every block in the program looking for `_http_route(_, _, handler)`
-    /// and `_http_route_protected(_, _, handler, _)` calls, and add the third
-    /// argument's function name to `context.plugin_registered_handlers`.
+    /// Walk every block in the program looking for calls to the declared
+    /// handler-registering bridges, and add the function named at the
+    /// declared argument to `context.plugin_registered_handlers`.
     ///
-    /// The third argument is expected to be either:
+    /// That argument is expected to be either:
     /// - `HirExpression::Variable { name, .. }` — the typed-emission bridge form
     ///   (see `src/plugins/typed_emission/bridges.rs::_emit_route`), or
     /// - `HirExpression::Literal { value: Value::String(name), .. }` — the
@@ -508,37 +503,20 @@ impl HirValidator {
                 arguments,
                 ..
             } => {
-                // Plugin-declared handler-registering bridges take priority.
-                // If any loaded plugin's plugin.toml declares this bridge with
-                // `registers_handler_at_arg = <n>`, extract the handler name
-                // from that argument slot. Any plugin (frame.server today,
-                // future WebSocket / GraphQL subscription bridges tomorrow)
-                // can opt in without a compiler change.
-                let mut matched_plugin_bridge = false;
-                for (bridge_name, arg_index) in &context.handler_bridges {
-                    if function == bridge_name && arguments.len() > *arg_index {
-                        if let Some(name) = Self::handler_name_from_expr(&arguments[*arg_index]) {
-                            context.plugin_registered_handlers.insert(name);
-                        }
-                        matched_plugin_bridge = true;
-                        break;
-                    }
-                }
-                // Fallback: hardcoded recognition of frame.server's
-                // `_http_route(method, path, handler)` and
-                // `_http_route_protected(method, path, handler, role)`.
-                // Kept so existing installs work while framework maintainers
-                // add the `registers_handler_at_arg` metadata to plugin.toml.
-                // Once every handler-registering bridge declares the field,
-                // this fallback can be removed alongside the corresponding
-                // `EXEMPT_FILES` entry in tests/architecture_boundaries.rs.
-                if !matched_plugin_bridge
-                    && (function == "_http_route" || function == "_http_route_protected")
-                    && arguments.len() >= 3
+                // A bridge a loaded plugin declares with
+                // `registers_handler_at_arg = <n>` registers the function
+                // named at that argument as a request handler. Only the
+                // plugins' declarations count (plugin-contract.md §3.6).
+                let declared = context
+                    .handler_bridges
+                    .iter()
+                    .find(|(bridge_name, _)| function == bridge_name)
+                    .map(|(_, arg_index)| *arg_index);
+                if let Some(name) = declared
+                    .and_then(|index| arguments.get(index))
+                    .and_then(Self::handler_name_from_expr)
                 {
-                    if let Some(name) = Self::handler_name_from_expr(&arguments[2]) {
-                        context.plugin_registered_handlers.insert(name);
-                    }
+                    context.plugin_registered_handlers.insert(name);
                 }
                 for arg in arguments {
                     Self::scan_expr_for_route_registrations(context, arg);
@@ -1330,7 +1308,10 @@ impl HirValidator {
                         name: recv_name, ..
                     } = receiver.as_ref()
                     {
-                        if Self::is_request_context_namespace(recv_name) {
+                        // A local variable of that name shadows the namespace.
+                        if Self::is_request_context_namespace(recv_name)
+                            && context.lookup_variable(recv_name).is_none()
+                        {
                             context.error_with_code(
                                 &format!(
                                     "Request-context builtin '{}.{}' is used outside a request \
@@ -1457,7 +1438,9 @@ impl HirValidator {
                 // valid inside a request handler function.  Calling them from non-handler
                 // functions (e.g. utility functions, start:, tests) produces undefined
                 // behaviour at runtime because no request is active in those contexts.
-                if !context.inside_request_handler && Self::is_request_context_namespace(namespace)
+                if !context.inside_request_handler
+                    && Self::is_request_context_namespace(namespace)
+                    && context.lookup_variable(namespace).is_none()
                 {
                     context.error_with_code(
                         &format!(
@@ -2456,6 +2439,44 @@ mod concurrency_tests {
 
     /// Build a `start:` function that contains a single `_http_route` call
     /// registering `handler_name` for `GET "/path"`.
+    /// A `_http_route` call registers nothing unless a plugin declares the
+    /// bridge with `registers_handler_at_arg`: the compiler has no built-in
+    /// list of handler-registering bridges.
+    #[test]
+    fn test_conc002_undeclared_route_bridge_registers_no_handler() {
+        let handler = handler_returning_namespace_call("__debug_capture_handler", "req", "param");
+        let start = start_registering_route("__debug_capture_handler", false);
+        let program = HirProgram {
+            functions: vec![handler],
+            classes: vec![],
+            start_function: Some(start),
+            imports: vec![],
+            tests: vec![],
+            state: None,
+            watch_blocks: vec![],
+            externals: vec![],
+            capabilities: vec![],
+            screen_blocks: vec![],
+            location: loc(),
+        };
+        let errors = HirValidator::validate(&program)
+            .expect_err("an undeclared bridge must not register a request handler");
+        assert!(
+            errors.iter().any(|e| e.to_string().contains("CONC002")),
+            "Expected CONC002, got: {:?}",
+            errors
+        );
+    }
+
+    /// frame.server's handler-registering bridges as its plugin.toml declares
+    /// them (`registers_handler_at_arg = 2`).
+    fn route_bridges() -> Vec<(String, usize)> {
+        vec![
+            ("_http_route".to_string(), 2),
+            ("_http_route_protected".to_string(), 2),
+        ]
+    }
+
     fn start_registering_route(handler_name: &str, protected: bool) -> HirFunction {
         let mut args = vec![
             HirExpression::Literal {
@@ -2555,7 +2576,7 @@ mod concurrency_tests {
             screen_blocks: vec![],
             location: loc(),
         };
-        let result = HirValidator::validate(&program);
+        let result = HirValidator::validate_with_handler_bridges(&program, &route_bridges());
         if let Err(ref errors) = result {
             assert!(
                 !errors.iter().any(|e| e.to_string().contains("CONC002")),
@@ -2588,7 +2609,7 @@ mod concurrency_tests {
                 screen_blocks: vec![],
                 location: loc(),
             };
-            let result = HirValidator::validate(&program);
+            let result = HirValidator::validate_with_handler_bridges(&program, &route_bridges());
             if let Err(ref errors) = result {
                 assert!(
                     !errors.iter().any(|e| e.to_string().contains("CONC002")),
@@ -2656,7 +2677,7 @@ mod concurrency_tests {
             screen_blocks: vec![],
             location: loc(),
         };
-        let result = HirValidator::validate(&program);
+        let result = HirValidator::validate_with_handler_bridges(&program, &route_bridges());
         if let Err(ref errors) = result {
             assert!(
                 !errors.iter().any(|e| e.to_string().contains("CONC002")),
@@ -2689,7 +2710,7 @@ mod concurrency_tests {
             screen_blocks: vec![],
             location: loc(),
         };
-        let result = HirValidator::validate(&program);
+        let result = HirValidator::validate_with_handler_bridges(&program, &route_bridges());
         assert!(
             result.is_err(),
             "CONC002 must still reject req.param inside an unregistered function"
@@ -2706,8 +2727,7 @@ mod concurrency_tests {
     ///
     /// A plugin can declare `registers_handler_at_arg = <n>` on any
     /// `[[bridge]]` entry to mark it as a handler-registering call. The
-    /// HIR validator's CONC002 pre-pass consults that list before falling
-    /// back to hardcoded `_http_route` / `_http_route_protected` names.
+    /// HIR validator's CONC002 pre-pass consults only that list.
     /// This test exercises a fabricated bridge named `_ws_on_message`
     /// (WebSocket) with the handler at arg index 1, proving that no
     /// compiler change is needed to teach the CONC002 check about new

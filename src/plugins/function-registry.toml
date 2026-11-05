@@ -1568,6 +1568,72 @@ aliases     = ["time.now"]
 hosts       = ["all"]
 description = "Get current Unix timestamp in seconds since epoch as i64"
 
+[[functions]]
+name        = "_time_format"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = ["number", "string", "string", "string"]
+returns     = "ptr"
+aliases     = ["time.format"]
+hosts       = ["all"]
+description = "Format a Unix timestamp in seconds: ts, pattern (tokens YYYY MM DD HH mm ss h A a; other characters literal), locale (BCP 47 or empty), timezone (IANA name or empty for local). Returns empty string for a non-finite ts."
+
+[[functions]]
+name        = "_time_relative"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = ["number", "string"]
+returns     = "ptr"
+aliases     = ["time.relative"]
+hosts       = ["all"]
+description = "Human-readable time of a Unix timestamp in seconds relative to now (e.g. 'just now', '3 hours ago', 'in 2 days'): ts, locale (BCP 47 or empty)."
+
+[[functions]]
+name        = "_time_parse"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = ["string"]
+returns     = "number"
+aliases     = ["time.parse"]
+hosts       = ["all"]
+description = "Parse an ISO 8601 string to a Unix timestamp in seconds (fractional). Date-only strings are UTC midnight; date-times without an offset are local time. Returns -1 on invalid input."
+
+[[functions]]
+name        = "_time_parts"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = ["number", "string"]
+returns     = "ptr"
+aliases     = ["time.parts"]
+hosts       = ["all"]
+description = "Calendar components of a Unix timestamp in seconds as JSON {year, month, day, hour, minute, second, dayOfWeek (0=Sunday), timestamp}: ts, timezone (IANA name or empty for local)."
+
+[[functions]]
+name        = "_time_add"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = ["number", "i32", "string"]
+returns     = "number"
+aliases     = ["time.add"]
+hosts       = ["all"]
+description = "Add amount units to a Unix timestamp in seconds: ts, amount, unit (seconds|minutes|hours|days|weeks|months|years). Months and years follow calendar rules, clamping to the month's last day (2026-01-31 + 1 month = 2026-02-28). Returns NaN for an unknown unit."
+
+[[functions]]
+name        = "_time_diff"
+layer       = 2
+category    = "time"
+module      = "env"
+params      = ["number", "number", "string"]
+returns     = "number"
+aliases     = ["time.diff"]
+hosts       = ["all"]
+description = "Difference to - from of two Unix timestamps in seconds, expressed in unit (same values as _time_add); fractional values allowed. Returns NaN for an unknown unit."
+
 # ============================================================
 # LAYER 2 - MEMORY RUNTIME (5 functions)
 # module = "memory_runtime" (not "env")
@@ -2074,7 +2140,7 @@ params      = ["string", "string", "i32", "string", "i32", "i32", "string"]
 returns     = "void"
 aliases     = ["job.register"]
 hosts       = ["server"]
-description = "Register a job handler: name, handler function, maxAttempts, backoff strategy, delayMs, timeoutMs, queue name"
+description = "Register a job handler: name, handler function, maxAttempts, backoff strategy, delaySeconds, timeoutSeconds, queue name"
 
 [[functions]]
 name        = "_job_enqueue"
@@ -2096,7 +2162,7 @@ params      = ["string", "string", "number"]
 returns     = "ptr"
 aliases     = ["job.enqueueAt", "queue.enqueueAt"]
 hosts       = ["server"]
-description = "Schedule a job for a specific Unix epoch timestamp (milliseconds, f64): jobName, argsJson, runAtUnixMs. Returns generated job ID."
+description = "Schedule a job for a specific Unix epoch timestamp (seconds, f64): jobName, argsJson, runAtUnixSeconds. Returns generated job ID."
 
 [[functions]]
 name        = "_job_cancel"
@@ -2173,7 +2239,7 @@ params      = ["i32"]
 returns     = "void"
 aliases     = ["job.retryAfter"]
 hosts       = ["server"]
-description = "Inside a job handler, request retry after a specific delay in milliseconds; overrides default backoff for this attempt"
+description = "Inside a job handler, request retry after a specific delay in seconds; overrides default backoff for this attempt"
 
 [[functions]]
 name        = "_job_fail"
@@ -2217,7 +2283,7 @@ params      = ["string"]
 returns     = "boolean"
 aliases     = ["schedule.cancel"]
 hosts       = ["server"]
-description = "Cancel a cron schedule by name; returns true if cancelled, false if not found"
+description = "Cancel a cron schedule by name or by the registration ID returned from _schedule_cron; returns true if cancelled, false if not found"
 
 # ============================================================
 # LAYER 2 - I18N / LOCALE (8 functions — translations, formatting)
@@ -2301,7 +2367,7 @@ params      = ["number", "string", "string"]
 returns     = "ptr"
 aliases     = ["i18n.formatDate", "locale.formatDate"]
 hosts       = ["all"]
-description = "Format a date for a locale: Unix timestamp ms (f64), format ('short' | 'medium' | 'long' | 'full' | CLDR pattern), locale code"
+description = "Format a date for a locale: Unix timestamp seconds (f64), format ('short' | 'medium' | 'long' | 'full' | CLDR pattern), locale code"
 
 [[functions]]
 name        = "_i18n_load"
@@ -2903,7 +2969,7 @@ params      = ["integer"]
 returns     = "void"
 aliases     = ["server.sleep"]
 hosts       = ["all"]
-description = "Suspend execution for the given number of milliseconds."
+description = "Suspend execution for the given duration in milliseconds."
 
 # ============================================================
 # LAYER 3 - UI (4 functions)
@@ -2965,7 +3031,7 @@ hosts       = ["browser", "server"]
 description = "Register a component's server-side HTML template for expansion in _ui_render_page; first arg is the hyphenated tag name (e.g. my-widget), second arg is the rendered HTML string; returns 1 on success"
 
 # ============================================================
-# LAYER 3 - MCP (6 functions)
+# LAYER 3 - MCP (9 functions)
 # ============================================================
 
 [[functions]]
@@ -2999,7 +3065,7 @@ params      = ["i32", "string"]
 returns     = "i32"
 aliases     = ["mcp.http_serve"]
 hosts       = ["server"]
-description = "Start an HTTP+SSE listener for MCP. Binds to host:port. Exposes POST /mcp (JSON-RPC) and GET /sse (SSE stream) with CORS and Mcp-Session-Id headers. Returns 1 immediately; listener runs in background."
+description = "Start an HTTP+SSE listener for MCP. Binds to host:port. Exposes POST / (JSON-RPC; POST /mcp is also accepted) and GET /sse (SSE stream) with CORS and Mcp-Session-Id headers. Returns 1 immediately; listener runs in background."
 
 [[functions]]
 name        = "_mcp_http_accept"
@@ -3010,7 +3076,7 @@ params      = []
 returns     = "ptr"
 aliases     = ["mcp.http_accept"]
 hosts       = ["server"]
-description = "Block until the next POST /mcp request arrives. Stores the response writer as the current HTTP client context. Returns the raw JSON-RPC request body as a length-prefixed string. Returns empty string on shutdown."
+description = "Block until the next JSON-RPC POST request arrives. Stores the response writer as the current HTTP client context. Returns the raw JSON-RPC request body as a length-prefixed string. Returns empty string on shutdown."
 
 [[functions]]
 name        = "_mcp_http_respond"
@@ -3022,6 +3088,28 @@ returns     = "i32"
 aliases     = ["mcp.http_respond"]
 hosts       = ["server"]
 description = "Deliver the JSON response body to the HTTP client whose request was returned by the most recent _mcp_http_accept call. Each accept must be followed by exactly one respond before the next accept. Returns 1 on success, 0 if no in-flight HTTP response context is set or the client disconnected."
+
+[[functions]]
+name        = "_mcp_http_header"
+layer       = 3
+category    = "mcp"
+module      = "env"
+params      = ["string"]
+returns     = "ptr"
+aliases     = ["mcp.http_header"]
+hosts       = ["server"]
+description = "Return the value of the named header (case-insensitive) of the request returned by the most recent _mcp_http_accept. Returns empty string when the header is absent."
+
+[[functions]]
+name        = "_mcp_http_require_key"
+layer       = 3
+category    = "mcp"
+module      = "env"
+params      = ["string"]
+returns     = "i32"
+aliases     = ["mcp.http_require_key"]
+hosts       = ["server"]
+description = "Require Authorization: Bearer <key> on every MCP HTTP request (frame.mcp apiKey:). Requests without the matching key are answered 401 Unauthorized by the host and never reach _mcp_http_accept. Returns 1 on success, 0 for an empty key."
 
 [[functions]]
 name        = "_mcp_sse_send"
@@ -3135,7 +3223,7 @@ params      = ["i32"]
 returns     = "i32"
 aliases     = ["sse.retry"]
 hosts       = ["server"]
-description = "Write 'retry: {ms}\\n\\n' to the SSE stream to set the client reconnect interval. Returns 0."
+description = "Write 'retry: {ms}\\n\\n' to the SSE stream to set the client reconnect interval, in milliseconds (a duration). Returns 0."
 
 [[functions]]
 name        = "_sse_is_connected"

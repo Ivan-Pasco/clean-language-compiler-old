@@ -150,6 +150,33 @@ impl TokenParser {
         }
     }
 
+    /// Whether the current token can be a member name after `.`
+    /// (grammar.ebnf `member_name`): an identifier or any keyword, so
+    /// `auth.tenant.require()`, `item.type` and `timer.start()` parse.
+    pub(super) fn at_member_name(&self) -> bool {
+        let text = self.current().text.as_str();
+        let mut chars = text.chars();
+        chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    /// Consume a member name after `.` (see [`Self::at_member_name`]).
+    pub(super) fn expect_member_name(
+        &mut self,
+    ) -> Result<crate::lexer::specification_token::Token, CompilerError> {
+        if self.at_member_name() {
+            return Ok(self.bump());
+        }
+        let token = self.current();
+        Err(CompilerError::parse_error(
+            format!("Expected a member name after '.', found {:?}", token.kind),
+            Some(token.location.clone()),
+            None,
+        ))
+    }
+
     /// Parse a complete program
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
         self.skip_whitespace();

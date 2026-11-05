@@ -187,6 +187,39 @@ impl MirCodeGenerator<'_> {
         false
     }
 
+    /// The merge block the MIR builder recorded for the source `if` whose
+    /// condition test ends `block_id` (`MirFunction::if_merges`), while that
+    /// block still ends in the `if`'s own Branch: the merge is the false
+    /// target (no `else`) or the false target is the `else` arm.
+    pub(super) fn recorded_if_merge(
+        &self,
+        function: &MirFunction,
+        block_id: BasicBlockId,
+        false_block: BasicBlockId,
+    ) -> Option<BasicBlockId> {
+        let merge = *function.if_merges.get(&block_id)?;
+        let is_if_branch = merge == false_block
+            || function
+                .blocks
+                .get(&false_block)
+                .is_some_and(|b| b.label.as_deref() == Some("else"));
+        is_if_branch.then_some(merge)
+    }
+
+    /// Whether any block transfers control to `target`. The merge of an
+    /// `if` whose arms all return, break or continue is never entered.
+    pub(super) fn has_incoming_edge(&self, function: &MirFunction, target: BasicBlockId) -> bool {
+        function.blocks.values().any(|b| match &b.terminator {
+            MirTerminator::Jump { target: t } => *t == target,
+            MirTerminator::Branch {
+                true_block,
+                false_block,
+                ..
+            } => *true_block == target || *false_block == target,
+            _ => false,
+        })
+    }
+
     /// Whether a Jump to `block_id` leaves the current iteration of a loop
     /// being emitted: `continue` (to the loop header, or to the increment
     /// block of an `iterate` loop) or `break` (to the loop exit). Such a

@@ -258,7 +258,7 @@ impl TokenParser {
                     let mut has_colon = false;
                     while self.eat(&TokenKind::Dot) {
                         self.skip_whitespace();
-                        if matches!(self.current_kind(), TokenKind::Identifier(_)) {
+                        if self.at_member_name() {
                             self.bump(); // consume property name
                             self.skip_whitespace();
                             if self.check(&TokenKind::Colon) {
@@ -357,15 +357,12 @@ impl TokenParser {
                     // Consume the leading dot and subsequent identifier segments.
                     while self.check(&TokenKind::Dot) {
                         self.bump(); // consume .
-                        match self.current_kind() {
-                            TokenKind::Identifier(seg) => {
-                                path.push(seg.clone());
-                                self.bump();
-                            }
-                            _ => {
-                                // Not a plain identifier after dot — not a property assignment.
-                                break;
-                            }
+                        if self.at_member_name() {
+                            // Any keyword is a member name after `.`.
+                            path.push(self.bump().text);
+                        } else {
+                            // Not a member name after the dot — not a property assignment.
+                            break;
                         }
                     }
 

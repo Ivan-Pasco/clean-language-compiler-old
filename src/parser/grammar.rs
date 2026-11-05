@@ -191,6 +191,36 @@ impl CleanParser {
             };
         }
 
+        // Expression fragments parse exactly like expressions in a source file
+        // (string interpolation included), so the token-driven parser used
+        // for source files and statement fragments goes first. The pest
+        // wrappers below remain the fallback and the source of diagnostics.
+        if !trimmed.contains('\n') {
+            let wrapped = format!("start:\n\tany __x = {}\n", trimmed);
+            if let Some(program) = parse_with_token_parser(&wrapped) {
+                let body = program
+                    .start_function
+                    .as_ref()
+                    .map(|f| &f.body)
+                    .or_else(|| {
+                        program
+                            .functions
+                            .iter()
+                            .find(|f| f.name == "start")
+                            .map(|f| &f.body)
+                    });
+                if let Some(
+                    [Statement::VariableDecl {
+                        initializer: Some(expr),
+                        ..
+                    }],
+                ) = body.map(Vec::as_slice)
+                {
+                    return SingleExpressionParse::Expression(expr.clone());
+                }
+            }
+        }
+
         // Try wrapping the fragment as the RHS of a typed variable declaration.
         // The concrete type is unknown, so probe each primitive prefix — if any
         // wrapper parses cleanly, the fragment is a valid expression.
@@ -389,6 +419,47 @@ mod tests {
                 );
             }
             _ => panic!("fragment must fail to parse"),
+        }
+    }
+
+    /// The pest grammar (fragment fallback and diagnostics) accepts any
+    /// keyword after `.` (grammar.ebnf `member_name`) but still rejects a
+    /// keyword as a plain identifier.
+    #[test]
+    fn pest_grammar_accepts_keywords_as_member_names() {
+        use pest::Parser;
+        for source in [
+            "start:\n\tstring t = auth.tenant.require()\n",
+            "start:\n\tany k = item.type\n",
+            "start:\n\tjob.start = 2\n",
+            "start:\n\tinteger n = obj.state.length()\n",
+        ] {
+            assert!(
+                CleanParser::parse(Rule::program, source).is_ok(),
+                "pest must parse `{}`",
+                source
+            );
+        }
+        assert!(CleanParser::parse(Rule::identifier, "while").is_err());
+    }
+
+    /// Regression: `"{x}"` in an expression fragment
+    /// (`_emit_expr_from_source`) was kept as literal text, while the same
+    /// literal in a statement fragment was interpolated.
+    #[test]
+    fn single_expression_fragment_interpolates_strings() {
+        match CleanParser::parse_single_expression("\"v{n}\" == \"v5\"") {
+            SingleExpressionParse::Expression(Expression::Binary(left, _, _)) => {
+                assert!(
+                    matches!(*left, Expression::StringInterpolation(_)),
+                    "left operand must be an interpolated string, got {:?}",
+                    left
+                );
+            }
+            SingleExpressionParse::Expression(other) => {
+                panic!("fragment must parse as a comparison, got {:?}", other)
+            }
+            _ => panic!("fragment must parse as an expression"),
         }
     }
 

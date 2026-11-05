@@ -1,0 +1,53 @@
+// Test: bugfixes/json_encode_records_and_class_instances
+// Grammar: function_call, class_definition, list_type
+// Semantic: json.encode serializes class instances by their fields
+// Fixed in: compiler 0.33.170
+// Expected output:
+//   {"users":[{"name":"ann"}]}
+//   [5,"s",{"name":"ann"}]
+//   direct={"title":"T1","views":3,"tags":[{"name":"x"}],"extra":{"k":1}}
+//   list=[{"title":"T1","views":3,"tags":[{"name":"x"}],"extra":{"k":1}}]
+//   empty={"title":"T2","views":0,"tags":[],"extra":null}
+//
+// Regression: values added to a `list<any>` were stored unboxed and the list
+// was converted with the integer tag, so records came out as heap addresses;
+// lists of class instances and `any` fields of a class were encoded as
+// null.
+
+start:
+	list<any> rows = []
+	rows.add({ name: "ann" })
+	any r = { users: rows }
+	printl(json.encode(r))
+	list<any> mixed = []
+	mixed.add(5)
+	mixed.add("s")
+	mixed.add({ name: "ann" })
+	printl(json.encode(mixed))
+	Post p = Post("T1", 3)
+	p.tags.add(Tag("x"))
+	p.extra = json.textToData("{\"k\":1}")
+	printl("direct=" + json.encode(p))
+	list<Post> ps = []
+	ps.add(p)
+	printl("list=" + json.encode(ps))
+	printl("empty=" + json.encode(Post("T2", 0)))
+
+class Tag
+	public:
+		string name
+
+	constructor(string nameParam)
+		name = nameParam
+
+class Post
+	public:
+		string title
+		integer views
+		list<Tag> tags
+		any extra
+
+	constructor(string titleParam, integer viewsParam)
+		title = titleParam
+		views = viewsParam
+		tags = []

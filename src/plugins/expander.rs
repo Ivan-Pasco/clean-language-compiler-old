@@ -58,8 +58,7 @@ fn stamp_plugin_origin_expansion(expansion: &mut super::PluginExpansion, plugin_
 /// routing to the plugin's owning component (framework for frame.*).
 /// Names of the functions `stmts` registers as request handlers: the
 /// argument at `registers_handler_at_arg` of every handler-registering bridge
-/// call (plugin-contract.md §3.6), plus the historical `_http_route` /
-/// `_http_route_protected` handler at argument 2 when no plugin declares them.
+/// call (plugin-contract.md §3.6). Only the plugins' declarations count.
 fn registered_request_handlers(
     stmts: &[Statement],
     bridges: &[(String, usize)],
@@ -78,12 +77,10 @@ fn registered_request_handlers(
         out: &mut std::collections::HashSet<String>,
     ) {
         if let Expression::Call(callee, args) = expr {
-            let declared = bridges.iter().find(|(name, _)| name == callee);
-            let arg_index = match declared {
-                Some((_, index)) => Some(*index),
-                None if callee == "_http_route" || callee == "_http_route_protected" => Some(2),
-                None => None,
-            };
+            let arg_index = bridges
+                .iter()
+                .find(|(name, _)| name == callee)
+                .map(|(_, index)| *index);
             if let Some(name) = arg_index.and_then(|i| args.get(i)).and_then(handler_name) {
                 out.insert(name);
             }
