@@ -459,11 +459,14 @@ impl MirBuilder {
     /// field, parent fields first — in the JSON-tree layout of
     /// BOXED_ANY_ABI §3.3, so `json.encode(instance)` and the other JSON
     /// bridges serialize it like any other `any` object. Each member value
-    /// is boxed by its field type: primitives directly, nested classes
-    /// through their own `__json_tree_*`, lists and pairs of primitives
-    /// through the typed-collection converters, lists of class instances
-    /// through `__json_tree_list_*`, and an `any` field is its boxed value.
-    /// A field with no JSON representation is `null`.
+    /// is boxed by its field type: primitives directly, nested instances
+    /// through `__json_tree_instance` (the builder of the class named by the
+    /// instance header), lists and pairs of primitives through the
+    /// typed-collection converters, lists of class instances through
+    /// `__json_tree_list_*`, and an `any` field is its boxed value (the JSON
+    /// bridges pass the whole tree through `__json_normalize`, which turns
+    /// instances boxed in `any` values into objects). A field with no JSON
+    /// representation is `null`.
     pub(super) fn build_class_json_tree(
         &mut self,
         symbol_id: SymbolId,
@@ -605,19 +608,14 @@ impl MirBuilder {
                     type_tag: Self::get_any_type_tag(t),
                     source_type: field_mir_type,
                 },
-                ConcreteType::Class {
-                    symbol_id: nested_sym,
-                    ..
-                } => match all_classes
-                    .iter()
-                    .find(|c| c.symbol_id == *nested_sym)
-                    .and_then(|c| self.class_json_tree_ids.get(&c.name).copied())
-                {
-                    Some(nested_tree) => MirOperation::Call {
-                        function: MirOperand::Function(nested_tree),
-                        arguments: vec![MirOperand::Value(val_vid)],
+                // A nested instance (or null) is the object of its own class,
+                // read from its header: a subclass keeps its fields.
+                ConcreteType::Class { .. } | ConcreteType::Interface { .. } => MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name: "__json_tree_instance".to_string(),
+                        symbol_id: SymbolId(0),
                     },
-                    None => null_box,
+                    arguments: vec![MirOperand::Value(val_vid)],
                 },
                 // An `any` field already holds a boxed value (0 → null).
                 ConcreteType::Any => MirOperation::Call {
@@ -798,13 +796,9 @@ impl MirBuilder {
 
     /// `__json_tree_list_ClassName(list: i32) -> i32` — the JSON-tree array
     /// (`[count][boxed_elem_ptr]…`, BOXED_ANY_ABI §3.2) of a
-    /// `list<ClassName>`: every element goes through the class's
-    /// `__json_tree_ClassName` builder.
-    pub(super) fn build_class_json_list(
-        symbol_id: SymbolId,
-        class_name: &str,
-        tree_fn: SymbolId,
-    ) -> MirFunction {
+    /// `list<ClassName>`: every element becomes the object of its own class
+    /// (`__json_tree_instance`), or null.
+    pub(super) fn build_class_json_list(symbol_id: SymbolId, class_name: &str) -> MirFunction {
         const LIST_DATA_OFFSET: i64 = 16;
         let loc = SourceLocation::default();
         let mut locals: HashMap<ValueId, MirLocal> = HashMap::new();
@@ -894,7 +888,10 @@ impl MirBuilder {
             instruction(
                 Some(tree),
                 MirOperation::Call {
-                    function: MirOperand::Function(tree_fn),
+                    function: MirOperand::NamedFunction {
+                        name: "__json_tree_instance".to_string(),
+                        symbol_id: SymbolId(0),
+                    },
                     arguments: vec![value(element)],
                 },
             ),

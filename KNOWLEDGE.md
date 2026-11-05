@@ -267,3 +267,17 @@ A Jump to a loop header, to an `iterate` loop's increment block or to a loop exi
 **Where:** `src/hir/hir_builder.rs` (`build_block_inner`), `src/mir/mir_builder/helpers.rs` (`add_instruction`, `begin_error_region`, `end_error_region`, `leave_error_regions`), `src/codegen/mir_codegen/instructions.rs` (`ErrorCheck`), `src/codegen/codegen_registration.rs` (`register_error_handling_operations`), globals 5-6 in `native_stdlib/mod.rs`.
 
 **Watch for:** `return`, `break` and `continue` out of a region must call `__err_leave` for each region they leave (`leave_error_regions`), or the depth count leaks and later errors are swallowed instead of trapping. A WASM `br` emitted inside nested instructions (short-circuit rhs) must count the enclosing `if` in `current_block_depth`. The `error` variable inside a handler is not implemented yet. Regression: `tests/cln/bugfixes/onerror_catches_error_from_called_function.cln`.
+
+## 20. Class Instance Header and Instances in `any`
+
+**What:** Every class instance starts with a 4-byte object header, `CLASS_HEADER_MARK | class_id` (`0xC1A50000 | id`, `mir_types::class_header_word`), written by the constructor call (`expressions.rs`, constructor allocation). The mark makes the word negative, so it never equals the non-negative `count` that starts a JSON-tree object or array; that is how the runtime tells a boxed instance (tag 6, payload = instance pointer) from a JSON-tree object (tag 6, payload = fragment). Boxing an instance keeps the instance, so `any` → class unboxing returns it; boxing a null instance gives a null box (`emit_box_value`, tag selected at run time).
+
+The JSON hosts only understand JSON-tree fragments, so every value bound for a JSON bridge goes through `MirBuilder::json_value_of`: a class value through `__json_tree_instance` (switch on the header → `__json_tree_ClassName`), anything that can contain an instance through `__json_normalize` (copy-on-change walk that replaces boxed instances with their objects). `any` → class goes through `__any_to_instance`. The three functions are native WASM emitted after the MIR functions (`src/codegen/mir_codegen/class_json.rs`); their indices are reserved before MIR bodies are generated (`preregister_class_json_runtime`) because MIR calls them by name. They exist only when the program declares a class.
+
+**Watch for:**
+- Never box an instance as a JSON tree at boxing time: frame.data records travel through `any` and back (`Post? latest()`), and only the instance pointer survives the round trip. Convert at the JSON boundary instead.
+- A new place that hands a value to a host JSON bridge (or to any bridge that reads boxed-Any trees) must use `json_value_of`, or a boxed instance reaches the host as raw memory.
+- Capability dispatch compares the whole header word, not the bare class-id.
+- Any new instance allocation path must write the header.
+
+**Regression:** `tests/cln/bugfixes/class_instance_json_through_any.cln`, `tests/cln/bugfixes/record_rows_through_any_and_back.cln`, `tests/cln/bugfixes/class_instance_round_trips_through_any.cln`.

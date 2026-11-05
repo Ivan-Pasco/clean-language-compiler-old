@@ -69,6 +69,11 @@ pub struct MirProgram {
     /// switch that routes to the correct concrete method.
     pub capability_dispatch:
         BTreeMap<(crate::resolver::SymbolId, usize), Vec<(u32, crate::resolver::SymbolId)>>,
+
+    /// Class-id → SymbolId of that class's `__json_tree_ClassName` builder.
+    /// Codegen emits `__json_tree_instance` from it: the runtime switch over
+    /// an instance's header that builds the JSON object of its own class.
+    pub class_json_trees: BTreeMap<u32, crate::resolver::SymbolId>,
 }
 
 /// MIR External Function - a function provided by the WASM host (imported)
@@ -578,6 +583,29 @@ pub enum MirType {
     /// For Number (f64): bits are split across value1 (low) and value2 (high)
     /// Represented as i32 pointer to boxed structure in memory
     Any,
+}
+
+/// High half of the word every class instance starts with (the object
+/// header, MEMORY_MODEL.md "Class instance"). The low half is the class-id.
+/// As an `i32` the mark is negative, so a header can never be mistaken for
+/// the non-negative `count` that starts a JSON-tree object (BOXED_ANY_ABI
+/// §3.3): a tag-6 box whose payload begins with the mark holds a class
+/// instance.
+pub const CLASS_HEADER_MARK: u32 = 0xC1A5_0000;
+
+/// Mask selecting the mark half of an object header.
+pub const CLASS_HEADER_MARK_MASK: u32 = 0xFFFF_0000;
+
+/// Largest class-id that fits in the header's low half.
+pub const MAX_CLASS_ID: u32 = 0xFFFF;
+
+/// The object-header word of an instance of the class with `class_id`.
+pub fn class_header_word(class_id: u32) -> i32 {
+    debug_assert!(
+        class_id <= MAX_CLASS_ID,
+        "class-id {class_id} exceeds the header"
+    );
+    (CLASS_HEADER_MARK | (class_id & MAX_CLASS_ID)) as i32
 }
 
 /// Type tags for boxed `any` values

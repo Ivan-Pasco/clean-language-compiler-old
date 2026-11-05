@@ -321,6 +321,15 @@ impl MirBuilder {
                 .insert(class.name.clone(), list_sym_id);
 
             let class_id = self.next_class_id;
+            if class_id > crate::mir::mir_types::MAX_CLASS_ID {
+                return Err(vec![CompilerError::validation_error(
+                    format!(
+                        "Too many classes: a program can declare at most {} classes",
+                        crate::mir::mir_types::MAX_CLASS_ID
+                    ),
+                    SourceLocation::default(),
+                )]);
+            }
             self.next_class_id += 1;
             self.class_ids.insert(class.symbol_id, class_id);
             debug!(
@@ -461,6 +470,8 @@ impl MirBuilder {
                 .collect::<BTreeMap<_, _>>(),
             // Built from tast.vtable_descriptors below.
             capability_dispatch: BTreeMap::new(),
+            // Filled once the class JSON builders exist (below).
+            class_json_trees: BTreeMap::new(),
         };
 
         // Build the runtime capability dispatch table from the resolver's
@@ -704,8 +715,11 @@ impl MirBuilder {
                     .insert(sym_id, mir_fn.name.clone());
                 mir_program.functions.insert(sym_id, mir_fn);
                 self.stats.functions_lowered += 1;
+                if let Some(&class_id) = self.class_ids.get(&class.symbol_id) {
+                    mir_program.class_json_trees.insert(class_id, sym_id);
+                }
                 if let Some(&list_sym_id) = self.class_json_list_ids.get(&class.name) {
-                    let list_fn = Self::build_class_json_list(list_sym_id, &class.name, sym_id);
+                    let list_fn = Self::build_class_json_list(list_sym_id, &class.name);
                     mir_program
                         .symbol_name_map
                         .insert(list_sym_id, list_fn.name.clone());

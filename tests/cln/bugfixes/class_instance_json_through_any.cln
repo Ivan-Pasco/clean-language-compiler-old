@@ -1,0 +1,113 @@
+// Test: bugfixes/class_instance_json_through_any
+// Grammar: function_definition, class_definition, type (nullable "?")
+// Semantic: a class instance carries a runtime type header, so a value
+//   boxed into `any` still encodes to the JSON object of its fields
+// Fixed in: compiler 0.33.171
+// Expected output:
+//   param={"title":"T","views":3}
+//   direct={"title":"T","views":3}
+//   mixed=[{"title":"T","views":3},{"name":"x"},7,"s",null]
+//   sub={"title":"S","views":1,"badge":"gold"}
+//   sub={"title":"S","views":1,"badge":"gold"}
+//   nested={"post":{"title":"T","views":3},"n":2}
+//   field={"title":"W","views":0,"extra":{"name":"y"}}
+//   literal={"who":{"name":"z"},"list":[{"name":"x"}]}
+//   back=T 3
+//   found={"title":"T","views":3}
+//   missing=null
+//   isnull=true
+//   gone=null
+//   after={"title":"T","views":3}
+//
+// Regression: a class instance passed through an `any` value (an `any`
+// parameter, a `list<any>`, an object literal member, an `any` field) was
+// handed to the JSON host as its raw instance memory and encoded as
+// garbage. Instances now start with a header that names their class; the
+// JSON bridges turn a boxed instance into the object of its fields, using
+// the instance's own class (a subclass held in a parent-typed variable
+// keeps its fields), and the boxed value still unboxes to the same
+// instance.
+
+start:
+	Post p = Post("T", 3)
+	printl("param=" + encode(p))
+	printl("direct=" + json.encode(p))
+	list<any> mixed = []
+	mixed.add(p)
+	mixed.add(Tag("x"))
+	mixed.add(7)
+	mixed.add("s")
+	Post nothing = lookup(false)
+	mixed.add(nothing)
+	printl("mixed=" + json.encode(mixed))
+	Post s = Featured("S", 1, "gold")
+	printl("sub=" + encode(s))
+	printl("sub=" + json.encode(s))
+	any holder = { post: p, n: 2 }
+	printl("nested=" + json.encode(holder))
+	Wrapper w = Wrapper("W")
+	w.extra = Tag("y")
+	printl("field=" + json.encode(w))
+	list<any> tags = []
+	tags.add(Tag("x"))
+	printl("literal=" + encode({ who: Tag("z"), list: tags }))
+	Post back = unwrap(wrap(p))
+	printl("back=" + back.title + " " + back.views.toString())
+	printl("found=" + encode(lookup(true)))
+	printl("missing=" + encode(lookup(false)))
+	any boxedNull = lookup(false)
+	printl("isnull=" + (boxedNull == null).toString())
+	Post gone = unwrap(boxedNull)
+	if gone == null
+		printl("gone=null")
+	printl("after=" + json.encode(p))
+
+class Tag
+	public:
+		string name
+
+	constructor(string nameParam)
+		name = nameParam
+
+class Post
+	public:
+		string title
+		integer views
+
+	constructor(string titleParam, integer viewsParam)
+		title = titleParam
+		views = viewsParam
+
+class Featured is Post
+	public:
+		string badge
+
+	constructor(string titleParam, integer viewsParam, string badgeParam)
+		base(titleParam, viewsParam)
+		badge = badgeParam
+
+class Wrapper
+	public:
+		string title
+		integer views
+		any extra
+
+	constructor(string titleParam)
+		title = titleParam
+		views = 0
+
+functions:
+	string encode(any value)
+		return json.encode(value)
+
+	any wrap(any value)
+		return value
+
+	Post? unwrap(any value)
+		Post post = value
+		return post
+
+	Post? lookup(boolean present)
+		if present
+			return Post("T", 3)
+		return null

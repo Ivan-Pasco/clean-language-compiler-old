@@ -274,9 +274,7 @@ impl MirBuilder {
         )))
     }
 
-    /// Evaluate `value` as a boxed-Any pointer for a JSON bridge. A class
-    /// instance becomes the JSON object of its fields (`__json_tree_Class`);
-    /// any other typed value is boxed (`emit_box_any`).
+    /// Evaluate `value` as a boxed-Any pointer for a JSON bridge.
     fn build_json_value(
         &mut self,
         context: &mut FunctionBuildContext,
@@ -284,13 +282,57 @@ impl MirBuilder {
         location: &SourceLocation,
     ) -> Result<ValueId, Vec<CompilerError>> {
         let value_id = self.build_expression(context, value)?;
-        if let Some(tree_fn) = self.class_json_tree_fn(context, &value.expr_type) {
-            return Ok(self.emit_class_json_tree(context, tree_fn, value_id, location));
-        }
-        Ok(match &value.expr_type {
+        Ok(self.json_value_of(context, value_id, &value.expr_type, location))
+    }
+
+    /// The boxed JSON value of `value_id` for a JSON bridge. A class
+    /// instance becomes the JSON object of its own class
+    /// (`__json_tree_instance` reads the class from the instance header);
+    /// any other typed value is boxed (`emit_box_any`). When the program
+    /// declares classes, a value that can hold an instance (`any`, lists,
+    /// pairs, objects) is passed through `__json_normalize`, which replaces
+    /// every boxed instance inside it with the object of its fields — the
+    /// host only understands JSON-tree objects (BOXED_ANY_ABI §3.3).
+    pub(super) fn json_value_of(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let has_classes = !self.class_json_tree_ids.is_empty();
+        let boxed = match value_type {
+            ConcreteType::Class { .. } | ConcreteType::Interface { .. } if has_classes => self
+                .emit_named_call(
+                    context,
+                    "__json_tree_instance",
+                    vec![MirOperand::Value(value_id)],
+                    MirType::Any,
+                    location,
+                ),
             ConcreteType::Any => value_id,
             other => self.emit_box_any(context, value_id, other, location),
-        })
+        };
+        let primitive = matches!(
+            value_type,
+            ConcreteType::String
+                | ConcreteType::Boolean
+                | ConcreteType::Integer
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::Number
+                | ConcreteType::NumberSized { .. }
+                | ConcreteType::Null
+        );
+        if !has_classes || primitive {
+            return boxed;
+        }
+        self.emit_named_call(
+            context,
+            "__json_normalize",
+            vec![MirOperand::Value(boxed)],
+            MirType::Any,
+            location,
+        )
     }
 
     /// The call that builds the JSON-tree array of a list whose elements are
@@ -366,59 +408,18 @@ impl MirBuilder {
         result_id
     }
 
-    /// The `__json_tree_Class` builder for a class-typed value, if any.
-    pub(super) fn class_json_tree_fn(
-        &self,
-        context: &FunctionBuildContext,
-        value_type: &ConcreteType,
-    ) -> Option<SymbolId> {
-        let ConcreteType::Class { symbol_id, .. } = value_type else {
-            return None;
-        };
-        let class = context
-            .all_classes
-            .iter()
-            .find(|c| c.symbol_id == *symbol_id)?;
-        self.class_json_tree_ids.get(&class.name).copied()
-    }
-
-    /// Call a class's `__json_tree_Class` builder on `instance_id`; returns
-    /// the boxed JSON object.
-    pub(super) fn emit_class_json_tree(
-        &mut self,
-        context: &mut FunctionBuildContext,
-        tree_fn: SymbolId,
-        instance_id: ValueId,
-        location: &SourceLocation,
-    ) -> ValueId {
-        let result_id = ValueId(context.function.next_value_id);
-        context.function.next_value_id += 1;
-        self.register_temp_local(context, result_id, MirType::Any, location.clone());
-        self.add_instruction(
-            context,
-            MirInstruction {
-                dest: Some(result_id),
-                operation: MirOperation::Call {
-                    function: MirOperand::Function(tree_fn),
-                    arguments: vec![MirOperand::Value(instance_id)],
-                },
-                location: location.clone(),
-            },
-        );
-        result_id
-    }
-
-    /// The compact JSON text of a class instance: its `__json_tree_Class`
-    /// object encoded by `_json_encode_v2`. Used where a class instance is
-    /// passed for a string (bridge arguments, `later` calls).
+    /// The compact JSON text of a class instance: the object of its own
+    /// class (`json_value_of`) encoded by `_json_encode_v2`. Used where a
+    /// class instance is passed for a string (bridge arguments, `later`
+    /// calls).
     pub(super) fn emit_class_json_text(
         &mut self,
         context: &mut FunctionBuildContext,
-        tree_fn: SymbolId,
         instance_id: ValueId,
+        instance_type: &ConcreteType,
         location: &SourceLocation,
     ) -> ValueId {
-        let tree_id = self.emit_class_json_tree(context, tree_fn, instance_id, location);
+        let tree_id = self.json_value_of(context, instance_id, instance_type, location);
         self.emit_named_call(
             context,
             "_json_encode_v2",
@@ -647,6 +648,22 @@ impl MirBuilder {
                 },
             );
             return result_id;
+        }
+
+        // A class target: the instance the box holds (the header tells an
+        // instance from a JSON object), or null.
+        if matches!(
+            target_type,
+            ConcreteType::Class { .. } | ConcreteType::Interface { .. }
+        ) && !self.class_json_tree_ids.is_empty()
+        {
+            return self.emit_named_call(
+                context,
+                "__any_to_instance",
+                vec![MirOperand::Value(value_id)],
+                MirType::I32,
+                location,
+            );
         }
 
         let result_id = ValueId(context.function.next_value_id);

@@ -24,6 +24,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 
 // Submodules
 mod blocks;
+mod class_json;
 mod control_flow;
 mod instructions;
 mod operands;
@@ -230,6 +231,11 @@ pub struct MirCodeGenerator<'a> {
     pub(super) capability_dispatch:
         std::collections::BTreeMap<(SymbolId, usize), Vec<(u32, SymbolId)>>,
 
+    /// Class-id → SymbolId of the class's `__json_tree_ClassName` builder,
+    /// copied from MirProgram. Drives the class JSON runtime
+    /// (`class_json.rs`).
+    pub(super) class_json_trees: std::collections::BTreeMap<u32, SymbolId>,
+
     /// Function signature map for parameter/return type handling.
     pub(super) function_signatures: HashMap<SymbolId, MirFunction>,
 
@@ -413,6 +419,7 @@ impl MirCodeGenerator<'_> {
             function_symbol_map: HashMap::new(),
             symbol_to_function_index: HashMap::new(),
             capability_dispatch: std::collections::BTreeMap::new(),
+            class_json_trees: std::collections::BTreeMap::new(),
             function_signatures: HashMap::new(),
             function_return_types: HashMap::new(),
             value_to_type: HashMap::new(),
@@ -460,6 +467,7 @@ impl MirCodeGenerator<'_> {
             function_symbol_map: HashMap::new(),
             symbol_to_function_index: HashMap::new(),
             capability_dispatch: std::collections::BTreeMap::new(),
+            class_json_trees: std::collections::BTreeMap::new(),
             function_signatures: HashMap::new(),
             function_return_types: HashMap::new(),
             value_to_type: HashMap::new(),
@@ -507,6 +515,7 @@ impl MirCodeGenerator<'_> {
             function_symbol_map: HashMap::new(),
             symbol_to_function_index: HashMap::new(),
             capability_dispatch: std::collections::BTreeMap::new(),
+            class_json_trees: std::collections::BTreeMap::new(),
             function_signatures: HashMap::new(),
             function_return_types: HashMap::new(),
             value_to_type: HashMap::new(),
@@ -650,6 +659,7 @@ impl MirCodeGenerator<'_> {
         // per-instruction handler can look up class-id → method mappings
         // when lowering `MirOperation::CallCapability`.
         self.capability_dispatch = mir_program.capability_dispatch.clone();
+        self.class_json_trees = mir_program.class_json_trees.clone();
         for (symbol_id, function) in &mir_program.functions {
             tracing::debug!(
                 symbol_id = symbol_id.0,
@@ -1316,6 +1326,12 @@ impl MirCodeGenerator<'_> {
             functions_registered = sorted_functions.len(),
             "All functions pre-registered in function_map"
         );
+
+        // The class JSON runtime is emitted right after the MIR functions;
+        // MIR bodies call it by name, so its indices are reserved now.
+        let class_json_runtime_base =
+            self.wasm_generator.function_count + sorted_functions.len() as u32;
+        self.preregister_class_json_runtime(class_json_runtime_base);
         debug_mir!(
             total_entries = self.function_symbol_map.len(),
             "Function symbol map complete"
@@ -1362,6 +1378,9 @@ impl MirCodeGenerator<'_> {
             new_function_count = self.wasm_generator.function_count,
             "Updated function_count after generation"
         );
+
+        self.emit_class_json_runtime(class_json_runtime_base)
+            .map_err(|e| vec![e])?;
 
         // Handle entry point if it exists
         if let Some(entry_symbol_id) = mir_program.entry_point {

@@ -2685,8 +2685,8 @@ impl MirCodeGenerator<'_> {
 
         // Emit an if/else-if chain over class_ids.
         // Structure per arm:
-        //   load receiver.class_id
-        //   i32.const <class_id>
+        //   load receiver header
+        //   i32.const <CLASS_HEADER_MARK | class_id>
         //   i32.eq
         //   if <blocktype>
         //     load receiver
@@ -2700,7 +2700,7 @@ impl MirCodeGenerator<'_> {
         // case where a class not in the conformance set somehow reached here.
         let n_arms = entries.len();
         for (class_id, method_sym) in &entries {
-            // Load receiver.class_id (i32 at offset 0 of instance header).
+            // Load the receiver's object header (i32 at offset 0).
             self.current_instructions
                 .push(Instruction::LocalGet(receiver_local));
             self.current_instructions
@@ -2710,7 +2710,9 @@ impl MirCodeGenerator<'_> {
                     memory_index: 0,
                 }));
             self.current_instructions
-                .push(Instruction::I32Const(*class_id as i32));
+                .push(Instruction::I32Const(crate::mir::class_header_word(
+                    *class_id,
+                )));
             self.current_instructions.push(Instruction::I32Eq);
             self.current_instructions.push(Instruction::If(block_type));
 
@@ -3363,6 +3365,16 @@ impl MirCodeGenerator<'_> {
         // Stack: [ptr]
         self.current_instructions
             .push(Instruction::I32Const(tag.as_i32()));
+        if tag == AnyTypeTag::Object && !matches!(source_type, MirType::F64 | MirType::I64) {
+            // A null instance (`Post?` holding null) boxes as null: an
+            // object payload of 0 is not a value (BOXED_ANY_ABI §6), and
+            // `== null` reads the tag.
+            self.current_instructions
+                .push(Instruction::I32Const(AnyTypeTag::Null.as_i32()));
+            self.current_instructions
+                .push(Instruction::LocalGet(temp_local));
+            self.current_instructions.push(Instruction::Select);
+        }
         self.current_instructions
             .push(Instruction::I32Store(wasm_encoder::MemArg {
                 offset: 0,

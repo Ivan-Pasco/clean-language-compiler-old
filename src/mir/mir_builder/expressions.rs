@@ -1141,10 +1141,11 @@ impl MirBuilder {
 
                     self.add_instruction(context, alloc_instr);
 
-                    // Write the runtime class-id into the instance's object header
-                    // (bytes 0-3). Read by dynamic dispatch on capability-typed
-                    // receivers to look up the correct method via the per-class
-                    // vtable. See helpers.rs::OBJECT_HEADER_SIZE.
+                    // Write the object header (bytes 0-3): the class mark and
+                    // the runtime class-id. Read by dynamic dispatch on
+                    // capability-typed receivers and by the JSON bridges,
+                    // which build the object of the instance's own class.
+                    // See helpers.rs::OBJECT_HEADER_SIZE and MEMORY_MODEL.md.
                     let class_id_val = self.class_ids.get(class_symbol_id).copied().unwrap_or(0);
                     self.add_instruction(
                         context,
@@ -1153,7 +1154,7 @@ impl MirBuilder {
                             operation: MirOperation::Store {
                                 destination: MirOperand::Value(alloc_result),
                                 value: MirOperand::Constant(MirConstant::Integer(
-                                    class_id_val as i64,
+                                    crate::mir::class_header_word(class_id_val) as i64,
                                 )),
                             },
                             location: expression.location.clone(),
@@ -1258,41 +1259,17 @@ impl MirBuilder {
                             && !matches!(arg.expr_type, ConcreteType::Any);
 
                         if needs_class_serialize {
-                            if let ConcreteType::Class {
-                                symbol_id: class_sym,
-                                ..
-                            } = &arg.expr_type
-                            {
-                                let class_sym = *class_sym;
-                                let class_name = context
-                                    .all_classes
-                                    .iter()
-                                    .find(|c| c.symbol_id == class_sym)
-                                    .map(|c| c.name.clone());
-
-                                if let Some(ref name) = class_name {
-                                    if let Some(&json_tree_fn) = self.class_json_tree_ids.get(name)
-                                    {
-                                        let result_id = self.emit_class_json_text(
-                                            context,
-                                            json_tree_fn,
-                                            arg_id,
-                                            &arg.location,
-                                        );
-                                        trace!(
-                                            class_name = %name,
-                                            "Auto-serialized class arg to JSON string"
-                                        );
-                                        result_id
-                                    } else {
-                                        arg_id
-                                    }
-                                } else {
-                                    arg_id
-                                }
-                            } else {
-                                arg_id
-                            }
+                            let result_id = self.emit_class_json_text(
+                                context,
+                                arg_id,
+                                &arg.expr_type,
+                                &arg.location,
+                            );
+                            trace!(
+                                arg_type = ?arg.expr_type,
+                                "Auto-serialized class arg to JSON string"
+                            );
+                            result_id
                         } else if needs_boxing {
                             trace!(
                                 arg_idx = arg_idx,
@@ -3696,31 +3673,8 @@ impl MirBuilder {
                     // Auto-serialize class instances to JSON strings for bridge/namespace calls.
                     let final_id = if callee_is_program_class {
                         arg_id
-                    } else if let ConcreteType::Class {
-                        symbol_id: class_sym,
-                        ..
-                    } = &arg.expr_type
-                    {
-                        let class_sym = *class_sym;
-                        let class_name = context
-                            .all_classes
-                            .iter()
-                            .find(|c| c.symbol_id == class_sym)
-                            .map(|c| c.name.clone());
-                        if let Some(ref name) = class_name {
-                            if let Some(&json_tree_fn) = self.class_json_tree_ids.get(name) {
-                                self.emit_class_json_text(
-                                    context,
-                                    json_tree_fn,
-                                    arg_id,
-                                    &arg.location,
-                                )
-                            } else {
-                                arg_id
-                            }
-                        } else {
-                            arg_id
-                        }
+                    } else if matches!(arg.expr_type, ConcreteType::Class { .. }) {
+                        self.emit_class_json_text(context, arg_id, &arg.expr_type, &arg.location)
                     } else {
                         arg_id
                     };

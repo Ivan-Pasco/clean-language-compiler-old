@@ -1916,32 +1916,13 @@ impl MirBuilder {
                             // Auto-serialize class instances to JSON strings.
                             // `later` calls target bridge functions which only accept primitives;
                             // a class argument must become its JSON representation.
-                            let final_id = if let ConcreteType::Class {
-                                symbol_id: class_sym,
-                                ..
-                            } = &arg.expr_type
-                            {
-                                let class_sym = *class_sym;
-                                let class_name = context
-                                    .all_classes
-                                    .iter()
-                                    .find(|c| c.symbol_id == class_sym)
-                                    .map(|c| c.name.clone());
-                                if let Some(ref name) = class_name {
-                                    if let Some(&json_tree_fn) = self.class_json_tree_ids.get(name)
-                                    {
-                                        self.emit_class_json_text(
-                                            context,
-                                            json_tree_fn,
-                                            arg_id,
-                                            &arg.location,
-                                        )
-                                    } else {
-                                        arg_id
-                                    }
-                                } else {
-                                    arg_id
-                                }
+                            let final_id = if matches!(arg.expr_type, ConcreteType::Class { .. }) {
+                                self.emit_class_json_text(
+                                    context,
+                                    arg_id,
+                                    &arg.expr_type,
+                                    &arg.location,
+                                )
                             } else {
                                 arg_id
                             };

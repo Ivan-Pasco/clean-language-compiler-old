@@ -1,0 +1,81 @@
+// Test: bugfixes/record_rows_through_any_and_back
+// Grammar: function_definition, class_definition, type (nullable "?")
+// Semantic: records built from query rows keep their class through `any`
+// Fixed in: compiler 0.33.171
+// Expected output:
+//   rows=2
+//   first=C 20
+//   none=null
+//   any={"id":3,"title":"C","viewCount":20}
+//   list=[{"id":3,"title":"C","viewCount":20},{"id":2,"title":"B","viewCount":5}]
+//   back=B 5
+//   saved=C
+//   missing=null
+//
+// The frame.data shape: rows of a `_db_query` result are materialized as
+// `list<Post>` (`__parse_as_Post`), `first:` returns the first row or null
+// (`Post? latest()`), and records then travel through `any` values — a
+// `list<any>` response body, an `any` helper parameter — before being
+// encoded or read back as `Post`. The instance header must let them encode
+// as their fields and still unbox to the same record.
+
+start:
+	string result = "{\"data\":{\"rows\":[{\"id\":3,\"title\":\"C\",\"viewCount\":20},{\"id\":2,\"title\":\"B\",\"viewCount\":5}]}}"
+	list<Post> rows = parseRows(result)
+	printl("rows=" + rows.length().toString())
+	Post last = firstRow(result)
+	printl("first=" + last.title + " " + last.viewCount.toString())
+	Post nothing = firstRow("{\"data\":{\"rows\":[]}}")
+	if nothing == null
+		printl("none=null")
+	printl("any=" + encode(last))
+	list<any> body = []
+	iterate row in rows
+		body.add(row)
+	printl("list=" + json.encode(body))
+	any second = body[1]
+	Post back = second
+	printl("back=" + back.title + " " + back.viewCount.toString())
+	printl("saved=" + keep(last).title)
+	printl("missing=" + encode(firstRow("{\"data\":{\"rows\":[]}}")))
+
+class Post
+	public:
+		integer id
+		string title
+		integer viewCount
+
+	constructor()
+		id = 0
+		title = ""
+		viewCount = 0
+
+functions:
+	list<Post> parseRows(string text)
+		list<Post> result = []
+		string rows = json.get(json.get(text, "data"), "rows")
+		integer i = 0
+		string check = json.get(rows, "0")
+		while check != ""
+			Post row = Post()
+			string rowJson = json.get(rows, i.toString())
+			row.id = json.get(rowJson, "id").toInteger()
+			row.title = json.get(rowJson, "title")
+			row.viewCount = json.get(rowJson, "viewCount").toInteger()
+			result.add(row)
+			i = i + 1
+			check = json.get(rows, i.toString())
+		return result
+
+	Post? firstRow(string text)
+		list<Post> rows = parseRows(text)
+		if rows.length() == 0
+			return null
+		return rows[0]
+
+	string encode(any value)
+		return json.encode(value)
+
+	Post keep(any value)
+		Post post = value
+		return post

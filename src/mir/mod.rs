@@ -19,8 +19,8 @@ pub mod optimization;
 
 pub use mir_builder::{MirBuildResult, MirBuilder};
 pub use mir_types::{
-    BasicBlockId, MirBasicBlock, MirFunction, MirInstruction, MirOperand, MirProgram, MirType,
-    ValueId,
+    class_header_word, BasicBlockId, MirBasicBlock, MirFunction, MirInstruction, MirOperand,
+    MirProgram, MirType, ValueId,
 };
 pub use optimization::{MirOptimizer, OptimizationPass};
 

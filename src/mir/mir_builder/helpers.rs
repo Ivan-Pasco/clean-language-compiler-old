@@ -408,11 +408,13 @@ impl MirBuilder {
     }
 
     /// Size in bytes of the per-instance object header prepended to every
-    /// class instance. Currently holds a single `i32` class-id used by
-    /// dynamic dispatch on capability-typed receivers (`shape.draw()` where
-    /// `shape: Drawable`). The class-id is written by the constructor
-    /// immediately after allocation and read by the `CallCapability`
-    /// codegen path to index into the per-class vtable.
+    /// class instance. It holds one `i32`: `CLASS_HEADER_MARK | class_id`
+    /// (`mir_types::class_header_word`, MEMORY_MODEL.md "Class instance").
+    /// The constructor call writes it immediately after allocation. It is
+    /// read by dynamic dispatch on capability-typed receivers
+    /// (`shape.draw()` where `shape: Drawable`) and by the JSON bridges
+    /// (`__json_tree_instance`, `__json_normalize`), which turn an instance
+    /// boxed in an `any` into the JSON object of its own class.
     ///
     /// All field offsets and instance sizes account for this header — see
     /// `calculate_field_byte_offset` and `calculate_instance_byte_size`.
