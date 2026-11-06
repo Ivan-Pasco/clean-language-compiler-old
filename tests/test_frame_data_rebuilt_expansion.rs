@@ -1,4 +1,4 @@
-//! Rebuild frame.data (and frame.server) from source with the compiler under
+//! Rebuild frame.data (with frame.server and frame.auth) from source with the compiler under
 //! test, then compile the framework's frame.data unit tests against those
 //! freshly built plugins.
 //!
@@ -18,7 +18,10 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-const REBUILT_PLUGINS: [&str; 2] = ["frame.data", "frame.server"];
+// Every plugin the frame.data unit tests declare (tenant-scope-test.cln also
+// declares frame.auth). On a CI runner nothing is installed in
+// ~/.cleen/plugins, so a plugin left out here cannot be found at all.
+const REBUILT_PLUGINS: [&str; 3] = ["frame.auth", "frame.data", "frame.server"];
 
 fn framework_dir() -> Option<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -70,6 +73,17 @@ fn build_plugin(framework: &Path, name: &str, scratch: &Path) -> PathBuf {
     dir
 }
 
+/// Plugin names listed in a file's `plugins:` block.
+fn declared_plugins(source: &str) -> Vec<String> {
+    let mut lines = source.lines().skip_while(|l| l.trim_end() != "plugins:");
+    lines.next();
+    lines
+        .take_while(|l| l.starts_with('\t') || l.starts_with(' '))
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 #[test]
 fn frame_data_built_by_this_compiler_expands_the_data_tests() {
     let Some(framework) = framework_dir() else {
@@ -78,11 +92,11 @@ fn frame_data_built_by_this_compiler_expands_the_data_tests() {
     };
 
     let scratch = TempDir::new().unwrap();
-    let overrides: Vec<String> = REBUILT_PLUGINS
+    let overrides: Vec<(&str, String)> = REBUILT_PLUGINS
         .iter()
         .map(|name| {
             let dir = build_plugin(&framework, name, scratch.path());
-            format!("{name}={}", dir.display())
+            (*name, format!("{name}={}", dir.display()))
         })
         .collect();
 
@@ -108,12 +122,21 @@ fn frame_data_built_by_this_compiler_expands_the_data_tests() {
             .arg(case)
             .arg("-o")
             .arg(&wasm);
-        for o in &overrides {
-            cmd.args(["--plugin-override", o]);
+        // Override only the plugins this case declares: the compiler rejects
+        // an override for a plugin no file loads.
+        let declared = declared_plugins(&std::fs::read_to_string(case).unwrap());
+        for (name, o) in &overrides {
+            if declared.iter().any(|d| d == name) {
+                cmd.args(["--plugin-override", o]);
+            }
         }
         let out = cmd.output().expect("failed to spawn cln");
         if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stderr = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stderr),
+                String::from_utf8_lossy(&out.stdout)
+            );
             let first_error = stderr
                 .lines()
                 .find(|l| l.starts_with("error"))

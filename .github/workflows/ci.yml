@@ -119,11 +119,12 @@ jobs:
     - name: Build + install framework plugins
       run: |
         set -euo pipefail
-        # Framework plugin build.sh scripts invoke `cln` directly (not via
-        # $CLN_COMPILER), so put the freshly-built release binary on PATH
-        # under the expected name.
+        # Framework plugin build.sh scripts run $CLN_COMPILER (default
+        # ~/.cleen/bin/cln, which does not exist on the runner), so point it
+        # at the freshly-built release binary.
         CLN_BIN_DIR="$GITHUB_WORKSPACE/clean-language-compiler/target/release"
         export PATH="$CLN_BIN_DIR:$PATH"
+        export CLN_COMPILER="$CLN_BIN_DIR/cln"
         command -v cln
         cln --version
         mkdir -p "$HOME/.cleen/plugins"

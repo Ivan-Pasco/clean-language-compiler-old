@@ -1814,13 +1814,11 @@ impl MirCodeGenerator<'_> {
                                 | MirBinaryOp::Ge,
                             left,
                             right,
-                        } => {
-                            if is_string_operand(current_func, left)
-                                || is_string_operand(current_func, right)
-                            {
-                                names.insert("string_compare".to_string());
-                                names.insert("string.compare".to_string());
-                            }
+                        } if is_string_operand(current_func, left)
+                            || is_string_operand(current_func, right) =>
+                        {
+                            names.insert("string_compare".to_string());
+                            names.insert("string.compare".to_string());
                         }
                         _ => {}
                     }
@@ -1895,13 +1893,11 @@ impl MirCodeGenerator<'_> {
                                 | MirBinaryOp::Ge,
                             left,
                             right,
-                        } => {
-                            if is_string_operand(function, left)
-                                || is_string_operand(function, right)
-                            {
-                                names.insert("string_compare".to_string());
-                                names.insert("string.compare".to_string());
-                            }
+                        } if is_string_operand(function, left)
+                            || is_string_operand(function, right) =>
+                        {
+                            names.insert("string_compare".to_string());
+                            names.insert("string.compare".to_string());
                         }
                         _ => {}
                     }

@@ -1030,15 +1030,15 @@ impl MirBuilder {
                         }
                     }
                 }
-                TastStatement::While { body, .. } => {
-                    if Self::body_escapes_or_returns(&body.statements, inner) {
-                        return true;
-                    }
+                TastStatement::While { body, .. }
+                    if Self::body_escapes_or_returns(&body.statements, inner) =>
+                {
+                    return true;
                 }
-                TastStatement::For { body, .. } => {
-                    if Self::body_escapes_or_returns(&body.statements, inner) {
-                        return true;
-                    }
+                TastStatement::For { body, .. }
+                    if Self::body_escapes_or_returns(&body.statements, inner) =>
+                {
+                    return true;
                 }
                 _ => {}
             }
