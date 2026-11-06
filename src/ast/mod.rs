@@ -796,6 +796,50 @@ impl Statement {
             Statement::ValidateCheck { location, .. } => location,
         }
     }
+
+    /// This statement's source location, when the parser recorded one.
+    pub fn location(&self) -> Option<&SourceLocation> {
+        match self {
+            Statement::Require { location, .. } => location.as_ref(),
+            Statement::Ensure { location, .. } => location.as_ref(),
+            Statement::VariableDecl { location, .. } => location.as_ref(),
+            Statement::FunctionsBlock { location, .. } => location.as_ref(),
+            Statement::TypeApplyBlock { location, .. } => location.as_ref(),
+            Statement::FunctionApplyBlock { location, .. } => location.as_ref(),
+            Statement::MethodApplyBlock { location, .. } => location.as_ref(),
+            Statement::ConstantApplyBlock { location, .. } => location.as_ref(),
+            Statement::Assignment { location, .. } => location.as_ref(),
+            Statement::Print { location, .. } => location.as_ref(),
+            Statement::PrintBlock { location, .. } => location.as_ref(),
+            Statement::Return { location, .. } => location.as_ref(),
+            Statement::Break { location, .. } => location.as_ref(),
+            Statement::Continue { location, .. } => location.as_ref(),
+            Statement::If { location, .. } => location.as_ref(),
+            Statement::Iterate { location, .. } => location.as_ref(),
+            Statement::RangeIterate { location, .. } => location.as_ref(),
+            Statement::While { location, .. } => location.as_ref(),
+            Statement::Test { location, .. } => location.as_ref(),
+            Statement::TestsBlock { location, .. } => location.as_ref(),
+            Statement::Expression { location, .. } => location.as_ref(),
+            Statement::Error { location, .. } => location.as_ref(),
+            Statement::Import { location, .. } => location.as_ref(),
+            Statement::LaterAssignment { location, .. } => location.as_ref(),
+            Statement::Background { location, .. } => location.as_ref(),
+            Statement::OnErrorBlock { location, .. } => location.as_ref(),
+            Statement::StandaloneErrorHandler { location, .. } => location.as_ref(),
+            Statement::ClassDefinition { location, .. } => location.as_ref(),
+            Statement::Description { location, .. } => location.as_ref(),
+            Statement::Spec { location, .. } => location.as_ref(),
+            Statement::Intent { location, .. } => location.as_ref(),
+            Statement::SourceBlock { location, .. } => location.as_ref(),
+            Statement::BuildBlock { location, .. } => location.as_ref(),
+            Statement::FrameworkBlock { location, .. } => location.as_ref(),
+            Statement::ResetStmt { location, .. } => location.as_ref(),
+            Statement::ScreenBlockStmt { location, .. } => location.as_ref(),
+            Statement::ValidateDeclaration { location, .. } => location.as_ref(),
+            Statement::ValidateCheck { location, .. } => location.as_ref(),
+        }
+    }
 }
 
 // ============================================================================

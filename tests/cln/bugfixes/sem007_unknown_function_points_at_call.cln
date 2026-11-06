@@ -1,0 +1,15 @@
+// Test: bugfixes/sem007_unknown_function_points_at_call
+// Grammar: function_call
+// Semantic: SEM002 undefined symbol (the compiler reports it as SEM007);
+//   the error names the line of the call and says how to declare the name
+// Fixed in: compiler 0.33.172
+// Expected output:
+// Expected error:
+//   error[SEM007]: Function 'notDeclared' not found
+//   sem007_unknown_function_points_at_call.cln:15:
+//   help: Nothing declares 'notDeclared'
+
+start:
+	integer x = 1
+	printl(x.toString())
+	notDeclared(x)

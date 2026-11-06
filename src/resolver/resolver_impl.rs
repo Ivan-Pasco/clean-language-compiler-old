@@ -2711,7 +2711,10 @@ impl NameResolver {
                     "'{}' is a function of screen '{}'; call it as {}.{}(...)",
                     function, screen, screen, function
                 )),
-                None => self.did_you_mean_function(&function),
+                None => Some(
+                    self.did_you_mean_function(&function)
+                        .unwrap_or_else(|| Self::undeclared_function_hint(&function)),
+                ),
             };
             self.error_with_help(&msg, hint, location.clone(), "SEM007");
         })?;
@@ -3973,6 +3976,16 @@ impl NameResolver {
                 .with_help_option(help),
             ),
         });
+    }
+
+    /// Hint for a call to a name nothing declares, when no near match
+    /// exists: the three ways a function becomes callable.
+    fn undeclared_function_hint(function: &str) -> String {
+        format!(
+            "Nothing declares '{}'. Define it in a `functions:` block, import the file \
+             that defines it, or list the plugin that provides it under `plugins:`.",
+            function
+        )
     }
 
     /// Build a "did you mean?" hint for an unresolved function name.

@@ -131,10 +131,20 @@ jobs:
           compile-options.json
           clean-language-server-*${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
+  # Rebuilds every framework plugin with this compiler and runs the
+  # framework suites + example smoke tests (framework-gate.yml). The release
+  # below needs it, so a compiler that breaks real Frame code is not published.
+  framework-gate:
+    name: Framework gate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/framework-gate.yml
+    secrets: inherit
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, framework-gate]
     permissions:
       contents: write
     steps:

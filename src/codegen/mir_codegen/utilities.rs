@@ -1909,6 +1909,24 @@ impl MirCodeGenerator<'_> {
             }
         }
 
+        // Include the names of every function that the BFS visited (seeded or
+        // called from a seed). This ensures that plugin-generated functions such as
+        // `start` (which is never *called* — it's the entry point) are in the
+        // reachable set, so the dead-code elimination filter in `generate()` does
+        // not accidentally drop them (GEN003).
+        //
+        // This runs BEFORE the preamble fixpoint below. Dead-code elimination
+        // keeps plugin helpers by name, so a user function that shares a
+        // helper's name (a class method `notFound` next to frame.server's
+        // `notFound` helper) keeps that helper too; the fixpoint must then walk
+        // the helper's body, or its own callees (`__json_escape`) are dropped
+        // and codegen fails with "not found in function map".
+        for sym in &visited {
+            if let Some(f) = mir_program.functions.get(sym) {
+                names.insert(f.name.clone());
+            }
+        }
+
         // Fixpoint: preserve plugin-preamble helpers transitively called from
         // any non-preamble function that will be retained
         // (ORM-MUTATION-OPS-MISSING-IN-CLIENT-CODEGEN-FUNCTION-MAP, fp
@@ -2121,17 +2139,6 @@ impl MirCodeGenerator<'_> {
         for (lang, import_field) in explicit_reachable {
             if names.contains(*lang) {
                 names.insert(import_field.to_string());
-            }
-        }
-
-        // Include the names of every function that the BFS visited (seeded or
-        // called from a seed). This ensures that plugin-generated functions such as
-        // `start` (which is never *called* — it's the entry point) are in the
-        // reachable set, so the dead-code elimination filter in `generate()` does
-        // not accidentally drop them (GEN003).
-        for sym in &visited {
-            if let Some(f) = mir_program.functions.get(sym) {
-                names.insert(f.name.clone());
             }
         }
 

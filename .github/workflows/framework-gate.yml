@@ -1,0 +1,114 @@
+name: Framework gate
+
+# Builds real Frame code with the compiler from this commit:
+#   - tests/cln/bugfixes regression pins (scripts/check_regressions.py),
+#     first without plugins, then again with the rebuilt plugins installed
+#   - every framework plugin rebuilt from source with this compiler, then the
+#     framework's suites, plugin helper tests and example smoke tests
+#     (scripts/framework_gate.sh)
+#
+# release.yml calls this workflow and will not publish a release when it
+# fails. It also runs on every push to main so a regression shows up before
+# a tag is cut.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_TOOLS_VERSION: '1.252.0'
+
+jobs:
+  framework-gate:
+    name: Build plugins + framework tests with this compiler
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout compiler
+        uses: actions/checkout@v4
+        with:
+          path: clean-language-compiler
+
+      # cleen-framework-old is public, so the default token can read it. If
+      # the repository is ever made private, add a secret named
+      # FRAMEWORK_REPO_TOKEN (a fine-grained token with read access to
+      # Ivan-Pasco/cleen-framework-old contents) to this repository.
+      - name: Check framework access
+        id: access
+        env:
+          TOKEN: ${{ secrets.FRAMEWORK_REPO_TOKEN || github.token }}
+        run: |
+          if git ls-remote "https://x-access-token:${TOKEN}@github.com/Ivan-Pasco/cleen-framework-old.git" HEAD >/dev/null 2>&1; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Framework gate skipped::Cannot read Ivan-Pasco/cleen-framework-old. Add a repository secret named FRAMEWORK_REPO_TOKEN with read access to that repository's contents; until then the plugin rebuild and framework tests do not run."
+          fi
+
+      - name: Checkout framework (main)
+        if: steps.access.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Ivan-Pasco/cleen-framework-old
+          ref: main
+          path: clean-framework
+          token: ${{ secrets.FRAMEWORK_REPO_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            clean-language-compiler/target/
+          key: ${{ runner.os }}-cargo-framework-gate-${{ hashFiles('clean-language-compiler/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-framework-gate-
+
+      - name: Build cln + wasmtime_runner
+        working-directory: clean-language-compiler
+        run: cargo build --release --bin cln --bin wasmtime_runner
+
+      - name: Regression pins (tests/cln/bugfixes)
+        working-directory: clean-language-compiler
+        run: python3 scripts/check_regressions.py
+
+      - name: Install wasm-tools
+        if: steps.access.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          v="$WASM_TOOLS_VERSION"
+          curl -fsSL -o /tmp/wasm-tools.tar.gz \
+            "https://github.com/bytecodealliance/wasm-tools/releases/download/v${v}/wasm-tools-${v}-x86_64-linux.tar.gz"
+          tar -xzf /tmp/wasm-tools.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/wasm-tools-${v}-x86_64-linux/wasm-tools" /usr/local/bin/wasm-tools
+          wasm-tools --version
+
+      - name: Install latest clean-server (old toolchain)
+        if: steps.access.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/server"
+          curl -fsSL -o /tmp/clean-server.tar.gz \
+            https://github.com/Ivan-Pasco/clean-server-old/releases/latest/download/clean-server-linux-x64.tar.gz
+          tar -xzf /tmp/clean-server.tar.gz -C "$RUNNER_TEMP/server" clean-server
+          chmod +x "$RUNNER_TEMP/server/clean-server"
+          "$RUNNER_TEMP/server/clean-server" --version
+
+      - name: Rebuild plugins, run framework suites + smoke examples
+        if: steps.access.outputs.ok == 'true'
+        working-directory: clean-language-compiler
+        run: |
+          scripts/framework_gate.sh \
+            --framework "$GITHUB_WORKSPACE/clean-framework" \
+            --cln "$PWD/target/release/cln" \
+            --server "$RUNNER_TEMP/server/clean-server" \
+            --runner "$PWD/target/release/wasmtime_runner"

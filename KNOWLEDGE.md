@@ -281,3 +281,11 @@ The JSON hosts only understand JSON-tree fragments, so every value bound for a J
 - Any new instance allocation path must write the header.
 
 **Regression:** `tests/cln/bugfixes/class_instance_json_through_any.cln`, `tests/cln/bugfixes/record_rows_through_any_and_back.cln`, `tests/cln/bugfixes/class_instance_round_trips_through_any.cln`.
+
+## 21. Plugin Helpers Are Kept by Name
+
+**What:** Plugin helper functions (`location.file == "<plugin-output>"`) are dead-code eliminated in `mir_codegen/mod.rs::generate()` by NAME: a helper survives when its name is in the reachable set from `collect_all_called_names_from_mir` (`mir_codegen/utilities.rs`). That set also gets the name of every function the BFS visited. A user function can share a helper's name — a class method `notFound` next to frame.server's `notFound` helper — and then the helper survives too, without the BFS ever walking its body.
+
+**Watch for:** every name added to the reachable set must be added before the preamble fixpoint, which walks the body of each kept helper. Adding names after it keeps a helper whose callees (`__json_escape`) were dropped, and codegen fails with "Function '__json_escape' not found in function map".
+
+**Regression:** `tests/cln/bugfixes/method_named_like_plugin_helper.cln` (found in the website app, `FormatHttpResponse.notFound`).

@@ -72,6 +72,36 @@ gh run view <run-number> --log-failed
 ```
 Then analyze the error, fix the issue, and repeat from Step 1.
 
+## Release Gate
+
+`.github/workflows/release.yml` (tag push) builds the binaries and calls
+`.github/workflows/framework-gate.yml`. The `release` job needs both, so a
+failed gate means no GitHub release and nothing for `cleen install latest`.
+The gate also runs on every push to main. It:
+
+1. builds `cln` + `wasmtime_runner` from the commit;
+2. runs `scripts/check_regressions.py` (the `tests/cln/bugfixes` pins;
+   pins that need a plugin are skipped here);
+3. checks out `Ivan-Pasco/cleen-framework-old` (main), rebuilds every plugin
+   with the new `cln`, installs them in a scratch `~/.cleen`, reruns the pins
+   with the plugins present, then runs the framework suites, the plugin
+   helper tests and `smoke-examples.sh` (`scripts/framework_gate.sh`).
+
+The framework repo is public, so no secret is needed. If it is ever made
+private, add a repository secret `FRAMEWORK_REPO_TOKEN` (read access to its
+contents); without it the gate prints a warning and skips step 3.
+
+Run the same gate locally before tagging:
+
+```bash
+scripts/framework_gate.sh --framework ../clean-framework \
+  --cln target/release/cln --server ~/.cleen/bin/clean-server \
+  --runner target/release/wasmtime_runner
+```
+
+When waiting for CI, watch the `Release Clean Language Compiler` run for the
+tag (the other workflows in this repo are disabled).
+
 ## Rules
 
 - Always wait for CI to complete — never skip

@@ -1,0 +1,15 @@
+// Test: bugfixes/framework_block_without_plugin_rejected
+// Grammar: framework_block, plugins_declaration
+// Semantic: a plugin block is only valid when the plugin that owns it is
+//   declared (specification 1.0 §22: plugins are always declared); issue #3
+// Fixed in: compiler 0.33.80 (pinned by this test in 0.33.172)
+// Expected output:
+// Expected error:
+//   error[SYN001]: No plugin loaded handles block 'canvasScene:'
+//   framework_block_without_plugin_rejected.cln:15:
+//   frame.canvas
+
+start:
+	printl("hi")
+
+canvasScene: width=200 height=200 fps=30

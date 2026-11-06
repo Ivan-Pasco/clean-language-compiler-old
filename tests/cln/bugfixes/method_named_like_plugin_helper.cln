@@ -1,0 +1,25 @@
+// Test: bugfixes/method_named_like_plugin_helper
+// Grammar: class_definition, method_definition, plugins_declaration
+// Semantic: COM006 (tracking: GEN003) — a class method may share its name with a
+//   frame.server helper (notFound, badRequest); the helper the name keeps alive
+//   must keep its own callees (__json_escape), or codegen fails with
+//   "not found in function map". Hit by the website app (FormatHttpResponse.notFound).
+// Fixed in: compiler 0.33.172
+// Expected output:
+// Expected compile: success
+
+plugins:
+	frame.server
+
+class Fmt
+	functions:
+		public:
+			string notFound()
+				return "not_found"
+
+			string badRequest()
+				return "bad"
+
+endpoints server:
+	GET "/ok" :
+		return json("{}")

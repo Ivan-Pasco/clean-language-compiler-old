@@ -8,6 +8,18 @@ header block, this script:
   3. Extracts stdout between the runner's `--- Output ---` markers.
   4. Diffs against the expected block from the header.
 
+A file may instead carry an `// Expected error:` block: the compile must then
+fail, and every listed line must appear in the compiler's output (stderr +
+stdout). Use it for bugs where the compiler accepted bad code or reported an
+error badly. Keep `// Expected output:` (empty) above it for the header rules.
+
+Server-side code cannot run in wasmtime_runner (no host for the server
+bridges). For those, `// Expected compile: success` (with an empty
+`// Expected output:`) only checks that the compile succeeds.
+
+A file whose `plugins:` block names a plugin that is not installed under
+~/.cleen/plugins is skipped, so the pins also run where no plugins exist.
+
 Exits non-zero on any mismatch. Intended to be wired into CI to catch silent
 regressions on bugs that have already been resolved on errors.cleanlanguage.dev.
 
@@ -80,6 +92,72 @@ def parse_expected(source: str) -> list[str] | None:
     return raw_lines
 
 
+ERROR_HEADER_RE = re.compile(
+    r"//\s*Expected error:\s*\n((?://[^\n]*\n)+)",
+    re.MULTILINE,
+)
+
+
+def parse_expected_error(source: str) -> list[str] | None:
+    """Substrings the failing compile must print, or None for a run test."""
+    if OPT_IN_MARKER not in source:
+        return None
+    m = ERROR_HEADER_RE.search(source)
+    if not m:
+        return None
+    needles: list[str] = []
+    for raw in m.group(1).splitlines():
+        content = raw.lstrip()[2:].strip()
+        if content == "" or re.match(r"^[A-Z][A-Za-z ]+:$", content):
+            break
+        needles.append(content)
+    return needles
+
+
+COMPILE_ONLY_MARKER = "// Expected compile: success"
+
+
+def missing_plugins(source: str) -> list[str]:
+    """Plugins the file's `plugins:` block needs that are not installed."""
+    m = re.search(r"^plugins:\s*\n((?:[ \t]+\S[^\n]*\n?)+)", source, re.MULTILINE)
+    if not m:
+        return []
+    root = Path(os.path.expanduser("~")) / ".cleen" / "plugins"
+    names = [line.strip() for line in m.group(1).splitlines() if line.strip()]
+    return [n for n in names if not (root / n / "plugin.toml").exists()]
+
+
+def run_compile_only(cln_path: Path) -> tuple[bool, str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        wasm = Path(tmp) / (cln_path.stem + ".wasm")
+        proc = subprocess.run(
+            [str(CLN_BIN), "compile", str(cln_path), "--output", str(wasm)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if proc.returncode != 0 or not wasm.exists():
+            return False, f"COMPILE FAIL:\n{(proc.stderr or proc.stdout)[-2000:]}"
+    return True, "OK (compiled)"
+
+
+def run_error_case(cln_path: Path, needles: list[str]) -> tuple[bool, str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        wasm = Path(tmp) / (cln_path.stem + ".wasm")
+        proc = subprocess.run(
+            [str(CLN_BIN), "compile", str(cln_path), "--output", str(wasm)],
+            capture_output=True, text=True, timeout=20,
+        )
+    output = (proc.stderr or "") + (proc.stdout or "")
+    if proc.returncode == 0:
+        return False, "COMPILED, but the compile must fail"
+    missing = [n for n in needles if n not in output]
+    if missing:
+        return False, (
+            "ERROR TEXT MISMATCH\n  missing:\n    " + "\n    ".join(missing)
+            + "\n  compiler output:\n    " + output[-2000:].replace("\n", "\n    ")
+        )
+    return True, f"OK (rejected, {len(needles)} lines matched)"
+
+
 def extract_runner_stdout(raw: str) -> list[str]:
     lines = raw.splitlines()
     try:
@@ -92,6 +170,15 @@ def extract_runner_stdout(raw: str) -> list[str]:
 
 def run_one(cln_path: Path) -> tuple[bool, str]:
     source = cln_path.read_text()
+    if OPT_IN_MARKER in source:
+        absent = missing_plugins(source)
+        if absent:
+            return True, f"SKIP (plugin not installed: {', '.join(absent)})"
+    if OPT_IN_MARKER in source and COMPILE_ONLY_MARKER in source:
+        return run_compile_only(cln_path)
+    needles = parse_expected_error(source)
+    if needles:
+        return run_error_case(cln_path, needles)
     expected = parse_expected(source)
     if expected is None:
         return True, "SKIP (no Expected output header)"

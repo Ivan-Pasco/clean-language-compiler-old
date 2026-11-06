@@ -190,6 +190,11 @@ pub struct HirBuilder {
     /// `instance_class` template. `Name<Arg>` lowers to the class the template
     /// names with `{T}` replaced by `Arg`.
     generic_instance_classes: std::collections::HashMap<String, String>,
+    /// Location of the statement currently being lowered. The AST `Call`
+    /// node carries no span of its own, so a call takes its statement's
+    /// line; without it, errors such as an unknown function (SEM007)
+    /// pointed at 0:0.
+    statement_location: Option<SourceLocation>,
 }
 
 impl HirBuilder {
@@ -211,6 +216,7 @@ impl HirBuilder {
             string_builder_counter: 0,
             carryover_counter: 0,
             generic_instance_classes: std::collections::HashMap::new(),
+            statement_location: None,
         }
     }
 
@@ -1845,6 +1851,27 @@ impl HirBuilder {
 
     /// Convert AST statement to HIR statement
     fn build_statement(&mut self, stmt: &Statement) -> Result<HirStatement, CompilerError> {
+        // Only real source positions are inherited. Plugin-expanded code
+        // carries `<plugin-…>` markers whose lines are relative to a
+        // generated fragment and would point at the wrong user line.
+        // A statement without any location inherits the enclosing one.
+        let outer = match stmt.location() {
+            Some(loc) if loc.file.starts_with('<') => self.statement_location.take(),
+            Some(loc) if loc.line > 0 => self.statement_location.replace(loc.clone()),
+            _ => self.statement_location.clone(),
+        };
+        let result = self.build_statement_inner(stmt);
+        self.statement_location = outer;
+        result
+    }
+
+    /// Location for an expression node whose AST form has no span: the
+    /// enclosing statement's location, or unknown.
+    fn enclosing_statement_location(&self) -> SourceLocation {
+        self.statement_location.clone().unwrap_or_default()
+    }
+
+    fn build_statement_inner(&mut self, stmt: &Statement) -> Result<HirStatement, CompilerError> {
         match stmt {
             Statement::VariableDecl {
                 name,
@@ -2279,11 +2306,12 @@ impl HirBuilder {
                         location: SourceLocation::default(),
                     })
                 } else {
-                    let hir_args = self.build_call_args(name, args, &SourceLocation::default())?;
+                    let location = self.enclosing_statement_location();
+                    let hir_args = self.build_call_args(name, args, &location)?;
                     Ok(HirExpression::Call {
                         function: name.clone(),
                         arguments: hir_args,
-                        location: SourceLocation::default(),
+                        location,
                     })
                 }
             }

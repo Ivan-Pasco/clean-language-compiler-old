@@ -62,6 +62,27 @@ forms:
   enough to warrant a formalized spec code should be raised in `TASKS.md` for
   developer approval rather than added unilaterally.
 
+### **5. Every App Bug Becomes a Bugfix Test**
+
+When a Studio-built app or any real app hits a compiler bug, the fix lands
+together with a minimal test in `tests/cln/bugfixes/` that reproduces it. No
+fix ships without one.
+
+- Cut the app code down to the smallest `.cln` that still shows the bug. No
+  plugins unless the bug needs them (the CI pin job has no plugins installed).
+- Use the bugfix headers (`Test:`, `Grammar:`/`Semantic:`, `Fixed in: compiler
+  X.Y.Z`, `Expected output:`). The `Fixed in: compiler` line opts the file into
+  `scripts/check_regressions.py`.
+- Wrong output or a crash: list the correct output under `// Expected output:`.
+- The compiler accepted bad code, or reported an error badly: leave
+  `// Expected output:` empty and add `// Expected error:` with the lines the
+  failing compile must print (error code, `file.cln:LINE:`, hint text).
+- Write the test first and see it fail on the released compiler.
+
+`scripts/check_regressions.py` runs every opted-in file in the framework gate
+(`.github/workflows/framework-gate.yml`) on each push to main and before every
+release, and in the local pre-push hook.
+
 ## 🔍 **PROVEN ERROR CLASSIFICATION SYSTEM**
 
 ### **CRITICAL (🔴) - Blocks All Tests**
