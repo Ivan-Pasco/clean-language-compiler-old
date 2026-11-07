@@ -1,0 +1,34 @@
+// Test: bugfixes/constructor_ending_in_if_else_returns_instance
+// Grammar: class_declaration, constructor, if_statement
+// Semantic: specification 15-classes-and-objects.md (a constructor yields the new instance)
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   big 10
+//   small 3
+//   big 7
+//
+// The code generator recognised constructors by name ("constructor" or
+// "*.constructor") and appended `local.get 0` after their body. The MIR
+// already ends every constructor path with `return this`; constructors now
+// go through the same function epilogue as every other function, including
+// a body whose last statement is an if/else.
+
+start:
+	Size a = Size(10)
+	printl(a.label + " " + a.value.toString())
+	Size b = Size(3)
+	printl(b.label + " " + b.value.toString())
+	Size c = Size(7)
+	printl(c.label + " " + c.value.toString())
+
+class Size
+	public:
+		string label = ""
+		integer value = 0
+
+	constructor(integer v)
+		value = v
+		if v > 5
+			label = "big"
+		else
+			label = "small"
