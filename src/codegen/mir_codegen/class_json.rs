@@ -28,7 +28,7 @@ const NORMALIZE: &str = "__json_normalize";
 const ANY_TO_INSTANCE: &str = "__any_to_instance";
 
 /// The runtime functions in emission order.
-const RUNTIME_FUNCTIONS: [&str; 3] = [TREE_INSTANCE, NORMALIZE, ANY_TO_INSTANCE];
+pub(super) const RUNTIME_FUNCTIONS: [&str; 3] = [TREE_INSTANCE, NORMALIZE, ANY_TO_INSTANCE];
 
 fn mem(offset: u64) -> MemArg {
     MemArg {

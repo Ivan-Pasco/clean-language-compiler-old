@@ -27,6 +27,7 @@ mod any_unbox;
 mod blocks;
 mod class_json;
 mod control_flow;
+mod exports;
 mod instructions;
 mod operands;
 mod utilities;
@@ -1296,6 +1297,15 @@ impl MirCodeGenerator<'_> {
                     || reachable_snap.contains(&f.name)
             });
         }
+
+        // The class JSON runtime is registered after the program functions.
+        let registered_later: &[&str] = if self.class_json_trees.is_empty() {
+            &[]
+        } else {
+            &class_json::RUNTIME_FUNCTIONS
+        };
+        self.check_function_names(&sorted_functions, registered_later)
+            .map_err(|e| vec![e])?;
 
         for (i, (symbol_id, function)) in sorted_functions.iter().enumerate() {
             let function_index = self.wasm_generator.function_count + i as u32;
