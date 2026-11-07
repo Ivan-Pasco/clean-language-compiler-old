@@ -276,7 +276,7 @@ impl PrefixMax {
             if self.tree[k] < Some(value) {
                 self.tree[k] = Some(value);
             }
-            k += k & k.wrapping_neg();
+            k += 1 << k.trailing_zeros();
         }
     }
 }
