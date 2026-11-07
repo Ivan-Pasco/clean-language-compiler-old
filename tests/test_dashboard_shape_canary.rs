@@ -120,7 +120,6 @@ fn compile_dashboard_canary() -> Result<Vec<u8>, String> {
 
     let status = Command::new(&cln)
         .arg("compile")
-        .arg("--plugins")
         .arg(&canary)
         .arg("--output")
         .arg(&out)

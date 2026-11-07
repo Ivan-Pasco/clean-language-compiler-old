@@ -33,7 +33,6 @@ fn compile(source: &str) -> Result<Vec<u8>, String> {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_cln"))
         .args([
             "compile",
-            "--plugins",
             src.to_str().unwrap(),
             "-o",
             tmp.path().join("out.wasm").to_str().unwrap(),
