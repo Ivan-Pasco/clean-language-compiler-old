@@ -655,16 +655,7 @@ impl HirBuilder {
     pub(crate) fn is_constant_state_value(value: &Value) -> bool {
         matches!(
             value,
-            Value::Integer(_)
-                | Value::Number(_)
-                | Value::Boolean(_)
-                | Value::String(_)
-                | Value::Integer8(_)
-                | Value::Integer8u(_)
-                | Value::Integer16(_)
-                | Value::Integer16u(_)
-                | Value::Integer32(_)
-                | Value::Integer64(_)
+            Value::Integer(_) | Value::Number(_) | Value::Boolean(_) | Value::String(_)
         )
     }
 
@@ -2700,14 +2691,6 @@ impl HirBuilder {
             Value::Number(_) => HirType::Number,
             Value::String(_) => HirType::String,
             Value::Boolean(_) => HirType::Boolean,
-            Value::Integer8(_) => HirType::Integer8,
-            Value::Integer8u(_) => HirType::Integer8u,
-            Value::Integer16(_) => HirType::Integer16,
-            Value::Integer16u(_) => HirType::Integer16u,
-            Value::Integer32(_) => HirType::Integer32,
-            Value::Integer64(_) => HirType::Integer64,
-            Value::Number32(_) => HirType::Number32,
-            Value::Number64(_) => HirType::Number64,
             Value::List(elements) => {
                 let element_type = if let Some(first) = elements.first() {
                     Box::new(self.value_to_hir_type(first))
@@ -7615,16 +7598,7 @@ impl HirBuilder {
                         // Type check: length constraint arguments must be integer literals.
                         // spec/semantic-rules.md: `length` constraint bounds must be integer.
                         if let Expression::Literal(ref v) = **min {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate length constraint: min argument must be integer, found {}",
@@ -7635,16 +7609,7 @@ impl HirBuilder {
                             }
                         }
                         if let Expression::Literal(ref v) = **max {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate length constraint: max argument must be integer, found {}",
@@ -7687,19 +7652,7 @@ impl HirBuilder {
                         // Type check: min constraint argument must be number or integer.
                         // spec/semantic-rules.md: `min` constraint value must be numeric.
                         if let Expression::Literal(ref v) = **expr {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                                    | Value::Number(_)
-                                    | Value::Number32(_)
-                                    | Value::Number64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_) | Value::Number(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate min constraint: argument must be number or integer, found {}",
@@ -7730,19 +7683,7 @@ impl HirBuilder {
                         // Type check: max constraint argument must be number or integer.
                         // spec/semantic-rules.md: `max` constraint value must be numeric.
                         if let Expression::Literal(ref v) = **expr {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                                    | Value::Number(_)
-                                    | Value::Number32(_)
-                                    | Value::Number64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_) | Value::Number(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate max constraint: argument must be number or integer, found {}",

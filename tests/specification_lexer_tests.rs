@@ -49,31 +49,6 @@ fn test_integer_literals() {
     }
 }
 
-/// Test precision integer literals (§3.2 - Type Precision)
-#[test]
-fn test_precision_integer_literals() {
-    let test_cases = vec![
-        ("42:8", vec![TokenKind::Integer8Literal(42)]),
-        ("42:8u", vec![TokenKind::Integer8uLiteral(42)]),
-        ("1000:16", vec![TokenKind::Integer16Literal(1000)]),
-        ("1000:16u", vec![TokenKind::Integer16uLiteral(1000)]),
-        ("50000:32", vec![TokenKind::Integer32Literal(50000)]),
-        (
-            "9223372036854775807:64",
-            vec![TokenKind::Integer64Literal(9223372036854775807)],
-        ),
-    ];
-
-    for (input, expected) in test_cases {
-        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
-        assert_eq!(
-            tokens, expected,
-            "Precision integer test failed for: {}",
-            input
-        );
-    }
-}
-
 /// Test number literals (§2.3.2 - Number Values)
 #[test]
 fn test_number_literals() {
@@ -88,24 +63,6 @@ fn test_number_literals() {
         assert_eq!(
             tokens, expected,
             "Number literal test failed for: {}",
-            input
-        );
-    }
-}
-
-/// Test precision number literals
-#[test]
-fn test_precision_number_literals() {
-    let test_cases = vec![
-        ("3.14:32", vec![TokenKind::Number32Literal(3.14)]),
-        ("2.718:64", vec![TokenKind::Number64Literal(2.718)]),
-    ];
-
-    for (input, expected) in test_cases {
-        let tokens = tokenize(input).unwrap_or_else(|_| panic!("Failed to tokenize: {}", input));
-        assert_eq!(
-            tokens, expected,
-            "Precision number test failed for: {}",
             input
         );
     }
@@ -248,9 +205,6 @@ fn test_punctuation() {
         (",", vec![TokenKind::Comma]),
         (".", vec![TokenKind::Dot]),
         (":", vec![TokenKind::Colon]),
-        (";", vec![TokenKind::Semicolon]),
-        ("..", vec![TokenKind::Range]),
-        ("..=", vec![TokenKind::RangeInclusive]),
     ];
 
     for (punct, expected) in punctuation {
@@ -347,26 +301,6 @@ start()
         "Complete program tokenized successfully with {} tokens",
         tokens.len()
     );
-}
-
-/// Test precision modifier parsing edge cases
-#[test]
-fn test_precision_edge_cases() {
-    let test_cases = vec![
-        ("0:8", vec![TokenKind::Integer8Literal(0)]),
-        ("255:8u", vec![TokenKind::Integer8uLiteral(255)]),
-        ("3.14159:32", vec![TokenKind::Number32Literal(3.14159)]),
-    ];
-
-    for (input, expected) in test_cases {
-        let tokens = tokenize(input)
-            .unwrap_or_else(|_| panic!("Failed to tokenize precision case: {}", input));
-        assert_eq!(
-            tokens, expected,
-            "Precision edge case test failed for: {}",
-            input
-        );
-    }
 }
 
 /// Test newline handling

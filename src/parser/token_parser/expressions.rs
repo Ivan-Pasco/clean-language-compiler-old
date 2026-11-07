@@ -546,11 +546,6 @@ impl TokenParser {
                 // Parse string interpolation: "Hello {name}!"
                 self.parse_string_interpolation()
             }
-            TokenKind::BooleanLiteral(b) => {
-                let value = *b;
-                self.bump();
-                Ok(Expression::Literal(Value::Boolean(value)))
-            }
             TokenKind::True => {
                 self.bump();
                 Ok(Expression::Literal(Value::Boolean(true)))

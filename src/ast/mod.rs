@@ -102,15 +102,6 @@ pub enum Value {
     Matrix(Vec<Vec<Value>>),
     None,
     Void,
-    // Advanced sized types
-    Integer8(i8),
-    Integer8u(u8),
-    Integer16(i16),
-    Integer16u(u16),
-    Integer32(i32),
-    Integer64(i64),
-    Number32(f32),
-    Number64(f64),
 
     // List (replaces Array)
     List(Vec<Value>),
@@ -1564,14 +1555,6 @@ impl fmt::Display for Value {
             }
             Value::None => write!(f, "none"),
             Value::Void => write!(f, "()"),
-            Value::Integer8(i) => write!(f, "{i}:8"),
-            Value::Integer8u(u) => write!(f, "{u}:8u"),
-            Value::Integer16(i) => write!(f, "{i}:16"),
-            Value::Integer16u(u) => write!(f, "{u}:16u"),
-            Value::Integer32(i) => write!(f, "{i}:32"),
-            Value::Integer64(i) => write!(f, "{i}:64"),
-            Value::Number32(f_val) => write!(f, "{f_val}:32"),
-            Value::Number64(f_val) => write!(f, "{f_val}:64"),
             Value::Pairs(pairs) => {
                 write!(f, "{{")?;
                 for (i, (key, value)) in pairs.iter().enumerate() {
