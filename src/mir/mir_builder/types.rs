@@ -492,9 +492,9 @@ impl MirBuilder {
 
     /// Emit a Call to the `__json_decode_v2_or_raise` WASM wrapper. The
     /// wrapper null-checks its argument and, on 0 (parse failure per D5),
-    /// traps with unreachable (the runtime signals a parse error to the
-    /// host); otherwise it returns the argument unchanged. Used by
-    /// `json.textToData` per D5's raise semantics.
+    /// raises the error "JSON parse failure", which `onError` catches;
+    /// otherwise it returns the argument unchanged. Used by
+    /// `json.textToData` and `json.decode` per D5's raise semantics.
     pub(super) fn emit_json_decode_v2_or_raise_wrapper(
         &mut self,
         context: &mut FunctionBuildContext,

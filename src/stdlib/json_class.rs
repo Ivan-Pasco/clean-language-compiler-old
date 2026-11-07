@@ -53,6 +53,8 @@ const NOT_A_LIST_MESSAGE: &str = "value is not a list";
 pub const ANY_LENGTH: &str = "__any_length";
 /// The error `__any_length` raises for a value that has no length.
 const NO_LENGTH_MESSAGE: &str = "value has no length";
+/// The error `__json_decode_v2_or_raise` raises (stdlib-reference.md §8, D5).
+const JSON_PARSE_FAILURE_MESSAGE: &str = "JSON parse failure";
 
 /// The helper converting a boxed `any` to a typed list or pairs map:
 /// `__any_convert(any_ptr, descriptor, position) -> value`. The descriptor
@@ -306,16 +308,22 @@ impl JsonClass {
 
         // __json_decode_v2_or_raise(raw: i32) -> i32
         // Post-check wrapper around a `_json_decode_v2` bridge return value.
-        // Per D5 raises (via WASM unreachable trap) when the bridge returned
-        // the 0 sentinel; otherwise returns the pointer unchanged. Emitted
-        // by mir_builder/expressions.rs for `json.textToData` / `json.decode`.
+        // Per D5 raises the error "JSON parse failure" when the bridge
+        // returned the 0 sentinel; otherwise returns the pointer unchanged.
+        // Emitted by mir_builder/types.rs for `json.textToData` /
+        // `json.decode`.
+        let parse_failure_message =
+            codegen.get_or_create_string_offset(JSON_PARSE_FAILURE_MESSAGE)?;
         register_stdlib_function_with_locals(
             codegen,
             "__json_decode_v2_or_raise",
             &[WasmType::I32],    // raw bridge result (0 on parse failure)
             Some(WasmType::I32), // returns non-zero boxed-Any pointer
             &[],
-            Self::generate_json_decode_v2_or_raise_instructions(),
+            Self::generate_json_decode_v2_or_raise_instructions(
+                err_raise_index,
+                parse_failure_message,
+            ),
         )?;
 
         Ok(())
@@ -1286,17 +1294,22 @@ impl JsonClass {
     /// Layout:
     ///   local 0: raw (param)
     ///
-    /// Semantics (Delivery 2 §D5): if raw != 0, return raw; else trap via
-    /// WASM `unreachable`. The trap is Clean's raise mechanism at the WASM
-    /// level — the runtime host translates it into a `error()` with message
-    /// "JSON parse failure" for the caller.
-    fn generate_json_decode_v2_or_raise_instructions() -> Vec<Instruction<'static>> {
+    /// Semantics (Delivery 2 §D5): if raw != 0, return raw; else raise the
+    /// error "JSON parse failure" (`__err_raise`), which an `onError`
+    /// handler catches; outside every handler it stops the program.
+    fn generate_json_decode_v2_or_raise_instructions(
+        err_raise_idx: u32,
+        parse_failure_message: u32,
+    ) -> Vec<Instruction<'static>> {
         vec![
-            // if raw == 0 → trap
+            // if raw == 0 → raise
             Instruction::LocalGet(0),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::Unreachable,
+            Instruction::I32Const(parse_failure_message as i32),
+            Instruction::Call(err_raise_idx),
+            Instruction::I32Const(0),
+            Instruction::Return,
             Instruction::End,
             // return raw
             Instruction::LocalGet(0),
