@@ -2217,7 +2217,7 @@ impl HirBuilder {
                 Ok(HirExpression::Array {
                     elements: hir_elements,
                     element_type: HirType::Void,
-                    location: SourceLocation::default(),
+                    location: self.enclosing_statement_location(),
                 })
             }
             Expression::Literal(value) => {
@@ -2242,19 +2242,19 @@ impl HirBuilder {
                         Ok(HirExpression::Array {
                             elements: hir_elements,
                             element_type,
-                            location: SourceLocation::default(),
+                            location: self.enclosing_statement_location(),
                         })
                     }
                     _ => Ok(HirExpression::Literal {
                         value: value.clone(),
-                        location: SourceLocation::default(),
+                        location: self.enclosing_statement_location(),
                     }),
                 }
             }
 
             Expression::Variable(name) => Ok(HirExpression::Variable {
                 name: name.clone(),
-                location: SourceLocation::default(),
+                location: self.enclosing_statement_location(),
             }),
 
             Expression::Binary(left, op, right) => {
@@ -2462,7 +2462,7 @@ impl HirBuilder {
                 Ok(HirExpression::Index {
                     array: Box::new(hir_array),
                     index: Box::new(hir_index),
-                    location: SourceLocation::default(),
+                    location: self.enclosing_statement_location(),
                 })
             }
 
