@@ -42,6 +42,15 @@ pub const JSON_TAG_STRING: i32 = 4;
 pub const JSON_TAG_ARRAY: i32 = 5;
 pub const JSON_TAG_OBJECT: i32 = 6;
 
+/// The helper converting a boxed JSON array to a `list<any>`.
+pub const JSON_TO_CLN_LIST: &str = "__json_to_cln_list";
+/// The error `__json_to_cln_list` raises for a value that is not an array.
+const NOT_A_LIST_MESSAGE: &str = "value is not a list";
+/// The helper computing `.length()` of an `any`.
+pub const ANY_LENGTH: &str = "__any_length";
+/// The error `__any_length` raises for a value that has no length.
+const NO_LENGTH_MESSAGE: &str = "value has no length";
+
 /// JSON support functions registered into every module.
 pub struct JsonClass;
 
@@ -154,6 +163,51 @@ impl JsonClass {
                 WasmType::I32, // 3: json_array_ptr
             ],
             Self::generate_from_cln_list_boxed_instructions(malloc_index, null_or_box_index),
+        )?;
+
+        // __json_to_cln_list(any_ptr: i32) -> i32
+        // The `list<any>` of a boxed JSON array (stdlib-reference.md §8: a
+        // JSON array is a `list<any>`): a native Clean list whose elements
+        // are the array's boxed element pointers. Used where an `any` is
+        // assigned to a `list<any>` and where an `any` is iterated. A null
+        // value gives a null list; any other non-array value raises an error.
+        let list_allocate_index = codegen
+            .get_function_index("list.allocate")
+            .expect("list.allocate must be registered before the JSON helpers");
+        let err_raise_index = codegen
+            .get_function_index("__err_raise")
+            .expect("__err_raise must be registered before the JSON helpers");
+        let not_a_list_message = codegen.get_or_create_string_offset(NOT_A_LIST_MESSAGE)?;
+        register_stdlib_function_with_locals(
+            codegen,
+            JSON_TO_CLN_LIST,
+            &[WasmType::I32],    // any_ptr
+            Some(WasmType::I32), // returns list_ptr
+            &[
+                WasmType::I32, // 1: raw_array_ptr
+                WasmType::I32, // 2: count
+                WasmType::I32, // 3: list_ptr
+                WasmType::I32, // 4: i
+            ],
+            Self::generate_json_to_cln_list_instructions(
+                list_allocate_index,
+                err_raise_index,
+                not_a_list_message,
+            ),
+        )?;
+
+        // __any_length(any_ptr: i32) -> i32
+        // `.length()` of an `any`: the element count of a JSON array, the
+        // entry count of a JSON object, the byte length of a string (as
+        // `string.length`); 0 for null. Any other value raises an error.
+        let no_length_message = codegen.get_or_create_string_offset(NO_LENGTH_MESSAGE)?;
+        register_stdlib_function_with_locals(
+            codegen,
+            ANY_LENGTH,
+            &[WasmType::I32],    // any_ptr
+            Some(WasmType::I32), // returns the length
+            &[WasmType::I32],    // 1: tag
+            Self::generate_any_length_instructions(err_raise_index, no_length_message),
         )?;
 
         // __json_decode_v2_or_raise(raw: i32) -> i32
@@ -995,6 +1049,141 @@ impl JsonClass {
             Instruction::End,
             Instruction::End,
             Instruction::LocalGet(3),
+        ]
+    }
+
+    /// Generate WASM body for `__json_to_cln_list(any_ptr: i32) -> i32`.
+    ///
+    /// Locals: 0 any_ptr (param), 1 raw_array_ptr, 2 count, 3 list_ptr, 4 i.
+    fn generate_json_to_cln_list_instructions(
+        list_allocate_idx: u32,
+        err_raise_idx: u32,
+        not_a_list_message: u32,
+    ) -> Vec<Instruction<'static>> {
+        use wasm_encoder::BlockType;
+        let word = |offset: u64| MemArg {
+            offset,
+            align: 2,
+            memory_index: 0,
+        };
+        vec![
+            // A null pointer or a null box is a null list.
+            Instruction::LocalGet(0),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(0)),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            // Any other non-array value raises.
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(0)),
+            Instruction::I32Const(JSON_TAG_ARRAY),
+            Instruction::I32Ne,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(not_a_list_message as i32),
+            Instruction::Call(err_raise_idx),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            // raw = any_ptr[4]; count = raw[0]
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(4)),
+            Instruction::LocalTee(1),
+            Instruction::I32Load(word(0)),
+            Instruction::LocalSet(2),
+            // list = list.allocate(count); list.size = count
+            Instruction::LocalGet(2),
+            Instruction::Call(list_allocate_idx),
+            Instruction::LocalTee(3),
+            Instruction::LocalGet(2),
+            Instruction::I32Store(word(0)),
+            // for i in 0..count: list[16 + i*4] = raw[4 + i*4]
+            Instruction::I32Const(0),
+            Instruction::LocalSet(4),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(word(4)),
+            Instruction::I32Store(word(16)),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(4),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(3),
+        ]
+    }
+
+    /// Generate WASM body for `__any_length(any_ptr: i32) -> i32`.
+    ///
+    /// Locals: 0 any_ptr (param), 1 tag. A string, array and object payload
+    /// each point at a structure whose first word is its length or count.
+    fn generate_any_length_instructions(
+        err_raise_idx: u32,
+        no_length_message: u32,
+    ) -> Vec<Instruction<'static>> {
+        use wasm_encoder::BlockType;
+        let word = |offset: u64| MemArg {
+            offset,
+            align: 2,
+            memory_index: 0,
+        };
+        vec![
+            // A null pointer or a null box has length 0.
+            Instruction::LocalGet(0),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(0)),
+            Instruction::LocalTee(1),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            // string, array, object: the first word of the payload.
+            Instruction::LocalGet(1),
+            Instruction::I32Const(JSON_TAG_STRING),
+            Instruction::I32GeU,
+            Instruction::LocalGet(1),
+            Instruction::I32Const(JSON_TAG_OBJECT),
+            Instruction::I32LeU,
+            Instruction::I32And,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(4)),
+            Instruction::I32Load(word(0)),
+            Instruction::Return,
+            Instruction::End,
+            // integer, boolean, number: no length.
+            Instruction::I32Const(no_length_message as i32),
+            Instruction::Call(err_raise_idx),
+            Instruction::I32Const(0),
         ]
     }
 

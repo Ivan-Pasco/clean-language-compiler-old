@@ -2912,6 +2912,24 @@ impl MirBuilder {
 
                             return Ok(result_id);
                         }
+                        // `.length()` of an `any` (a JSON array, object or
+                        // string). The call is typed `any`, so the count is
+                        // boxed as an integer.
+                        (ConcreteType::Any, "length") if arguments.is_empty() => {
+                            let length_id = self.emit_named_call(
+                                context,
+                                crate::stdlib::json_class::ANY_LENGTH,
+                                vec![MirOperand::Value(receiver_id)],
+                                MirType::I32,
+                                &expression.location,
+                            );
+                            return Ok(self.emit_box_any(
+                                context,
+                                length_id,
+                                &ConcreteType::Integer,
+                                &expression.location,
+                            ));
+                        }
                         // NOTE: Handle any type's isDefined/isNotDefined/isEmpty/isNotEmpty methods
                         // These were falling through to the default case which used SymbolId(0) (print function)
                         // Use NamedFunction since these are stdlib functions registered by name, not in symbol table

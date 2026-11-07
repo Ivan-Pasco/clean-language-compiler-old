@@ -225,7 +225,7 @@ impl MemoryTier {
     }
 
     /// Maximum WASM memory pages for this tier.
-    pub fn max_pages(self) -> u64 {
+    pub const fn max_pages(self) -> u64 {
         match self {
             MemoryTier::Embedded => 16,
             MemoryTier::Minimal => 128,

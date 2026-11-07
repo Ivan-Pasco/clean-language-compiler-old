@@ -1,0 +1,73 @@
+// Test: bugfixes/onerror_handler_reads_error_message
+// Grammar: on_error_expression, on_error_block, standalone_on_error, primary ("error")
+// Semantic: 14-error-handling.md — "The error is available as error."
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   fallback=one
+//   got two
+//   block=three
+//   standalone=four
+//   begin
+//   rollback after step failed
+//   outer=transaction failed
+//   inner=inner
+//   outer=outer
+//   empty=[]
+//   ok=good
+//   local=not the message
+//
+// Regression: inside an `onError` handler the raised message was not
+// available — `error` was rejected ("This expression form is not supported
+// here" / "Undefined variable 'error'"). `error(msg)` now keeps the message
+// in the error state and `error` reads it in all three handler forms. A
+// block handler copies the message when it starts, so an error raised and
+// handled inside the handler does not change what `error` reads after it.
+// A handler that raises again (the frame.data transaction shape) passes the
+// new message to the enclosing handler. Outside a handler, `error` is still
+// an ordinary name.
+
+start:
+	string a = fails("one") onError error
+	printl("fallback=" + a)
+	string b = fails("two") onError "got " + error
+	printl(b)
+	fails("three") onError:
+		printl("block=" + error)
+	standalone()
+	string r = tx() onError "outer=" + error
+	printl(r)
+	nested()
+	string empty = fails("") onError "[" + error + "]"
+	printl("empty=" + empty)
+	string ok = good() onError "unused " + error
+	printl("ok=" + ok)
+	string error = "not the message"
+	printl("local=" + error)
+
+functions:
+	string fails(string msg)
+		error(msg)
+		return "never"
+
+	string good()
+		return "good"
+
+	standalone()
+		string v = fails("four")
+		printl("unreachable " + v)
+		onError:
+			printl("standalone=" + error)
+
+	string tx()
+		printl("begin")
+		string v = fails("step failed")
+		return v
+		onError:
+			printl("rollback after " + error)
+			error("transaction failed")
+
+	nested()
+		fails("outer") onError:
+			fails("inner") onError:
+				printl("inner=" + error)
+			printl("outer=" + error)

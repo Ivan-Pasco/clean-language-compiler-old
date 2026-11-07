@@ -1398,8 +1398,20 @@ impl MirBuilder {
                     );
                 }
 
-                // Build the iterable expression (e.g., array, range)
+                // Build the iterable expression (e.g., array, range). An
+                // `any` is walked as the `list<any>` a JSON array is.
                 let iterable_value = self.build_expression(context, iterable)?;
+                let iterable_is_any = matches!(iterable.expr_type, ConcreteType::Any);
+                let iterable_value = if iterable_is_any {
+                    self.emit_unbox_any(
+                        context,
+                        iterable_value,
+                        &ConcreteType::Array(Box::new(ConcreteType::Any)),
+                        location,
+                    )
+                } else {
+                    iterable_value
+                };
 
                 // Create loop blocks
                 // NOTE: Use next_block_id counter instead of blocks.len() to prevent
@@ -1496,6 +1508,7 @@ impl MirBuilder {
                 use crate::typechecker::tast::ConcreteType;
                 let element_mir_type = match &iterable.expr_type {
                     ConcreteType::Array(elem) => MirType::from_concrete_type(elem),
+                    ConcreteType::Any => MirType::from_concrete_type(&ConcreteType::Any),
                     _ => MirType::I32,
                 };
                 let iterator_local = MirLocal {
