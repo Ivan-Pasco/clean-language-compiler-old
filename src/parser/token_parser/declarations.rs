@@ -2064,7 +2064,24 @@ impl TokenParser {
             }
 
             match self.parse_statement() {
-                Ok(stmt) => statements.push(stmt),
+                Ok(stmt) => {
+                    statements.push(stmt);
+                    // One statement per line (grammar.ebnf `simple_indented_block`
+                    // separates statements with NEWLINE).
+                    if let Some(line) = self.previous_significant_line() {
+                        if !self.statement_ends_after(line) {
+                            let token = self.current();
+                            self.errors.push(CompilerError::parse_error(
+                                format!(
+                                    "Expected a new line after the statement, found {:?}",
+                                    token.kind
+                                ),
+                                Some(token.location.clone()),
+                                Some("Put each statement on its own line.".to_string()),
+                            ));
+                        }
+                    }
+                }
                 Err(e) => {
                     self.errors.push(e);
                     self.bump(); // Skip error token

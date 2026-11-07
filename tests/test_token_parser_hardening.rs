@@ -177,3 +177,30 @@ fn block_header_without_indented_body_is_rejected() {
     parse("start:\n\tinteger x = 1\n\tif x > 0\n\t\tprint(1)\n\telse\n\t\tprint(2)\n\tprint(3)\n")
         .unwrap_or_else(|e| panic!("must parse: {:?}", e));
 }
+
+/// Statements are separated by line breaks (grammar.ebnf
+/// `simple_indented_block`); several on one line used to be accepted.
+#[test]
+fn one_statement_per_line() {
+    for src in [
+        "start:\n\tinteger x = 1 integer y = 2\n",
+        "start:\n\tinteger x = 1\n\tprint(x) print(x)\n",
+        "start:\n\tinteger x = 1\n\tx = 2 x = 3\n",
+    ] {
+        let error = parse_err(src);
+        assert!(
+            error
+                .to_string()
+                .contains("Expected a new line after the statement"),
+            "{}: {}",
+            src.escape_debug(),
+            error
+        );
+    }
+    // Expressions may still span lines inside parentheses, and trailing
+    // comments are fine.
+    parse(
+        "start:\n\tinteger x = max(1,\n\t\t2)\n\tlist<integer> xs = [1, 2]\n\tprint(x) // done\n\tprint(xs[0]) /* c */\n",
+    )
+    .unwrap_or_else(|e| panic!("must parse: {:?}", e));
+}

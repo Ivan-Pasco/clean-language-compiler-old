@@ -619,6 +619,25 @@ impl TokenParser {
         0 // Default to level 0 if no Indent/Dedent found
     }
 
+    /// Source line of the last token consumed that is not layout or a
+    /// comment, i.e. where the previous construct ended.
+    pub(super) fn previous_significant_line(&self) -> Option<usize> {
+        self.tokens[..self.cursor.min(self.tokens.len())]
+            .iter()
+            .rev()
+            .find(|t| {
+                !matches!(
+                    t.kind,
+                    TokenKind::Newline
+                        | TokenKind::Indent(_)
+                        | TokenKind::Dedent(_)
+                        | TokenKind::Comment(_)
+                        | TokenKind::BlockComment(_)
+                )
+            })
+            .map(|t| t.location.line)
+    }
+
     /// True when nothing but comments follows on source line `line`: the
     /// next significant token is a line break, a layout token, end of file,
     /// or a token on a later line. Nothing is consumed.
