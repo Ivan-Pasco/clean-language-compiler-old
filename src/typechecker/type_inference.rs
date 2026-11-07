@@ -4584,8 +4584,9 @@ impl<'a> TypeInference<'a> {
             location: location.clone(),
         });
 
-        // Result type is the unified type of both branches
-        let result_type = tast_then.expr_type.clone();
+        // The value has the common type of both branches (`if c then 1 else
+        // 2.5` is a number); the MIR builder widens the narrower branch.
+        let result_type = self.find_common_type(&tast_then.expr_type, &tast_else.expr_type);
 
         Ok((
             TastExpressionKind::Conditional {

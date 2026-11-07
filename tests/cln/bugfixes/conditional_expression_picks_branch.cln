@@ -1,0 +1,32 @@
+// Test: bugfixes/conditional_expression_picks_branch
+// Grammar: conditional_expression
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   yes
+//   no
+//   b=2
+//   n=2.5
+//   calls=1
+//
+// Regression: `if c then a else b` always produced the `then` value; the
+// condition and the `else` branch were never lowered. Only the chosen
+// branch runs, and an integer branch widens to the number result type.
+
+start:
+	integer x = 3
+	string a = if x > 2 then "yes" else "no"
+	printl(a)
+	string b = if x > 5 then "yes" else "no"
+	printl(b)
+	integer c = if x == 1 then 1 else 2
+	printl("b=" + c.toString())
+	number n = if x > 5 then 1 else 2.5
+	printl("n=" + n.toString())
+	list<integer> log = []
+	integer picked = if x > 2 then bump(log) else bump(log)
+	printl("calls=" + log.length().toString())
+
+functions:
+	integer bump(list<integer> log)
+		log.add(1)
+		return log.length()

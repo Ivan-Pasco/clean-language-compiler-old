@@ -64,6 +64,7 @@ pub struct MirBuildStats {
     /// Build time in microseconds
     pub build_time_us: u64,
 }
+use helpers::BranchArm;
 
 /// MIR builder - converts TAST to MIR
 #[derive(Debug)]

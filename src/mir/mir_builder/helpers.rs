@@ -1131,4 +1131,97 @@ impl MirBuilder {
         };
         self.add_instruction(context, instr);
     }
+
+    /// Lower a value chosen by `condition`: the `then` arm when it is
+    /// non-zero, the `else` arm otherwise. Only the chosen arm runs: each arm
+    /// gets its own block (labelled like an `if`/`else` so the structured
+    /// codegen emits an `if ... else ... end`), and both store into one
+    /// result local of `result_type` before joining at the merge block.
+    pub(super) fn build_two_way_value(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        condition: ValueId,
+        then_arm: BranchArm<'_>,
+        else_arm: BranchArm<'_>,
+        result_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        let result_mir_type = self.convert_concrete_type(result_type);
+        self.register_temp_local(context, result_id, result_mir_type, location.clone());
+
+        let base = context.function.next_block_id;
+        context.function.next_block_id += 3;
+        let then_block = BasicBlockId(base);
+        let else_block = BasicBlockId(base + 1);
+        let merge_block = BasicBlockId(base + 2);
+        for (id, label) in [
+            (then_block, "then"),
+            (else_block, "else"),
+            (merge_block, "continue"),
+        ] {
+            context.function.blocks.insert(
+                id,
+                MirBasicBlock {
+                    id,
+                    label: Some(label.to_string()),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable,
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: location.clone(),
+                },
+            );
+        }
+        if let Some(branch_block) = self.current_block {
+            context.function.if_merges.insert(branch_block, merge_block);
+        }
+        self.set_block_terminator(
+            context,
+            MirTerminator::Branch {
+                condition: MirOperand::Value(condition),
+                true_block: then_block,
+                false_block: else_block,
+            },
+        );
+
+        for (block, arm) in [(then_block, then_arm), (else_block, else_arm)] {
+            self.current_block = Some(block);
+            let (value_id, expression) = match arm {
+                BranchArm::Built(value_id, expression) => (value_id, expression),
+                BranchArm::Lazy(expression) => {
+                    (self.build_expression(context, expression)?, expression)
+                }
+            };
+            let value_id = self.coerce_on_error_branch(context, value_id, expression, result_type);
+            self.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(result_id),
+                    operation: MirOperation::Copy {
+                        source: MirOperand::Value(value_id),
+                    },
+                    location: location.clone(),
+                },
+            );
+            self.set_block_terminator(
+                context,
+                MirTerminator::Jump {
+                    target: merge_block,
+                },
+            );
+        }
+
+        self.current_block = Some(merge_block);
+        Ok(result_id)
+    }
+}
+
+/// One arm of [`MirBuilder::build_two_way_value`].
+pub(super) enum BranchArm<'e> {
+    /// A value computed before the branch, typed as the given expression.
+    Built(ValueId, &'e TastExpression),
+    /// An expression evaluated only when its arm is taken.
+    Lazy(&'e TastExpression),
 }

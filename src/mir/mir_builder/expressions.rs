@@ -4129,12 +4129,20 @@ impl MirBuilder {
             }
 
             TastExpressionKind::Conditional {
-                condition: _,
+                condition,
                 then_expr,
-                else_expr: _,
+                else_expr,
             } => {
-                // Evaluates then branch (full ternary requires control flow - handled in if/else codegen)
-                self.build_expression(context, then_expr)
+                // `if c then a else b`: only the chosen branch is evaluated.
+                let condition_id = self.build_expression(context, condition)?;
+                self.build_two_way_value(
+                    context,
+                    condition_id,
+                    BranchArm::Lazy(then_expr),
+                    BranchArm::Lazy(else_expr),
+                    &expression.expr_type,
+                    &expression.location,
+                )
             }
 
             TastExpressionKind::BaseCall {
