@@ -1,0 +1,21 @@
+// Test: bugfixes/sem001_static_method_arguments_class_declared_later
+// Grammar: static_method_call
+// Semantic: SEM001 — the arguments of `Class.method(...)` match the method's
+//   parameters, wherever the class is declared.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[SEM001]: A value of type string cannot be used as integer
+//   sem001_static_method_arguments_class_declared_later.cln:15:
+//
+// Regression: the arguments were not checked when the class was declared
+// after the caller (the resolver leaves the method unbound there).
+
+start:
+	integer f = Box.twice("x")
+	printl(f.toString())
+
+class Box
+	functions:
+		integer twice(integer v)
+			return v * 2

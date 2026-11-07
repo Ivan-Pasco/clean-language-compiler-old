@@ -65,6 +65,12 @@ pub struct TypeInference<'a> {
     statement_location: Option<SourceLocation>,
 }
 
+/// A built-in method's signature (see `TypeInference::builtin_method_signature`).
+struct BuiltinMethod {
+    params: Vec<ConcreteType>,
+    /// The first `required` parameters must be passed; the rest are optional.
+    required: usize,
+    return_type: ConcreteType,
 }
 
 /// Result of type inference
@@ -3936,8 +3942,7 @@ impl<'a> TypeInference<'a> {
         let resolved_receiver_type = self.resolve_type(&tast_receiver.expr_type);
 
         // Use resolved type for method resolution
-        let return_type =
-            self.infer_method_return_type(method, &resolved_receiver_type, &tast_arguments)?;
+        let return_type = self.infer_method_return_type(method, &resolved_receiver_type)?;
 
         // NOTE: Resolve method symbol from receiver's class type or primitive type
         // The resolver sets method_symbol_id = None because it doesn't have type info
@@ -4014,6 +4019,13 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        self.check_builtin_method_call(
+            &resolved_receiver_type,
+            method,
+            &mut tast_arguments,
+            location,
+        );
+
         // SEM004: joining a list is a namespace utility (`list.join(items, sep)`);
         // the method form is not part of the language (method-style syntax:
         // "every operation has one name").
@@ -4032,25 +4044,6 @@ impl<'a> TypeInference<'a> {
                     .with_error_code("SEM004"),
                 ),
             });
-        }
-
-        // SEM001: a value added to a typed list must have the element type.
-        if let (ConcreteType::Array(element_type), "add" | "push", [value]) =
-            (&resolved_receiver_type, method, tast_arguments.as_slice())
-        {
-            if Self::is_primitive_value_type(element_type)
-                && Self::is_primitive_value_type(&value.expr_type)
-                && !value.expr_type.is_assignable_to(element_type)
-            {
-                self.errors.push(CompilerError::type_error(
-                    format!(
-                        "Cannot add a value of type {} to a list of {}",
-                        value.expr_type, element_type
-                    ),
-                    None,
-                    Some(value.location.clone()),
-                ));
-            }
         }
 
         // FUNC002 / SEM001: a class method's arguments must match its parameters.
@@ -4128,8 +4121,12 @@ impl<'a> TypeInference<'a> {
             method,
             tast_arguments.len()
         );
-        let return_type =
-            self.infer_static_method_return_type(&full_class_name, method, &tast_arguments)?;
+        let return_type = self.infer_static_method_return_type(
+            &full_class_name,
+            method,
+            &tast_arguments,
+            location,
+        )?;
 
         // Emit argument-vs-parameter type constraints for user-defined static
         // methods so the constraint solver can reject non-conforming classes
@@ -4138,19 +4135,30 @@ impl<'a> TypeInference<'a> {
         // like `Registry.save(NonPersist())` compiled and only trapped at
         // codegen with "no class conforms to capability" — see fingerprint
         // #838c14541ba7 (0.33.86).
-        if method_symbol_id.0 != 0 {
-            if let Some(sym) = self.symbol_table.get_symbol(*method_symbol_id) {
+        // The resolver leaves the method unbound (SymbolId(0)) when the class
+        // is declared after the caller; find it by class and name.
+        let checked_method_symbol = if method_symbol_id.0 != 0 {
+            Some(*method_symbol_id)
+        } else {
+            self.symbol_table
+                .lookup_symbol(&full_class_name)
+                .filter(|id| {
+                    matches!(
+                        self.symbol_table.get_symbol(*id).map(|s| &s.kind),
+                        Some(SymbolKind::Class { .. })
+                    )
+                })
+                .and_then(|class_id| self.symbol_table.lookup_class_member(class_id, method))
+        };
+        if let Some(method_symbol) = checked_method_symbol {
+            if let Some(sym) = self.symbol_table.get_symbol(method_symbol) {
                 if let SymbolKind::Method { parameters, .. } = &sym.kind {
                     let param_types: Vec<ConcreteType> = parameters
                         .iter()
                         .map(|p| self.hir_type_to_concrete(p))
                         .collect();
-                    for (param_type, arg) in param_types.iter().zip(tast_arguments.iter()) {
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: arg.expr_type.clone(),
-                            right: param_type.clone(),
-                            location: location.clone(),
-                        });
+                    for (param_type, arg) in param_types.iter().zip(tast_arguments.iter_mut()) {
+                        self.require_assignable(arg, param_type, location);
                     }
                 }
             }
@@ -4159,20 +4167,7 @@ impl<'a> TypeInference<'a> {
         // NOTE: Use SymbolId(0) for built-in namespace methods
         // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
         // For user-defined static methods, keep the actual method_symbol_id
-        let is_builtin_namespace = [
-            "string",
-            "math",
-            "list",
-            "array",
-            "compare",
-            "file",
-            "http",
-            "json",
-            "input",
-            "validator",
-        ]
-        .iter()
-        .any(|ns| full_class_name.eq(*ns) || full_class_name.starts_with(&format!("{}.", ns)));
+        let is_builtin_namespace = Self::is_builtin_namespace(&full_class_name);
 
         tracing::debug!(
             "DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
@@ -5155,6 +5150,7 @@ impl<'a> TypeInference<'a> {
         function_symbol_id: SymbolId,
         function_name: &str,
         arguments: &[TastExpression],
+        location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
         // Numeric-polymorphic math functions: preserve the argument type so that
         // `integer x = math.abs(integer_val)` does not produce a false SEM004 error.
@@ -5181,25 +5177,24 @@ impl<'a> TypeInference<'a> {
             });
         }
 
-        // Special handling for generic list namespace functions FIRST
-        // Use the function_name parameter directly for SymbolId(0) namespace functions
-        // to avoid incorrect matching with the "print" symbol at SymbolId(0)
-
-        // Functions that always return integer
-        if function_name == "list_indexOf"
-            || function_name == "list.indexOf"
-            || function_name == "list_lastIndexOf"
-            || function_name == "list.lastIndexOf"
-            // time.now (frame.server / frame.auth alias) returns a Unix timestamp.
-            // The typechecker needs to know this returns Integer (not Unknown/Any)
-            // so `integer now = time.now()` doesn't unbox the raw i32 as a
-            // pointer and OOB on the toString path. Fingerprints 95c8a7cd
-            // (TIME-TOSTRING-001), ba77c082 (CODEGEN-I64-TOSTRING-OOB),
-            // 97d07985 (COD001).
-            || function_name == "time.now"
-            || function_name == "time_now"
-            || function_name == "now"
+        // `list.<fn>(items, ...)` (and its `list_<fn>` alias): one set of
+        // return-type rules, shared with the `list.` namespace call form.
+        if let Some(list_fn) = function_name
+            .strip_prefix("list.")
+            .or_else(|| function_name.strip_prefix("list_"))
         {
+            if Self::is_typed_list_namespace_function(list_fn) {
+                return self.infer_static_method_return_type("list", list_fn, arguments, location);
+            }
+        }
+
+        // time.now (frame.server / frame.auth alias) returns a Unix timestamp.
+        // The typechecker needs to know this returns Integer (not Unknown/Any)
+        // so `integer now = time.now()` doesn't unbox the raw i32 as a
+        // pointer and OOB on the toString path. Fingerprints 95c8a7cd
+        // (TIME-TOSTRING-001), ba77c082 (CODEGEN-I64-TOSTRING-OOB),
+        // 97d07985 (COD001).
+        if function_name == "time.now" || function_name == "time_now" || function_name == "now" {
             return Ok(ConcreteType::Integer);
         }
 
@@ -5232,74 +5227,6 @@ impl<'a> TypeInference<'a> {
             return Ok(ConcreteType::String);
         }
 
-        // Functions that always return boolean
-        if function_name == "list_contains"
-            || function_name == "list.contains"
-            || function_name == "list_isEmpty"
-            || function_name == "list.isEmpty"
-            || function_name == "list_isNotEmpty"
-            || function_name == "list.isNotEmpty"
-        {
-            return Ok(ConcreteType::Boolean);
-        }
-
-        // Functions that return the element type of their list argument
-        if (function_name == "list_remove"
-            || function_name == "list.remove"
-            || function_name == "list_get"
-            || function_name == "list.get"
-            || function_name == "list_pop"
-            || function_name == "list.pop"
-            || function_name == "list_removeLast"
-            || function_name == "list.removeLast"
-            || function_name == "list_peek"
-            || function_name == "list.peek"
-            || function_name == "list_first"
-            || function_name == "list.first"
-            || function_name == "list_last"
-            || function_name == "list.last")
-            && !arguments.is_empty()
-        {
-            let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
-            if let ConcreteType::Array(element_type) = resolved_arg_type {
-                return Ok((*element_type).clone());
-            }
-        }
-
-        // Functions that return the same list type as their input
-        if (function_name == "list_add"
-            || function_name == "list.add"
-            || function_name == "list_push"
-            || function_name == "list.push"
-            || function_name == "list_sort"
-            || function_name == "list.sort"
-            || function_name == "list_reverse"
-            || function_name == "list.reverse"
-            || function_name == "list_insert"
-            || function_name == "list.insert"
-            || function_name == "list_slice"
-            || function_name == "list.slice"
-            || function_name == "list_concat"
-            || function_name == "list.concat")
-            && !arguments.is_empty()
-        {
-            let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
-            if let ConcreteType::Array(_) = resolved_arg_type {
-                return Ok(resolved_arg_type);
-            }
-        }
-
-        // Functions that create new lists with element type from second argument
-        if (function_name == "list_fill" || function_name == "list.fill") && arguments.len() >= 2 {
-            let element_type = self.resolve_type(&arguments[1].expr_type);
-            return Ok(ConcreteType::Array(Box::new(element_type)));
-        }
-
-        // list_range always returns list<integer>
-        if function_name == "list_range" || function_name == "list.range" {
-            return Ok(ConcreteType::Array(Box::new(ConcreteType::Integer)));
-        }
-
         // Look up function type from symbol table
         if let Some(function_type) = self.type_env.get(&function_symbol_id) {
             match function_type {
@@ -5320,12 +5247,12 @@ impl<'a> TypeInference<'a> {
                 if let Some(dot_pos) = function_name.find('.') {
                     let class_name = &function_name[..dot_pos];
                     let method_name = &function_name[dot_pos + 1..];
-                    // Try to infer as static method/stdlib function
-                    if let Ok(static_return_type) =
-                        self.infer_static_method_return_type(class_name, method_name, arguments)
-                    {
-                        return Ok(static_return_type);
-                    }
+                    return self.infer_static_method_return_type(
+                        class_name,
+                        method_name,
+                        arguments,
+                        location,
+                    );
                 }
             }
 
@@ -5338,23 +5265,53 @@ impl<'a> TypeInference<'a> {
                     let class_name = &function_name[..dot_pos];
                     let method_name = &function_name[dot_pos + 1..];
                     // Try to infer as static method
-                    if let Ok(static_return_type) =
-                        self.infer_static_method_return_type(class_name, method_name, arguments)
-                    {
+                    if let Ok(static_return_type) = self.infer_static_method_return_type(
+                        class_name,
+                        method_name,
+                        arguments,
+                        location,
+                    ) {
                         return Ok(static_return_type);
                     }
                 }
             }
 
-            Err(CompilerError::type_error(
-                format!(
-                    "Function symbol {:?} not found in type environment",
-                    function_symbol_id
-                ),
+            Err(CompilerError::semantic_error_with_code(
+                format!("Function '{}' not found", function_name),
                 None,
-                None,
+                Some(location.clone()),
+                "FUNC001",
             ))
         }
+    }
+
+    /// `list.` namespace functions whose result type depends on their list
+    /// argument (see the `("list", _)` arms of `infer_static_method_return_type`).
+    fn is_typed_list_namespace_function(name: &str) -> bool {
+        matches!(
+            name,
+            "indexOf"
+                | "lastIndexOf"
+                | "contains"
+                | "isEmpty"
+                | "isNotEmpty"
+                | "remove"
+                | "get"
+                | "pop"
+                | "removeLast"
+                | "peek"
+                | "first"
+                | "last"
+                | "add"
+                | "push"
+                | "sort"
+                | "reverse"
+                | "insert"
+                | "slice"
+                | "concat"
+                | "fill"
+                | "range"
+        )
     }
 
     /// Get the builtin type name for method lookups (e.g., "string", "integer", "list")
@@ -5375,95 +5332,196 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// Signature of a built-in method of a primitive, list or pairs value
+    /// (stdlib-reference.md §3–§5): its parameter types, how many of them
+    /// are required, and its return type.
+    fn builtin_method_signature(receiver: &ConcreteType, method: &str) -> Option<BuiltinMethod> {
+        use ConcreteType as T;
+        let sig = |params: Vec<ConcreteType>, required: usize, return_type: ConcreteType| {
+            Some(BuiltinMethod {
+                params,
+                required,
+                return_type,
+            })
+        };
+        let none = |return_type: ConcreteType| sig(Vec::new(), 0, return_type);
+        match (receiver, method) {
+            (T::Integer, "toString") => none(T::String),
+            (T::Integer, "abs" | "toInteger") => none(T::Integer),
+            (T::Integer, "toNumber") => none(T::Number),
+            (T::Integer, "toBoolean") => none(T::Boolean),
+
+            (T::Number, "toString") => none(T::String),
+            (T::Number, "abs" | "toNumber") => none(T::Number),
+            (T::Number, "floor" | "ceil" | "round" | "toInteger") => none(T::Integer),
+            (T::Number, "toBoolean") => none(T::Boolean),
+
+            (T::Boolean, "toString") => none(T::String),
+
+            (
+                T::String,
+                "toString" | "toUpperCase" | "toLowerCase" | "trim" | "trimStart" | "trimEnd",
+            ) => none(T::String),
+            (T::String, "length" | "size" | "toInteger") => none(T::Integer),
+            (T::String, "toNumber") => none(T::Number),
+            (T::String, "toBoolean" | "isEmpty" | "isNotEmpty" | "isBlank") => none(T::Boolean),
+            (T::String, "substring") => sig(vec![T::Integer, T::Integer], 2, T::String),
+            (T::String, "charAt") => sig(vec![T::Integer], 1, T::String),
+            (T::String, "charCodeAt") => sig(vec![T::Integer], 1, T::Integer),
+            (T::String, "indexOf" | "lastIndexOf") => {
+                sig(vec![T::String, T::Integer], 1, T::Integer)
+            }
+            (T::String, "contains" | "startsWith" | "endsWith") => {
+                sig(vec![T::String], 1, T::Boolean)
+            }
+            (T::String, "replace" | "replaceAll") => sig(vec![T::String, T::String], 2, T::String),
+            (T::String, "concat") => sig(vec![T::String], 1, T::String),
+            (T::String, "split") => sig(vec![T::String], 1, T::Array(Box::new(T::String))),
+            (T::String, "padStart" | "padEnd") => sig(vec![T::Integer, T::String], 2, T::String),
+            (T::String, "repeat") => sig(vec![T::Integer], 1, T::String),
+            (T::String, "matches") => sig(vec![T::String], 1, T::Boolean),
+
+            (T::Array(_), "length" | "size") => none(T::Integer),
+            (T::Array(element), "add" | "push") => sig(vec![(**element).clone()], 1, T::Undefined),
+            (T::Array(element), "insert") => {
+                sig(vec![T::Integer, (**element).clone()], 2, T::Undefined)
+            }
+            (T::Array(element), "set") => {
+                sig(vec![T::Integer, (**element).clone()], 2, T::Undefined)
+            }
+            (T::Array(element), "get") => sig(vec![T::Integer], 1, (**element).clone()),
+            // `remove()` without an index takes the element the list's
+            // behavior (`.line`, `.pile`) designates.
+            (T::Array(element), "remove") => sig(vec![T::Integer], 0, (**element).clone()),
+            (T::Array(element), "pop" | "removeLast" | "peek" | "first" | "last") => {
+                none((**element).clone())
+            }
+            (T::Array(element), "contains") => sig(vec![(**element).clone()], 1, T::Boolean),
+            (T::Array(element), "indexOf" | "lastIndexOf") => {
+                sig(vec![(**element).clone()], 1, T::Integer)
+            }
+            (T::Array(_), "isEmpty" | "isNotEmpty") => none(T::Boolean),
+            (T::Array(_), "toString") => none(T::String),
+            (T::Array(_), "reverse" | "sort") => none(receiver.clone()),
+            (T::Array(_), "slice") => sig(vec![T::Integer, T::Integer], 2, receiver.clone()),
+            (T::Array(_), "concat") => sig(vec![receiver.clone()], 1, receiver.clone()),
+
+            (T::Pairs(key, value), "get") => sig(vec![(**key).clone()], 1, (**value).clone()),
+            (T::Pairs(key, _), "has") => sig(vec![(**key).clone()], 1, T::Boolean),
+            (T::Pairs(key, value), "set") => {
+                sig(vec![(**key).clone(), (**value).clone()], 2, T::Undefined)
+            }
+            (T::Pairs(key, _), "remove") => sig(vec![(**key).clone()], 1, T::Undefined),
+            (T::Pairs(_, _), "len" | "size") => none(T::Integer),
+
+            _ => None,
+        }
+    }
+
+    /// The method-style utilities every integer, number, string and boolean
+    /// answers (`src/stdlib/method_style.rs`, 17-method-style-syntax.md).
+    fn is_method_style_utility(receiver: &ConcreteType, method: &str) -> bool {
+        let scalar = matches!(
+            receiver,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::String
+                | ConcreteType::Boolean
+        );
+        let utility = matches!(
+            method,
+            "isDefined"
+                | "isNotDefined"
+                | "isEmpty"
+                | "isNotEmpty"
+                | "mustBeTrue"
+                | "mustBeFalse"
+                | "mustBeEqual"
+                | "mustNotBeEqual"
+                | "toString"
+                | "toInteger"
+                | "toNumber"
+                | "toBoolean"
+                | "length"
+        ) || (method == "keepBetween"
+            && matches!(receiver, ConcreteType::Integer | ConcreteType::Number));
+        scalar && utility
+    }
+
+    /// FUNC001 / FUNC002 / SEM001 for a method called on an integer, number,
+    /// boolean, string, list or pairs value: the method must exist (in the
+    /// signature table, or as a `type.method` built-in registered by the
+    /// standard library), and its arguments must match the signature.
+    fn check_builtin_method_call(
+        &mut self,
+        receiver: &ConcreteType,
+        method: &str,
+        arguments: &mut [TastExpression],
+        location: &SourceLocation,
+    ) {
+        let type_name = match receiver {
+            ConcreteType::Integer => "integer",
+            ConcreteType::Number => "number",
+            ConcreteType::Boolean => "boolean",
+            ConcreteType::String => "string",
+            ConcreteType::Array(_) => "list",
+            ConcreteType::Pairs(_, _) => "pairs",
+            _ => return,
+        };
+        let Some(signature) = Self::builtin_method_signature(receiver, method) else {
+            let registered = Self::is_method_style_utility(receiver, method)
+                || self
+                    .symbol_table
+                    .lookup_symbol(&format!("{}.{}", type_name, method))
+                    .is_some();
+            if !registered {
+                self.errors.push(CompilerError::semantic_error_with_code(
+                    format!("Method '{}' not found on a {} value", method, type_name),
+                    Some(format!(
+                        "See the {} methods in the standard library reference",
+                        type_name
+                    )),
+                    Some(location.clone()),
+                    "FUNC001",
+                ));
+            }
+            return;
+        };
+        let count = arguments.len();
+        if count < signature.required || count > signature.params.len() {
+            let expected = if signature.required == signature.params.len() {
+                signature.required.to_string()
+            } else {
+                format!("{} to {}", signature.required, signature.params.len())
+            };
+            self.errors.push(CompilerError::semantic_error_with_code(
+                format!(
+                    "'{}.{}' expects {} argument(s), got {}",
+                    type_name, method, expected, count
+                ),
+                None,
+                Some(location.clone()),
+                "FUNC002",
+            ));
+            return;
+        }
+        for (param, arg) in signature.params.iter().zip(arguments.iter_mut()) {
+            let arg_location = Self::argument_location(arg, location);
+            self.require_assignable(arg, param, &arg_location);
+        }
+    }
+
     /// Infer return type of method call
     fn infer_method_return_type(
         &self,
         method_name: &str,
         receiver_type: &ConcreteType,
-        _arguments: &[TastExpression],
     ) -> Result<ConcreteType, CompilerError> {
-        // For now, implement basic built-in method type inference
+        if let Some(signature) = Self::builtin_method_signature(receiver_type, method_name) {
+            return Ok(signature.return_type);
+        }
         match (receiver_type, method_name) {
-            // Integer methods — type-system.md §7, §12 conversion methods
-            (ConcreteType::Integer, "toString") => Ok(ConcreteType::String),
-            (ConcreteType::Integer, "abs") => Ok(ConcreteType::Integer),
-            (ConcreteType::Integer, "toInteger") => Ok(ConcreteType::Integer),
-            (ConcreteType::Integer, "toNumber") => Ok(ConcreteType::Number),
-            (ConcreteType::Integer, "toBoolean") => Ok(ConcreteType::Boolean),
-
-            // Number methods — type-system.md §12 conversion methods
-            (ConcreteType::Number, "toString") => Ok(ConcreteType::String),
-            (ConcreteType::Number, "abs") => Ok(ConcreteType::Number),
-            (ConcreteType::Number, "floor") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "ceil") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "round") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "toInteger") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "toNumber") => Ok(ConcreteType::Number),
-            (ConcreteType::Number, "toBoolean") => Ok(ConcreteType::Boolean),
-
-            // String methods
-            (ConcreteType::String, "length") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "size") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "toString") => Ok(ConcreteType::String),
-            (ConcreteType::String, "toUpperCase") => Ok(ConcreteType::String),
-            (ConcreteType::String, "toLowerCase") => Ok(ConcreteType::String),
-            (ConcreteType::String, "trim") => Ok(ConcreteType::String),
-            (ConcreteType::String, "trimStart") => Ok(ConcreteType::String),
-            (ConcreteType::String, "trimEnd") => Ok(ConcreteType::String),
-            (ConcreteType::String, "substring") => Ok(ConcreteType::String),
-            (ConcreteType::String, "replace") => Ok(ConcreteType::String),
-            (ConcreteType::String, "replaceAll") => Ok(ConcreteType::String),
-            (ConcreteType::String, "charAt") => Ok(ConcreteType::String),
-            (ConcreteType::String, "concat") => Ok(ConcreteType::String),
-            (ConcreteType::String, "padStart") => Ok(ConcreteType::String),
-            (ConcreteType::String, "padEnd") => Ok(ConcreteType::String),
-            (ConcreteType::String, "indexOf") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "lastIndexOf") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "charCodeAt") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "toInteger") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "toNumber") => Ok(ConcreteType::Number),
-            (ConcreteType::String, "toBoolean") => Ok(ConcreteType::Boolean),
-            (ConcreteType::String, "contains")
-            | (ConcreteType::String, "startsWith")
-            | (ConcreteType::String, "endsWith")
-            | (ConcreteType::String, "isEmpty")
-            | (ConcreteType::String, "isBlank")
-            | (ConcreteType::String, "isNotEmpty") => Ok(ConcreteType::Boolean),
-            (ConcreteType::String, "split") => {
-                Ok(ConcreteType::Array(Box::new(ConcreteType::String)))
-            }
-
-            // Pairs methods
-            (ConcreteType::Pairs(_, value_type), "get") => Ok((**value_type).clone()),
-            (ConcreteType::Pairs(_, _), "has") => Ok(ConcreteType::Boolean),
-            (ConcreteType::Pairs(_, _), "len" | "size") => Ok(ConcreteType::Integer),
-            (ConcreteType::Pairs(_, _), "set" | "remove") => Ok(ConcreteType::Undefined),
-
-            // Array methods — type-system.md §12
-            (ConcreteType::Array(_), "length") => Ok(ConcreteType::Integer),
-            (ConcreteType::Array(_), "size") => Ok(ConcreteType::Integer), // Alias for length
-            (ConcreteType::Array(_), "push") => Ok(ConcreteType::Undefined), // void return
-            (ConcreteType::Array(element_type), "pop") => Ok((**element_type).clone()),
-            (ConcreteType::Array(element_type), "removeLast") => Ok((**element_type).clone()), // canonical name for pop
-            (ConcreteType::Array(element_type), "remove") => Ok((**element_type).clone()), // remove() behaves like pop()
-            (ConcreteType::Array(element_type), "get") => Ok((**element_type).clone()),
-            (ConcreteType::Array(_), "contains") => Ok(ConcreteType::Boolean), // contains() returns boolean
-            (ConcreteType::Array(_), "isEmpty") => Ok(ConcreteType::Boolean), // isEmpty() returns boolean
-            (ConcreteType::Array(_), "isNotEmpty") => Ok(ConcreteType::Boolean),
-            (ConcreteType::Array(_), "toString") => Ok(ConcreteType::String),
-            // stdlib-reference.md §5
-            (ConcreteType::Array(element_type), "first" | "last" | "peek") => {
-                Ok((**element_type).clone())
-            }
-            (ConcreteType::Array(_), "indexOf" | "lastIndexOf") => Ok(ConcreteType::Integer),
-            (ConcreteType::Array(_), "reverse" | "sort" | "slice" | "concat") => {
-                Ok(receiver_type.clone())
-            }
-
-            // Boolean methods
-            (ConcreteType::Boolean, "toString") => Ok(ConcreteType::String),
-
-            // Any type methods - returns string for toString, preserves any for others
+            // `any` converts to text; its other methods are resolved at runtime.
             (ConcreteType::Any, "toString") => Ok(ConcreteType::String),
 
             // Capability-typed receiver (`Draw thing; thing.draw()`).
@@ -5544,12 +5602,32 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// A compiler built-in namespace (`string.`, `math.`, `list.`, ...),
+    /// whose functions are lowered by name.
+    fn is_builtin_namespace(name: &str) -> bool {
+        [
+            "string",
+            "math",
+            "list",
+            "array",
+            "compare",
+            "file",
+            "http",
+            "json",
+            "input",
+            "validator",
+        ]
+        .iter()
+        .any(|ns| name == *ns || name.starts_with(&format!("{}.", ns)))
+    }
+
     /// Infer return type for static method calls
     fn infer_static_method_return_type(
         &self,
         class_name: &str,
         method_name: &str,
         arguments: &[TastExpression],
+        location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
         // Helper to validate argument count
         let validate_arg_count =
@@ -5562,13 +5640,14 @@ impl<'a> TypeInference<'a> {
                 );
                 if actual != expected {
                     tracing::debug!("DEBUG: ARGUMENT COUNT MISMATCH - RETURNING ERROR!");
-                    let error = CompilerError::type_error(
+                    let error = CompilerError::semantic_error_with_code(
                         format!(
                             "{}() expects {} argument(s), but {} were provided",
                             method_full_name, expected, actual
                         ),
                         Some(format!("Provide exactly {} argument(s)", expected)),
-                        None,
+                        Some(location.clone()),
+                        "FUNC002",
                     );
                     tracing::debug!("DEBUG: Created error: {:?}", error);
                     return Err(error);
@@ -5695,7 +5774,7 @@ impl<'a> TypeInference<'a> {
                     Ok(ConcreteType::Unknown)
                 }
             }
-            ("list", "pop") | ("list", "shift") | ("list", "removeLast") => {
+            ("list", "pop") | ("list", "shift") | ("list", "removeLast") | ("list", "peek") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 // Returns T - the element type of the list
                 // list.pop(list<T>) -> T, list.removeLast(list<T>) -> T
@@ -5958,7 +6037,13 @@ impl<'a> TypeInference<'a> {
             // dereferencing the actual i32 result as a pointer and reading
             // garbage memory. See CODEGEN_STACK_REMAINING (fp df5b8c9b1021).
             _ => {
-                if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(class_name) {
+                let class_symbol_id = self.symbol_table.lookup_symbol(class_name).filter(|id| {
+                    matches!(
+                        self.symbol_table.get_symbol(*id).map(|s| &s.kind),
+                        Some(SymbolKind::Class { .. })
+                    )
+                });
+                if let Some(class_symbol_id) = class_symbol_id {
                     if let Some(method_symbol_id) = self
                         .symbol_table
                         .lookup_class_member(class_symbol_id, method_name)
@@ -5970,6 +6055,11 @@ impl<'a> TypeInference<'a> {
                             }
                         }
                     }
+                    return Err(self.unknown_class_method_error(
+                        class_symbol_id,
+                        method_name,
+                        location,
+                    ));
                 }
                 // A dotted plugin language function (`auth.csrf.generate`) is
                 // registered under its full name; use its declared return type.
@@ -5984,6 +6074,20 @@ impl<'a> TypeInference<'a> {
                             None => ConcreteType::Null,
                         });
                     }
+                }
+                // The `json.` namespace has exactly the functions above
+                // (stdlib-reference.md §8). Other built-in namespaces also
+                // have functions the code generator provides by name.
+                if class_name == "json" {
+                    return Err(CompilerError::semantic_error_with_code(
+                        format!("Function '{}' not found", full_method_name),
+                        Some(format!(
+                            "See the `{}.` functions in the standard library reference",
+                            class_name
+                        )),
+                        Some(location.clone()),
+                        "FUNC001",
+                    ));
                 }
                 Ok(ConcreteType::Unknown)
             }
