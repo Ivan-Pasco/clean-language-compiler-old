@@ -391,9 +391,13 @@ impl HirValidator {
 
         // Register imported module names as valid namespaces so `MathUtils.square(5)`
         // is not rejected as "Undefined variable 'MathUtils'" before the resolver runs.
+        // `import: Utils as U` is called through `U` (`U.square(5)`).
         for import in &hir.imports {
             if !import.module_name.is_empty() {
                 context.plugin_namespaces.insert(import.module_name.clone());
+            }
+            if let (None, Some(alias)) = (&import.items, &import.alias) {
+                context.plugin_namespaces.insert(alias.clone());
             }
         }
     }
@@ -2020,6 +2024,7 @@ mod concurrency_tests {
                     },
                     guard: None,
                     is_private: false,
+                    list_behavior: crate::ast::ListBehavior::Default,
                     location: loc(),
                 }],
                 computed: vec![],

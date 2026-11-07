@@ -1,0 +1,35 @@
+// Test: bugfixes/list_modifier_on_field_and_state
+// Grammar: list_type (behavior suffix), class_field, state_declaration
+// Semantic: `.unique` on a class field or state variable keeps the list free
+//   of duplicates, as it does on a local
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   2
+//   2
+//   1
+
+start:
+	Bag b = Bag()
+	b.items.add(1)
+	b.items.add(1)
+	b.items.add(2)
+	print(b.items.length())
+	seen.add(4)
+	seen.add(4)
+	seen.add(5)
+	print(seen.length())
+	Child c = Child()
+	c.items.add(3)
+	c.items.add(3)
+	print(c.items.length())
+
+state:
+	list<integer>.unique seen = []
+
+class Bag
+	public:
+		list<integer>.unique items = []
+
+class Child is Bag
+	public:
+		integer extra = 0

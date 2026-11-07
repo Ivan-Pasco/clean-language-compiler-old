@@ -13,7 +13,6 @@
 //! - Error reporting for unresolved symbols
 
 use crate::ast::SourceLocation;
-use crate::error::CompilerError;
 use crate::hir::*;
 
 pub mod resolver_impl;
@@ -28,7 +27,6 @@ pub struct ResolvedHirProgram {
     pub functions: Vec<ResolvedHirFunction>,
     pub classes: Vec<ResolvedHirClass>,
     pub start_function: Option<ResolvedHirFunction>,
-    pub imports: Vec<ResolvedHirImport>,
     pub tests: Vec<ResolvedHirTest>,
     pub state: Option<ResolvedHirStateBlock>,
     /// Top-level watch blocks (reactive state observers)
@@ -95,7 +93,6 @@ pub struct ResolvedHirFunction {
     pub return_type: Option<HirType>,
     pub body: ResolvedHirBlock,
     pub is_start: bool,
-    pub is_background: bool,
     pub location: SourceLocation,
 }
 
@@ -106,7 +103,6 @@ pub struct ResolvedHirParameter {
     pub symbol_id: SymbolId,
     pub param_type: HirType,
     pub default_value: Option<ResolvedHirExpression>,
-    pub is_variadic: bool,
     pub location: SourceLocation,
 }
 
@@ -156,15 +152,6 @@ pub struct ResolvedHirMethod {
     pub parameters: Vec<ResolvedHirParameter>,
     pub return_type: HirType,
     pub body: ResolvedHirBlock,
-    pub location: SourceLocation,
-}
-
-/// Resolved HIR Import with resolved module references
-#[derive(Debug, Clone)]
-pub struct ResolvedHirImport {
-    pub module_name: String,
-    pub module_id: ModuleId,
-    pub items: Option<Vec<(String, SymbolId)>>, // (name, resolved symbol)
     pub location: SourceLocation,
 }
 
@@ -546,5 +533,4 @@ pub enum ResolvedHirLValue {
 #[derive(Debug)]
 pub struct ResolutionResult {
     pub resolved_hir: ResolvedHirProgram,
-    pub warnings: Vec<CompilerError>,
 }

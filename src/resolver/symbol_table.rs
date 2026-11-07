@@ -81,10 +81,6 @@ pub const SYM_COMPUTED_GETTER_BASE: usize = 0x4002_0000;
 /// Base for MIR-synthesized class JSON serializer IDs.
 pub const SYM_CLASS_SERIALIZER_BASE: usize = 0x4003_0000;
 
-/// Unique identifier for modules
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ModuleId(pub usize);
-
 /// Unique identifier for scopes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(pub usize);
@@ -170,9 +166,6 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub scope_id: ScopeId,
     pub location: SourceLocation,
-    pub is_exported: bool,
-    pub is_imported: bool,
-    pub module_id: Option<ModuleId>,
     /// True when the symbol was declared inside a `private:` sub-section.
     ///
     /// A private symbol may only be accessed from within its owning scope:
@@ -194,38 +187,6 @@ pub struct Scope {
     pub id: ScopeId,
     pub parent: Option<ScopeId>,
     pub symbols: HashMap<String, SymbolId>,
-    pub scope_type: ScopeType,
-}
-
-/// Types of scopes in Clean Language
-#[derive(Debug, Clone, PartialEq)]
-pub enum ScopeType {
-    Global,
-    Function {
-        function_id: SymbolId,
-    },
-    Class {
-        class_id: SymbolId,
-    },
-    Method {
-        method_id: SymbolId,
-        class_id: SymbolId,
-    },
-    Constructor {
-        class_id: SymbolId,
-    },
-    Block,
-    Test,
-}
-
-/// Module information for import resolution
-#[derive(Debug, Clone)]
-pub struct Module {
-    pub id: ModuleId,
-    pub name: String,
-    pub file_path: String,
-    pub exported_symbols: HashMap<String, SymbolId>,
-    pub imported_modules: Vec<ModuleId>,
 }
 
 /// Global symbol table managing all symbols and scopes
@@ -233,16 +194,13 @@ pub struct Module {
 pub struct GlobalSymbolTable {
     symbols: HashMap<SymbolId, Symbol>,
     scopes: HashMap<ScopeId, Scope>,
-    modules: HashMap<ModuleId, Module>,
 
     // Generators for unique IDs
     next_symbol_id: usize,
     next_scope_id: usize,
-    next_module_id: usize,
 
     // Current context
     current_scope: ScopeId,
-    current_module: Option<ModuleId>,
 
     // Built-in symbols (populated during initialization)
     pub(crate) builtins: HashSet<SymbolId>,
@@ -262,12 +220,9 @@ impl Clone for GlobalSymbolTable {
         Self {
             symbols: self.symbols.clone(),
             scopes: self.scopes.clone(),
-            modules: self.modules.clone(),
             next_symbol_id: self.next_symbol_id,
             next_scope_id: self.next_scope_id,
-            next_module_id: self.next_module_id,
             current_scope: self.current_scope,
-            current_module: self.current_module,
             builtins: self.builtins.clone(),
             scope_depth_errors: Mutex::new(self.scope_depth_errors.lock().unwrap().clone()),
             raw_ptr_params: self.raw_ptr_params.clone(),
@@ -289,19 +244,16 @@ impl GlobalSymbolTable {
         let mut table = Self {
             symbols: HashMap::new(),
             scopes: HashMap::new(),
-            modules: HashMap::new(),
             next_symbol_id: 0,
             next_scope_id: 0,
-            next_module_id: 0,
             current_scope: ScopeId(0),
-            current_module: None,
             builtins: HashSet::new(),
             scope_depth_errors: Mutex::new(Vec::new()),
             raw_ptr_params: HashMap::new(),
         };
 
         // Create global scope
-        table.create_scope(None, ScopeType::Global);
+        table.create_scope(None);
 
         // Add built-in symbols
         table.add_builtins();
@@ -445,15 +397,8 @@ impl GlobalSymbolTable {
         id
     }
 
-    /// Generate a new unique module ID
-    fn next_module_id(&mut self) -> ModuleId {
-        let id = ModuleId(self.next_module_id);
-        self.next_module_id += 1;
-        id
-    }
-
     /// Create a new scope
-    pub fn create_scope(&mut self, parent: Option<ScopeId>, scope_type: ScopeType) -> ScopeId {
+    pub fn create_scope(&mut self, parent: Option<ScopeId>) -> ScopeId {
         let scope_id = self.next_scope_id();
 
         // Prevent circular reference: scope should never be its own parent
@@ -480,7 +425,6 @@ impl GlobalSymbolTable {
             id: scope_id,
             parent: parent_scope,
             symbols: HashMap::new(),
-            scope_type,
         };
 
         self.scopes.insert(scope_id, scope);
@@ -516,9 +460,6 @@ impl GlobalSymbolTable {
             kind,
             scope_id,
             location,
-            is_exported: false,
-            is_imported: false,
-            module_id: self.current_module,
             is_private: false,
             owner_scope_name: None,
         };
@@ -689,26 +630,6 @@ impl GlobalSymbolTable {
             symbol.is_private = true;
             symbol.owner_scope_name = Some(owner_scope_name);
         }
-    }
-
-    /// Create a new module
-    pub fn create_module(&mut self, name: String, file_path: String) -> ModuleId {
-        let module_id = self.next_module_id();
-        let module = Module {
-            id: module_id,
-            name: name.clone(),
-            file_path,
-            exported_symbols: HashMap::new(),
-            imported_modules: Vec::new(),
-        };
-
-        self.modules.insert(module_id, module);
-        module_id
-    }
-
-    /// Get module by ID
-    pub fn get_module(&self, id: ModuleId) -> Option<&Module> {
-        self.modules.get(&id)
     }
 
     /// Get current scope ID
@@ -2008,12 +1929,7 @@ mod tests {
         let mut table = GlobalSymbolTable::new();
 
         // Create function scope
-        let func_scope = table.create_scope(
-            None,
-            ScopeType::Function {
-                function_id: SymbolId(999),
-            },
-        );
+        let func_scope = table.create_scope(None);
         table.enter_scope(func_scope);
 
         // Add parameter

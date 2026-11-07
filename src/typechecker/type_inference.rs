@@ -1320,7 +1320,7 @@ impl<'a> TypeInference<'a> {
         let function_type = ConcreteType::Function {
             parameters: param_types,
             return_type: Box::new(return_type.clone()),
-            is_background: function.is_background,
+            is_background: false,
         };
 
         self.type_env.insert(function.symbol_id, function_type);
@@ -1483,7 +1483,7 @@ impl<'a> TypeInference<'a> {
                 name: param.name.clone(),
                 param_type,
                 default_value,
-                is_variadic: param.is_variadic,
+                is_variadic: false,
                 location: param.location.clone(),
             });
         }
@@ -1591,7 +1591,7 @@ impl<'a> TypeInference<'a> {
             body: tast_body,
             generic_params: Vec::new(), // Would handle generics here
             constraints: Vec::new(),
-            is_background: function.is_background,
+            is_background: false,
             is_static: false, // Top-level functions are not static methods
             visibility: Visibility::Public, // Would get from HIR
             location: function.location.clone(),
@@ -1624,7 +1624,7 @@ impl<'a> TypeInference<'a> {
                 name: param.name.clone(),
                 param_type,
                 default_value: None,
-                is_variadic: param.is_variadic,
+                is_variadic: false,
                 location: param.location.clone(),
             });
         }
@@ -1668,7 +1668,7 @@ impl<'a> TypeInference<'a> {
                 name: param.name.clone(),
                 param_type,
                 default_value: None, // Would convert from HIR
-                is_variadic: param.is_variadic,
+                is_variadic: false,
                 location: param.location.clone(),
             });
         }
@@ -6233,8 +6233,6 @@ impl<'a> TypeInference<'a> {
             HirType::String => ConcreteType::String,
             HirType::Boolean => ConcreteType::Boolean,
             HirType::Void => ConcreteType::Null,
-            // BOOK: null-support - HirType::Null maps to ConcreteType::Null
-            HirType::Null => ConcreteType::Null,
             // 8/16/32-bit integers collapse to `Integer` (i32 in WASM) — no precision loss.
             // 64-bit integers preserve their precision modifier so the MIR builder can route
             // literals to `MirConstant::Integer64` and codegen can emit i64 ops; otherwise

@@ -1,0 +1,17 @@
+// Test: bugfixes/user_function_named_like_builtin_method
+// Grammar: method_call, function_declaration
+// Semantic: FUNC012 — a user function sharing a name with a built-in method
+//   does not turn `list.length()` into a method call on that function
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   3
+//   8
+
+start:
+	list<integer> xs = [1, 2, 3]
+	print(xs.length())
+	print(length(4))
+
+functions:
+	integer length(integer n)
+		return n * 2

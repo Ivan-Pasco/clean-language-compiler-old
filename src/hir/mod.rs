@@ -103,8 +103,6 @@ pub enum HirType {
     String,
     Boolean,
     Void,
-    // BOOK: null-support - Null type for representing absence of value
-    Null,
 
     /// Precision types (from lexer precision modifiers)
     Integer8,
@@ -191,6 +189,9 @@ pub struct HirField {
     pub initializer: Option<HirExpression>,
     /// True when declared inside a `private:` sub-section of a class body (SEM005).
     pub is_private: bool,
+    /// Behavior modifier of a list-typed field (`list<T>.unique`, ...);
+    /// `Default` otherwise. Set on every new instance.
+    pub list_behavior: crate::ast::ListBehavior,
     pub location: SourceLocation,
 }
 
@@ -219,6 +220,8 @@ pub struct HirMethod {
 pub struct HirImport {
     pub module_name: String,
     pub items: Option<Vec<String>>, // None = import all, Some = specific items
+    /// `as` name: the module's (`Utils as U`) or the item's (`Json.decode as jd`).
+    pub alias: Option<String>,
     pub location: SourceLocation,
 }
 
@@ -260,6 +263,8 @@ pub struct HirStateDeclaration {
     pub guard: Option<HirGuardClause>,
     /// True when declared inside a `private:` sub-section of a `state:` block (SEM005).
     pub is_private: bool,
+    /// Behavior modifier of a list-typed state variable; `Default` otherwise.
+    pub list_behavior: crate::ast::ListBehavior,
     pub location: SourceLocation,
 }
 

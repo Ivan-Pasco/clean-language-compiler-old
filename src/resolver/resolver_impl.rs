@@ -23,7 +23,7 @@ pub struct NameResolver {
     /// from outside a screen be reported as SCOPE005.
     screen_names: Vec<String>,
     /// class name → set of declared method names. Populated during
-    /// `register_top_level_symbols` so `receiver_has_method` can answer
+    /// `register_top_level_symbols` so `class_has_method` can answer
     /// "does this class declare this method?" during the FIRST pass of
     /// expression resolution — before `resolve_class` has had a chance to
     /// build the class's method-symbol list. Without this, every method
@@ -33,8 +33,12 @@ pub struct NameResolver {
     /// receiver-type-first lookup couldn't find the matching method and
     /// raised the standalone-function error.
     class_method_names: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// class name → (class scope, field symbols in declaration order).
+    /// Created by `register_class_fields` before any body is resolved, so a
+    /// class sees the fields it inherits whatever order the classes are
+    /// declared in.
+    class_members: std::collections::HashMap<String, (ScopeId, Vec<SymbolId>)>,
     errors: Vec<CompilerError>,
-    warnings: Vec<CompilerError>,
     expression_recursion_depth: usize,
     /// Plugin bridge functions deferred until after `register_top_level_symbols` runs,
     /// so they are applied AFTER builtins and are never overwritten by them.
@@ -56,6 +60,10 @@ pub struct NameResolver {
     /// Default argument values for language alias functions that have `param_defaults`.
     /// Keyed by language function name. Values are per-param default strings (empty = required).
     language_fn_defaults: std::collections::HashMap<String, Vec<String>>,
+    /// Name a module is called through (its own name, or the alias of
+    /// `import: Module as M`) → the module's name. `M.fn(args)` on such a
+    /// name binds to the module's function `fn`.
+    module_namespaces: std::collections::HashMap<String, String>,
 }
 
 impl NameResolver {
@@ -69,20 +77,27 @@ impl NameResolver {
             current_screen: None,
             screen_names: Vec::new(),
             class_method_names: std::collections::HashMap::new(),
+            class_members: std::collections::HashMap::new(),
             errors: Vec::new(),
-            warnings: Vec::new(),
             expression_recursion_depth: 0,
             pending_bridge_functions: Vec::new(),
             pending_language_aliases: std::collections::HashMap::new(),
             pending_language_helper_aliases: std::collections::HashMap::new(),
             pending_language_fn_defs: std::collections::HashMap::new(),
             language_fn_defaults: std::collections::HashMap::new(),
+            module_namespaces: std::collections::HashMap::new(),
         }
     }
 
     /// Resolve names in a HIR program
     pub fn resolve(hir: HirProgram) -> Result<ResolutionResult, Vec<CompilerError>> {
-        Self::resolve_with_bridge_functions(hir, &[])
+        Self::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            hir,
+            &[],
+            &std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Resolve the entire HIR program
@@ -117,7 +132,6 @@ impl NameResolver {
         } else {
             None
         };
-        let resolved_imports = self.resolve_imports(&hir.imports)?;
         let resolved_tests = self.resolve_tests(&hir.tests)?;
 
         // Resolve state block if present
@@ -132,30 +146,24 @@ impl NameResolver {
         // in the global scope. Each body is resolved independently.
         let mut resolved_watch_blocks: Vec<crate::resolver::ResolvedHirWatchBlock> = Vec::new();
         for watch in &hir.watch_blocks {
-            // Resolve and validate each target name against the symbol table.
+            // Each target must name a `state:` variable (SCOPE004).
             let mut target_symbol_ids: Vec<SymbolId> = Vec::new();
-            let mut target_resolution_failed = false;
             for target_name in &watch.targets {
-                match self.symbol_table.lookup_symbol(target_name) {
+                let state_symbol = self.symbol_table.lookup_symbol(target_name).filter(|&id| {
+                    self.symbol_table
+                        .get_symbol(id)
+                        .is_some_and(|s| matches!(s.kind, SymbolKind::StateVariable { .. }))
+                });
+                match state_symbol {
                     Some(sid) => target_symbol_ids.push(sid),
-                    None => {
-                        tracing::warn!(
-                            name = %target_name,
-                            "Watch target '{}' not found in symbol table — \
-                             it may be defined later or come from a plugin",
-                            target_name
-                        );
-                        // Use a sentinel SymbolId(0) so that the rest of the pipeline
-                        // can still operate; the runtime will validate at execution time.
-                        target_symbol_ids.push(SymbolId(0));
-                        target_resolution_failed = true;
-                    }
+                    None => self.error_with_code(
+                        &format!("Watch target '{}' is not a state variable", target_name),
+                        "SCOPE004",
+                        watch.location.clone(),
+                    ),
                 }
             }
 
-            // Even when target resolution had warnings, still resolve the body so that
-            // type errors in the handler are caught at compile time.
-            let _ = target_resolution_failed; // informational only
             let resolved_body = self.resolve_block(&watch.body)?;
 
             resolved_watch_blocks.push(crate::resolver::ResolvedHirWatchBlock {
@@ -215,6 +223,31 @@ impl NameResolver {
                             location: decl.location.clone(),
                         }),
                 );
+                // A list declared with a behavior modifier gets the behavior
+                // once its list exists.
+                for decl in &qualified_state.declarations {
+                    if decl.list_behavior == crate::ast::ListBehavior::Default {
+                        continue;
+                    }
+                    let set_flags = HirExpression::MethodCall {
+                        receiver: Box::new(HirExpression::Variable {
+                            name: decl.name.clone(),
+                            location: decl.location.clone(),
+                        }),
+                        method: "setFlags".to_string(),
+                        arguments: vec![HirExpression::Literal {
+                            value: crate::ast::Value::Integer(i64::from(
+                                decl.list_behavior.to_flags(),
+                            )),
+                            location: decl.location.clone(),
+                        }],
+                        location: decl.location.clone(),
+                    };
+                    screen_state_init.push(ResolvedHirStatement::Expression {
+                        expression: self.resolve_expression(&set_flags)?,
+                        location: decl.location.clone(),
+                    });
+                }
                 match resolved_state {
                     Some(ref mut app_state) => {
                         app_state
@@ -359,7 +392,6 @@ impl NameResolver {
             functions: resolved_functions,
             classes: resolved_classes,
             start_function: resolved_start_function,
-            imports: resolved_imports,
             tests: resolved_tests,
             state: resolved_state,
             watch_blocks: resolved_watch_blocks,
@@ -623,7 +655,6 @@ impl NameResolver {
                 symbol_id: param_symbol_id,
                 param_type: cap_param.param_type.clone(),
                 default_value: None,
-                is_variadic: false,
                 location: cap_param.location.clone(),
             });
             argument_exprs.push(ResolvedHirExpression::Variable {
@@ -948,7 +979,7 @@ impl NameResolver {
                 );
 
                 // Pre-populate the class → method-names map so
-                // `receiver_has_method` can answer the FUNC012 carve-out
+                // `class_has_method` can answer the FUNC012 carve-out
                 // during expression resolution of top-level functions.
                 // resolve_class will register the actual method symbols and
                 // wire them onto the class symbol in a later pass; this
@@ -959,6 +990,8 @@ impl NameResolver {
                     .insert(class.name.clone(), method_set);
             }
         }
+
+        self.register_class_fields(&hir.classes);
 
         // Register top-level capability declarations (`can Name:`).
         // Clean Language Specification §Capabilities · grammar.ebnf §6.4a.
@@ -1063,17 +1096,24 @@ impl NameResolver {
         // Register imported modules as Namespace symbols in the global scope.
         // This must happen in the first pass so that `Module.function()` call
         // sites can be resolved regardless of where they appear in the source.
+        // `import: Module as M` makes the module callable as `M` only.
         for import in &hir.imports {
+            let namespace_name = match (&import.items, &import.alias) {
+                (None, Some(alias)) => alias.clone(),
+                _ => import.module_name.clone(),
+            };
             if !self
                 .symbol_table
-                .has_symbol_in_current_scope(&import.module_name)
+                .has_symbol_in_current_scope(&namespace_name)
             {
-                let _ns_id = self.symbol_table.create_symbol(
-                    import.module_name.clone(),
+                self.symbol_table.create_symbol(
+                    namespace_name.clone(),
                     SymbolKind::Namespace { functions: vec![] },
                     self.symbol_table.current_scope_id(),
                     import.location.clone(),
                 );
+                self.module_namespaces
+                    .insert(namespace_name, import.module_name.clone());
             }
         }
 
@@ -1207,6 +1247,52 @@ impl NameResolver {
         }
     }
 
+    /// Create each class's scope and field symbols, and link it to its
+    /// parent, before any class body is resolved: a class declared before
+    /// its parent still sees the fields it inherits. An unknown parent is
+    /// left unlinked; `resolve_class` reports it.
+    fn register_class_fields(&mut self, classes: &[HirClass]) {
+        for class in classes {
+            if self.class_members.contains_key(&class.name) {
+                continue;
+            }
+            let Some(class_symbol_id) = self.symbol_table.lookup_symbol(&class.name) else {
+                continue;
+            };
+            let parent_symbol_id = class
+                .parent
+                .as_ref()
+                .and_then(|parent| self.symbol_table.lookup_symbol(parent));
+            let class_scope = self.symbol_table.create_scope(None);
+            let mut field_symbol_ids = Vec::with_capacity(class.fields.len());
+            for field in &class.fields {
+                let field_symbol_id = self.symbol_table.create_symbol(
+                    field.name.clone(),
+                    SymbolKind::Field {
+                        class_id: class_symbol_id,
+                        field_type: field.field_type.clone(),
+                    },
+                    class_scope,
+                    field.location.clone(),
+                );
+                // Propagate inline private: visibility (SEM005).
+                if field.is_private {
+                    self.symbol_table
+                        .mark_as_private(field_symbol_id, class.name.clone());
+                }
+                field_symbol_ids.push(field_symbol_id);
+            }
+            if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
+                if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
+                    *fields = field_symbol_ids.clone();
+                    *parent = parent_symbol_id;
+                }
+            }
+            self.class_members
+                .insert(class.name.clone(), (class_scope, field_symbol_ids));
+        }
+    }
+
     /// Resolve all functions
     fn resolve_functions(
         &mut self,
@@ -1235,45 +1321,14 @@ impl NameResolver {
                 })?;
 
         // Create function scope
-        let function_scope = self.symbol_table.create_scope(
-            None,
-            ScopeType::Function {
-                function_id: function_symbol_id,
-            },
-        );
+        let function_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(function_scope);
         self.current_function = Some(function_symbol_id);
         let previous_return_type = self.current_function_return_type.clone();
         self.current_function_return_type = function.return_type.clone();
 
-        // Resolve parameters
-        let mut resolved_parameters = Vec::new();
-        for param in &function.parameters {
-            let param_symbol_id = self.symbol_table.create_symbol(
-                param.name.clone(),
-                SymbolKind::Parameter {
-                    param_type: param.param_type.clone(),
-                },
-                function_scope,
-                param.location.clone(),
-            );
-
-            // Resolve default value expression if present
-            let default_value = if let Some(default_expr) = &param.default_value {
-                Some(self.resolve_expression(default_expr)?)
-            } else {
-                None
-            };
-
-            resolved_parameters.push(ResolvedHirParameter {
-                name: param.name.clone(),
-                symbol_id: param_symbol_id,
-                param_type: param.param_type.clone(),
-                default_value,
-                is_variadic: false, // Variadic not yet in language spec
-                location: param.location.clone(),
-            });
-        }
+        let resolved_parameters =
+            self.resolve_parameters(&function.parameters, function_scope, &function.location)?;
 
         // If this function belongs to a screen (owner_screen is set), temporarily
         // set current_screen so that SCOPE005 allows access to that screen's state.
@@ -1298,9 +1353,50 @@ impl NameResolver {
             return_type: function.return_type,
             body: resolved_body,
             is_start: function.is_start,
-            is_background: false, // Async detection handled by runtime analysis
             location: function.location,
         })
+    }
+
+    /// Declare `parameters` in `scope` and resolve their default values.
+    /// Two parameters of one function sharing a name is SEM003; the error
+    /// points at `owner` (the function), parameters carry no position.
+    fn resolve_parameters(
+        &mut self,
+        parameters: &[HirParameter],
+        scope: ScopeId,
+        owner: &SourceLocation,
+    ) -> Result<Vec<ResolvedHirParameter>, ()> {
+        let mut resolved = Vec::with_capacity(parameters.len());
+        for (index, param) in parameters.iter().enumerate() {
+            if parameters[..index].iter().any(|p| p.name == param.name) {
+                self.error_with_code(
+                    &format!("Parameter '{}' is declared more than once", param.name),
+                    "SEM003",
+                    owner.clone(),
+                );
+                return Err(());
+            }
+            let symbol_id = self.symbol_table.create_symbol(
+                param.name.clone(),
+                SymbolKind::Parameter {
+                    param_type: param.param_type.clone(),
+                },
+                scope,
+                param.location.clone(),
+            );
+            let default_value = match &param.default_value {
+                Some(default_expr) => Some(self.resolve_expression(default_expr)?),
+                None => None,
+            };
+            resolved.push(ResolvedHirParameter {
+                name: param.name.clone(),
+                symbol_id,
+                param_type: param.param_type.clone(),
+                default_value,
+                location: param.location.clone(),
+            });
+        }
+        Ok(resolved)
     }
 
     /// Resolve all classes
@@ -1308,10 +1404,74 @@ impl NameResolver {
         let mut resolved_classes = Vec::new();
 
         for class in classes {
-            resolved_classes.push(self.resolve_class(class.clone())?);
+            let class = Self::with_list_behavior_prologue(class, classes);
+            resolved_classes.push(self.resolve_class(class)?);
         }
 
         Ok(resolved_classes)
+    }
+
+    /// `class` with its constructor starting by giving every list field
+    /// declared with a behavior modifier (`list<T>.unique items`), its own or
+    /// inherited, that behavior: the field's list is created by the field
+    /// initializer, the behavior lives in the list's header. A class without
+    /// a constructor gets one holding only these statements.
+    fn with_list_behavior_prologue(class: &HirClass, classes: &[HirClass]) -> HirClass {
+        let mut prologue = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut current = Some(class);
+        while let Some(c) = current {
+            if !seen.insert(c.name.as_str()) {
+                break;
+            }
+            for field in &c.fields {
+                if field.list_behavior == crate::ast::ListBehavior::Default {
+                    continue;
+                }
+                let loc = field.location.clone();
+                let this_field = HirExpression::FieldAccess {
+                    object: Box::new(HirExpression::Variable {
+                        name: "this".to_string(),
+                        location: loc.clone(),
+                    }),
+                    field: field.name.clone(),
+                    location: loc.clone(),
+                };
+                prologue.push(HirStatement::Expression {
+                    expression: HirExpression::MethodCall {
+                        receiver: Box::new(this_field),
+                        method: "setFlags".to_string(),
+                        arguments: vec![HirExpression::Literal {
+                            value: crate::ast::Value::Integer(i64::from(
+                                field.list_behavior.to_flags(),
+                            )),
+                            location: loc.clone(),
+                        }],
+                        location: loc.clone(),
+                    },
+                    location: loc,
+                });
+            }
+            current = c
+                .parent
+                .as_ref()
+                .and_then(|parent| classes.iter().find(|k| &k.name == parent));
+        }
+        let mut class = class.clone();
+        if prologue.is_empty() {
+            return class;
+        }
+        let constructor = class.constructor.get_or_insert_with(|| HirConstructor {
+            parameters: Vec::new(),
+            body: HirBlock {
+                statements: Vec::new(),
+                location: class.location.clone(),
+            },
+            location: class.location.clone(),
+        });
+        prologue.append(&mut constructor.body.statements);
+        constructor.body.statements = prologue;
+        class
     }
 
     /// Resolve a single class
@@ -1356,38 +1516,26 @@ impl NameResolver {
                 );
             })?;
 
-        // Create class scope
-        let class_scope = self.symbol_table.create_scope(
-            None,
-            ScopeType::Class {
-                class_id: class_symbol_id,
-            },
-        );
+        // The class scope and field symbols were created by
+        // `register_class_fields`.
+        let Some((class_scope, field_symbol_ids)) = self.class_members.get(&class.name).cloned()
+        else {
+            self.error(
+                &format!(
+                    "Fields of class '{}' were not registered - this is an internal compiler error",
+                    class.name
+                ),
+                class.location.clone(),
+            );
+            return Err(());
+        };
         self.symbol_table.enter_scope(class_scope);
         self.current_class = Some(class_symbol_id);
 
-        // Resolve fields
+        // Resolve field initializers
         let mut resolved_fields = Vec::new();
-        let mut field_symbol_ids = Vec::new();
 
-        for field in &class.fields {
-            let field_symbol_id = self.symbol_table.create_symbol(
-                field.name.clone(),
-                SymbolKind::Field {
-                    class_id: class_symbol_id,
-                    field_type: field.field_type.clone(),
-                },
-                class_scope,
-                field.location.clone(),
-            );
-            // Propagate inline private: visibility (SEM005).
-            if field.is_private {
-                self.symbol_table
-                    .mark_as_private(field_symbol_id, class.name.clone());
-            }
-
-            field_symbol_ids.push(field_symbol_id);
-
+        for (field, &field_symbol_id) in class.fields.iter().zip(field_symbol_ids.iter()) {
             let resolved_initializer = if let Some(init) = &field.initializer {
                 Some(self.resolve_expression(init)?)
             } else {
@@ -1401,14 +1549,6 @@ impl NameResolver {
                 initializer: resolved_initializer,
                 location: field.location.clone(),
             });
-        }
-
-        // Update class symbol with fields and parent immediately after creating them
-        if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
-            if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
-                *fields = field_symbol_ids.clone();
-                *parent = parent_symbol_id;
-            }
         }
 
         // Resolve constructor (symbol was already created in global scope)
@@ -1469,14 +1609,6 @@ impl NameResolver {
             let resolved_method =
                 self.resolve_method(method.clone(), class_symbol_id, method_symbol_id)?;
             resolved_methods.push(resolved_method);
-        }
-
-        // Update class symbol with fields and parent (methods were set in pass 1 above).
-        if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
-            if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
-                *fields = field_symbol_ids.clone();
-                *parent = parent_symbol_id;
-            }
         }
 
         // Resolve always: block expressions in class scope (fields are visible here)
@@ -1553,43 +1685,18 @@ impl NameResolver {
         constructor_symbol_id: SymbolId,
     ) -> Result<ResolvedHirConstructor, ()> {
         // Create constructor scope
-        let constructor_scope = self
-            .symbol_table
-            .create_scope(None, ScopeType::Constructor { class_id });
+        let constructor_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(constructor_scope);
 
         // Set current class for implicit field access
         let previous_class = self.current_class;
         self.current_class = Some(class_id);
 
-        // Resolve parameters
-        let mut resolved_parameters = Vec::new();
-        for param in &constructor.parameters {
-            let param_symbol_id = self.symbol_table.create_symbol(
-                param.name.clone(),
-                SymbolKind::Parameter {
-                    param_type: param.param_type.clone(),
-                },
-                constructor_scope,
-                param.location.clone(),
-            );
-
-            // Resolve default value expression if present
-            let default_value = if let Some(default_expr) = &param.default_value {
-                Some(self.resolve_expression(default_expr)?)
-            } else {
-                None
-            };
-
-            resolved_parameters.push(ResolvedHirParameter {
-                name: param.name.clone(),
-                symbol_id: param_symbol_id,
-                param_type: param.param_type.clone(),
-                default_value,
-                is_variadic: false, // Variadic not yet in language spec
-                location: param.location.clone(),
-            });
-        }
+        let resolved_parameters = self.resolve_parameters(
+            &constructor.parameters,
+            constructor_scope,
+            &constructor.location,
+        )?;
 
         // Resolve body
         let resolved_body = self.resolve_block(&constructor.body)?;
@@ -1614,13 +1721,7 @@ impl NameResolver {
         method_id: SymbolId,
     ) -> Result<ResolvedHirMethod, ()> {
         // Create method scope
-        let method_scope = self.symbol_table.create_scope(
-            None,
-            ScopeType::Method {
-                method_id,
-                class_id,
-            },
-        );
+        let method_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(method_scope);
         self.current_function = Some(method_id);
 
@@ -1630,34 +1731,8 @@ impl NameResolver {
         let previous_return_type = self.current_function_return_type.clone();
         self.current_function_return_type = Some(method.return_type.clone());
 
-        // Resolve parameters
-        let mut resolved_parameters = Vec::new();
-        for param in &method.parameters {
-            let param_symbol_id = self.symbol_table.create_symbol(
-                param.name.clone(),
-                SymbolKind::Parameter {
-                    param_type: param.param_type.clone(),
-                },
-                method_scope,
-                param.location.clone(),
-            );
-
-            // Resolve default value expression if present
-            let default_value = if let Some(default_expr) = &param.default_value {
-                Some(self.resolve_expression(default_expr)?)
-            } else {
-                None
-            };
-
-            resolved_parameters.push(ResolvedHirParameter {
-                name: param.name.clone(),
-                symbol_id: param_symbol_id,
-                param_type: param.param_type.clone(),
-                default_value,
-                is_variadic: false, // Variadic not yet in language spec
-                location: param.location.clone(),
-            });
-        }
+        let resolved_parameters =
+            self.resolve_parameters(&method.parameters, method_scope, &method.location)?;
 
         // Resolve body
         let resolved_body = self.resolve_block(&method.body)?;
@@ -1678,68 +1753,13 @@ impl NameResolver {
         })
     }
 
-    /// Resolve imports (basic implementation)
-    fn resolve_imports(&mut self, imports: &[HirImport]) -> Result<Vec<ResolvedHirImport>, ()> {
-        let mut resolved_imports = Vec::new();
-
-        for import in imports {
-            // Create a placeholder module entry
-            let module_id = self.symbol_table.create_module(
-                import.module_name.clone(),
-                format!("{}.cln", import.module_name),
-            );
-
-            // Register the module name as a Namespace symbol in the current scope.
-            // This allows `ModuleName.function(args)` syntax to resolve correctly:
-            // the resolver recognises the receiver as a Namespace and emits a qualified call.
-            let _namespace_symbol_id = self.symbol_table.create_symbol(
-                import.module_name.clone(),
-                SymbolKind::Namespace { functions: vec![] },
-                self.symbol_table.current_scope_id(),
-                import.location.clone(),
-            );
-
-            let resolved_items = if let Some(items) = &import.items {
-                let mut resolved_items = Vec::new();
-                for item in items {
-                    // Register each explicitly-imported item as a Function symbol.
-                    // The full resolution of parameter/return types happens during
-                    // the actual module compilation; here we create placeholders that
-                    // are sufficient for the resolver to proceed without errors.
-                    let symbol_id = self.symbol_table.create_symbol(
-                        item.clone(),
-                        SymbolKind::Function {
-                            parameters: vec![],
-                            return_type: None,
-                        },
-                        self.symbol_table.current_scope_id(),
-                        import.location.clone(),
-                    );
-                    resolved_items.push((item.clone(), symbol_id));
-                }
-                Some(resolved_items)
-            } else {
-                None
-            };
-
-            resolved_imports.push(ResolvedHirImport {
-                module_name: import.module_name.clone(),
-                module_id,
-                items: resolved_items,
-                location: import.location.clone(),
-            });
-        }
-
-        Ok(resolved_imports)
-    }
-
     /// Resolve tests
     fn resolve_tests(&mut self, tests: &[HirTest]) -> Result<Vec<ResolvedHirTest>, ()> {
         let mut resolved_tests = Vec::new();
 
         for test in tests {
             // Create test scope
-            let test_scope = self.symbol_table.create_scope(None, ScopeType::Test);
+            let test_scope = self.symbol_table.create_scope(None);
             self.symbol_table.enter_scope(test_scope);
 
             let resolved_body = self.resolve_block(&test.body)?;
@@ -1775,7 +1795,6 @@ impl NameResolver {
                     symbol_id: SymbolId(10000 + idx), // Synthetic ID for external params
                     param_type: p.param_type.clone(),
                     default_value: None,
-                    is_variadic: false,
                     location: p.location.clone(),
                 })
                 .collect();
@@ -1801,12 +1820,19 @@ impl NameResolver {
 
         for decl in &state_block.declarations {
             // Look up symbol_id from symbol table
-            let symbol_id = self
+            let Some(symbol_id) = self
                 .symbol_table
                 .lookup_symbol_in_scope(&decl.name, ScopeId(0))
-                .ok_or_else(|| {
-                    tracing::error!("Undefined state variable: {}", decl.name);
-                })?;
+            else {
+                self.error(
+                    &format!(
+                        "State variable '{}' was not registered - this is an internal compiler error",
+                        decl.name
+                    ),
+                    decl.location.clone(),
+                );
+                return Err(());
+            };
 
             // Resolve the initializer expression
             let resolved_initializer = self.resolve_expression(&decl.initializer)?;
@@ -1817,7 +1843,7 @@ impl NameResolver {
                 // Create a temporary scope for the guard context
                 let guard_scope = self
                     .symbol_table
-                    .create_scope(Some(self.symbol_table.current_scope_id()), ScopeType::Block);
+                    .create_scope(Some(self.symbol_table.current_scope_id()));
                 self.symbol_table.enter_scope(guard_scope);
 
                 // Add 'value' as a parameter in the guard scope with the state variable's type
@@ -1863,12 +1889,19 @@ impl NameResolver {
             Vec::new();
         for comp in &state_block.computed {
             // The symbol was already registered in register_top_level_symbols; look it up.
-            let symbol_id = self
+            let Some(symbol_id) = self
                 .symbol_table
                 .lookup_symbol_in_scope(&comp.name, ScopeId(0))
-                .ok_or_else(|| {
-                    tracing::error!("Undefined computed state variable: {}", comp.name);
-                })?;
+            else {
+                self.error(
+                    &format!(
+                        "Computed state '{}' was not registered - this is an internal compiler error",
+                        comp.name
+                    ),
+                    comp.location.clone(),
+                );
+                return Err(());
+            };
 
             let resolved_body = self.resolve_block(&comp.body)?;
 
@@ -1900,7 +1933,7 @@ impl NameResolver {
     /// Resolve a block of statements
     fn resolve_block(&mut self, block: &HirBlock) -> Result<ResolvedHirBlock, ()> {
         // Create block scope
-        let block_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+        let block_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(block_scope);
 
         let mut resolved_statements = Vec::new();
@@ -2037,7 +2070,7 @@ impl NameResolver {
                 let resolved_iterable = self.resolve_expression(iterable)?;
 
                 // Create new scope for loop variable
-                let loop_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                let loop_scope = self.symbol_table.create_scope(None);
                 self.symbol_table.enter_scope(loop_scope);
 
                 let var_symbol_id = self.symbol_table.create_symbol(
@@ -2074,7 +2107,7 @@ impl NameResolver {
                 let resolved_condition = self.resolve_expression(condition)?;
 
                 // Create new scope for while body
-                let loop_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                let loop_scope = self.symbol_table.create_scope(None);
                 self.symbol_table.enter_scope(loop_scope);
 
                 let resolved_body = self.resolve_block(body)?;
@@ -2171,7 +2204,7 @@ impl NameResolver {
                 // temporary block scope and inject a `result` symbol with the enclosing
                 // function's return type. The scope is exited immediately after the condition
                 // is resolved, so `result` does not leak into the surrounding function scope.
-                let ensure_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                let ensure_scope = self.symbol_table.create_scope(None);
                 self.symbol_table.enter_scope(ensure_scope);
 
                 if let Some(return_type) = &self.current_function_return_type.clone() {
@@ -2206,12 +2239,15 @@ impl NameResolver {
         &mut self,
         expression: &HirExpression,
     ) -> Result<ResolvedHirExpression, ()> {
-        // Check recursion depth to prevent stack overflow
-        const MAX_EXPRESSION_RECURSION: usize = 50; // Increased from 5 to allow more complex expressions
+        // Bound the recursion so a pathologically nested expression is an
+        // error, not a stack overflow. The bound matches the type checker's
+        // (`infer_expression`); a 1000-term `+` chain resolves well within
+        // the main thread's stack.
+        const MAX_EXPRESSION_RECURSION: usize = 1000;
         if self.expression_recursion_depth >= MAX_EXPRESSION_RECURSION {
             self.error(
                 &format!(
-                    "Maximum expression recursion depth exceeded ({})",
+                    "Expression is nested too deeply (more than {} levels); split it into intermediate variables",
                     MAX_EXPRESSION_RECURSION
                 ),
                 expression.location().clone(),
@@ -2901,6 +2937,11 @@ impl NameResolver {
                             location: location.clone(),
                         });
                     } else if let SymbolKind::Namespace { .. } = &class_symbol.kind {
+                        if let Some(result) = self
+                            .resolve_module_function_call(class_name, method, arguments, location)
+                        {
+                            return result;
+                        }
                         // This is a namespace function call (e.g., logical.and, conditional.integer, string.length)
                         // NOTE: Use dot notation to match stdlib function registration
                         let qualified_name = format!("{}.{}", class_name, method);
@@ -3038,11 +3079,19 @@ impl NameResolver {
         // `render()` method emitted by `expand_component`). Spec rule:
         // `instance.method()` binds to the method on the instance's class
         // before falling back to top-level symbols.
+        //
+        // The check only fires when the receiver's class is known statically
+        // and declares no such method. A receiver of a built-in type (`list`,
+        // `string`, ...) or of a type not known here has methods of its own
+        // (`xs.length()` with a user `length(integer)` in scope); the type
+        // checker decides those.
         if let Some(symbol_id) = self.symbol_table.lookup_symbol(method) {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if matches!(symbol.kind, SymbolKind::Function { .. })
                     && !self.symbol_table.is_builtin(symbol_id)
-                    && !self.receiver_has_method(receiver, method)
+                    && self
+                        .receiver_class_name(receiver)
+                        .is_some_and(|class| !self.class_has_method(&class, method))
                 {
                     self.errors
                         .push(CompilerError::method_call_on_standalone_function(
@@ -3075,88 +3124,66 @@ impl NameResolver {
         })
     }
 
-    /// Return true when `receiver` is a variable or parameter whose declared
-    /// type is a class that declares a method (inherited or own) named
-    /// `method_name` (or a constructor call of such a class). Used by the
-    /// FUNC012 guard so that a top-level function
-    /// with the same name as a class method does NOT shadow the method when
-    /// called on a typed receiver. Receivers that aren't simple identifiers,
-    /// or whose type isn't a `Named` class reference, return false — those
-    /// cases reach the regular instance-method resolution downstream where
-    /// type inference fills in for missing static type info.
-    fn receiver_has_method(&self, receiver: &HirExpression, method_name: &str) -> bool {
+    /// The user class `receiver` is statically known to be an instance of:
+    /// a variable, parameter or state variable declared with a class type,
+    /// or a constructor call (`Page()`, `Page().render()`). `None` when the
+    /// receiver's type is a built-in type or not known before type checking.
+    fn receiver_class_name(&self, receiver: &HirExpression) -> Option<String> {
         let class_name = match receiver {
             HirExpression::Variable { name, .. } => {
-                let var_symbol_id = match self.symbol_table.lookup_symbol(name) {
-                    Some(id) => id,
-                    None => return false,
-                };
-                let var_symbol = match self.symbol_table.get_symbol(var_symbol_id) {
-                    Some(s) => s,
-                    None => return false,
-                };
-                match &var_symbol.kind {
+                let var_symbol_id = self.symbol_table.lookup_symbol(name)?;
+                match &self.symbol_table.get_symbol(var_symbol_id)?.kind {
                     SymbolKind::Variable {
                         var_type: HirType::Named { name, .. },
                         ..
-                    } => name.clone(),
-                    SymbolKind::Parameter {
+                    }
+                    | SymbolKind::Parameter {
                         param_type: HirType::Named { name, .. },
-                    } => name.clone(),
-                    SymbolKind::StateVariable {
+                    }
+                    | SymbolKind::StateVariable {
                         var_type: HirType::Named { name, .. },
                         ..
                     } => name.clone(),
-                    _ => return false,
+                    _ => return None,
                 }
             }
-            // `Page().render()`: the receiver is a freshly constructed
-            // instance, so its class is known directly.
             HirExpression::Constructor { class_name, .. } => class_name.clone(),
             // `Page()` before constructor resolution is a call named after
             // the class.
-            HirExpression::Call { function, .. }
-                if self.class_method_names.contains_key(function.as_str())
-                    || self
-                        .symbol_table
-                        .lookup_symbol(function)
-                        .and_then(|id| self.symbol_table.get_symbol(id))
-                        .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. })) =>
-            {
-                function.clone()
-            }
-            _ => return false,
+            HirExpression::Call { function, .. } => function.clone(),
+            _ => return None,
         };
+        let is_class = self.class_method_names.contains_key(class_name.as_str())
+            || self
+                .symbol_table
+                .lookup_symbol(&class_name)
+                .and_then(|id| self.symbol_table.get_symbol(id))
+                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. }));
+        is_class.then_some(class_name)
+    }
 
-        // Prefer the pre-populated map: it's set up in
-        // `register_top_level_symbols` before any function bodies are
-        // resolved, so the answer is correct even for top-level functions
-        // that reference class methods (e.g. the HYDRATE_AUTO Gap 2 shim
-        // pass's `void <method>() { instance.<method>() }` shims). The
-        // symbol-table path below is a fallback for cases where the class
-        // came from somewhere other than the HIR program's classes vec
-        // (e.g. plugin module_helpers expansion that adds classes after
-        // first-pass registration).
-        if let Some(method_set) = self.class_method_names.get(&class_name) {
-            if method_set.contains(method_name) {
-                return true;
-            }
+    /// Whether class `class_name` declares (or inherits) a method
+    /// `method_name`. Prefers the map built in `register_top_level_symbols`,
+    /// which is complete before any body is resolved (the HYDRATE_AUTO Gap 2
+    /// shims call class methods from top-level functions resolved before
+    /// the classes); the symbol table covers classes added after that pass
+    /// (plugin module_helpers expansion) and inherited methods.
+    fn class_has_method(&self, class_name: &str, method_name: &str) -> bool {
+        if self
+            .class_method_names
+            .get(class_name)
+            .is_some_and(|methods| methods.contains(method_name))
+        {
+            return true;
         }
-
-        let class_symbol_id = match self.symbol_table.lookup_symbol(&class_name) {
-            Some(id) => id,
-            None => return false,
-        };
-        let class_symbol = match self.symbol_table.get_symbol(class_symbol_id) {
-            Some(s) => s,
-            None => return false,
-        };
-        if !matches!(class_symbol.kind, SymbolKind::Class { .. }) {
-            return false;
-        }
-
         self.symbol_table
-            .lookup_class_member(class_symbol_id, method_name)
+            .lookup_symbol(class_name)
+            .filter(|&id| {
+                self.symbol_table
+                    .get_symbol(id)
+                    .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. }))
+            })
+            .and_then(|id| self.symbol_table.lookup_class_member(id, method_name))
             .is_some()
     }
 
@@ -3513,8 +3540,12 @@ impl NameResolver {
 
             match symbol_kind {
                 Some(SymbolKind::Namespace { .. }) => {
-                    // This is a legitimate namespace, continue with normal namespace processing
-                    // Continue to normal namespace processing below
+                    if let Some(result) =
+                        self.resolve_module_function_call(namespace, function, arguments, location)
+                    {
+                        return result;
+                    }
+                    // A built-in namespace: normal namespace processing below.
                 }
                 Some(SymbolKind::Class { methods, .. }) => {
                     // This is a static method call on a class (e.g., MathUtils.add(5, 3))
@@ -3620,6 +3651,61 @@ impl NameResolver {
             arguments: resolved_arguments,
             location: location.clone(),
         })
+    }
+
+    /// `Module.fn(args)` where `Module` names an imported module (or its
+    /// `as` alias). The module's functions are part of the program, so the
+    /// call binds to the program function `fn`. Returns `None` when
+    /// `namespace` is not an imported module, or when `namespace.fn` is a
+    /// declared namespace function, so the caller resolves it as a namespace
+    /// call.
+    fn resolve_module_function_call(
+        &mut self,
+        namespace: &str,
+        function: &str,
+        arguments: &[HirExpression],
+        location: &SourceLocation,
+    ) -> Option<Result<ResolvedHirExpression, ()>> {
+        let module = self.module_namespaces.get(namespace)?.clone();
+        let declared = self
+            .symbol_table
+            .lookup_symbol_in_scope(function, ScopeId(0))
+            .filter(|&id| {
+                !self.symbol_table.is_builtin(id)
+                    && self
+                        .symbol_table
+                        .get_symbol(id)
+                        .is_some_and(|s| matches!(s.kind, SymbolKind::Function { .. }))
+            });
+        let Some(function_symbol_id) = declared else {
+            if self
+                .symbol_table
+                .lookup_symbol(&format!("{}.{}", namespace, function))
+                .is_some()
+            {
+                return None;
+            }
+            self.error_with_code(
+                &format!("Function '{}' not found in module '{}'", function, module),
+                "SEM007",
+                location.clone(),
+            );
+            return Some(Err(()));
+        };
+        let mut resolved_arguments = Vec::with_capacity(arguments.len());
+        for arg in arguments {
+            match self.resolve_expression(arg) {
+                Ok(resolved) => resolved_arguments.push(resolved),
+                Err(()) => return Some(Err(())),
+            }
+        }
+        self.inject_param_defaults(function, &mut resolved_arguments, location);
+        Some(Ok(ResolvedHirExpression::Call {
+            function: function.to_string(),
+            function_symbol_id,
+            arguments: resolved_arguments,
+            location: location.clone(),
+        }))
     }
 
     /// Resolve a `StaticMethodCall` expression (e.g., `compare.integer.greaterThan(…)`).
@@ -3852,7 +3938,29 @@ impl NameResolver {
     fn resolve_lvalue(&mut self, lvalue: &HirLValue) -> Result<ResolvedHirLValue, ()> {
         match lvalue {
             HirLValue::Variable { name, location } => {
-                // If we're in a class method, check for class fields first (implicit field access)
+                // A local variable shadows a field of the same name, for
+                // writes exactly as for reads (see
+                // `resolve_variable_expression`). A parameter named like a
+                // field is outside the specification (15-classes-and-objects:
+                // "Parameter names cannot match field names"); constructors
+                // written `name = name` rely on such a write reaching the
+                // field, so parameters do not shadow fields here.
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
+                    if self
+                        .symbol_table
+                        .get_symbol(symbol_id)
+                        .is_some_and(|s| matches!(s.kind, SymbolKind::Variable { .. }))
+                    {
+                        return Ok(ResolvedHirLValue::Variable {
+                            name: name.clone(),
+                            symbol_id,
+                            location: location.clone(),
+                        });
+                    }
+                }
+
+                // Otherwise, inside a class method, a field name is an
+                // implicit field access.
                 if let Some(current_class_id) = self.current_class {
                     if let Some((field_id, _)) =
                         self.symbol_table.lookup_class_field(current_class_id, name)
@@ -3907,8 +4015,18 @@ impl NameResolver {
             } => {
                 let resolved_object = self.resolve_expression(object)?;
 
-                // Field resolution depends on object type - for now use placeholder
-                let field_symbol_id = SymbolId(0);
+                // A field of `this` is known here; any other object's field
+                // is bound by the type checker from the object's type.
+                let field_symbol_id = match &resolved_object {
+                    ResolvedHirExpression::This {
+                        class_symbol_id, ..
+                    } => self
+                        .symbol_table
+                        .lookup_class_field(*class_symbol_id, field)
+                        .map(|(id, _)| id)
+                        .unwrap_or(SymbolId(0)),
+                    _ => SymbolId(0),
+                };
 
                 Ok(ResolvedHirLValue::FieldAccess {
                     object: Box::new(resolved_object),
@@ -4376,180 +4494,6 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
-        // List namespace functions (underscore versions for namespace resolution)
-        // Using Integer as generic placeholder - type checker handles actual generic list typing
-        self.register_builtin_fn(
-            "list_add",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_get",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_set",
-            vec![
-                HirType::List(Box::new(HirType::Integer)),
-                HirType::Integer,
-                HirType::Integer,
-            ],
-            Some(HirType::Void),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_clear",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Void),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_sort",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_reverse",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_contains",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::Boolean),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_remove",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_size",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_length",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_isEmpty",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Boolean),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_isNotEmpty",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Boolean),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_peek",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_indexOf",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_index_of",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_lastIndexOf",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_insert",
-            vec![
-                HirType::List(Box::new(HirType::Integer)),
-                HirType::Integer,
-                HirType::Integer,
-            ],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_slice",
-            vec![
-                HirType::List(Box::new(HirType::Integer)),
-                HirType::Integer,
-                HirType::Integer,
-            ],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_concat",
-            vec![
-                HirType::List(Box::new(HirType::Integer)),
-                HirType::List(Box::new(HirType::Integer)),
-            ],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_first",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_last",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_join",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::String],
-            Some(HirType::String),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_fill",
-            vec![HirType::Integer, HirType::Integer],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_range",
-            vec![HirType::Integer, HirType::Integer],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_push",
-            vec![HirType::List(Box::new(HirType::Integer)), HirType::Integer],
-            Some(HirType::List(Box::new(HirType::Integer))),
-            builtin_location.clone(),
-        );
-        self.register_builtin_fn(
-            "list_pop",
-            vec![HirType::List(Box::new(HirType::Integer))],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-
         // Validator namespace functions
         // validator.create() -> Integer (pointer to validation rules)
         self.register_builtin_fn(
@@ -4777,44 +4721,6 @@ impl NameResolver {
         );
         // Mark the symbol as builtin so it gets registered in the type environment
         self.symbol_table.mark_as_builtin(symbol_id);
-    }
-
-    /// Resolve names in a HIR program with plugin bridge functions
-    ///
-    /// This allows plugins to declare bridge functions in their plugin.toml
-    /// that will be recognized by the compiler during name resolution.
-    /// Bridge functions are applied AFTER builtin registration (inside
-    /// `resolve_program`) so their signatures are never overwritten.
-    pub fn resolve_with_bridge_functions(
-        hir: HirProgram,
-        bridge_functions: &[crate::plugins::BridgeFunction],
-    ) -> Result<ResolutionResult, Vec<CompilerError>> {
-        Self::resolve_with_bridge_and_language_aliases(
-            hir,
-            bridge_functions,
-            &std::collections::HashMap::new(),
-        )
-    }
-
-    /// Resolve with both bridge functions and language-name aliases.
-    ///
-    /// Extends `resolve_with_bridge_functions` by also registering dot-notation
-    /// language API names (e.g. `"db.query"`) as builtin functions with the same
-    /// signature as the underlying bridge function they map to.
-    /// Both bridge functions and aliases are applied AFTER builtin registration
-    /// (inside `resolve_program`) so plugin signatures are never overwritten.
-    pub fn resolve_with_bridge_and_language_aliases(
-        hir: crate::hir::HirProgram,
-        bridge_functions: &[crate::plugins::BridgeFunction],
-        language_to_bridge: &std::collections::HashMap<String, String>,
-    ) -> Result<ResolutionResult, Vec<CompilerError>> {
-        Self::resolve_with_bridge_aliases_fn_defs_and_helpers(
-            hir,
-            bridge_functions,
-            language_to_bridge,
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-        )
     }
 
     /// Register language-name aliases (dot-notation API names) as builtins.
@@ -5414,12 +5320,13 @@ impl NameResolver {
         resolver.pending_language_helper_aliases = language_to_helper;
         resolver.pending_language_fn_defs = language_fn_defs;
 
+        // Every error recorded while resolving fails the resolution, also
+        // when the pass itself ran to the end: an error inside an `always:`
+        // invariant or a watch target must not compile into a program that
+        // silently lacks the invariant.
         match resolver.resolve_program(hir) {
-            Ok(resolved_hir) => Ok(ResolutionResult {
-                resolved_hir,
-                warnings: resolver.warnings,
-            }),
-            Err(_) => Err(resolver.errors),
+            Ok(resolved_hir) if resolver.errors.is_empty() => Ok(ResolutionResult { resolved_hir }),
+            _ => Err(resolver.errors),
         }
     }
 }
@@ -5465,6 +5372,7 @@ mod scope_tests {
                 },
                 guard: None,
                 is_private: false,
+                list_behavior: crate::ast::ListBehavior::Default,
                 location: loc(),
             }],
             computed: vec![],

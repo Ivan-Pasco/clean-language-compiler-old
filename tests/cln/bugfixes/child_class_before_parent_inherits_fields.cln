@@ -1,0 +1,24 @@
+// Test: bugfixes/child_class_before_parent_inherits_fields
+// Grammar: class_declaration ("is" parent)
+// Semantic: inheritance — a class may be declared before its parent and still
+//   use the fields it inherits
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   Rex 4
+
+start:
+	Dog d = Dog()
+	print(d.describe())
+
+class Dog is Animal
+	public:
+		integer legs = 4
+
+	functions:
+		public:
+			string describe()
+				return name + " " + legs.toString()
+
+class Animal
+	public:
+		string name = "Rex"

@@ -1,0 +1,26 @@
+// Test: bugfixes/reset_state_restores_every_state_variable
+// Grammar: reset_statement = "reset" , ( "state" | identifier )
+// Semantic: `reset state` returns every state variable to its declared
+//   initial value (specification 1.0 §23); a `.unique` list keeps its behavior
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   5 hi 2
+//   1 start 0
+//   1
+
+start:
+	count = 5
+	label = "hi"
+	seen.add(7)
+	seen.add(8)
+	print(count.toString() + " " + label + " " + seen.length().toString())
+	reset state
+	print(count.toString() + " " + label + " " + seen.length().toString())
+	seen.add(3)
+	seen.add(3)
+	print(seen.length())
+
+state:
+	integer count = 1
+	string label = "start"
+	list<integer>.unique seen = []

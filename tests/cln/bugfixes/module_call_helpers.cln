@@ -1,0 +1,17 @@
+// Test: bugfixes/module_call_helpers
+// Semantic: module imported by the module-call pins
+//   (module_qualified_call_*.cln, import_module_alias.cln); an imported
+//   module's start: block runs before the importing program's
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   helpers loaded
+
+start:
+	print("helpers loaded")
+
+functions:
+	integer twice(integer n)
+		return n * 2
+
+	string label(string s)
+		return "<" + s + ">"

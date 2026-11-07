@@ -1,0 +1,36 @@
+// Test: bugfixes/local_shadows_field_on_assignment
+// Grammar: assignment, variable_declaration, class_declaration
+// Semantic: SCOPE — a local variable named like a field shadows the field
+//   for writes as for reads; the field keeps its value
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   field=10
+//   local=7
+//   field=10
+//   field=3
+
+start:
+	Counter c = Counter()
+	print("field=" + c.get().toString())
+	print("local=" + c.localShadow().toString())
+	print("field=" + c.get().toString())
+	c.setField(3)
+	print("field=" + c.get().toString())
+
+class Counter
+	public:
+		integer count
+
+	constructor()
+		count = 10
+
+	functions:
+		public:
+			integer localShadow()
+				integer count = 6
+				count = count + 1
+				return count
+			setField(integer v)
+				count = v
+			integer get()
+				return count

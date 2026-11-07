@@ -1,0 +1,16 @@
+// Test: bugfixes/import_module_alias
+// Grammar: import_item (module_name "as" module_name)
+// Semantic: an aliased module is called through its alias
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   helpers loaded
+//   14
+//   <z>
+
+import:
+	module_call_helpers as H
+
+start:
+	integer v = H.twice(7)
+	print(v)
+	print(H.label("z"))

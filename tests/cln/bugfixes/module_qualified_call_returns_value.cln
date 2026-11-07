@@ -1,0 +1,17 @@
+// Test: bugfixes/module_qualified_call_returns_value
+// Grammar: import_block, method_call (module.function(args))
+// Semantic: SEM002 — a module-qualified call binds to the module's function
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   helpers loaded
+//   9
+//   <a>
+
+import:
+	module_call_helpers
+
+start:
+	integer v = module_call_helpers.twice(4)
+	print(v + 1)
+	string s = module_call_helpers.label("a")
+	print(s)
