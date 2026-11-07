@@ -1325,7 +1325,10 @@ impl MirCodeGenerator<'_> {
             module.section(&custom);
         }
 
-        Ok(module.finish())
+        // Runtime helpers and imports are registered before the code
+        // generator knows which ones the program uses; drop those nothing
+        // calls.
+        crate::codegen::module_dce::remove_unreachable_functions(module.finish())
     }
 
     // -------------------------------------------------------------------------

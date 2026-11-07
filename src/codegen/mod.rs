@@ -14,6 +14,7 @@ mod codegen_registration;
 pub mod const_eval;
 mod memory;
 pub mod mir_codegen;
+mod module_dce;
 pub mod native_stdlib;
 mod type_manager;
 pub mod validate;
