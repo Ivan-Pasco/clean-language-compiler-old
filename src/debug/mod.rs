@@ -172,34 +172,88 @@ impl DebugUtils {
         }
     }
 
-    /// Validate code style and return issues
+    /// Validate code style and return issues.
+    ///
+    /// Checks the leading whitespace of each line (Clean Language indents
+    /// with tabs only), trailing whitespace, and lines longer than 120
+    /// characters.
     pub fn validate_style(source: &str) -> Vec<String> {
         let mut issues = Vec::new();
 
-        // Basic style checks on source code
-        let lines: Vec<&str> = source.lines().collect();
-
-        for (line_num, line) in lines.iter().enumerate() {
-            // Check for mixed indentation
-            if line.starts_with(' ') && line.contains('\t') {
-                issues.push(format!("Line {}: Mixed spaces and tabs", line_num + 1));
+        for (line_num, line) in source.lines().enumerate() {
+            let line_no = line_num + 1;
+            let indent: String = line
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            let only_whitespace = indent.chars().count() == line.chars().count();
+            if !only_whitespace && indent.contains(' ') {
+                if indent.contains('\t') {
+                    issues.push(format!(
+                        "Line {line_no}: Mixed spaces and tabs in indentation"
+                    ));
+                } else {
+                    issues.push(format!(
+                        "Line {line_no}: Indentation uses spaces; Clean Language indents with tabs"
+                    ));
+                }
             }
 
-            // Check for trailing whitespace
             if line.ends_with(' ') || line.ends_with('\t') {
-                issues.push(format!("Line {}: Trailing whitespace", line_num + 1));
+                issues.push(format!("Line {line_no}: Trailing whitespace"));
             }
 
-            // Check line length
-            if line.len() > 120 {
+            let length = line.chars().count();
+            if length > 120 {
                 issues.push(format!(
-                    "Line {}: Line too long ({} characters)",
-                    line_num + 1,
-                    line.len()
+                    "Line {line_no}: Line too long ({length} characters)"
                 ));
             }
         }
 
         issues
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DebugUtils;
+
+    #[test]
+    fn style_flags_space_indentation_and_mixed_indentation() {
+        let issues = DebugUtils::validate_style("start:\n    print(1)\n\t print(2)\n");
+        assert_eq!(
+            issues,
+            vec![
+                "Line 2: Indentation uses spaces; Clean Language indents with tabs".to_string(),
+                "Line 3: Mixed spaces and tabs in indentation".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn style_ignores_tabs_inside_code_and_counts_characters() {
+        // A tab after the code, not in the indentation, is not mixed indentation.
+        let source = format!(
+            "start:\n\tprint(\"a\tb\")\n\tprint(\"{}\")\n",
+            "é".repeat(110)
+        );
+        assert!(DebugUtils::validate_style(&source).is_empty());
+        let long = format!("\tprint(\"{}\")\n", "é".repeat(120));
+        assert_eq!(
+            DebugUtils::validate_style(&long),
+            vec!["Line 1: Line too long (130 characters)".to_string()]
+        );
+    }
+
+    #[test]
+    fn style_flags_trailing_whitespace() {
+        assert_eq!(
+            DebugUtils::validate_style("start:\t\n\tprint(1) \n"),
+            vec![
+                "Line 1: Trailing whitespace".to_string(),
+                "Line 2: Trailing whitespace".to_string(),
+            ]
+        );
     }
 }
