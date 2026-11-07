@@ -1,0 +1,51 @@
+// Test: bugfixes/any_methods_dispatch_on_the_value
+// Grammar: method_call, variable_declaration
+// Semantic: type-system.md §7 (conversion output types), §9 (methods of `any`)
+// Fixed in: compiler 0.33.176
+// Expected output:
+//   toInteger=42
+//   toNumber=2.5
+//   toBoolean=true
+//   boxedNumber=2.5
+//   emptyText=true
+//   text=false
+//   emptyList=true
+//   list=true
+//   nullEmpty=true
+//   defined=true
+//   missing=true
+//   noLength=-1
+//
+// Regression: `.toNumber()` on an `any` typed the result as unknown, so
+// `any r = value.toNumber()` stored an f64 in an i32 slot (invalid WASM);
+// `.toInteger()` and `.toBoolean()` results assigned to an `any` were not
+// boxed; `.isEmpty()` / `.isNotEmpty()` read the box's type tag as a
+// length, so an empty string was not empty and an empty list was not
+// empty. The conversions now have their output types and the emptiness
+// checks use the length of the array, object or string the value holds.
+
+start:
+	any data = json.textToData("{\"n\": \"42\", \"x\": 2.5, \"b\": \"true\", \"empty\": \"\", \"word\": \"hi\", \"none\": [], \"some\": [1], \"nothing\": null, \"count\": 3}")
+	integer n = data.n.toInteger()
+	printl("toInteger=" + n.toString())
+	number x = data.x.toNumber()
+	printl("toNumber=" + x.toString())
+	boolean b = data.b.toBoolean()
+	printl("toBoolean=" + b.toString())
+	any boxed = data.x.toNumber()
+	printl("boxedNumber=" + boxed.toString())
+	printl("emptyText=" + data.empty.isEmpty().toString())
+	printl("text=" + data.word.isEmpty().toString())
+	printl("emptyList=" + data.none.isEmpty().toString())
+	printl("list=" + data.some.isNotEmpty().toString())
+	printl("nullEmpty=" + data.nothing.isEmpty().toString())
+	printl("defined=" + data.word.isDefined().toString())
+	printl("missing=" + data.unknown.isNotDefined().toString())
+	integer noLength = emptiness(data.count) onError -1
+	printl("noLength=" + noLength.toString())
+
+functions:
+	integer emptiness(any value)
+		if value.isEmpty()
+			return 1
+		return 0

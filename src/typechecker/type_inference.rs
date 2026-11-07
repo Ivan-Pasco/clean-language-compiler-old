@@ -4002,6 +4002,9 @@ impl<'a> TypeInference<'a> {
             &mut tast_arguments,
             location,
         );
+        if matches!(resolved_receiver_type, ConcreteType::Any) {
+            self.check_any_method_call(method, tast_arguments.len(), location);
+        }
 
         // SEM004: joining a list is a namespace utility (`list.join(items, sep)`);
         // the method form is not part of the language (method-style syntax:
@@ -5393,6 +5396,52 @@ impl<'a> TypeInference<'a> {
         scalar && utility
     }
 
+    /// The methods an `any` value has, with their argument count. Each one
+    /// dispatches on the type the value holds at run time; any other method
+    /// has no meaning for an unknown value (FUNC001).
+    const ANY_METHODS: [(&'static str, usize); 10] = [
+        ("toString", 0),
+        ("toInteger", 0),
+        ("toNumber", 0),
+        ("toBoolean", 0),
+        ("length", 0),
+        ("get", 1),
+        ("isDefined", 0),
+        ("isNotDefined", 0),
+        ("isEmpty", 0),
+        ("isNotEmpty", 0),
+    ];
+
+    /// FUNC001 / FUNC002 for a method called on an `any` value.
+    fn check_any_method_call(&mut self, method: &str, count: usize, location: &SourceLocation) {
+        let Some((_, expected)) = Self::ANY_METHODS.iter().find(|(name, _)| *name == method) else {
+            let names: Vec<&str> = Self::ANY_METHODS.iter().map(|(name, _)| *name).collect();
+            self.errors.push(CompilerError::semantic_error_with_code(
+                format!("Method '{}' not found on an `any` value", method),
+                Some(format!(
+                    "An `any` has {}. Assign the value to a typed variable first, \
+                     e.g. `string text = value`, then call `text.{}()`",
+                    names.join(", "),
+                    method
+                )),
+                Some(location.clone()),
+                "FUNC001",
+            ));
+            return;
+        };
+        if count != *expected {
+            self.errors.push(CompilerError::semantic_error_with_code(
+                format!(
+                    "'any.{}' expects {} argument(s), got {}",
+                    method, expected, count
+                ),
+                None,
+                Some(location.clone()),
+                "FUNC002",
+            ));
+        }
+    }
+
     /// FUNC001 / FUNC002 / SEM001 for a method called on an integer, number,
     /// boolean, string, list or pairs value: the method must exist (in the
     /// signature table, or as a `type.method` built-in registered by the
@@ -5471,11 +5520,19 @@ impl<'a> TypeInference<'a> {
             return Ok(signature.return_type);
         }
         match (receiver_type, method_name) {
-            // `any` converts to text; its other methods are resolved at runtime.
+            // `any` converts to text (type-system.md §9).
             (ConcreteType::Any, "toString") => Ok(ConcreteType::String),
             // The length of the array, object or string the `any` holds,
-            // as an `any` (type-system.md §9).
-            (ConcreteType::Any, "length") => Ok(ConcreteType::Any),
+            // and a member or element, as an `any` (type-system.md §9).
+            (ConcreteType::Any, "length" | "get") => Ok(ConcreteType::Any),
+            // The explicit conversions give their output type
+            // (type-system.md §7).
+            (ConcreteType::Any, "toInteger") => Ok(ConcreteType::Integer),
+            (ConcreteType::Any, "toNumber") => Ok(ConcreteType::Number),
+            (ConcreteType::Any, "toBoolean") => Ok(ConcreteType::Boolean),
+            (ConcreteType::Any, "isDefined" | "isNotDefined" | "isEmpty" | "isNotEmpty") => {
+                Ok(ConcreteType::Boolean)
+            }
 
             // Capability-typed receiver (`Draw thing; thing.draw()`).
             // Method resolution goes through the capability's method contract,

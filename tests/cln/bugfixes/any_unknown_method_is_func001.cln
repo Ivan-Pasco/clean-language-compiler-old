@@ -1,0 +1,20 @@
+// Test: bugfixes/any_unknown_method_is_func001
+// Grammar: method_call
+// Semantic: FUNC001 — a method an `any` value does not have is an error, not a call to an unrelated function
+// Fixed in: compiler 0.33.176
+// Expected output:
+// Expected error:
+//   FUNC001
+//   Method 'toUpperCase' not found on an `any` value
+//
+// Regression: a method on an `any` other than the ones the compiler lowers
+// (`toString`, `toInteger`, `toNumber`, `toBoolean`, `length`, `get`,
+// `isDefined`, `isNotDefined`, `isEmpty`, `isNotEmpty`) compiled to a call
+// of the print function: `name.toUpperCase()` printed the value and
+// returned garbage.
+
+start:
+	any data = json.textToData("{\"name\": \"abc\"}")
+	any name = data.name
+	any upper = name.toUpperCase()
+	printl(upper.toString())
