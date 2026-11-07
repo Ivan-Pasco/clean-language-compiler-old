@@ -1048,9 +1048,11 @@ impl<'a> SpecificationLexer<'a> {
                         text,
                     ))
                 } else {
-                    let value: i64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
-                        text: text.clone(),
-                        location: start_location.clone(),
+                    let value = Self::decimal_integer(&number_text).ok_or_else(|| {
+                        LexError::InvalidNumber {
+                            text: text.clone(),
+                            location: start_location.clone(),
+                        }
                     })?;
                     Ok(Token::new(
                         TokenKind::IntegerLiteral(value),
@@ -1074,16 +1076,29 @@ impl<'a> SpecificationLexer<'a> {
                     text,
                 ))
             } else {
-                let value: i64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
-                    text: text.clone(),
-                    location: start_location.clone(),
-                })?;
+                let value =
+                    Self::decimal_integer(&number_text).ok_or_else(|| LexError::InvalidNumber {
+                        text: text.clone(),
+                        location: start_location.clone(),
+                    })?;
                 Ok(Token::new(
                     TokenKind::IntegerLiteral(value),
                     start_location,
                     text,
                 ))
             }
+        }
+    }
+
+    /// Value of a decimal integer literal. `9223372036854775808` (2^63) does
+    /// not fit in i64 on its own but is the magnitude of `i64::MIN`, so it
+    /// lexes as `i64::MIN`; the parser accepts it only right after a unary
+    /// minus and reports it as out of range anywhere else.
+    fn decimal_integer(text: &str) -> Option<i64> {
+        match text.parse::<i64>() {
+            Ok(value) => Some(value),
+            Err(_) if text.parse::<u64>() == Ok(1u64 << 63) => Some(i64::MIN),
+            Err(_) => None,
         }
     }
 

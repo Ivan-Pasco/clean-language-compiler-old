@@ -38,3 +38,35 @@ fn lexer_errors_point_at_the_offending_character() {
     let error = parse_err("start:\n\tinteger x = 99999999999999999999\n");
     assert_eq!(error_line_col(&error), (2, 14), "{}", error);
 }
+
+fn first_statement_value(src: &str) -> clean_language_compiler::ast::Expression {
+    use clean_language_compiler::ast::Statement;
+    let program = parse(src).unwrap_or_else(|e| panic!("`{}` must parse: {:?}", src, e));
+    let start = program
+        .functions
+        .iter()
+        .find(|f| f.name == "start")
+        .expect("start function");
+    match &start.body[0] {
+        Statement::VariableDecl {
+            initializer: Some(value),
+            ..
+        } => value.clone(),
+        other => panic!("expected a declaration, got {:?}", other),
+    }
+}
+
+/// `-9223372036854775808` (i64::MIN) is a valid integer literal; the bare
+/// magnitude 2^63 is out of range.
+#[test]
+fn i64_min_literal() {
+    use clean_language_compiler::ast::{Expression, Value};
+    assert_eq!(
+        first_statement_value("start:\n\tinteger x = -9223372036854775808\n"),
+        Expression::Literal(Value::Integer(i64::MIN))
+    );
+    let error = parse_err("start:\n\tinteger x = 9223372036854775808\n");
+    assert!(error.to_string().contains("out of range"), "{}", error);
+    let error = parse_err("start:\n\tinteger x = -9223372036854775809\n");
+    assert!(error.to_string().contains("Invalid number"), "{}", error);
+}
