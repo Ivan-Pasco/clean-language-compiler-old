@@ -8128,7 +8128,7 @@ impl HirBuilder {
     /// Build a HirTest body for an endpoint test case.
     ///
     /// Generates:
-    ///   integer __handle = _test_http_request_clean(method, path, body, "", "", "")
+    ///   integer __handle = _test_http_request_clean(method, path, body, header_key, header_value)
     ///   boolean __ok = true
     ///   for each assertion:
     ///     Status   → __ok = __ok && (_test_response_status(__handle) op value)
@@ -8154,22 +8154,44 @@ impl HirBuilder {
             HttpMethod::Patch => "PATCH",
         };
 
-        // _test_http_request_clean(method, path, body, "", "", "")
-        // body: use empty string for now (body key/value pairs require serialization)
+        // `_test_http_request` (function-registry.toml): method, path, body,
+        // header key, header value. `json(k: v, ...)` is sent as the JSON
+        // encoding of the object `{ k: v, ... }`; no body / header is "".
+        let body = match &endpoint.request.body {
+            Some(fields) => {
+                let object = Expression::ObjectLiteral {
+                    fields: fields
+                        .iter()
+                        .map(|(key, value)| (Value::String(key.clone()), value.clone()))
+                        .collect(),
+                    location: loc.clone(),
+                };
+                let encode = Expression::MethodCall {
+                    object: Box::new(Expression::Variable("json".to_string())),
+                    method: "encode".to_string(),
+                    arguments: vec![object],
+                    location: loc.clone(),
+                };
+                self.build_expression(&encode)?
+            }
+            None => empty_str(),
+        };
+        let string_literal = |text: &str| HirExpression::Literal {
+            value: Value::String(text.to_string()),
+            location: loc.clone(),
+        };
+        let (header_key, header_value) = match &endpoint.request.header {
+            Some((key, value)) => (string_literal(key), string_literal(value)),
+            None => (empty_str(), empty_str()),
+        };
         let handle_call = HirExpression::Call {
             function: "_test_http_request_clean".to_string(),
             arguments: vec![
-                HirExpression::Literal {
-                    value: Value::String(method_str.to_string()),
-                    location: loc.clone(),
-                },
-                HirExpression::Literal {
-                    value: Value::String(endpoint.request.path.clone()),
-                    location: loc.clone(),
-                },
-                empty_str(), // body
-                empty_str(), // header key
-                empty_str(), // header value
+                string_literal(method_str),
+                string_literal(&endpoint.request.path),
+                body,
+                header_key,
+                header_value,
             ],
             location: loc.clone(),
         };
