@@ -698,6 +698,9 @@ impl<'a> SpecificationLexer<'a> {
                 // expression): skip it so its quotes and braces are not taken
                 // for the outer string's.
                 '"' if Self::operand_expected(prev, &word) => {
+                    // On failure the outer string ends at this quote, so the
+                    // probe reports only what came before it.
+                    let quote_at = scanned;
                     ahead.next();
                     scanned += 1;
                     loop {
@@ -705,11 +708,11 @@ impl<'a> SpecificationLexer<'a> {
                             Some('"') => break,
                             Some('\\') => {
                                 if ahead.next().is_none() {
-                                    return (false, scanned);
+                                    return (false, quote_at);
                                 }
                                 scanned += 1;
                             }
-                            Some('\n') | None => return (false, scanned),
+                            Some('\n') | None => return (false, quote_at),
                             Some(_) => {}
                         }
                         scanned += 1;
@@ -758,10 +761,14 @@ impl<'a> SpecificationLexer<'a> {
     /// Whether an operand (here: a nested string literal) may follow the
     /// interpolation text seen so far, given its last non-whitespace
     /// character and the word ending there.
+    ///
+    /// A quote right after the opening `{` is not included: `"{" + x + "}"`
+    /// is the common way to build braces, so there the quote ends the outer
+    /// string and the brace is literal text.
     fn operand_expected(prev: char, word: &str) -> bool {
         matches!(
             prev,
-            '{' | '(' | '[' | ',' | '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '^'
+            '(' | '[' | ',' | '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '^'
         ) || matches!(
             word,
             "and" | "or" | "not" | "is" | "default" | "onError" | "then" | "else"
@@ -1787,6 +1794,17 @@ mod regression_tests {
                 .filter(|k| matches!(k, TokenKind::InterpolationEnd))
                 .count(),
             1,
+            "{:?}",
+            k
+        );
+        // A quote right after `{` closes the outer string: building braces
+        // by concatenation keeps working.
+        let k = kinds("json = \"{\" + body + \"}\"\nx = 1");
+        assert_eq!(k[2], TokenKind::StringLiteral("{".to_string()), "{:?}", k);
+        assert_eq!(k[6], TokenKind::StringLiteral("}".to_string()), "{:?}", k);
+        let k = kinds("r = r.replace(\"{\", \"\\\\{\")\nx = 1");
+        assert!(
+            k.contains(&TokenKind::StringLiteral("{".to_string())),
             "{:?}",
             k
         );

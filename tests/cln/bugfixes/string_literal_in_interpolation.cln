@@ -3,13 +3,16 @@
 // Fixed in: compiler 0.33.174
 // Expected output:
 //   v=q!
-//   n=ab
+//   n=a!b
 //   a {b c}
+//   {x}
 
 start:
 	print("v={wrap("q")}")
-	print("n={"a" + "b"}")
+	print("n={wrap("a") + "b"}")
 	print("a {b" + " c}")
+	string body = "x"
+	print("{" + body + "}")
 
 functions:
 	string wrap(string s)
