@@ -595,9 +595,7 @@ pub fn parse_to_ast(source: &str, file_path: &str) -> Result<ast::Program, Vec<C
         file_path.to_string(),
     );
     let mut lexer = SpecificationLexer::new(&source_code);
-    let tokens = lexer
-        .tokenize()
-        .map_err(|e| vec![CompilerError::LexError(e)])?;
+    let tokens = lexer.tokenize().map_err(|e| vec![CompilerError::from(e)])?;
 
     // Stage 2: Parsing to AST
     let mut parser =
@@ -756,9 +754,7 @@ fn run_single_source_frontend(
     // Stage 1: Lexical analysis
     let source_code = SourceCode::new(source.to_string(), file_path.to_string());
     let mut lexer = SpecificationLexer::new(&source_code);
-    let tokens = lexer
-        .tokenize()
-        .map_err(|e| vec![CompilerError::LexError(e)])?;
+    let tokens = lexer.tokenize().map_err(|e| vec![CompilerError::from(e)])?;
 
     // Stage 2: Parsing. Plugin keywords let the parser recognise
     // plugin-defined blocks (e.g. `data User`).
@@ -1010,9 +1006,7 @@ pub fn lint_source(
 
     let source_code = SourceCode::new(source.to_string(), file_path.to_string());
     let mut lexer = SpecificationLexer::new(&source_code);
-    let tokens = lexer
-        .tokenize()
-        .map_err(|e| vec![CompilerError::LexError(e)])?;
+    let tokens = lexer.tokenize().map_err(|e| vec![CompilerError::from(e)])?;
 
     let plugin_keywords = registry.get_all_block_keywords();
     let mut parser =

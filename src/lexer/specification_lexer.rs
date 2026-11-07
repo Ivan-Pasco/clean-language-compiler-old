@@ -1492,27 +1492,65 @@ pub enum LexError {
     SpacesInIndentation { location: SourceLocation },
 }
 
-impl From<LexError> for CompilerError {
-    fn from(error: LexError) -> Self {
-        // Surface SYN004 (unterminated construct) at the conversion site so the rest of
-        // the toolchain receives a Syntax variant carrying both a SourceLocation and the
-        // spec error code. Other LexError kinds remain in the catch-all LexError variant
-        // until they too earn an explicit classification.
-        match &error {
-            LexError::UnterminatedString { location } => CompilerError::syntax_error_with_code(
-                error.to_string(),
-                Some("Close the string literal with the matching quote.".to_string()),
-                Some(location.clone()),
-                "SYN004",
-            ),
-            LexError::UnterminatedComment { location } => CompilerError::syntax_error_with_code(
-                error.to_string(),
-                Some("Close the comment with `*/`.".to_string()),
-                Some(location.clone()),
-                "SYN004",
-            ),
-            _ => CompilerError::LexError(error),
+impl LexError {
+    /// Where the error was found. Every lexer error carries the position of
+    /// the offending character, so diagnostics never fall back to 1:1.
+    pub fn location(&self) -> &SourceLocation {
+        match self {
+            LexError::InvalidCharacter { location, .. }
+            | LexError::UnterminatedString { location }
+            | LexError::UnterminatedComment { location }
+            | LexError::InvalidNumber { location, .. }
+            | LexError::InvalidPrecisionModifier { location, .. }
+            | LexError::InvalidIndentation { location, .. }
+            | LexError::SpacesInIndentation { location } => location,
         }
+    }
+
+    /// The spec error code (foundation/spec/error-codes.md, SYN001-SYN005).
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            LexError::InvalidCharacter { .. } => "SYN001",
+            LexError::InvalidIndentation { .. } | LexError::SpacesInIndentation { .. } => "SYN003",
+            LexError::UnterminatedString { .. } | LexError::UnterminatedComment { .. } => "SYN004",
+            LexError::InvalidNumber { .. } | LexError::InvalidPrecisionModifier { .. } => "SYN005",
+        }
+    }
+
+    fn help(&self) -> String {
+        match self {
+            LexError::InvalidCharacter { .. } => {
+                "This character is only allowed inside strings, comments and framework blocks."
+            }
+            LexError::UnterminatedString { .. } => {
+                "Close the string literal with the matching quote."
+            }
+            LexError::UnterminatedComment { .. } => "Close the comment with `*/`.",
+            LexError::InvalidNumber { .. } => {
+                "Integer literals must fit in 64 bits (-9223372036854775808 to 9223372036854775807)."
+            }
+            LexError::InvalidPrecisionModifier { .. } => {
+                "Valid precision modifiers are :8, :8u, :16, :16u, :32 and :64."
+            }
+            LexError::InvalidIndentation { .. } => {
+                "Dedent to the indentation level of an enclosing block."
+            }
+            LexError::SpacesInIndentation { .. } => "Indent with tabs only.",
+        }
+        .to_string()
+    }
+}
+
+impl From<LexError> for CompilerError {
+    /// Every lexer error becomes a located syntax error, so the reporter and
+    /// the language server point at the offending character.
+    fn from(error: LexError) -> Self {
+        CompilerError::syntax_error_with_code(
+            error.to_string(),
+            Some(error.help()),
+            Some(error.location().clone()),
+            error.error_code(),
+        )
     }
 }
 

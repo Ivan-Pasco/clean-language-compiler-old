@@ -1267,19 +1267,7 @@ impl MultiFileCompiler {
         let source_code =
             SourceCode::new(source.to_string(), file_path.to_string_lossy().to_string());
         let mut lexer = SpecificationLexer::new(&source_code);
-        let tokens = lexer.tokenize().map_err(|e| {
-            CompilerError::syntax_error(
-                format!("Lexer error: {}", e),
-                None,
-                Some(SourceLocation {
-                    file: file_path.to_string_lossy().to_string(),
-                    line: 1,
-                    column: 1,
-                    byte_start: None,
-                    byte_end: None,
-                }),
-            )
-        })?;
+        let tokens = lexer.tokenize().map_err(CompilerError::from)?;
 
         // Stage 2: Parse to AST (use plugin keywords if available)
         let plugin_keywords = if let Some(ref registry) = self.config.plugin_registry {
@@ -1435,7 +1423,7 @@ impl MultiFileCompiler {
         let source_code =
             SourceCode::new(source.to_string(), file_path.to_string_lossy().to_string());
         let mut lexer = SpecificationLexer::new(&source_code);
-        let tokens = lexer.tokenize().map_err(CompilerError::LexError)?;
+        let tokens = lexer.tokenize().map_err(CompilerError::from)?;
 
         // Stage 2: Parse to AST
         // Get plugin keywords so the parser recognizes plugin-defined syntax
