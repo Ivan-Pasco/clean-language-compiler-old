@@ -206,6 +206,26 @@ fn stamp_one_statement(stmt: &mut Statement, marker: &str) {
     }
 }
 
+/// Tag lifecycle-slot statements so downstream passes can tell plugin
+/// lifecycle output from user-authored `start:` code.
+fn tag_lifecycle_output(statements: &mut [Statement]) {
+    for stmt in statements {
+        let loc = stmt.location_mut();
+        match loc {
+            Some(l) => l.file = crate::ast::LIFECYCLE_SLOT_OUTPUT_MARKER.to_string(),
+            None => {
+                *loc = Some(crate::ast::SourceLocation {
+                    file: crate::ast::LIFECYCLE_SLOT_OUTPUT_MARKER.to_string(),
+                    line: 0,
+                    column: 0,
+                    byte_start: None,
+                    byte_end: None,
+                });
+            }
+        }
+    }
+}
+
 fn merge_state_block(target: &mut Option<StateBlock>, incoming: Option<StateBlock>) {
     let incoming = match incoming {
         Some(s) => s,
@@ -657,18 +677,17 @@ impl<'a> PluginExpander<'a> {
         // into the start function. To preserve declaration order across
         // multiple slots, we accumulate their outputs first, then prepend
         // the assembled block to the existing start body in a single splice.
-        self.merge_module_helpers(&mut program)?;
-        let mut slot_prelude: Vec<Statement> = Vec::new();
-        self.collect_slot_statements(&mut slot_prelude, "program_init");
+        let mut slot_prelude: Vec<Statement> = self.merge_module_helpers(&mut program)?;
+        self.collect_slot_statements(&mut slot_prelude, "program_init")?;
         if self.is_server_build {
-            self.collect_slot_statements(&mut slot_prelude, "server_init");
+            self.collect_slot_statements(&mut slot_prelude, "server_init")?;
         }
         if self.is_client_build {
             // §1 — client_init contributes the body of the synthetic client
             // _start. Plugins that opted in (e.g. frame.ui's emit_ui_client_init)
             // emit component-instantiation + onMount() calls here.
             // Closes HYDRATE_AUTO once a plugin declares the slot.
-            self.collect_slot_statements(&mut slot_prelude, "client_init");
+            self.collect_slot_statements(&mut slot_prelude, "client_init")?;
 
             // CLIENT_PULLS_SERVER: The user's start: body is server-side code
             // (HTTP listen, migration registration, route setup). Clear it so
@@ -712,13 +731,16 @@ impl<'a> PluginExpander<'a> {
     }
 
     /// Plugin Contracts v2 — merge `module_helpers` contributions into the
-    /// program's top-level functions/classes/externals. See `lifecycle.md`
-    /// §3.1. Duplicate-name entries are silently skipped per the v1 preamble
-    /// merge semantics.
-    fn merge_module_helpers(&self, program: &mut Program) -> Result<(), PluginError> {
+    /// program's top-level functions/classes/externals/state. See
+    /// `lifecycle.md` §3.1. Duplicate-name entries are silently skipped per
+    /// the v1 preamble merge semantics. Statements the slot emits (top-level
+    /// and start-function body) are returned so the caller places them at the
+    /// head of the start prelude.
+    fn merge_module_helpers(&self, program: &mut Program) -> Result<Vec<Statement>, PluginError> {
+        let mut statements = Vec::new();
         for expansion in self
             .registry
-            .invoke_lifecycle_slot("module_helpers", &self.build_context)
+            .invoke_lifecycle_slot("module_helpers", &self.build_context)?
         {
             for mut func in expansion.functions {
                 if !program.functions.iter().any(|f| f.name == func.name) {
@@ -761,10 +783,20 @@ impl<'a> PluginExpander<'a> {
                     program.externals.push(ext);
                 }
             }
-            // Statements at module scope are rare for module_helpers; if
-            // present, they accumulate into the slot prelude later.
+            // Plugin state declarations precede the user's, matching
+            // `merge_pending_into`.
+            if expansion.state.is_some() {
+                let user_state = program.state.take();
+                program.state = expansion.state;
+                merge_state_block(&mut program.state, user_state);
+            }
+            statements.extend(expansion.statements);
+            if let Some(start_fn) = expansion.start_function {
+                statements.extend(start_fn.body);
+            }
         }
-        Ok(())
+        tag_lifecycle_output(&mut statements);
+        Ok(statements)
     }
 
     /// Plugin Contracts v2 — collect a single slot's contributed statements
@@ -772,34 +804,20 @@ impl<'a> PluginExpander<'a> {
     /// outputs in fixed order (program_init → server_init → client_init)
     /// before splicing the assembled prelude into the start function.
     /// See `lifecycle.md` §3.
-    fn collect_slot_statements(&self, accumulator: &mut Vec<Statement>, slot: &str) {
+    fn collect_slot_statements(
+        &self,
+        accumulator: &mut Vec<Statement>,
+        slot: &str,
+    ) -> Result<(), PluginError> {
         for expansion in self
             .registry
-            .invoke_lifecycle_slot(slot, &self.build_context)
+            .invoke_lifecycle_slot(slot, &self.build_context)?
         {
-            let mut stmts: Vec<Statement> = expansion.statements;
-            if let Some(start_fn) = expansion.start_function {
-                stmts.extend(start_fn.body);
-            }
-            // Tag every injected statement so downstream passes can distinguish
-            // plugin-contributed lifecycle output from user-authored start: code.
-            for stmt in &mut stmts {
-                let loc = stmt.location_mut();
-                match loc {
-                    Some(l) => l.file = crate::ast::LIFECYCLE_SLOT_OUTPUT_MARKER.to_string(),
-                    None => {
-                        *loc = Some(crate::ast::SourceLocation {
-                            file: crate::ast::LIFECYCLE_SLOT_OUTPUT_MARKER.to_string(),
-                            line: 0,
-                            column: 0,
-                            byte_start: None,
-                            byte_end: None,
-                        });
-                    }
-                }
-            }
+            let mut stmts = expansion.into_inline_statements();
+            tag_lifecycle_output(&mut stmts);
             accumulator.extend(stmts);
         }
+        Ok(())
     }
 
     /// Merge everything the plugin expansions queued into `program`: the

@@ -108,15 +108,9 @@ pub fn evaluate_required_when(
             .any(|m| m.lifecycle.client_init.is_some());
     }
     if let Some(slot) = predicate.strip_prefix("has_lifecycle.") {
-        return loaded_manifests.values().any(|m| match slot {
-            "module_helpers" => m.lifecycle.module_helpers.is_some(),
-            "program_init" => m.lifecycle.program_init.is_some(),
-            "client_init" => m.lifecycle.client_init.is_some(),
-            "server_init" => m.lifecycle.server_init.is_some(),
-            "per_request" => m.lifecycle.per_request.is_some(),
-            "artifact_emitters" => m.lifecycle.artifact_emitters.is_some(),
-            _ => false,
-        });
+        return loaded_manifests
+            .values()
+            .any(|m| m.lifecycle.slot_export(slot).is_some());
     }
     if let Some(artifact) = predicate.strip_prefix("has_artifact.") {
         return artifacts_so_far.iter().any(|a| a == artifact);

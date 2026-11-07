@@ -150,8 +150,13 @@ pub struct PluginRegistry {
     /// Patterns come from `[handles] expressions` in plugin.toml.  A leading `*`
     /// acts as a wildcard matching any identifier before the `.`.
     expression_handlers: HashMap<String, Arc<dyn FrameworkPlugin>>,
-    /// Track plugin names for debugging
+    /// Plugin names in load order
     registered_plugins: Vec<String>,
+    /// Every registered plugin, once, in load order. Passes that call every
+    /// plugin (assemble hooks, lifecycle slots, lint) walk this list so their
+    /// output order is deterministic and plugins that register only
+    /// expression patterns are included.
+    plugins: Vec<Arc<dyn FrameworkPlugin>>,
     /// Bridge functions from all loaded plugins
     /// These are functions that plugins expect the runtime to provide (e.g., _db_query)
     bridge_functions: Vec<BridgeFunction>,
@@ -208,6 +213,7 @@ impl PluginRegistry {
             handlers: HashMap::new(),
             expression_handlers: HashMap::new(),
             registered_plugins: Vec::new(),
+            plugins: Vec::new(),
             bridge_functions: Vec::new(),
             manifests: IndexMap::new(),
             plugin_permissions: HashMap::new(),
@@ -257,19 +263,27 @@ impl PluginRegistry {
             }
         }
 
-        // Register all block handlers
+        for pattern in plugin.expression_patterns() {
+            if let Some(existing) = self.expression_handlers.get(pattern) {
+                return Err(PluginError::RegistrationConflict {
+                    block_name: pattern.clone(),
+                    existing_plugin: existing.name().to_string(),
+                    new_plugin: plugin_name,
+                });
+            }
+        }
+
         for block_name in plugin.handles() {
             self.handlers
                 .insert(block_name.to_string(), Arc::clone(&plugin));
         }
-
-        // Register ORM expression patterns
         for pattern in plugin.expression_patterns() {
             self.expression_handlers
                 .insert(pattern.clone(), Arc::clone(&plugin));
         }
 
         self.registered_plugins.push(plugin_name);
+        self.plugins.push(plugin);
         Ok(())
     }
 
@@ -453,30 +467,14 @@ impl PluginRegistry {
         &self.registered_plugins
     }
 
-    /// Iterate every plugin in the registry, once per plugin, in an
-    /// implementation-defined order.
-    ///
-    /// The internal `handlers` map keys plugins by block name so a plugin
-    /// registered for multiple blocks appears multiple times. This helper
-    /// dedupes by plugin name so callers walking side-effect-carrying trait
-    /// methods (lint, lifecycle slots, etc.) don't invoke a plugin twice
-    /// per pass. See `plugins::lint::run_lint_pass` for the primary caller.
-    pub fn iter_unique_plugins(
-        &self,
-    ) -> impl Iterator<Item = &std::sync::Arc<dyn FrameworkPlugin>> {
-        let mut seen = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        for plugin in self.handlers.values() {
-            if seen.insert(plugin.name()) {
-                out.push(plugin);
-            }
-        }
-        out.into_iter()
+    /// Iterate every registered plugin once, in load order.
+    pub fn iter_unique_plugins(&self) -> impl Iterator<Item = &Arc<dyn FrameworkPlugin>> {
+        self.plugins.iter()
     }
 
     /// Check if the registry has any plugins registered
     pub fn is_empty(&self) -> bool {
-        self.handlers.is_empty()
+        self.plugins.is_empty()
     }
 
     /// Get all bridge functions from loaded plugins
@@ -528,12 +526,10 @@ impl PluginRegistry {
             .collect()
     }
 
-    /// Run all registered assemble hooks, merging their outputs.
-    ///
-    /// Called once per compilation after source discovery but before parsing.
-    /// Results from all plugins are combined: injected sources are appended,
-    /// transformed sources are merged (last write wins for duplicate paths).
-    /// Run every loaded plugin's `assemble` hook and merge the outputs.
+    /// Run every loaded plugin's `assemble` hook, in load order, and merge
+    /// the outputs. Called once per compilation after source discovery but
+    /// before parsing. Injected sources are appended; transformed sources are
+    /// merged (the later-loaded plugin wins for duplicate paths).
     ///
     /// Returns `(combined_output, errors)`:
     /// - `combined_output` aggregates successful plugins' contributions so a
@@ -553,18 +549,10 @@ impl PluginRegistry {
         Vec<(String, PluginError)>,
     ) {
         use crate::plugins::plugin_abi::AssembleOutput;
-        use std::collections::HashSet;
 
         let mut combined = AssembleOutput::default();
         let mut errors: Vec<(String, PluginError)> = Vec::new();
-        // Deduplicate by raw pointer so each plugin is called exactly once
-        // even when registered under multiple block names.
-        let mut seen: HashSet<*const dyn FrameworkPlugin> = HashSet::new();
-        for plugin in self.handlers.values() {
-            let ptr = Arc::as_ptr(plugin);
-            if !seen.insert(ptr) {
-                continue;
-            }
+        for plugin in &self.plugins {
             let plugin_name = plugin.name().to_string();
             match plugin.assemble(input) {
                 Ok(output) => {
@@ -613,15 +601,9 @@ impl PluginRegistry {
     /// expander's client_init contribution instead of clearing client _start).
     /// See contracts/lifecycle.md §3.
     pub fn any_plugin_declares_lifecycle_slot(&self, slot_name: &str) -> bool {
-        self.manifests.values().any(|m| match slot_name {
-            "module_helpers" => m.lifecycle.module_helpers.is_some(),
-            "program_init" => m.lifecycle.program_init.is_some(),
-            "client_init" => m.lifecycle.client_init.is_some(),
-            "server_init" => m.lifecycle.server_init.is_some(),
-            "per_request" => m.lifecycle.per_request.is_some(),
-            "artifact_emitters" => m.lifecycle.artifact_emitters.is_some(),
-            _ => false,
-        })
+        self.manifests
+            .values()
+            .any(|m| m.lifecycle.slot_export(slot_name).is_some())
     }
 
     /// Plugin Contracts v2 — invoke a lifecycle slot across every registered
@@ -635,14 +617,15 @@ impl PluginRegistry {
     /// caller's `context` is cloned and the snapshot is stamped into the
     /// clone — the caller's context is never mutated.
     ///
-    /// Plugins that have not declared the slot in their manifest contribute
-    /// empty expansions. Failed slot invocations are logged and skipped — the
-    /// build continues with whatever the other plugins contributed.
+    /// Plugins that have not declared the slot in their manifest are skipped.
+    /// A failing slot fails the build: dropping its contribution would leave
+    /// the program without helpers or init code the plugin's other output
+    /// depends on.
     pub fn invoke_lifecycle_slot(
         &self,
         slot_name: &str,
         context: &super::BuildContext,
-    ) -> Vec<super::PluginExpansion> {
+    ) -> Result<Vec<super::PluginExpansion>, PluginError> {
         // Take a fresh snapshot of the build state into a per-dispatch
         // context clone. Without this, `context.build_state` stays as
         // whatever the caller passed in (typically an empty map from
@@ -654,45 +637,20 @@ impl PluginRegistry {
         let mut snapshotted = context.clone();
         snapshotted.snapshot_build_state(&self.build_state);
 
-        let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
-        for plugin in self.handlers.values() {
-            let plugin_name = plugin.name();
-            if !seen.insert(plugin_name.to_string()) {
-                continue;
-            }
+        for plugin in &self.plugins {
             // Skip plugins that did not declare the slot. Avoids spinning up
             // a wasmtime instance for every (plugin, slot) pair.
             let declared = self
                 .manifests
-                .get(plugin_name)
-                .map(|m| match slot_name {
-                    "module_helpers" => m.lifecycle.module_helpers.is_some(),
-                    "program_init" => m.lifecycle.program_init.is_some(),
-                    "client_init" => m.lifecycle.client_init.is_some(),
-                    "server_init" => m.lifecycle.server_init.is_some(),
-                    "per_request" => m.lifecycle.per_request.is_some(),
-                    "artifact_emitters" => m.lifecycle.artifact_emitters.is_some(),
-                    _ => false,
-                })
-                .unwrap_or(false);
+                .get(plugin.name())
+                .is_some_and(|m| m.lifecycle.slot_export(slot_name).is_some());
             if !declared {
                 continue;
             }
-            match plugin.invoke_lifecycle_slot(slot_name, &snapshotted) {
-                Ok(expansion) => results.push(expansion),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "plugin_contracts_v2",
-                        plugin = %plugin_name,
-                        slot = %slot_name,
-                        error = %e,
-                        "lifecycle slot invocation failed; continuing with empty contribution"
-                    );
-                }
-            }
+            results.push(plugin.invoke_lifecycle_slot(slot_name, &snapshotted)?);
         }
-        results
+        Ok(results)
     }
 
     /// Plugin Contracts v2 — return resolved callback contracts from every
@@ -751,24 +709,13 @@ impl PluginRegistry {
     /// reports a configuration error rather than silently feeding raw HTML
     /// into the Clean parser (which produced `SYN001` historically).
     pub fn find_html_processor(&self) -> Option<&Arc<dyn FrameworkPlugin>> {
-        // Plugins are registered once per block or expression pattern they
-        // handle, so the same Arc may appear under several keys. Pick the
-        // first plugin whose manifest declares the export, in deterministic
-        // order (Vec preserves registration order). A plugin registered
-        // without a manifest declares no exports and is skipped.
-        self.registered_plugins
-            .iter()
-            .filter(|name| {
-                self.manifests
-                    .get(name.as_str())
-                    .is_some_and(|m| m.exports.process_html.is_some())
-            })
-            .find_map(|name| {
-                self.handlers
-                    .values()
-                    .chain(self.expression_handlers.values())
-                    .find(|p| p.name() == name.as_str())
-            })
+        // First plugin, in load order, whose manifest declares the export. A
+        // plugin registered without a manifest declares no exports.
+        self.plugins.iter().find(|p| {
+            self.manifests
+                .get(p.name())
+                .is_some_and(|m| m.exports.process_html.is_some())
+        })
     }
 
     /// Resolve the highest memory tier declared by any active plugin.
@@ -1272,6 +1219,7 @@ impl PluginRegistryBuilder {
         let mut handlers = HashMap::new();
         let mut expression_handlers: HashMap<String, Arc<dyn FrameworkPlugin>> = HashMap::new();
         let mut registered_plugins = Vec::new();
+        let mut plugins: Vec<Arc<dyn FrameworkPlugin>> = Vec::new();
 
         // Validate and register all plugins
         for plugin in self.plugins {
@@ -1289,17 +1237,25 @@ impl PluginRegistryBuilder {
                 }
             }
 
-            // Register all block handlers for this plugin
+            for pattern in plugin.expression_patterns() {
+                if let Some(existing) = expression_handlers.get(pattern) {
+                    return Err(PluginError::RegistrationConflict {
+                        block_name: pattern.clone(),
+                        existing_plugin: existing.name().to_string(),
+                        new_plugin: plugin_name,
+                    });
+                }
+            }
+
             for block_name in plugin.handles() {
                 handlers.insert(block_name.to_string(), Arc::clone(&plugin));
             }
-
-            // Register ORM expression patterns for this plugin
             for pattern in plugin.expression_patterns() {
                 expression_handlers.insert(pattern.clone(), Arc::clone(&plugin));
             }
 
             registered_plugins.push(plugin_name);
+            plugins.push(plugin);
         }
 
         // Plugin Contracts v2 — validate callback contracts.
@@ -1412,6 +1368,7 @@ This is a compiler build issue, not a plugin issue."
             handlers,
             expression_handlers,
             registered_plugins,
+            plugins,
             bridge_functions: self.bridge_functions,
             manifests: self.manifests,
             build_state: super::new_build_state(),
@@ -2120,5 +2077,145 @@ mod tests {
             .find_html_processor()
             .expect("the HTML processor is found past the manifest-less plugin");
         assert_eq!(processor.name(), "test.html");
+    }
+
+    /// A plugin with expression patterns and a `program_init` slot whose
+    /// result (or failure) is configurable.
+    struct SlotPlugin {
+        name: &'static str,
+        patterns: Vec<String>,
+        fail_slot: bool,
+    }
+
+    impl FrameworkPlugin for SlotPlugin {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            &[]
+        }
+
+        fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(vec![])
+        }
+
+        fn expression_patterns(&self) -> &[String] {
+            &self.patterns
+        }
+
+        fn invoke_lifecycle_slot(
+            &self,
+            slot_name: &str,
+            _context: &crate::plugins::BuildContext,
+        ) -> PluginResult<crate::plugins::PluginExpansion> {
+            if self.fail_slot {
+                return Err(PluginError::ExpansionFailed {
+                    plugin_name: self.name.to_string(),
+                    block_name: slot_name.to_string(),
+                    message: "slot failed".to_string(),
+                    location: None,
+                });
+            }
+            let func = crate::ast::Function::new(
+                self.name.to_string(),
+                Vec::new(),
+                crate::ast::Type::Void,
+                Vec::new(),
+                None,
+            );
+            Ok(crate::plugins::PluginExpansion {
+                functions: vec![func],
+                ..Default::default()
+            })
+        }
+    }
+
+    fn slot_registry(plugins: Vec<SlotPlugin>) -> Result<PluginRegistry, PluginError> {
+        use v2_callback_helpers::manifest_with_callback;
+        let mut builder = PluginRegistryBuilder::new()
+            .with_validation_policy(crate::plugins::registry_loader::ValidationPolicy::Off);
+        for plugin in plugins {
+            let mut manifest = manifest_with_callback(plugin.name, "_probe", None);
+            manifest.lifecycle.program_init = Some("emit_init".to_string());
+            builder = builder
+                .add_manifest(plugin.name.to_string(), manifest)
+                .add(plugin);
+        }
+        builder.build()
+    }
+
+    /// Lifecycle slots run in load order, including plugins that register
+    /// only expression patterns (no block handlers).
+    #[test]
+    fn lifecycle_slots_run_in_load_order_for_pattern_only_plugins() {
+        let names = ["p.zeta", "p.alpha", "p.mid", "p.beta"];
+        let registry = slot_registry(
+            names
+                .iter()
+                .map(|n| SlotPlugin {
+                    name: n,
+                    patterns: vec![format!("{n}.find")],
+                    fail_slot: false,
+                })
+                .collect(),
+        )
+        .expect("registry builds");
+
+        let order: Vec<String> = registry
+            .invoke_lifecycle_slot("program_init", &crate::plugins::BuildContext::new())
+            .expect("slots succeed")
+            .into_iter()
+            .map(|e| e.functions[0].name.clone())
+            .collect();
+        assert_eq!(order, names);
+        let walked: Vec<&str> = registry.iter_unique_plugins().map(|p| p.name()).collect();
+        assert_eq!(walked, names);
+    }
+
+    /// A failing lifecycle slot is an error, not a silently empty contribution.
+    #[test]
+    fn failing_lifecycle_slot_is_an_error() {
+        let registry = slot_registry(vec![SlotPlugin {
+            name: "p.broken",
+            patterns: Vec::new(),
+            fail_slot: true,
+        }])
+        .expect("registry builds");
+        let err = registry
+            .invoke_lifecycle_slot("program_init", &crate::plugins::BuildContext::new())
+            .expect_err("slot failure propagates");
+        assert!(err.to_string().contains("slot failed"), "got: {err}");
+    }
+
+    /// Two plugins claiming the same expression pattern conflict, like two
+    /// plugins claiming the same block name.
+    #[test]
+    fn duplicate_expression_pattern_is_a_conflict() {
+        let result = slot_registry(vec![
+            SlotPlugin {
+                name: "p.one",
+                patterns: vec!["*.find".to_string()],
+                fail_slot: false,
+            },
+            SlotPlugin {
+                name: "p.two",
+                patterns: vec!["*.find".to_string()],
+                fail_slot: false,
+            },
+        ]);
+        match result {
+            Err(PluginError::RegistrationConflict {
+                block_name,
+                existing_plugin,
+                new_plugin,
+            }) => {
+                assert_eq!(block_name, "*.find");
+                assert_eq!(existing_plugin, "p.one");
+                assert_eq!(new_plugin, "p.two");
+            }
+            Err(other) => panic!("expected a registration conflict, got {other}"),
+            Ok(_) => panic!("expected a registration conflict, registry built"),
+        }
     }
 }

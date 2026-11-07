@@ -1082,6 +1082,20 @@ pub struct PluginLifecycle {
 }
 
 impl PluginLifecycle {
+    /// The WASM export name declared for a lifecycle slot, or `None` when the
+    /// plugin did not opt into that slot (or the slot name is unknown).
+    pub fn slot_export(&self, slot_name: &str) -> Option<&str> {
+        match slot_name {
+            "module_helpers" => self.module_helpers.as_deref(),
+            "program_init" => self.program_init.as_deref(),
+            "client_init" => self.client_init.as_deref(),
+            "server_init" => self.server_init.as_deref(),
+            "per_request" => self.per_request.as_deref(),
+            "artifact_emitters" => self.artifact_emitters.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Returns true if the plugin declares any v2 lifecycle slot.
     /// Used to choose between v2 dispatch and the v1.0.0 `__preamble` path.
     pub fn opts_into_v2(&self) -> bool {

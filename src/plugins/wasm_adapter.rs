@@ -4002,15 +4002,7 @@ impl FrameworkPlugin for WasmPluginAdapter {
         // Plugin Contracts v2 — read the slot's export name from the manifest's
         // [lifecycle] section. A missing entry is a no-op (the plugin did not
         // opt into this slot). See contracts/lifecycle.md §3.
-        let export_name = match slot_name {
-            "module_helpers" => self.manifest.lifecycle.module_helpers.as_deref(),
-            "program_init" => self.manifest.lifecycle.program_init.as_deref(),
-            "client_init" => self.manifest.lifecycle.client_init.as_deref(),
-            "server_init" => self.manifest.lifecycle.server_init.as_deref(),
-            "per_request" => self.manifest.lifecycle.per_request.as_deref(),
-            "artifact_emitters" => self.manifest.lifecycle.artifact_emitters.as_deref(),
-            _ => None,
-        };
+        let export_name = self.manifest.lifecycle.slot_export(slot_name);
         let Some(export_name) = export_name else {
             return Ok(PluginExpansion::default());
         };
