@@ -160,17 +160,12 @@ grcov = "0.8"
 # File system utilities
 walkdir = "2.4"
 
-# Main compiler binary - Complete feature set
-# This is the ONE command for everything: compile, run, test, package, lint, debug
+# Main compiler binary: compile, build, check, run, test, lint, debug, serve
 [[bin]]
 name = "cln"
 path = "src/main.rs"
 
 # Essential debugging tools
-[[bin]]
-name = "debug_parser"
-path = "src/bin/debug_parser.rs"
-
 [[bin]]
 name = "debug_wasm"
 path = "src/bin/debug_wasm.rs"
@@ -188,21 +183,6 @@ path = "src/bin/wasm2wat.rs"
 [[bin]]
 name = "wasmtime_runner"
 path = "src/bin/wasmtime_runner.rs"
-
-# Testing and quality assurance tools
-[[bin]]
-name = "test_runner"
-path = "src/bin/test_runner.rs"
-
-[[bin]]
-name = "coverage_report"
-path = "src/bin/coverage_report.rs"
-
-[[bin]]
-name = "performance_benchmark"
-path = "src/bin/performance_benchmark.rs"
-
-
 
 [lib]
 name = "clean_language_compiler"
