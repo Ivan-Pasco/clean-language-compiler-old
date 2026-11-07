@@ -150,3 +150,20 @@ fn debug_show_ast_prints_the_ast() {
         "debug --show-ast must print the AST; output:\n{text}"
     );
 }
+
+/// Other components (clean-server tests and CI, framework scripts, example
+/// READMEs) call `cln compile --plugins`. The flag has no effect, but
+/// rejecting it would break every one of those callers.
+#[test]
+fn compile_accepts_plugins_flag() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("main.cln"), VALID_SOURCE).unwrap();
+    assert_succeeds(
+        &cln(
+            &["compile", "main.cln", "-o", "main.wasm", "--plugins"],
+            tmp.path(),
+        ),
+        "compile --plugins",
+    );
+    assert!(tmp.path().join("main.wasm").exists());
+}

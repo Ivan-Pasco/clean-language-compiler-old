@@ -201,6 +201,12 @@ enum Commands {
         #[arg(long, default_value = None)]
         memory_tier: Option<String>,
 
+        /// Accepted so existing callers keep working (clean-server tests and
+        /// CI, framework scripts, example READMEs pass it). Plugins are
+        /// always loaded from the source's `plugins:` block.
+        #[arg(long, hide = true)]
+        plugins: bool,
+
         /// Release mode: strip always: invariant checks for smaller, faster output
         #[arg(long)]
         release: bool,
@@ -511,6 +517,7 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             opt_level,
             target,
             memory_tier,
+            plugins: _,
             release,
             strict_hosts,
             emit_heap_probes,
