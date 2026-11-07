@@ -4641,7 +4641,7 @@ impl<'a> TypeInference<'a> {
         // Optional guarded-use enforcement (spec Step 5):
         // When an Optional(T) value appears in a context that requires T, the compiler must
         // emit an error.  The following operators are "safe" contexts for Optional:
-        //   - Equal / NotEqual / Is / IsNot  →  comparison against none  (`x == none`)
+        //   - Equal / NotEqual / Is  →  comparison against none  (`x == none`)
         //   - Or                             →  optional fallback         (`x or fallback`)
         //   - NullCoalesce                   →  null coalescing           (`x default fallback`)
         // All other operators (arithmetic, string concatenation, logical AND, ordering)
@@ -4651,7 +4651,6 @@ impl<'a> TypeInference<'a> {
             HirBinaryOp::Equal
                 | HirBinaryOp::NotEqual
                 | HirBinaryOp::Is
-                | HirBinaryOp::IsNot
                 | HirBinaryOp::Or
                 | HirBinaryOp::NullCoalesce
         );
@@ -4815,7 +4814,7 @@ impl<'a> TypeInference<'a> {
                 }
             }
 
-            HirBinaryOp::Equal | HirBinaryOp::NotEqual | HirBinaryOp::Is | HirBinaryOp::IsNot => {
+            HirBinaryOp::Equal | HirBinaryOp::NotEqual | HirBinaryOp::Is => {
                 // Equality/identity can compare any types
                 Ok(ConcreteType::Boolean)
             }
@@ -6377,7 +6376,6 @@ impl<'a> TypeInference<'a> {
             HirBinaryOp::Greater => BinaryOperator::GreaterThan,
             HirBinaryOp::GreaterEqual => BinaryOperator::GreaterThanOrEqual,
             HirBinaryOp::Is => BinaryOperator::Is,
-            HirBinaryOp::IsNot => BinaryOperator::IsNot,
             HirBinaryOp::And => BinaryOperator::And,
             HirBinaryOp::Or => BinaryOperator::Or,
             // BOOK: null-coalescing - Map NullCoalesce operator

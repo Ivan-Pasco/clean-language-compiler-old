@@ -1043,7 +1043,6 @@ impl MirBuilder {
             BinaryOperator::LessThanOrEqual => MirBinaryOp::Le,
             BinaryOperator::GreaterThanOrEqual => MirBinaryOp::Ge,
             BinaryOperator::Is => MirBinaryOp::Eq, // Identity is equality for value types
-            BinaryOperator::IsNot => MirBinaryOp::Ne, // IsNot is not-equal for value types
 
             // Logical operators (And/Or work on booleans, lowered to i32.and/i32.or in WASM)
             // The type system ensures these are used on boolean types

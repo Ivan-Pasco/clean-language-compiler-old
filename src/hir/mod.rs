@@ -571,8 +571,7 @@ pub enum HirBinaryOp {
     Greater,
     LessEqual,
     GreaterEqual,
-    Is,    // Identity comparison (same as Equal for value types)
-    IsNot, // Negated identity comparison
+    Is, // Identity comparison (same as Equal for value types)
 
     // Logical
     And,

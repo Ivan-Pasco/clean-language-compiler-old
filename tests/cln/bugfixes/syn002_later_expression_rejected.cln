@@ -1,0 +1,16 @@
+// Test: bugfixes/syn002_later_expression_rejected
+// Grammar: later_assignment (later is a statement, not an expression)
+// Semantic: SYN002 — `later f()` in expression position
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   SYN002
+//   `later` is not an expression
+
+start:
+	string greeting = later fetchGreeting()
+	print(greeting)
+
+functions:
+	string fetchGreeting()
+		return "hello"

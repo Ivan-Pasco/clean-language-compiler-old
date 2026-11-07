@@ -2,7 +2,7 @@
 //!
 //! This module handles all statement-level constructs for `TokenParser`:
 //! - `parse_statement` — dispatch table for all statement forms
-//! - Control flow: if, while, for, iterate, break, continue, return
+//! - Control flow: if, while, iterate, break, continue, return
 //! - Print and error statements
 //! - Later / background async statements
 //! - `try_parse_on_error_block` — onError: block suffix
@@ -22,7 +22,12 @@ impl TokenParser {
             TokenKind::While => self.parse_while(),
             TokenKind::Break => self.parse_break(),
             TokenKind::Continue => self.parse_continue(),
-            TokenKind::For => self.parse_for(),
+            // `for` is reserved but has no syntax (grammar.ebnf §1.2).
+            TokenKind::For => Err(self.unsupported_syntax_error(
+                "`for` loops are not Clean Language syntax: use `iterate item in collection`"
+                    .to_string(),
+                "iterate item in items\n\tprint(item)",
+            )),
             TokenKind::Iterate => self.parse_iterate(),
             TokenKind::Later => self.parse_later_assignment(),
             TokenKind::Background => self.parse_background(),
@@ -621,31 +626,6 @@ impl TokenParser {
             condition,
             body,
             location: Some(while_token.location),
-        })
-    }
-
-    pub(super) fn parse_for(&mut self) -> Result<Statement, CompilerError> {
-        // For is represented as Iterate in Clean Language
-        let header_level = self.get_current_indent_level();
-        let for_token = self.expect(&TokenKind::For)?;
-        self.skip_whitespace();
-
-        let variable_token = self.expect_identifier()?;
-        let iterator = variable_token.text.clone();
-
-        self.skip_whitespace();
-        self.expect(&TokenKind::In)?;
-        self.skip_whitespace();
-
-        let collection = self.parse_expression()?;
-        self.skip_whitespace();
-        let body = self.parse_block(header_level)?;
-
-        Ok(Statement::Iterate {
-            iterator,
-            collection,
-            body,
-            location: Some(for_token.location),
         })
     }
 

@@ -71,19 +71,13 @@ integration with a headless test runner.
 | String built-in methods | .length(), .toUpperCase(), .contains() | t3_string_methods | 3 | PASS |
 | Math built-in functions | math.abs(), math.floor(), math.sqrt() | t3_math_functions | 3 | PASS |
 | Nested function calls | fn(fn(...)) as arguments | t3_nested_function_calls | 3 | PASS |
-| Async function / later | async fn + later keyword | t4_async_basic | 4 | FAIL |
+| Deferred value (later) | later name = start f() | t4_async_basic | 4 | PASS |
 | Module import | import ModuleName | t4_import_module | 4 | FAIL |
 | Generic list iteration | iterate item in list<T> | t4_generic_list | 4 | PASS |
 | Matrix 2D access | matrix<T> = [[...]], [r][c] | t4_matrix_basic | 4 | PASS |
 | Pairs type | pairs<K,V>, key assignment, lookup | t4_pairs_basic | 4 | PASS |
 
 ## Tier 4 Known Failure Details
-
-### t4_async_basic — COMPILE_FAIL
-- **Error**: `E001: Expected LeftParen, found Identifier("fetchGreeting")`
-- **Root cause**: The parser does not support `async` function modifier or `later` call keyword
-- **Impact**: Any async programming patterns fail at parse stage
-- **Spec reference**: async/later keywords exist in the language spec but are not yet implemented
 
 ### t4_import_module — COMPILE_FAIL
 - **Error**: `Module 'MathUtils' not found`

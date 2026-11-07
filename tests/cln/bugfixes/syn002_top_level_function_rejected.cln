@@ -1,0 +1,14 @@
+// Test: bugfixes/syn002_top_level_function_rejected
+// Grammar: keyword ("function" is reserved but unused); functions_block
+// Semantic: SYN002 — functions are declared in a `functions:` block
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   SYN002
+//   declare functions in a `functions:` block
+
+start:
+	print(double(2))
+
+function double(n: integer) returns integer
+	return n * 2

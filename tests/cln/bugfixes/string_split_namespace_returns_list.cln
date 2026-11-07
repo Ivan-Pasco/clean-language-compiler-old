@@ -5,6 +5,8 @@
 // Regression: the namespace form was typed `Unknown` because the builtin
 //   signature mapper dropped list return types, so the list pointer was
 //   unboxed as an `any` value and every use saw an empty list.
+// Fixed: was using `for part in ...`; grammar.ebnf reserves `for` without
+//   syntax and requires `iterate part in ...`.
 // Expected output:
 //   3
 //   3
@@ -22,6 +24,6 @@ start:
 	list<string> words = string.split("one two three four", " ")
 	print(words.length().toString())
 	string joined = ""
-	for part in string.split("x y z", " ")
+	iterate part in string.split("x y z", " ")
 		joined = joined + part + "|"
 	print(joined)

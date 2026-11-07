@@ -1,12 +1,14 @@
 // CI Tier 4 | t4_async_basic
-// Grammar: async function declaration, later keyword
-// Status: KNOWN INCOMPLETE — async/later not fully implemented in runtime
-// Purpose: Verify async function syntax is accepted by parser
+// Grammar: later_assignment, start_expression, function_in_block
+// Purpose: Verify the spec'd async form (later name = start f()) compiles
+// Fixed: was using an `async` function modifier and a `later f()` expression;
+//   grammar.ebnf has neither. It requires `later name = start f()` and a
+//   plain function in the `functions:` block.
 
 start:
-	string result = later fetchGreeting()
+	later result = start fetchGreeting()
 	print(result)
 
 functions:
-	async string fetchGreeting()
+	string fetchGreeting()
 		return "hello async"

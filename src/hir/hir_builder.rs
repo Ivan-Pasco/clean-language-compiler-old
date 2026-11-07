@@ -2894,7 +2894,6 @@ impl HirBuilder {
             BinaryOperator::LessEqual => HirBinaryOp::LessEqual,
             BinaryOperator::GreaterEqual => HirBinaryOp::GreaterEqual,
             BinaryOperator::Is => HirBinaryOp::Is,
-            BinaryOperator::Not => HirBinaryOp::IsNot,
             BinaryOperator::And => HirBinaryOp::And,
             BinaryOperator::Or => HirBinaryOp::Or,
             BinaryOperator::Default => HirBinaryOp::NullCoalesce,

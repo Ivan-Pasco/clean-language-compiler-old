@@ -1,0 +1,14 @@
+// Test: bugfixes/later_assignment_still_accepted
+// Grammar: later_assignment, start_expression
+// Semantic: removing the non-spec `later f()` expression keeps the spec'd statement form
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected compile: success
+
+start:
+	later greeting = start fetchGreeting()
+	print(greeting)
+
+functions:
+	string fetchGreeting()
+		return "hello"

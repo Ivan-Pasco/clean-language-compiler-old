@@ -214,7 +214,6 @@ pub enum BinaryOperator {
     LessEqual,
     GreaterEqual,
     Is,
-    Not,
 
     // Logical
     And,
@@ -1505,7 +1504,6 @@ pub struct RulesBlock {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum FunctionModifier {
     None,
-    Background,
     /// Method declared inside a class's `events:` section.
     ///
     /// Semantically identical to a method declared inside `functions:` —

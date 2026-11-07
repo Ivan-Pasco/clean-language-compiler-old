@@ -208,7 +208,6 @@ mod mapping {
             "<=" => BinaryOperator::LessEqual,
             ">=" => BinaryOperator::GreaterEqual,
             "is" => BinaryOperator::Is,
-            "not" => BinaryOperator::Not,
             "and" => BinaryOperator::And,
             "or" => BinaryOperator::Or,
             "default" => BinaryOperator::Default,

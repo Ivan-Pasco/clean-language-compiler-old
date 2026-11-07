@@ -1,11 +1,11 @@
 //! Declaration parsing methods for the token-driven parser.
 //!
 //! This module handles all declaration-level constructs for `TokenParser`:
-//! - `parse_function` / `parse_start_function` / `parse_functions_block`
+//! - `parse_start_function` / `parse_functions_block`
 //! - `parse_function_in_block` — function inside `functions:` block
 //! - `parse_class` / `parse_class_body` / `parse_field` / `parse_constructor`
 //! - `parse_import` / `parse_import_item`
-//! - `parse_parameter_list` / `parse_parameter` / `parse_type`
+//! - `parse_type`
 //! - `parse_block` — the indentation-aware statement block
 //! - `expect_identifier` / `expect_name` — token utilities
 
@@ -19,54 +19,6 @@ use crate::lexer::specification_token::TokenKind;
 use tracing::warn;
 
 impl TokenParser {
-    pub(super) fn parse_function(&mut self) -> Result<Function, CompilerError> {
-        let header_level = self.get_current_indent_level();
-        self.expect(&TokenKind::Function)?;
-        self.skip_whitespace();
-
-        let name_token = self.expect_identifier()?;
-        let name = name_token.text.clone();
-        let location = name_token.location.clone();
-
-        self.skip_whitespace();
-
-        // Parameters
-        let parameters = if self.eat(&TokenKind::LeftParen) {
-            self.parse_parameter_list()?
-        } else {
-            Vec::new()
-        };
-
-        self.skip_whitespace();
-
-        // Return type (optional, defaults to Void)
-        let return_type = if self.eat(&TokenKind::Returns) {
-            self.skip_whitespace();
-            self.parse_type()?
-        } else {
-            Type::Void
-        };
-
-        self.skip_whitespace();
-        let body = self.parse_block(header_level)?;
-
-        Ok(Function {
-            name,
-            type_parameters: Vec::new(),
-            type_constraints: Vec::new(),
-            parameters,
-            return_type,
-            body,
-            description: None,
-            // Private by default per the 2026-06-25 visibility flip;
-            // a function becomes Public only when it appears inside a
-            // `public:` sub-section (parse_public_functions_section).
-            visibility: Visibility::Private,
-            modifier: FunctionModifier::None,
-            location: Some(location),
-        })
-    }
-
     /// Parse start: block (entry point)
     /// Example: start:
     ///             print("Hello")
@@ -355,18 +307,20 @@ impl TokenParser {
         // Save position in case we need to backtrack
         let saved_cursor = self.cursor;
 
-        // Check for `async` modifier keyword (tokenized as Identifier("async"))
-        // `async` is a function modifier indicating asynchronous execution.
-        // The async scheduling is handled at the host/runtime level; the compiler
-        // treats async functions identically to regular functions at the WASM level.
-        let modifier = if matches!(self.current_kind(), TokenKind::Identifier(name) if name == "async")
+        // grammar.ebnf `function_in_block` has no modifier slot. `async`
+        // followed by more of a header (`async string f()`) is a leftover
+        // modifier from other languages; a function named `async()` is fine.
+        if matches!(self.current_kind(), TokenKind::Identifier(name) if name == "async")
+            && !matches!(self.peek_kind(), Some(TokenKind::LeftParen))
         {
-            self.bump(); // consume 'async'
-            self.skip_whitespace();
-            FunctionModifier::Background
-        } else {
-            FunctionModifier::None
-        };
+            return Err(self.unsupported_syntax_error(
+                "`async` is not a Clean Language function modifier: declare the function \
+                 without it and run it asynchronously at the call site with \
+                 `later name = start f()` or `background f()`"
+                    .to_string(),
+                "functions:\n\tstring fetch()\n\t\treturn \"done\"\n\nstart:\n\tlater result = start fetch()",
+            ));
+        }
 
         // Try to parse as type (which handles precision modifiers like number:64)
         let (return_type, func_name) = match self.parse_type() {
@@ -475,7 +429,7 @@ impl TokenParser {
             // a function becomes Public only when it appears inside a
             // `public:` sub-section (parse_public_functions_section).
             visibility: Visibility::Private,
-            modifier,
+            modifier: FunctionModifier::None,
             location: Some(start_location),
         })
     }
@@ -1635,54 +1589,6 @@ impl TokenParser {
             name,
             alias,
             is_file_import: false,
-        })
-    }
-
-    pub(super) fn parse_parameter_list(&mut self) -> Result<Vec<Parameter>, CompilerError> {
-        let mut parameters = Vec::new();
-
-        self.skip_whitespace();
-
-        while !self.check(&TokenKind::RightParen) && !self.is_at_end() {
-            parameters.push(self.parse_parameter()?);
-            self.skip_whitespace();
-
-            if !self.eat(&TokenKind::Comma) {
-                break;
-            }
-            self.skip_whitespace();
-        }
-
-        self.expect(&TokenKind::RightParen)?;
-
-        Ok(parameters)
-    }
-
-    pub(super) fn parse_parameter(&mut self) -> Result<Parameter, CompilerError> {
-        let name_token = self.expect_identifier()?;
-        let name = name_token.text.clone();
-
-        self.skip_whitespace();
-
-        // Type annotation (required for parameters)
-        self.expect(&TokenKind::Colon)?;
-        self.skip_whitespace();
-        let type_ = self.parse_type()?;
-
-        self.skip_whitespace();
-
-        // Optional default value (e.g., name: type = defaultValue)
-        let default_value = if self.eat(&TokenKind::Assign) {
-            self.skip_whitespace();
-            Some(self.parse_expression()?)
-        } else {
-            None
-        };
-
-        Ok(Parameter {
-            name,
-            type_,
-            default_value,
         })
     }
 

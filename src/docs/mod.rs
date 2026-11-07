@@ -327,7 +327,7 @@ pub fn extract_symbols_from_source(source: &str) -> AvailableSymbols {
 /// Words that start statements; a line beginning with one of them is never a
 /// function declaration (`return helper(2)`, `print(x)`, `if ready(x)`).
 const STATEMENT_KEYWORDS: &[&str] = &[
-    "return", "print", "printl", "input", "if", "else", "while", "for", "iterate", "in", "break",
+    "return", "print", "printl", "input", "if", "else", "while", "iterate", "in", "break",
     "continue", "later", "test", "start", "require", "onError", "error", "and", "or", "not",
 ];
 

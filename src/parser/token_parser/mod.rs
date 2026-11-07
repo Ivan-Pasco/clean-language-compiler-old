@@ -270,10 +270,18 @@ impl TokenParser {
 
             // Parse top-level declarations
             match self.current_kind() {
-                TokenKind::Function => match self.parse_function() {
-                    Ok(func) => functions.push(func),
-                    Err(e) => self.errors.push(e),
-                },
+                TokenKind::Function => {
+                    // `function` is reserved but has no syntax (grammar.ebnf
+                    // §1.2); functions are declared in a `functions:` block.
+                    let error = self.unsupported_syntax_error(
+                        "`function name(...)` declarations are not Clean Language syntax: \
+                         declare functions in a `functions:` block"
+                            .to_string(),
+                        "functions:\n\tinteger name(integer n)\n\t\treturn n",
+                    );
+                    self.errors.push(error);
+                    self.skip_rejected_declaration();
+                }
                 TokenKind::Class => match self.parse_class() {
                     Ok(class) => {
                         classes.push(class);
@@ -690,6 +698,52 @@ impl TokenParser {
                         | TokenKind::Dedent(_)
                 ) || token.location.line != line
             }
+        }
+    }
+
+    /// SYN002 error at the current token for a construct grammar.ebnf does
+    /// not define. `message` names the spec'd alternative; `help` shows it.
+    pub(super) fn unsupported_syntax_error(&self, message: String, help: &str) -> CompilerError {
+        use crate::error::{ErrorContext, ErrorType};
+        CompilerError::Syntax {
+            context: Box::new(
+                ErrorContext::new(
+                    message,
+                    Some(help.to_string()),
+                    ErrorType::Syntax,
+                    Some(self.current().location.clone()),
+                )
+                .with_error_code("SYN002"),
+            ),
+        }
+    }
+
+    /// Skip a rejected top-level declaration: the rest of its header line
+    /// and every indented line below it, so parsing resumes at the next
+    /// top-level item instead of reporting each body token again.
+    pub(super) fn skip_rejected_declaration(&mut self) {
+        let mut at_line_start = false;
+        while !self.is_at_end() {
+            match self.current_kind() {
+                TokenKind::Newline => at_line_start = true,
+                // Comment-only lines carry no indentation token.
+                TokenKind::Comment(_) | TokenKind::BlockComment(_) => {}
+                // An indented line, or a return to a level that is still
+                // indented, belongs to the declaration's body.
+                TokenKind::Indent(level) | TokenKind::Dedent(level)
+                    if at_line_start && *level > 0 =>
+                {
+                    at_line_start = false
+                }
+                TokenKind::Dedent(_) if at_line_start => {
+                    // Back at column 0: the body is over.
+                    self.bump();
+                    return;
+                }
+                _ if at_line_start => return,
+                _ => {}
+            }
+            self.bump();
         }
     }
 

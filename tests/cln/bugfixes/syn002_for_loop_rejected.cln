@@ -1,0 +1,13 @@
+// Test: bugfixes/syn002_for_loop_rejected
+// Grammar: keyword ("for" is reserved but unused); iterate_statement
+// Semantic: SYN002 — `for x in xs` is not Clean Language syntax
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   SYN002
+//   use `iterate item in collection`
+
+start:
+	list<integer> items = [1, 2, 3]
+	for item in items
+		print(item)

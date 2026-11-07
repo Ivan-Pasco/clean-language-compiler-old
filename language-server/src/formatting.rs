@@ -175,7 +175,6 @@ impl FormattingProvider {
             "if",
             "else",
             "while",
-            "for",
         ];
 
         for keyword in block_keywords.iter() {

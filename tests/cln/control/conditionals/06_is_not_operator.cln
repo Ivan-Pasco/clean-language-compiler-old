@@ -1,17 +1,16 @@
 // Fixed: was using `print(x) +` for one value per line; grammar.ebnf print_parenthesized_statement
 // prints a newline, while `print(x) +` (print_newline_statement) continues the line.
+// Fixed: was using `x is not y`; grammar.ebnf comparison_op has only `is`, so the
+// negated comparison is written `not (x is y)` (unary_op "not" on a parenthesised
+// comparison). The expected output is unchanged.
 // Test: control/conditionals/is_not_operator
-// Grammar: comparison_expression → expr 'is' 'not' expr | expr 'is' expr
-// Semantic: SEM001 (tracking: SEM-COMPARE-01 — `is`/`is not` operator typing)
+// Grammar: comparison_expression → expr 'is' expr; unary_expression → 'not' primary
+// Semantic: SEM001 (tracking: SEM-COMPARE-01 — `is` operator typing)
 // Expected output:
 //   a is b: true
 //   c is not d: true
 //   not of true: false
 //   x is not y: ok
-//
-// Regression: `is not` must be parsed as a single two-token operator.
-// Before this fix, `value is not expr` was parsed as `value is (not expr)`,
-// meaning BinaryOperator::IsNot was never emitted by the token parser.
 
 start:
 	// Test `is` for equality (same integer value)
@@ -22,15 +21,15 @@ start:
 	else
 		print("a is b: false")
 
-	// Test `is not` for inequality (different integer values)
+	// Test negated `is` for inequality (different integer values)
 	integer c = 42
 	integer d = 99
-	if c is not d
+	if not (c is d)
 		print("c is not d: true")
 	else
 		print("c is not d: false")
 
-	// Test unary `not` still works after the parser fix
+	// Test unary `not` on a boolean variable
 	boolean flag = true
 	boolean negated = not flag
 	if negated
@@ -38,10 +37,10 @@ start:
 	else
 		print("not of true: false")
 
-	// Test that `is not` parses as a single compound operator
+	// Test negated `is` once more
 	integer x = 5
 	integer y = 10
-	if x is not y
+	if not (x is y)
 		print("x is not y: ok")
 	else
 		print("x is not y: fail")

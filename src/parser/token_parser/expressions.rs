@@ -111,8 +111,18 @@ impl TokenParser {
             let op_token = self.bump();
             self.skip_whitespace();
 
-            // When we see `is`, peek ahead for `not` to handle `value is not null`.
-            // `is not` is a single two-token operator meaning inequality / non-null check.
+            // grammar.ebnf `comparison_op` has `is` but no `is not`. Reject the
+            // pair instead of reading it as `x is (not y)`, which is almost
+            // never what was meant.
+            if op_token.kind == TokenKind::Is && self.check(&TokenKind::Not) {
+                return Err(self.unsupported_syntax_error(
+                    "`is not` is not a Clean Language operator: write `not (x is y)` or `x != y` \
+                     (or `x is (not y)` to compare with a negated value)"
+                        .to_string(),
+                    "if not (value is other)\n\tprint(\"different\")",
+                ));
+            }
+
             let op = match &op_token.kind {
                 TokenKind::Equal => BinaryOperator::Equal,
                 TokenKind::NotEqual => BinaryOperator::NotEqual,
@@ -120,16 +130,7 @@ impl TokenParser {
                 TokenKind::Greater => BinaryOperator::Greater,
                 TokenKind::LessEqual => BinaryOperator::LessEqual,
                 TokenKind::GreaterEqual => BinaryOperator::GreaterEqual,
-                TokenKind::Is => {
-                    // Check for `is not` two-token operator
-                    if self.check(&TokenKind::Not) {
-                        self.bump(); // consume `not`
-                        self.skip_whitespace();
-                        BinaryOperator::Not
-                    } else {
-                        BinaryOperator::Is
-                    }
-                }
+                TokenKind::Is => BinaryOperator::Is,
                 _ => unreachable!(),
             };
 
@@ -570,15 +571,13 @@ impl TokenParser {
                     location,
                 })
             }
-            TokenKind::Later => {
-                // `later` as an expression prefix: later fetchGreeting()
-                // The async scheduling is handled at the host/runtime level.
-                // At the WASM/compiler level, `later expr` compiles as a regular call.
-                self.bump(); // consume 'later'
-                self.skip_whitespace();
-                // Parse the following expression (typically a function call)
-                self.parse_primary()
-            }
+            // `later` only starts a statement (grammar.ebnf `later_assignment`).
+            TokenKind::Later => Err(self.unsupported_syntax_error(
+                "`later` is not an expression: declare the deferred value with \
+                 `later name = start f()`"
+                    .to_string(),
+                "later result = start fetch()\nprint(result)",
+            )),
             // Contextual keywords used as names (variables, class/type names).
             kind if Self::is_contextual_name(kind) => {
                 let token = self.bump();
