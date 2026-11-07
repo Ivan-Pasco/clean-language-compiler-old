@@ -11,8 +11,7 @@ use wasmtime::{
 
 use crate::ast::{FrameworkBlock, Statement};
 use crate::plugins::{
-    FrameworkPlugin, HtmlEntryOutput, PluginCompletionItem, PluginDiagnostic, PluginError,
-    PluginExpansion, PluginHoverInfo, PluginLspContext, PluginResult,
+    FrameworkPlugin, HtmlEntryOutput, PluginError, PluginExpansion, PluginResult,
 };
 
 use super::plugin_abi::PluginManifest;
@@ -27,7 +26,7 @@ pub struct WasmPluginAdapter {
     module: Module,
     /// Wasmtime engine
     engine: Engine,
-    /// Block types this plugin handles, leaked once at construction so
+    /// Block types this plugin handles, interned (`intern_str_list`) so
     /// `FrameworkPlugin::handles` can hand out the `'static` slice.
     handles_cache: &'static [&'static str],
     /// Cached ORM expression patterns from `[handles] expressions`
@@ -58,6 +57,47 @@ pub struct WasmPluginAdapter {
     /// plugin cannot accidentally re-use a handle from a prior call even if
     /// it stored the old ctx in its `_build_state_set` keystore.
     next_ctx_counter: AtomicI32,
+}
+
+/// Strings interned for the process lifetime; see `intern_str`.
+static INTERNED_STRS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<&'static str>>,
+> = std::sync::OnceLock::new();
+
+/// String lists interned for the process lifetime; see `intern_str_list`.
+#[allow(clippy::type_complexity)]
+static INTERNED_STR_LISTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<Vec<&'static str>, &'static [&'static str]>>,
+> = std::sync::OnceLock::new();
+
+/// A `'static` copy of `s`, allocated once per distinct value for the life
+/// of the process.
+fn intern_str(s: &str) -> &'static str {
+    let mut set = INTERNED_STRS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(&interned) = set.get(s) {
+        return interned;
+    }
+    let interned: &'static str = Box::leak(s.to_owned().into_boxed_str());
+    set.insert(interned);
+    interned
+}
+
+/// A `'static` copy of `items`, allocated once per distinct list.
+fn intern_str_list(items: &[String]) -> &'static [&'static str] {
+    let key: Vec<&'static str> = items.iter().map(|s| intern_str(s)).collect();
+    let mut map = INTERNED_STR_LISTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(&interned) = map.get(&key) {
+        return interned;
+    }
+    let interned: &'static [&'static str] = Box::leak(key.clone().into_boxed_slice());
+    map.insert(key, interned);
+    interned
 }
 
 /// Verify at load time that a plugin's declared `exports.assemble` export
@@ -190,22 +230,13 @@ impl WasmPluginAdapter {
         module: Module,
         engine: Engine,
     ) -> Result<Self> {
-        // Pre-cache static strings to avoid repeated allocations
-        let name_cache: &'static str = Box::leak(name.clone().into_boxed_str());
-        let version_cache: &'static str =
-            Box::leak(manifest.plugin.version.clone().into_boxed_str());
-        let description_cache: &'static str =
-            Box::leak(manifest.plugin.description.clone().into_boxed_str());
-
-        let handles_cache: &'static [&'static str] = Box::leak(
-            manifest
-                .handles
-                .blocks
-                .iter()
-                .map(|s| Box::leak(s.clone().into_boxed_str()) as &'static str)
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-        );
+        // `FrameworkPlugin` hands these out as `'static`. They are interned,
+        // so a long-running process (language server, MCP server) that
+        // loads the same plugins again does not leak a fresh copy each time.
+        let name_cache = intern_str(&name);
+        let version_cache = intern_str(&manifest.plugin.version);
+        let description_cache = intern_str(&manifest.plugin.description);
+        let handles_cache = intern_str_list(&manifest.handles.blocks);
 
         // Expression patterns come exclusively from the plugin's
         // `[handles] expressions` manifest declaration. The previous fallback
@@ -313,10 +344,9 @@ impl WasmPluginAdapter {
         self.create_store_with_state(PluginState::new())
     }
 
-    /// Instantiate the plugin module in `store` and prepare its memory for a
-    /// call: returns the instance and its exported memory, with the plugin's
-    /// default heap pointer moved past its data section. `what` names the
-    /// call in diagnostics.
+    /// Instantiate the plugin module in `store` for a call: returns the
+    /// instance and its exported memory. `what` names the call in
+    /// diagnostics.
     fn instantiate(
         &self,
         store: &mut Store<PluginState>,
@@ -334,7 +364,6 @@ impl WasmPluginAdapter {
         let memory = instance
             .get_memory(&mut *store, "memory")
             .ok_or_else(|| anyhow!("plugin `{}` does not export memory", self.name))?;
-        relocate_default_heap_pointer(store, &instance);
         Ok((instance, memory))
     }
 
@@ -462,7 +491,7 @@ impl WasmPluginAdapter {
              \"config\":{{\"level\":\"{}\"}}}}",
             handle, compiler_version, level
         );
-        let input_ptr = self.find_or_write_string(&mut store, &instance, &memory, &ctx_json)?;
+        let input_ptr = self.write_clean_string(&mut store, &instance, &memory, &ctx_json)?;
 
         // Call the plugin's `lint_project(input_lp) -> output_lp`.
         let lint_fn: TypedFunc<i32, i32> = instance
@@ -515,11 +544,10 @@ impl WasmPluginAdapter {
         };
         let block_name = block.name.trim_end_matches(':');
         let dispatch_version = self.manifest.resolve_block_dispatch(block_name).version;
-        // The same body and attributes the expand export receives.
-        let (_, content) = split_binding_header(block_name, &block.content);
-        let (extra_attrs, body) = extract_inline_attrs(content);
-        let attributes = build_attributes_json(&block.attributes, extra_attrs);
-        let (attributes, body) = (attributes.as_str(), body.as_str());
+        // plugin-contract.md §5.2: validate takes exactly what the block's
+        // expand export receives.
+        let inputs = expand_inputs(block_name, block, dispatch_version);
+        let (attributes, body) = (inputs.attributes.as_str(), inputs.body.as_str());
         let what = format!("validate block `{}`", block_name);
         let mut message = String::new();
         let mut run = |store: &mut Store<PluginState>,
@@ -537,9 +565,9 @@ impl WasmPluginAdapter {
                         e
                     )
                 })?;
-            let block_name_ptr = self.find_or_write_string(store, instance, memory, block_name)?;
-            let attributes_ptr = self.find_or_write_string(store, instance, memory, attributes)?;
-            let body_ptr = self.find_or_write_string(store, instance, memory, body)?;
+            let block_name_ptr = self.write_clean_string(store, instance, memory, block_name)?;
+            let attributes_ptr = self.write_clean_string(store, instance, memory, attributes)?;
+            let body_ptr = self.write_clean_string(store, instance, memory, body)?;
             let result = validate.call(&mut *store, (block_name_ptr, attributes_ptr, body_ptr));
             if let Ok(ptr) = result {
                 let bytes = self.read_result(store, memory, ptr)?;
@@ -576,9 +604,9 @@ impl WasmPluginAdapter {
         let ctx = self.next_ctx_handle();
         let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
         let (arena, status) = self.run_typed_call(&what, arena, |store, instance, memory| {
-            let block_name_ptr = self.find_or_write_string(store, instance, memory, block_name)?;
-            let attributes_ptr = self.find_or_write_string(store, instance, memory, attributes)?;
-            let body_ptr = self.find_or_write_string(store, instance, memory, body)?;
+            let block_name_ptr = self.write_clean_string(store, instance, memory, block_name)?;
+            let attributes_ptr = self.write_clean_string(store, instance, memory, attributes)?;
+            let body_ptr = self.write_clean_string(store, instance, memory, body)?;
             let expand: TypedFunc<(i32, i32, i32, i32), i32> = instance
                 .get_typed_func(&mut *store, export_name)
                 .map_err(|e| {
@@ -677,7 +705,7 @@ impl WasmPluginAdapter {
         let ctx = self.next_ctx_handle();
         let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
         let (arena, status) = self.run_typed_call(what, arena, |store, instance, memory| {
-            let input_ptr = self.find_or_write_string(store, instance, memory, input_json)?;
+            let input_ptr = self.write_clean_string(store, instance, memory, input_json)?;
             let export: TypedFunc<(i32, i32), i32> = instance
                 .get_typed_func(&mut *store, export_name)
                 .map_err(|e| {
@@ -1115,10 +1143,9 @@ impl WasmPluginAdapter {
 
                 // Perform the split.
                 let parts: Vec<&str> = if delimiter.is_empty() {
-                    // Empty delimiter: split into individual characters.
-                    // Collect into a Vec<&str> by splitting at char boundaries.
-                    // We'll use a temporary approach: split on "" returns the
-                    // same string, so instead split on every char.
+                    // Empty delimiter: one part per character (`split("")`
+                    // yields the characters between empty leading and
+                    // trailing parts, which are dropped).
                     source.split("").filter(|s| !s.is_empty()).collect()
                 } else {
                     source.split(delimiter.as_str()).collect()
@@ -1500,7 +1527,6 @@ impl WasmPluginAdapter {
         )?;
 
         // env.string.substring - Extract a substring from a string
-        // CRITICAL: This was the missing function causing string corruption
         // string.substring(ptr: i32, start: i32, end: i32) -> i32
         linker.func_wrap(
             "env",
@@ -2030,52 +2056,14 @@ impl WasmPluginAdapter {
     // LIST NAMESPACE - List/array operations
     // =========================================
     fn register_list_functions(linker: &mut Linker<PluginState>) -> Result<()> {
-        // env.list.push_f64 - Push an f64 element to a list
-        // List header: [length: i32, capacity: i32, type_tag: i32, flags: i32] (16 bytes)
-        // Data starts at offset 16, each f64 element is 8 bytes
+        // env.list.push_f64(list, value) -> list — append an f64 element.
+        // Returns the list pointer the caller must use from then on: the
+        // same list when it had room, or a grown copy.
         linker.func_wrap(
             "env",
             "list.push_f64",
-            |mut caller: Caller<'_, PluginState>, array_ptr: i32, value: f64| -> i32 {
-                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    Some(m) => m,
-                    None => {
-                        eprintln!("[list.push_f64: no memory export]");
-                        return array_ptr;
-                    }
-                };
-
-                let data = memory.data(&caller);
-                let ptr = array_ptr as usize;
-
-                if ptr + 16 > data.len() {
-                    eprintln!("[list.push_f64: invalid pointer {}]", array_ptr);
-                    return array_ptr;
-                }
-
-                // Read length from offset 0
-                let length =
-                    u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
-                        as usize;
-
-                // Data starts at offset 16, each f64 element is 8 bytes
-                let element_offset = ptr + 16 + length * 8;
-
-                if element_offset + 8 > data.len() {
-                    eprintln!("[list.push_f64: out of memory bounds]");
-                    return array_ptr;
-                }
-
-                // Write the f64 value
-                let data_mut = memory.data_mut(&mut caller);
-                let bytes = value.to_le_bytes();
-                data_mut[element_offset..element_offset + 8].copy_from_slice(&bytes);
-
-                // Increment length
-                let new_length = (length + 1) as u32;
-                data_mut[ptr..ptr + 4].copy_from_slice(&new_length.to_le_bytes());
-
-                array_ptr
+            |caller: Caller<'_, PluginState>, list_ptr: i32, value: f64| -> i32 {
+                list_push_f64(caller, list_ptr, value)
             },
         )?;
 
@@ -2481,21 +2469,23 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>| -> i32 { 0 },
         )?;
 
-        // env.http_encode_url
+        // env.http_encode_url — stub: plugins never make HTTP calls while
+        // expanding; returns an empty string.
         linker.func_wrap(
             "env",
             "http_encode_url",
-            |_caller: Caller<'_, PluginState>, url_ptr: i32, _url_len: i32| -> i32 {
-                // Return input unchanged for now
-                url_ptr
+            |mut caller: Caller<'_, PluginState>, _url_ptr: i32, _url_len: i32| -> i32 {
+                write_clean_string(&mut caller, b"")
             },
         )?;
 
-        // env.http_decode_url
+        // env.http_decode_url — stub, empty string (see http_encode_url).
         linker.func_wrap(
             "env",
             "http_decode_url",
-            |_: Caller<'_, PluginState>, url_ptr: i32, _url_len: i32| -> i32 { url_ptr },
+            |mut caller: Caller<'_, PluginState>, _url_ptr: i32, _url_len: i32| -> i32 {
+                write_clean_string(&mut caller, b"")
+            },
         )?;
 
         // env.http_build_query
@@ -2902,13 +2892,24 @@ impl WasmPluginAdapter {
                 write_clean_string(&mut caller, b"")
             },
         )?;
-        linker.func_wrap("env", "_req_form", |_: Caller<'_, PluginState>| -> i32 {
-            0
-        })?;
-        linker.func_wrap("env", "_req_ip", |_: Caller<'_, PluginState>| -> i32 { 0 })?;
-        linker.func_wrap("env", "_req_headers", |_: Caller<'_, PluginState>| -> i32 {
-            0
-        })?;
+        // String-returning request stubs hand back an empty string, like
+        // `_req_cookie`, so a plugin reading the result sees "" rather than
+        // a null pointer.
+        linker.func_wrap(
+            "env",
+            "_req_form",
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
+        )?;
+        linker.func_wrap(
+            "env",
+            "_req_ip",
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
+        )?;
+        linker.func_wrap(
+            "env",
+            "_req_headers",
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
+        )?;
 
         // Additional HTTP routing stubs (not defined above)
         linker.func_wrap(
@@ -3026,7 +3027,7 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "_auth_get_session",
-            |_: Caller<'_, PluginState>| -> i32 { 0 },
+            |mut caller: Caller<'_, PluginState>| -> i32 { write_clean_string(&mut caller, b"") },
         )?;
         linker.func_wrap(
             "env",
@@ -3131,10 +3132,6 @@ impl WasmPluginAdapter {
     /// Plugin ABI: expand(block_name: string, attributes: string, body: string) -> string
     /// Clean Language strings are pointers to [4-byte length][data] structures.
     ///
-    /// IMPORTANT: Clean Language uses pointer equality for string comparison.
-    /// To match string literals in the plugin, we must find and reuse the
-    /// existing string pointers from the plugin's data section.
-    ///
     /// The result preserves the start function, functions, classes,
     /// capabilities, externals and state the plugin generates.
     fn call_expand_full(&self, block: &FrameworkBlock) -> Result<PluginExpansion> {
@@ -3154,9 +3151,12 @@ impl WasmPluginAdapter {
         // plugin (which imports typed-emission bridges the v1 linker does not
         // provide) is never instantiated with the wrong linker.
         let dispatch = self.manifest.resolve_block_dispatch(block_name);
+        let ExpandInputs {
+            binding_header,
+            attributes: attributes_str,
+            body: actual_body,
+        } = expand_inputs(block_name, block, dispatch.version);
         if dispatch.version >= 3 {
-            let (extra_attrs, actual_body) = extract_inline_attrs(&block.content);
-            let attributes_str = build_attributes_json(&block.attributes, extra_attrs);
             return self.call_expand_typed(
                 &dispatch.export,
                 block_name,
@@ -3166,19 +3166,6 @@ impl WasmPluginAdapter {
         }
         // ── v1 path continues below ───────────────────────────────────────────
 
-        // Binding-header preservation for ORM-style typed expression blocks
-        // (`<type> <name> = Model.<verb>: ...`).
-        //
-        // The expander encodes the variable binding as the first line of the
-        // block content. The plugin's expand_block expects just the body — the
-        // binding is the compiler's responsibility to reattach afterwards.
-        // Strip the header here, remember it, and the post-call reassembly
-        // below stitches the resulting expression back into a complete
-        // VariableDecl. Every `Model.<verb>:` block goes through the single
-        // generic expand_block call, so the binding is preserved for all
-        // verbs, known or future (see bug SEM007).
-        let (binding_header, effective_content) = split_binding_header(block_name, &block.content);
-
         let mut store = self.create_store();
         let (instance, memory) = self.instantiate(
             &mut store,
@@ -3186,19 +3173,11 @@ impl WasmPluginAdapter {
             &format!("expand block `{}`", block_name),
         )?;
 
-        let block_name_ptr =
-            self.find_or_write_string(&mut store, &instance, &memory, block_name)?;
+        let block_name_ptr = self.write_clean_string(&mut store, &instance, &memory, block_name)?;
 
-        // Extract inline key="value" pairs from the first line of content
-        // e.g., content = 'tag="site-header"\n\thtml:\n...' → attrs: {"tag":"site-header"}, body: '\thtml:\n...'
-        let (extra_attrs, actual_body) = extract_inline_attrs(effective_content);
-
-        // Format attributes as JSON object for plugin consumption
-        // Plugins expect: {"tag":"site-header","client":"off"}
-        let attributes_str = build_attributes_json(&block.attributes, extra_attrs);
         let attributes_ptr =
-            self.find_or_write_string(&mut store, &instance, &memory, &attributes_str)?;
-        let body_ptr = self.find_or_write_string(&mut store, &instance, &memory, &actual_body)?;
+            self.write_clean_string(&mut store, &instance, &memory, &attributes_str)?;
+        let body_ptr = self.write_clean_string(&mut store, &instance, &memory, &actual_body)?;
 
         let expand_fn_name = &dispatch.export;
         let expand: TypedFunc<(i32, i32, i32), i32> = instance
@@ -3421,50 +3400,6 @@ impl WasmPluginAdapter {
         })
     }
 
-    /// Find an existing string in plugin memory or write a new one
-    ///
-    /// Clean Language uses pointer equality for string comparison, so we scan
-    /// the plugin's data section for matching strings and return the existing
-    /// pointer if found. This allows `block_name == "server"` to work correctly.
-    fn find_or_write_string(
-        &self,
-        store: &mut Store<PluginState>,
-        instance: &wasmtime::Instance,
-        memory: &Memory,
-        s: &str,
-    ) -> Result<i32> {
-        let bytes = s.as_bytes();
-        let len = bytes.len();
-
-        // Scan the plugin's data section for a matching string
-        // Clean strings are stored as [4-byte length][data]
-        // Data section starts around 1024 and can extend to 32KB+ for large plugins
-        let data = memory.data(&*store);
-        let scan_start = 1024usize;
-        let scan_end = std::cmp::min(32768usize, data.len().saturating_sub(4 + len));
-
-        for ptr in scan_start..scan_end {
-            // Check if this looks like a string with our length
-            if ptr + 4 + len <= data.len() {
-                let stored_len =
-                    u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]])
-                        as usize;
-
-                if stored_len == len {
-                    // Check if content matches
-                    let stored_data = &data[ptr + 4..ptr + 4 + len];
-                    if stored_data == bytes {
-                        // Found a match - return the pointer to the existing string
-                        return Ok(ptr as i32);
-                    }
-                }
-            }
-        }
-
-        // No match found, write a new string
-        self.write_clean_string(store, instance, memory, s)
-    }
-
     /// Write a Clean string to WASM memory
     ///
     /// Clean string memory layout (from the string pointer):
@@ -3567,8 +3502,7 @@ impl WasmPluginAdapter {
                 e
             )
         })?;
-        let context_ptr =
-            self.find_or_write_string(&mut store, &instance, &memory, &context_json)?;
+        let context_ptr = self.write_clean_string(&mut store, &instance, &memory, &context_json)?;
 
         // Call the slot — signature `(param i32) -> i32`.
         let slot: TypedFunc<i32, i32> =
@@ -3684,7 +3618,7 @@ impl WasmPluginAdapter {
             peak_bytes = store.data().peak_alloc_offset,
             final_mark_depth = store.data().arena_marks.len(),
             slot = slot_name,
-            "plugin arena: expand-block exit",
+            "plugin arena: lifecycle-slot exit",
         );
 
         Ok(PluginExpansion {
@@ -3720,12 +3654,12 @@ impl WasmPluginAdapter {
             &format!("process_html for `{}`", path),
         )?;
 
-        let html_ptr = self.find_or_write_string(&mut store, &instance, &memory, html)?;
-        let path_ptr = self.find_or_write_string(&mut store, &instance, &memory, path)?;
+        let html_ptr = self.write_clean_string(&mut store, &instance, &memory, html)?;
+        let path_ptr = self.write_clean_string(&mut store, &instance, &memory, path)?;
         let registry_ptr =
-            self.find_or_write_string(&mut store, &instance, &memory, registry_json)?;
+            self.write_clean_string(&mut store, &instance, &memory, registry_json)?;
         let companion_ptr =
-            self.find_or_write_string(&mut store, &instance, &memory, companion_json)?;
+            self.write_clean_string(&mut store, &instance, &memory, companion_json)?;
 
         let process: TypedFunc<(i32, i32, i32, i32), i32> = instance
             .get_typed_func(&mut store, export_name)
@@ -3789,7 +3723,7 @@ impl WasmPluginAdapter {
         let (instance, memory) =
             self.instantiate(&mut store, self.typed_emission_linker()?, "assemble")?;
         let input_ptr = self
-            .find_or_write_string(&mut store, &instance, &memory, &input_json)
+            .write_clean_string(&mut store, &instance, &memory, &input_json)
             .map_err(|e| anyhow!("Failed to write input to WASM memory: {}", e))?;
 
         if let Ok(assemble_typed) =
@@ -3862,31 +3796,21 @@ impl WasmPluginAdapter {
             .map_err(|e| anyhow!("Failed to read assemble result: {}", e))?;
 
         if result_bytes.is_empty() {
-            // Empty result from a non-trivial input is almost always the
-            // signature of an out-of-memory failure inside the plugin:
-            // `mem_alloc` returns 0 once `memory.grow()` can't extend further
-            // (capped by the plugin's `[memory]` max), the plugin propagates
-            // that 0 through its accumulator strings, and the final result
-            // pointer is also 0 — which we then read as zero bytes. Without
-            // a warning the failure is invisible (downstream SEM007 makes it
-            // look like the plugin "just didn't emit the renamed function")
-            // and bisecting takes hours. Surface it the first time we see it.
-            //
-            // The 0-input edge case (no source files at all) is legitimately
-            // empty — only warn if we sent the plugin something to chew on.
-            if input_json.len() > 256 {
-                eprintln!(
-                    "warning: plugin '{}' assemble() returned 0 bytes for {}-byte input. \
-                     This almost always means the plugin exhausted its WASM memory \
-                     (`memory.grow()` failed). If you control the plugin, rebuild it with \
-                     `--target=plugin` so it gets the 1 GB plugin tier instead of the \
-                     32 MB standard tier. If you don't, please report this — the host can't \
-                     safely fall back to anything useful here.",
-                    self.name,
-                    input_json.len()
-                );
-            }
-            return Ok(AssembleOutput::default());
+            // assemble.md §5.1: the v1 hook returns an `AssembleOutput` JSON
+            // object — `{}` when it has nothing to add. An empty result is not
+            // that; it is almost always an out-of-memory failure inside the
+            // plugin (`mem_alloc` returns 0 once `memory.grow()` is refused,
+            // the plugin propagates the 0 and the result pointer is 0).
+            // Treating it as "nothing to add" silently drops the plugin's
+            // sources, so it is an error.
+            let oom = store.data().oom_during_call.clone();
+            return Err(anyhow!(
+                "plugin `{}` assemble() returned an empty result for a {}-byte input instead \
+                 of an AssembleOutput JSON object{}",
+                self.name,
+                input_json.len(),
+                oom.map(|s| format!(" [OOM: {}]", s)).unwrap_or_default()
+            ));
         }
 
         let json_str = std::str::from_utf8(&result_bytes)
@@ -4037,26 +3961,6 @@ impl FrameworkPlugin for WasmPluginAdapter {
 
     fn version(&self) -> &'static str {
         self.version_cache
-    }
-
-    fn get_keywords(&self) -> &'static [&'static str] {
-        // LSP features provided by plugin's exported WASM functions
-        &[]
-    }
-
-    fn get_completions(&self, _ctx: &PluginLspContext) -> Vec<PluginCompletionItem> {
-        // LSP completions from plugin's exported WASM functions
-        Vec::new()
-    }
-
-    fn get_hover_info(&self, _keyword: &str) -> Option<PluginHoverInfo> {
-        // LSP hover info from plugin's exported WASM functions
-        None
-    }
-
-    fn get_diagnostics(&self, _content: &str) -> Vec<PluginDiagnostic> {
-        // LSP diagnostics from plugin's exported WASM functions
-        Vec::new()
     }
 
     fn description(&self) -> &'static str {
@@ -4917,6 +4821,60 @@ fn host_allocate_in_memory(
     Some((memory, ptr))
 }
 
+/// `list.push_f64(list, value) -> list` for plugin code.
+///
+/// List layout (MEMORY_MODEL.md, `list.allocate`): a 16-byte header
+/// `[length:i32][capacity:i32][type_id:i32][flags:i32]` followed by the
+/// elements. `capacity` counts 4-byte slots — `list.allocate` reserves
+/// `capacity * 4` bytes — and an f64 element takes two of them. When the
+/// next element does not fit, the list is copied into a block with double
+/// the room and the new pointer is returned, like the runtime's growable
+/// lists. Returns 0 (with the cause recorded for the trap report) when the
+/// pointer is invalid or memory runs out; never writes past the list.
+fn list_push_f64(mut caller: Caller<'_, PluginState>, list_ptr: i32, value: f64) -> i32 {
+    const HEADER: usize = 16;
+    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+        return 0;
+    };
+    let Ok(ptr) = usize::try_from(list_ptr) else {
+        return 0;
+    };
+    let data = memory.data(&caller);
+    let Some(header) = data.get(ptr..ptr + HEADER) else {
+        return 0;
+    };
+    let read = |at: usize| u32::from_le_bytes(header[at..at + 4].try_into().unwrap()) as usize;
+    let (length, capacity) = (read(0), read(4));
+    let used = length * 8;
+    let room = capacity * 4;
+    if used > room || ptr + HEADER + room > data.len() {
+        // A header that claims more than the list holds or than memory has.
+        return 0;
+    }
+
+    let (list, room) = if used + 8 <= room {
+        (ptr, room)
+    } else {
+        let new_room = (room * 2).max(used + 8).max(64);
+        let Some((_, new_ptr)) =
+            host_allocate_in_memory(&mut caller, HEADER + new_room, PluginState::allocate)
+        else {
+            return 0;
+        };
+        let data = memory.data_mut(&mut caller);
+        data.copy_within(ptr..ptr + HEADER + used, new_ptr);
+        data[new_ptr + 4..new_ptr + 8].copy_from_slice(&((new_room / 4) as u32).to_le_bytes());
+        (new_ptr, new_room)
+    };
+    debug_assert!(used + 8 <= room);
+
+    let data = memory.data_mut(&mut caller);
+    let at = list + HEADER + used;
+    data[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    data[list..list + 4].copy_from_slice(&((length + 1) as u32).to_le_bytes());
+    list as i32
+}
+
 /// Allocator for the JSON bridges (`runtime::json_bridge`): the shared bump
 /// heap, the same one every other host result is written to.
 fn json_bridge_alloc(caller: &mut Caller<'_, PluginState>, size: i32) -> Result<i32, String> {
@@ -4944,18 +4902,13 @@ fn wrap_slot_statements_as_start(source: &str) -> String {
     wrapped
 }
 
-/// Escape a string for embedding inside a JSON string literal in the
-/// attribute payload handed to plugins.
-fn escape_attr_json(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 /// One `"key":"value"` (or `"key":true` for a bare flag) JSON member of the
-/// attribute payload. Both key and value are escaped.
+/// attribute payload, with key and value JSON-escaped.
 fn attr_json_pair(key: &str, value: Option<&str>) -> String {
+    let key = serde_json::Value::from(key);
     match value {
-        Some(v) => format!("\"{}\":\"{}\"", escape_attr_json(key), escape_attr_json(v)),
-        None => format!("\"{}\":true", escape_attr_json(key)),
+        Some(v) => format!("{}:{}", key, serde_json::Value::from(v)),
+        None => format!("{}:true", key),
     }
 }
 
@@ -4979,22 +4932,36 @@ fn build_attributes_json(
     }
 }
 
-/// Move a plugin's heap pointer past its static data section.
+/// The strings a block's expand export (and its validate export, which
+/// plugin-contract.md §5.2 gives the same inputs) is called with.
+struct ExpandInputs {
+    /// The `<type> <name> =` binding line taken off the body, for a v1
+    /// block; the compiler reattaches it to the plugin's output.
+    binding_header: Option<String>,
+    /// JSON object of the block's attributes (`""` when there are none).
+    attributes: String,
+    body: String,
+}
+
+/// Build the expand inputs for `block` under ABI `version`.
 ///
-/// The plugin's first exported i32 global holding the compiler default heap
-/// base (1024) is its bump-allocator pointer. The data section of a large
-/// plugin extends beyond 1024, so allocations starting there would overwrite
-/// static string literals. Relocate it to 8192 before any call.
-fn relocate_default_heap_pointer(store: &mut Store<PluginState>, instance: &wasmtime::Instance) {
-    let globals: Vec<_> = instance
-        .exports(&mut *store)
-        .filter_map(|e| e.into_global())
-        .collect();
-    for global in globals {
-        if let wasmtime::Val::I32(1024) = global.get(&mut *store) {
-            let _ = global.set(&mut *store, wasmtime::Val::I32(8192));
-            break;
-        }
+/// For a `<type> <name> = Model.<verb>:` block the expander puts the binding
+/// on the first line of the content. A v1 (string-emission) plugin returns
+/// a bare expression, so the binding is taken off here and reattached to
+/// its output. A v3 (typed-emission) plugin receives the binding as part of
+/// the body and emits the declaration itself (`emit_binding_stmt` in
+/// frame.data), so the body is passed unchanged.
+fn expand_inputs(block_name: &str, block: &FrameworkBlock, version: u32) -> ExpandInputs {
+    let (binding_header, content) = if version >= 3 {
+        (None, block.content.as_str())
+    } else {
+        split_binding_header(block_name, &block.content)
+    };
+    let (extra_attrs, body) = extract_inline_attrs(content);
+    ExpandInputs {
+        binding_header,
+        attributes: build_attributes_json(&block.attributes, extra_attrs),
+        body,
     }
 }
 
@@ -5028,56 +4995,95 @@ fn split_binding_header<'c>(block_name: &str, content: &'c str) -> (Option<Strin
     }
 }
 
-/// Extract inline `key="value"` pairs from the first line of block content.
+/// Extract the inline `key="value"` attributes written on a block's header
+/// line (`component: tag="site-header"`, frame-ui.ebnf
+/// `component_tag_attr`).
 ///
-/// For content like `tag="site-header"\n\thtml:\n\t\t<h1>...`, this extracts:
-/// - attrs: `["\"tag\":\"site-header\""]` (JSON key-value pairs)
-/// - body: `\thtml:\n\t\t<h1>...` (remaining content after the attribute line)
+/// The parser hands over the block content from the first token after the
+/// `:`. Text on the header line therefore arrives unindented as the first
+/// line, while every body line keeps its leading tab. So the first line is
+/// an attribute line only when it is not indented and consists entirely of
+/// `identifier="string"` pairs separated by whitespace or a comma. Values are
+/// `string_literal`s (grammar.ebnf §1.6) and their escapes are decoded.
 ///
-/// If the first line has no `key="value"` pattern, returns empty attrs and full content.
+/// Returns the attributes as JSON members (`"tag":"site-header"`) and the
+/// body that follows; content without an attribute line is returned whole.
 fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
-    // Split at first newline
     let (first_line, rest) = match content.find('\n') {
         Some(pos) => (&content[..pos], &content[pos + 1..]),
         None => (content, ""),
     };
-
-    let trimmed = first_line.trim();
-
-    // Check if the first line contains key="value" patterns (not markup)
-    if trimmed.is_empty() || trimmed.starts_with('<') {
+    if first_line.starts_with([' ', '\t']) {
         return (Vec::new(), content.to_string());
     }
+    match parse_attr_line(first_line.trim_end()) {
+        Some(pairs) if !pairs.is_empty() => (
+            pairs
+                .iter()
+                .map(|(k, v)| attr_json_pair(k, Some(v)))
+                .collect(),
+            rest.to_string(),
+        ),
+        _ => (Vec::new(), content.to_string()),
+    }
+}
 
-    // Parse key="value" pairs from the first line
+/// Parse a whole line of `identifier="string"` pairs. `None` when any part
+/// of the line is something else.
+fn parse_attr_line(line: &str) -> Option<Vec<(String, String)>> {
     let mut pairs = Vec::new();
-    let mut remaining = trimmed;
-
-    while !remaining.is_empty() {
-        // Find key=
-        if let Some(eq_pos) = remaining.find('=') {
-            let key = remaining[..eq_pos].trim();
-            let after_eq = &remaining[eq_pos + 1..];
-
-            if let Some(after_quote) = after_eq.strip_prefix('"') {
-                // Find closing quote
-                if let Some(close_pos) = after_quote.find('"') {
-                    let value = &after_quote[..close_pos];
-                    pairs.push(attr_json_pair(key, Some(value)));
-                    remaining = after_quote[close_pos + 1..].trim_start();
-                    continue;
-                }
-            }
+    let mut rest = line;
+    while !rest.is_empty() {
+        let key_len = rest
+            .char_indices()
+            .find(|&(i, c)| {
+                !(c.is_ascii_alphabetic()
+                    || c == '_'
+                    || (i > 0 && (c.is_ascii_digit() || c == '-')))
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(rest.len());
+        if key_len == 0 {
+            return None;
         }
-        // If we can't parse, treat the whole line as non-attribute content
-        return (Vec::new(), content.to_string());
+        let key = &rest[..key_len];
+        let mut chars = rest[key_len..].strip_prefix("=\"")?.char_indices();
+        let after_open = &rest[key_len + 2..];
+        let mut value = String::new();
+        let end = loop {
+            let (i, c) = chars.next()?;
+            match c {
+                '"' => break i + 1,
+                '\\' => {
+                    let (_, escaped) = chars.next()?;
+                    value.push(match escaped {
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        '0' => '\0',
+                        '"' | '\\' | '{' | '}' => escaped,
+                        _ => return None,
+                    });
+                }
+                c => value.push(c),
+            }
+        };
+        pairs.push((key.to_string(), value));
+        // Pairs are separated by whitespace, optionally after a comma
+        // (`tag="x", client="off"`).
+        let after = &after_open[end..];
+        let after_comma = after.strip_prefix(',').unwrap_or(after);
+        let trimmed = after_comma.trim_start_matches([' ', '\t']);
+        if !trimmed.is_empty() && trimmed.len() == after.len() {
+            return None;
+        }
+        if trimmed.is_empty() && after_comma.len() != after.len() {
+            // A trailing comma.
+            return None;
+        }
+        rest = trimmed;
     }
-
-    if pairs.is_empty() {
-        (Vec::new(), content.to_string())
-    } else {
-        (pairs, rest.to_string())
-    }
+    Some(pairs)
 }
 
 /// True when `generated_code` already starts with the binding header we stripped
@@ -5296,6 +5302,197 @@ mod tests {
         "#;
         let bytes = call_and_read(wat, WasmPluginAdapter::register_http_client_functions);
         assert!(bytes.is_empty());
+    }
+
+    /// String-returning stubs hand back a readable empty LP string, never
+    /// the caller's raw input pointer or a null pointer.
+    #[test]
+    fn string_stubs_return_readable_empty_strings() {
+        let two_arg = |name: &str| {
+            format!(
+                r#"
+                (module
+                  (import "env" "{name}" (func $f (param i32 i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (data (i32.const 64) "\05\00\00\00a%20b")
+                  (func (export "run") (result i32)
+                    i32.const 68
+                    i32.const 5
+                    call $f))
+                "#
+            )
+        };
+        for name in ["http_encode_url", "http_decode_url"] {
+            let bytes = call_and_read(
+                &two_arg(name),
+                WasmPluginAdapter::register_http_client_functions,
+            );
+            assert!(bytes.is_empty(), "{} returned {:?}", name, bytes);
+        }
+        let no_arg = |name: &str| {
+            format!(
+                r#"
+                (module
+                  (import "env" "{name}" (func $f (result i32)))
+                  (memory (export "memory") 1)
+                  (func (export "run") (result i32) call $f))
+                "#
+            )
+        };
+        for name in ["_req_ip", "_req_form", "_req_headers", "_auth_get_session"] {
+            let bytes = call_and_read(&no_arg(name), WasmPluginAdapter::register_http_auth_stubs);
+            assert!(bytes.is_empty(), "{} returned {:?}", name, bytes);
+        }
+    }
+
+    /// `list.push_f64` appends within the list's capacity and grows the list
+    /// (returning the new pointer) when it is full, instead of writing past
+    /// the allocation.
+    #[test]
+    fn list_push_f64_grows_a_full_list() {
+        // A list at 1024 with capacity 2 slots (= one f64), followed by a
+        // guard word that must survive.
+        let wat = r#"
+            (module
+              (import "env" "list.push_f64" (func $push (param i32 f64) (result i32)))
+              (memory (export "memory") 2)
+              (global (export "__heap_ptr") (mut i32) (i32.const 4096))
+              (data (i32.const 1024) "\00\00\00\00\02\00\00\00\00\00\00\00\00\00\00\00")
+              (data (i32.const 1048) "\ef\be\ad\de")
+              (func (export "run") (result i32)
+                (local $l i32)
+                i32.const 1024
+                f64.const 1.5
+                call $push
+                local.set $l
+                local.get $l
+                f64.const 2.5
+                call $push
+                local.set $l
+                local.get $l
+                f64.const 3.5
+                call $push))
+        "#;
+        let (mut store, instance, memory) =
+            instantiate_with(wat, WasmPluginAdapter::register_list_functions);
+        let run: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "run").unwrap();
+        let list = run.call(&mut store, ()).expect("push must not trap") as usize;
+        let data = memory.data(&store);
+        let word = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap());
+        let f64_at = |at: usize| f64::from_le_bytes(data[at..at + 8].try_into().unwrap());
+        assert_ne!(list, 1024, "a full list must be copied, not overflowed");
+        assert_eq!(word(list), 3, "length");
+        assert!(
+            word(list + 4) as usize * 4 >= 3 * 8,
+            "capacity covers the elements"
+        );
+        assert_eq!(
+            [f64_at(list + 16), f64_at(list + 24), f64_at(list + 32)],
+            [1.5, 2.5, 3.5]
+        );
+        assert_eq!(
+            word(1048),
+            0xdead_beef,
+            "memory after the old list is untouched"
+        );
+    }
+
+    /// Header-line attributes (`component: tag="x"`) are taken off the
+    /// content; an indented body line of the same shape is body, and
+    /// escaped quotes in a value are decoded instead of breaking parsing.
+    #[test]
+    fn inline_attrs_are_parsed_exactly() {
+        let (attrs, body) = extract_inline_attrs("tag=\"site-header\" client=\"off\"\n\thtml:\n");
+        assert_eq!(attrs, vec!["\"tag\":\"site-header\"", "\"client\":\"off\""]);
+        assert_eq!(body, "\thtml:\n");
+        let (attrs, _) = extract_inline_attrs("tag=\"site-header\", client=\"off\"\n\thtml:\n");
+        assert_eq!(attrs, vec!["\"tag\":\"site-header\"", "\"client\":\"off\""]);
+
+        // An indented first line is the body, even when it looks like an attribute.
+        let content = "\tname=\"x\"\n\tage=\"3\"\n";
+        assert_eq!(extract_inline_attrs(content), (vec![], content.to_string()));
+
+        // Escapes inside a value.
+        let (attrs, _) = extract_inline_attrs("tag=\"a\\\"b\\\\c\"\n\tbody");
+        assert_eq!(attrs, vec![r#""tag":"a\"b\\c""#]);
+
+        // Anything that is not wholly `key="value"` pairs is not an attribute line.
+        for line in [
+            "tag=\"x\" stray",
+            "tag=\"x\"other=\"y\"",
+            "tag=\"x\",",
+            "tag = \"x\"",
+            "list<User> rows =",
+            "tag=\"unterminated",
+            "<div>",
+        ] {
+            let content = format!("{}\n\tbody", line);
+            assert_eq!(
+                extract_inline_attrs(&content),
+                (vec![], content.clone()),
+                "{:?}",
+                line
+            );
+        }
+    }
+
+    /// Attribute keys and values are JSON-escaped completely (control
+    /// characters included), so the payload a plugin receives always parses.
+    #[test]
+    fn attribute_json_escapes_control_characters() {
+        let attrs = vec![crate::plugins::FrameworkAttribute {
+            name: "title".to_string(),
+            value: Some("line1\nline2\t\"q\"\\".to_string()),
+            location: None,
+        }];
+        let json = build_attributes_json(&attrs, Vec::new());
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect(&json);
+        assert_eq!(parsed["title"], "line1\nline2\t\"q\"\\");
+    }
+
+    /// A v1 block's binding header is taken off the body (the compiler
+    /// reattaches it); a v3 block receives it, and validate sees exactly
+    /// what expand sees in both cases.
+    #[test]
+    fn expand_inputs_keep_binding_header_for_typed_emission() {
+        let block = FrameworkBlock {
+            name: "User.find".to_string(),
+            content: "list<User> rows =\n\twhere: id == 1\n".to_string(),
+            attributes: Vec::new(),
+            location: None,
+        };
+        let v1 = expand_inputs("User.find", &block, 1);
+        assert_eq!(v1.binding_header.as_deref(), Some("list<User> rows ="));
+        assert_eq!(v1.body, "\twhere: id == 1\n");
+        let v3 = expand_inputs("User.find", &block, 3);
+        assert_eq!(v3.binding_header, None);
+        assert_eq!(v3.body, block.content);
+    }
+
+    /// A v1 `assemble` that returns an empty result (the out-of-memory
+    /// signature) is an error, not "nothing to add".
+    #[test]
+    fn v1_assemble_empty_result_is_an_error() {
+        let wat = r#"
+            (module
+              (memory (export "memory") 1)
+              (global (export "__heap_ptr") (mut i32) (i32.const 2048))
+              (data (i32.const 1024) "\00\00\00\00")
+              (func (export "assemble") (param i32) (result i32)
+                i32.const 1024))
+        "#;
+        let engine = crate::plugins::wasm_loader::shared_engine().unwrap();
+        let module = Module::new(&engine, wat).unwrap();
+        let manifest: PluginManifest = toml::from_str(
+            "[plugin]\nname = \"asm.empty\"\nversion = \"1.0.0\"\n\
+             [handles]\nblocks = []\n[exports]\nassemble = \"assemble\"\n",
+        )
+        .unwrap();
+        let adapter =
+            WasmPluginAdapter::new("asm.empty".to_string(), manifest, module, engine).unwrap();
+        let input = crate::plugins::plugin_abi::AssembleInput::default();
+        let err = adapter.assemble(&input).unwrap_err().to_string();
+        assert!(err.contains("empty result"), "{}", err);
     }
 
     /// A plugin-like module: exports `memory` and a `__heap_ptr` bump heap
@@ -6140,9 +6337,6 @@ mod lint_e2e_tests {
     ///   [0..1024]      reserved (heap start marker)
     ///   [1024..1028]   LP length prefix (u32 LE)
     ///   [1028..]       LP body (the JSON string)
-    ///
-    /// The `__heap_ptr` global is set to 1024 so the heap-fixup logic in
-    /// call_lint_project bumps it to 8192, well past our static data.
     ///
     /// The static JSON body is:
     ///   [{"code":"TEST-E001","severity":"error","message":"first",

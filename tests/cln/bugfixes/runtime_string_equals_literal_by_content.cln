@@ -1,0 +1,26 @@
+// Test: bugfixes/runtime_string_equals_literal_by_content
+// Grammar: comparison_expression, string_literal
+// Semantic: type-system.md "string" equality compares text
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   true
+//   false
+//   server
+//
+// The plugin host used to scan plugin memory for an existing copy of every
+// string it passed in (block names, bodies), because string `==` once
+// compared pointers. `==` compares the text: a string built at run time
+// equals a literal with the same characters, so the host now writes its
+// inputs as ordinary strings.
+
+start:
+	string built = "ser" + "ver"
+	print(built == "server")
+	print(built == "serve")
+	print(pick(built))
+
+functions:
+	string pick(string block_name)
+		if block_name == "server"
+			return "server"
+		return "other"
