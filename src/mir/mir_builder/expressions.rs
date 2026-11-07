@@ -3701,6 +3701,8 @@ impl MirBuilder {
                     // list and the key pointer as an element index read memory
                     // past the map.
                     ConcreteType::Pairs(_, value_type) => {
+                        let index_id =
+                            self.pairs_key(context, index_id, &index.expr_type, &index.location)?;
                         let result_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
                         let result_type = self.convert_concrete_type(value_type);

@@ -688,6 +688,8 @@ impl MirBuilder {
                             }
                             ConcreteType::Pairs(_, value_type) => {
                                 let value_type = (**value_type).clone();
+                                let index_id =
+                                    self.pairs_key(context, index_id, &index.expr_type, location)?;
                                 let value_id = self.unbox_any_argument(
                                     context,
                                     value_id,

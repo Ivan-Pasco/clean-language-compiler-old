@@ -2819,14 +2819,9 @@ impl<'a> TypeInference<'a> {
                             ConcreteType::Unknown
                         }
                     }
-                    ResolvedHirLValue::Index { array, .. } => {
-                        // Infer array type to get element type
-                        let tast_array = self.infer_expression(array)?;
-                        match &tast_array.expr_type {
-                            ConcreteType::Array(element_type) => (**element_type).clone(),
-                            _ => ConcreteType::Unknown,
-                        }
-                    }
+                    // The element type is determined (and the index checked)
+                    // with the target expressions below.
+                    ResolvedHirLValue::Index { .. } => ConcreteType::Unknown,
                 };
 
                 // Special handling for empty literals with known target type
@@ -3006,22 +3001,17 @@ impl<'a> TypeInference<'a> {
                         index,
                         location: index_location,
                     } => {
-                        // Handle array index assignments like arr[i] = value
+                        // `list[i] = v`, `pairs[key] = v`: the same container and
+                        // index checks as a read, and the value must be
+                        // assignable to the element type.
                         let tast_array = self.infer_expression(array)?;
                         let tast_index = self.infer_expression(index)?;
-
-                        // For array index assignment, the element type should match the value type
-                        let element_type = match &tast_array.expr_type {
-                            ConcreteType::Array(elem_type) => (**elem_type).clone(),
-                            _ => ConcreteType::Unknown, // Not an array, but we'll handle this as unknown
-                        };
-
-                        // Add constraint that value type matches element type
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: tast_value.expr_type.clone(),
-                            right: element_type.clone(),
-                            location: location.clone(),
-                        });
+                        let element_type = self.index_element_type(
+                            &tast_array.expr_type,
+                            &tast_index.expr_type,
+                            index_location,
+                        );
+                        self.require_assignable(&mut tast_value, &element_type, location);
 
                         TastExpression {
                             kind: TastExpressionKind::ArrayAccess {
@@ -3595,14 +3585,34 @@ impl<'a> TypeInference<'a> {
         let tast_array = self.infer_expression(array)?;
         let tast_index = self.infer_expression(index)?;
 
-        // Extract element type based on array type and index type.
+        let element_type =
+            self.index_element_type(&tast_array.expr_type, &tast_index.expr_type, location);
+
+        Ok((
+            TastExpressionKind::ArrayAccess {
+                array: Box::new(tast_array),
+                index: Box::new(tast_index),
+            },
+            element_type,
+            location.clone(),
+        ))
+    }
+
+    /// The element type of `container[index]` (list, matrix, pairs or any),
+    /// reporting IDX001–IDX004 when the container cannot be indexed or the
+    /// index has the wrong type. Shared by reads and bracket assignments.
+    fn index_element_type(
+        &mut self,
+        container_type: &ConcreteType,
+        index_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ConcreteType {
         // IDX001–IDX004 are errors (error-codes.md) when both sides have a
         // definite type; when either side is still unresolved (Unknown, Any,
         // generic, union, optional, sized integer) the mismatch cannot be
         // proven and is reported as a warning instead.
-        let index_type = tast_index.expr_type.clone();
-        let index_is_definite = Self::is_definite_index_type(&index_type);
-        let element_type = match &tast_array.expr_type {
+        let index_is_definite = Self::is_definite_index_type(index_type);
+        match container_type {
             // Any type supports both string (object access) and integer (array access)
             ConcreteType::Any => {
                 if !matches!(index_type, ConcreteType::String | ConcreteType::Integer) {
@@ -3647,13 +3657,12 @@ impl<'a> TypeInference<'a> {
             }
             // Pairs bracket access uses the declared key type (IDX003)
             ConcreteType::Pairs(key_type, value_type) => {
-                let key_is_string = matches!(**key_type, ConcreteType::String);
-                if index_type != **key_type && !matches!(index_type, ConcreteType::String) {
+                if !index_type.is_assignable_to(key_type) {
                     self.report_index_diagnostic(
-                        key_is_string && index_is_definite,
+                        index_is_definite && Self::is_definite_index_type(key_type),
                         "IDX003",
-                        format!("Pairs key must be string, found {}", index_type),
-                        "Use pairs[\"key\"] for pairs access",
+                        format!("Pairs key must be {}, found {}", key_type, index_type),
+                        "Use a key of the type the pairs declares, e.g. pairs[\"key\"] for pairs<string, V>",
                         location,
                     );
                 }
@@ -3671,16 +3680,7 @@ impl<'a> TypeInference<'a> {
                 );
                 ConcreteType::Unknown
             }
-        };
-
-        Ok((
-            TastExpressionKind::ArrayAccess {
-                array: Box::new(tast_array),
-                index: Box::new(tast_index),
-            },
-            element_type,
-            location.clone(),
-        ))
+        }
     }
 
     /// True when `t` is a fully-known type, so an index-type mismatch

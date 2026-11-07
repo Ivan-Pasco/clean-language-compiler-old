@@ -1381,6 +1381,25 @@ impl MirBuilder {
     }
 }
 
+impl MirBuilder {
+    /// The key a pairs lookup or store passes to `pairs.get` / `pairs.set`.
+    /// Pairs keys are stored as text — a literal `{1: "one"}` stores the
+    /// key "1" — so a key of another type is converted to its text.
+    pub(super) fn pairs_key(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        key_id: ValueId,
+        key_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        match key_type {
+            ConcreteType::String => Ok(key_id),
+            ConcreteType::Any => Ok(self.emit_any_to_string(context, key_id, location)),
+            _ => self.convert_value_to_string(context, key_id, key_type, location),
+        }
+    }
+}
+
 /// One arm of [`MirBuilder::build_two_way_value`].
 pub(super) enum BranchArm<'e> {
     /// A value computed before the branch, typed as the given expression.

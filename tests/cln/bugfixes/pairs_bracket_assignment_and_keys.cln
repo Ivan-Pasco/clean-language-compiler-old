@@ -1,0 +1,24 @@
+// Test: bugfixes/pairs_bracket_assignment_and_keys
+// Grammar: assignment_statement, index_expression
+// Semantic: IDX003 — a pairs is indexed with its declared key type; an
+//   element assigned through brackets has the pairs' value type.
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   b=3
+//   one
+//   two
+//
+// Regression: bracket assignment only understood lists, so `ages["b"] = 2`
+// gave the element the type Unknown and never checked the key; an integer
+// key was passed to the pairs runtime as if it were a string pointer (the
+// literal `{1: "one"}` stores the key "1").
+
+start:
+	pairs<string, integer> ages = {"a": 1}
+	ages["b"] = 2
+	integer b = ages["b"] + 1
+	printl("b=" + b.toString())
+	pairs<integer, string> names = {1: "one"}
+	names[2] = "two"
+	printl(names[1])
+	printl(names[2])
