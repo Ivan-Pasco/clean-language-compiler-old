@@ -1886,7 +1886,8 @@ impl TokenParser {
             self.bump(); // tentatively consume ':'
 
             if let TokenKind::IntegerLiteral(size) = self.current_kind() {
-                let bits = *size as u8;
+                let size = *size;
+                let size_location = self.current().location.clone();
                 self.bump(); // consume the size
 
                 // Check for 'u' suffix for unsigned
@@ -1901,15 +1902,45 @@ impl TokenParser {
                     false
                 };
 
-                // Apply precision modifier based on base type
+                // Widths from foundation/spec/type-system.md §2 "Precision Modifiers".
+                let valid = match base_type {
+                    Type::Integer => matches!(size, 8 | 16 | 32 | 64),
+                    Type::Number => matches!(size, 32 | 64) && !unsigned,
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            format!("Precision modifiers are only supported for integer and number types, not {:?}", base_type),
+                            Some(size_location),
+                            Some("Use :bits syntax only with integer or number types".to_string()),
+                        ))
+                    }
+                };
+                if !valid {
+                    let base = if matches!(base_type, Type::Integer) {
+                        "integer"
+                    } else {
+                        "number"
+                    };
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Invalid precision '{}:{}{}'",
+                            base,
+                            size,
+                            if unsigned { "u" } else { "" }
+                        ),
+                        Some(size_location),
+                        Some(if base == "integer" {
+                            "integer supports :8, :16, :32 and :64, each optionally followed by u"
+                                .to_string()
+                        } else {
+                            "number supports :32 and :64".to_string()
+                        }),
+                    ));
+                }
+                // In range: 8..=64.
+                let bits = size as u8;
                 match base_type {
                     Type::Integer => Type::IntegerSized { bits, unsigned },
-                    Type::Number => Type::NumberSized { bits },
-                    _ => return Err(CompilerError::parse_error(
-                        format!("Precision modifiers are only supported for integer and number types, not {:?}", base_type),
-                        Some(self.current().location.clone()),
-                        Some("Use :bits syntax only with integer or number types".to_string()),
-                    ))
+                    _ => Type::NumberSized { bits },
                 }
             } else {
                 // Not a precision modifier — restore cursor so the colon stays for the caller

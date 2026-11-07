@@ -91,3 +91,35 @@ fn negative_numbers_in_list_literals() {
     // Other unary expressions still need parentheses.
     parse_err("start:\n\tinteger a = 1\n\tlist<integer> xs = [-a]\n");
 }
+
+/// Precision widths outside foundation/spec/type-system.md §2 are rejected
+/// instead of being truncated to a u8 (`integer:264` used to become 8 bits).
+#[test]
+fn invalid_precision_widths_are_rejected() {
+    for bad in [
+        "integer:264",
+        "integer:7",
+        "integer:128",
+        "number:16",
+        "number:32u",
+    ] {
+        let error = parse_err(&format!("start:\n\t{} x = 5\n", bad));
+        assert!(
+            error.to_string().contains("Invalid precision"),
+            "{}: {}",
+            bad,
+            error
+        );
+    }
+    for good in [
+        "integer:8",
+        "integer:16u",
+        "integer:32u",
+        "integer:64",
+        "number:32",
+        "number:64",
+    ] {
+        let src = format!("start:\n\t{} x = 5\n", good);
+        assert!(parse(&src).is_ok(), "{} must parse", good);
+    }
+}
