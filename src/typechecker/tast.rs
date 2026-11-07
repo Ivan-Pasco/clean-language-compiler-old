@@ -8,6 +8,50 @@ use crate::resolver::{GlobalSymbolTable, ScopeId, SymbolId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// `string.matches(pattern)` pattern names (stdlib-reference.md §4) and the
+/// `pattern_id` passed to the `string_matches` host import for each.
+///
+/// The ids are the ones the hosts implement (clean-server `string_ops.rs`,
+/// `wasmtime_runner`): email=0 url=1 uuid=2 phone=3 date=4. The spec lists
+/// different ids for phone and date (6 and 7) and three more patterns
+/// (`slug`, `numeric`, `alpha`) that no host implements yet; those are in
+/// [`STRING_MATCH_PATTERNS_WITHOUT_HOST`] and rejected at compile time.
+pub const STRING_MATCH_PATTERNS: &[(&str, i64)] = &[
+    ("email", 0),
+    ("url", 1),
+    ("uuid", 2),
+    ("phone", 3),
+    ("date", 4),
+];
+
+/// Spec pattern names that no runtime host implements yet.
+pub const STRING_MATCH_PATTERNS_WITHOUT_HOST: &[&str] = &["slug", "numeric", "alpha"];
+
+/// The host `pattern_id` of a `string.matches()` pattern name.
+pub fn string_match_pattern_id(name: &str) -> Option<i64> {
+    STRING_MATCH_PATTERNS
+        .iter()
+        .find(|(pattern, _)| *pattern == name)
+        .map(|(_, id)| *id)
+}
+
+/// SEM010 message for a pattern name that `string_match_pattern_id` rejects.
+pub fn string_match_pattern_error(name: &str) -> String {
+    let valid = STRING_MATCH_PATTERNS
+        .iter()
+        .map(|(pattern, _)| *pattern)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if STRING_MATCH_PATTERNS_WITHOUT_HOST.contains(&name) {
+        format!(
+            "Pattern '{}' is not implemented by the runtime yet. Supported patterns: {}",
+            name, valid
+        )
+    } else {
+        format!("Unknown pattern name '{}'. Valid patterns: {}", name, valid)
+    }
+}
+
 /// Type-checked program representation
 #[derive(Debug, Clone)]
 pub struct TastProgram {

@@ -2106,51 +2106,20 @@ impl MirBuilder {
                     }
                 }
 
-                // NOTE: Handle String.matches EARLY — pattern name is resolved to a compile-time
-                // integer ID so the host bridge receives (str_ptr, str_len, pattern_id: i32).
-                // ID mapping matches server v1.9.27+: email=0 url=1 uuid=2 phone=3 date=4
-                //   integer=5 number=6 alphanumeric=7
+                // NOTE: Handle String.matches EARLY — the pattern name is resolved to
+                // the compile-time pattern id the `string_matches` host import takes
+                // (`STRING_MATCH_PATTERNS`, shared with the type checker's SEM010).
                 if matches!(&receiver.expr_type, ConcreteType::String) && method_name == "matches" {
-                    use crate::typechecker::tast::{TastExpressionKind, TastLiteral};
-
-                    let pattern_id: i64 = if let Some(arg) = arguments.first() {
-                        match &arg.kind {
-                            TastExpressionKind::Literal {
-                                value: TastLiteral::String(pattern),
-                            } => match pattern.as_str() {
-                                "email" => 0,
-                                "url" => 1,
-                                "uuid" => 2,
-                                "phone" => 3,
-                                "date" => 4,
-                                "integer" => 5,
-                                "number" => 6,
-                                "alphanumeric" => 7,
-                                other => {
-                                    return Err(vec![crate::error::CompilerError::semantic_error(
-                                        format!(
-                                            "string.matches(): unknown pattern '{}'. \
-                                             Valid: email, url, uuid, phone, date, integer, number, alphanumeric",
-                                            other
-                                        ),
-                                        None,
-                                        Some(expression.location.clone()),
-                                    )]);
-                                }
-                            },
-                            _ => {
-                                return Err(vec![crate::error::CompilerError::semantic_error(
-                                    "string.matches(): pattern argument must be a string literal",
-                                    None,
-                                    Some(expression.location.clone()),
-                                )]);
-                            }
-                        }
-                    } else {
-                        return Err(vec![crate::error::CompilerError::semantic_error(
-                            "string.matches() requires a pattern name argument",
-                            None,
-                            Some(expression.location.clone()),
+                    let pattern_id = match arguments.first().map(|a| &a.kind) {
+                        Some(TastExpressionKind::Literal {
+                            value: TastLiteral::String(pattern),
+                        }) => crate::typechecker::tast::string_match_pattern_id(pattern),
+                        _ => None,
+                    };
+                    let Some(pattern_id) = pattern_id else {
+                        return Err(vec![CompilerError::validation_error(
+                            "string.matches() needs one of the supported pattern names as a string literal",
+                            expression.location.clone(),
                         )]);
                     };
 
