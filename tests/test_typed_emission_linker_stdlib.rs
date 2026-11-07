@@ -70,6 +70,7 @@ fn make_manifest(plugin_name: &str) -> PluginManifest {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
     }
 }
 

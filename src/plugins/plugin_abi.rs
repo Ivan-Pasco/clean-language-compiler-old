@@ -51,6 +51,9 @@ pub struct PluginManifest {
     /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/artifacts.md.
     #[serde(default)]
     pub artifacts: Vec<PluginArtifact>,
+    /// Explicit language-name → bridge-function aliases (`[aliases]`).
+    #[serde(default)]
+    pub aliases: PluginAliases,
 }
 
 /// Result of resolving the expand dispatch for a single block.
@@ -584,6 +587,26 @@ pub struct BlockFolderRule {
 pub struct PluginBridge {
     #[serde(default)]
     pub functions: Vec<BridgeFunction>,
+}
+
+/// `[aliases]` section in plugin.toml.
+///
+/// Names the Clean Language call that routes to a bridge function when the
+/// name does not follow the `_namespace_method` convention, e.g.
+/// `{ clean_name = "locale.current", bridge_name = "_i18n_locale" }`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginAliases {
+    #[serde(default)]
+    pub functions: Vec<PluginAlias>,
+}
+
+/// One `[aliases].functions` entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginAlias {
+    /// Language-facing name used at call sites (`locale.current`).
+    pub clean_name: String,
+    /// Bridge function the call lowers to (`_i18n_locale`).
+    pub bridge_name: String,
 }
 
 // ============================================================================

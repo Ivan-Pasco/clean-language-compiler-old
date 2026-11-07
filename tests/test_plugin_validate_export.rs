@@ -57,6 +57,7 @@ fn adapter(with_validate: bool) -> WasmPluginAdapter {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
     };
     let engine = Engine::default();
     let bytes = wat::parse_str(PLUGIN_WAT).expect("fixture WAT compiles");
