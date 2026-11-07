@@ -204,3 +204,48 @@ fn one_statement_per_line() {
     )
     .unwrap_or_else(|e| panic!("must parse: {:?}", e));
 }
+
+/// Unknown keys in `build:` and `source:` blocks used to be skipped
+/// silently, and `spec: "path"` (the form specification 1.0 §21 uses) left
+/// the spec path empty.
+#[test]
+fn build_and_source_blocks_reject_unknown_keys() {
+    use clean_language_compiler::ast::Statement;
+    let error = parse_err("build:\n\trules = true\n\toutput: \"dist\"\n\nstart:\n\tprint(1)\n");
+    assert!(
+        error
+            .to_string()
+            .contains("Unknown key 'output' in build: block"),
+        "{}",
+        error
+    );
+    let error = parse_err("source:\n\tspec \"a\"\n\tbogus \"b\"\n\nstart:\n\tprint(1)\n");
+    assert!(
+        error
+            .to_string()
+            .contains("Unknown key 'bogus' in source: block"),
+        "{}",
+        error
+    );
+    let error = parse_err("source:\n\tspec 42\n\nstart:\n\tprint(1)\n");
+    assert!(
+        error.to_string().contains("Expected a string after 'spec'"),
+        "{}",
+        error
+    );
+    for src in [
+        "source:\n\tspec \"pricing/rules\"\n\tversion \"v2\"\n\nstart:\n\tprint(1)\n",
+        "source:\n\tspec: \"pricing/rules\"\n\tversion: \"v2\"\n\nstart:\n\tprint(1)\n",
+    ] {
+        let program = parse(src).unwrap_or_else(|e| panic!("must parse: {:?}", e));
+        match program.source_block {
+            Some(Statement::SourceBlock {
+                spec_path, version, ..
+            }) => {
+                assert_eq!(spec_path, "pricing/rules");
+                assert_eq!(version.as_deref(), Some("v2"));
+            }
+            other => panic!("expected a source block, got {:?}", other),
+        }
+    }
+}

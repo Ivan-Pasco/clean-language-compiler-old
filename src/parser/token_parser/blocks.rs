@@ -1757,8 +1757,16 @@ impl TokenParser {
                     self.bump();
                 }
                 _ => {
-                    // Skip unknown properties inside the build block to stay forward-compatible
-                    self.bump();
+                    // grammar.ebnf `build_field = "rules" , "=" , build_rules_value`
+                    let token = self.current();
+                    return Err(CompilerError::parse_error(
+                        format!("Unknown key '{}' in build: block", token.text),
+                        Some(token.location.clone()),
+                        Some(
+                            "The only build: setting is `rules = true | false | \"development\"`."
+                                .to_string(),
+                        ),
+                    ));
                 }
             }
         }
@@ -1834,21 +1842,9 @@ impl TokenParser {
             }
 
             match self.current_kind() {
-                TokenKind::Spec => {
-                    self.bump(); // consume "spec"
-                    self.skip_whitespace();
-                    if let TokenKind::StringLiteral(path) = self.current_kind() {
-                        spec_path = path.clone();
-                        self.bump();
-                    }
-                }
+                TokenKind::Spec => spec_path = self.parse_source_field_value("spec")?,
                 TokenKind::Identifier(name) if name == "version" => {
-                    self.bump(); // consume "version"
-                    self.skip_whitespace();
-                    if let TokenKind::StringLiteral(ver) = self.current_kind() {
-                        version = Some(ver.clone());
-                        self.bump();
-                    }
+                    version = Some(self.parse_source_field_value("version")?);
                 }
                 TokenKind::Indent(_) => {
                     self.bump();
@@ -1857,8 +1853,15 @@ impl TokenParser {
                     self.bump();
                 }
                 _ => {
-                    // Skip unknown tokens inside source block
-                    self.bump();
+                    let token = self.current();
+                    return Err(CompilerError::parse_error(
+                        format!("Unknown key '{}' in source: block", token.text),
+                        Some(token.location.clone()),
+                        Some(
+                            "A source: block holds `spec: \"path\"` and `version: \"id\"`."
+                                .to_string(),
+                        ),
+                    ));
                 }
             }
         }
@@ -1868,6 +1871,30 @@ impl TokenParser {
             version,
             location: Some(source_token.location),
         })
+    }
+
+    /// The value of a `source:` field: `key "text"` or `key: "text"`
+    /// (specification 1.0 §21 writes the colon form). The cursor is at the
+    /// key.
+    fn parse_source_field_value(&mut self, key: &str) -> Result<String, CompilerError> {
+        self.bump(); // consume the key
+        self.skip_whitespace();
+        self.eat(&TokenKind::Colon);
+        self.skip_whitespace();
+        if let TokenKind::StringLiteral(value) = self.current_kind() {
+            let value = value.clone();
+            self.bump();
+            return Ok(value);
+        }
+        let token = self.current();
+        Err(CompilerError::parse_error(
+            format!(
+                "Expected a string after '{}' in source: block, found {:?}",
+                key, token.kind
+            ),
+            Some(token.location.clone()),
+            None,
+        ))
     }
 
     /// Parse a state: block containing state variable declarations

@@ -1,0 +1,14 @@
+// Test: bugfixes/build_block_unknown_key
+// Grammar: build_block, build_field
+// Semantic: unknown keys in build: used to be skipped silently
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   Unknown key 'output' in build: block
+//   build_block_unknown_key.cln:11:2
+
+build:
+	output: "dist"
+
+start:
+	print("x")
