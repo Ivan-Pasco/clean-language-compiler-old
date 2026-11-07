@@ -115,15 +115,7 @@ impl TokenParser {
 
         // Determine the functions block's indentation level
         // Functions should be indented one level from the "functions:" line (which is at level 0)
-        let functions_block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1 // Default to level 1
-            }
-        } else {
-            1 // Default to level 1
-        };
+        let functions_block_level = self.current_indent_level_or(1);
 
         // Parse functions until we hit a dedent or EOF
         // Functions in a functions: block are indented relative to the "functions:" line
@@ -700,16 +692,7 @@ impl TokenParser {
                     self.skip_whitespace();
 
                     // Determine the functions block indentation level
-                    let functions_indent_level =
-                        if matches!(self.current_kind(), TokenKind::Indent(_)) {
-                            if let TokenKind::Indent(level) = self.current_kind() {
-                                *level
-                            } else {
-                                1
-                            }
-                        } else {
-                            1
-                        };
+                    let functions_indent_level = self.current_indent_level_or(1);
 
                     // Parse methods in the functions block
                     while !self.is_at_end() {
@@ -888,16 +871,7 @@ impl TokenParser {
                         self.expect(&TokenKind::Colon)?;
                         self.skip_whitespace();
 
-                        let events_indent_level =
-                            if matches!(self.current_kind(), TokenKind::Indent(_)) {
-                                if let TokenKind::Indent(level) = self.current_kind() {
-                                    *level
-                                } else {
-                                    1
-                                }
-                            } else {
-                                1
-                            };
+                        let events_indent_level = self.current_indent_level_or(1);
 
                         // Mirror the methods-parsing loop from the Functions arm.
                         while !self.is_at_end() {

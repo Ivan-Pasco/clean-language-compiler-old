@@ -55,26 +55,12 @@ impl TokenParser {
                 self.skip_whitespace();
 
                 // Check if this is a variable declaration (Test varName = ...)
-                if let TokenKind::Identifier(var_name) = self.current_kind() {
-                    let var_name = var_name.clone();
-                    let var_location = self.current().location.clone();
-                    self.bump(); // consume variable name
-                    self.skip_whitespace();
-
-                    // Check for initializer
-                    let initializer = if self.eat(&TokenKind::Assign) {
-                        self.skip_whitespace();
-                        Some(self.parse_expression()?)
-                    } else {
-                        None
-                    };
-
-                    Ok(Statement::VariableDecl {
-                        name: var_name,
-                        type_: Type::Object(first_name), // Test is a class type
-                        initializer,
-                        location: Some(var_location),
-                    })
+                if let TokenKind::Identifier(_) = self.current_kind() {
+                    // Test is a class type here.
+                    self.parse_declaration_tail(
+                        Type::Object(first_name),
+                        "Expected variable name after type",
+                    )
                 } else {
                     // Not a variable declaration, might be a function call like Test()
                     // Move cursor back to reparse as expression
@@ -173,6 +159,37 @@ impl TokenParser {
         }
     }
 
+    /// The rest of a variable declaration after its type: `name [= value]`
+    /// (grammar.ebnf `variable_declaration`). The cursor is at the name.
+    fn parse_declaration_tail(
+        &mut self,
+        type_: Type,
+        missing_name: &str,
+    ) -> Result<Statement, CompilerError> {
+        let Some(name) = self.try_extract_var_name() else {
+            return Err(CompilerError::parse_error(
+                missing_name.to_string(),
+                Some(self.current().location.clone()),
+                None,
+            ));
+        };
+        let location = self.current().location.clone();
+        self.bump(); // consume the variable name
+        self.skip_whitespace();
+        let initializer = if self.eat(&TokenKind::Assign) {
+            self.skip_whitespace();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+        Ok(Statement::VariableDecl {
+            name,
+            type_,
+            initializer,
+            location: Some(location),
+        })
+    }
+
     /// A statement starting with a name (an identifier or a contextual
     /// keyword used as one): a variable declaration, an assignment, an
     /// apply block or an expression statement. The cursor is at the name.
@@ -217,101 +234,25 @@ impl TokenParser {
                 // This will allow it to be parsed as a method/namespace call below
                 self.cursor = saved_cursor;
                 // Fall through to the non-type-keyword handling code
-            } else if self.check(&TokenKind::Colon) {
-                // Could be either:
-                // 1. TYPE: apply block (followed by newline/indent)
-                // 2. TYPE:precision variable declaration (followed by integer literal)
-
-                // Look ahead to distinguish
-                self.bump(); // consume colon
-                self.skip_whitespace();
-
-                // Check what follows the colon
-                let is_precision_modifier =
-                    matches!(self.current_kind(), TokenKind::IntegerLiteral(_));
-
-                // Restore cursor to the original position (at type identifier)
-                self.cursor = saved_cursor;
-
-                if is_precision_modifier {
-                    // This is a variable declaration with precision modifier: TYPE:bits var = val
-                    // Fall through to parse as variable declaration
-                } else {
-                    // This is a TYPE: apply block
-                    return self.parse_type_apply_block();
-                }
-
-                // At this point, cursor is positioned AT the type identifier
-                // Parse the type (which will handle precision modifiers)
-                let type_ = self.parse_type()?;
-                self.skip_whitespace();
-
-                // Next token should be the variable name
-                // Allow contextual keywords (like `rules`, `state`) as variable names
-                if let Some(var_name) = self.try_extract_var_name() {
-                    let var_location = self.current().location.clone();
-                    self.bump(); // consume variable name
-                    self.skip_whitespace();
-
-                    // Check for initializer
-                    let initializer = if self.eat(&TokenKind::Assign) {
-                        self.skip_whitespace();
-                        Some(self.parse_expression()?)
-                    } else {
-                        None
-                    };
-
-                    return Ok(Statement::VariableDecl {
-                        name: var_name,
-                        type_,
-                        initializer,
-                        location: Some(var_location),
-                    });
-                } else {
-                    return Err(CompilerError::parse_error(
-                        "Expected variable name after type".to_string(),
-                        Some(self.current().location.clone()),
-                        None,
-                    ));
-                }
             } else {
-                // Not a colon - this is a regular variable declaration
-                // Restore cursor to the original position
+                if self.check(&TokenKind::Colon) {
+                    // Either a TYPE: apply block or a TYPE:bits declaration;
+                    // an integer after the colon means a precision modifier.
+                    self.bump(); // consume colon
+                    self.skip_whitespace();
+                    let is_precision_modifier =
+                        matches!(self.current_kind(), TokenKind::IntegerLiteral(_));
+                    self.cursor = saved_cursor;
+                    if !is_precision_modifier {
+                        return self.parse_type_apply_block();
+                    }
+                }
+                // A variable declaration: parse the type (with any precision
+                // modifier) from the type identifier.
                 self.cursor = saved_cursor;
-
-                // At this point, cursor is positioned AT the type identifier
-                // Parse the type (which will handle precision modifiers)
                 let type_ = self.parse_type()?;
                 self.skip_whitespace();
-
-                // Next token should be the variable name
-                // Allow contextual keywords (like `rules`, `state`) as variable names
-                if let Some(var_name) = self.try_extract_var_name() {
-                    let var_location = self.current().location.clone();
-                    self.bump(); // consume variable name
-                    self.skip_whitespace();
-
-                    // Check for initializer
-                    let initializer = if self.eat(&TokenKind::Assign) {
-                        self.skip_whitespace();
-                        Some(self.parse_expression()?)
-                    } else {
-                        None
-                    };
-
-                    return Ok(Statement::VariableDecl {
-                        name: var_name,
-                        type_,
-                        initializer,
-                        location: Some(var_location),
-                    });
-                } else {
-                    return Err(CompilerError::parse_error(
-                        "Expected variable name after type".to_string(),
-                        Some(self.current().location.clone()),
-                        None,
-                    ));
-                }
+                return self.parse_declaration_tail(type_, "Expected variable name after type");
             }
         }
 
@@ -392,32 +333,7 @@ impl TokenParser {
             let type_ = self.parse_type()?;
             self.skip_whitespace();
 
-            // Next token should be the variable name (could be identifier or keyword)
-            let Some(var_name) = self.try_extract_var_name() else {
-                return Err(CompilerError::parse_error(
-                    "Expected variable name after custom type".to_string(),
-                    Some(self.current().location.clone()),
-                    None,
-                ));
-            };
-            let var_location = self.current().location.clone();
-            self.bump(); // consume variable name
-            self.skip_whitespace();
-
-            // Check for initializer
-            let initializer = if self.eat(&TokenKind::Assign) {
-                self.skip_whitespace();
-                Some(self.parse_expression()?)
-            } else {
-                None
-            };
-
-            Ok(Statement::VariableDecl {
-                name: var_name,
-                type_,
-                initializer,
-                location: Some(var_location),
-            })
+            self.parse_declaration_tail(type_, "Expected variable name after custom type")
         } else if self.check(&TokenKind::Assign) {
             // This is a simple assignment: VAR = EXPR
             self.bump(); // consume =
@@ -657,23 +573,7 @@ impl TokenParser {
 
         self.skip_whitespace();
 
-        // Consume Dedent tokens until we return to the if statement's own level
-        // This allows us to see if there's an else clause at the same level as the if
-        while let TokenKind::Dedent(dedent_level) = self.current_kind() {
-            let level = *dedent_level; // Copy the value to avoid borrow issues
-            if level < if_indent_level {
-                // This Dedent would take us below the if statement's level
-                // Don't consume it - it belongs to a parent block
-                break;
-            }
-            self.bump();
-            self.skip_whitespace();
-
-            // After consuming a dedent, if we've reached the if statement's level, stop
-            if level == if_indent_level {
-                break;
-            }
-        }
+        self.consume_dedents_to(if_indent_level);
 
         // Check for else or else if at the same level as the if statement
         let else_branch = if self.eat(&TokenKind::Else) {
@@ -715,23 +615,7 @@ impl TokenParser {
 
         self.skip_whitespace();
 
-        // Consume Dedent tokens until we return to the while statement's own level
-        // This ensures proper positioning for the next statement at the same level
-        while let TokenKind::Dedent(dedent_level) = self.current_kind() {
-            let level = *dedent_level; // Copy the value to avoid borrow issues
-            if level < while_indent_level {
-                // This Dedent would take us below the while statement's level
-                // Don't consume it - it belongs to a parent block
-                break;
-            }
-            self.bump();
-            self.skip_whitespace();
-
-            // After consuming a dedent, if we've reached the while statement's level, stop
-            if level == while_indent_level {
-                break;
-            }
-        }
+        self.consume_dedents_to(while_indent_level);
 
         Ok(Statement::While {
             condition,

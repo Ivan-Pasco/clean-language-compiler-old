@@ -609,6 +609,34 @@ impl TokenParser {
         &self.tokens[pos]
     }
 
+    /// The level of the Indent token at the cursor, or `default` when the
+    /// cursor is not at an Indent. Nothing is consumed.
+    pub(super) fn current_indent_level_or(&self, default: usize) -> usize {
+        match self.current_kind() {
+            TokenKind::Indent(level) => *level,
+            _ => default,
+        }
+    }
+
+    /// Consume the Dedent tokens that close the blocks of a compound
+    /// statement (if/while) whose header sits at `header_level`, stopping
+    /// at a Dedent that belongs to an enclosing block. Leaves the cursor
+    /// where an `else` at the header's level would be.
+    pub(super) fn consume_dedents_to(&mut self, header_level: usize) {
+        while let TokenKind::Dedent(level) = self.current_kind() {
+            let level = *level;
+            if level < header_level {
+                // Belongs to a parent block.
+                break;
+            }
+            self.bump();
+            self.skip_whitespace();
+            if level == header_level {
+                break;
+            }
+        }
+    }
+
     /// Get the current block's indentation level by looking at recent Indent/Dedent tokens
     /// Returns 0 if no Indent/Dedent token found (top-level)
     pub(super) fn get_current_indent_level(&self) -> usize {

@@ -483,12 +483,7 @@ impl TokenParser {
                             self.eat(&TokenKind::Newline);
                             self.skip_whitespace();
 
-                            let block_indent_level =
-                                if let TokenKind::Indent(level) = self.current_kind() {
-                                    *level
-                                } else {
-                                    1
-                                };
+                            let block_indent_level = self.current_indent_level_or(1);
 
                             let content = self.extract_block_content_raw(block_indent_level);
 

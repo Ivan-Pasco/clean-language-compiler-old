@@ -51,15 +51,7 @@ impl TokenParser {
         let mut assignments = Vec::new();
 
         // Determine the apply block's indentation level
-        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         while !self.is_at_end() {
             tracing::debug!(
@@ -186,15 +178,7 @@ impl TokenParser {
         let mut constants = Vec::new();
 
         // Determine the apply block's indentation level
-        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -307,15 +291,7 @@ impl TokenParser {
         let mut expressions = Vec::new();
 
         // Determine the apply block's indentation level
-        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -381,11 +357,7 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Determine indentation level from the first indented token.
-        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         let mut expressions = Vec::new();
 
@@ -561,11 +533,7 @@ impl TokenParser {
         // Check whether the indented body starts with ORM-style sub-clauses.
         // If so, capture the block as raw content for the frame.data plugin expander.
         if self.peek_has_orm_subclauses() {
-            let block_indent_level = if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            };
+            let block_indent_level = self.current_indent_level_or(1);
             let content = self.extract_block_content_raw(block_indent_level);
             // Construct the block name as "Object.method" (or "Object" when no chain)
             let block_name = if method_chain.is_empty() {
@@ -585,15 +553,7 @@ impl TokenParser {
         let mut expressions = Vec::new();
 
         // Determine the apply block's indentation level
-        let block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -834,15 +794,7 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Determine the block's indentation level
-        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
+        let block_indent_level = self.current_indent_level_or(1);
 
         // Extract raw content from source using byte positions
         let content = self.extract_block_content_raw(block_indent_level);
@@ -994,15 +946,7 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Determine the block's indentation level
-        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
+        let block_indent_level = self.current_indent_level_or(1);
 
         // Extract raw content from source using byte positions
         let content = self.extract_block_content_raw(block_indent_level);
@@ -1039,15 +983,7 @@ impl TokenParser {
         let mut tests = Vec::new();
 
         // Determine the tests block's indentation level
-        let tests_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1
-            }
-        } else {
-            1
-        };
+        let tests_indent_level = self.current_indent_level_or(1);
 
         trace!(
             indent_level = tests_indent_level,
@@ -1673,11 +1609,7 @@ impl TokenParser {
         }
 
         // Determine the indent level of the block body
-        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         // Consume the opening indent token
         if matches!(self.current_kind(), TokenKind::Indent(_)) {
@@ -1800,11 +1732,7 @@ impl TokenParser {
         }
 
         // Get the indent level
-        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         // Consume the initial indent
         if matches!(self.current_kind(), TokenKind::Indent(_)) {
@@ -1929,11 +1857,7 @@ impl TokenParser {
         }
 
         // Get the indent level
-        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            1 // Default to level 1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         // Consume the initial indent
         if matches!(self.current_kind(), TokenKind::Indent(_)) {
@@ -2252,11 +2176,7 @@ impl TokenParser {
         }
 
         // Get the indent level for rules (should be deeper than parent block)
-        let rules_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            parent_block_level + 1
-        };
+        let rules_level = self.current_indent_level_or(parent_block_level + 1);
 
         // Parse rule expressions until we leave this indent level
         loop {
@@ -2361,11 +2281,7 @@ impl TokenParser {
 
         // Determine the indent level for computed declarations
         // (should be one level deeper than the parent state block)
-        let computed_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            parent_block_level + 1
-        };
+        let computed_level = self.current_indent_level_or(parent_block_level + 1);
 
         loop {
             self.skip_whitespace();
@@ -2690,11 +2606,7 @@ impl TokenParser {
         }
 
         // Get the indent level
-        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            1 // Default to level 1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         // Consume the initial indent
         if matches!(self.current_kind(), TokenKind::Indent(_)) {
@@ -2834,11 +2746,7 @@ impl TokenParser {
         }
 
         // Get the indent level
-        let block_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            1 // Default to level 1
-        };
+        let block_level = self.current_indent_level_or(1);
 
         // Consume the initial indent
         if matches!(self.current_kind(), TokenKind::Indent(_)) {
@@ -3035,11 +2943,7 @@ impl TokenParser {
         let mut messages: Option<ValidateMessages> = None;
 
         // Determine indentation level of the first field
-        let indent_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            1
-        };
+        let indent_level = self.current_indent_level_or(1);
 
         loop {
             self.skip_whitespace();
@@ -3287,11 +3191,7 @@ impl TokenParser {
         let mut field_messages: Vec<(String, String)> = Vec::new();
 
         // Determine indentation level of the message entries
-        let indent_level = if let TokenKind::Indent(level) = self.current_kind() {
-            *level
-        } else {
-            2
-        };
+        let indent_level = self.current_indent_level_or(2);
 
         loop {
             self.skip_whitespace();
