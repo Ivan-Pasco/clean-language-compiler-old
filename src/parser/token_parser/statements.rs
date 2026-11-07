@@ -795,22 +795,13 @@ impl TokenParser {
             let end = self.parse_expression()?;
             self.skip_whitespace();
 
-            // Check for optional "inclusive" contextual keyword (spec §grammar.ebnf range_expression)
-            // Check for optional "inclusive" contextual keyword.
-            // spec/grammar.ebnf: range_expression = ... , "to" , ... , [ "inclusive" ] ;
-            // "inclusive" is not a reserved keyword — lexed as Identifier("inclusive").
-            // Both forms are treated as inclusive; the keyword exists for readability.
-            let inclusive = if let Some(tok) = self.tokens.get(self.cursor) {
-                if matches!(&tok.kind, TokenKind::Identifier(s) if s == "inclusive") {
-                    self.bump();
-                    self.skip_whitespace();
-                    true
-                } else {
-                    true // default: range is inclusive
-                }
-            } else {
-                true
-            };
+            // Optional "inclusive" contextual keyword (grammar.ebnf: not
+            // reserved, lexed as an identifier). Ranges always include the
+            // end; the keyword only exists for readability.
+            if matches!(self.current_kind(), TokenKind::Identifier(s) if s == "inclusive") {
+                self.bump();
+                self.skip_whitespace();
+            }
 
             // Check for optional "step" clause
             let step = if self.check(&TokenKind::Step) {
@@ -829,7 +820,6 @@ impl TokenParser {
                 start: start_or_collection,
                 end,
                 step,
-                inclusive,
                 body,
                 location: Some(iterate_token.location),
             })

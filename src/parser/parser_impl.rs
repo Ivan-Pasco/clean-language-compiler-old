@@ -5,8 +5,8 @@ use super::type_parser::parse_type;
 use super::Rule;
 use super::{get_location, CleanParser};
 use crate::ast::{
-    Expression, Function, FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program,
-    Statement, TestCase, Type, Visibility,
+    Expression, Function, FunctionModifier, ImportItem, Parameter, Program, Statement, TestCase,
+    Type, Visibility,
 };
 use crate::error::{CompilerError, ErrorUtils};
 use pest::{iterators::Pair, Parser};
@@ -163,7 +163,6 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
             return_type: Type::Void,
             body: filtered_statements,
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: Visibility::Public,
             modifier: FunctionModifier::None,
             location: None,
@@ -219,7 +218,6 @@ pub fn parse_start_block(pair: Pair<Rule>) -> Result<Function, CompilerError> {
         return_type,
         body,
         description: None,
-        syntax: FunctionSyntax::Simple,
         visibility: Visibility::Public,
         modifier: FunctionModifier::None,
         location,
@@ -742,7 +740,6 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
         return_type,
         body,
         description,
-        syntax: FunctionSyntax::Block,
         visibility: Visibility::Public,
         modifier: FunctionModifier::None,
         location,

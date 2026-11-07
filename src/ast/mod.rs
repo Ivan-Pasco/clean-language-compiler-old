@@ -197,10 +197,6 @@ pub enum Type {
         name: String,
         type_args: Vec<Type>,
     },
-    Function(Vec<Type>, Box<Type>),
-
-    // Background types
-    Future(Box<Type>),
 
     // Handler — a first-class function reference passed to bridge functions
     // At the WASM level this is an i32 function-table index.
@@ -383,28 +379,6 @@ pub enum Expression {
         location: SourceLocation,
     },
 
-    // Later assignment (for background tasks)
-    LaterAssignment {
-        variable: String,
-        expression: Box<Expression>,
-        location: SourceLocation,
-    },
-
-    // Input expressions (for console input)
-    Input {
-        prompt: Option<String>,
-        input_type: InputType,
-        location: SourceLocation,
-    },
-
-    // Range expressions (1..10)
-    Range {
-        start: Box<Expression>,
-        end: Box<Expression>,
-        inclusive: bool,
-        location: SourceLocation,
-    },
-
     /// Anonymous object literal `{ key: expr, ... }` — `pairs_literal` per
     /// grammar.ebnf:167-169.  Field values are `single_line_expression`, so
     /// they may be variables, calls, or binary expressions — not only
@@ -464,15 +438,6 @@ pub enum Expression {
 pub enum StringPart {
     Text(String),
     Interpolation(Expression),
-}
-
-/// Input types for console input expressions
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub enum InputType {
-    String,  // input("prompt")
-    Integer, // input.integer("prompt")
-    Number,  // input.number("prompt")
-    Boolean, // input.yesNo("prompt")
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -592,7 +557,6 @@ pub enum Statement {
         start: Expression,
         end: Expression,
         step: Option<Expression>,
-        inclusive: bool,
         body: Vec<Statement>,
         location: Option<SourceLocation>,
     },
@@ -608,12 +572,6 @@ pub enum Statement {
     Test {
         name: String,
         body: Vec<Statement>,
-        location: Option<SourceLocation>,
-    },
-
-    // Tests block
-    TestsBlock {
-        tests: Vec<TestCase>,
         location: Option<SourceLocation>,
     },
 
@@ -775,7 +733,6 @@ impl Statement {
             Statement::RangeIterate { location, .. } => location,
             Statement::While { location, .. } => location,
             Statement::Test { location, .. } => location,
-            Statement::TestsBlock { location, .. } => location,
             Statement::Expression { location, .. } => location,
             Statement::Error { location, .. } => location,
             Statement::Import { location, .. } => location,
@@ -819,7 +776,6 @@ impl Statement {
             Statement::RangeIterate { location, .. } => location.as_ref(),
             Statement::While { location, .. } => location.as_ref(),
             Statement::Test { location, .. } => location.as_ref(),
-            Statement::TestsBlock { location, .. } => location.as_ref(),
             Statement::Expression { location, .. } => location.as_ref(),
             Statement::Error { location, .. } => location.as_ref(),
             Statement::Import { location, .. } => location.as_ref(),
@@ -1245,15 +1201,6 @@ pub enum FunctionModifier {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub enum FunctionSyntax {
-    Simple,     // function integer add() ...
-    Detailed,   // function integer add() with description/input blocks
-    Block,      // functions: block
-    Standalone, // start() function (can be outside functions block)
-    Background, // background function modifier
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TypeConstraint {
     pub type_parameter: String,
     pub constraint_type: Type,
@@ -1268,7 +1215,6 @@ pub struct Function {
     pub return_type: Type,
     pub body: Vec<Statement>,
     pub description: Option<String>,
-    pub syntax: FunctionSyntax,
     pub visibility: Visibility,
     pub modifier: FunctionModifier,
     pub location: Option<SourceLocation>,
@@ -1290,7 +1236,6 @@ impl Function {
             return_type,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: Visibility::Private,
             modifier: FunctionModifier::None,
             location,
@@ -1551,16 +1496,6 @@ impl fmt::Display for Type {
             }
             Type::Matrix(inner) => write!(f, "matrix<{inner}>"),
             Type::Pairs(key, value) => write!(f, "pairs<{key}, {value}>"),
-            Type::Function(params, ret) => {
-                write!(f, "function(")?;
-                for (i, param) in params.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{param}")?;
-                }
-                write!(f, ") returns {ret}")
-            }
             Type::Object(name) => write!(f, "{name}"),
             Type::Class { name, type_args } => {
                 if type_args.is_empty() {
@@ -1587,7 +1522,6 @@ impl fmt::Display for Type {
                 write!(f, ">")
             }
             Type::TypeParameter(name) => write!(f, "{name}"),
-            Type::Future(inner) => write!(f, "Future<{inner}>"),
             Type::Handler => f.write_str("handler"),
             Type::Any => f.write_str("any"),
         }

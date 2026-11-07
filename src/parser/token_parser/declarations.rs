@@ -12,8 +12,7 @@
 use super::TokenParser;
 use crate::ast::{
     Capability, CapabilityMethod, Class, Constructor, Expression, Field, Function,
-    FunctionModifier, FunctionSyntax, ImportItem, ListBehavior, Parameter, Statement, Type,
-    Visibility,
+    FunctionModifier, ImportItem, ListBehavior, Parameter, Statement, Type, Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
@@ -59,7 +58,6 @@ impl TokenParser {
             return_type,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             // Private by default per the 2026-06-25 visibility flip;
             // a function becomes Public only when it appears inside a
             // `public:` sub-section (parse_public_functions_section).
@@ -93,7 +91,6 @@ impl TokenParser {
             return_type: Type::Void,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: Visibility::Public,
             modifier: FunctionModifier::None,
             location: Some(location),
@@ -482,7 +479,6 @@ impl TokenParser {
             return_type,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             // Private by default per the 2026-06-25 visibility flip;
             // a function becomes Public only when it appears inside a
             // `public:` sub-section (parse_public_functions_section).
@@ -574,7 +570,6 @@ impl TokenParser {
             return_type: Type::Void,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: Visibility::Public,
             modifier: FunctionModifier::None,
             location: Some(start_location),

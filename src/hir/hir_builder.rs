@@ -611,9 +611,7 @@ impl HirBuilder {
                 }
                 Statement::ClassDefinition { location, .. } => Some((3, "class", location.clone())),
                 // Auxiliary — exempt from ordering.
-                Statement::ScreenBlockStmt { .. }
-                | Statement::FrameworkBlock { .. }
-                | Statement::TestsBlock { .. } => None,
+                Statement::ScreenBlockStmt { .. } | Statement::FrameworkBlock { .. } => None,
                 _ => None,
             }
         }
@@ -762,63 +760,6 @@ impl HirBuilder {
                     let loc = location.clone().unwrap_or_default();
                     let mut expanded = self.desugar_validate_declaration(schema, &loc)?;
                     validate_preamble.append(&mut expanded);
-                }
-                Statement::TestsBlock {
-                    tests: test_cases,
-                    location,
-                } => {
-                    // Lower each test case into a HirTest node whose body returns
-                    // (test_expression == expected_value) as a boolean.
-                    let loc = location.clone().unwrap_or_default();
-                    for (idx, test_case) in test_cases.iter().enumerate() {
-                        let test_loc = test_case.location.clone().unwrap_or_else(|| loc.clone());
-                        match &test_case.kind {
-                            crate::ast::TestCaseKind::Expression {
-                                test_expression,
-                                expected_value,
-                            } => {
-                                let lhs = self.build_expression(test_expression)?;
-                                let rhs = self.build_expression(expected_value)?;
-                                let equality = HirExpression::BinaryOp {
-                                    left: Box::new(lhs),
-                                    op: HirBinaryOp::Equal,
-                                    right: Box::new(rhs),
-                                    location: test_loc.clone(),
-                                };
-                                let body = HirBlock {
-                                    statements: vec![HirStatement::Return {
-                                        value: Some(equality),
-                                        location: test_loc.clone(),
-                                    }],
-                                    location: test_loc.clone(),
-                                };
-                                let name = test_case
-                                    .description
-                                    .clone()
-                                    .unwrap_or_else(|| format!("test_{}", idx));
-                                tests.push(HirTest {
-                                    name,
-                                    description: test_case.description.clone(),
-                                    body,
-                                    location: test_loc,
-                                });
-                            }
-                            crate::ast::TestCaseKind::Endpoint(endpoint) => {
-                                let name = test_case
-                                    .description
-                                    .clone()
-                                    .unwrap_or_else(|| format!("test_{}", idx));
-                                let body =
-                                    self.build_endpoint_test_body(endpoint, test_loc.clone())?;
-                                tests.push(HirTest {
-                                    name,
-                                    description: test_case.description.clone(),
-                                    body,
-                                    location: test_loc,
-                                });
-                            }
-                        }
-                    }
                 }
                 Statement::FrameworkBlock { name, location, .. } => {
                     // COMPILER-IMPLICIT-PLUGIN-ACTIVATION (dashboard fp 73cfeba24d14).
@@ -2023,7 +1964,6 @@ impl HirBuilder {
                 start,
                 end,
                 step,
-                inclusive,
                 body,
                 location,
             } => {
@@ -2040,7 +1980,9 @@ impl HirBuilder {
                     start: Box::new(hir_start),
                     end: Box::new(hir_end),
                     step: hir_step,
-                    inclusive: *inclusive,
+                    // `iterate i in a to b` includes `b` (the optional
+                    // `inclusive` keyword is only for readability).
+                    inclusive: true,
                     location: location.clone().unwrap_or_default(),
                 };
 
@@ -2576,24 +2518,6 @@ impl HirBuilder {
 
                 Ok(HirExpression::BaseCall {
                     arguments: hir_args,
-                    location: location.clone(),
-                })
-            }
-
-            Expression::Range {
-                start,
-                end,
-                inclusive,
-                location,
-            } => {
-                let hir_start = self.build_expression(start)?;
-                let hir_end = self.build_expression(end)?;
-
-                Ok(HirExpression::Range {
-                    start: Box::new(hir_start),
-                    end: Box::new(hir_end),
-                    step: None, // Expression::Range doesn't have step; it's in Statement::RangeIterate
-                    inclusive: *inclusive,
                     location: location.clone(),
                 })
             }
