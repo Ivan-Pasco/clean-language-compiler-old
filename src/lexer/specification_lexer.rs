@@ -358,12 +358,11 @@ impl<'a> SpecificationLexer<'a> {
                 }
 
                 // Characters that are not valid Clean Language syntax outside of
-                // framework blocks (html:, component:, etc.) but MUST flow through the
-                // token stream so plugin-owned blocks can capture them via byte-range
-                // raw extraction. The parser's extract_block_content_raw() reads bytes
-                // directly from the source — the token kind for these characters is
-                // irrelevant, only their presence (so the lexer doesn't error) and their
-                // byte position matter.
+                // framework blocks (html:, component:, style:, ...) but MUST flow
+                // through the token stream so plugin-owned blocks can capture
+                // them via byte-range raw extraction
+                // (TokenParser::extract_block_content_raw reads the source bytes;
+                // only the token's presence and byte position matter).
                 //
                 // Pass-through set:
                 //   '\''         — html attribute values like alt='Photo'
@@ -373,28 +372,15 @@ impl<'a> SpecificationLexer<'a> {
                 //                  "#{var}" pattern that precedes an interpolation
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
                 //
-                // If any of these appear outside a framework block, the parser will
-                // catch them later as an unexpected-token error in the right context.
+                // They lex as RawChar, which no parser rule accepts, so outside a
+                // framework block they are an "unexpected token" error (they used
+                // to lex as identifiers, which made `integer & = 3` compile).
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' | '\\' => {
-                    let loc = start_location.clone();
-                    let c = self.advance().unwrap();
-                    Ok(Token::new(
-                        TokenKind::Identifier(c.to_string()),
-                        loc,
-                        c.to_string(),
-                    ))
-                }
-
-                c if !c.is_ascii() => {
+                c if matches!(c, '\'' | '&' | '#' | '\\') || !c.is_ascii() => {
                     let loc = start_location.clone();
                     let ch = self.advance().unwrap();
-                    Ok(Token::new(
-                        TokenKind::Identifier(ch.to_string()),
-                        loc,
-                        ch.to_string(),
-                    ))
+                    Ok(Token::new(TokenKind::RawChar(ch), loc, ch.to_string()))
                 }
 
                 // Invalid character
@@ -1819,6 +1805,23 @@ mod regression_tests {
                 TokenKind::StringLiteral("c}".to_string()),
             ]
         );
+    }
+
+    /// Characters only plugin blocks use lex as RawChar, never as
+    /// identifiers, so the parser cannot take them for names.
+    #[test]
+    fn stray_characters_are_raw_chars() {
+        for (src, c) in [
+            ("&", '&'),
+            ("#", '#'),
+            ("'", '\''),
+            ("\\", '\\'),
+            ("→", '→'),
+        ] {
+            assert_eq!(kinds(src)[0], TokenKind::RawChar(c), "{}", src);
+        }
+        // Non-ASCII letters are still identifier characters.
+        assert_eq!(kinds("é")[0], TokenKind::Identifier("é".to_string()));
     }
 
     /// Real exponents and base-prefixed integers keep working.

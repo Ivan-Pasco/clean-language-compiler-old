@@ -130,17 +130,25 @@ pub enum TokenKind {
 
     // Special tokens
     Identifier(String), // Variable names, function names, etc.
-    Newline,            // \n (significant for Clean Language)
-    Indent(usize),      // Tab levels for indentation
-    Dedent(usize),      // Reduced tab levels
-    Eof,                // End of file
+    /// A character that is not Clean Language syntax (`'`, `&`, `#`, `\\`,
+    /// a non-alphabetic non-ASCII character). It only exists so plugin-owned
+    /// blocks (`html:`, `style:`, ...) can capture it by byte range; the
+    /// parser rejects it anywhere else.
+    RawChar(char),
+    Newline,       // \n (significant for Clean Language)
+    Indent(usize), // Tab levels for indentation
+    Dedent(usize), // Reduced tab levels
+    Eof,           // End of file
 
     // Comments (not in AST but needed for parsing)
     Comment(String),      // // single line comments
     BlockComment(String), // /* block comments */
 
     // Error recovery
-    Invalid { text: String, message: String },
+    Invalid {
+        text: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for TokenKind {
@@ -259,6 +267,7 @@ impl fmt::Display for TokenKind {
 
             // Special
             TokenKind::Identifier(name) => write!(f, "{}", name),
+            TokenKind::RawChar(c) => write!(f, "{}", c),
             TokenKind::Newline => write!(f, "\\n"),
             TokenKind::Indent(level) => write!(f, "INDENT({})", level),
             TokenKind::Dedent(level) => write!(f, "DEDENT({})", level),
