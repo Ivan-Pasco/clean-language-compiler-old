@@ -3,6 +3,19 @@
 use super::*;
 
 impl MirBuilder {
+    /// True for a statement after which nothing in the same statement list
+    /// can run. Lowering stops there: statements after it are unreachable,
+    /// and lowering them would emit their side effects into the block before
+    /// its terminator runs.
+    pub(super) fn ends_control_flow(statement: &TastStatement) -> bool {
+        matches!(
+            statement,
+            TastStatement::Return { .. }
+                | TastStatement::Break { .. }
+                | TastStatement::Continue { .. }
+        )
+    }
+
     pub(super) fn build_statement(
         &mut self,
         context: &mut FunctionBuildContext,
@@ -1075,6 +1088,9 @@ impl MirBuilder {
                 // Process then block statements
                 for stmt in &then_block.statements {
                     self.build_statement(context, stmt)?;
+                    if Self::ends_control_flow(stmt) {
+                        break;
+                    }
                 }
 
                 // NOTE: Check the THEN BLOCK's terminator, not current_block
@@ -1212,6 +1228,9 @@ impl MirBuilder {
                     // Process else block statements
                     for stmt in &else_stmt_block.statements {
                         self.build_statement(context, stmt)?;
+                        if Self::ends_control_flow(stmt) {
+                            break;
+                        }
                     }
 
                     // NOTE: Check if current_block is None after processing else block
@@ -1628,6 +1647,9 @@ impl MirBuilder {
                 // Process loop body statements
                 for stmt in &body.statements {
                     self.build_statement(context, stmt)?;
+                    if Self::ends_control_flow(stmt) {
+                        break;
+                    }
                 }
 
                 trace!(
@@ -1831,6 +1853,9 @@ impl MirBuilder {
                 // Process body statements
                 for stmt in &body.statements {
                     self.build_statement(context, stmt)?;
+                    if Self::ends_control_flow(stmt) {
+                        break;
+                    }
                 }
 
                 // Pop loop context after processing body
@@ -2426,6 +2451,9 @@ impl MirBuilder {
             trace!(statement_index = idx, current_block = ?self.current_block, "Processing body statement");
             self.build_statement(context, stmt)?;
             trace!(statement_index = idx, current_block = ?self.current_block, "After body statement");
+            if Self::ends_control_flow(stmt) {
+                break;
+            }
         }
         trace!(current_block = ?self.current_block, "After all range for body statements");
 

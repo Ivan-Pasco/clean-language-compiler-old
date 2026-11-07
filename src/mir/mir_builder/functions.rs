@@ -360,6 +360,9 @@ impl MirBuilder {
                 current_block = ?self.current_block,
                 "After statement"
             );
+            if Self::ends_control_flow(statement) {
+                break;
+            }
         }
 
         // Handle last statement if it should be auto-returned

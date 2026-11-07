@@ -1,0 +1,48 @@
+// Test: bugfixes/statements_after_return_do_not_run
+// Grammar: return_statement, break_statement, continue_statement
+// Semantic: control leaves the block at return/break/continue; statements
+//   written after them in the same block never run
+// Regression: MIR lowering kept lowering the rest of the block after a
+//   return, so their side effects ran before the return took effect.
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   10
+//   20
+//   5
+//   3
+//   4
+
+start:
+	print(pick(1))
+	print(pick(2))
+	print(early())
+	print(count_until(3))
+	print(skip_odd(4))
+
+functions:
+	integer pick(integer x)
+		if x == 1
+			return 10
+			print("unreachable in if")
+		return 20
+	integer early()
+		return 5
+		print("unreachable after return")
+	integer count_until(integer limit)
+		integer n = 0
+		while true
+			if n == limit
+				break
+				print("unreachable after break")
+			n = n + 1
+		return n
+	integer skip_odd(integer limit)
+		integer evens = 0
+		integer i = 0
+		while i < limit
+			i = i + 1
+			if i % 2 == 1
+				continue
+				print("unreachable after continue")
+			evens = evens + 1
+		return evens * 2
