@@ -1,0 +1,24 @@
+// Test: bugfixes/func002_builtin_method_arguments_checked
+// Grammar: method_call
+// Semantic: FUNC002 / SEM001 — a built-in method (stdlib-reference.md §4)
+//   takes its declared number and types of arguments.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[FUNC002]: 'string.substring' expects 2 argument(s), got 0
+//   func002_builtin_method_arguments_checked.cln:21:
+//   error[FUNC002]: 'string.toUpperCase' expects 0 argument(s), got 1
+//   func002_builtin_method_arguments_checked.cln:22:
+//   error[SEM001]: A value of type integer cannot be used as string
+//   func002_builtin_method_arguments_checked.cln:23:
+//
+// Regression: built-in instance methods had no argument checks:
+// `s.substring()` produced invalid WASM, extra arguments were dropped and
+// `s.indexOf(5)` was accepted.
+
+start:
+	string s = "hello"
+	string a = s.substring()
+	string b = s.toUpperCase("x")
+	integer c = s.indexOf(5)
+	printl(a + b + c.toString())

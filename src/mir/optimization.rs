@@ -25,9 +25,6 @@ pub struct MirOptimizer {
 
 /// Trait for optimization passes
 pub trait OptimizationPass: std::fmt::Debug {
-    /// Get the name of this optimization pass
-    fn name(&self) -> &str;
-
     /// Apply this optimization pass to a function
     fn optimize_function(&mut self, function: &mut MirFunction)
         -> Result<PassStats, CompilerError>;
@@ -264,10 +261,6 @@ impl ConstantFoldingPass {
 }
 
 impl OptimizationPass for ConstantFoldingPass {
-    fn name(&self) -> &str {
-        "constant-folding"
-    }
-
     fn optimize_function(
         &mut self,
         function: &mut MirFunction,
@@ -282,8 +275,6 @@ impl OptimizationPass for ConstantFoldingPass {
 
         // Track constants through the function
         for block in function.blocks.values_mut() {
-            let _instructions_to_remove: Vec<usize> = Vec::new();
-
             for instruction in block.instructions.iter_mut() {
                 match &mut instruction.operation {
                     MirOperation::Copy {
@@ -570,10 +561,6 @@ impl DeadCodeEliminationPass {
 }
 
 impl OptimizationPass for DeadCodeEliminationPass {
-    fn name(&self) -> &str {
-        "dead-code-elimination"
-    }
-
     fn optimize_function(
         &mut self,
         function: &mut MirFunction,
@@ -669,10 +656,6 @@ impl ControlFlowSimplificationPass {
 }
 
 impl OptimizationPass for ControlFlowSimplificationPass {
-    fn name(&self) -> &str {
-        "control-flow-simplification"
-    }
-
     fn optimize_function(
         &mut self,
         function: &mut MirFunction,
@@ -800,8 +783,6 @@ mod tests {
             next_block_id: block_count,
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: false,
                 entry_point: false,
                 exported: false,
             },

@@ -435,13 +435,6 @@ pub enum ResolvedHirExpression {
         location: SourceLocation,
     },
 
-    /// Assignment expression with resolved target and value
-    Assignment {
-        target: ResolvedHirLValue,
-        value: Box<ResolvedHirExpression>,
-        location: SourceLocation,
-    },
-
     /// Error handling expression (expression onError fallback)
     OnError {
         expression: Box<ResolvedHirExpression>,
@@ -498,7 +491,6 @@ impl ResolvedHirExpression {
             ResolvedHirExpression::Constructor { location, .. } => location,
             ResolvedHirExpression::This { location, .. } => location,
             ResolvedHirExpression::Cast { location, .. } => location,
-            ResolvedHirExpression::Assignment { location, .. } => location,
             ResolvedHirExpression::OnError { location, .. } => location,
             ResolvedHirExpression::Conditional { location, .. } => location,
             ResolvedHirExpression::BaseCall { location, .. } => location,

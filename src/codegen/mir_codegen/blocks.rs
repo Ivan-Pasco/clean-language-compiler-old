@@ -40,7 +40,6 @@ impl MirCodeGenerator<'_> {
                 | MirType::U32
                 | MirType::Bool
                 | MirType::Ptr(_)
-                | MirType::StringTuple
                 | MirType::Any,
             ) => {
                 self.current_instructions.push(Instruction::I32Const(0));

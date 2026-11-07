@@ -9,15 +9,6 @@ impl MirBuilder {
         context: &mut FunctionBuildContext,
         instruction: MirInstruction,
     ) {
-        if matches!(instruction.operation, MirOperation::GetElementPtr { .. }) {
-            trace!(current_block = ?self.current_block, "Adding GetElementPtr");
-        }
-        if matches!(instruction.operation, MirOperation::Load { .. })
-            && self.current_block == Some(BasicBlockId(2))
-        {
-            trace!(current_block = ?self.current_block, "Adding Load to body block");
-        }
-
         // A call to a Clean function (or `error(...)`) may raise: follow it
         // with the `onError` unwinding check (removed again when the program
         // has no `onError` region).
@@ -231,13 +222,6 @@ impl MirBuilder {
     ) {
         if let Some(block_id) = self.current_block {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
-                if block_id == BasicBlockId(3) && context.function.name == "test" {
-                    trace!(
-                        old_terminator = ?block.terminator,
-                        new_terminator = ?terminator,
-                        "Setting terminator for BasicBlockId(3)"
-                    );
-                }
                 block.terminator = terminator;
             }
         }
@@ -504,7 +488,6 @@ impl MirBuilder {
             ConcreteType::Union(_) => 4,           // Pointer (boxed)
             ConcreteType::Generic { .. } => 4,     // Treat as pointer
             ConcreteType::Unknown => 4,            // Default
-            ConcreteType::Never => 0,              // Never returns
             ConcreteType::Namespace => 4,          // Not really used in memory
             ConcreteType::Any => 12,               // Boxed: [tag:i32][value1:i32][value2:i32]
             // Optional<T> has the same runtime representation as T (none = 0/null)
@@ -1131,4 +1114,295 @@ impl MirBuilder {
         };
         self.add_instruction(context, instr);
     }
+
+    /// Lower a value chosen by `condition`: the `then` arm when it is
+    /// non-zero, the `else` arm otherwise. Only the chosen arm runs: each arm
+    /// gets its own block (labelled like an `if`/`else` so the structured
+    /// codegen emits an `if ... else ... end`), and both store into one
+    /// result local of `result_type` before joining at the merge block.
+    pub(super) fn build_two_way_value(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        condition: ValueId,
+        then_arm: BranchArm<'_>,
+        else_arm: BranchArm<'_>,
+        result_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        let result_mir_type = self.convert_concrete_type(result_type);
+        self.register_temp_local(context, result_id, result_mir_type, location.clone());
+
+        let base = context.function.next_block_id;
+        context.function.next_block_id += 3;
+        let then_block = BasicBlockId(base);
+        let else_block = BasicBlockId(base + 1);
+        let merge_block = BasicBlockId(base + 2);
+        for (id, label) in [
+            (then_block, "then"),
+            (else_block, "else"),
+            (merge_block, "continue"),
+        ] {
+            context.function.blocks.insert(
+                id,
+                MirBasicBlock {
+                    id,
+                    label: Some(label.to_string()),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable,
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: location.clone(),
+                },
+            );
+        }
+        if let Some(branch_block) = self.current_block {
+            context.function.if_merges.insert(branch_block, merge_block);
+        }
+        self.set_block_terminator(
+            context,
+            MirTerminator::Branch {
+                condition: MirOperand::Value(condition),
+                true_block: then_block,
+                false_block: else_block,
+            },
+        );
+
+        for (block, arm) in [(then_block, then_arm), (else_block, else_arm)] {
+            self.current_block = Some(block);
+            let (value_id, expression) = match arm {
+                BranchArm::Built(value_id, expression) => (value_id, expression),
+                BranchArm::Lazy(expression) => {
+                    (self.build_expression(context, expression)?, expression)
+                }
+            };
+            let value_id = self.coerce_on_error_branch(context, value_id, expression, result_type);
+            self.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(result_id),
+                    operation: MirOperation::Copy {
+                        source: MirOperand::Value(value_id),
+                    },
+                    location: location.clone(),
+                },
+            );
+            self.set_block_terminator(
+                context,
+                MirTerminator::Jump {
+                    target: merge_block,
+                },
+            );
+        }
+
+        self.current_block = Some(merge_block);
+        Ok(result_id)
+    }
+}
+
+impl MirBuilder {
+    /// A plain `integer`, `number` or `boolean` (of any width): only the
+    /// nullable form `T?` (`ConcreteType::Optional`) can hold null.
+    pub(super) fn is_non_nullable_value_type(t: &ConcreteType) -> bool {
+        matches!(
+            t,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::Boolean
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::NumberSized { .. }
+        )
+    }
+
+    /// Emit an i32 that is non-zero when `value_id` (of type `value_type`)
+    /// is not null. Null is the zero value of the representation (a null
+    /// pointer, or `none` of a `T?`); an `any` is also null when it boxes
+    /// the null tag (what a JSON `null` decodes to).
+    pub(super) fn emit_non_null_test(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let value_mir_type = context
+            .function
+            .locals
+            .get(&value_id)
+            .map(|l| l.local_type.clone())
+            .unwrap_or_else(|| self.convert_concrete_type(value_type));
+        let new_i32 = |builder: &mut Self, context: &mut FunctionBuildContext| {
+            let id = ValueId(context.function.next_value_id);
+            context.function.next_value_id += 1;
+            builder.register_temp_local(context, id, MirType::I32, location.clone());
+            id
+        };
+        if matches!(value_mir_type, MirType::Any) {
+            // tag = ptr != 0 ? load(ptr) : 0 — reading the tag word of a
+            // null pointer reads address 0, which is never trapped; the
+            // select discards it.
+            let tag = new_i32(self, context);
+            self.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(tag),
+                    operation: MirOperation::Load {
+                        source: MirOperand::Value(value_id),
+                    },
+                    location: location.clone(),
+                },
+            );
+            let result = new_i32(self, context);
+            self.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(result),
+                    operation: MirOperation::Select {
+                        condition: MirOperand::Value(value_id),
+                        true_value: MirOperand::Value(tag),
+                        false_value: MirOperand::Constant(MirConstant::Integer(
+                            AnyTypeTag::Null.as_i32() as i64,
+                        )),
+                    },
+                    location: location.clone(),
+                },
+            );
+            return result;
+        }
+        let zero = match value_mir_type {
+            MirType::F32 | MirType::F64 => MirConstant::Float(0.0),
+            MirType::I64 | MirType::U64 => MirConstant::Integer64(0),
+            // An i32 value (a pointer, or a `T?` of an i32 type) is its own
+            // test: a branch on it is taken when it is non-zero. Comparing
+            // a string pointer with 0 would compare string contents.
+            _ => return value_id,
+        };
+        let result = new_i32(self, context);
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result),
+                operation: MirOperation::BinaryOp {
+                    op: MirBinaryOp::Ne,
+                    left: MirOperand::Value(value_id),
+                    right: MirOperand::Constant(zero),
+                },
+                location: location.clone(),
+            },
+        );
+        result
+    }
+}
+
+impl MirBuilder {
+    /// Emit an i32 boolean: whether two `any` values are equal. They are
+    /// equal when they box the same kind of value (same type tag; a null
+    /// pointer counts as the null tag) with the same text — numbers,
+    /// booleans and strings by value, lists and objects by their JSON text.
+    pub(super) fn emit_any_values_equal(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        left: ValueId,
+        right: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let left_tag = self.emit_non_null_test(context, left, &ConcreteType::Any, location);
+        let right_tag = self.emit_non_null_test(context, right, &ConcreteType::Any, location);
+        let left_text = self.emit_any_to_string(context, left, location);
+        let right_text = self.emit_any_to_string(context, right, location);
+        let mut binary = |builder: &mut Self, op: MirBinaryOp, a: ValueId, b: ValueId| {
+            let id = ValueId(context.function.next_value_id);
+            context.function.next_value_id += 1;
+            builder.register_temp_local(context, id, MirType::I32, location.clone());
+            builder.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(id),
+                    operation: MirOperation::BinaryOp {
+                        op,
+                        left: MirOperand::Value(a),
+                        right: MirOperand::Value(b),
+                    },
+                    location: location.clone(),
+                },
+            );
+            id
+        };
+        let same_tag = binary(self, MirBinaryOp::Eq, left_tag, right_tag);
+        let same_text = binary(self, MirBinaryOp::Eq, left_text, right_text);
+        binary(self, MirBinaryOp::And, same_tag, same_text)
+    }
+}
+
+impl MirBuilder {
+    /// SymbolId of a compiler built-in (`int_to_string`, `string.length`, ...)
+    /// as registered in the symbol table.
+    pub(super) fn builtin_symbol(
+        &self,
+        name: &str,
+        location: &SourceLocation,
+    ) -> Result<SymbolId, Vec<CompilerError>> {
+        self.symbol_table.lookup_symbol(name).ok_or_else(|| {
+            vec![CompilerError::validation_error(
+                format!("Built-in function '{}' is not registered", name),
+                location.clone(),
+            )]
+        })
+    }
+
+    /// Emit `result = name(arguments)` for the built-in `name`, whose result
+    /// has type `result_type`.
+    pub(super) fn emit_builtin_call(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        name: &str,
+        arguments: Vec<MirOperand>,
+        result_type: MirType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        let function = MirOperand::Function(self.builtin_symbol(name, location)?);
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, result_type, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Call {
+                    function,
+                    arguments,
+                },
+                location: location.clone(),
+            },
+        );
+        Ok(result_id)
+    }
+}
+
+impl MirBuilder {
+    /// The key a pairs lookup or store passes to `pairs.get` / `pairs.set`.
+    /// Pairs keys are stored as text — a literal `{1: "one"}` stores the
+    /// key "1" — so a key of another type is converted to its text.
+    pub(super) fn pairs_key(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        key_id: ValueId,
+        key_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        match key_type {
+            ConcreteType::String => Ok(key_id),
+            ConcreteType::Any => Ok(self.emit_any_to_string(context, key_id, location)),
+            _ => self.convert_value_to_string(context, key_id, key_type, location),
+        }
+    }
+}
+
+/// One arm of [`MirBuilder::build_two_way_value`].
+pub(super) enum BranchArm<'e> {
+    /// A value computed before the branch, typed as the given expression.
+    Built(ValueId, &'e TastExpression),
+    /// An expression evaluated only when its arm is taken.
+    Lazy(&'e TastExpression),
 }

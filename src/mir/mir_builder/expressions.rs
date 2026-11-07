@@ -389,93 +389,41 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
-                // BOOK: null-coalescing - Handle NullCoalesce operator (value default fallback)
-                // Returns left if not null, otherwise returns right
-                // IMPORTANT: 0, false, "" are NOT null - only the null literal is null
+                // `value default fallback` (06-expressions.md §Default Operator):
+                // the fallback is evaluated only when `value` is null. Only
+                // null coalesces — `0`, `false` and `""` are values.
                 if matches!(operator, BinaryOperator::NullCoalesce) {
-                    use crate::typechecker::tast::{TastExpressionKind, TastLiteral};
-
-                    // Check if left is definitely null (literal null or Null type)
-                    let left_is_null_literal = matches!(
+                    let left_is_null = matches!(
                         &left.kind,
                         TastExpressionKind::Literal {
                             value: TastLiteral::Null
                         }
-                    );
-                    let left_is_null_type = matches!(&left.expr_type, ConcreteType::Null);
-
-                    if left_is_null_literal || left_is_null_type {
-                        // Left is definitely null - just return the fallback (right)
+                    ) || matches!(&left.expr_type, ConcreteType::Null);
+                    if left_is_null {
                         return self.build_expression(context, right);
                     }
-
-                    // Check if left is definitely NOT null (non-null literal)
-                    let left_is_non_null_literal = match &left.kind {
-                        TastExpressionKind::Literal { value } => {
-                            !matches!(value, TastLiteral::Null)
-                        }
-                        _ => false,
-                    };
-
-                    if left_is_non_null_literal {
-                        // Left is definitely NOT null - just return the original (left)
+                    // A non-null literal, and a plain integer, number or
+                    // boolean (only `T?` holds null), is never null.
+                    let left_is_non_null_literal = matches!(
+                        &left.kind,
+                        TastExpressionKind::Literal { value } if !matches!(value, TastLiteral::Null)
+                    );
+                    if left_is_non_null_literal || Self::is_non_nullable_value_type(&left.expr_type)
+                    {
                         return self.build_expression(context, left);
                     }
 
-                    // For variables and other expressions, we need runtime checking
-                    // However, since we don't have proper nullable types yet, we use a
-                    // special "null marker" approach: null is represented as a pointer value
-                    // of 0 for reference types, but for primitives (int, bool), 0/false are valid values.
-                    //
-                    // Current behavior: If we can't determine at compile time, we check
-                    // if the expression type could be null. For now, we just return the left value
-                    // since we can't distinguish null from 0/false at runtime for primitives.
-                    //
-                    // Note: A proper nullable type system (Option<T> or T?) would improve this.
-
-                    // For now, evaluate left and return it (we don't have runtime null tracking)
-                    // This handles the case where left is a variable that could be null
-                    // In the future, we'll track nullability in the type system
                     let left_id = self.build_expression(context, left)?;
-
-                    // Get the MIR type of the left expression
-                    let left_mir_type = context
-                        .function
-                        .locals
-                        .get(&left_id)
-                        .map(|local| local.local_type.clone())
-                        .unwrap_or_else(|| MirType::from_concrete_type(&left.expr_type));
-
-                    // Evaluate right expression (the fallback value) - needed for later
-                    let right_id = self.build_expression(context, right)?;
-
-                    // Create result local with same type as left
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    let non_null =
+                        self.emit_non_null_test(context, left_id, &left.expr_type, &left.location);
+                    return self.build_two_way_value(
                         context,
-                        result_id,
-                        left_mir_type.clone(),
-                        expression.location.clone(),
+                        non_null,
+                        BranchArm::Built(left_id, left),
+                        BranchArm::Lazy(right),
+                        &expression.expr_type,
+                        &expression.location,
                     );
-
-                    // Generate select instruction: if left != 0 then left else right
-                    // NOTE: This only works correctly for reference types (pointers) where
-                    // null = 0 and valid values are non-zero. For primitives like int and bool,
-                    // this will incorrectly treat 0 and false as null.
-                    // A proper nullable type system would allow distinguishing null from valid zero values.
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Select {
-                            condition: MirOperand::Value(left_id),
-                            true_value: MirOperand::Value(left_id),
-                            false_value: MirOperand::Value(right_id),
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // Check if this is string concatenation (String + String or String + other)
@@ -651,9 +599,8 @@ impl MirBuilder {
                     // compares the boxed-any pointer bits to the literal's first
                     // 4 bytes and silently always evaluates false.
                     //
-                    // Mixed any+any comparisons are left as raw pointer equality
-                    // for now (well-defined for object identity, no silent
-                    // mis-evaluation).
+                    // Two `any` operands of `==` / `!=` compare their values
+                    // (`emit_any_values_equal`), not their box pointers.
                     //
                     // Regression tests:
                     //   tests/test_any_int_compare.rs    (ANY_INT_COMPARE_USES_POINTER)
@@ -731,6 +678,42 @@ impl MirBuilder {
                         (right_id, right_mir_type)
                     };
 
+                    if left_is_any
+                        && right_is_any
+                        && matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    {
+                        let equal = self.emit_any_values_equal(
+                            context,
+                            left_id,
+                            right_id,
+                            &expression.location,
+                        );
+                        if matches!(operator, BinaryOperator::Equal) {
+                            return Ok(equal);
+                        }
+                        let result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            MirType::I32,
+                            expression.location.clone(),
+                        );
+                        self.add_instruction(
+                            context,
+                            MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::BinaryOp {
+                                    op: MirBinaryOp::Eq,
+                                    left: MirOperand::Value(equal),
+                                    right: MirOperand::Constant(MirConstant::Integer(0)),
+                                },
+                                location: expression.location.clone(),
+                            },
+                        );
+                        return Ok(result_id);
+                    }
+
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
@@ -786,33 +769,16 @@ impl MirBuilder {
             }
 
             TastExpressionKind::UnaryOperation { operator, operand } => {
-                // NOTE: Handle unary Plus as a no-op (identity operation)
-                if matches!(operator, UnaryOperator::Plus) {
-                    // Unary plus is a no-op - just return the operand value unchanged
-                    return self.build_expression(context, operand);
-                }
-
-                // NOTE: Increment/Decrement operators need special desugaring
-                // These operators should have been desugared by the TAST phase, but if they reach here,
-                // we need to handle them properly with proper state mutation
-                match operator {
-                    UnaryOperator::PreIncrement
-                    | UnaryOperator::PostIncrement
-                    | UnaryOperator::PreDecrement
-                    | UnaryOperator::PostDecrement => {
-                        return Err(vec![CompilerError::validation_error(
-                            format!(
-                                "Increment/decrement operators must be desugared before MIR lowering. \
-                                 Operator {:?} cannot be directly lowered to MIR.",
-                                operator
-                            ),
-                            expression.location.clone(),
-                        )]);
-                    }
-                    _ => {}
-                }
-
                 let operand_id = self.build_expression(context, operand)?;
+
+                // `value!` checks for null; a plain integer, number or boolean
+                // is never null, and `0` / `false` must pass the check.
+                if matches!(operator, UnaryOperator::Required)
+                    && Self::is_non_nullable_value_type(&operand.expr_type)
+                {
+                    return Ok(operand_id);
+                }
+
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
@@ -1003,43 +969,13 @@ impl MirBuilder {
                 {
                     let arg_id = self.build_expression(context, &arguments[0])?;
 
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    return self.emit_builtin_call(
                         context,
-                        result_id,
+                        "float_to_string",
+                        vec![MirOperand::Value(arg_id)],
                         MirType::Ptr(Box::new(MirType::U8)),
-                        expression.location.clone(),
+                        &expression.location,
                     );
-
-                    let symbol_id = self
-                        .symbol_table
-                        .lookup_symbol("float_to_string")
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "float_to_string not found in symbol table for toString(number) early dispatch"
-                            );
-                            SymbolId(0)
-                        });
-
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Call {
-                            function: if symbol_id.0 == 0 {
-                                MirOperand::NamedFunction {
-                                    name: "float_to_string".to_string(),
-                                    symbol_id: SymbolId(0),
-                                }
-                            } else {
-                                MirOperand::Function(symbol_id)
-                            },
-                            arguments: vec![MirOperand::Value(arg_id)],
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // JSON calls lower to the Layer 2 host bridges
@@ -1506,6 +1442,33 @@ impl MirBuilder {
                     "Method call receiver"
                 );
 
+                // `obj.toString()` on a class that declares no `toString()`
+                // (nor inherits one) is the class name (07-statements.md
+                // "Default Class Behavior").
+                if let ConcreteType::Class {
+                    symbol_id: class_symbol,
+                    ..
+                } = &receiver_actual_type
+                {
+                    if method_name == "toString" && method_symbol.0 == 0 && arguments.is_empty() {
+                        if let Some(class_name) = self
+                            .all_classes
+                            .iter()
+                            .find(|c| c.symbol_id == *class_symbol)
+                            .map(|c| c.name.clone())
+                        {
+                            let name_literal = TastExpression {
+                                kind: TastExpressionKind::Literal {
+                                    value: TastLiteral::String(class_name),
+                                },
+                                expr_type: ConcreteType::String,
+                                location: expression.location.clone(),
+                            };
+                            return self.build_expression(context, &name_literal);
+                        }
+                    }
+                }
+
                 // Capability-typed receiver — emit dynamic dispatch via
                 // MirOperation::CallCapability. The receiver's class-id (at
                 // offset 0 of its instance header) drives the class switch
@@ -1726,43 +1689,13 @@ impl MirBuilder {
                 if matches!(&receiver_actual_type, ConcreteType::Integer)
                     && method_name == "toString"
                 {
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    return self.emit_builtin_call(
                         context,
-                        result_id,
+                        "int_to_string",
+                        vec![MirOperand::Value(receiver_id)],
                         MirType::Ptr(Box::new(MirType::U8)),
-                        expression.location.clone(),
+                        &expression.location,
                     );
-
-                    let symbol_id = self
-                        .symbol_table
-                        .lookup_symbol("int_to_string")
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "int_to_string not found in symbol table for Integer.toString() early dispatch"
-                            );
-                            SymbolId(0)
-                        });
-
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Call {
-                            function: if symbol_id.0 == 0 {
-                                MirOperand::NamedFunction {
-                                    name: "int_to_string".to_string(),
-                                    symbol_id: SymbolId(0),
-                                }
-                            } else {
-                                MirOperand::Function(symbol_id)
-                            },
-                            arguments: vec![MirOperand::Value(receiver_id)],
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // NOTE: Handle Number.toString() EARLY — same rationale as the
@@ -1780,43 +1713,13 @@ impl MirBuilder {
                 if matches!(&receiver_actual_type, ConcreteType::Number)
                     && method_name == "toString"
                 {
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    return self.emit_builtin_call(
                         context,
-                        result_id,
+                        "float_to_string",
+                        vec![MirOperand::Value(receiver_id)],
                         MirType::Ptr(Box::new(MirType::U8)),
-                        expression.location.clone(),
+                        &expression.location,
                     );
-
-                    let symbol_id = self
-                        .symbol_table
-                        .lookup_symbol("float_to_string")
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "float_to_string not found in symbol table for Number.toString() early dispatch"
-                            );
-                            SymbolId(0)
-                        });
-
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Call {
-                            function: if symbol_id.0 == 0 {
-                                MirOperand::NamedFunction {
-                                    name: "float_to_string".to_string(),
-                                    symbol_id: SymbolId(0),
-                                }
-                            } else {
-                                MirOperand::Function(symbol_id)
-                            },
-                            arguments: vec![MirOperand::Value(receiver_id)],
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // NOTE: Handle Any.toInteger() EARLY for chained calls
@@ -2204,51 +2107,20 @@ impl MirBuilder {
                     }
                 }
 
-                // NOTE: Handle String.matches EARLY — pattern name is resolved to a compile-time
-                // integer ID so the host bridge receives (str_ptr, str_len, pattern_id: i32).
-                // ID mapping matches server v1.9.27+: email=0 url=1 uuid=2 phone=3 date=4
-                //   integer=5 number=6 alphanumeric=7
+                // NOTE: Handle String.matches EARLY — the pattern name is resolved to
+                // the compile-time pattern id the `string_matches` host import takes
+                // (`STRING_MATCH_PATTERNS`, shared with the type checker's SEM010).
                 if matches!(&receiver.expr_type, ConcreteType::String) && method_name == "matches" {
-                    use crate::typechecker::tast::{TastExpressionKind, TastLiteral};
-
-                    let pattern_id: i64 = if let Some(arg) = arguments.first() {
-                        match &arg.kind {
-                            TastExpressionKind::Literal {
-                                value: TastLiteral::String(pattern),
-                            } => match pattern.as_str() {
-                                "email" => 0,
-                                "url" => 1,
-                                "uuid" => 2,
-                                "phone" => 3,
-                                "date" => 4,
-                                "integer" => 5,
-                                "number" => 6,
-                                "alphanumeric" => 7,
-                                other => {
-                                    return Err(vec![crate::error::CompilerError::semantic_error(
-                                        format!(
-                                            "string.matches(): unknown pattern '{}'. \
-                                             Valid: email, url, uuid, phone, date, integer, number, alphanumeric",
-                                            other
-                                        ),
-                                        None,
-                                        Some(expression.location.clone()),
-                                    )]);
-                                }
-                            },
-                            _ => {
-                                return Err(vec![crate::error::CompilerError::semantic_error(
-                                    "string.matches(): pattern argument must be a string literal",
-                                    None,
-                                    Some(expression.location.clone()),
-                                )]);
-                            }
-                        }
-                    } else {
-                        return Err(vec![crate::error::CompilerError::semantic_error(
-                            "string.matches() requires a pattern name argument",
-                            None,
-                            Some(expression.location.clone()),
+                    let pattern_id = match arguments.first().map(|a| &a.kind) {
+                        Some(TastExpressionKind::Literal {
+                            value: TastLiteral::String(pattern),
+                        }) => crate::typechecker::tast::string_match_pattern_id(pattern),
+                        _ => None,
+                    };
+                    let Some(pattern_id) = pattern_id else {
+                        return Err(vec![CompilerError::validation_error(
+                            "string.matches() needs one of the supported pattern names as a string literal",
+                            expression.location.clone(),
                         )]);
                     };
 
@@ -2448,105 +2320,33 @@ impl MirBuilder {
                     match (receiver_type, method_name.as_str()) {
                         // Integer to String conversion - call int_to_string
                         (ConcreteType::Integer, "toString") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-
-                            // Register the result as Ptr(U8) to distinguish string pointers from integers
-                            self.register_temp_local(
+                            return self.emit_builtin_call(
                                 context,
-                                result_id,
+                                "int_to_string",
+                                vec![MirOperand::Value(receiver_id)],
                                 MirType::Ptr(Box::new(MirType::U8)),
-                                expression.location.clone(),
+                                &expression.location,
                             );
-
-                            let symbol_id = self
-                                .symbol_table
-                                .lookup_symbol("int_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("int_to_string not found in symbol table, using SymbolId(166)");
-                                    SymbolId(166)
-                                });
-
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::Function(symbol_id),
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
-                            };
-
-                            self.add_instruction(context, instruction);
-
-                            return Ok(result_id);
                         }
                         // Number to String conversion - call float_to_string
                         (ConcreteType::Number, "toString") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-
-                            // Register the result as Ptr(U8) to distinguish string pointers from numbers
-                            self.register_temp_local(
+                            return self.emit_builtin_call(
                                 context,
-                                result_id,
+                                "float_to_string",
+                                vec![MirOperand::Value(receiver_id)],
                                 MirType::Ptr(Box::new(MirType::U8)),
-                                expression.location.clone(),
+                                &expression.location,
                             );
-
-                            let symbol_id = self
-                                .symbol_table
-                                .lookup_symbol("float_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                                    SymbolId(167)
-                                });
-
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::Function(symbol_id),
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
-                            };
-
-                            self.add_instruction(context, instruction);
-
-                            return Ok(result_id);
                         }
                         // Boolean to String conversion - call bool_to_string
                         (ConcreteType::Boolean, "toString") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-
-                            // Register the result as Ptr(U8) to distinguish string pointers from booleans
-                            self.register_temp_local(
+                            return self.emit_builtin_call(
                                 context,
-                                result_id,
+                                "bool_to_string",
+                                vec![MirOperand::Value(receiver_id)],
                                 MirType::Ptr(Box::new(MirType::U8)),
-                                expression.location.clone(),
+                                &expression.location,
                             );
-
-                            let symbol_id = self
-                                .symbol_table
-                                .lookup_symbol("bool_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("bool_to_string not found in symbol table, using SymbolId(165)");
-                                    SymbolId(165)
-                                });
-
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::Function(symbol_id),
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
-                            };
-
-                            self.add_instruction(context, instruction);
-
-                            return Ok(result_id);
                         }
                         // Any to String conversion with proper type dispatch
                         // Uses the boxed any value's type tag to call the correct toString function
@@ -2787,29 +2587,20 @@ impl MirBuilder {
                         // Type conversion methods - look up correct SymbolIds from symbol table
                         (ConcreteType::Integer, "toString") => {
                             // Call int_to_string with the integer value
-                            let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("int_to_string not found in symbol table, using SymbolId(166)");
-                                    SymbolId(166)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("int_to_string", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Number, "toString") => {
                             // Call float_to_string with the float value
-                            let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                                    SymbolId(167)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("float_to_string", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Boolean, "toString") => {
                             // Call bool_to_string with the boolean value
-                            let symbol_id = self.symbol_table.lookup_symbol("bool_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("bool_to_string not found in symbol table, using SymbolId(165)");
-                                    SymbolId(165)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("bool_to_string", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         // Generic type with toString() - infer from MIR type
@@ -2831,20 +2622,14 @@ impl MirBuilder {
                             match mir_type {
                                 MirType::I32 => {
                                     // Call int_to_string
-                                    let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
-                                        .unwrap_or_else(|| {
-                                            warn!("int_to_string not found in symbol table, using SymbolId(166)");
-                                            SymbolId(166)
-                                        });
+                                    let symbol_id =
+                                        self.builtin_symbol("int_to_string", &expression.location)?;
                                     (symbol_id, vec![MirOperand::Value(receiver_id)])
                                 }
                                 MirType::F64 => {
                                     // Call float_to_string
-                                    let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
-                                        .unwrap_or_else(|| {
-                                            warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                                            SymbolId(167)
-                                        });
+                                    let symbol_id = self
+                                        .builtin_symbol("float_to_string", &expression.location)?;
                                     (symbol_id, vec![MirOperand::Value(receiver_id)])
                                 }
                                 _ => {
@@ -2857,48 +2642,43 @@ impl MirBuilder {
                         // String methods - look up correct SymbolIds from symbol table
                         (ConcreteType::String, "length") => {
                             // Call string.length with the string value
-                            let symbol_id = self.symbol_table.lookup_symbol("string.length")
-                                .unwrap_or_else(|| {
-                                    warn!("string.length not found in symbol table, using SymbolId(67)");
-                                    SymbolId(67)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("string.length", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "toUpperCase") => {
                             // Call string.toUpperCase
-                            let symbol_id = self.symbol_table.lookup_symbol("string.toUpperCase")
-                                .unwrap_or_else(|| {
-                                    warn!("string.toUpperCase not found in symbol table, using SymbolId(74)");
-                                    SymbolId(74)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("string.toUpperCase", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "toLowerCase") => {
                             // Call string.toLowerCase
-                            let symbol_id = self.symbol_table.lookup_symbol("string.toLowerCase")
-                                .unwrap_or_else(|| {
-                                    warn!("string.toLowerCase not found in symbol table, using SymbolId(75)");
-                                    SymbolId(75)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("string.toLowerCase", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "substring") => {
-                            // Call string_substring (SymbolId 49)
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
                                 args.push(MirOperand::Value(arg_id));
                             }
-                            (SymbolId(49), args)
+                            (
+                                self.builtin_symbol("string.substring", &expression.location)?,
+                                args,
+                            )
                         }
                         (ConcreteType::String, "contains") => {
-                            // Call string_contains (SymbolId 52)
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
                                 args.push(MirOperand::Value(arg_id));
                             }
-                            (SymbolId(52), args)
+                            (
+                                self.builtin_symbol("string.contains", &expression.location)?,
+                                args,
+                            )
                         }
                         (ConcreteType::String, "indexOf") => {
                             // indexOf has two variants:
@@ -3025,15 +2805,8 @@ impl MirBuilder {
                         }
                         (ConcreteType::Array(_), "setFlags") => {
                             // Store compile-time-known behavior flags at offset 12.
-                            let set_flags_symbol = self
-                                .symbol_table
-                                .lookup_symbol("list.setFlags")
-                                .unwrap_or_else(|| {
-                                    warn!(
-                                        "list.setFlags not found in symbol table, using fallback"
-                                    );
-                                    *method_symbol
-                                });
+                            let set_flags_symbol =
+                                self.builtin_symbol("list.setFlags", &expression.location)?;
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
@@ -3042,14 +2815,8 @@ impl MirBuilder {
                             (set_flags_symbol, args)
                         }
                         (ConcreteType::Array(_), "get") => {
-                            // Call list_get - look up from symbol table
-                            let list_get_symbol = self
-                                .symbol_table
-                                .lookup_symbol("list_get")
-                                .unwrap_or_else(|| {
-                                    warn!("list_get not found in symbol table, using fallback");
-                                    *method_symbol
-                                });
+                            let list_get_symbol =
+                                self.builtin_symbol("list_get", &expression.location)?;
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
@@ -3072,15 +2839,7 @@ impl MirBuilder {
                             } else {
                                 "list.indexOf.string"
                             };
-                            let str_symbol =
-                                self.symbol_table.lookup_symbol(alias).unwrap_or_else(|| {
-                                    warn!(
-                                        "{} not found in symbol table, falling back to \
-                                         pointer-equality variant (bug baf3ccc5 may surface)",
-                                        alias
-                                    );
-                                    *method_symbol
-                                });
+                            let str_symbol = self.builtin_symbol(alias, &expression.location)?;
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
@@ -3943,6 +3702,8 @@ impl MirBuilder {
                     // list and the key pointer as an element index read memory
                     // past the map.
                     ConcreteType::Pairs(_, value_type) => {
+                        let index_id =
+                            self.pairs_key(context, index_id, &index.expr_type, &index.location)?;
                         let result_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
                         let result_type = self.convert_concrete_type(value_type);
@@ -4129,12 +3890,20 @@ impl MirBuilder {
             }
 
             TastExpressionKind::Conditional {
-                condition: _,
+                condition,
                 then_expr,
-                else_expr: _,
+                else_expr,
             } => {
-                // Evaluates then branch (full ternary requires control flow - handled in if/else codegen)
-                self.build_expression(context, then_expr)
+                // `if c then a else b`: only the chosen branch is evaluated.
+                let condition_id = self.build_expression(context, condition)?;
+                self.build_two_way_value(
+                    context,
+                    condition_id,
+                    BranchArm::Lazy(then_expr),
+                    BranchArm::Lazy(else_expr),
+                    &expression.expr_type,
+                    &expression.location,
+                )
             }
 
             TastExpressionKind::BaseCall {
@@ -4967,14 +4736,6 @@ impl MirBuilder {
 
                 trace!("Range array created");
                 Ok(list_value_id)
-            }
-
-            _ => {
-                // Unsupported expression type - return error with details
-                Err(vec![CompilerError::validation_error(
-                    format!("Expression type not yet implemented: {:?}", expression.kind),
-                    expression.location.clone(),
-                )])
             }
         }
     }

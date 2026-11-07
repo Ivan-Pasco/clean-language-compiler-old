@@ -2325,11 +2325,6 @@ impl NameResolver {
                 target_type,
                 location,
             } => self.resolve_cast_expression(expression, target_type, location),
-            HirExpression::Assignment {
-                target,
-                value,
-                location,
-            } => self.resolve_assignment_expression(target, value, location),
             HirExpression::NamespaceCall {
                 namespace,
                 function,
@@ -3335,23 +3330,6 @@ impl NameResolver {
         Ok(ResolvedHirExpression::Cast {
             expression: Box::new(resolved_expression),
             target_type: target_type.clone(),
-            location: location.clone(),
-        })
-    }
-
-    /// Resolve an `Assignment` expression.
-    fn resolve_assignment_expression(
-        &mut self,
-        target: &HirLValue,
-        value: &HirExpression,
-        location: &SourceLocation,
-    ) -> Result<ResolvedHirExpression, ()> {
-        let resolved_target = self.resolve_lvalue(target)?;
-        let resolved_value = self.resolve_expression(value)?;
-
-        Ok(ResolvedHirExpression::Assignment {
-            target: resolved_target,
-            value: Box::new(resolved_value),
             location: location.clone(),
         })
     }

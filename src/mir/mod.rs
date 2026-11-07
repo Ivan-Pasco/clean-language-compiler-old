@@ -17,7 +17,7 @@ pub mod mir_builder;
 pub mod mir_types;
 pub mod optimization;
 
-pub use mir_builder::{MirBuildResult, MirBuilder};
+pub use mir_builder::MirBuilder;
 pub use mir_types::{
     class_header_word, BasicBlockId, MirBasicBlock, MirFunction, MirInstruction, MirOperand,
     MirProgram, MirType, ValueId,
@@ -76,16 +76,6 @@ impl MirPipeline {
         }
     }
 
-    /// Create a new MIR pipeline with custom configuration
-    pub fn with_config(config: MirConfig) -> Self {
-        let empty_symbol_table = std::sync::Arc::new(crate::resolver::GlobalSymbolTable::new());
-        Self {
-            builder: MirBuilder::new(empty_symbol_table),
-            optimizer: MirOptimizer::with_config(&config),
-            config,
-        }
-    }
-
     /// Lower TAST to optimized MIR
     pub fn lower(&mut self, tast: TastProgram) -> Result<MirResult, Vec<CompilerError>> {
         tracing::debug!(
@@ -108,18 +98,18 @@ impl MirPipeline {
         self.builder.release_mode = preserved_release_mode;
 
         // Phase 1: Lower TAST to unoptimized MIR
-        let build_result = self.builder.build(tast)?;
+        let built = self.builder.build(tast)?;
 
         tracing::debug!(
-            function_count = build_result.program.functions.len(),
+            function_count = built.functions.len(),
             "MIR build completed"
         );
 
         // Phase 2: Apply optimization passes if enabled
         let program = if self.config.optimize {
-            self.optimizer.optimize(build_result.program)?
+            self.optimizer.optimize(built)?
         } else {
-            build_result.program
+            built
         };
 
         Ok(MirResult { program })

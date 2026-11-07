@@ -1,0 +1,39 @@
+// Test: bugfixes/iterate_list_last_statement_return_break
+// Grammar: iterate_statement, return_statement, break_statement
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   first=7
+//   count=1
+//   nested=2
+//
+// Regression: inside `iterate x in list`, a `return` or `break` that was the
+// last statement of the loop body was replaced by a jump to the increment
+// block, so the loop kept going: firstOf returned the fallback and
+// countUntilBreak counted every element.
+
+start:
+	list<integer> xs = [7, 8, 9]
+	printl("first=" + firstOf(xs).toString())
+	printl("count=" + countUntilBreak(xs).toString())
+	printl("nested=" + nestedReturn(xs).toString())
+
+functions:
+	integer firstOf(list<integer> items)
+		iterate x in items
+			return x
+		return -1
+
+	integer countUntilBreak(list<integer> items)
+		integer n = 0
+		iterate x in items
+			n = n + 1
+			break
+		return n
+
+	integer nestedReturn(list<integer> items)
+		integer n = 0
+		iterate x in items
+			n = n + 1
+			if x == 8
+				return n
+		return -1

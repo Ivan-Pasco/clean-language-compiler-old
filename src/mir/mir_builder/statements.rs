@@ -688,6 +688,8 @@ impl MirBuilder {
                             }
                             ConcreteType::Pairs(_, value_type) => {
                                 let value_type = (**value_type).clone();
+                                let index_id =
+                                    self.pairs_key(context, index_id, &index.expr_type, location)?;
                                 let value_id = self.unbox_any_argument(
                                     context,
                                     value_id,
@@ -712,12 +714,10 @@ impl MirBuilder {
                         }
                     }
                     _ => {
-                        // Handle any other complex assignment targets
-                        tracing::warn!(
-                            target_kind = ?target.kind,
-                            "Complex assignment target not implemented"
-                        );
-                        // Don't error out, just ignore the assignment for now
+                        return Err(vec![CompilerError::validation_error(
+                            "Only a variable, a field or an indexed element can be assigned to",
+                            target.location.clone(),
+                        )]);
                     }
                 }
             }
@@ -1651,34 +1651,19 @@ impl MirBuilder {
                     self.emit_mem_scope_pop(context, location.clone());
                 }
 
-                // NOTE: Check if body block already has a terminator
-                // (IF statements may have set one). If not, jump to increment block.
-                let body_has_terminator = context
-                    .function
-                    .blocks
-                    .get(&body_block_id)
-                    .map(|b| !matches!(b.terminator, MirTerminator::Unreachable))
-                    .unwrap_or(false);
+                // After the body, the block control ended in (which differs
+                // from the body's first block when the body has nested
+                // control flow) continues with the increment block unless it
+                // already ends in a return, break or continue.
+                if let Some(current) = self.current_block {
+                    let has_terminator = context
+                        .function
+                        .blocks
+                        .get(&current)
+                        .map(|b| !matches!(b.terminator, MirTerminator::Unreachable))
+                        .unwrap_or(false);
 
-                if !body_has_terminator {
-                    // Body block needs a terminator - jump to increment block
-                    self.current_block = Some(body_block_id);
-                    self.set_block_terminator(
-                        context,
-                        MirTerminator::Jump {
-                            target: increment_block_id,
-                        },
-                    );
-                } else {
-                    // Body block already has terminator (from IF/etc)
-                    // Need to redirect it to increment block instead of header
-                    // For now, we'll handle this in the increment block by having
-                    // continuation blocks jump to increment instead
-                    trace!(current_block = ?self.current_block, "Body block already has terminator");
-
-                    // Set current block to wherever we ended up after processing statements
-                    // and make it jump to increment block
-                    if let Some(_curr_block) = self.current_block {
+                    if !has_terminator {
                         self.set_block_terminator(
                             context,
                             MirTerminator::Jump {

@@ -1,0 +1,25 @@
+// Test: bugfixes/sem001_list_element_layout_mismatch
+// Grammar: variable_declaration, assignment_statement
+// Semantic: type-system.md §5 — `list<T1>` → `list<T2>` needs T1 → T2; a
+//   list<number> is never a list<integer>. A list<integer> stores 4-byte
+//   elements and a list<number> 8-byte ones, so the list itself cannot be
+//   reused as the other type; a list literal still widens.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   A value of type Array<number> cannot be used as Array<integer>
+//   A value of type Array<integer> cannot be used as Array<number>
+//   sem001_list_element_layout_mismatch.cln:23:
+//   sem001_list_element_layout_mismatch.cln:24:
+//
+// Regression: list element types unified both ways and the element layouts
+// were never converted, so both assignments printed garbage.
+
+start:
+	list<number> ns = [1.5, 2.5]
+	list<integer> ints = [1, 2]
+	list<number> literal = [1, 2]
+	list<integer> xs = [0]
+	xs = ns
+	list<number> ys = ints
+	printl(literal.length().toString())

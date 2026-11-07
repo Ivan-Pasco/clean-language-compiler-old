@@ -65,11 +65,6 @@ impl MirCodeGenerator<'_> {
                 self.current_instructions
                     .push(Instruction::I32Const(function_index as i32));
             }
-
-            MirOperand::Global(_symbol_id) => {
-                // Global variable access (module globals indexed from 0)
-                self.current_instructions.push(Instruction::GlobalGet(0));
-            }
         }
 
         Ok(())
@@ -147,16 +142,6 @@ impl MirCodeGenerator<'_> {
             MirConstant::Undefined => {
                 // Undefined values are represented as 0
                 self.current_instructions.push(Instruction::I32Const(0));
-            }
-            _ => {
-                return Err(CompilerError::Codegen {
-                    context: Box::new(crate::error::ErrorContext::new(
-                        format!("Constant type not yet implemented: {:?}", constant),
-                        None,
-                        crate::error::ErrorType::Codegen,
-                        Some(crate::ast::SourceLocation::default()),
-                    )),
-                });
             }
         }
 

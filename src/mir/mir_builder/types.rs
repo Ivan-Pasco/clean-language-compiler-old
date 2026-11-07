@@ -775,7 +775,6 @@ impl MirBuilder {
             }
             TastLiteral::Boolean(b) => MirConstant::Boolean(*b),
             TastLiteral::Null => MirConstant::Null,
-            TastLiteral::Undefined => MirConstant::Undefined,
         }
     }
 
@@ -798,7 +797,6 @@ impl MirBuilder {
             TastLiteral::String(_) => MirType::Ptr(Box::new(MirType::I8)), // String as i8 pointer
             TastLiteral::Boolean(_) => MirType::Bool,
             TastLiteral::Null => MirType::Ptr(Box::new(MirType::Void)),
-            TastLiteral::Undefined => MirType::Void,
         }
     }
 
@@ -857,138 +855,45 @@ impl MirBuilder {
             }
             ConcreteType::Integer => {
                 // Convert integer to string using int_to_string
-                let converted_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
-
-                // Register as Ptr(U8) - int_to_string returns a string pointer
-                self.register_temp_local(
+                self.emit_builtin_call(
                     context,
-                    converted_id,
+                    "int_to_string",
+                    vec![MirOperand::Value(value_id)],
                     MirType::Ptr(Box::new(MirType::U8)),
-                    location.clone(),
-                );
-
-                let symbol_id = self
-                    .symbol_table
-                    .lookup_symbol("int_to_string")
-                    .unwrap_or_else(|| {
-                        warn!("int_to_string not found in symbol table, using SymbolId(166)");
-                        SymbolId(166)
-                    });
-
-                let conversion_instruction = MirInstruction {
-                    dest: Some(converted_id),
-                    operation: MirOperation::Call {
-                        function: MirOperand::Function(symbol_id),
-                        arguments: vec![MirOperand::Value(value_id)],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, conversion_instruction);
-                Ok(converted_id)
+                    location,
+                )
             }
             ConcreteType::IntegerSized { bits: 64, .. } => {
                 // 64-bit integers use int64_to_string (registered with i64 param)
                 // so the full signed-64 range round-trips through .toString() without
                 // narrowing through int_to_string's i32 parameter.
-                let converted_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
-
-                self.register_temp_local(
+                self.emit_builtin_call(
                     context,
-                    converted_id,
+                    "int64_to_string",
+                    vec![MirOperand::Value(value_id)],
                     MirType::Ptr(Box::new(MirType::U8)),
-                    location.clone(),
-                );
-
-                let symbol_id = self
-                    .symbol_table
-                    .lookup_symbol("int64_to_string")
-                    .ok_or_else(|| {
-                        vec![CompilerError::Codegen {
-                            context: Box::new(crate::error::ErrorContext::new(
-                                "int64_to_string host bridge function is not registered",
-                                Some("Ensure function-registry.toml declares int64_to_string and the host implements it".to_string()),
-                                crate::error::ErrorType::Codegen,
-                                Some(location.clone()),
-                            )),
-                        }]
-                    })?;
-
-                let conversion_instruction = MirInstruction {
-                    dest: Some(converted_id),
-                    operation: MirOperation::Call {
-                        function: MirOperand::Function(symbol_id),
-                        arguments: vec![MirOperand::Value(value_id)],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, conversion_instruction);
-                Ok(converted_id)
+                    location,
+                )
             }
             ConcreteType::Number => {
                 // Convert float to string using float_to_string
-                let converted_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
-
-                // Register as Ptr(U8) - float_to_string returns a string pointer
-                self.register_temp_local(
+                self.emit_builtin_call(
                     context,
-                    converted_id,
+                    "float_to_string",
+                    vec![MirOperand::Value(value_id)],
                     MirType::Ptr(Box::new(MirType::U8)),
-                    location.clone(),
-                );
-
-                let symbol_id = self
-                    .symbol_table
-                    .lookup_symbol("float_to_string")
-                    .unwrap_or_else(|| {
-                        warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                        SymbolId(167)
-                    });
-
-                let conversion_instruction = MirInstruction {
-                    dest: Some(converted_id),
-                    operation: MirOperation::Call {
-                        function: MirOperand::Function(symbol_id),
-                        arguments: vec![MirOperand::Value(value_id)],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, conversion_instruction);
-                Ok(converted_id)
+                    location,
+                )
             }
             ConcreteType::Boolean => {
                 // Convert boolean to string using bool_to_string
-                let converted_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
-
-                // Register as Ptr(U8) - bool_to_string returns a string pointer
-                self.register_temp_local(
+                self.emit_builtin_call(
                     context,
-                    converted_id,
+                    "bool_to_string",
+                    vec![MirOperand::Value(value_id)],
                     MirType::Ptr(Box::new(MirType::U8)),
-                    location.clone(),
-                );
-
-                let symbol_id = self
-                    .symbol_table
-                    .lookup_symbol("bool_to_string")
-                    .unwrap_or_else(|| {
-                        warn!("bool_to_string not found in symbol table, using SymbolId(165)");
-                        SymbolId(165)
-                    });
-
-                let conversion_instruction = MirInstruction {
-                    dest: Some(converted_id),
-                    operation: MirOperation::Call {
-                        function: MirOperand::Function(symbol_id),
-                        arguments: vec![MirOperand::Value(value_id)],
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, conversion_instruction);
-                Ok(converted_id)
+                    location,
+                )
             }
             _ => {
                 // For other types (objects, arrays, etc.), use the value as-is for now
@@ -1018,7 +923,6 @@ impl MirBuilder {
                     _ => ConcreteType::Null, // Fallback for other pointer types
                 }
             }
-            MirType::StringTuple => ConcreteType::String,
             MirType::Function {
                 parameters,
                 return_type,
@@ -1031,8 +935,6 @@ impl MirBuilder {
             MirType::I8 | MirType::I16 | MirType::I64 => ConcreteType::Integer,
             MirType::U8 | MirType::U16 | MirType::U32 | MirType::U64 => ConcreteType::Integer,
             MirType::F32 => ConcreteType::Number,
-            MirType::Array(_, _) => ConcreteType::Array(Box::new(ConcreteType::Integer)),
-            MirType::Struct(_) => ConcreteType::Null,
             MirType::Any => ConcreteType::Any, // Boxed any type
         }
     }
@@ -1165,11 +1067,6 @@ impl MirBuilder {
 
             // Bitwise operators (And/Or work on integers, lowered to i32.and/i32.or in WASM)
             // The type system ensures these are used on integer types
-            BinaryOperator::BitwiseAnd => MirBinaryOp::And,
-            BinaryOperator::BitwiseOr => MirBinaryOp::Or,
-            BinaryOperator::BitwiseXor => MirBinaryOp::Xor,
-            BinaryOperator::LeftShift => MirBinaryOp::Shl,
-            BinaryOperator::RightShift => MirBinaryOp::Shr,
 
             // CRITICAL: These operators should NEVER reach here - they must be handled in build_expression
             BinaryOperator::Power => {
@@ -1178,42 +1075,19 @@ impl MirBuilder {
             BinaryOperator::Concatenate => {
                 panic!("BUG: String concatenation should be handled in build_expression as string.concat call, not converted to MIR operator")
             }
-            // BOOK: null-coalescing - NullCoalesce must be handled in build_expression with select instruction
             BinaryOperator::NullCoalesce => {
-                panic!("BUG: NullCoalesce operator should be handled in build_expression with select instruction, not converted to MIR operator")
+                panic!("BUG: NullCoalesce operator should be handled in build_expression as a two-way branch, not converted to MIR operator")
             }
         }
     }
 
     /// Convert TAST unary operator to MIR unary operator
-    ///
-    /// Note: Some unary operators (Plus, Increment, Decrement) cannot be directly
-    /// represented in MIR and should be handled specially in build_expression.
     pub(super) fn convert_unary_op(&self, op: &UnaryOperator) -> MirUnaryOp {
         match op {
-            // Direct unary operators
             UnaryOperator::Negate => MirUnaryOp::Neg,
             UnaryOperator::Not => MirUnaryOp::Not,
-            UnaryOperator::BitwiseNot => MirUnaryOp::BitNot,
             // BOOK: required-operator - Postfix ! assertion for null check
             UnaryOperator::Required => MirUnaryOp::Required,
-
-            // CRITICAL: These operators should NEVER reach here - they must be handled in build_expression
-            UnaryOperator::Plus => {
-                panic!("BUG: Unary plus should be handled in build_expression as no-op, not converted to MIR operator")
-            }
-            UnaryOperator::PreIncrement => {
-                panic!("BUG: Pre-increment should be desugared to assignment (x = x + 1) in build_expression, not converted to MIR operator")
-            }
-            UnaryOperator::PostIncrement => {
-                panic!("BUG: Post-increment should be desugared to assignment (temp = x; x = x + 1; temp) in build_expression, not converted to MIR operator")
-            }
-            UnaryOperator::PreDecrement => {
-                panic!("BUG: Pre-decrement should be desugared to assignment (x = x - 1) in build_expression, not converted to MIR operator")
-            }
-            UnaryOperator::PostDecrement => {
-                panic!("BUG: Post-decrement should be desugared to assignment (temp = x; x = x - 1; temp) in build_expression, not converted to MIR operator")
-            }
         }
     }
 

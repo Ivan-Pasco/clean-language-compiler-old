@@ -1,0 +1,27 @@
+// Test: bugfixes/sem001_number_not_assignable_to_integer
+// Grammar: assignment_statement, return_statement, function_call
+// Semantic: type-system.md §5 Assignability — `integer` widens to `number`
+//   implicitly; a `number` is never implicitly an `integer` (assignment,
+//   argument or return).
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   A value of type number cannot be used as integer without an explicit conversion
+//   sem001_number_not_assignable_to_integer.cln:21:
+//   sem001_number_not_assignable_to_integer.cln:22:
+//   sem001_number_not_assignable_to_integer.cln:27:
+//
+// Regression: integer and number unified both ways, so `x = n`, passing 3.7
+// to an integer parameter (invalid WASM) and `return 2.5` from an integer
+// function were accepted.
+
+start:
+	number n = 2.5
+	integer x = 1
+	x = n
+	printl(half(3.7).toString())
+	number widened = x
+
+functions:
+	integer half(integer v)
+		return 2.5

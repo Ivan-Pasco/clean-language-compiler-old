@@ -65,9 +65,6 @@ pub fn try_const_eval_tast(expr: &TastExpression) -> ConstValue {
         | TastExpressionKind::ArrayLiteral { .. }
         | TastExpressionKind::ArrayAccess { .. }
         | TastExpressionKind::ObjectLiteral { .. }
-        | TastExpressionKind::Cast { .. }
-        | TastExpressionKind::TypeCheck { .. }
-        | TastExpressionKind::Await { .. }
         | TastExpressionKind::OnError { .. }
         | TastExpressionKind::Conditional { .. }
         | TastExpressionKind::BaseCall { .. }
@@ -82,7 +79,7 @@ fn eval_tast_literal(lit: &TastLiteral) -> ConstValue {
         TastLiteral::Number(f) => ConstValue::Float(*f),
         TastLiteral::Boolean(b) => ConstValue::Boolean(*b),
         TastLiteral::String(s) => ConstValue::String(s.clone()),
-        TastLiteral::Null | TastLiteral::Undefined => ConstValue::NotConst,
+        TastLiteral::Null => ConstValue::NotConst,
     }
 }
 
@@ -92,7 +89,6 @@ fn eval_tast_unary(op: &UnaryOperator, val: ConstValue) -> ConstValue {
         (UnaryOperator::Negate, ConstValue::Integer(n)) => ConstValue::Integer(-n),
         (UnaryOperator::Negate, ConstValue::Float(f)) => ConstValue::Float(-f),
         (UnaryOperator::Not, ConstValue::Boolean(b)) => ConstValue::Boolean(!b),
-        (UnaryOperator::Plus, v) => v, // Unary plus is identity
         _ => ConstValue::NotConst,
     }
 }

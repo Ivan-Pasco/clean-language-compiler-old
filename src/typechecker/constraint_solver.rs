@@ -6,7 +6,7 @@
 use super::tast::{ConcreteType, TypeConstraint};
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 /// Type variable identifier for constraint solving
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,7 +47,6 @@ pub struct ConstraintSolver<'a> {
 #[derive(Debug)]
 pub struct SolverResult {
     pub substitution: Substitution,
-    pub remaining_constraints: Vec<TypeConstraint>,
     pub errors: Vec<CompilerError>,
 }
 
@@ -105,65 +104,15 @@ impl<'a> ConstraintSolver<'a> {
 
     /// Solve all constraints and return the result
     pub fn solve(mut self) -> SolverResult {
-        // Process constraints until none remain or we can't make progress.
-        //
-        // The iteration cap is a safety net against pathological infinite loops
-        // in `solve_constraint`. Genuine non-progress is already detected by the
-        // `try_alternative_strategies` `break` below — so we don't need the cap
-        // to catch stalls, only true loops.
-        //
-        // Each plugin-generated `data:` block expands into many constraints
-        // (~250 with frame.data — the class declaration, two generic result
-        // types `PagedResult<T>` and `CursorResult<T>`, the `find`, `first`,
-        // `save`, `delete`, `paginate`, `cursor` methods, and the implicit
-        // `this` references inside each). A realistic project with 50 data
-        // models therefore submits ~12500 constraints; one with 100 models
-        // submits ~25000. The previous 10000-iteration cap rejected the
-        // former. Setting the cap to 100000 covers projects up to ~400 data
-        // models — comfortably ahead of any realistic application — while
-        // still trapping an actual runaway. See SEM001 (fingerprint
-        // 7cc56e80f714).
-        let mut iterations = 0;
-        let max_iterations = 100_000;
-
-        while !self.constraints.is_empty() && iterations < max_iterations {
-            let initial_count = self.constraints.len();
-
-            // Try to solve one constraint
-            if let Some(constraint) = self.constraints.pop_front() {
-                if let Err(error) = self.solve_constraint(constraint) {
-                    self.errors.push(error);
-                }
+        // Each step consumes one constraint; solving never adds constraints.
+        while let Some(constraint) = self.constraints.pop_front() {
+            if let Err(error) = self.solve_constraint(constraint) {
+                self.errors.push(error);
             }
-
-            // Check if we made progress
-            if self.constraints.len() == initial_count {
-                // No progress made, try different solving strategies
-                if !self.try_alternative_strategies() {
-                    break; // Can't make any more progress
-                }
-            }
-
-            iterations += 1;
-        }
-
-        if iterations >= max_iterations {
-            self.errors.push(CompilerError::type_error(
-                "Type inference timeout: too many constraint solving iterations",
-                None,
-                Some(SourceLocation {
-                    file: "<constraint_solver>".to_string(),
-                    line: 0,
-                    column: 0,
-                    byte_start: None,
-                    byte_end: None,
-                }),
-            ));
         }
 
         SolverResult {
             substitution: self.substitution,
-            remaining_constraints: self.constraints.into_iter().collect(),
             errors: self.errors,
         }
     }
@@ -542,25 +491,174 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
-    /// Check subtype relationship
+    /// Check that a value of type `subtype` may be stored where a
+    /// `supertype` is expected (assignment, argument, return, operand).
+    ///
+    /// Unlike `unify` this is directional (type-system.md §Assignability):
+    /// `integer` widens to `number` but a `number` is not an `integer`, a
+    /// child class is its parent class but not the other way round, and a
+    /// list converts only when its elements are stored the same way.
     fn check_subtype(
         &mut self,
         subtype: &ConcreteType,
         supertype: &ConcreteType,
         location: &SourceLocation,
     ) -> Result<(), CompilerError> {
-        let subtype = self.apply_substitution(subtype);
-        let supertype = self.apply_substitution(supertype);
-
-        if subtype.is_assignable_to(&supertype) {
-            Ok(())
-        } else {
-            Err(CompilerError::type_error(
-                format!("Type {} is not a subtype of {}", subtype, supertype),
+        let from = self.apply_substitution(subtype);
+        let to = self.apply_substitution(supertype);
+        let mismatch = |from: &ConcreteType, to: &ConcreteType| {
+            CompilerError::type_error(
+                format!("A value of type {} cannot be used as {}", from, to),
                 None,
                 Some(location.clone()),
-            ))
+            )
+        };
+
+        match (&from, &to) {
+            (a, b) if a == b => Ok(()),
+
+            // Type variables are bound as in unification.
+            (ConcreteType::Generic { .. }, _) | (_, ConcreteType::Generic { .. }) => {
+                self.unify(&from, &to, location)
+            }
+
+            // Error recovery, the dynamic type, and null (every slot is nullable).
+            (ConcreteType::Unknown | ConcreteType::Any | ConcreteType::Null, _)
+            | (_, ConcreteType::Unknown | ConcreteType::Any) => Ok(()),
+
+            // Numbers convert only by widening (integer → number, narrower
+            // sized → wider sized of the same signedness).
+            (a, b) if Self::is_plain_numeric(a) && Self::is_plain_numeric(b) => {
+                if a.is_assignable_to(b) {
+                    Ok(())
+                } else {
+                    Err(CompilerError::type_error(
+                        format!(
+                            "A value of type {} cannot be used as {} without an explicit conversion",
+                            a, b
+                        ),
+                        Some(format!(
+                            "Convert it explicitly, e.g. `value.{}()`",
+                            if matches!(b, ConcreteType::Number | ConcreteType::NumberSized { .. }) {
+                                "toNumber"
+                            } else {
+                                "toInteger"
+                            }
+                        )),
+                        Some(location.clone()),
+                    ))
+                }
+            }
+
+            // A child class is assignable to its parent class only.
+            (
+                ConcreteType::Class {
+                    symbol_id: child,
+                    type_args: child_args,
+                },
+                ConcreteType::Class {
+                    symbol_id: parent,
+                    type_args: parent_args,
+                },
+            ) => {
+                if child != parent && !self.is_subclass_of(*child, *parent) {
+                    return Err(self.class_mismatch(*child, *parent, location));
+                }
+                if child_args.len() != parent_args.len() {
+                    return Err(mismatch(&from, &to));
+                }
+                for (a, b) in child_args.iter().zip(parent_args.iter()) {
+                    self.unify(a, b, location)?;
+                }
+                Ok(())
+            }
+
+            // Lists and matrices are covariant in their element type, as long
+            // as the elements are stored the same way: a list of integers
+            // (4-byte slots) is not a list of numbers (8-byte slots).
+            (ConcreteType::Array(a), ConcreteType::Array(b))
+            | (ConcreteType::Matrix(a), ConcreteType::Matrix(b)) => {
+                let (a, b) = (a.as_ref(), b.as_ref());
+                if a != b && (Self::is_plain_numeric(a) || Self::is_plain_numeric(b)) {
+                    if matches!(b, ConcreteType::Unknown | ConcreteType::Any)
+                        || matches!(a, ConcreteType::Unknown | ConcreteType::Any)
+                    {
+                        return Ok(());
+                    }
+                    return Err(CompilerError::type_error(
+                        format!("A value of type {} cannot be used as {}", from, to),
+                        Some(format!(
+                            "The elements are stored differently; build a new list of {} in an `iterate` loop",
+                            b
+                        )),
+                        Some(location.clone()),
+                    ));
+                }
+                self.check_subtype(a, b, location)
+            }
+
+            (ConcreteType::Optional(a), ConcreteType::Optional(b)) => {
+                let (a, b) = ((**a).clone(), (**b).clone());
+                self.check_subtype(&a, &b, location)
+            }
+            (_, ConcreteType::Optional(inner)) => {
+                let inner = (**inner).clone();
+                self.check_subtype(&from, &inner, location)
+            }
+            (ConcreteType::Optional(inner), _) => {
+                let inner = (**inner).clone();
+                self.check_subtype(&inner, &to, location)
+            }
+
+            // Two different scalar types (string, boolean, a number).
+            (a, b) if Self::is_scalar(a) && Self::is_scalar(b) => Err(mismatch(&from, &to)),
+
+            // Everything else (functions, capabilities, unions, pairs)
+            // follows the unification rules.
+            _ => self.unify(&from, &to, location),
         }
+    }
+
+    /// A string, boolean, or number of any width.
+    fn is_scalar(t: &ConcreteType) -> bool {
+        matches!(t, ConcreteType::String | ConcreteType::Boolean) || Self::is_plain_numeric(t)
+    }
+
+    /// `integer` / `number` of any width (not a nullable `T?`).
+    fn is_plain_numeric(t: &ConcreteType) -> bool {
+        t.is_numeric() && !matches!(t, ConcreteType::Optional(_))
+    }
+
+    /// SEM001 for a class value used where an unrelated (or more derived)
+    /// class is expected, naming both classes.
+    fn class_mismatch(
+        &self,
+        from: crate::resolver::SymbolId,
+        to: crate::resolver::SymbolId,
+        location: &SourceLocation,
+    ) -> CompilerError {
+        let name = |id: crate::resolver::SymbolId| {
+            self.symbol_table
+                .and_then(|st| st.get_symbol(id).map(|s| s.name.clone()))
+                .unwrap_or_else(|| format!("#{}", id.0))
+        };
+        let (from_name, to_name) = (name(from), name(to));
+        let help = if self.is_subclass_of(to, from) {
+            format!(
+                "'{}' is a parent of '{}': a parent class value is not a '{}'",
+                from_name, to_name, to_name
+            )
+        } else {
+            format!("'{}' does not inherit from '{}'", from_name, to_name)
+        };
+        CompilerError::type_error(
+            format!(
+                "A value of class '{}' cannot be used as '{}'",
+                from_name, to_name
+            ),
+            Some(help),
+            Some(location.clone()),
+        )
     }
 
     /// Bind a type variable to a concrete type
@@ -698,86 +796,6 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
-    /// Try alternative solving strategies when stuck
-    fn try_alternative_strategies(&mut self) -> bool {
-        // Apply default types to unconstrained variables
-        self.apply_default_types()
-    }
-
-    /// Apply default types to unconstrained type variables
-    fn apply_default_types(&mut self) -> bool {
-        let mut made_progress = false;
-
-        // Find unconstrained type variables in remaining constraints
-        let mut unconstrained_vars = HashSet::new();
-
-        for constraint in &self.constraints {
-            match constraint {
-                TypeConstraint::Equality { left, right, .. } => {
-                    self.collect_type_vars(left, &mut unconstrained_vars);
-                    self.collect_type_vars(right, &mut unconstrained_vars);
-                }
-                TypeConstraint::Subtype {
-                    subtype, supertype, ..
-                } => {
-                    self.collect_type_vars(subtype, &mut unconstrained_vars);
-                    self.collect_type_vars(supertype, &mut unconstrained_vars);
-                }
-            }
-        }
-
-        // Remove already substituted variables
-        for var_id in self.substitution.keys() {
-            unconstrained_vars.remove(var_id);
-        }
-
-        // Apply default types (Unknown for now)
-        for var_id in unconstrained_vars {
-            self.substitution.insert(var_id, ConcreteType::Unknown);
-            made_progress = true;
-        }
-
-        made_progress
-    }
-
-    /// Collect type variables from a type
-    fn collect_type_vars(&self, type_: &ConcreteType, vars: &mut HashSet<TypeVarId>) {
-        match type_ {
-            ConcreteType::Generic { name, .. } => {
-                if let Ok(var_id) = name.parse::<usize>() {
-                    vars.insert(TypeVarId(var_id));
-                }
-            }
-            ConcreteType::Array(element_type) => {
-                self.collect_type_vars(element_type, vars);
-            }
-            ConcreteType::Matrix(element_type) => {
-                self.collect_type_vars(element_type, vars);
-            }
-            ConcreteType::Function {
-                parameters,
-                return_type,
-                ..
-            } => {
-                for param in parameters {
-                    self.collect_type_vars(param, vars);
-                }
-                self.collect_type_vars(return_type, vars);
-            }
-            ConcreteType::Class { type_args, .. } | ConcreteType::Interface { type_args, .. } => {
-                for arg in type_args {
-                    self.collect_type_vars(arg, vars);
-                }
-            }
-            ConcreteType::Union(types) => {
-                for t in types {
-                    self.collect_type_vars(t, vars);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Check if child_id is a subclass of parent_id
     fn is_subclass_of(
         &self,
@@ -840,7 +858,6 @@ mod tests {
         let result = solver.solve();
 
         assert!(result.errors.is_empty());
-        assert!(result.remaining_constraints.is_empty());
     }
 
     #[test]

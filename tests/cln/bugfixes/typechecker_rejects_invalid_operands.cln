@@ -1,0 +1,44 @@
+// Test: bugfixes/typechecker_rejects_invalid_operands
+// Grammar: unary_expression, field_access, binary_expression, assignment_statement
+// Semantic: SEM004 — `not` takes a boolean, arithmetic takes numbers, and a
+//   string or list has no `length` field (it is the `length()` method);
+//   SEM002 — an assigned field must exist.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[SEM004]: 'not' cannot be applied to a value of type integer
+//   typechecker_rejects_invalid_operands.cln:33:
+//   error[SEM004]: A string has no field 'length'
+//   typechecker_rejects_invalid_operands.cln:37:
+//   help: Use the method: `length()`
+//   error[SEM004]: Incompatible operand types 'string' and 'integer'
+//   typechecker_rejects_invalid_operands.cln:40:
+//   error[SEM002]: Field 'missing' not found in class 'Box'
+//   typechecker_rejects_invalid_operands.cln:44:
+//
+// Regression: `not 5` and `s.length` were accepted by the type checker and
+// then rejected by the MIR builder with a misleading message, `"a" * 2` was
+// reported as SEM006 (InheritanceError), and `box.missing = 1` dropped the
+// field lookup error.
+
+start:
+	printl("unreachable")
+
+class Box
+	public:
+		integer size = 0
+
+functions:
+	boolean notNumber()
+		return not 5
+
+	integer lengthField()
+		string s = "abc"
+		return s.length
+
+	integer arithmetic()
+		return "a" * 2
+
+	assignMissing()
+		Box b = Box()
+		b.missing = 1

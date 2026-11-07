@@ -492,9 +492,6 @@ pub enum MirOperand {
     /// Named function (for stdlib namespace functions like math.max, string.length)
     /// Stores both the name and SymbolId since SymbolId(0) is shared by all namespace functions
     NamedFunction { name: String, symbol_id: SymbolId },
-
-    /// Global variable reference
-    Global(SymbolId),
 }
 
 /// MIR constant values
@@ -525,12 +522,6 @@ pub enum MirConstant {
 
     /// Undefined value
     Undefined,
-
-    /// Array constant
-    Array(Vec<MirConstant>),
-
-    /// Structure constant
-    Struct(Vec<MirConstant>),
 }
 
 /// MIR type system (simplified from TAST)
@@ -561,21 +552,11 @@ pub enum MirType {
     /// Pointer type
     Ptr(Box<MirType>),
 
-    /// Array type with size
-    Array(Box<MirType>, usize),
-
     /// Function type
     Function {
         parameters: Vec<MirType>,
         return_type: Box<MirType>,
     },
-
-    /// Structure type
-    Struct(Vec<MirType>),
-
-    /// String tuple type (pointer, length) for WebAssembly compatibility
-    /// Strings in WASM are represented as (i32 ptr, i32 len) pairs
-    StringTuple,
 
     /// Any type - boxed value with runtime type tag
     /// Memory layout: [tag:i32][value1:i32][value2:i32] = 12 bytes
@@ -674,12 +655,6 @@ pub enum MirUnaryOp {
 /// Function attributes
 #[derive(Debug, Clone, Default)]
 pub struct MirFunctionAttributes {
-    /// Function is marked as inline
-    pub inline: bool,
-
-    /// Function is pure (no side effects)
-    pub pure: bool,
-
     /// Function is the entry point
     pub entry_point: bool,
 
@@ -796,7 +771,6 @@ impl fmt::Display for MirType {
             MirType::F64 => write!(f, "f64"),
             MirType::Bool => write!(f, "bool"),
             MirType::Ptr(inner) => write!(f, "{}*", inner),
-            MirType::Array(element, size) => write!(f, "[{} x {}]", element, size),
             MirType::Function {
                 parameters,
                 return_type,
@@ -808,15 +782,6 @@ impl fmt::Display for MirType {
                     .join(", ");
                 write!(f, "({}) -> {}", params, return_type)
             }
-            MirType::Struct(fields) => {
-                let field_types = fields
-                    .iter()
-                    .map(|f| f.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "{{{}}}", field_types)
-            }
-            MirType::StringTuple => write!(f, "string"),
             MirType::Any => write!(f, "any"),
         }
     }

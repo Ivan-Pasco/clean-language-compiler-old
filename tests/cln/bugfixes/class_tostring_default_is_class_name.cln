@@ -1,0 +1,27 @@
+// Test: bugfixes/class_tostring_default_is_class_name
+// Grammar: method_call
+// Semantic: 07-statements.md "Default Class Behavior" — a class without a
+//   `toString()` converts to its class name; a declared one is used.
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   Thing
+//   custom label
+//
+// Regression: `toString()` on a class that declares none was accepted as a
+// "universal method" and returned the object's address.
+
+start:
+	Thing t = Thing()
+	printl(t.toString())
+	Labeled l = Labeled()
+	printl(l.toString())
+
+class Thing
+	public:
+		integer size = 0
+
+class Labeled
+	functions:
+		public:
+			string toString()
+				return "custom label"

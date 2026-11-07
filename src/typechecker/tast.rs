@@ -8,6 +8,50 @@ use crate::resolver::{GlobalSymbolTable, ScopeId, SymbolId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// `string.matches(pattern)` pattern names (stdlib-reference.md §4) and the
+/// `pattern_id` passed to the `string_matches` host import for each.
+///
+/// The ids are the ones the hosts implement (clean-server `string_ops.rs`,
+/// `wasmtime_runner`): email=0 url=1 uuid=2 phone=3 date=4. The spec lists
+/// different ids for phone and date (6 and 7) and three more patterns
+/// (`slug`, `numeric`, `alpha`) that no host implements yet; those are in
+/// [`STRING_MATCH_PATTERNS_WITHOUT_HOST`] and rejected at compile time.
+pub const STRING_MATCH_PATTERNS: &[(&str, i64)] = &[
+    ("email", 0),
+    ("url", 1),
+    ("uuid", 2),
+    ("phone", 3),
+    ("date", 4),
+];
+
+/// Spec pattern names that no runtime host implements yet.
+pub const STRING_MATCH_PATTERNS_WITHOUT_HOST: &[&str] = &["slug", "numeric", "alpha"];
+
+/// The host `pattern_id` of a `string.matches()` pattern name.
+pub fn string_match_pattern_id(name: &str) -> Option<i64> {
+    STRING_MATCH_PATTERNS
+        .iter()
+        .find(|(pattern, _)| *pattern == name)
+        .map(|(_, id)| *id)
+}
+
+/// SEM010 message for a pattern name that `string_match_pattern_id` rejects.
+pub fn string_match_pattern_error(name: &str) -> String {
+    let valid = STRING_MATCH_PATTERNS
+        .iter()
+        .map(|(pattern, _)| *pattern)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if STRING_MATCH_PATTERNS_WITHOUT_HOST.contains(&name) {
+        format!(
+            "Pattern '{}' is not implemented by the runtime yet. Supported patterns: {}",
+            name, valid
+        )
+    } else {
+        format!("Unknown pattern name '{}'. Valid patterns: {}", name, valid)
+    }
+}
+
 /// Type-checked program representation
 #[derive(Debug, Clone)]
 pub struct TastProgram {
@@ -80,9 +124,6 @@ pub struct TastClass {
     pub methods: Vec<TastFunction>,
     pub constructors: Vec<TastFunction>,
     pub parent_class: Option<SymbolId>,
-    pub interfaces: Vec<SymbolId>,
-    pub generic_params: Vec<TypeParameter>,
-    pub is_abstract: bool,
     pub visibility: Visibility,
     /// Type-checked invariant conditions from the `always:` block.
     /// Each expression has been verified to be of boolean type.
@@ -98,7 +139,6 @@ pub struct TastField {
     pub field_type: ConcreteType,
     pub default_value: Option<TastExpression>,
     pub is_static: bool,
-    pub is_readonly: bool,
     pub visibility: Visibility,
     pub location: SourceLocation,
 }
@@ -257,18 +297,6 @@ pub enum TastExpressionKind {
     ObjectLiteral {
         fields: Vec<TastObjectField>,
     },
-    Cast {
-        expression: Box<TastExpression>,
-        target_type: ConcreteType,
-        is_safe: bool,
-    },
-    TypeCheck {
-        expression: Box<TastExpression>,
-        check_type: ConcreteType,
-    },
-    Await {
-        expression: Box<TastExpression>,
-    },
     OnError {
         expression: Box<TastExpression>,
         fallback: Box<TastExpression>,
@@ -298,7 +326,6 @@ pub enum TastLiteral {
     String(String),
     Boolean(bool),
     Null,
-    Undefined,
 }
 
 /// Type-checked object field
@@ -326,7 +353,6 @@ pub struct TastStateBlock {
     pub computed: Vec<TastComputedDeclaration>,
     /// State invariants checked at operation boundaries (after start:, frame:, handlers)
     pub rules: Vec<TastExpression>,
-    pub scope: TastStateScope,
     pub location: SourceLocation,
 }
 
@@ -361,18 +387,9 @@ pub struct TastComputedDeclaration {
 pub struct TastWatchBlock {
     /// Names of the watched state variables (for diagnostics / code generation)
     pub targets: Vec<String>,
-    /// Resolved symbol IDs for each target (parallel to `targets`)
-    pub target_symbol_ids: Vec<crate::resolver::SymbolId>,
     /// Fully type-checked handler body
     pub body: TastBlock,
     pub location: SourceLocation,
-}
-
-/// State scope level
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TastStateScope {
-    App,
-    Screen,
 }
 
 /// Type-checked state declaration
@@ -456,9 +473,6 @@ pub enum ConcreteType {
     /// Unknown type (for error recovery)
     Unknown,
 
-    /// Never type (for functions that never return)
-    Never,
-
     /// Namespace type (for namespace identifiers like 'math', 'string')
     Namespace,
 
@@ -531,13 +545,6 @@ pub enum BinaryOperator {
     // Usage: value default fallback (returns fallback if value is null)
     NullCoalesce,
 
-    // Bitwise
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
-    LeftShift,
-    RightShift,
-
     // String
     Concatenate,
 }
@@ -547,12 +554,6 @@ pub enum BinaryOperator {
 pub enum UnaryOperator {
     Negate,
     Not,
-    BitwiseNot,
-    Plus,
-    PreIncrement,
-    PostIncrement,
-    PreDecrement,
-    PostDecrement,
     // BOOK: required-operator - Postfix ! assertion for null check
     Required,
 }
@@ -855,7 +856,6 @@ impl std::fmt::Display for ConcreteType {
                 }
             }
             ConcreteType::Unknown => write!(f, "?"),
-            ConcreteType::Never => write!(f, "!"),
             ConcreteType::Namespace => write!(f, "namespace"),
             ConcreteType::Any => write!(f, "any"),
             ConcreteType::Optional(inner) => write!(f, "{}?", inner),

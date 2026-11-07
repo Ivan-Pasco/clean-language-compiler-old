@@ -7,12 +7,12 @@ use super::constraint_solver::ConstraintSolver;
 use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
-    TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStateScope,
-    TastStatement, TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
+    TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
+    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
-use crate::hir::{HirBinaryOp, HirStateScope, HirType, HirUnaryOp};
+use crate::hir::{HirBinaryOp, HirType, HirUnaryOp};
 use crate::resolver::{
     GlobalSymbolTable, ResolvedHirBlock, ResolvedHirClass, ResolvedHirExpression,
     ResolvedHirFunction, ResolvedHirLValue, ResolvedHirMethod, ResolvedHirParameter,
@@ -29,9 +29,6 @@ pub struct TypeInference<'a> {
 
     /// Generated type constraints
     constraints: Vec<TypeConstraint>,
-
-    /// Type variable generator
-    constraint_solver: ConstraintSolver<'a>,
 
     /// Symbol table from resolution phase
     symbol_table: &'a GlobalSymbolTable,
@@ -58,13 +55,25 @@ pub struct TypeInference<'a> {
 
     /// Recursion depth counter to prevent stack overflow
     recursion_depth: usize,
+
+    /// Location of the statement being inferred. Some expressions (operators,
+    /// literals) carry no position of their own; their diagnostics point at
+    /// the statement instead of `:0:0`.
+    statement_location: Option<SourceLocation>,
+}
+
+/// A built-in method's signature (see `TypeInference::builtin_method_signature`).
+struct BuiltinMethod {
+    params: Vec<ConcreteType>,
+    /// The first `required` parameters must be passed; the rest are optional.
+    required: usize,
+    return_type: ConcreteType,
 }
 
 /// Result of type inference
 #[derive(Debug)]
 pub struct InferenceResult {
     pub tast: TastProgram,
-    pub type_env: HashMap<SymbolId, ConcreteType>,
     pub errors: Vec<CompilerError>,
     pub warnings: Vec<CompilerError>,
 }
@@ -75,7 +84,6 @@ impl<'a> TypeInference<'a> {
         Self {
             type_env: HashMap::new(),
             constraints: Vec::new(),
-            constraint_solver: ConstraintSolver::with_symbol_table(symbol_table),
             symbol_table,
             required_param_counts: HashMap::new(),
             class_conformance: HashMap::new(),
@@ -85,6 +93,7 @@ impl<'a> TypeInference<'a> {
             errors: Vec::new(),
             warnings: Vec::new(),
             recursion_depth: 0,
+            statement_location: None,
         }
     }
 
@@ -115,20 +124,13 @@ impl<'a> TypeInference<'a> {
                 .or_default()
                 .insert(*cap_sym);
         }
-        // Forward the map to the constraint solver so it can validate
-        // Class → Interface (capability) unifications without needing to
-        // walk the resolver's descriptor map at each unification site.
-        self.constraint_solver
-            .set_class_conformance(self.class_conformance.clone());
-
         // Infer types for all program elements
         let tast_program = self.infer_program(&program);
 
-        // Solve generated constraints
-        let mut solver = std::mem::replace(
-            &mut self.constraint_solver,
-            ConstraintSolver::with_symbol_table(self.symbol_table),
-        );
+        // Solve the generated constraints. The conformance map lets the
+        // solver validate Class → Interface (capability) unifications.
+        let mut solver = ConstraintSolver::with_symbol_table(self.symbol_table);
+        solver.set_class_conformance(std::mem::take(&mut self.class_conformance));
         solver.add_constraints(std::mem::take(&mut self.constraints));
         let solver_result = solver.solve();
 
@@ -137,7 +139,6 @@ impl<'a> TypeInference<'a> {
 
         InferenceResult {
             tast: tast_program,
-            type_env: self.type_env,
             errors: self.errors,
             warnings: self.warnings,
         }
@@ -911,27 +912,28 @@ impl<'a> TypeInference<'a> {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if self.symbol_table.is_builtin(symbol_id) {
                     match &symbol.kind {
+                        // Skip if already registered (to preserve manual overrides above)
                         crate::resolver::SymbolKind::Function {
                             parameters,
                             return_type,
-                        } => {
-                            // Skip if already registered (to preserve manual overrides above)
-                            self.type_env.entry(symbol_id).or_insert_with(|| {
-                                let concrete_params: Vec<ConcreteType> = parameters
-                                    .iter()
-                                    .map(Self::hir_type_to_concrete_type)
-                                    .collect();
-                                let concrete_return = return_type
-                                    .as_ref()
-                                    .map(|t| Box::new(Self::hir_type_to_concrete_type(t)))
-                                    .unwrap_or_else(|| Box::new(ConcreteType::Null));
+                        } if !self.type_env.contains_key(&symbol_id) => {
+                            let concrete_params: Vec<ConcreteType> = parameters
+                                .iter()
+                                .map(|t| self.hir_type_to_concrete(t))
+                                .collect();
+                            let concrete_return = return_type
+                                .as_ref()
+                                .map(|t| Box::new(self.hir_type_to_concrete(t)))
+                                .unwrap_or_else(|| Box::new(ConcreteType::Null));
 
+                            self.type_env.insert(
+                                symbol_id,
                                 ConcreteType::Function {
                                     parameters: concrete_params,
                                     return_type: concrete_return,
                                     is_background: false,
-                                }
-                            });
+                                },
+                            );
                         }
                         _ => {
                             // Skip non-function builtins (classes, namespaces, etc.)
@@ -949,45 +951,7 @@ impl<'a> TypeInference<'a> {
         for symbol_id in all_symbols {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if let crate::resolver::SymbolKind::StateVariable { var_type, .. } = &symbol.kind {
-                    // Convert HirType to ConcreteType and register in type environment.
-                    //
-                    // The static mapper returns `Unknown` for any `HirType::Named` that
-                    // isn't one of the primitive aliases (integer/number/string/boolean/
-                    // void). User-defined class instances declared as state globals
-                    // (e.g. `state: MyToolbar instance = MyToolbar()` from frame.ui's
-                    // expand_component output) would land as Unknown here. The MIR
-                    // builder's method-call type-inference then falls back to the locals
-                    // map — which sees the class instance as `MirType::I32` (its WASM
-                    // pointer) and remaps that to `ConcreteType::Integer`. The codegen
-                    // then looks up `integer.<method>` and fails with "Function
-                    // 'integer.<method>' not found in function map".
-                    //
-                    // Upgrade: when the static mapper yields Unknown for a Named type
-                    // whose name matches a class symbol already in the table, register
-                    // it as `ConcreteType::Class { symbol_id, ... }` instead. Class
-                    // signatures are registered later in `infer_program` but the
-                    // resolver pass that ran before us already populated the symbol
-                    // table with class symbols, so the lookup succeeds here.
-                    let mut concrete_type = Self::hir_type_to_concrete_type(var_type);
-                    if matches!(concrete_type, ConcreteType::Unknown) {
-                        if let crate::hir::HirType::Named { name, .. } = var_type {
-                            if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(name) {
-                                if let Some(class_symbol) =
-                                    self.symbol_table.get_symbol(class_symbol_id)
-                                {
-                                    if matches!(
-                                        class_symbol.kind,
-                                        crate::resolver::SymbolKind::Class { .. }
-                                    ) {
-                                        concrete_type = ConcreteType::Class {
-                                            symbol_id: class_symbol_id,
-                                            type_args: Vec::new(),
-                                        };
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    let concrete_type = self.hir_type_to_concrete(var_type);
                     self.type_env.insert(symbol_id, concrete_type);
                     tracing::trace!(
                         "Registered state variable '{}' (SymbolId {:?}) with type",
@@ -996,71 +960,6 @@ impl<'a> TypeInference<'a> {
                     );
                 }
             }
-        }
-    }
-
-    /// Convert HirType to ConcreteType for builtin function type mapping
-    fn hir_type_to_concrete_type(hir_type: &HirType) -> ConcreteType {
-        match hir_type {
-            HirType::Integer => ConcreteType::Integer,
-            HirType::Number => ConcreteType::Number,
-            HirType::String => ConcreteType::String,
-            HirType::Boolean => ConcreteType::Boolean,
-            HirType::Void => ConcreteType::Null,
-            // Precision types - preserve bit width through type inference
-            HirType::Integer8 => ConcreteType::IntegerSized {
-                bits: 8,
-                unsigned: false,
-            },
-            HirType::Integer8u => ConcreteType::IntegerSized {
-                bits: 8,
-                unsigned: true,
-            },
-            HirType::Integer16 => ConcreteType::IntegerSized {
-                bits: 16,
-                unsigned: false,
-            },
-            HirType::Integer16u => ConcreteType::IntegerSized {
-                bits: 16,
-                unsigned: true,
-            },
-            HirType::Integer32 => ConcreteType::IntegerSized {
-                bits: 32,
-                unsigned: false,
-            },
-            HirType::Integer32u => ConcreteType::IntegerSized {
-                bits: 32,
-                unsigned: true,
-            },
-            HirType::Integer64 => ConcreteType::IntegerSized {
-                bits: 64,
-                unsigned: false,
-            },
-            HirType::Integer64u => ConcreteType::IntegerSized {
-                bits: 64,
-                unsigned: true,
-            },
-            HirType::Number32 => ConcreteType::NumberSized { bits: 32 },
-            HirType::Number64 => ConcreteType::NumberSized { bits: 64 },
-            // Builtin signatures such as `string.split -> list<string>` and
-            // `validator.getErrors -> list<string>` carry composite types.
-            // Mapping them to Unknown typed the call result as `any`, so the
-            // returned list pointer was unboxed as a tagged value.
-            HirType::List(element_type) => {
-                ConcreteType::Array(Box::new(Self::hir_type_to_concrete_type(element_type)))
-            }
-            HirType::Named { name, .. } => {
-                // For now, map named types to concrete types by name
-                match name.as_str() {
-                    "integer" => ConcreteType::Integer,
-                    "number" => ConcreteType::Number,
-                    "string" => ConcreteType::String,
-                    "boolean" => ConcreteType::Boolean,
-                    "void" => ConcreteType::Undefined,
-                    _ => ConcreteType::Unknown,
-                }
-            }
-            _ => ConcreteType::Unknown,
         }
     }
 
@@ -1297,7 +1196,6 @@ impl<'a> TypeInference<'a> {
 
         Ok(TastWatchBlock {
             targets: watch.targets.clone(),
-            target_symbol_ids: watch.target_symbol_ids.clone(),
             body: tast_body,
             location: watch.location.clone(),
         })
@@ -1412,7 +1310,7 @@ impl<'a> TypeInference<'a> {
         &mut self,
         callee: SymbolId,
         callee_name: &str,
-        arguments: &[TastExpression],
+        arguments: &mut [TastExpression],
         location: &SourceLocation,
     ) {
         let Some(ConcreteType::Function { parameters, .. }) = self.type_env.get(&callee).cloned()
@@ -1443,13 +1341,37 @@ impl<'a> TypeInference<'a> {
             ));
             return;
         }
-        for (param_type, arg) in parameters.iter().zip(arguments) {
-            self.add_constraint(TypeConstraint::Equality {
-                left: arg.expr_type.clone(),
-                right: param_type.clone(),
-                location: arg.location.clone(),
-            });
+        for (param_type, arg) in parameters.iter().zip(arguments.iter_mut()) {
+            let location = Self::argument_location(arg, location);
+            self.require_assignable(arg, param_type, &location);
         }
+    }
+
+    /// Where to report a problem with a call argument: the argument itself,
+    /// or the call when the argument carries no position (literals do not).
+    fn argument_location(arg: &TastExpression, call: &SourceLocation) -> SourceLocation {
+        if arg.location.line == 0 {
+            call.clone()
+        } else {
+            arg.location.clone()
+        }
+    }
+
+    /// `value` is stored where a `target` is expected (assignment, argument,
+    /// return): widen a literal to the target type and require the value's
+    /// type to be assignable to it (directional, type-system.md §5).
+    fn require_assignable(
+        &mut self,
+        value: &mut TastExpression,
+        target: &ConcreteType,
+        location: &SourceLocation,
+    ) {
+        Self::widen_literal_to_declared_type(value, target);
+        self.add_constraint(TypeConstraint::Subtype {
+            subtype: value.expr_type.clone(),
+            supertype: target.clone(),
+            location: location.clone(),
+        });
     }
 
     /// Infer types for a function
@@ -1503,33 +1425,9 @@ impl<'a> TypeInference<'a> {
         // Check return type consistency
         let inferred_return_type = tast_body.return_type.clone();
         let declared_return_type = if let Some(ref return_type) = function.return_type {
-            // Explicit return type declared - enforce it
-            let concrete_return_type = self.hir_type_to_concrete(return_type);
-
-            // FIX: Only add constraint if types are compatible
-            // This prevents incorrect constraint generation when block inference fails
-            match (&inferred_return_type, &concrete_return_type) {
-                (ConcreteType::Generic { .. }, _) => {
-                    // Type variable - no constraint needed, use declared type
-                }
-                (inferred, declared) if inferred == declared => {
-                    // Types match - no constraint needed
-                }
-                (ConcreteType::Integer, ConcreteType::String)
-                | (ConcreteType::String, ConcreteType::Integer) => {
-                    // String/Integer mismatch - known issue, use declared type without constraint
-                    // This is a targeted fix for the string type constraint generation bug
-                }
-                _ => {
-                    // Other concrete types - add constraint to ensure consistency
-                    self.add_constraint(TypeConstraint::Equality {
-                        left: inferred_return_type.clone(),
-                        right: concrete_return_type.clone(),
-                        location: function.location.clone(),
-                    });
-                }
-            }
-            concrete_return_type
+            // Explicit return type declared: every `return` was checked
+            // against it while the body was inferred.
+            self.hir_type_to_concrete(return_type)
         } else {
             // No return type declared - use inferred type
             // This allows functions to have their return type inferred from their body
@@ -1731,7 +1629,7 @@ impl<'a> TypeInference<'a> {
     ) {
         let is_void_return = matches!(
             declared_return_type,
-            ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Never
+            ConcreteType::Null | ConcreteType::Undefined
         );
         if is_void_return || Self::block_definitely_returns(body) {
             return;
@@ -1797,8 +1695,7 @@ impl<'a> TypeInference<'a> {
                 name: field.name.clone(),
                 field_type,
                 default_value,
-                is_static: false,   // ResolvedHirField doesn't have is_static field
-                is_readonly: false, // Would get from HIR
+                is_static: false, // ResolvedHirField doesn't have is_static field
                 visibility: Visibility::Public, // Would get from HIR
                 location: field.location.clone(),
             });
@@ -1872,9 +1769,6 @@ impl<'a> TypeInference<'a> {
             methods: tast_methods,
             constructors: tast_constructors, // Now properly populated
             parent_class: class.parent,
-            interfaces: Vec::new(),         // Would handle interfaces
-            generic_params: Vec::new(),     // Would handle generics
-            is_abstract: false,             // Would get from HIR
             visibility: Visibility::Public, // Would get from HIR
             invariants: tast_invariants,
             location: class.location.clone(),
@@ -2080,7 +1974,6 @@ impl<'a> TypeInference<'a> {
                         collect_refs_expr(fallback, out);
                     }
                     Cast { expression, .. } => collect_refs_expr(expression, out),
-                    Assignment { value, .. } => collect_refs_expr(value, out),
                     Range {
                         start, end, step, ..
                     } => {
@@ -2326,16 +2219,10 @@ impl<'a> TypeInference<'a> {
             tast_rules.push(rule);
         }
 
-        let scope = match state_block.scope {
-            HirStateScope::App => TastStateScope::App,
-            HirStateScope::Screen => TastStateScope::Screen,
-        };
-
         Ok(TastStateBlock {
             declarations: tast_declarations,
             computed: tast_computed,
             rules: tast_rules,
-            scope,
             location: state_block.location.clone(),
         })
     }
@@ -2485,7 +2372,53 @@ impl<'a> TypeInference<'a> {
         }
 
         self.recursion_depth += 1;
-        let result = match statement {
+        let saved_statement_location = self.statement_location.clone();
+        if let Some(location) = Self::statement_location_of(statement) {
+            if location.line != 0 {
+                self.statement_location = Some(location.clone());
+            }
+        }
+        let result = self.infer_statement_kind(statement);
+        self.statement_location = saved_statement_location;
+        self.recursion_depth -= 1;
+        result
+    }
+
+    /// The source location of a statement.
+    fn statement_location_of(statement: &ResolvedHirStatement) -> Option<&SourceLocation> {
+        match statement {
+            ResolvedHirStatement::VariableDeclaration { location, .. }
+            | ResolvedHirStatement::Assignment { location, .. }
+            | ResolvedHirStatement::Expression { location, .. }
+            | ResolvedHirStatement::Return { location, .. }
+            | ResolvedHirStatement::If { location, .. }
+            | ResolvedHirStatement::For { location, .. }
+            | ResolvedHirStatement::While { location, .. }
+            | ResolvedHirStatement::Break { location }
+            | ResolvedHirStatement::Continue { location }
+            | ResolvedHirStatement::Print { location, .. }
+            | ResolvedHirStatement::LaterAssignment { location, .. }
+            | ResolvedHirStatement::Background { location, .. }
+            | ResolvedHirStatement::Require { location, .. }
+            | ResolvedHirStatement::Ensure { location, .. } => Some(location),
+        }
+    }
+
+    /// `location`, or the enclosing statement's location when `location`
+    /// carries no position.
+    fn located(&self, location: &SourceLocation) -> SourceLocation {
+        match &self.statement_location {
+            Some(statement) if location.line == 0 => statement.clone(),
+            _ => location.clone(),
+        }
+    }
+
+    /// Infer one statement (see `infer_statement`).
+    fn infer_statement_kind(
+        &mut self,
+        statement: &ResolvedHirStatement,
+    ) -> Result<TastStatement, CompilerError> {
+        match statement {
             ResolvedHirStatement::Expression {
                 expression,
                 location,
@@ -2628,11 +2561,7 @@ impl<'a> TypeInference<'a> {
                                 ),
                             });
                         } else {
-                            self.add_constraint(TypeConstraint::Equality {
-                                left: tast_init.expr_type.clone(),
-                                right: declared_type.clone(),
-                                location: location.clone(),
-                            });
+                            self.require_assignable(&mut tast_init, &declared_type, location);
                         }
 
                         tast_init
@@ -2676,16 +2605,12 @@ impl<'a> TypeInference<'a> {
 
             ResolvedHirStatement::Return { value, location } => {
                 let return_type = if let Some(return_expr) = value {
-                    let tast_expr = self.infer_expression(return_expr)?;
-                    let expr_type = tast_expr.expr_type.clone();
+                    let mut tast_expr = self.infer_expression(return_expr)?;
 
-                    // Check against function return type
-                    if let Some(expected_return_type) = &self.current_return_type {
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: expr_type.clone(),
-                            right: expected_return_type.clone(),
-                            location: location.clone(),
-                        });
+                    // The returned value must be assignable to the declared
+                    // return type.
+                    if let Some(expected_return_type) = self.current_return_type.clone() {
+                        self.require_assignable(&mut tast_expr, &expected_return_type, location);
                     }
 
                     Some(tast_expr)
@@ -2792,18 +2717,24 @@ impl<'a> TypeInference<'a> {
                 // Infer iterable type
                 let tast_iterable = self.infer_expression(iterable)?;
 
-                // Extract element type from iterable (Array<T> -> T)
+                // `iterate x in items` walks a list (a range is a list of
+                // integers); the loop variable has the element type.
                 let element_type = match &tast_iterable.expr_type {
                     ConcreteType::Array(element_type) => (**element_type).clone(),
-                    _ => {
-                        // Add constraint that iterable must be an array
-                        let element_var = self.create_type_variable();
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: tast_iterable.expr_type.clone(),
-                            right: ConcreteType::Array(Box::new(element_var.clone())),
-                            location: location.clone(),
-                        });
-                        element_var
+                    // Already reported where the type became unknown.
+                    ConcreteType::Unknown => ConcreteType::Unknown,
+                    other => {
+                        let help = if matches!(other, ConcreteType::Any) {
+                            "Declare the value as a list first, e.g. `list<any> items = value`, then iterate over `items`"
+                        } else {
+                            "`iterate` walks the elements of a list or a range (`iterate i in 1 to 10`)"
+                        };
+                        return Err(CompilerError::semantic_error_with_code(
+                            format!("Cannot iterate over a value of type {}", other),
+                            Some(help.to_string()),
+                            Some(tast_iterable.location.clone()),
+                            "SEM004",
+                        ));
                     }
                 };
 
@@ -2875,14 +2806,9 @@ impl<'a> TypeInference<'a> {
                             ConcreteType::Unknown
                         }
                     }
-                    ResolvedHirLValue::Index { array, .. } => {
-                        // Infer array type to get element type
-                        let tast_array = self.infer_expression(array)?;
-                        match &tast_array.expr_type {
-                            ConcreteType::Array(element_type) => (**element_type).clone(),
-                            _ => ConcreteType::Unknown,
-                        }
-                    }
+                    // The element type is determined (and the index checked)
+                    // with the target expressions below.
+                    ResolvedHirLValue::Index { .. } => ConcreteType::Unknown,
                 };
 
                 // Special handling for empty literals with known target type
@@ -2897,7 +2823,7 @@ impl<'a> TypeInference<'a> {
                     _ => false,
                 };
 
-                let tast_value =
+                let mut tast_value =
                     if is_empty_literal && !matches!(target_type, ConcreteType::Unknown) {
                         // For empty array literals, create an ArrayLiteral with empty elements
                         // This ensures the list gets properly allocated rather than set to 0
@@ -2956,12 +2882,7 @@ impl<'a> TypeInference<'a> {
 
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
-                            // Add constraint that value type matches target type
-                            self.add_constraint(TypeConstraint::Equality {
-                                left: tast_value.expr_type.clone(),
-                                right: target_type.clone(),
-                                location: location.clone(),
-                            });
+                            self.require_assignable(&mut tast_value, &target_type, location);
                         }
 
                         TastExpression {
@@ -3007,9 +2928,16 @@ impl<'a> TypeInference<'a> {
                         // object's type; bind it here the same way field reads
                         // are bound.
                         let (target_type, field_symbol_id) = if *field_symbol_id == SymbolId(0) {
-                            match self.infer_field_type_and_symbol(&tast_object.expr_type, field) {
+                            match self.infer_field_type_and_symbol(
+                                &tast_object.expr_type,
+                                field,
+                                field_location,
+                            ) {
                                 Ok(found) => found,
-                                Err(_) => (target_type, *field_symbol_id),
+                                Err(error) => {
+                                    self.errors.push(error);
+                                    (ConcreteType::Unknown, *field_symbol_id)
+                                }
                             }
                         } else {
                             (target_type, *field_symbol_id)
@@ -3042,12 +2970,7 @@ impl<'a> TypeInference<'a> {
 
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
-                            // Add constraint that value type matches field type
-                            self.add_constraint(TypeConstraint::Equality {
-                                left: tast_value.expr_type.clone(),
-                                right: target_type.clone(),
-                                location: location.clone(),
-                            });
+                            self.require_assignable(&mut tast_value, &target_type, location);
                         }
 
                         TastExpression {
@@ -3065,22 +2988,17 @@ impl<'a> TypeInference<'a> {
                         index,
                         location: index_location,
                     } => {
-                        // Handle array index assignments like arr[i] = value
+                        // `list[i] = v`, `pairs[key] = v`: the same container and
+                        // index checks as a read, and the value must be
+                        // assignable to the element type.
                         let tast_array = self.infer_expression(array)?;
                         let tast_index = self.infer_expression(index)?;
-
-                        // For array index assignment, the element type should match the value type
-                        let element_type = match &tast_array.expr_type {
-                            ConcreteType::Array(elem_type) => (**elem_type).clone(),
-                            _ => ConcreteType::Unknown, // Not an array, but we'll handle this as unknown
-                        };
-
-                        // Add constraint that value type matches element type
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: tast_value.expr_type.clone(),
-                            right: element_type.clone(),
-                            location: location.clone(),
-                        });
+                        let element_type = self.index_element_type(
+                            &tast_array.expr_type,
+                            &tast_index.expr_type,
+                            index_location,
+                        );
+                        self.require_assignable(&mut tast_value, &element_type, location);
 
                         TastExpression {
                             kind: TastExpressionKind::ArrayAccess {
@@ -3199,9 +3117,7 @@ impl<'a> TypeInference<'a> {
                     location: location.clone(),
                 })
             }
-        };
-        self.recursion_depth -= 1;
-        result
+        }
     }
 
     /// Walk a resolved expression and, for every `Variable { name: "result" }` node found,
@@ -3336,11 +3252,6 @@ impl<'a> TypeInference<'a> {
                 operand,
                 location,
             } => self.infer_unary_op_expression(op, operand, location)?,
-            ResolvedHirExpression::Assignment {
-                target,
-                value,
-                location,
-            } => self.infer_assignment_expression(target, value, location)?,
             ResolvedHirExpression::Constructor {
                 class_name,
                 class_symbol_id,
@@ -3395,7 +3306,7 @@ impl<'a> TypeInference<'a> {
         Ok(TastExpression {
             kind,
             expr_type,
-            location,
+            location: self.located(&location),
         })
     }
 
@@ -3548,9 +3459,8 @@ impl<'a> TypeInference<'a> {
         let tast_left = self.infer_expression(left)?;
         let tast_right = self.infer_expression(right)?;
 
-        // Resolve types with current substitutions before binary operation type inference
-        let resolved_left_type = self.resolve_type(&tast_left.expr_type);
-        let resolved_right_type = self.resolve_type(&tast_right.expr_type);
+        let resolved_left_type = tast_left.expr_type.clone();
+        let resolved_right_type = tast_right.expr_type.clone();
 
         let result_type =
             self.infer_binary_operation(op, &resolved_left_type, &resolved_right_type, location)?;
@@ -3595,15 +3505,19 @@ impl<'a> TypeInference<'a> {
             }
             let _constraint_check = self.infer_function_call(
                 &function_type,
-                &tast_arguments,
+                &mut tast_arguments,
                 *function_symbol_id,
                 location,
             )?;
         }
 
         // Look up function type and determine return type
-        let return_type =
-            self.infer_function_return_type(*function_symbol_id, function, &tast_arguments)?;
+        let return_type = self.infer_function_return_type(
+            *function_symbol_id,
+            function,
+            &tast_arguments,
+            location,
+        )?;
 
         // Use SymbolId(0) for namespace functions (string.*, math.*, req.*, etc.)
         // This ensures MIR builder creates NamedFunction operands for proper symbol resolution
@@ -3652,14 +3566,34 @@ impl<'a> TypeInference<'a> {
         let tast_array = self.infer_expression(array)?;
         let tast_index = self.infer_expression(index)?;
 
-        // Extract element type based on array type and index type.
+        let element_type =
+            self.index_element_type(&tast_array.expr_type, &tast_index.expr_type, location);
+
+        Ok((
+            TastExpressionKind::ArrayAccess {
+                array: Box::new(tast_array),
+                index: Box::new(tast_index),
+            },
+            element_type,
+            location.clone(),
+        ))
+    }
+
+    /// The element type of `container[index]` (list, matrix, pairs or any),
+    /// reporting IDX001–IDX004 when the container cannot be indexed or the
+    /// index has the wrong type. Shared by reads and bracket assignments.
+    fn index_element_type(
+        &mut self,
+        container_type: &ConcreteType,
+        index_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ConcreteType {
         // IDX001–IDX004 are errors (error-codes.md) when both sides have a
         // definite type; when either side is still unresolved (Unknown, Any,
         // generic, union, optional, sized integer) the mismatch cannot be
         // proven and is reported as a warning instead.
-        let index_type = tast_index.expr_type.clone();
-        let index_is_definite = Self::is_definite_index_type(&index_type);
-        let element_type = match &tast_array.expr_type {
+        let index_is_definite = Self::is_definite_index_type(index_type);
+        match container_type {
             // Any type supports both string (object access) and integer (array access)
             ConcreteType::Any => {
                 if !matches!(index_type, ConcreteType::String | ConcreteType::Integer) {
@@ -3704,13 +3638,12 @@ impl<'a> TypeInference<'a> {
             }
             // Pairs bracket access uses the declared key type (IDX003)
             ConcreteType::Pairs(key_type, value_type) => {
-                let key_is_string = matches!(**key_type, ConcreteType::String);
-                if index_type != **key_type && !matches!(index_type, ConcreteType::String) {
+                if !index_type.is_assignable_to(key_type) {
                     self.report_index_diagnostic(
-                        key_is_string && index_is_definite,
+                        index_is_definite && Self::is_definite_index_type(key_type),
                         "IDX003",
-                        format!("Pairs key must be string, found {}", index_type),
-                        "Use pairs[\"key\"] for pairs access",
+                        format!("Pairs key must be {}, found {}", key_type, index_type),
+                        "Use a key of the type the pairs declares, e.g. pairs[\"key\"] for pairs<string, V>",
                         location,
                     );
                 }
@@ -3728,16 +3661,7 @@ impl<'a> TypeInference<'a> {
                 );
                 ConcreteType::Unknown
             }
-        };
-
-        Ok((
-            TastExpressionKind::ArrayAccess {
-                array: Box::new(tast_array),
-                index: Box::new(tast_index),
-            },
-            element_type,
-            location.clone(),
-        ))
+        }
     }
 
     /// True when `t` is a fully-known type, so an index-type mismatch
@@ -3787,7 +3711,7 @@ impl<'a> TypeInference<'a> {
             message,
             Some(help.to_string()),
             crate::error::ErrorType::Validation,
-            Some(location.clone()),
+            Some(self.located(location)),
         )
         .with_error_code(code);
         if is_error {
@@ -3960,48 +3884,25 @@ impl<'a> TypeInference<'a> {
             tast_arguments.push(self.infer_expression(arg)?);
         }
 
-        // SEM010: string.matches() argument must be a known pattern name literal.
-        // semantic-rules.md §SEM010
-        // Valid patterns per spec: email, url, uuid, slug, numeric, alpha, phone, date
+        // SEM010: string.matches() argument must be a known pattern name literal
+        // (semantic-rules.md §SEM010). The table is shared with the MIR builder.
         if method == "matches" && matches!(tast_receiver.expr_type, ConcreteType::String) {
-            const VALID_PATTERNS: &[&str] = &[
-                "email", "url", "uuid", "slug", "numeric", "alpha", "phone", "date",
-            ];
-            if let Some(first_arg) = tast_arguments.first() {
-                let is_valid = match &first_arg.kind {
-                    crate::typechecker::tast::TastExpressionKind::Literal {
-                        value: crate::typechecker::tast::TastLiteral::String(pattern_name),
-                    } => VALID_PATTERNS.contains(&pattern_name.as_str()),
-                    _ => false, // non-literal argument also rejected
-                };
-                if !is_valid {
-                    let name = match &first_arg.kind {
-                        crate::typechecker::tast::TastExpressionKind::Literal {
-                            value: crate::typechecker::tast::TastLiteral::String(s),
-                        } => s.clone(),
-                        _ => "<expression>".to_string(),
-                    };
-                    self.errors.push(CompilerError::Validation {
-                        context: Box::new(
-                            crate::error::ErrorContext::new(
-                                format!(
-                                    "Unknown pattern name '{}'. Valid patterns: email, url, uuid, slug, numeric, alpha, phone, date",
-                                    name
-                                ),
-                                None,
-                                crate::error::ErrorType::Validation,
-                                Some(location.clone()),
-                            )
-                            .with_error_code("SEM010"),
-                        ),
-                    });
+            let message = match tast_arguments.first().map(|a| &a.kind) {
+                Some(TastExpressionKind::Literal {
+                    value: TastLiteral::String(pattern_name),
+                }) => super::tast::string_match_pattern_id(pattern_name)
+                    .is_none()
+                    .then(|| super::tast::string_match_pattern_error(pattern_name)),
+                Some(_) => {
+                    Some("string.matches() takes the pattern name as a string literal".to_string())
                 }
-            } else {
-                // No argument at all — report missing argument
+                None => Some(super::tast::string_match_pattern_error("")),
+            };
+            if let Some(message) = message {
                 self.errors.push(CompilerError::Validation {
                     context: Box::new(
                         crate::error::ErrorContext::new(
-                            "string.matches() requires a pattern name argument (email, url, uuid, slug, numeric, alpha, phone, date)".to_string(),
+                            message,
                             None,
                             crate::error::ErrorType::Validation,
                             Some(location.clone()),
@@ -4012,12 +3913,10 @@ impl<'a> TypeInference<'a> {
             }
         }
 
-        // Resolve receiver type with current substitutions before method lookup
-        let resolved_receiver_type = self.resolve_type(&tast_receiver.expr_type);
+        let resolved_receiver_type = tast_receiver.expr_type.clone();
 
         // Use resolved type for method resolution
-        let return_type =
-            self.infer_method_return_type(method, &resolved_receiver_type, &tast_arguments)?;
+        let return_type = self.infer_method_return_type(method, &resolved_receiver_type)?;
 
         // NOTE: Resolve method symbol from receiver's class type or primitive type
         // The resolver sets method_symbol_id = None because it doesn't have type info
@@ -4094,6 +3993,13 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        self.check_builtin_method_call(
+            &resolved_receiver_type,
+            method,
+            &mut tast_arguments,
+            location,
+        );
+
         // SEM004: joining a list is a namespace utility (`list.join(items, sep)`);
         // the method form is not part of the language (method-style syntax:
         // "every operation has one name").
@@ -4114,25 +4020,6 @@ impl<'a> TypeInference<'a> {
             });
         }
 
-        // SEM001: a value added to a typed list must have the element type.
-        if let (ConcreteType::Array(element_type), "add" | "push", [value]) =
-            (&resolved_receiver_type, method, tast_arguments.as_slice())
-        {
-            if Self::is_primitive_value_type(element_type)
-                && Self::is_primitive_value_type(&value.expr_type)
-                && !value.expr_type.is_assignable_to(element_type)
-            {
-                self.errors.push(CompilerError::type_error(
-                    format!(
-                        "Cannot add a value of type {} to a list of {}",
-                        value.expr_type, element_type
-                    ),
-                    None,
-                    Some(value.location.clone()),
-                ));
-            }
-        }
-
         // FUNC002 / SEM001: a class method's arguments must match its parameters.
         if matches!(resolved_receiver_type, ConcreteType::Class { .. })
             && matches!(
@@ -4142,7 +4029,12 @@ impl<'a> TypeInference<'a> {
                 Some(SymbolKind::Method { .. })
             )
         {
-            self.check_call_arguments(resolved_method_symbol, method, &tast_arguments, location);
+            self.check_call_arguments(
+                resolved_method_symbol,
+                method,
+                &mut tast_arguments,
+                location,
+            );
         }
 
         // SEM005: Private method access check.
@@ -4203,8 +4095,12 @@ impl<'a> TypeInference<'a> {
             method,
             tast_arguments.len()
         );
-        let return_type =
-            self.infer_static_method_return_type(&full_class_name, method, &tast_arguments)?;
+        let return_type = self.infer_static_method_return_type(
+            &full_class_name,
+            method,
+            &tast_arguments,
+            location,
+        )?;
 
         // Emit argument-vs-parameter type constraints for user-defined static
         // methods so the constraint solver can reject non-conforming classes
@@ -4213,19 +4109,30 @@ impl<'a> TypeInference<'a> {
         // like `Registry.save(NonPersist())` compiled and only trapped at
         // codegen with "no class conforms to capability" — see fingerprint
         // #838c14541ba7 (0.33.86).
-        if method_symbol_id.0 != 0 {
-            if let Some(sym) = self.symbol_table.get_symbol(*method_symbol_id) {
+        // The resolver leaves the method unbound (SymbolId(0)) when the class
+        // is declared after the caller; find it by class and name.
+        let checked_method_symbol = if method_symbol_id.0 != 0 {
+            Some(*method_symbol_id)
+        } else {
+            self.symbol_table
+                .lookup_symbol(&full_class_name)
+                .filter(|id| {
+                    matches!(
+                        self.symbol_table.get_symbol(*id).map(|s| &s.kind),
+                        Some(SymbolKind::Class { .. })
+                    )
+                })
+                .and_then(|class_id| self.symbol_table.lookup_class_member(class_id, method))
+        };
+        if let Some(method_symbol) = checked_method_symbol {
+            if let Some(sym) = self.symbol_table.get_symbol(method_symbol) {
                 if let SymbolKind::Method { parameters, .. } = &sym.kind {
                     let param_types: Vec<ConcreteType> = parameters
                         .iter()
                         .map(|p| self.hir_type_to_concrete(p))
                         .collect();
-                    for (param_type, arg) in param_types.iter().zip(tast_arguments.iter()) {
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: arg.expr_type.clone(),
-                            right: param_type.clone(),
-                            location: location.clone(),
-                        });
+                    for (param_type, arg) in param_types.iter().zip(tast_arguments.iter_mut()) {
+                        self.require_assignable(arg, param_type, location);
                     }
                 }
             }
@@ -4234,20 +4141,7 @@ impl<'a> TypeInference<'a> {
         // NOTE: Use SymbolId(0) for built-in namespace methods
         // (string.*, math.*, list.*, etc.) so MIR builder creates NamedFunction operands
         // For user-defined static methods, keep the actual method_symbol_id
-        let is_builtin_namespace = [
-            "string",
-            "math",
-            "list",
-            "array",
-            "compare",
-            "file",
-            "http",
-            "json",
-            "input",
-            "validator",
-        ]
-        .iter()
-        .any(|ns| full_class_name.eq(*ns) || full_class_name.starts_with(&format!("{}.", ns)));
+        let is_builtin_namespace = Self::is_builtin_namespace(&full_class_name);
 
         tracing::debug!(
             "DEBUG TYPE INF STATIC: full_class_name='{}', method='{}', is_builtin={}, method_symbol_id=SymbolId({})",
@@ -4297,7 +4191,7 @@ impl<'a> TypeInference<'a> {
         // NOTE: Resolve the field type AND symbol ID based on the object's actual type
         // This enables inherited field access - we look up the field in the object's class hierarchy
         let (field_type, resolved_field_symbol_id) =
-            self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
+            self.infer_field_type_and_symbol(&tast_object.expr_type, field, location)?;
 
         // SEM005: Private field access check.
         if resolved_field_symbol_id.0 != 0 {
@@ -4391,37 +4285,6 @@ impl<'a> TypeInference<'a> {
         ))
     }
 
-    /// Helper: infer an `Assignment` expression.
-    fn infer_assignment_expression(
-        &mut self,
-        target: &ResolvedHirLValue,
-        value: &ResolvedHirExpression,
-        location: &SourceLocation,
-    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
-        let tast_value = self.infer_expression(value)?;
-
-        // For assignment expressions, the type is the type of the assigned value
-        let assignment_type = tast_value.expr_type.clone();
-
-        // Validate assignment target - complex LValues not yet fully supported
-        match target {
-            ResolvedHirLValue::Variable { .. } => {
-                // Simple variable assignment is supported
-            }
-            _ => {
-                // For complex LValues (field access, array indexing, etc.), emit error
-                self.errors.push(CompilerError::type_error(
-                    "Complex assignment targets not yet fully supported in type inference",
-                    None,
-                    Some(location.clone()),
-                ));
-            }
-        }
-
-        // Assignment expressions return the assigned value in Clean Language
-        Ok((tast_value.kind, assignment_type, location.clone()))
-    }
-
     /// Helper: infer a `Constructor` expression.
     fn infer_constructor_expression(
         &mut self,
@@ -4438,7 +4301,7 @@ impl<'a> TypeInference<'a> {
         self.check_call_arguments(
             *constructor_symbol_id,
             class_name,
-            &tast_arguments,
+            &mut tast_arguments,
             location,
         );
 
@@ -4584,8 +4447,9 @@ impl<'a> TypeInference<'a> {
             location: location.clone(),
         });
 
-        // Result type is the unified type of both branches
-        let result_type = tast_then.expr_type.clone();
+        // The value has the common type of both branches (`if c then 1 else
+        // 2.5` is a number); the MIR builder widens the narrower branch.
+        let result_type = self.find_common_type(&tast_then.expr_type, &tast_else.expr_type);
 
         Ok((
             TastExpressionKind::Conditional {
@@ -4752,8 +4616,8 @@ impl<'a> TypeInference<'a> {
             crate::ast::Value::List(elements) => {
                 // Infer list type from elements
                 if elements.is_empty() {
-                    // Empty list - type will be inferred from context
-                    // For now, return Unknown which will be unified with expected type
+                    // An empty list literal takes its element type from the
+                    // declaration or parameter it is assigned to.
                     (TastLiteral::Null, ConcreteType::Unknown)
                 } else {
                     // Infer element type from first element (could be improved)
@@ -4773,6 +4637,7 @@ impl<'a> TypeInference<'a> {
         right_type: &ConcreteType,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
+        let location = &self.located(location);
         // Optional guarded-use enforcement (spec Step 5):
         // When an Optional(T) value appears in a context that requires T, the compiler must
         // emit an error.  The following operators are "safe" contexts for Optional:
@@ -4883,7 +4748,7 @@ impl<'a> TypeInference<'a> {
             | HirBinaryOp::Divide
             | HirBinaryOp::Modulo
             | HirBinaryOp::Power => {
-                // SEM006: Incompatible operand types in binary expression.
+                // SEM004: arithmetic on a non-numeric operand.
                 // Emit up-front when both operands are concrete and non-numeric.
                 let is_concrete_non_numeric = |t: &ConcreteType| -> bool {
                     matches!(t, ConcreteType::String | ConcreteType::Boolean)
@@ -4900,7 +4765,7 @@ impl<'a> TypeInference<'a> {
                                 crate::error::ErrorType::Validation,
                                 Some(location.clone()),
                             )
-                            .with_error_code("SEM006"),
+                            .with_error_code("SEM004"),
                         ),
                     });
                     return Ok(ConcreteType::Unknown);
@@ -5077,7 +4942,7 @@ impl<'a> TypeInference<'a> {
     fn infer_function_call(
         &mut self,
         function_type: &ConcreteType,
-        arguments: &[TastExpression],
+        arguments: &mut [TastExpression],
         function_symbol_id: SymbolId,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
@@ -5195,13 +5060,19 @@ impl<'a> TypeInference<'a> {
 
                 // Check argument types match parameters (only for provided arguments)
                 // Skip type checking for generic list functions and variadic print functions
+                // `toString(value)` converts any number: the MIR builder sends a
+                // `number` argument to `float_to_string` instead of the
+                // registered `(integer) -> string` built-in.
+                let is_to_string = self
+                    .symbol_table
+                    .get_symbol(function_symbol_id)
+                    .is_some_and(|s| s.name == "toString");
                 if !is_generic_list_fn && !is_variadic_print_fn {
-                    for (param_type, arg) in parameters.iter().zip(arguments.iter()) {
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: arg.expr_type.clone(),
-                            right: param_type.clone(),
-                            location: location.clone(),
-                        });
+                    for (param_type, arg) in parameters.iter().zip(arguments.iter_mut()) {
+                        if is_to_string && arg.expr_type.is_numeric() {
+                            continue;
+                        }
+                        self.require_assignable(arg, param_type, location);
                     }
                 }
 
@@ -5222,12 +5093,13 @@ impl<'a> TypeInference<'a> {
         function_symbol_id: SymbolId,
         function_name: &str,
         arguments: &[TastExpression],
+        location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
         // Numeric-polymorphic math functions: preserve the argument type so that
         // `integer x = math.abs(integer_val)` does not produce a false SEM004 error.
         // These checks MUST run before the type_env lookup which would return Number.
         if function_name == "math.abs" || function_name == "math_abs" {
-            let arg_type = arguments.first().map(|a| self.resolve_type(&a.expr_type));
+            let arg_type = arguments.first().map(|a| a.expr_type.clone());
             return Ok(match arg_type.as_ref() {
                 Some(ConcreteType::Integer) => ConcreteType::Integer,
                 _ => ConcreteType::Number,
@@ -5240,7 +5112,7 @@ impl<'a> TypeInference<'a> {
         {
             let both_int = arguments
                 .iter()
-                .all(|a| matches!(self.resolve_type(&a.expr_type), ConcreteType::Integer));
+                .all(|a| matches!(a.expr_type, ConcreteType::Integer));
             return Ok(if both_int {
                 ConcreteType::Integer
             } else {
@@ -5248,25 +5120,24 @@ impl<'a> TypeInference<'a> {
             });
         }
 
-        // Special handling for generic list namespace functions FIRST
-        // Use the function_name parameter directly for SymbolId(0) namespace functions
-        // to avoid incorrect matching with the "print" symbol at SymbolId(0)
-
-        // Functions that always return integer
-        if function_name == "list_indexOf"
-            || function_name == "list.indexOf"
-            || function_name == "list_lastIndexOf"
-            || function_name == "list.lastIndexOf"
-            // time.now (frame.server / frame.auth alias) returns a Unix timestamp.
-            // The typechecker needs to know this returns Integer (not Unknown/Any)
-            // so `integer now = time.now()` doesn't unbox the raw i32 as a
-            // pointer and OOB on the toString path. Fingerprints 95c8a7cd
-            // (TIME-TOSTRING-001), ba77c082 (CODEGEN-I64-TOSTRING-OOB),
-            // 97d07985 (COD001).
-            || function_name == "time.now"
-            || function_name == "time_now"
-            || function_name == "now"
+        // `list.<fn>(items, ...)` (and its `list_<fn>` alias): one set of
+        // return-type rules, shared with the `list.` namespace call form.
+        if let Some(list_fn) = function_name
+            .strip_prefix("list.")
+            .or_else(|| function_name.strip_prefix("list_"))
         {
+            if Self::is_typed_list_namespace_function(list_fn) {
+                return self.infer_static_method_return_type("list", list_fn, arguments, location);
+            }
+        }
+
+        // time.now (frame.server / frame.auth alias) returns a Unix timestamp.
+        // The typechecker needs to know this returns Integer (not Unknown/Any)
+        // so `integer now = time.now()` doesn't unbox the raw i32 as a
+        // pointer and OOB on the toString path. Fingerprints 95c8a7cd
+        // (TIME-TOSTRING-001), ba77c082 (CODEGEN-I64-TOSTRING-OOB),
+        // 97d07985 (COD001).
+        if function_name == "time.now" || function_name == "time_now" || function_name == "now" {
             return Ok(ConcreteType::Integer);
         }
 
@@ -5299,74 +5170,6 @@ impl<'a> TypeInference<'a> {
             return Ok(ConcreteType::String);
         }
 
-        // Functions that always return boolean
-        if function_name == "list_contains"
-            || function_name == "list.contains"
-            || function_name == "list_isEmpty"
-            || function_name == "list.isEmpty"
-            || function_name == "list_isNotEmpty"
-            || function_name == "list.isNotEmpty"
-        {
-            return Ok(ConcreteType::Boolean);
-        }
-
-        // Functions that return the element type of their list argument
-        if (function_name == "list_remove"
-            || function_name == "list.remove"
-            || function_name == "list_get"
-            || function_name == "list.get"
-            || function_name == "list_pop"
-            || function_name == "list.pop"
-            || function_name == "list_removeLast"
-            || function_name == "list.removeLast"
-            || function_name == "list_peek"
-            || function_name == "list.peek"
-            || function_name == "list_first"
-            || function_name == "list.first"
-            || function_name == "list_last"
-            || function_name == "list.last")
-            && !arguments.is_empty()
-        {
-            let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
-            if let ConcreteType::Array(element_type) = resolved_arg_type {
-                return Ok((*element_type).clone());
-            }
-        }
-
-        // Functions that return the same list type as their input
-        if (function_name == "list_add"
-            || function_name == "list.add"
-            || function_name == "list_push"
-            || function_name == "list.push"
-            || function_name == "list_sort"
-            || function_name == "list.sort"
-            || function_name == "list_reverse"
-            || function_name == "list.reverse"
-            || function_name == "list_insert"
-            || function_name == "list.insert"
-            || function_name == "list_slice"
-            || function_name == "list.slice"
-            || function_name == "list_concat"
-            || function_name == "list.concat")
-            && !arguments.is_empty()
-        {
-            let resolved_arg_type = self.resolve_type(&arguments[0].expr_type);
-            if let ConcreteType::Array(_) = resolved_arg_type {
-                return Ok(resolved_arg_type);
-            }
-        }
-
-        // Functions that create new lists with element type from second argument
-        if (function_name == "list_fill" || function_name == "list.fill") && arguments.len() >= 2 {
-            let element_type = self.resolve_type(&arguments[1].expr_type);
-            return Ok(ConcreteType::Array(Box::new(element_type)));
-        }
-
-        // list_range always returns list<integer>
-        if function_name == "list_range" || function_name == "list.range" {
-            return Ok(ConcreteType::Array(Box::new(ConcreteType::Integer)));
-        }
-
         // Look up function type from symbol table
         if let Some(function_type) = self.type_env.get(&function_symbol_id) {
             match function_type {
@@ -5387,12 +5190,12 @@ impl<'a> TypeInference<'a> {
                 if let Some(dot_pos) = function_name.find('.') {
                     let class_name = &function_name[..dot_pos];
                     let method_name = &function_name[dot_pos + 1..];
-                    // Try to infer as static method/stdlib function
-                    if let Ok(static_return_type) =
-                        self.infer_static_method_return_type(class_name, method_name, arguments)
-                    {
-                        return Ok(static_return_type);
-                    }
+                    return self.infer_static_method_return_type(
+                        class_name,
+                        method_name,
+                        arguments,
+                        location,
+                    );
                 }
             }
 
@@ -5405,23 +5208,53 @@ impl<'a> TypeInference<'a> {
                     let class_name = &function_name[..dot_pos];
                     let method_name = &function_name[dot_pos + 1..];
                     // Try to infer as static method
-                    if let Ok(static_return_type) =
-                        self.infer_static_method_return_type(class_name, method_name, arguments)
-                    {
+                    if let Ok(static_return_type) = self.infer_static_method_return_type(
+                        class_name,
+                        method_name,
+                        arguments,
+                        location,
+                    ) {
                         return Ok(static_return_type);
                     }
                 }
             }
 
-            Err(CompilerError::type_error(
-                format!(
-                    "Function symbol {:?} not found in type environment",
-                    function_symbol_id
-                ),
+            Err(CompilerError::semantic_error_with_code(
+                format!("Function '{}' not found", function_name),
                 None,
-                None,
+                Some(location.clone()),
+                "FUNC001",
             ))
         }
+    }
+
+    /// `list.` namespace functions whose result type depends on their list
+    /// argument (see the `("list", _)` arms of `infer_static_method_return_type`).
+    fn is_typed_list_namespace_function(name: &str) -> bool {
+        matches!(
+            name,
+            "indexOf"
+                | "lastIndexOf"
+                | "contains"
+                | "isEmpty"
+                | "isNotEmpty"
+                | "remove"
+                | "get"
+                | "pop"
+                | "removeLast"
+                | "peek"
+                | "first"
+                | "last"
+                | "add"
+                | "push"
+                | "sort"
+                | "reverse"
+                | "insert"
+                | "slice"
+                | "concat"
+                | "fill"
+                | "range"
+        )
     }
 
     /// Get the builtin type name for method lookups (e.g., "string", "integer", "list")
@@ -5442,95 +5275,196 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// Signature of a built-in method of a primitive, list or pairs value
+    /// (stdlib-reference.md §3–§5): its parameter types, how many of them
+    /// are required, and its return type.
+    fn builtin_method_signature(receiver: &ConcreteType, method: &str) -> Option<BuiltinMethod> {
+        use ConcreteType as T;
+        let sig = |params: Vec<ConcreteType>, required: usize, return_type: ConcreteType| {
+            Some(BuiltinMethod {
+                params,
+                required,
+                return_type,
+            })
+        };
+        let none = |return_type: ConcreteType| sig(Vec::new(), 0, return_type);
+        match (receiver, method) {
+            (T::Integer, "toString") => none(T::String),
+            (T::Integer, "abs" | "toInteger") => none(T::Integer),
+            (T::Integer, "toNumber") => none(T::Number),
+            (T::Integer, "toBoolean") => none(T::Boolean),
+
+            (T::Number, "toString") => none(T::String),
+            (T::Number, "abs" | "toNumber") => none(T::Number),
+            (T::Number, "floor" | "ceil" | "round" | "toInteger") => none(T::Integer),
+            (T::Number, "toBoolean") => none(T::Boolean),
+
+            (T::Boolean, "toString") => none(T::String),
+
+            (
+                T::String,
+                "toString" | "toUpperCase" | "toLowerCase" | "trim" | "trimStart" | "trimEnd",
+            ) => none(T::String),
+            (T::String, "length" | "size" | "toInteger") => none(T::Integer),
+            (T::String, "toNumber") => none(T::Number),
+            (T::String, "toBoolean" | "isEmpty" | "isNotEmpty" | "isBlank") => none(T::Boolean),
+            (T::String, "substring") => sig(vec![T::Integer, T::Integer], 2, T::String),
+            (T::String, "charAt") => sig(vec![T::Integer], 1, T::String),
+            (T::String, "charCodeAt") => sig(vec![T::Integer], 1, T::Integer),
+            (T::String, "indexOf" | "lastIndexOf") => {
+                sig(vec![T::String, T::Integer], 1, T::Integer)
+            }
+            (T::String, "contains" | "startsWith" | "endsWith") => {
+                sig(vec![T::String], 1, T::Boolean)
+            }
+            (T::String, "replace" | "replaceAll") => sig(vec![T::String, T::String], 2, T::String),
+            (T::String, "concat") => sig(vec![T::String], 1, T::String),
+            (T::String, "split") => sig(vec![T::String], 1, T::Array(Box::new(T::String))),
+            (T::String, "padStart" | "padEnd") => sig(vec![T::Integer, T::String], 2, T::String),
+            (T::String, "repeat") => sig(vec![T::Integer], 1, T::String),
+            (T::String, "matches") => sig(vec![T::String], 1, T::Boolean),
+
+            (T::Array(_), "length" | "size") => none(T::Integer),
+            (T::Array(element), "add" | "push") => sig(vec![(**element).clone()], 1, T::Undefined),
+            (T::Array(element), "insert") => {
+                sig(vec![T::Integer, (**element).clone()], 2, T::Undefined)
+            }
+            (T::Array(element), "set") => {
+                sig(vec![T::Integer, (**element).clone()], 2, T::Undefined)
+            }
+            (T::Array(element), "get") => sig(vec![T::Integer], 1, (**element).clone()),
+            // `remove()` without an index takes the element the list's
+            // behavior (`.line`, `.pile`) designates.
+            (T::Array(element), "remove") => sig(vec![T::Integer], 0, (**element).clone()),
+            (T::Array(element), "pop" | "removeLast" | "peek" | "first" | "last") => {
+                none((**element).clone())
+            }
+            (T::Array(element), "contains") => sig(vec![(**element).clone()], 1, T::Boolean),
+            (T::Array(element), "indexOf" | "lastIndexOf") => {
+                sig(vec![(**element).clone()], 1, T::Integer)
+            }
+            (T::Array(_), "isEmpty" | "isNotEmpty") => none(T::Boolean),
+            (T::Array(_), "toString") => none(T::String),
+            (T::Array(_), "reverse" | "sort") => none(receiver.clone()),
+            (T::Array(_), "slice") => sig(vec![T::Integer, T::Integer], 2, receiver.clone()),
+            (T::Array(_), "concat") => sig(vec![receiver.clone()], 1, receiver.clone()),
+
+            (T::Pairs(key, value), "get") => sig(vec![(**key).clone()], 1, (**value).clone()),
+            (T::Pairs(key, _), "has") => sig(vec![(**key).clone()], 1, T::Boolean),
+            (T::Pairs(key, value), "set") => {
+                sig(vec![(**key).clone(), (**value).clone()], 2, T::Undefined)
+            }
+            (T::Pairs(key, _), "remove") => sig(vec![(**key).clone()], 1, T::Undefined),
+            (T::Pairs(_, _), "len" | "size") => none(T::Integer),
+
+            _ => None,
+        }
+    }
+
+    /// The method-style utilities every integer, number, string and boolean
+    /// answers (`src/stdlib/method_style.rs`, 17-method-style-syntax.md).
+    fn is_method_style_utility(receiver: &ConcreteType, method: &str) -> bool {
+        let scalar = matches!(
+            receiver,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::String
+                | ConcreteType::Boolean
+        );
+        let utility = matches!(
+            method,
+            "isDefined"
+                | "isNotDefined"
+                | "isEmpty"
+                | "isNotEmpty"
+                | "mustBeTrue"
+                | "mustBeFalse"
+                | "mustBeEqual"
+                | "mustNotBeEqual"
+                | "toString"
+                | "toInteger"
+                | "toNumber"
+                | "toBoolean"
+                | "length"
+        ) || (method == "keepBetween"
+            && matches!(receiver, ConcreteType::Integer | ConcreteType::Number));
+        scalar && utility
+    }
+
+    /// FUNC001 / FUNC002 / SEM001 for a method called on an integer, number,
+    /// boolean, string, list or pairs value: the method must exist (in the
+    /// signature table, or as a `type.method` built-in registered by the
+    /// standard library), and its arguments must match the signature.
+    fn check_builtin_method_call(
+        &mut self,
+        receiver: &ConcreteType,
+        method: &str,
+        arguments: &mut [TastExpression],
+        location: &SourceLocation,
+    ) {
+        let type_name = match receiver {
+            ConcreteType::Integer => "integer",
+            ConcreteType::Number => "number",
+            ConcreteType::Boolean => "boolean",
+            ConcreteType::String => "string",
+            ConcreteType::Array(_) => "list",
+            ConcreteType::Pairs(_, _) => "pairs",
+            _ => return,
+        };
+        let Some(signature) = Self::builtin_method_signature(receiver, method) else {
+            let registered = Self::is_method_style_utility(receiver, method)
+                || self
+                    .symbol_table
+                    .lookup_symbol(&format!("{}.{}", type_name, method))
+                    .is_some();
+            if !registered {
+                self.errors.push(CompilerError::semantic_error_with_code(
+                    format!("Method '{}' not found on a {} value", method, type_name),
+                    Some(format!(
+                        "See the {} methods in the standard library reference",
+                        type_name
+                    )),
+                    Some(location.clone()),
+                    "FUNC001",
+                ));
+            }
+            return;
+        };
+        let count = arguments.len();
+        if count < signature.required || count > signature.params.len() {
+            let expected = if signature.required == signature.params.len() {
+                signature.required.to_string()
+            } else {
+                format!("{} to {}", signature.required, signature.params.len())
+            };
+            self.errors.push(CompilerError::semantic_error_with_code(
+                format!(
+                    "'{}.{}' expects {} argument(s), got {}",
+                    type_name, method, expected, count
+                ),
+                None,
+                Some(location.clone()),
+                "FUNC002",
+            ));
+            return;
+        }
+        for (param, arg) in signature.params.iter().zip(arguments.iter_mut()) {
+            let arg_location = Self::argument_location(arg, location);
+            self.require_assignable(arg, param, &arg_location);
+        }
+    }
+
     /// Infer return type of method call
     fn infer_method_return_type(
         &self,
         method_name: &str,
         receiver_type: &ConcreteType,
-        _arguments: &[TastExpression],
     ) -> Result<ConcreteType, CompilerError> {
-        // For now, implement basic built-in method type inference
+        if let Some(signature) = Self::builtin_method_signature(receiver_type, method_name) {
+            return Ok(signature.return_type);
+        }
         match (receiver_type, method_name) {
-            // Integer methods — type-system.md §7, §12 conversion methods
-            (ConcreteType::Integer, "toString") => Ok(ConcreteType::String),
-            (ConcreteType::Integer, "abs") => Ok(ConcreteType::Integer),
-            (ConcreteType::Integer, "toInteger") => Ok(ConcreteType::Integer),
-            (ConcreteType::Integer, "toNumber") => Ok(ConcreteType::Number),
-            (ConcreteType::Integer, "toBoolean") => Ok(ConcreteType::Boolean),
-
-            // Number methods — type-system.md §12 conversion methods
-            (ConcreteType::Number, "toString") => Ok(ConcreteType::String),
-            (ConcreteType::Number, "abs") => Ok(ConcreteType::Number),
-            (ConcreteType::Number, "floor") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "ceil") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "round") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "toInteger") => Ok(ConcreteType::Integer),
-            (ConcreteType::Number, "toNumber") => Ok(ConcreteType::Number),
-            (ConcreteType::Number, "toBoolean") => Ok(ConcreteType::Boolean),
-
-            // String methods
-            (ConcreteType::String, "length") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "size") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "toString") => Ok(ConcreteType::String),
-            (ConcreteType::String, "toUpperCase") => Ok(ConcreteType::String),
-            (ConcreteType::String, "toLowerCase") => Ok(ConcreteType::String),
-            (ConcreteType::String, "trim") => Ok(ConcreteType::String),
-            (ConcreteType::String, "trimStart") => Ok(ConcreteType::String),
-            (ConcreteType::String, "trimEnd") => Ok(ConcreteType::String),
-            (ConcreteType::String, "substring") => Ok(ConcreteType::String),
-            (ConcreteType::String, "replace") => Ok(ConcreteType::String),
-            (ConcreteType::String, "replaceAll") => Ok(ConcreteType::String),
-            (ConcreteType::String, "charAt") => Ok(ConcreteType::String),
-            (ConcreteType::String, "concat") => Ok(ConcreteType::String),
-            (ConcreteType::String, "padStart") => Ok(ConcreteType::String),
-            (ConcreteType::String, "padEnd") => Ok(ConcreteType::String),
-            (ConcreteType::String, "indexOf") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "lastIndexOf") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "charCodeAt") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "toInteger") => Ok(ConcreteType::Integer),
-            (ConcreteType::String, "toNumber") => Ok(ConcreteType::Number),
-            (ConcreteType::String, "toBoolean") => Ok(ConcreteType::Boolean),
-            (ConcreteType::String, "contains")
-            | (ConcreteType::String, "startsWith")
-            | (ConcreteType::String, "endsWith")
-            | (ConcreteType::String, "isEmpty")
-            | (ConcreteType::String, "isBlank")
-            | (ConcreteType::String, "isNotEmpty") => Ok(ConcreteType::Boolean),
-            (ConcreteType::String, "split") => {
-                Ok(ConcreteType::Array(Box::new(ConcreteType::String)))
-            }
-
-            // Pairs methods
-            (ConcreteType::Pairs(_, value_type), "get") => Ok((**value_type).clone()),
-            (ConcreteType::Pairs(_, _), "has") => Ok(ConcreteType::Boolean),
-            (ConcreteType::Pairs(_, _), "len" | "size") => Ok(ConcreteType::Integer),
-            (ConcreteType::Pairs(_, _), "set" | "remove") => Ok(ConcreteType::Undefined),
-
-            // Array methods — type-system.md §12
-            (ConcreteType::Array(_), "length") => Ok(ConcreteType::Integer),
-            (ConcreteType::Array(_), "size") => Ok(ConcreteType::Integer), // Alias for length
-            (ConcreteType::Array(_), "push") => Ok(ConcreteType::Undefined), // void return
-            (ConcreteType::Array(element_type), "pop") => Ok((**element_type).clone()),
-            (ConcreteType::Array(element_type), "removeLast") => Ok((**element_type).clone()), // canonical name for pop
-            (ConcreteType::Array(element_type), "remove") => Ok((**element_type).clone()), // remove() behaves like pop()
-            (ConcreteType::Array(element_type), "get") => Ok((**element_type).clone()),
-            (ConcreteType::Array(_), "contains") => Ok(ConcreteType::Boolean), // contains() returns boolean
-            (ConcreteType::Array(_), "isEmpty") => Ok(ConcreteType::Boolean), // isEmpty() returns boolean
-            (ConcreteType::Array(_), "isNotEmpty") => Ok(ConcreteType::Boolean),
-            (ConcreteType::Array(_), "toString") => Ok(ConcreteType::String),
-            // stdlib-reference.md §5
-            (ConcreteType::Array(element_type), "first" | "last" | "peek") => {
-                Ok((**element_type).clone())
-            }
-            (ConcreteType::Array(_), "indexOf" | "lastIndexOf") => Ok(ConcreteType::Integer),
-            (ConcreteType::Array(_), "reverse" | "sort" | "slice" | "concat") => {
-                Ok(receiver_type.clone())
-            }
-
-            // Boolean methods
-            (ConcreteType::Boolean, "toString") => Ok(ConcreteType::String),
-
-            // Any type methods - returns string for toString, preserves any for others
+            // `any` converts to text; its other methods are resolved at runtime.
             (ConcreteType::Any, "toString") => Ok(ConcreteType::String),
 
             // Capability-typed receiver (`Draw thing; thing.draw()`).
@@ -5546,13 +5480,12 @@ impl<'a> TypeInference<'a> {
                         if let Some(m) = methods.iter().find(|m| m.name == method_name) {
                             // HirType::Void → ConcreteType::Undefined so the
                             // auto-return path in MIR treats void-method calls
-                            // as truly void (no local push before return).
-                            // The static hir_type_to_concrete_type maps Void
-                            // to ConcreteType::Null which triggers a spurious
-                            // implicit-return-value branch downstream.
+                            // as truly void (no local push before return);
+                            // hir_type_to_concrete maps Void to Null, which
+                            // triggers a spurious implicit-return-value branch.
                             let ret = match &m.return_type {
                                 crate::hir::HirType::Void => ConcreteType::Undefined,
-                                other => Self::hir_type_to_concrete_type(other),
+                                other => self.hir_type_to_concrete(other),
                             };
                             return Ok(ret);
                         }
@@ -5585,7 +5518,7 @@ impl<'a> TypeInference<'a> {
                         } = &symbol.kind
                         {
                             // Convert HirType to ConcreteType
-                            let concrete_type = Self::hir_type_to_concrete_type(return_type);
+                            let concrete_type = self.hir_type_to_concrete(return_type);
                             tracing::debug!(
                                 class_symbol = symbol_id.0,
                                 method_name = %method_name,
@@ -5612,12 +5545,32 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// A compiler built-in namespace (`string.`, `math.`, `list.`, ...),
+    /// whose functions are lowered by name.
+    fn is_builtin_namespace(name: &str) -> bool {
+        [
+            "string",
+            "math",
+            "list",
+            "array",
+            "compare",
+            "file",
+            "http",
+            "json",
+            "input",
+            "validator",
+        ]
+        .iter()
+        .any(|ns| name == *ns || name.starts_with(&format!("{}.", ns)))
+    }
+
     /// Infer return type for static method calls
     fn infer_static_method_return_type(
         &self,
         class_name: &str,
         method_name: &str,
         arguments: &[TastExpression],
+        location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
         // Helper to validate argument count
         let validate_arg_count =
@@ -5630,13 +5583,14 @@ impl<'a> TypeInference<'a> {
                 );
                 if actual != expected {
                     tracing::debug!("DEBUG: ARGUMENT COUNT MISMATCH - RETURNING ERROR!");
-                    let error = CompilerError::type_error(
+                    let error = CompilerError::semantic_error_with_code(
                         format!(
                             "{}() expects {} argument(s), but {} were provided",
                             method_full_name, expected, actual
                         ),
                         Some(format!("Provide exactly {} argument(s)", expected)),
-                        None,
+                        Some(location.clone()),
+                        "FUNC002",
                     );
                     tracing::debug!("DEBUG: Created error: {:?}", error);
                     return Err(error);
@@ -5763,7 +5717,7 @@ impl<'a> TypeInference<'a> {
                     Ok(ConcreteType::Unknown)
                 }
             }
-            ("list", "pop") | ("list", "shift") | ("list", "removeLast") => {
+            ("list", "pop") | ("list", "shift") | ("list", "removeLast") | ("list", "peek") => {
                 validate_arg_count(1, arg_count, &full_method_name)?;
                 // Returns T - the element type of the list
                 // list.pop(list<T>) -> T, list.removeLast(list<T>) -> T
@@ -6026,7 +5980,13 @@ impl<'a> TypeInference<'a> {
             // dereferencing the actual i32 result as a pointer and reading
             // garbage memory. See CODEGEN_STACK_REMAINING (fp df5b8c9b1021).
             _ => {
-                if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(class_name) {
+                let class_symbol_id = self.symbol_table.lookup_symbol(class_name).filter(|id| {
+                    matches!(
+                        self.symbol_table.get_symbol(*id).map(|s| &s.kind),
+                        Some(SymbolKind::Class { .. })
+                    )
+                });
+                if let Some(class_symbol_id) = class_symbol_id {
                     if let Some(method_symbol_id) = self
                         .symbol_table
                         .lookup_class_member(class_symbol_id, method_name)
@@ -6038,6 +5998,11 @@ impl<'a> TypeInference<'a> {
                             }
                         }
                     }
+                    return Err(self.unknown_class_method_error(
+                        class_symbol_id,
+                        method_name,
+                        location,
+                    ));
                 }
                 // A dotted plugin language function (`auth.csrf.generate`) is
                 // registered under its full name; use its declared return type.
@@ -6053,6 +6018,20 @@ impl<'a> TypeInference<'a> {
                         });
                     }
                 }
+                // The `json.` namespace has exactly the functions above
+                // (stdlib-reference.md §8). Other built-in namespaces also
+                // have functions the code generator provides by name.
+                if class_name == "json" {
+                    return Err(CompilerError::semantic_error_with_code(
+                        format!("Function '{}' not found", full_method_name),
+                        Some(format!(
+                            "See the `{}.` functions in the standard library reference",
+                            class_name
+                        )),
+                        Some(location.clone()),
+                        "FUNC001",
+                    ));
+                }
                 Ok(ConcreteType::Unknown)
             }
         }
@@ -6065,6 +6044,7 @@ impl<'a> TypeInference<'a> {
         operand_type: &ConcreteType,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
+        let location = &self.located(location);
         match operator {
             HirUnaryOp::Negate => match operand_type {
                 ConcreteType::Integer
@@ -6085,9 +6065,21 @@ impl<'a> TypeInference<'a> {
                 )),
                 _ => Ok(ConcreteType::Unknown),
             },
+            // SEM004: `not` is defined for booleans only (an `any` holding
+            // a boolean is checked at runtime).
             HirUnaryOp::Not => match operand_type {
-                ConcreteType::Boolean => Ok(ConcreteType::Boolean),
-                _ => Ok(ConcreteType::Unknown),
+                ConcreteType::Boolean | ConcreteType::Any | ConcreteType::Unknown => {
+                    Ok(ConcreteType::Boolean)
+                }
+                _ => Err(CompilerError::semantic_error_with_code(
+                    format!("'not' cannot be applied to a value of type {operand_type}"),
+                    Some(
+                        "`not` takes a boolean; compare the value to get one, e.g. `x == 0`"
+                            .to_string(),
+                    ),
+                    Some(location.clone()),
+                    "SEM004",
+                )),
             },
             // BOOK: required-operator - Postfix ! assertion for null check
             // Required operator returns the same type, just adds runtime null check
@@ -6108,70 +6100,65 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// Infer the type of a field access based on the object type and field name
-    /// Infer field type and symbol ID from object type
-    /// Returns (field_type, field_symbol_id)
+    /// The type and symbol of field `field_name` on a value of `object_type`.
+    ///
+    /// A class field is declared by the class or one of its ancestors
+    /// (SEM002 when it is not); an `any` value accepts every field name (its
+    /// fields are read at runtime). Lists and strings have no fields: their
+    /// length is the `length()` method.
     fn infer_field_type_and_symbol(
         &self,
         object_type: &ConcreteType,
         field_name: &str,
+        location: &SourceLocation,
     ) -> Result<(ConcreteType, SymbolId), CompilerError> {
         match object_type {
-            // Array fields - use placeholder symbol for built-in fields
-            ConcreteType::Array(_element_type) if field_name == "length" => {
-                Ok((ConcreteType::Integer, SymbolId(0)))
-            }
-
-            // String fields - use placeholder symbol for built-in fields
-            ConcreteType::String if field_name == "length" => {
-                Ok((ConcreteType::Integer, SymbolId(0)))
-            }
-
-            // A class field is declared by the class or any of its ancestors.
-            ConcreteType::Class {
-                symbol_id,
-                type_args: _,
-            } => {
-                let Some(class_symbol) = self.symbol_table.get_symbol(*symbol_id) else {
-                    return Err(CompilerError::type_error(
-                        format!(
-                            "Cannot resolve class type for field access '{}'",
-                            field_name
-                        ),
-                        None,
-                        None,
-                    ));
-                };
+            ConcreteType::Class { symbol_id, .. } => {
+                let class_name = self
+                    .symbol_table
+                    .get_symbol(*symbol_id)
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| format!("#{}", symbol_id.0));
                 if let Some((field_id, field_type)) =
                     self.symbol_table.lookup_class_field(*symbol_id, field_name)
                 {
                     return Ok((self.hir_type_to_concrete(field_type), field_id));
                 }
-                Err(CompilerError::type_error(
-                    format!(
-                        "Field '{}' not found in class '{}'",
-                        field_name, class_symbol.name
-                    ),
-                    None,
-                    None,
+                Err(CompilerError::semantic_error(
+                    format!("Field '{}' not found in class '{}'", field_name, class_name),
+                    Some(format!(
+                        "Declare `{}` in `{}` or one of its parent classes",
+                        field_name, class_name
+                    )),
+                    Some(location.clone()),
                 ))
             }
 
-            // BOOK: safe-access - Any type supports arbitrary field access
-            // Any type (dynamic/JSON objects) allows access to any field name
-            // The result is also Any type since we don't know the actual field type at compile time
-            ConcreteType::Any => {
-                // Use a placeholder symbol ID for dynamic field access
-                Ok((ConcreteType::Any, SymbolId(0)))
+            ConcreteType::Any => Ok((ConcreteType::Any, SymbolId(0))),
+
+            ConcreteType::Array(_) | ConcreteType::String if field_name == "length" => {
+                Err(CompilerError::semantic_error_with_code(
+                    format!("A {} has no field 'length'", object_type),
+                    Some("Use the method: `length()`".to_string()),
+                    Some(location.clone()),
+                    "SEM004",
+                ))
             }
 
-            _ => Err(CompilerError::type_error(
+            // Unresolved types were reported where they arose.
+            ConcreteType::Unknown => Ok((ConcreteType::Unknown, SymbolId(0))),
+
+            _ => Err(CompilerError::semantic_error_with_code(
                 format!(
-                    "Type {:?} does not have field '{}'",
+                    "A value of type {} has no field '{}'",
                     object_type, field_name
                 ),
-                None,
-                None,
+                Some(
+                    "Fields belong to class instances; `any` values (decoded JSON) accept any field name"
+                        .to_string(),
+                ),
+                Some(location.clone()),
+                "SEM004",
             )),
         }
     }
@@ -6266,13 +6253,9 @@ impl<'a> TypeInference<'a> {
                     if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                         match &symbol.kind {
                             SymbolKind::Class { .. } => {
-                                // Note: Generic type arguments are not yet supported
-                                // Clean Language uses 'any' for generic placeholder types
-                                // Full generic instantiation (e.g., List<String>) requires:
-                                // 1. Parser support for type argument syntax
-                                // 2. HIR support for carrying type arguments
-                                // 3. Type inference for generic parameters
-                                // For now, classes are instantiated without type arguments
+                                // Classes have no type parameters (a generic
+                                // placeholder is written `any`), so a class type
+                                // carries no type arguments.
                                 ConcreteType::Class {
                                     symbol_id,
                                     type_args: Vec::new(),
@@ -6292,7 +6275,8 @@ impl<'a> TypeInference<'a> {
                                 }
                             }
                             _ => {
-                                // For other named types (functions, variables), treat as unknown for now
+                                // A name that is not a type (a function or a
+                                // variable) has no type; the resolver reports it.
                                 ConcreteType::Unknown
                             }
                         }
@@ -6331,8 +6315,9 @@ impl<'a> TypeInference<'a> {
                 )
             }
             HirType::Inferred { .. } => {
-                // Type inference placeholders are handled by the constraint solver
-                // For now, return Unknown and let constraint solver handle it
+                // The symbol's type is set where its value is bound (a loop
+                // variable takes the list's element type, a `later` binding
+                // its expression's type); the placeholder itself has none.
                 ConcreteType::Unknown
             }
             HirType::Any => {
@@ -6370,11 +6355,6 @@ impl<'a> TypeInference<'a> {
     /// Add a constraint to be solved
     fn add_constraint(&mut self, constraint: TypeConstraint) {
         self.constraints.push(constraint);
-    }
-
-    /// Apply current substitution to resolve a type
-    fn resolve_type(&self, type_: &ConcreteType) -> ConcreteType {
-        self.constraint_solver.apply_substitution(type_)
     }
 
     /// Check whether `child_id` is the same as or a subclass (transitively) of `parent_id`.
@@ -6428,16 +6408,6 @@ impl<'a> TypeInference<'a> {
                 // Otherwise, fall back to Unknown for error recovery
                 _ => ConcreteType::Unknown,
             }
-        }
-    }
-
-    /// Create a fresh type variable for type inference
-    fn create_type_variable(&mut self) -> ConcreteType {
-        // Generate a unique type variable by borrowing from the constraint solver
-        let type_var_id = self.constraint_solver.fresh_type_var();
-        ConcreteType::Generic {
-            name: type_var_id.0.to_string(),
-            bounds: Vec::new(),
         }
     }
 
@@ -6647,9 +6617,6 @@ fn find_io_call_in_expression(expr: &TastExpression) -> Option<String> {
         } => find_io_call_in_expression(condition)
             .or_else(|| find_io_call_in_expression(then_expr))
             .or_else(|| find_io_call_in_expression(else_expr)),
-        TastExpressionKind::Cast { expression, .. } => find_io_call_in_expression(expression),
-        TastExpressionKind::TypeCheck { expression, .. } => find_io_call_in_expression(expression),
-        TastExpressionKind::Await { expression } => find_io_call_in_expression(expression),
         TastExpressionKind::OnError {
             expression,
             fallback,

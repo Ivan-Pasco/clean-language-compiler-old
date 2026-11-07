@@ -45,8 +45,6 @@ impl MirBuilder {
             next_block_id: 1, // Block 0 is entry block
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: false,
                 entry_point: tast_function.name == "start",
                 exported: tast_function.name == "start",
             },
@@ -192,20 +190,6 @@ impl MirBuilder {
 
         // Resolve pending phi nodes
         self.resolve_phi_nodes(&mut context)?;
-
-        self.stats.basic_blocks_created += context.function.blocks.len();
-        self.stats.ssa_values_created += context.function.next_value_id;
-
-        if context.function.name == "test" {
-            trace!(
-                function_name = %context.function.name,
-                block_count = context.function.blocks.len(),
-                "Final MIR function blocks"
-            );
-            for (block_id, block) in &context.function.blocks {
-                trace!(block_id = ?block_id, terminator = ?block.terminator, "Block terminator");
-            }
-        }
 
         Ok(context.function)
     }
@@ -785,8 +769,6 @@ impl MirBuilder {
             next_block_id: 1,
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: true,
                 entry_point: false,
                 exported: false,
             },
@@ -980,8 +962,6 @@ impl MirBuilder {
             next_block_id: 4,
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: true,
                 entry_point: false,
                 exported: false,
             },

@@ -64,12 +64,9 @@ impl MirCodeGenerator<'_> {
                 MirConstant::String(_) => MirType::I32, // String pointers are i32
                 MirConstant::Null => MirType::I32,
                 MirConstant::Undefined => MirType::I32,
-                MirConstant::Array(_) => MirType::I32, // Array pointers are i32
-                MirConstant::Struct(_) => MirType::I32, // Struct pointers are i32
             }),
             MirOperand::Function(_) => Some(MirType::I32),
             MirOperand::NamedFunction { .. } => Some(MirType::I32),
-            MirOperand::Global(_) => Some(MirType::I32),
         }
     }
 
@@ -169,13 +166,6 @@ impl MirCodeGenerator<'_> {
             "Function MIR return type"
         );
         match &function.return_type {
-            MirType::StringTuple => {
-                // String returns are single pointer to [len|content] structure in memory
-                result_types.push(ValType::I32);
-                debug_mir!(
-                    "Converted to WASM result_types: [I32] (string tuple as memory pointer)"
-                );
-            }
             MirType::Void => {
                 debug_mir!("Converted to WASM result_types: [] (void)");
             }
@@ -226,11 +216,6 @@ impl MirCodeGenerator<'_> {
             MirType::F64 => Ok(ValType::F64),
 
             MirType::Ptr(_) => Ok(ValType::I32),
-
-            MirType::StringTuple => {
-                // As a parameter type, StringTuple is a pointer to the string structure
-                Ok(ValType::I32)
-            }
 
             MirType::Any => {
                 // Any type is a pointer to boxed value: [tag:i32][value1:i32][value2:i32]
@@ -423,8 +408,6 @@ impl MirCodeGenerator<'_> {
                 next_block_id: 0,
                 if_merges: Default::default(),
                 attributes: MirFunctionAttributes {
-                    inline: false,
-                    pure: false,
                     entry_point: false,
                     exported: false,
                 },
@@ -2875,12 +2858,9 @@ impl MirCodeGenerator<'_> {
             MirType::F64 => WasmType::F64,
 
             MirType::Ptr(_) => WasmType::I32,
-            MirType::StringTuple => WasmType::I32,
             MirType::Any => WasmType::I32,
-            MirType::Array(_, _) => WasmType::I32,
             MirType::Function { .. } => WasmType::I32,
             MirType::Void => WasmType::I32,
-            MirType::Struct(_) => WasmType::I32,
         }
     }
 

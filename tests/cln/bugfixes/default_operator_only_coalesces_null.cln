@@ -1,0 +1,59 @@
+// Test: bugfixes/default_operator_only_coalesces_null
+// Grammar: null_coalescing_expression, postfix_required
+// Semantic: 06-expressions.md §Default Operator — `default` only checks for
+//   null, never for 0, false or ""; the fallback is evaluated only when the
+//   value is null. `!` on a plain integer/number/boolean never traps.
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   zero=0
+//   off=false
+//   n=1.5
+//   name=fallback
+//   kept=set
+//   calls=0
+//   calls=1
+//   req=0
+//   reqn=0
+//   reqb=false
+//
+// Regression: `default` was lowered to a `select` on the left value, so 0
+// and false were treated as null, the fallback ran even when it was not
+// used, and a number operand produced invalid WASM (select on an f64
+// condition). `!` trapped on the value 0.
+
+start:
+	integer z = 0
+	integer zero = z default 10
+	printl("zero=" + zero.toString())
+	boolean f = false
+	boolean off = f default true
+	printl("off=" + off.toString())
+	number m = 1.5
+	number n = m default 2.5
+	printl("n=" + n.toString())
+	string? missing = null
+	string name = missing default "fallback"
+	printl("name=" + name)
+	string? present = "set"
+	string kept = present default fallbackText(present)
+	printl("kept=" + kept)
+	list<integer> log = []
+	string a = present default track(log)
+	printl("calls=" + log.length().toString())
+	string b = missing default track(log)
+	printl("calls=" + log.length().toString())
+	integer req = z!
+	printl("req=" + req.toString())
+	number zn = 0.0
+	number reqn = zn!
+	printl("reqn=" + reqn.toString())
+	boolean reqb = f!
+	printl("reqb=" + reqb.toString())
+
+functions:
+	string fallbackText(string? s)
+		return "unused"
+
+	string track(list<integer> log)
+		log.add(1)
+		return "tracked"
