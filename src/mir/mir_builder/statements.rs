@@ -3,16 +3,52 @@
 use super::*;
 
 impl MirBuilder {
-    /// True for a statement after which nothing in the same statement list
-    /// can run. Lowering stops there: statements after it are unreachable,
-    /// and lowering them would emit their side effects into the block before
-    /// its terminator runs.
+    /// Lower a statement list. After a statement that ends control flow
+    /// (`ends_control_flow`) the following statements are unreachable and
+    /// are skipped — lowering them would emit their side effects into the
+    /// block before its terminator runs — up to the next `onError` region
+    /// end (`is_error_region_end`), whose exit the region's error checks
+    /// make reachable again.
+    pub(super) fn build_statement_list(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        statements: &[TastStatement],
+    ) -> Result<(), Vec<CompilerError>> {
+        let mut reachable = true;
+        for stmt in statements {
+            if !reachable && !Self::is_error_region_end(stmt) {
+                continue;
+            }
+            self.build_statement(context, stmt)?;
+            reachable = !Self::ends_control_flow(stmt);
+        }
+        Ok(())
+    }
+
+    /// A statement after which the rest of its statement list is unreachable.
     pub(super) fn ends_control_flow(statement: &TastStatement) -> bool {
         matches!(
             statement,
             TastStatement::Return { .. }
                 | TastStatement::Break { .. }
                 | TastStatement::Continue { .. }
+        )
+    }
+
+    /// The HIR builder's marker for the end of an `onError` region.
+    pub(super) fn is_error_region_end(statement: &TastStatement) -> bool {
+        matches!(
+            statement,
+            TastStatement::Expression {
+                expression: TastExpression {
+                    kind: TastExpressionKind::FunctionCall { function, .. },
+                    ..
+                },
+                ..
+            } if matches!(
+                &function.kind,
+                TastExpressionKind::Variable { name, .. } if name == "__err_region_end"
+            )
         )
     }
 
@@ -1086,12 +1122,7 @@ impl MirBuilder {
                 self.current_block = Some(then_block_id);
 
                 // Process then block statements
-                for stmt in &then_block.statements {
-                    self.build_statement(context, stmt)?;
-                    if Self::ends_control_flow(stmt) {
-                        break;
-                    }
-                }
+                self.build_statement_list(context, &then_block.statements)?;
 
                 // NOTE: Check the THEN BLOCK's terminator, not current_block
                 // After processing nested statements (like nested If), current_block may point
@@ -1226,12 +1257,7 @@ impl MirBuilder {
                     let before_else = self.current_block;
 
                     // Process else block statements
-                    for stmt in &else_stmt_block.statements {
-                        self.build_statement(context, stmt)?;
-                        if Self::ends_control_flow(stmt) {
-                            break;
-                        }
-                    }
+                    self.build_statement_list(context, &else_stmt_block.statements)?;
 
                     // NOTE: Check if current_block is None after processing else block
                     // If current_block is None, it means all paths in the else block returned
@@ -1645,12 +1671,7 @@ impl MirBuilder {
                 );
 
                 // Process loop body statements
-                for stmt in &body.statements {
-                    self.build_statement(context, stmt)?;
-                    if Self::ends_control_flow(stmt) {
-                        break;
-                    }
-                }
+                self.build_statement_list(context, &body.statements)?;
 
                 trace!(
                     instruction_count = context
@@ -1851,12 +1872,7 @@ impl MirBuilder {
                 }
 
                 // Process body statements
-                for stmt in &body.statements {
-                    self.build_statement(context, stmt)?;
-                    if Self::ends_control_flow(stmt) {
-                        break;
-                    }
-                }
+                self.build_statement_list(context, &body.statements)?;
 
                 // Pop loop context after processing body
                 context.loop_stack.pop();
@@ -2447,13 +2463,15 @@ impl MirBuilder {
             current_block = ?self.current_block,
             "Building range for loop body"
         );
+        let mut reachable = true;
         for (idx, stmt) in body.statements.iter().enumerate() {
             trace!(statement_index = idx, current_block = ?self.current_block, "Processing body statement");
+            if !reachable && !Self::is_error_region_end(stmt) {
+                continue;
+            }
             self.build_statement(context, stmt)?;
             trace!(statement_index = idx, current_block = ?self.current_block, "After body statement");
-            if Self::ends_control_flow(stmt) {
-                break;
-            }
+            reachable = !Self::ends_control_flow(stmt);
         }
         trace!(current_block = ?self.current_block, "After all range for body statements");
 

@@ -342,6 +342,7 @@ impl MirBuilder {
             num_statements
         };
 
+        let mut reachable = true;
         for (i, statement) in block
             .statements
             .iter()
@@ -354,15 +355,16 @@ impl MirBuilder {
                 current_block = ?self.current_block,
                 "Processing statement"
             );
+            if !reachable && !Self::is_error_region_end(statement) {
+                continue;
+            }
             self.build_statement(context, statement)?;
             trace!(
                 statement_index = i,
                 current_block = ?self.current_block,
                 "After statement"
             );
-            if Self::ends_control_flow(statement) {
-                break;
-            }
+            reachable = !Self::ends_control_flow(statement);
         }
 
         // Handle last statement if it should be auto-returned

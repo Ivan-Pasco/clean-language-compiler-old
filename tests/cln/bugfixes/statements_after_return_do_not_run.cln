@@ -3,7 +3,8 @@
 // Semantic: control leaves the block at return/break/continue; statements
 //   written after them in the same block never run
 // Regression: MIR lowering kept lowering the rest of the block after a
-//   return, so their side effects ran before the return took effect.
+//   return, so their side effects ran before the return took effect. A
+//   function-level onError: handler after the final return must still run.
 // Fixed in: compiler 0.33.174
 // Expected output:
 //   10
@@ -11,6 +12,9 @@
 //   5
 //   3
 //   4
+//   7
+//   handled
+//   -1
 
 start:
 	print(pick(1))
@@ -18,6 +22,8 @@ start:
 	print(early())
 	print(count_until(3))
 	print(skip_odd(4))
+	print(guarded(false))
+	print(guarded(true))
 
 functions:
 	integer pick(integer x)
@@ -46,3 +52,11 @@ functions:
 				print("unreachable after continue")
 			evens = evens + 1
 		return evens * 2
+	integer guarded(boolean fail)
+		if fail
+			error("boom")
+		return 7
+		print("unreachable before handler")
+		onError:
+			print("handled")
+			return -1
