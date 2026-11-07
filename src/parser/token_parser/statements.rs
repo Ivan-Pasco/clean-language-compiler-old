@@ -834,15 +834,15 @@ impl TokenParser {
                 location: Some(iterate_token.location),
             })
         } else {
-            // Regular collection iteration: iterate item in collection
-            // Check if there's an optional "step" clause (shouldn't be used with collections, but handle it)
-            let _step = if self.check(&TokenKind::Step) {
-                self.bump(); // consume "step"
-                self.skip_whitespace();
-                Some(Box::new(self.parse_expression()?))
-            } else {
-                None
-            };
+            // Regular collection iteration: iterate item in collection.
+            // grammar.ebnf: only `range_iterate_statement` has a `step` clause.
+            if self.check(&TokenKind::Step) {
+                return Err(CompilerError::parse_error(
+                    "'step' is only allowed when iterating over a range".to_string(),
+                    Some(self.current().location.clone()),
+                    Some("Use `iterate i in start to end step n`, or drop the step.".to_string()),
+                ));
+            }
 
             self.skip_whitespace();
             let body = self.parse_block(header_level)?;
