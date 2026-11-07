@@ -80,7 +80,9 @@ impl PluginDiscovery {
         }
     }
 
-    /// Set the global plugins directory
+    /// Set the global plugins directory (unit-test seam; production code
+    /// always uses `~/.cleen/plugins/`).
+    #[cfg(test)]
     pub fn with_global_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.global_dir = dir.into();
         self
@@ -181,21 +183,21 @@ impl PluginDiscovery {
         })
     }
 
-    /// Validate that a candidate path is strictly contained within the allowed root.
+    /// True when `name` is usable as a plugin directory name: exactly one
+    /// normal path component, so `root.join(name)` is a direct child of `root`.
     ///
-    /// Returns `true` only when the canonicalized candidate starts with the
-    /// canonicalized root, preventing `..` / absolute-path directory traversal.
-    fn is_within_root(root: &Path, candidate: &Path) -> bool {
-        // Canonicalize both paths so that `..` segments and symlinks are resolved.
-        // If canonicalization fails (e.g. the path doesn't exist yet) we err on the
-        // side of safety and reject the candidate.
-        let Ok(canonical_root) = root.canonicalize() else {
-            return false;
-        };
-        let Ok(canonical_candidate) = candidate.canonicalize() else {
-            return false;
-        };
-        canonical_candidate.starts_with(&canonical_root)
+    /// This is the path-traversal guard. It is purely lexical on purpose: an
+    /// installed plugin folder may be a symlink to a checkout elsewhere on
+    /// disk (`~/.cleen/plugins/frame.ui -> clean-framework/plugins/frame.ui`),
+    /// and resolving the link would wrongly reject it. Names such as `..`,
+    /// `a/b` or an absolute path have more or other components and are
+    /// refused.
+    fn is_plugin_dir_name(name: &str) -> bool {
+        let mut components = Path::new(name).components();
+        matches!(
+            (components.next(), components.next()),
+            (Some(std::path::Component::Normal(_)), None)
+        )
     }
 
     /// Load a specific plugin by name
@@ -209,9 +211,10 @@ impl PluginDiscovery {
     /// * `Ok(PluginManifest)` - The loaded manifest
     /// * `Err(DiscoveryError::PluginNotFound)` - If plugin doesn't exist
     pub fn load_plugin(&self, name: &str) -> Result<PluginManifest, DiscoveryError> {
-        // Reject names that are absolute paths or contain path-traversal sequences.
-        // Plugin names must be simple identifiers like "frame.data" or "frame-data".
-        if name.contains("..") || std::path::Path::new(name).is_absolute() {
+        // Plugin names are simple identifiers like "frame.data" or
+        // "frame-data". Anything else (absolute paths, `..`, separators) could
+        // escape the plugin roots and is refused.
+        if !Self::is_plugin_dir_name(name) {
             return Err(DiscoveryError::PluginNotFound {
                 name: name.to_string(),
             });
@@ -224,8 +227,7 @@ impl PluginDiscovery {
         if let Some(ref project_dir) = self.project_dir {
             for dir_name in &dir_names {
                 let manifest_path = project_dir.join(dir_name).join("plugin.toml");
-                // Only proceed if the resolved path stays inside the project root.
-                if manifest_path.exists() && Self::is_within_root(project_dir, &manifest_path) {
+                if manifest_path.exists() {
                     return self.load_manifest(&manifest_path);
                 }
             }
@@ -234,8 +236,7 @@ impl PluginDiscovery {
         // Check global directory
         for dir_name in &dir_names {
             let manifest_path = self.global_dir.join(dir_name).join("plugin.toml");
-            // Only proceed if the resolved path stays inside the global root.
-            if manifest_path.exists() && Self::is_within_root(&self.global_dir, &manifest_path) {
+            if manifest_path.exists() {
                 return self.load_manifest(&manifest_path);
             }
         }
@@ -268,41 +269,6 @@ impl PluginDiscovery {
         }
 
         result
-    }
-
-    /// Get all plugin manifest paths from a directory
-    ///
-    /// Useful for file watching - returns paths to all plugin.toml files.
-    pub fn get_manifest_paths(&self) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-
-        // Global directory
-        if self.global_dir.exists() {
-            if let Ok(entries) = fs::read_dir(&self.global_dir) {
-                for entry in entries.flatten() {
-                    let manifest_path = entry.path().join("plugin.toml");
-                    if manifest_path.exists() {
-                        paths.push(manifest_path);
-                    }
-                }
-            }
-        }
-
-        // Project directory
-        if let Some(ref project_dir) = self.project_dir {
-            if project_dir.exists() {
-                if let Ok(entries) = fs::read_dir(project_dir) {
-                    for entry in entries.flatten() {
-                        let manifest_path = entry.path().join("plugin.toml");
-                        if manifest_path.exists() {
-                            paths.push(manifest_path);
-                        }
-                    }
-                }
-            }
-        }
-
-        paths
     }
 }
 
@@ -418,16 +384,41 @@ blocks = ["projectblock"]
         assert!(matches!(result, Err(DiscoveryError::PluginNotFound { .. })));
     }
 
+    /// Installed plugin folders may be symlinks to a framework checkout
+    /// outside the plugins root; they must still load.
+    #[cfg(unix)]
     #[test]
-    fn test_get_manifest_paths() {
-        let temp = TempDir::new().unwrap();
-        create_test_plugin(temp.path(), "plugin1");
-        create_test_plugin(temp.path(), "plugin2");
+    fn test_symlinked_plugin_dir_outside_root_loads() {
+        let root = TempDir::new().unwrap();
+        let elsewhere = TempDir::new().unwrap();
+        let real = create_test_plugin(elsewhere.path(), "linked.plugin");
+        std::os::unix::fs::symlink(&real, root.path().join("linked.plugin")).unwrap();
 
-        let discovery = PluginDiscovery::new().with_global_dir(temp.path());
+        let discovery = PluginDiscovery::new().with_global_dir(root.path());
+        let manifest = discovery.load_plugin("linked.plugin").unwrap();
+        assert_eq!(manifest.plugin.name, "linked.plugin");
+    }
 
-        let paths = discovery.get_manifest_paths();
-        assert_eq!(paths.len(), 2);
-        assert!(paths.iter().all(|p| p.ends_with("plugin.toml")));
+    /// Names that are not a single directory component must not reach the
+    /// filesystem, even when the path they spell exists.
+    #[test]
+    fn test_path_traversal_names_are_refused() {
+        let outer = TempDir::new().unwrap();
+        create_test_plugin(outer.path(), "victim");
+        let root = outer.path().join("plugins");
+        fs::create_dir_all(&root).unwrap();
+        let discovery = PluginDiscovery::new().with_global_dir(&root);
+
+        let absolute = outer.path().join("victim");
+        for name in ["../victim", "..", "a/b", absolute.to_str().unwrap(), ""] {
+            assert!(
+                matches!(
+                    discovery.load_plugin(name),
+                    Err(DiscoveryError::PluginNotFound { .. })
+                ),
+                "name {:?} must be refused",
+                name
+            );
+        }
     }
 }
