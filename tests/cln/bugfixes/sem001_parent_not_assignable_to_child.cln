@@ -1,0 +1,37 @@
+// Test: bugfixes/sem001_parent_not_assignable_to_child
+// Grammar: assignment_statement, function_call
+// Semantic: type-system.md §5 Assignability — a child class is assignable to
+//   its parent class; a parent class value is not a child.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   A value of class 'Animal' cannot be used as 'Dog'
+//   sem001_parent_not_assignable_to_child.cln:22:
+//   sem001_parent_not_assignable_to_child.cln:21:
+//
+// Regression: class unification was symmetric, so a parent-class value
+// could be stored in a child-class variable or passed for a child-class
+// parameter.
+
+start:
+	Dog d = Dog()
+	Animal a = d
+	describe(d)
+	Dog other = Dog()
+	other = a
+	bark(a)
+
+class Animal
+	public:
+		integer legs
+
+class Dog is Animal
+	public:
+		integer tail
+
+functions:
+	describe(Animal x)
+		printl("animal")
+
+	bark(Dog x)
+		printl("dog")

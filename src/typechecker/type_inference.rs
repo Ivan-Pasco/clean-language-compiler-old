@@ -1310,7 +1310,7 @@ impl<'a> TypeInference<'a> {
         &mut self,
         callee: SymbolId,
         callee_name: &str,
-        arguments: &[TastExpression],
+        arguments: &mut [TastExpression],
         location: &SourceLocation,
     ) {
         let Some(ConcreteType::Function { parameters, .. }) = self.type_env.get(&callee).cloned()
@@ -1341,13 +1341,37 @@ impl<'a> TypeInference<'a> {
             ));
             return;
         }
-        for (param_type, arg) in parameters.iter().zip(arguments) {
-            self.add_constraint(TypeConstraint::Equality {
-                left: arg.expr_type.clone(),
-                right: param_type.clone(),
-                location: arg.location.clone(),
-            });
+        for (param_type, arg) in parameters.iter().zip(arguments.iter_mut()) {
+            let location = Self::argument_location(arg, location);
+            self.require_assignable(arg, param_type, &location);
         }
+    }
+
+    /// Where to report a problem with a call argument: the argument itself,
+    /// or the call when the argument carries no position (literals do not).
+    fn argument_location(arg: &TastExpression, call: &SourceLocation) -> SourceLocation {
+        if arg.location.line == 0 {
+            call.clone()
+        } else {
+            arg.location.clone()
+        }
+    }
+
+    /// `value` is stored where a `target` is expected (assignment, argument,
+    /// return): widen a literal to the target type and require the value's
+    /// type to be assignable to it (directional, type-system.md §5).
+    fn require_assignable(
+        &mut self,
+        value: &mut TastExpression,
+        target: &ConcreteType,
+        location: &SourceLocation,
+    ) {
+        Self::widen_literal_to_declared_type(value, target);
+        self.add_constraint(TypeConstraint::Subtype {
+            subtype: value.expr_type.clone(),
+            supertype: target.clone(),
+            location: location.clone(),
+        });
     }
 
     /// Infer types for a function
@@ -1401,33 +1425,9 @@ impl<'a> TypeInference<'a> {
         // Check return type consistency
         let inferred_return_type = tast_body.return_type.clone();
         let declared_return_type = if let Some(ref return_type) = function.return_type {
-            // Explicit return type declared - enforce it
-            let concrete_return_type = self.hir_type_to_concrete(return_type);
-
-            // FIX: Only add constraint if types are compatible
-            // This prevents incorrect constraint generation when block inference fails
-            match (&inferred_return_type, &concrete_return_type) {
-                (ConcreteType::Generic { .. }, _) => {
-                    // Type variable - no constraint needed, use declared type
-                }
-                (inferred, declared) if inferred == declared => {
-                    // Types match - no constraint needed
-                }
-                (ConcreteType::Integer, ConcreteType::String)
-                | (ConcreteType::String, ConcreteType::Integer) => {
-                    // String/Integer mismatch - known issue, use declared type without constraint
-                    // This is a targeted fix for the string type constraint generation bug
-                }
-                _ => {
-                    // Other concrete types - add constraint to ensure consistency
-                    self.add_constraint(TypeConstraint::Equality {
-                        left: inferred_return_type.clone(),
-                        right: concrete_return_type.clone(),
-                        location: function.location.clone(),
-                    });
-                }
-            }
-            concrete_return_type
+            // Explicit return type declared: every `return` was checked
+            // against it while the body was inferred.
+            self.hir_type_to_concrete(return_type)
         } else {
             // No return type declared - use inferred type
             // This allows functions to have their return type inferred from their body
@@ -2526,11 +2526,7 @@ impl<'a> TypeInference<'a> {
                                 ),
                             });
                         } else {
-                            self.add_constraint(TypeConstraint::Equality {
-                                left: tast_init.expr_type.clone(),
-                                right: declared_type.clone(),
-                                location: location.clone(),
-                            });
+                            self.require_assignable(&mut tast_init, &declared_type, location);
                         }
 
                         tast_init
@@ -2574,16 +2570,12 @@ impl<'a> TypeInference<'a> {
 
             ResolvedHirStatement::Return { value, location } => {
                 let return_type = if let Some(return_expr) = value {
-                    let tast_expr = self.infer_expression(return_expr)?;
-                    let expr_type = tast_expr.expr_type.clone();
+                    let mut tast_expr = self.infer_expression(return_expr)?;
 
-                    // Check against function return type
-                    if let Some(expected_return_type) = &self.current_return_type {
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: expr_type.clone(),
-                            right: expected_return_type.clone(),
-                            location: location.clone(),
-                        });
+                    // The returned value must be assignable to the declared
+                    // return type.
+                    if let Some(expected_return_type) = self.current_return_type.clone() {
+                        self.require_assignable(&mut tast_expr, &expected_return_type, location);
                     }
 
                     Some(tast_expr)
@@ -2795,7 +2787,7 @@ impl<'a> TypeInference<'a> {
                     _ => false,
                 };
 
-                let tast_value =
+                let mut tast_value =
                     if is_empty_literal && !matches!(target_type, ConcreteType::Unknown) {
                         // For empty array literals, create an ArrayLiteral with empty elements
                         // This ensures the list gets properly allocated rather than set to 0
@@ -2854,12 +2846,7 @@ impl<'a> TypeInference<'a> {
 
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
-                            // Add constraint that value type matches target type
-                            self.add_constraint(TypeConstraint::Equality {
-                                left: tast_value.expr_type.clone(),
-                                right: target_type.clone(),
-                                location: location.clone(),
-                            });
+                            self.require_assignable(&mut tast_value, &target_type, location);
                         }
 
                         TastExpression {
@@ -2940,12 +2927,7 @@ impl<'a> TypeInference<'a> {
 
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
-                            // Add constraint that value type matches field type
-                            self.add_constraint(TypeConstraint::Equality {
-                                left: tast_value.expr_type.clone(),
-                                right: target_type.clone(),
-                                location: location.clone(),
-                            });
+                            self.require_assignable(&mut tast_value, &target_type, location);
                         }
 
                         TastExpression {
@@ -3493,15 +3475,19 @@ impl<'a> TypeInference<'a> {
             }
             let _constraint_check = self.infer_function_call(
                 &function_type,
-                &tast_arguments,
+                &mut tast_arguments,
                 *function_symbol_id,
                 location,
             )?;
         }
 
         // Look up function type and determine return type
-        let return_type =
-            self.infer_function_return_type(*function_symbol_id, function, &tast_arguments)?;
+        let return_type = self.infer_function_return_type(
+            *function_symbol_id,
+            function,
+            &tast_arguments,
+            location,
+        )?;
 
         // Use SymbolId(0) for namespace functions (string.*, math.*, req.*, etc.)
         // This ensures MIR builder creates NamedFunction operands for proper symbol resolution
@@ -4017,7 +4003,12 @@ impl<'a> TypeInference<'a> {
                 Some(SymbolKind::Method { .. })
             )
         {
-            self.check_call_arguments(resolved_method_symbol, method, &tast_arguments, location);
+            self.check_call_arguments(
+                resolved_method_symbol,
+                method,
+                &mut tast_arguments,
+                location,
+            );
         }
 
         // SEM005: Private method access check.
@@ -4313,7 +4304,7 @@ impl<'a> TypeInference<'a> {
         self.check_call_arguments(
             *constructor_symbol_id,
             class_name,
-            &tast_arguments,
+            &mut tast_arguments,
             location,
         );
 
@@ -4953,7 +4944,7 @@ impl<'a> TypeInference<'a> {
     fn infer_function_call(
         &mut self,
         function_type: &ConcreteType,
-        arguments: &[TastExpression],
+        arguments: &mut [TastExpression],
         function_symbol_id: SymbolId,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
@@ -5071,13 +5062,19 @@ impl<'a> TypeInference<'a> {
 
                 // Check argument types match parameters (only for provided arguments)
                 // Skip type checking for generic list functions and variadic print functions
+                // `toString(value)` converts any number: the MIR builder sends a
+                // `number` argument to `float_to_string` instead of the
+                // registered `(integer) -> string` built-in.
+                let is_to_string = self
+                    .symbol_table
+                    .get_symbol(function_symbol_id)
+                    .is_some_and(|s| s.name == "toString");
                 if !is_generic_list_fn && !is_variadic_print_fn {
-                    for (param_type, arg) in parameters.iter().zip(arguments.iter()) {
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: arg.expr_type.clone(),
-                            right: param_type.clone(),
-                            location: location.clone(),
-                        });
+                    for (param_type, arg) in parameters.iter().zip(arguments.iter_mut()) {
+                        if is_to_string && arg.expr_type.is_numeric() {
+                            continue;
+                        }
+                        self.require_assignable(arg, param_type, location);
                     }
                 }
 

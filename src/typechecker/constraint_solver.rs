@@ -542,25 +542,174 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
-    /// Check subtype relationship
+    /// Check that a value of type `subtype` may be stored where a
+    /// `supertype` is expected (assignment, argument, return, operand).
+    ///
+    /// Unlike `unify` this is directional (type-system.md §Assignability):
+    /// `integer` widens to `number` but a `number` is not an `integer`, a
+    /// child class is its parent class but not the other way round, and a
+    /// list converts only when its elements are stored the same way.
     fn check_subtype(
         &mut self,
         subtype: &ConcreteType,
         supertype: &ConcreteType,
         location: &SourceLocation,
     ) -> Result<(), CompilerError> {
-        let subtype = self.apply_substitution(subtype);
-        let supertype = self.apply_substitution(supertype);
-
-        if subtype.is_assignable_to(&supertype) {
-            Ok(())
-        } else {
-            Err(CompilerError::type_error(
-                format!("Type {} is not a subtype of {}", subtype, supertype),
+        let from = self.apply_substitution(subtype);
+        let to = self.apply_substitution(supertype);
+        let mismatch = |from: &ConcreteType, to: &ConcreteType| {
+            CompilerError::type_error(
+                format!("A value of type {} cannot be used as {}", from, to),
                 None,
                 Some(location.clone()),
-            ))
+            )
+        };
+
+        match (&from, &to) {
+            (a, b) if a == b => Ok(()),
+
+            // Type variables are bound as in unification.
+            (ConcreteType::Generic { .. }, _) | (_, ConcreteType::Generic { .. }) => {
+                self.unify(&from, &to, location)
+            }
+
+            // Error recovery, the dynamic type, and null (every slot is nullable).
+            (ConcreteType::Unknown | ConcreteType::Any | ConcreteType::Null, _)
+            | (_, ConcreteType::Unknown | ConcreteType::Any) => Ok(()),
+
+            // Numbers convert only by widening (integer → number, narrower
+            // sized → wider sized of the same signedness).
+            (a, b) if Self::is_plain_numeric(a) && Self::is_plain_numeric(b) => {
+                if a.is_assignable_to(b) {
+                    Ok(())
+                } else {
+                    Err(CompilerError::type_error(
+                        format!(
+                            "A value of type {} cannot be used as {} without an explicit conversion",
+                            a, b
+                        ),
+                        Some(format!(
+                            "Convert it explicitly, e.g. `value.{}()`",
+                            if matches!(b, ConcreteType::Number | ConcreteType::NumberSized { .. }) {
+                                "toNumber"
+                            } else {
+                                "toInteger"
+                            }
+                        )),
+                        Some(location.clone()),
+                    ))
+                }
+            }
+
+            // A child class is assignable to its parent class only.
+            (
+                ConcreteType::Class {
+                    symbol_id: child,
+                    type_args: child_args,
+                },
+                ConcreteType::Class {
+                    symbol_id: parent,
+                    type_args: parent_args,
+                },
+            ) => {
+                if child != parent && !self.is_subclass_of(*child, *parent) {
+                    return Err(self.class_mismatch(*child, *parent, location));
+                }
+                if child_args.len() != parent_args.len() {
+                    return Err(mismatch(&from, &to));
+                }
+                for (a, b) in child_args.iter().zip(parent_args.iter()) {
+                    self.unify(a, b, location)?;
+                }
+                Ok(())
+            }
+
+            // Lists and matrices are covariant in their element type, as long
+            // as the elements are stored the same way: a list of integers
+            // (4-byte slots) is not a list of numbers (8-byte slots).
+            (ConcreteType::Array(a), ConcreteType::Array(b))
+            | (ConcreteType::Matrix(a), ConcreteType::Matrix(b)) => {
+                let (a, b) = (a.as_ref(), b.as_ref());
+                if a != b && (Self::is_plain_numeric(a) || Self::is_plain_numeric(b)) {
+                    if matches!(b, ConcreteType::Unknown | ConcreteType::Any)
+                        || matches!(a, ConcreteType::Unknown | ConcreteType::Any)
+                    {
+                        return Ok(());
+                    }
+                    return Err(CompilerError::type_error(
+                        format!("A value of type {} cannot be used as {}", from, to),
+                        Some(format!(
+                            "The elements are stored differently; build a new list of {} in an `iterate` loop",
+                            b
+                        )),
+                        Some(location.clone()),
+                    ));
+                }
+                self.check_subtype(a, b, location)
+            }
+
+            (ConcreteType::Optional(a), ConcreteType::Optional(b)) => {
+                let (a, b) = ((**a).clone(), (**b).clone());
+                self.check_subtype(&a, &b, location)
+            }
+            (_, ConcreteType::Optional(inner)) => {
+                let inner = (**inner).clone();
+                self.check_subtype(&from, &inner, location)
+            }
+            (ConcreteType::Optional(inner), _) => {
+                let inner = (**inner).clone();
+                self.check_subtype(&inner, &to, location)
+            }
+
+            // Two different scalar types (string, boolean, a number).
+            (a, b) if Self::is_scalar(a) && Self::is_scalar(b) => Err(mismatch(&from, &to)),
+
+            // Everything else (functions, capabilities, unions, pairs)
+            // follows the unification rules.
+            _ => self.unify(&from, &to, location),
         }
+    }
+
+    /// A string, boolean, or number of any width.
+    fn is_scalar(t: &ConcreteType) -> bool {
+        matches!(t, ConcreteType::String | ConcreteType::Boolean) || Self::is_plain_numeric(t)
+    }
+
+    /// `integer` / `number` of any width (not a nullable `T?`).
+    fn is_plain_numeric(t: &ConcreteType) -> bool {
+        t.is_numeric() && !matches!(t, ConcreteType::Optional(_))
+    }
+
+    /// SEM001 for a class value used where an unrelated (or more derived)
+    /// class is expected, naming both classes.
+    fn class_mismatch(
+        &self,
+        from: crate::resolver::SymbolId,
+        to: crate::resolver::SymbolId,
+        location: &SourceLocation,
+    ) -> CompilerError {
+        let name = |id: crate::resolver::SymbolId| {
+            self.symbol_table
+                .and_then(|st| st.get_symbol(id).map(|s| s.name.clone()))
+                .unwrap_or_else(|| format!("#{}", id.0))
+        };
+        let (from_name, to_name) = (name(from), name(to));
+        let help = if self.is_subclass_of(to, from) {
+            format!(
+                "'{}' is a parent of '{}': a parent class value is not a '{}'",
+                from_name, to_name, to_name
+            )
+        } else {
+            format!("'{}' does not inherit from '{}'", from_name, to_name)
+        };
+        CompilerError::type_error(
+            format!(
+                "A value of class '{}' cannot be used as '{}'",
+                from_name, to_name
+            ),
+            Some(help),
+            Some(location.clone()),
+        )
     }
 
     /// Bind a type variable to a concrete type
