@@ -167,8 +167,17 @@ fn extract_camel_bridge_calls(literal_body: &str) -> Vec<String> {
     let mut hits = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        // Look for the start of an identifier: '_' followed by lowercase
-        if bytes[i] == b'_' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_lowercase() {
+        // Look for the start of an identifier: '_' followed by lowercase, not
+        // in the middle of another identifier. Bridge names start with exactly
+        // one '_'; `__name` is a plugin-internal helper (e.g. frame.server's
+        // `__dc_*` dev-capture helpers), not a bridge call.
+        let at_identifier_start =
+            i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+        if at_identifier_start
+            && bytes[i] == b'_'
+            && i + 1 < bytes.len()
+            && bytes[i + 1].is_ascii_lowercase()
+        {
             // Walk the identifier
             let start = i;
             let mut j = i + 1;
@@ -318,6 +327,10 @@ fn extract_camel_bridge_calls_requires_two_snake_segments() {
 
     // Non-underscore-prefixed names → ignored entirely.
     assert!(extract_camel_bridge_calls("doSomething()").is_empty());
+
+    // Double-underscore plugin-internal helpers are not bridge calls, and no
+    // match starts in the middle of one.
+    assert!(extract_camel_bridge_calls("\"__dc_jsonEscapeString\"").is_empty());
 }
 
 #[test]
