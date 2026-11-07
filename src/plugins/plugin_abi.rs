@@ -1138,9 +1138,6 @@ pub struct PluginArtifact {
     /// Whether the artifact is served to web clients.
     #[serde(default)]
     pub public: bool,
-    /// Cache key hint: "build_input_hash" (default), "plugin_version", "never".
-    #[serde(default = "default_cache_hint")]
-    pub cache: String,
     /// MIME type. Inferred from extension if absent.
     #[serde(default)]
     pub content_type: Option<String>,
@@ -1148,10 +1145,6 @@ pub struct PluginArtifact {
 
 fn default_required_when() -> String {
     "always".to_string()
-}
-
-fn default_cache_hint() -> String {
-    "build_input_hash".to_string()
 }
 
 /// How an artifact's bytes are produced.
@@ -1730,8 +1723,6 @@ mod tests {
         assert_eq!(theme.purpose, "static_asset");
         // Default required_when is "always"
         assert_eq!(theme.required_when, "always");
-        // Default cache is "build_input_hash"
-        assert_eq!(theme.cache, "build_input_hash");
         match theme.emit.as_ref().unwrap() {
             ArtifactSource::Callback(name) => assert_eq!(name, "emit_theme_css"),
             _ => panic!("expected Callback variant for theme.css emit"),
