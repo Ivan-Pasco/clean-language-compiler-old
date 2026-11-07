@@ -223,6 +223,31 @@ impl NameResolver {
                             location: decl.location.clone(),
                         }),
                 );
+                // A list declared with a behavior modifier gets the behavior
+                // once its list exists.
+                for decl in &qualified_state.declarations {
+                    if decl.list_behavior == crate::ast::ListBehavior::Default {
+                        continue;
+                    }
+                    let set_flags = HirExpression::MethodCall {
+                        receiver: Box::new(HirExpression::Variable {
+                            name: decl.name.clone(),
+                            location: decl.location.clone(),
+                        }),
+                        method: "setFlags".to_string(),
+                        arguments: vec![HirExpression::Literal {
+                            value: crate::ast::Value::Integer(i64::from(
+                                decl.list_behavior.to_flags(),
+                            )),
+                            location: decl.location.clone(),
+                        }],
+                        location: decl.location.clone(),
+                    };
+                    screen_state_init.push(ResolvedHirStatement::Expression {
+                        expression: self.resolve_expression(&set_flags)?,
+                        location: decl.location.clone(),
+                    });
+                }
                 match resolved_state {
                     Some(ref mut app_state) => {
                         app_state
@@ -1379,10 +1404,74 @@ impl NameResolver {
         let mut resolved_classes = Vec::new();
 
         for class in classes {
-            resolved_classes.push(self.resolve_class(class.clone())?);
+            let class = Self::with_list_behavior_prologue(class, classes);
+            resolved_classes.push(self.resolve_class(class)?);
         }
 
         Ok(resolved_classes)
+    }
+
+    /// `class` with its constructor starting by giving every list field
+    /// declared with a behavior modifier (`list<T>.unique items`), its own or
+    /// inherited, that behavior: the field's list is created by the field
+    /// initializer, the behavior lives in the list's header. A class without
+    /// a constructor gets one holding only these statements.
+    fn with_list_behavior_prologue(class: &HirClass, classes: &[HirClass]) -> HirClass {
+        let mut prologue = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut current = Some(class);
+        while let Some(c) = current {
+            if !seen.insert(c.name.as_str()) {
+                break;
+            }
+            for field in &c.fields {
+                if field.list_behavior == crate::ast::ListBehavior::Default {
+                    continue;
+                }
+                let loc = field.location.clone();
+                let this_field = HirExpression::FieldAccess {
+                    object: Box::new(HirExpression::Variable {
+                        name: "this".to_string(),
+                        location: loc.clone(),
+                    }),
+                    field: field.name.clone(),
+                    location: loc.clone(),
+                };
+                prologue.push(HirStatement::Expression {
+                    expression: HirExpression::MethodCall {
+                        receiver: Box::new(this_field),
+                        method: "setFlags".to_string(),
+                        arguments: vec![HirExpression::Literal {
+                            value: crate::ast::Value::Integer(i64::from(
+                                field.list_behavior.to_flags(),
+                            )),
+                            location: loc.clone(),
+                        }],
+                        location: loc.clone(),
+                    },
+                    location: loc,
+                });
+            }
+            current = c
+                .parent
+                .as_ref()
+                .and_then(|parent| classes.iter().find(|k| &k.name == parent));
+        }
+        let mut class = class.clone();
+        if prologue.is_empty() {
+            return class;
+        }
+        let constructor = class.constructor.get_or_insert_with(|| HirConstructor {
+            parameters: Vec::new(),
+            body: HirBlock {
+                statements: Vec::new(),
+                location: class.location.clone(),
+            },
+            location: class.location.clone(),
+        });
+        prologue.append(&mut constructor.body.statements);
+        constructor.body.statements = prologue;
+        class
     }
 
     /// Resolve a single class
@@ -5283,6 +5372,7 @@ mod scope_tests {
                 },
                 guard: None,
                 is_private: false,
+                list_behavior: crate::ast::ListBehavior::Default,
                 location: loc(),
             }],
             computed: vec![],

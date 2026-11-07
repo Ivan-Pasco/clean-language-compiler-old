@@ -1,0 +1,33 @@
+// Test: bugfixes/apply_block_function_and_method
+// Grammar: function_apply_block, method_apply_block (grammar.ebnf §6.12)
+// Semantic: an apply block calls the function or method once per indented item
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   shout: a
+//   shout: b
+//   2
+//   6
+//   1
+
+start:
+	shout:
+		"a"
+		"b"
+	list<integer> xs = []
+	xs.add:
+		5
+		6
+	print(xs.length())
+	print(xs[1])
+	Box b = Box()
+	b.items.add:
+		9
+	print(b.items.length())
+
+class Box
+	public:
+		list<integer> items = []
+
+functions:
+	shout(string s)
+		print("shout: " + s)

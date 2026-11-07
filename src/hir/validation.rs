@@ -2024,6 +2024,7 @@ mod concurrency_tests {
                     },
                     guard: None,
                     is_private: false,
+                    list_behavior: crate::ast::ListBehavior::Default,
                     location: loc(),
                 }],
                 computed: vec![],

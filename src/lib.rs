@@ -2778,6 +2778,7 @@ fn run_multi_file_frontend(
                         field_type: parse_hir_type(&f.type_),
                         initializer: None,
                         is_private: false,
+                        list_behavior: crate::ast::ListBehavior::Default,
                         location: Default::default(),
                     })
                     .collect();

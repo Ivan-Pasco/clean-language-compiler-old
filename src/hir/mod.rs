@@ -189,6 +189,9 @@ pub struct HirField {
     pub initializer: Option<HirExpression>,
     /// True when declared inside a `private:` sub-section of a class body (SEM005).
     pub is_private: bool,
+    /// Behavior modifier of a list-typed field (`list<T>.unique`, ...);
+    /// `Default` otherwise. Set on every new instance.
+    pub list_behavior: crate::ast::ListBehavior,
     pub location: SourceLocation,
 }
 
@@ -260,6 +263,8 @@ pub struct HirStateDeclaration {
     pub guard: Option<HirGuardClause>,
     /// True when declared inside a `private:` sub-section of a `state:` block (SEM005).
     pub is_private: bool,
+    /// Behavior modifier of a list-typed state variable; `Default` otherwise.
+    pub list_behavior: crate::ast::ListBehavior,
     pub location: SourceLocation,
 }
 

@@ -8,8 +8,10 @@ start:
 	greet:
 		"Alice"
 
-	// Test 2: Call a function using apply-block syntax with two arguments
-	printSum:
+	// Test 2: The apply block calls the function once per indented item
+	// Fixed: was `printSum:` expecting one printSum(10, 20) call; an apply block
+	// applies a single-argument function to each item (specification 1.0 §05)
+	printValue:
 		10
 		20
 
@@ -19,5 +21,5 @@ functions:
 	void greet(string name)
 		print("Hello, " + name)
 
-	void printSum(integer a, integer b)
-		print("Sum: " + (a + b).toString())
+	void printValue(integer n)
+		print("Value: " + n.toString())

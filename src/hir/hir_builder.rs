@@ -168,11 +168,15 @@ pub struct HirBuilder {
     /// API namespace (e.g. "result" → "api"). Used by `build_expression` to
     /// substitute `result.ok` → `api.ok()`, `result.json(p)` → `api.json(p)`, etc.
     api_response_vars: std::collections::HashMap<String, String>,
-    /// Initial values of top-level state variables, keyed by name. Pre-scanned in
-    /// `build_hir` before functions are lowered so `reset <name>` statements can
-    /// expand inline to `<name> = <initializer>` without depending on a host
-    /// bridge to remember the original value.
-    state_initializers: std::collections::HashMap<String, crate::ast::Expression>,
+    /// Declarations of the top-level `state:` block in source order.
+    /// Pre-scanned in `build_hir` before functions are lowered so `reset`
+    /// expands inline to assignments of the declared initial values.
+    state_decls: Vec<StateDeclInfo>,
+    /// The same for each screen's own `state:` block, keyed by screen name.
+    screen_state_decls: std::collections::HashMap<String, Vec<StateDeclInfo>>,
+    /// Screen whose functions are being lowered (`reset` inside a screen
+    /// targets the screen's own state).
+    current_screen: Option<String>,
     /// Monotonic counter used to name temporaries introduced by the
     /// string-accumulator-loop rewrite that resolves
     /// CMP-SSR-MALLOC-OOM-PAGE-RENDER. Each rewritten loop gets a unique
@@ -197,6 +201,24 @@ pub struct HirBuilder {
     statement_location: Option<SourceLocation>,
 }
 
+/// One `state:` declaration as `reset` needs it: name, initializer and the
+/// list behavior of its declared type.
+#[derive(Debug, Clone)]
+struct StateDeclInfo {
+    name: String,
+    initializer: Expression,
+    list_behavior: ListBehavior,
+}
+
+/// The behavior modifier (`.line`, `.pile`, `.unique`) of a declared list
+/// type; `Default` for every other type.
+fn list_behavior_of(type_: &Type) -> ListBehavior {
+    match type_ {
+        Type::List(_, behavior) => *behavior,
+        _ => ListBehavior::Default,
+    }
+}
+
 impl HirBuilder {
     /// Create a new HIR builder
     pub fn new() -> Self {
@@ -212,7 +234,9 @@ impl HirBuilder {
             later_counter: 0,
             current_function_name: String::new(),
             api_response_vars: std::collections::HashMap::new(),
-            state_initializers: std::collections::HashMap::new(),
+            state_decls: Vec::new(),
+            screen_state_decls: std::collections::HashMap::new(),
+            current_screen: None,
             string_builder_counter: 0,
             carryover_counter: 0,
             generic_instance_classes: std::collections::HashMap::new(),
@@ -703,14 +727,32 @@ impl HirBuilder {
         // named args can be validated and reordered when expressions are lowered.
         self.prescan_signatures(&program);
 
-        // Pre-scan state initializers so that `reset <name>` statements lowered later
-        // can expand inline to an assignment of the original initializer expression.
-        // Top-level `state:` is the only scope `reset name` can target outside of a
-        // screen block (per grammar.ebnf reset_statement = "reset" , ( "state" | identifier )).
+        // Pre-scan state declarations so that `reset` statements lowered later
+        // can expand inline to assignments of the declared initial values
+        // (grammar.ebnf reset_statement = "reset" , ( "state" | identifier )).
+        let state_decl_infos = |block: &crate::ast::StateBlock| -> Vec<StateDeclInfo> {
+            block
+                .declarations
+                .iter()
+                .map(|decl| StateDeclInfo {
+                    name: decl.name.clone(),
+                    initializer: decl.initializer.clone(),
+                    list_behavior: list_behavior_of(&decl.type_),
+                })
+                .collect()
+        };
         if let Some(state_block) = &program.state {
-            for decl in &state_block.declarations {
-                self.state_initializers
-                    .insert(decl.name.clone(), decl.initializer.clone());
+            self.state_decls = state_decl_infos(state_block);
+        }
+        for stmt in &program.screen_blocks {
+            if let Statement::ScreenBlockStmt {
+                name,
+                state: Some(screen_state),
+                ..
+            } = stmt
+            {
+                self.screen_state_decls
+                    .insert(name.clone(), state_decl_infos(screen_state));
             }
         }
 
@@ -733,7 +775,7 @@ impl HirBuilder {
                     for func in func_list {
                         let hir_func = self.build_function(func)?;
                         if func.name == "start" {
-                            start_function = Some(hir_func);
+                            Self::set_start_function(&mut start_function, hir_func)?;
                         } else {
                             functions.push(hir_func);
                         }
@@ -866,8 +908,19 @@ impl HirBuilder {
                         location.clone(),
                     ));
                 }
-                _ => {
-                    // Handle other top-level statements if needed
+                // `build: rules = ...` is parsed but its setting is not applied:
+                // state `rules:` are checked in every non-release build
+                // (specification 1.0 §09 describes the setting).
+                Statement::BuildBlock { .. } => {}
+                other => {
+                    return Err(CompilerError::syntax_error(
+                        format!(
+                            "{} is not allowed at the top level of a program",
+                            Self::statement_kind_name(other)
+                        ),
+                        None,
+                        other.location().cloned(),
+                    ));
                 }
             }
         }
@@ -887,7 +940,7 @@ impl HirBuilder {
         for func in &program.functions {
             let hir_func = self.build_function(func)?;
             if func.name == "start" {
-                start_function = Some(hir_func);
+                Self::set_start_function(&mut start_function, hir_func)?;
             } else {
                 functions.push(hir_func);
             }
@@ -907,7 +960,8 @@ impl HirBuilder {
 
         // Handle the start function if it exists
         if let Some(start_func) = &program.start_function {
-            start_function = Some(self.build_function(start_func)?);
+            let hir_func = self.build_function(start_func)?;
+            Self::set_start_function(&mut start_function, hir_func)?;
         }
 
         // Process test cases from program.tests (parser stores them directly, not in statements).
@@ -1009,7 +1063,10 @@ impl HirBuilder {
                 // The functions join the global function list so they are
                 // compiled and callable as `Screen.fn(...)`.
                 for screen_fn in screen_fns {
-                    let mut hir_fn = self.build_function(screen_fn)?;
+                    self.current_screen = Some(name.clone());
+                    let built = self.build_function(screen_fn);
+                    self.current_screen = None;
+                    let mut hir_fn = built?;
                     hir_fn.name = format!("{}.{}", name, hir_fn.name);
                     hir_fn.owner_screen = Some(name.clone());
                     functions.push(hir_fn);
@@ -1040,8 +1097,12 @@ impl HirBuilder {
                         location: loc.clone(),
                     },
                     value: self.build_expression(&decl.initializer)?,
-                    location: loc,
+                    location: loc.clone(),
                 });
+                let behavior = list_behavior_of(&decl.type_);
+                if behavior != ListBehavior::Default {
+                    state_init.push(self.make_set_behavior_stmt(&decl.name, behavior, loc));
+                }
             }
             state_init.append(&mut start_fn.body.statements);
             start_fn.body.statements = state_init;
@@ -1135,10 +1196,27 @@ impl HirBuilder {
 
     /// Convert AST class to HIR class
     fn build_class(&mut self, class: &Class) -> Result<HirClass, CompilerError> {
+        // Field initializers and `always:` conditions carry no position of
+        // their own; they report at the class declaration.
+        let outer_location = self.statement_location.clone();
+        if let Some(loc) = class
+            .location
+            .as_ref()
+            .filter(|loc| loc.line > 0 && !loc.file.starts_with('<'))
+        {
+            self.statement_location = Some(loc.clone());
+        }
+        let result = self.build_class_inner(class);
+        self.statement_location = outer_location;
+        result
+    }
+
+    fn build_class_inner(&mut self, class: &Class) -> Result<HirClass, CompilerError> {
+        let class_location = class.location.clone().unwrap_or_default();
         let fields = class
             .fields
             .iter()
-            .map(|field| self.build_field(field))
+            .map(|field| self.build_field(field, &class_location))
             .collect::<Result<Vec<_>, _>>()?;
 
         let constructor = if let Some(ctor) = &class.constructor {
@@ -1175,12 +1253,23 @@ impl HirBuilder {
     }
 
     /// Convert AST field to HIR field
-    fn build_field(&mut self, field: &crate::ast::Field) -> Result<HirField, CompilerError> {
+    fn build_field(
+        &mut self,
+        field: &crate::ast::Field,
+        location: &SourceLocation,
+    ) -> Result<HirField, CompilerError> {
         let field_type = self.build_type(&field.type_)?;
-        let initializer = if let Some(init) = &field.default_value {
-            Some(self.build_expression(init)?)
-        } else {
-            None
+        let list_behavior = list_behavior_of(&field.type_);
+        let initializer = match &field.default_value {
+            Some(init) => Some(self.build_expression(init)?),
+            // A behavior modifier lives in the list's header, so the field
+            // needs a list from construction on: it starts empty.
+            None if list_behavior != ListBehavior::Default => Some(HirExpression::Array {
+                elements: Vec::new(),
+                element_type: HirType::Void,
+                location: location.clone(),
+            }),
+            None => None,
         };
 
         Ok(HirField {
@@ -1188,7 +1277,8 @@ impl HirBuilder {
             field_type,
             initializer,
             is_private: field.visibility == crate::ast::Visibility::Private,
-            location: SourceLocation::default(),
+            list_behavior,
+            location: location.clone(),
         })
     }
 
@@ -1408,13 +1498,22 @@ impl HirBuilder {
                 // an i32 function-table index, so we map it to Integer in HIR.
                 Ok(HirType::Integer)
             }
-            _ => {
-                // For unsupported types, create an inferred type for now
+            // A generic type without a plugin instance template
+            // (`Box<Item>`): the type checker infers the concrete type from
+            // the value.
+            Type::Generic(..) => {
                 self.type_inference_counter += 1;
                 Ok(HirType::Inferred {
                     id: self.type_inference_counter,
                     location: SourceLocation::default(),
                 })
+            }
+            Type::TypeParameter(_) | Type::Function(..) | Type::Future(_) => {
+                Err(CompilerError::syntax_error(
+                    format!("Type '{}' is not supported here", ast_type),
+                    None,
+                    self.statement_location.clone(),
+                ))
             }
         }
     }
@@ -1794,6 +1893,62 @@ impl HirBuilder {
                 ));
                 let handler = self.build_block(error_block)?;
                 hir_statements.push(Self::error_handler_if(handler, &loc));
+            } else if let Statement::FunctionApplyBlock {
+                function_name,
+                expressions,
+                location,
+            } = stmt
+            {
+                // `fn:` + indented items calls `fn(item)` once per item
+                // (grammar.ebnf §6.12 function_apply_block).
+                let loc = location.clone().unwrap_or_default();
+                for item in expressions {
+                    let call = Expression::Call(function_name.clone(), vec![item.clone()]);
+                    hir_statements.push(self.build_expression_statement(&call, &loc)?);
+                }
+            } else if let Statement::MethodApplyBlock {
+                object_name,
+                method_chain,
+                expressions,
+                location,
+            } = stmt
+            {
+                // `obj.a.method:` + indented items calls `obj.a.method(item)`
+                // once per item (grammar.ebnf §6.12 method_apply_block).
+                let loc = location.clone().unwrap_or_default();
+                let Some((method, fields)) = method_chain.split_last() else {
+                    return Err(CompilerError::syntax_error(
+                        format!("Apply block on '{}' names no method", object_name),
+                        None,
+                        Some(loc),
+                    ));
+                };
+                let receiver = fields.iter().fold(
+                    Expression::Variable(object_name.clone()),
+                    |object, field| Expression::PropertyAccess {
+                        object: Box::new(object),
+                        property: field.clone(),
+                        location: loc.clone(),
+                    },
+                );
+                for item in expressions {
+                    let call = Expression::MethodCall {
+                        object: Box::new(receiver.clone()),
+                        method: method.clone(),
+                        arguments: vec![item.clone()],
+                        location: loc.clone(),
+                    };
+                    hir_statements.push(self.build_expression_statement(&call, &loc)?);
+                }
+            } else if let Statement::ResetStmt { target, location } = stmt {
+                let loc = location.clone().unwrap_or_default();
+                let mut expanded = self.lower_reset(target, &loc)?;
+                hir_statements.append(&mut expanded);
+            } else if matches!(
+                stmt,
+                Statement::Description { .. } | Statement::Spec { .. } | Statement::Intent { .. }
+            ) {
+                // Documentation and AI metadata: no runtime effect.
             } else if let Statement::PrintBlock {
                 expressions,
                 newline,
@@ -2122,74 +2277,163 @@ impl HirBuilder {
                 })
             }
 
-            // reset_statement — lower to inline assignment from the captured state initializer.
-            // grammar.ebnf: reset_statement = "reset" , ( "state" | identifier ) ;
-            //
-            // Host bridges historically left `_state_reset_named` / `_state_reset_all` as
-            // no-ops, so `reset <name>` produced no effect at runtime. The initializer is
-            // captured during the build_hir pre-scan, so we can rewrite the statement here
-            // to `<name> = <initializer>` and bypass the host entirely.
-            Statement::ResetStmt { target, location } => {
-                let loc = location.clone().unwrap_or_default();
-                match target {
-                    ResetTarget::AllState => {
-                        // `reset state` — fall back to the host bridge for now. Lowering this
-                        // inline requires emitting multiple assignments from a single
-                        // statement node, which build_statement's single-return shape doesn't
-                        // accommodate. Tracked as a follow-up; `reset state` is the rarer
-                        // form and most hosts already stub it.
-                        Ok(HirStatement::Expression {
-                            expression: HirExpression::Call {
-                                function: "_state_reset_all".to_string(),
-                                arguments: vec![],
-                                location: loc.clone(),
-                            },
-                            location: loc,
-                        })
-                    }
-                    ResetTarget::Variable(name) => {
-                        if let Some(init_expr) = self.state_initializers.get(name).cloned() {
-                            let value = self.build_expression(&init_expr)?;
-                            Ok(HirStatement::Assignment {
-                                target: HirLValue::Variable {
-                                    name: name.clone(),
-                                    location: loc.clone(),
-                                },
-                                value,
-                                location: loc,
-                            })
-                        } else {
-                            // Variable was not declared in any state: block — keep the call
-                            // so semantic analysis emits the right diagnostic instead of
-                            // silently succeeding on a missing target.
-                            Ok(HirStatement::Expression {
-                                expression: HirExpression::Call {
-                                    function: "_state_reset_named".to_string(),
-                                    arguments: vec![HirExpression::Literal {
-                                        value: Value::String(name.clone()),
-                                        location: loc.clone(),
-                                    }],
-                                    location: loc.clone(),
-                                },
-                                location: loc,
-                            })
-                        }
+            // Apply blocks, `reset`, `error(...)`, `onError`, `print:` and
+            // the validate forms expand to several statements and are lowered
+            // in `build_block_inner`; declarations and blocks that belong at
+            // the top level cannot appear inside a body.
+            other => Err(CompilerError::syntax_error(
+                format!(
+                    "{} is not allowed inside a function or block",
+                    Self::statement_kind_name(other)
+                ),
+                None,
+                other.location().cloned(),
+            )),
+        }
+    }
+
+    /// Human-readable name of a statement kind, for diagnostics.
+    fn statement_kind_name(stmt: &Statement) -> &'static str {
+        match stmt {
+            Statement::Require { .. } => "'require'",
+            Statement::Ensure { .. } => "'ensure'",
+            Statement::VariableDecl { .. } => "A variable declaration",
+            Statement::FunctionsBlock { .. } => "A 'functions:' block",
+            Statement::TypeApplyBlock { .. }
+            | Statement::FunctionApplyBlock { .. }
+            | Statement::MethodApplyBlock { .. }
+            | Statement::ConstantApplyBlock { .. } => "An apply block",
+            Statement::Assignment { .. } => "An assignment",
+            Statement::Print { .. } | Statement::PrintBlock { .. } => "'print'",
+            Statement::Return { .. } => "'return'",
+            Statement::Break { .. } => "'break'",
+            Statement::Continue { .. } => "'continue'",
+            Statement::If { .. } => "'if'",
+            Statement::Iterate { .. } | Statement::RangeIterate { .. } => "'iterate'",
+            Statement::While { .. } => "'while'",
+            Statement::Test { .. } => "A 'test' block (tests belong in a 'tests:' block)",
+            Statement::TestsBlock { .. } => "A 'tests:' block",
+            Statement::Expression { .. } => "An expression statement",
+            Statement::Error { .. } => "'error(...)'",
+            Statement::Import { .. } => "An 'import:' block",
+            Statement::LaterAssignment { .. } => "'later'",
+            Statement::Background { .. } => "'background'",
+            Statement::OnErrorBlock { .. } | Statement::StandaloneErrorHandler { .. } => {
+                "'onError'"
+            }
+            Statement::ClassDefinition { .. } => "A class declaration",
+            Statement::Description { .. } => "'description'",
+            Statement::Spec { .. } => "'spec'",
+            Statement::Intent { .. } => "'intent'",
+            Statement::SourceBlock { .. } => "A 'source:' block",
+            Statement::BuildBlock { .. } => "A 'build:' block",
+            Statement::FrameworkBlock { .. } => "A plugin block",
+            Statement::ResetStmt { .. } => "'reset'",
+            Statement::ScreenBlockStmt { .. } => "A 'screen' block",
+            Statement::ValidateDeclaration { .. } | Statement::ValidateCheck { .. } => {
+                "A 'validate' block"
+            }
+        }
+    }
+
+    /// An expression statement for `expr`, located at `location`.
+    fn build_expression_statement(
+        &mut self,
+        expr: &Expression,
+        location: &SourceLocation,
+    ) -> Result<HirStatement, CompilerError> {
+        let outer = self.statement_location.replace(location.clone());
+        let expression = self.build_expression(expr);
+        self.statement_location = outer;
+        Ok(HirStatement::Expression {
+            expression: expression?,
+            location: location.clone(),
+        })
+    }
+
+    /// Record `function` as the program's `start:` block. A second, distinct
+    /// `start:` block is SEM003 (the same block may arrive through more than
+    /// one AST list, with the same location).
+    fn set_start_function(
+        slot: &mut Option<HirFunction>,
+        function: HirFunction,
+    ) -> Result<(), CompilerError> {
+        if let Some(existing) = slot {
+            if existing.location != function.location {
+                return Err(CompilerError::semantic_error_with_code(
+                    format!(
+                        "A program has one 'start:' block; the first is declared at line {}",
+                        existing.location.line
+                    ),
+                    Some("Merge the statements into a single 'start:' block".to_string()),
+                    Some(function.location),
+                    "SEM003",
+                ));
+            }
+        }
+        *slot = Some(function);
+        Ok(())
+    }
+
+    /// Lower `reset name` / `reset state` to assignments of the declared
+    /// initial values. Inside a screen, `reset state` resets the screen's own
+    /// state and `reset name` looks at the screen's state first. A list with
+    /// a behavior modifier gets its behavior back after the assignment.
+    fn lower_reset(
+        &mut self,
+        target: &ResetTarget,
+        location: &SourceLocation,
+    ) -> Result<Vec<HirStatement>, CompilerError> {
+        let screen_decls = self
+            .current_screen
+            .as_ref()
+            .and_then(|screen| self.screen_state_decls.get(screen))
+            .cloned();
+        let targets: Vec<StateDeclInfo> = match target {
+            ResetTarget::AllState => screen_decls.unwrap_or_else(|| self.state_decls.clone()),
+            ResetTarget::Variable(name) => {
+                let found = screen_decls
+                    .iter()
+                    .flatten()
+                    .chain(self.state_decls.iter())
+                    .find(|decl| decl.name == *name)
+                    .cloned();
+                match found {
+                    Some(decl) => vec![decl],
+                    None => {
+                        return Err(CompilerError::semantic_error_with_code(
+                            format!(
+                                "'reset {}' names no state variable; '{}' is not declared in a 'state:' block",
+                                name, name
+                            ),
+                            Some("Only variables declared in 'state:' can be reset".to_string()),
+                            Some(location.clone()),
+                            "SEM002",
+                        ));
                     }
                 }
             }
-
-            // TypeApplyBlock is handled in build_block() where it can expand into multiple statements
-            _ => {
-                // For unsupported statements, create a dummy expression statement
-                Ok(HirStatement::Expression {
-                    expression: HirExpression::Literal {
-                        value: Value::Void,
-                        location: SourceLocation::default(),
-                    },
-                    location: SourceLocation::default(),
-                })
+        };
+        let mut statements = Vec::new();
+        for decl in targets {
+            let value = self.build_expression(&decl.initializer)?;
+            statements.push(HirStatement::Assignment {
+                target: HirLValue::Variable {
+                    name: decl.name.clone(),
+                    location: location.clone(),
+                },
+                value,
+                location: location.clone(),
+            });
+            if decl.list_behavior != ListBehavior::Default {
+                statements.push(self.make_set_behavior_stmt(
+                    &decl.name,
+                    decl.list_behavior,
+                    location.clone(),
+                ));
             }
         }
+        Ok(statements)
     }
 
     /// Convert AST expression to HIR expression
@@ -2711,21 +2955,17 @@ impl HirBuilder {
                 "SEM001",
             )),
 
-            // For unsupported expressions we lower to a void literal rather than
-            // erroring, because some upstream rewrites legitimately leave behind
-            // transient nodes that are pruned later. Logged at trace so the
-            // silent path is observable when debugging but doesn't pollute
-            // normal compilation output.
-            other => {
-                tracing::trace!(
-                    expression = ?std::mem::discriminant(other),
-                    "HIR builder catch-all: lowering unrecognised expression to void"
-                );
-                Ok(HirExpression::Literal {
-                    value: Value::Void,
-                    location: SourceLocation::default(),
-                })
-            }
+            // `expr onError:` blocks, the `error` variable, `later` and
+            // `input` have statement forms that are lowered elsewhere; in
+            // expression position they have no lowering.
+            Expression::OnErrorBlock { location, .. }
+            | Expression::ErrorVariable { location }
+            | Expression::LaterAssignment { location, .. }
+            | Expression::Input { location, .. } => Err(CompilerError::syntax_error(
+                "This expression form is not supported here".to_string(),
+                None,
+                Some(location.clone()),
+            )),
         }
     }
 
@@ -2862,6 +3102,7 @@ impl HirBuilder {
             initializer,
             guard,
             is_private: decl.is_private,
+            list_behavior: list_behavior_of(&decl.type_),
             location: decl.location.clone().unwrap_or_default(),
         })
     }
@@ -8074,9 +8315,7 @@ impl HirBuilder {
             location: loc.clone(),
         };
         let mut ok_hir_stmts = vec![value_decl];
-        for stmt in &check.ok_branch {
-            ok_hir_stmts.push(self.build_statement(stmt)?);
-        }
+        ok_hir_stmts.extend(self.build_block(&check.ok_branch)?.statements);
         let ok_block = HirBlock {
             statements: ok_hir_stmts,
             location: loc.clone(),
@@ -8099,9 +8338,7 @@ impl HirBuilder {
             location: loc.clone(),
         };
         let mut error_hir_stmts = vec![errors_decl];
-        for stmt in &check.error_branch {
-            error_hir_stmts.push(self.build_statement(stmt)?);
-        }
+        error_hir_stmts.extend(self.build_block(&check.error_branch)?.statements);
         let error_block = HirBlock {
             statements: error_hir_stmts,
             location: loc.clone(),
