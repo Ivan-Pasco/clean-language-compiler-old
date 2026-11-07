@@ -1,0 +1,28 @@
+// Test: bugfixes/list_literals_allocate_through_growing_heap
+// Grammar: list_literal ("[" expression { "," expression } "]")
+// Semantic: list literals allocate on the heap (specification 20-memory-management.md)
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   60000
+//   1800150000
+//   59999
+//   60001
+//
+// Regression: `list.allocate` (the allocator behind list literals) bumped
+// __heap_ptr itself instead of calling __malloc, so it never grew linear
+// memory, never aligned the block, and left the header's flags word with
+// whatever bytes were there. Keeping 60000 literals alive runs the heap past
+// the initial memory, which trapped with an out-of-bounds store.
+
+start:
+	list<list<integer>> all = []
+	integer total = 0
+	iterate i in 1 to 60000
+		list<integer> xs = [i, (i + 1), (i + 2)]
+		all.add(xs)
+		total = total + xs[2]
+	print(all.length())
+	print(total)
+	list<integer> last = all[59998]
+	print(last[0])
+	print(last[2])
