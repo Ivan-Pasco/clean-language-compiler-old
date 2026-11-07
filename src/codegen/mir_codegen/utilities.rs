@@ -1204,13 +1204,12 @@ impl MirCodeGenerator<'_> {
         // Export all user-defined functions.
         //
         // Defensive invariants:
-        // 1. Skip the `u32::MAX` tree-shake sentinel (Import Minimality Rule).
-        // 2. Skip indices that are out of bounds w.r.t. the module's function
+        // 1. Skip indices that are out of bounds w.r.t. the module's function
         //    count. A bad index here causes wasmparser to reject the module
         //    with "unknown function N: exported function index out of bounds".
         //    When that happens it's a registration bug upstream — log and
         //    skip rather than silently emitting invalid bytes.
-        // 3. Collect and SORT before iterating. `function_map` is a `HashMap`
+        // 2. Collect and SORT before iterating. `function_map` is a `HashMap`
         //    whose iteration order is randomized per-process. Emitting the
         //    export section in HashMap order made every recompilation produce
         //    a different WASM binary (root cause of
@@ -1225,9 +1224,6 @@ impl MirCodeGenerator<'_> {
             self.wasm_generator.function_map.iter().collect();
         function_map_entries.sort_by(|a, b| a.0.cmp(b.0));
         for (name, &index) in function_map_entries {
-            if index == u32::MAX {
-                continue;
-            }
             if index >= total_functions {
                 tracing::error!(
                     name = %name,
@@ -2412,27 +2408,22 @@ impl MirCodeGenerator<'_> {
                     "Registering plugin bridge import (expand_strings)"
                 );
 
-                let raw_func_index = self.wasm_generator.register_import_function(
+                // A tree-shaken import (Import Minimality Rule,
+                // foundation/platform-architecture/EXECUTION_LAYERS.md) has no
+                // host function to wrap.
+                let Some(raw_func_index) = self.wasm_generator.register_import_function(
                     module,
                     &func.name,
                     &raw_wasm_params,
                     raw_wasm_return,
-                )?;
-
-                // `register_import_function` returns `u32::MAX` as a sentinel
-                // when the import is tree-shaken out (Import Minimality Rule,
-                // foundation/platform-architecture/EXECUTION_LAYERS.md). If that happens,
-                // there is no real host function to wrap, so skip the wrapper
-                // entirely — otherwise the wrapper's body would emit
-                // `Call(u32::MAX)` and the wrapper would end up in the export
-                // section with a bogus index.
-                if raw_func_index == u32::MAX {
+                )?
+                else {
                     tracing::debug!(
                         name = %func.name,
                         "Skipping wrapper for tree-shaken bridge import"
                     );
                     continue;
-                }
+                };
 
                 let wrapper_params: Vec<WasmType> = param_types
                     .iter()
@@ -2462,16 +2453,15 @@ impl MirCodeGenerator<'_> {
                 // so callers receive a Clean integer. This mirrors register_time_builtin_imports
                 // + register_time_builtin_wrappers but handles the plugin-bridge code path
                 // where language_to_bridge_map already maps "time.now" → "_time_now".
-                let raw_index = self.wasm_generator.register_import_function(
+                let Some(raw_index) = self.wasm_generator.register_import_function(
                     module,
                     "_time_now",
                     &[],
                     Some(WasmType::I64),
-                )?;
-
-                if raw_index == u32::MAX {
+                )?
+                else {
                     continue;
-                }
+                };
 
                 tracing::debug!(
                     raw_index = raw_index,
@@ -2528,16 +2518,15 @@ impl MirCodeGenerator<'_> {
                         }
                     };
 
-                    let raw_func_index = self.wasm_generator.register_import_function(
+                    let Some(raw_func_index) = self.wasm_generator.register_import_function(
                         module,
                         &func.name,
                         &raw_wasm_params,
                         raw_wasm_return,
-                    )?;
-
-                    if raw_func_index == u32::MAX {
+                    )?
+                    else {
                         continue;
-                    }
+                    };
 
                     let wrapper_params: Vec<WasmType> = param_types
                         .iter()
@@ -2593,21 +2582,17 @@ impl MirCodeGenerator<'_> {
                     "Registering plugin bridge function as direct WASM import"
                 );
 
-                let import_index = self.wasm_generator.register_import_function(
+                // A tree-shaken import (EXECUTION_LAYERS.md Import Minimality
+                // Rule) gets no language-level aliases.
+                let Some(import_index) = self.wasm_generator.register_import_function(
                     module,
                     &func.name,
                     &wasm_params,
                     wasm_return,
-                )?;
-
-                // Tree-shaken imports return `u32::MAX` (see
-                // EXECUTION_LAYERS.md Import Minimality Rule). Never attach
-                // that sentinel to a language-level alias — aliases end up in
-                // `function_map` and anything reading from there (including
-                // the export-section emitter) must only see valid indices.
-                if import_index == u32::MAX {
+                )?
+                else {
                     continue;
-                }
+                };
 
                 // Register language-name aliases
                 for (lang_name, bridge_name) in &self.language_to_bridge_map {
@@ -2680,9 +2665,6 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
-            if wrapper.raw_func_index == u32::MAX {
-                continue; // import was tree-shaken, no wrapper needed
-            }
             wrapper_instructions.push(Instruction::Call(wrapper.raw_func_index));
 
             // _time_now: host returns i64, Clean integer is i32 — wrap before returning.
@@ -2951,24 +2933,21 @@ impl MirCodeGenerator<'_> {
                 "Registering external function as WASM import"
             );
 
-            let func_index = self.wasm_generator.register_import_function(
+            // A tree-shaken import (Import Minimality Rule) is not reachable
+            // and gets no function_map entry.
+            let Some(func_index) = self.wasm_generator.register_import_function(
                 &external.module,
                 &external.name,
                 &wasm_params,
                 wasm_return,
-            )?;
-
-            // register_import_function returns u32::MAX when the import is
-            // tree-shaken (Import Minimality Rule). Never store the sentinel
-            // in function_map — it propagates to symbol_to_function_index
-            // and produces Call(u32::MAX) in function bodies (GEN003).
-            if func_index == u32::MAX {
+            )?
+            else {
                 tracing::debug!(
                     name = %external.name,
                     "Skipping tree-shaken external function (not reachable)"
                 );
                 continue;
-            }
+            };
 
             self.external_function_indices
                 .insert(external.name.clone(), func_index);

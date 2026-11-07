@@ -916,16 +916,14 @@ impl super::CodeGenerator {
 
         // Register string_compare as an import that compares two strings
         // Returns 1 if equal, 0 if not equal
-        let idx = self.register_import_function(
+        // The alias exists only when the import does (it is tree-shaken
+        // when no string comparison is reachable).
+        if let Some(idx) = self.register_import_function(
             "env",
             "string_compare",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-        )?;
-
-        // Add canonical alias — skip when the import was tree-shaken (u32::MAX sentinel)
-        // to avoid inserting a bogus index that would generate an invalid Call instruction.
-        if idx != u32::MAX {
+        )? {
             self.add_function_alias("string.compare", idx);
         }
 
@@ -939,16 +937,14 @@ impl super::CodeGenerator {
 
         // Register string_replace as an import that replaces all occurrences of a substring
         // Parameters: (string_ptr: i32, search_ptr: i32, replace_ptr: i32) -> i32
-        let idx = self.register_import_function(
+        // The aliases exist only when the import does (it is tree-shaken
+        // when no replace is reachable).
+        if let Some(idx) = self.register_import_function(
             "env",
             "string_replace",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-        )?;
-
-        // Add canonical aliases — skip when the import was tree-shaken (u32::MAX sentinel)
-        // to avoid inserting a bogus index that would generate an invalid Call instruction.
-        if idx != u32::MAX {
+        )? {
             self.add_function_alias("string.replace", idx);
             // replaceAll uses the same host function (replaces all occurrences)
             self.add_function_alias("string.replaceAll", idx);

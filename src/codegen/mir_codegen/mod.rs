@@ -1277,7 +1277,7 @@ impl MirCodeGenerator<'_> {
         // generated for every import of a plugin, even when the user's code does
         // not call them. Their bodies reference bridge imports. If those imports are
         // tree-shaken (not reachable from user code), compiling the preamble function
-        // would produce Call(u32::MAX) or "not found in function map".
+        // would fail with "not found in function map".
         //
         // We skip preamble functions whose names are not in the BFS reachable set.
         // User-defined functions are always kept (they are seeded by the BFS).

@@ -43,11 +43,16 @@ fn test_import_is_emitted_once_per_host_function() {
             Some(WasmType::I32),
         )
         .unwrap();
-    assert_eq!(again, first, "the second registration reuses the import");
+    assert_eq!(
+        again,
+        Some(first),
+        "the second registration reuses the import"
+    );
 
     let code = gen
         .register_import_function("env", "http_get_response_code", &[], Some(WasmType::I32))
-        .unwrap();
+        .unwrap()
+        .expect("no reachability filter is set");
     let code_ty = gen.add_function_type(&[], Some(WasmType::I32)).unwrap();
     assert!(
         !gen.emit_import(

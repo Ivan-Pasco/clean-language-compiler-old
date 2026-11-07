@@ -1310,16 +1310,7 @@ impl MirCodeGenerator<'_> {
                     if bridge_handler_params.as_ref().is_some_and(|params| {
                         i < params.len() && matches!(params[i], crate::builtins::registry::BuiltinType::Handler)
                     }) {
-                        let handler_index = self.resolve_handler_argument(arg)?;
-                        debug_mir!(
-                            " CALL ARGS:   Arg[{}] is handler, resolved to index {}",
-                            i, handler_index
-                        );
-                        // u32::MAX sentinel means resolve_handler_argument already
-                        // pushed the value onto the stack (Value operand case)
-                        if handler_index != u32::MAX {
-                            self.current_instructions.push(Instruction::I32Const(handler_index as i32));
-                        }
+                        self.emit_handler_argument(arg)?;
                         continue;
                     }
 
@@ -2747,11 +2738,45 @@ impl MirCodeGenerator<'_> {
         false
     }
 
-    /// Resolve a handler argument (function reference) to a handler index.
-    pub(super) fn resolve_handler_argument(
-        &mut self,
-        arg: &MirOperand,
-    ) -> Result<u32, CompilerError> {
+    /// Push a handler argument: the handler index of a function reference
+    /// (exported as `handle_event_N`), or an integer handler index as is.
+    pub(super) fn emit_handler_argument(&mut self, arg: &MirOperand) -> Result<(), CompilerError> {
+        if let MirOperand::Value(value_id) = arg {
+            if self.funcref_local_name(*value_id).is_none() {
+                // Plugin-generated code like `_http_route("GET", "/", 0)`
+                // passes the handler index as an integer value.
+                let local_index = *self.value_to_local.get(value_id).ok_or_else(|| {
+                    CompilerError::codegen_error(
+                        format!("Handler argument Value({:?}) not found in locals", value_id),
+                        None,
+                        None,
+                    )
+                })?;
+                self.current_instructions
+                    .push(Instruction::LocalGet(local_index));
+                return Ok(());
+            }
+        }
+        let index = self.resolve_handler_index(arg)?;
+        self.current_instructions
+            .push(Instruction::I32Const(index as i32));
+        Ok(())
+    }
+
+    /// The function name of a `funcref_<name>` local: the MIR builder emits
+    /// function references as values held in such locals.
+    fn funcref_local_name(&self, value_id: ValueId) -> Option<String> {
+        self.current_function
+            .as_ref()
+            .and_then(|f| f.locals.get(&value_id))
+            .and_then(|l| l.name.as_ref())
+            .and_then(|name| name.strip_prefix("funcref_"))
+            .map(str::to_string)
+    }
+
+    /// The handler index of a handler argument that names a function (or is
+    /// an integer literal).
+    fn resolve_handler_index(&mut self, arg: &MirOperand) -> Result<u32, CompilerError> {
         // Extract the function name from the operand
         let handler_name = match arg {
             MirOperand::Function(symbol_id) => {
@@ -2770,56 +2795,13 @@ impl MirCodeGenerator<'_> {
                 // Already a literal integer — pass through as-is
                 return Ok(*n as u32);
             }
-            MirOperand::Value(value_id) => {
-                // The MIR builder emits function references as Value(ValueId) with a
-                // local named "funcref_<function_name>". Detect this pattern and
-                // resolve the function name to a handler index, matching the
-                // Function operand branch below.
-                let local_name = self
-                    .current_function
-                    .as_ref()
-                    .and_then(|f| f.locals.get(value_id))
-                    .and_then(|l| l.name.as_ref())
-                    .cloned();
-
-                if let Some(name) = local_name {
-                    if let Some(func_name) = name.strip_prefix("funcref_") {
-                        // Function reference — assign a handler index like Function branch
-                        let handler_name = func_name.to_string();
-                        if let Some(&index) = self.handler_indices.get(&handler_name) {
-                            return Ok(index);
-                        }
-                        let index = self.next_handler_index;
-                        self.next_handler_index += 1;
-                        self.handler_indices.insert(handler_name.clone(), index);
-                        tracing::debug!(
-                            handler = %handler_name,
-                            index = index,
-                            "Assigned handler index from funcref Value (will export as handle_event_{})",
-                            index
-                        );
-                        return Ok(index);
-                    }
-                }
-
-                // Plugin-generated code like `_http_route("GET", "/", 0)` produces
-                // Value(ValueId) wrapping literal integers. Load the integer value
-                // from the local and let the runtime use it as a handler index.
-                if let Some(&local_index) = self.value_to_local.get(value_id) {
-                    self.current_instructions
-                        .push(Instruction::LocalGet(local_index));
-                    // Return sentinel to tell caller value is already on stack
-                    return Ok(u32::MAX);
-                }
-                return Err(CompilerError::codegen_error(
-                    format!(
-                        "Handler argument Value({:?}) not found in locals",
-                        value_id
-                    ),
+            MirOperand::Value(value_id) => self.funcref_local_name(*value_id).ok_or_else(|| {
+                CompilerError::codegen_error(
+                    format!("Handler argument Value({:?}) is not a function reference", value_id),
                     None,
                     None,
-                ));
-            }
+                )
+            })?,
             other => {
                 return Err(CompilerError::codegen_error(
                     format!(

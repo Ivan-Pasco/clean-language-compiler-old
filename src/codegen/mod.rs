@@ -151,22 +151,25 @@ impl CodeGenerator {
             .add_function_type_single(params, return_type)
     }
 
+    /// Import `module.field` and return its function index, or `None` when
+    /// the import is tree-shaken: a reachability-gated import (see
+    /// `is_reachability_gated_import`) that no reachable code calls. A
+    /// tree-shaken import has no index, so nothing may call it.
     pub fn register_import_function(
         &mut self,
         module: &str,
         field: &str,
         params: &[WasmType],
         return_type: Option<WasmType>,
-    ) -> Result<u32, CompilerError> {
-        // NOTE: Check if function is already registered to prevent duplicates
-        // This allows multiple registration calls to be idempotent
+    ) -> Result<Option<u32>, CompilerError> {
+        // Registering the same import twice returns the first index.
         if let Some(&existing_index) = self.function_map.get(field) {
             tracing::debug!(
                 function = field,
                 existing_index = existing_index,
                 "Function already registered, returning existing index"
             );
-            return Ok(existing_index);
+            return Ok(Some(existing_index));
         }
 
         // Reachability-gated tree-shaking (Import Minimality Rule,
@@ -183,9 +186,7 @@ impl CodeGenerator {
                     function = field,
                     "Skipping unused reachability-gated import (tree-shake)"
                 );
-                // Return a sentinel index. Nothing calls an unreachable
-                // import, so this value is never consumed.
-                return Ok(u32::MAX);
+                return Ok(None);
             }
         }
 
@@ -207,7 +208,7 @@ impl CodeGenerator {
             "Registered new import function"
         );
 
-        Ok(func_index)
+        Ok(Some(func_index))
     }
 
     /// Get function index from function map (safe alternative to hardcoded indices)

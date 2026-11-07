@@ -38,29 +38,43 @@ impl MirCodeGenerator<'_> {
             }
 
             MirOperand::Function(symbol_id) => {
-                // Resolve the function's WASM index and emit it as an i32
-                // constant. Each function reference now yields a distinct stable
-                // integer (the WASM function index), so downstream host callers
-                // (e.g. frame.ui handlers) receive unique handles instead of 0.
+                // A function reference is its WASM function index (also its
+                // slot in `__indirect_function_table`), so every reference
+                // is a distinct handle hosts can call back.
                 let function_index = self
                     .symbol_to_function_index
                     .get(symbol_id)
                     .copied()
-                    .unwrap_or(0);
+                    .ok_or_else(|| {
+                        CompilerError::codegen_error(
+                            format!(
+                                "function reference to SymbolId({}) has no compiled function",
+                                symbol_id.0
+                            ),
+                            None,
+                            None,
+                        )
+                    })?;
                 self.referenced_function_indices.insert(function_index);
                 self.current_instructions
                     .push(Instruction::I32Const(function_index as i32));
             }
 
             MirOperand::NamedFunction { symbol_id, name } => {
-                // Named function reference — same resolution as Function(symbol_id),
-                // with a name-based fallback through function_map.
+                // Same as `Function`, with a name-based fallback through
+                // `function_map`.
                 let function_index = self
                     .symbol_to_function_index
                     .get(symbol_id)
                     .copied()
                     .or_else(|| self.wasm_generator.function_map.get(name).copied())
-                    .unwrap_or(0);
+                    .ok_or_else(|| {
+                        CompilerError::codegen_error(
+                            format!("function reference to '{name}' has no compiled function"),
+                            None,
+                            None,
+                        )
+                    })?;
                 self.referenced_function_indices.insert(function_index);
                 self.current_instructions
                     .push(Instruction::I32Const(function_index as i32));
@@ -724,5 +738,27 @@ impl MirCodeGenerator<'_> {
     /// Store value to local without type conversion (backward compatibility wrapper).
     pub(super) fn store_to_local(&mut self, value_id: ValueId) -> Result<(), CompilerError> {
         self.store_to_local_with_conversion(value_id, None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unresolved_function_reference_is_an_error() {
+        // A reference to a function that was never compiled used to load
+        // index 0, a handle to whatever function happens to be first.
+        let mut generator = MirCodeGenerator::new();
+        assert!(generator
+            .load_operand(&MirOperand::Function(SymbolId(424_242)))
+            .is_err());
+        assert!(generator
+            .load_operand(&MirOperand::NamedFunction {
+                name: "not_compiled".to_string(),
+                symbol_id: SymbolId(424_242),
+            })
+            .is_err());
+        assert!(generator.referenced_function_indices.is_empty());
     }
 }
