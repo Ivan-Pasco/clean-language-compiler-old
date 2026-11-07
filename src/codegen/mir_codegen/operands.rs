@@ -235,12 +235,6 @@ impl MirCodeGenerator<'_> {
         Ok(())
     }
 
-    // NOTE: Full boxing implementation for `any` type is pending.
-    // The `any` type currently works with i32 values only (integers, booleans, pointers).
-    // f64 values are truncated to i32 when passed to `any` parameters.
-    // Proper boxing with type tags and memory allocation will be implemented in a future version.
-    // See MirType::Any and AnyTypeTag for the planned memory layout.
-
     /// Load string argument for print functions (expands to pointer + length).
     pub(super) fn load_string_argument_for_print(
         &mut self,

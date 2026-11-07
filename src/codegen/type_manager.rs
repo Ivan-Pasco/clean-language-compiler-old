@@ -67,6 +67,23 @@ impl TypeManager {
         Ok(type_index)
     }
 
+    /// The parameter types of the function type at `type_index`.
+    pub(crate) fn param_types(&self, type_index: u32) -> Option<Vec<WasmType>> {
+        let function_type = self.function_types.get(type_index as usize)?;
+        function_type
+            .params()
+            .iter()
+            .map(|param| match param {
+                wasmparser::ValType::I32 => Some(WasmType::I32),
+                wasmparser::ValType::I64 => Some(WasmType::I64),
+                wasmparser::ValType::F32 => Some(WasmType::F32),
+                wasmparser::ValType::F64 => Some(WasmType::F64),
+                wasmparser::ValType::V128 => Some(WasmType::V128),
+                wasmparser::ValType::Ref(_) => None,
+            })
+            .collect()
+    }
+
     /// Add a function type with single or no return value (convenience method)
     pub(crate) fn add_function_type_single(
         &mut self,

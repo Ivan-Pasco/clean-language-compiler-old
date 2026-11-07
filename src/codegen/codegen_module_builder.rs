@@ -42,6 +42,10 @@ impl super::CodeGenerator {
         }
         self.import_section.import(module, field, entity);
         self.imported_functions.insert(field.to_string());
+        if let wasm_encoder::EntityType::Function(type_index) = entity {
+            self.function_type_indices
+                .insert(self.function_count, type_index);
+        }
         // Callers give the import the next function index; record it under
         // its own name so `register_import_function` reuses it.
         self.function_map
@@ -1848,6 +1852,8 @@ impl super::CodeGenerator {
         let function_index = self.function_count;
         let type_index = self.add_function_type(params, return_type)?;
         self.function_section.function(type_index);
+        self.function_type_indices
+            .insert(function_index, type_index);
         let locals_needed: Vec<(u32, wasm_encoder::ValType)> = local_types
             .iter()
             .map(|wasm_type| {
@@ -1872,6 +1878,8 @@ impl super::CodeGenerator {
         self.code_section.function(&func);
         self.function_names.push(name.to_string());
         self.function_map.insert(name.to_string(), function_index);
+        self.wasm_function_return_types
+            .insert(name.to_string(), return_type);
         self.function_count += 1;
         Ok(function_index)
     }
@@ -1886,6 +1894,8 @@ impl super::CodeGenerator {
         let function_index = self.function_count;
         let type_index = self.add_function_type(params, return_type)?;
         self.function_section.function(type_index);
+        self.function_type_indices
+            .insert(function_index, type_index);
         let max_local_index = instructions
             .iter()
             .filter_map(|inst| match inst {

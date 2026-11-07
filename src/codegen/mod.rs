@@ -74,6 +74,10 @@ pub struct CodeGenerator {
     /// call into an `integer` local (or vice versa) emitted invalid WASM —
     /// see CODEGEN_F64 fingerprint `1a20405b`.
     wasm_function_return_types: HashMap<String, Option<WasmType>>,
+    /// Type-section index of every import and runtime helper, by function
+    /// index (MIR functions are not recorded). Gives a call site the
+    /// callee's parameter types (`function_param_types`).
+    function_type_indices: HashMap<u32, u32>,
     file_import_indices: HashMap<String, u32>,
     http_import_indices: HashMap<String, u32>,
 
@@ -133,6 +137,7 @@ impl CodeGenerator {
             function_map: HashMap::new(),
             function_names: Vec::new(),
             wasm_function_return_types: HashMap::new(),
+            function_type_indices: HashMap::new(),
             file_import_indices: HashMap::new(),
             http_import_indices: HashMap::new(),
 
@@ -205,6 +210,7 @@ impl CodeGenerator {
             .import(module, field, EntityType::Function(type_index));
         let func_index = self.function_count;
         self.function_map.insert(field.to_string(), func_index);
+        self.function_type_indices.insert(func_index, type_index);
         self.imported_functions.insert(field.to_string());
         self.function_names.push(field.to_string());
         self.wasm_function_return_types
@@ -219,6 +225,13 @@ impl CodeGenerator {
         );
 
         Ok(Some(func_index))
+    }
+
+    /// The WASM parameter types of the import or runtime helper `name`.
+    pub(crate) fn function_param_types(&self, name: &str) -> Option<Vec<WasmType>> {
+        let index = self.function_map.get(name)?;
+        let type_index = self.function_type_indices.get(index)?;
+        self.type_manager.param_types(*type_index)
     }
 
     /// Get function index from function map (safe alternative to hardcoded indices)

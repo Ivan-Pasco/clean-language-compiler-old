@@ -395,9 +395,9 @@ impl MirCodeGenerator<'_> {
             MirOperation::AsyncAssign { source } => {
                 debug_mir!(source = ?source, "Processing AsyncAssign");
 
-                // For async assignments, we load the source value and store it
-                // In a full async implementation, this would involve setting up async state
-                // For now, we treat it as a regular assignment with future resolution semantics
+                // A `later` binding whose expression is not a plain call
+                // (those lower to `AsyncAwaitCall`): the MIR builder has
+                // already evaluated it, so the binding is a copy.
                 self.load_operand(source)?;
 
                 if let Some(dest) = instruction.dest {
@@ -1216,67 +1216,33 @@ impl MirCodeGenerator<'_> {
             // that handle the expansion automatically. The wrapper receives original
             // Clean Language string pointers and expands them to (ptr+4, len) pairs.
             // No special handling needed here - just use normal load_operand.
-            Some(name) if name.starts_with("math.") => {
-                // NOTE: Math functions expect f64 parameters
-                // Convert i32 (integer) arguments to f64 (number) automatically
-                for arg in arguments {
-                    self.load_operand(arg)?;
-                    // Check if this is an integer constant or integer value
-                    // For now, assume integers need conversion (MIR should track this properly)
-                    // Integer constants and values default to i32, math functions expect f64
-                    if matches!(arg, MirOperand::Constant(MirConstant::Integer(_))) {
-                        // Convert i32 to f64
-                        self.current_instructions.push(Instruction::F64ConvertI32S);
-                    } else if let Some(MirOperand::Value(value_id)) = Some(arg) {
-                        // Check if the value type is an integer type
-                        if let Some(mir_type) = self.value_to_type.get(value_id) {
-                            if matches!(
-                                mir_type,
-                                MirType::I32
-                                    | MirType::I8
-                                    | MirType::I16
-                                    | MirType::U8
-                                    | MirType::U16
-                                    | MirType::U32
-                            ) {
-                                self.current_instructions.push(Instruction::F64ConvertI32S);
-                            } else if matches!(mir_type, MirType::I64 | MirType::U64) {
-                                self.current_instructions.push(Instruction::F64ConvertI64S);
-                            }
-                        }
-                    }
-                }
-            }
+            // Math and number-conversion runtime functions take `number`
+            // (f64) parameters (stdlib-reference.md §2), with integer
+            // variants (`math.abs.i32`): each argument converts to the
+            // parameter type the callee is registered with. (A user function
+            // named `number...` is not a runtime function and takes the
+            // generic path below.)
             Some(name)
-                if name.starts_with("number")
+                if (name.starts_with("math.")
+                    || name.starts_with("number")
                     || name == "float_to_string"
-                    || name == "integer.toNumber" =>
+                    || name == "integer.toNumber")
+                    && self.wasm_generator.function_param_types(name).is_some() =>
             {
-                // NOTE: number conversion functions expect f64 parameters
-                // number_to_string, float_to_string, etc. expect f64
-                // Convert i32 (integer) arguments to f64 (number) automatically
-                // NOTE: string.toNumber and boolean.toNumber take i32 inputs (pointer/boolean)
-                // and should NOT be converted - only integer.toNumber needs conversion
-                for arg in arguments {
+                let params = self
+                    .wasm_generator
+                    .function_param_types(name)
+                    .unwrap_or_default();
+                for (i, arg) in arguments.iter().enumerate() {
                     self.load_operand(arg)?;
-                    if matches!(arg, MirOperand::Constant(MirConstant::Integer(_))) {
-                        self.current_instructions.push(Instruction::F64ConvertI32S);
-                    } else if let Some(MirOperand::Value(value_id)) = Some(arg) {
-                        if let Some(mir_type) = self.value_to_type.get(value_id) {
-                            if matches!(
-                                mir_type,
-                                MirType::I32
-                                    | MirType::I8
-                                    | MirType::I16
-                                    | MirType::U8
-                                    | MirType::U16
-                                    | MirType::U32
-                            ) {
-                                self.current_instructions.push(Instruction::F64ConvertI32S);
-                            } else if matches!(mir_type, MirType::I64 | MirType::U64) {
-                                self.current_instructions.push(Instruction::F64ConvertI64S);
-                            }
-                        }
+                    let param = params.get(i).map(|param| match param {
+                        crate::types::WasmType::F64 => MirType::F64,
+                        crate::types::WasmType::I64 => MirType::I64,
+                        crate::types::WasmType::F32 => MirType::F32,
+                        _ => MirType::I32,
+                    });
+                    if let (Some(src), Some(dst)) = (self.get_operand_mir_type(arg), param) {
+                        self.emit_numeric_coercion(&src, &dst);
                     }
                 }
             }
@@ -1391,27 +1357,20 @@ impl MirCodeGenerator<'_> {
                                 }
                             }
 
-                            // Check if parameter expects Any type
-                            // For now, Any type accepts any i32 value (integer, boolean, pointer)
-                            // f64 values need to be converted to i32 (truncated)
+                            // An `any` parameter takes a boxed value
+                            // (BOXED_ANY_ABI). The MIR builder boxes `any`
+                            // arguments; a float or `integer:64` that still
+                            // arrives unboxed cannot be a box pointer, so it
+                            // is boxed here as a number.
                             if matches!(expected_param.param_type, MirType::Any) {
-                                // Get the argument's actual type
-                                let arg_type = match arg {
-                                    MirOperand::Constant(MirConstant::Float(_)) => Some(MirType::F64),
-                                    MirOperand::Value(value_id) => self.value_to_type.get(value_id).cloned(),
-                                    _ => None,
-                                };
-
-                                // If argument is f64, convert to i32 (truncate)
-                                // This is a limitation - proper boxing would preserve the f64
-                                if let Some(ref actual_type) = arg_type {
-                                    if matches!(actual_type, MirType::F64) {
-                                        debug_mir!(
-                                            "DEBUG CALL ARGS:   Converting f64 arg[{}] to i32 for any type",
-                                            i
-                                        );
-                                        self.current_instructions.push(Instruction::I32TruncF64S);
-                                    }
+                                if let Some(
+                                    source @ (MirType::F64
+                                    | MirType::F32
+                                    | MirType::I64
+                                    | MirType::U64),
+                                ) = arg_type.as_ref()
+                                {
+                                    self.emit_box_value(AnyTypeTag::Number, source)?;
                                 }
                             }
                         }
