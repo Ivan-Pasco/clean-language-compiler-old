@@ -23,7 +23,7 @@ pub struct NameResolver {
     /// from outside a screen be reported as SCOPE005.
     screen_names: Vec<String>,
     /// class name → set of declared method names. Populated during
-    /// `register_top_level_symbols` so `receiver_has_method` can answer
+    /// `register_top_level_symbols` so `class_has_method` can answer
     /// "does this class declare this method?" during the FIRST pass of
     /// expression resolution — before `resolve_class` has had a chance to
     /// build the class's method-symbol list. Without this, every method
@@ -943,7 +943,7 @@ impl NameResolver {
                 );
 
                 // Pre-populate the class → method-names map so
-                // `receiver_has_method` can answer the FUNC012 carve-out
+                // `class_has_method` can answer the FUNC012 carve-out
                 // during expression resolution of top-level functions.
                 // resolve_class will register the actual method symbols and
                 // wire them onto the class symbol in a later pass; this
@@ -3004,11 +3004,19 @@ impl NameResolver {
         // `render()` method emitted by `expand_component`). Spec rule:
         // `instance.method()` binds to the method on the instance's class
         // before falling back to top-level symbols.
+        //
+        // The check only fires when the receiver's class is known statically
+        // and declares no such method. A receiver of a built-in type (`list`,
+        // `string`, ...) or of a type not known here has methods of its own
+        // (`xs.length()` with a user `length(integer)` in scope); the type
+        // checker decides those.
         if let Some(symbol_id) = self.symbol_table.lookup_symbol(method) {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if matches!(symbol.kind, SymbolKind::Function { .. })
                     && !self.symbol_table.is_builtin(symbol_id)
-                    && !self.receiver_has_method(receiver, method)
+                    && self
+                        .receiver_class_name(receiver)
+                        .is_some_and(|class| !self.class_has_method(&class, method))
                 {
                     self.errors
                         .push(CompilerError::method_call_on_standalone_function(
@@ -3041,88 +3049,66 @@ impl NameResolver {
         })
     }
 
-    /// Return true when `receiver` is a variable or parameter whose declared
-    /// type is a class that declares a method (inherited or own) named
-    /// `method_name` (or a constructor call of such a class). Used by the
-    /// FUNC012 guard so that a top-level function
-    /// with the same name as a class method does NOT shadow the method when
-    /// called on a typed receiver. Receivers that aren't simple identifiers,
-    /// or whose type isn't a `Named` class reference, return false — those
-    /// cases reach the regular instance-method resolution downstream where
-    /// type inference fills in for missing static type info.
-    fn receiver_has_method(&self, receiver: &HirExpression, method_name: &str) -> bool {
+    /// The user class `receiver` is statically known to be an instance of:
+    /// a variable, parameter or state variable declared with a class type,
+    /// or a constructor call (`Page()`, `Page().render()`). `None` when the
+    /// receiver's type is a built-in type or not known before type checking.
+    fn receiver_class_name(&self, receiver: &HirExpression) -> Option<String> {
         let class_name = match receiver {
             HirExpression::Variable { name, .. } => {
-                let var_symbol_id = match self.symbol_table.lookup_symbol(name) {
-                    Some(id) => id,
-                    None => return false,
-                };
-                let var_symbol = match self.symbol_table.get_symbol(var_symbol_id) {
-                    Some(s) => s,
-                    None => return false,
-                };
-                match &var_symbol.kind {
+                let var_symbol_id = self.symbol_table.lookup_symbol(name)?;
+                match &self.symbol_table.get_symbol(var_symbol_id)?.kind {
                     SymbolKind::Variable {
                         var_type: HirType::Named { name, .. },
                         ..
-                    } => name.clone(),
-                    SymbolKind::Parameter {
+                    }
+                    | SymbolKind::Parameter {
                         param_type: HirType::Named { name, .. },
-                    } => name.clone(),
-                    SymbolKind::StateVariable {
+                    }
+                    | SymbolKind::StateVariable {
                         var_type: HirType::Named { name, .. },
                         ..
                     } => name.clone(),
-                    _ => return false,
+                    _ => return None,
                 }
             }
-            // `Page().render()`: the receiver is a freshly constructed
-            // instance, so its class is known directly.
             HirExpression::Constructor { class_name, .. } => class_name.clone(),
             // `Page()` before constructor resolution is a call named after
             // the class.
-            HirExpression::Call { function, .. }
-                if self.class_method_names.contains_key(function.as_str())
-                    || self
-                        .symbol_table
-                        .lookup_symbol(function)
-                        .and_then(|id| self.symbol_table.get_symbol(id))
-                        .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. })) =>
-            {
-                function.clone()
-            }
-            _ => return false,
+            HirExpression::Call { function, .. } => function.clone(),
+            _ => return None,
         };
+        let is_class = self.class_method_names.contains_key(class_name.as_str())
+            || self
+                .symbol_table
+                .lookup_symbol(&class_name)
+                .and_then(|id| self.symbol_table.get_symbol(id))
+                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. }));
+        is_class.then_some(class_name)
+    }
 
-        // Prefer the pre-populated map: it's set up in
-        // `register_top_level_symbols` before any function bodies are
-        // resolved, so the answer is correct even for top-level functions
-        // that reference class methods (e.g. the HYDRATE_AUTO Gap 2 shim
-        // pass's `void <method>() { instance.<method>() }` shims). The
-        // symbol-table path below is a fallback for cases where the class
-        // came from somewhere other than the HIR program's classes vec
-        // (e.g. plugin module_helpers expansion that adds classes after
-        // first-pass registration).
-        if let Some(method_set) = self.class_method_names.get(&class_name) {
-            if method_set.contains(method_name) {
-                return true;
-            }
+    /// Whether class `class_name` declares (or inherits) a method
+    /// `method_name`. Prefers the map built in `register_top_level_symbols`,
+    /// which is complete before any body is resolved (the HYDRATE_AUTO Gap 2
+    /// shims call class methods from top-level functions resolved before
+    /// the classes); the symbol table covers classes added after that pass
+    /// (plugin module_helpers expansion) and inherited methods.
+    fn class_has_method(&self, class_name: &str, method_name: &str) -> bool {
+        if self
+            .class_method_names
+            .get(class_name)
+            .is_some_and(|methods| methods.contains(method_name))
+        {
+            return true;
         }
-
-        let class_symbol_id = match self.symbol_table.lookup_symbol(&class_name) {
-            Some(id) => id,
-            None => return false,
-        };
-        let class_symbol = match self.symbol_table.get_symbol(class_symbol_id) {
-            Some(s) => s,
-            None => return false,
-        };
-        if !matches!(class_symbol.kind, SymbolKind::Class { .. }) {
-            return false;
-        }
-
         self.symbol_table
-            .lookup_class_member(class_symbol_id, method_name)
+            .lookup_symbol(class_name)
+            .filter(|&id| {
+                self.symbol_table
+                    .get_symbol(id)
+                    .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. }))
+            })
+            .and_then(|id| self.symbol_table.lookup_class_member(id, method_name))
             .is_some()
     }
 
