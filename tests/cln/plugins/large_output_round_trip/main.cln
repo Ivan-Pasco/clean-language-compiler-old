@@ -18,7 +18,11 @@ functions:
 		// output — three full 64 KiB pages of plugin linear memory.
 		// Each chunk is pure ASCII so any null byte in the output is
 		// proof of corruption rather than legitimate content.
-		string chunk = "0123456789abcdefABCDEF0123456789abcdefABCDEF0123456789abcdefABCD"
+		// Fixed: the chunk started with a digit, so the output lexed as an
+		// integer followed by an identifier: two statements on one line,
+		// which grammar.ebnf `simple_indented_block` does not allow. Starting
+		// with a letter makes the whole output one identifier statement.
+		string chunk = "x123456789abcdefABCDEF0123456789abcdefABCDEF0123456789abcdefABCD"
 		string result = ""
 		integer i = 0
 		while i < 3500
