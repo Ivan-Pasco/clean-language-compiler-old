@@ -881,7 +881,8 @@ impl MirBuilder {
                             .get(&value_id)
                             .map(|local| matches!(local.local_type, MirType::Any))
                             .unwrap_or(false);
-                    if return_type_is_concrete
+                    if (return_type_is_concrete
+                        || Self::is_any_conversion_target(&context.return_type))
                         && expr_is_any
                         && !matches!(expr.expr_type, ConcreteType::Null)
                     {
@@ -891,9 +892,13 @@ impl MirBuilder {
                             expr_type = ?expr.expr_type,
                             "Unboxing any return value to function's concrete return type"
                         );
-                        // Map function's MirType return back to ConcreteType
-                        // for emit_unbox_any (which dispatches on ConcreteType).
+                        // The declared return type when it is one an `any`
+                        // converts to; otherwise the function's MirType
+                        // return mapped back to a ConcreteType for
+                        // emit_unbox_any (which dispatches on ConcreteType).
+                        let declared = context.return_type.clone();
                         let target_concrete = match &context.function.return_type {
+                            _ if Self::is_any_conversion_target(&declared) => declared,
                             MirType::Ptr(inner) if matches!(**inner, MirType::I8 | MirType::U8) => {
                                 ConcreteType::String
                             }

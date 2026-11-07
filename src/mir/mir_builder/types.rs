@@ -601,13 +601,9 @@ impl MirBuilder {
         let Some(param_type) = param_type else {
             return arg_id;
         };
-        let primitive_param = matches!(
-            param_type,
-            ConcreteType::String
-                | ConcreteType::Integer
-                | ConcreteType::Number
-                | ConcreteType::Boolean
-        );
+        // Primitives, and the lists, pairs maps and class instances an
+        // `any` converts to (`emit_unbox_any`).
+        let primitive_param = Self::is_any_conversion_target(param_type);
         let arg_is_any = matches!(arg_type, ConcreteType::Any)
             || matches!(
                 context.function.locals.get(&arg_id).map(|l| &l.local_type),
@@ -660,6 +656,42 @@ impl MirBuilder {
             }
         }
 
+        // Any other list, and a pairs map: a JSON array or object (the
+        // JSON-tree layouts of BOXED_ANY_ABI §3.2-3.3) is converted element
+        // by element into the Clean layout; an element of another type
+        // raises an error.
+        if matches!(
+            target_type,
+            ConcreteType::Array(_) | ConcreteType::Pairs(_, _)
+        ) {
+            let result_type = self.convert_concrete_type(target_type);
+            let Some(descriptor) = Self::any_conversion_descriptor(target_type) else {
+                self.any_conversion_errors.push(CompilerError::type_error(
+                    format!("An `any` value cannot be converted to {}", target_type),
+                    Some(
+                        "An `any` converts to a list or `pairs<string, V>` of integer, number, \
+                         boolean, string, `any`, class, list or pairs elements \
+                         (`pairs` values cannot be `number` or `integer:64`)"
+                            .to_string(),
+                    ),
+                    Some(location.clone()),
+                ));
+                return value_id;
+            };
+            let descriptor_index = self.get_string_index(descriptor);
+            return self.emit_named_call(
+                context,
+                crate::stdlib::json_class::ANY_CONVERT,
+                vec![
+                    MirOperand::Value(value_id),
+                    MirOperand::Constant(MirConstant::String(descriptor_index)),
+                    MirOperand::Constant(MirConstant::Integer(0)),
+                ],
+                result_type,
+                location,
+            );
+        }
+
         let result_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
 
@@ -710,6 +742,61 @@ impl MirBuilder {
 
         self.add_instruction(context, instruction);
         result_id
+    }
+
+    /// A type an `any` value is converted to where one is returned or
+    /// passed as an argument (`emit_unbox_any`).
+    pub(super) fn is_any_conversion_target(target_type: &ConcreteType) -> bool {
+        matches!(
+            target_type,
+            ConcreteType::String
+                | ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::Boolean
+                | ConcreteType::Array(_)
+                | ConcreteType::Pairs(_, _)
+                | ConcreteType::Class { .. }
+                | ConcreteType::Interface { .. }
+        )
+    }
+
+    /// The `__any_convert` descriptor of a list or pairs target
+    /// (`json_class::any_descriptor`), or `None` when the type holds an
+    /// element no `any` converts to.
+    fn any_conversion_descriptor(target_type: &ConcreteType) -> Option<String> {
+        use crate::stdlib::json_class::any_descriptor as code;
+        fn element(target: &ConcreteType, out: &mut Vec<u8>, in_pairs: bool) -> Option<()> {
+            let byte = match target {
+                ConcreteType::Any => code::ANY,
+                ConcreteType::Integer
+                | ConcreteType::IntegerSized {
+                    bits: 8 | 16 | 32, ..
+                } => code::INTEGER,
+                // 8-byte values: list elements only (a pairs entry holds
+                // 4 bytes).
+                ConcreteType::IntegerSized { bits: 64, .. } if !in_pairs => code::INTEGER_64,
+                ConcreteType::Number | ConcreteType::NumberSized { bits: 64 } if !in_pairs => {
+                    code::NUMBER
+                }
+                ConcreteType::Boolean => code::BOOLEAN,
+                ConcreteType::String => code::STRING,
+                ConcreteType::Class { .. } | ConcreteType::Interface { .. } => code::INSTANCE,
+                ConcreteType::Array(inner) => {
+                    out.push(code::LIST);
+                    return element(inner, out, false);
+                }
+                ConcreteType::Pairs(key, value) if matches!(**key, ConcreteType::String) => {
+                    out.push(code::PAIRS);
+                    return element(value, out, true);
+                }
+                _ => return None,
+            };
+            out.push(byte);
+            Some(())
+        }
+        let mut out = Vec::new();
+        element(target_type, &mut out, false)?;
+        String::from_utf8(out).ok()
     }
 
     /// Convert a boxed `any` value to a string via runtime type-tag dispatch.

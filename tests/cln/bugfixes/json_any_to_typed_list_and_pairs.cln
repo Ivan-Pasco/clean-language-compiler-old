@@ -1,0 +1,77 @@
+// Test: bugfixes/json_any_to_typed_list_and_pairs
+// Grammar: variable_declaration, assignment, function_call, return_statement, on_error_expression
+// Semantic: type-system.md §9 (`any` can be assigned to any type); stdlib-reference.md §8 (a JSON array is a list, an object a `pairs<string, any>`)
+// Fixed in: compiler 0.33.176
+// Expected output:
+//   scores=1.5 2 0
+//   flags=true false
+//   grid=2 3 2
+//   big=9007199254740991
+//   rows=y
+//   m=5
+//   whole=3
+//   names=p||
+//   param=6
+//   return=3
+//   assigned=3
+//   mixed=-1
+//   notList=-2
+//   notObject=-3
+//   added=7.5
+//
+// Regression: a `list<integer>`, `list<number>`, `list<boolean>`,
+// `list<string>`, a nested list or a `pairs<string, V>` taken from an `any`
+// holding a JSON array or object copied the payload pointer, so the list
+// read the JSON-tree words (`[count][element pointers]`) as its own 16-byte
+// header and elements: `ids.get(1)` gave a pointer, `names.get(1)` garbage,
+// `m.get("y")` 0. The value is now converted element by element into the
+// Clean layout (declaration, assignment, argument and return); a null
+// element converts to null (0, "" for a string), and an element or value
+// of another type raises an error that `onError` catches.
+
+start:
+	any data = json.textToData("{\"ids\": [1, 2, 3], \"scores\": [1.5, 2, null], \"flags\": [true, false], \"grid\": [[1, 2], [3]], \"big\": [9007199254740991], \"rows\": [{\"a\": \"x\"}, {\"a\": \"y\"}], \"m\": {\"k\": [4, 5]}, \"mixed\": [1, \"two\"], \"names\": [\"p\", null]}")
+	list<number> scores = data.scores
+	printl("scores=" + scores.get(0).toString() + " " + scores.get(1).toString() + " " + scores.get(2).toString())
+	list<boolean> flags = data.flags
+	printl("flags=" + flags.get(0).toString() + " " + flags.get(1).toString())
+	list<list<integer>> grid = data.grid
+	printl("grid=" + grid.get(0).get(1).toString() + " " + grid.get(1).get(0).toString() + " " + grid.length().toString())
+	list<integer:64> big = data.big
+	printl("big=" + big.get(0).toString())
+	list<pairs<string, string>> rows = data.rows
+	printl("rows=" + rows.get(1).get("a"))
+	pairs<string, list<integer>> m = data.m
+	printl("m=" + m.get("k").get(1).toString())
+	pairs<string, any> whole = data
+	any ids = whole.get("ids")
+	printl("whole=" + ids.length().toString())
+	list<string> names = data.names
+	printl("names=" + names.get(0) + "|" + names.get(1) + "|")
+	printl("param=" + total(data.ids).toString())
+	list<integer> back = idsOf(data)
+	printl("return=" + back.get(2).toString())
+	list<integer> assigned = [9]
+	assigned = data.ids
+	printl("assigned=" + assigned.length().toString())
+	integer bad = total(data.mixed) onError -1
+	printl("mixed=" + bad.toString())
+	integer notList = total(data.m) onError -2
+	printl("notList=" + notList.toString())
+	integer notObject = keyCount(data.ids) onError -3
+	printl("notObject=" + notObject.toString())
+	scores.add(7.5)
+	printl("added=" + scores.get(3).toString())
+
+functions:
+	integer total(list<integer> values)
+		integer sum = 0
+		iterate v in values
+			sum = sum + v
+		return sum
+
+	list<integer> idsOf(any d)
+		return d.ids
+
+	integer keyCount(pairs<string, any> p)
+		return p.size()
