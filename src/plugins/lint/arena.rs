@@ -464,6 +464,7 @@ fn collect_framework_blocks_in_stmt(
             content,
             attributes,
             location,
+            ..
         } => {
             if name == block_name {
                 if !*first {
@@ -1009,18 +1010,21 @@ mod tests {
             content: "class User { id: integer }".to_string(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: Some(loc(5, "app/schema.cln")),
+            body_location: None,
         });
         prog.statements.push(Statement::FrameworkBlock {
             name: "endpoints".to_string(),
             content: "get /health\n\treturn 200".to_string(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: Some(loc(20, "app/api.cln")),
+            body_location: None,
         });
         prog.statements.push(Statement::FrameworkBlock {
             name: "data".to_string(),
             content: "class Order { id: integer }".to_string(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: Some(loc(50, "app/orders.cln")),
+            body_location: None,
         });
 
         let arena = LintArena::new(9, prog);
@@ -1042,6 +1046,7 @@ mod tests {
             content: "<div class=\"foo\">\n\thello</div>".to_string(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: Some(loc(1, "app/page.cln")),
+            body_location: None,
         });
 
         let arena = LintArena::new(11, prog);
@@ -1064,6 +1069,7 @@ mod tests {
                 location: None,
             }],
             location: Some(loc(12, "app/data/models/todo.cln")),
+            body_location: None,
         });
 
         let arena = LintArena::new(13, prog);
@@ -1083,6 +1089,7 @@ mod tests {
             content: "field integer\n".to_string(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: Some(loc(1, "app/x.cln")),
+            body_location: None,
         });
 
         let arena = LintArena::new(14, prog);
@@ -1106,6 +1113,7 @@ mod tests {
                 location: None,
             }],
             location: Some(loc(2, "app/y.cln")),
+            body_location: None,
         });
 
         let arena = LintArena::new(15, prog);
@@ -1163,6 +1171,7 @@ mod tests {
             content: content.to_string(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: Some(loc(line, "app/pages/home.cln")),
+            body_location: None,
         }
     }
 
@@ -1308,6 +1317,7 @@ mod tests {
             content: content.to_string(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: Some(loc(line, "app/models.cln")),
+            body_location: None,
         }
     }
 

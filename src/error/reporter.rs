@@ -330,7 +330,25 @@ impl ErrorReporter {
         context: &ErrorContext,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        if let (Some(location), Some(source)) = (&context.location, source_code) {
+        let file_text;
+        let source = match &context.location {
+            // No position, or code the compiler or a plugin generated
+            // (`<…>` markers): there is no source line to show.
+            Some(location) if location.line == 0 || location.file.starts_with('<') => None,
+            // The snippet comes from the file the error is in, which is not
+            // the entry file for errors in other files of a project.
+            Some(location) if !location.file.is_empty() => {
+                match std::fs::read_to_string(&location.file) {
+                    Ok(text) => {
+                        file_text = text;
+                        Some(file_text.as_str())
+                    }
+                    Err(_) => source_code,
+                }
+            }
+            _ => source_code,
+        };
+        if let (Some(location), Some(source)) = (&context.location, source) {
             let lines: Vec<&str> = source.lines().collect();
             let line_idx = location.line.saturating_sub(1);
 

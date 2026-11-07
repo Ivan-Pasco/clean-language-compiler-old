@@ -503,6 +503,7 @@ mod tests {
             build: Default::default(),
             lifecycle,
             artifacts: Vec::new(),
+            aliases: Default::default(),
             blocks: Default::default(),
         }
     }

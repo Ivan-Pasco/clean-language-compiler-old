@@ -1028,6 +1028,7 @@ fn parse_framework_block_statement(
         content,
         attributes,
         location: Some(ast_location),
+        body_location: None,
     })
 }
 

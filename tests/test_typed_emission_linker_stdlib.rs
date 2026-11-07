@@ -70,6 +70,7 @@ fn make_manifest(plugin_name: &str) -> PluginManifest {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
     }
 }
 
@@ -85,6 +86,7 @@ fn make_block() -> FrameworkBlock {
             byte_start: None,
             byte_end: None,
         }),
+        body_location: None,
     }
 }
 

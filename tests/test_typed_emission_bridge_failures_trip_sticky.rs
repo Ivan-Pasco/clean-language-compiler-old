@@ -51,6 +51,7 @@ fn expand(wat: &str) -> Result<(), String> {
         content: String::new(),
         attributes: Vec::new(),
         location: None,
+        body_location: None,
     };
     adapter
         .expand_full(&block)

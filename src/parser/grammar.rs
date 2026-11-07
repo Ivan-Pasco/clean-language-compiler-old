@@ -123,6 +123,19 @@ impl CleanParser {
             };
         };
 
+        // Locations are relative to the wrapper; make them relative to the
+        // fragment (every fragment line got one leading TAB).
+        let mut body = body;
+        let frame = FragmentFrame {
+            first_line_shift: 1,
+            other_line_shift: 1,
+            leading_lines: 0,
+            leading_columns: 0,
+        };
+        for stmt in body.iter_mut() {
+            stmt.for_each_location_mut(&mut |loc| frame.rebase(loc));
+        }
+
         if body.is_empty() {
             // No statement extracted. Could be an expression-only fragment
             // (which the statement grammar accepts as an Expression statement
@@ -184,6 +197,12 @@ impl CleanParser {
         let trimmed = source.trim_matches(ws);
         // Parser offsets are relative to `trimmed`; report them relative to `source`.
         let leading_ws = source.len() - source.trim_start_matches(ws).len();
+        let leading = &source[..leading_ws];
+        let leading_lines = leading.matches('\n').count();
+        let leading_columns = leading
+            .rsplit('\n')
+            .next()
+            .map_or(0, |last| last.chars().count());
         if trimmed.is_empty() {
             return SingleExpressionParse::ParseError {
                 message: "empty source fragment".to_string(),
@@ -216,7 +235,13 @@ impl CleanParser {
                     }],
                 ) = body.map(Vec::as_slice)
                 {
-                    return SingleExpressionParse::Expression(expr.clone());
+                    let frame = FragmentFrame {
+                        first_line_shift: "\tany __x = ".len(),
+                        other_line_shift: 0,
+                        leading_lines,
+                        leading_columns,
+                    };
+                    return SingleExpressionParse::Expression(frame.rebased(expr.clone()));
                 }
             }
         }
@@ -255,18 +280,24 @@ impl CleanParser {
                 continue;
             };
 
+            let frame = FragmentFrame {
+                first_line_shift: 1 + wrapper_lhs.len(),
+                other_line_shift: 0,
+                leading_lines,
+                leading_columns,
+            };
             for stmt in body {
                 if let Statement::VariableDecl {
                     initializer: Some(expr),
                     ..
                 } = stmt
                 {
-                    return SingleExpressionParse::Expression(expr.clone());
+                    return SingleExpressionParse::Expression(frame.rebased(expr.clone()));
                 }
                 // Some grammars route the typed initialiser through an Assignment
                 // statement instead of VariableDecl; accept that shape too.
                 if let Statement::Assignment { value, .. } = stmt {
-                    return SingleExpressionParse::Expression(value.clone());
+                    return SingleExpressionParse::Expression(frame.rebased(value.clone()));
                 }
             }
         }
@@ -283,6 +314,51 @@ impl CleanParser {
             message,
             byte_offset,
         }
+    }
+}
+
+/// How a fragment sits in the wrapper program it is parsed in: the wrapper's
+/// line 1 is `start:`, its line 2 holds the fragment's first line after
+/// `first_line_shift` added characters, and every later line has
+/// `other_line_shift` added characters. `leading_lines` / `leading_columns`
+/// is the whitespace trimmed off the fragment before wrapping.
+struct FragmentFrame {
+    first_line_shift: usize,
+    other_line_shift: usize,
+    leading_lines: usize,
+    leading_columns: usize,
+}
+
+impl FragmentFrame {
+    /// Make a location parsed from the wrapper relative to the fragment
+    /// (1-based line and column within the fragment). Byte offsets are
+    /// dropped: they were offsets into the wrapper.
+    fn rebase(&self, loc: &mut crate::ast::SourceLocation) {
+        if !loc.file.starts_with("<plugin-fragment") {
+            return;
+        }
+        match loc.line {
+            0 | 1 => {
+                loc.line = 1 + self.leading_lines;
+                loc.column = 1 + self.leading_columns;
+            }
+            2 => {
+                loc.column =
+                    loc.column.saturating_sub(self.first_line_shift).max(1) + self.leading_columns;
+                loc.line = 1 + self.leading_lines;
+            }
+            line => {
+                loc.column = loc.column.saturating_sub(self.other_line_shift).max(1);
+                loc.line = line - 1 + self.leading_lines;
+            }
+        }
+        loc.byte_start = None;
+        loc.byte_end = None;
+    }
+
+    fn rebased(&self, mut expr: Expression) -> Expression {
+        expr.for_each_location_mut(&mut |loc| self.rebase(loc));
+        expr
     }
 }
 

@@ -85,6 +85,7 @@ fn synthetic_manifest(name: &str) -> PluginManifest {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
         blocks: Default::default(),
     }
 }
@@ -101,6 +102,7 @@ fn build_block(content: &str) -> FrameworkBlock {
             byte_start: None,
             byte_end: None,
         }),
+        body_location: None,
     }
 }
 

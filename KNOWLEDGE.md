@@ -302,3 +302,14 @@ After `finalize_module` assembles the module, `codegen::module_dce` drops every 
 - New module shapes (non-function imports, passive element segments, `ref.func` in globals): `module_dce` returns such modules unchanged; extend it rather than working around it.
 
 **Regression:** `tests/test_module_exports.rs`, `tests/cln/bugfixes/function_named_like_runtime_helper_rejected.cln`, `tests/cln/bugfixes/function_named_memory_rejected.cln`, unit tests in `src/codegen/module_dce.rs`.
+
+## 23. Locations of Code Parsed from Plugin Fragments
+
+**What:** `_emit_stmt_from_source` / `_emit_expr_from_source` parse Clean source the plugin assembled from the block body (an endpoint handler, a component event, a query). Plugins pass origin offset 0 and re-indent or rewrite lines, so offsets cannot place that code. `src/parser/grammar.rs` first makes the parsed locations fragment-relative (`FragmentFrame`); then `typed_emission/fragment_origin.rs` matches each fragment line against the block's content lines (exact text, or a rewrite whose words contain the content line's words in order), aligns the matches in order, and gives matched code the user's file, line and column. Unmatched lines are the plugin's own code and get `<plugin:NAME>`. Where the content starts in the file comes from `FrameworkBlock::body_location`, set by the token parser (`block_body_location`); blocks without it (ORM queries the expander builds with a binding header) are never matched. The statements that replace an ORM query statement get that statement's location (`expand_orm_query`). The error reporter takes the snippet from the file the error is in, and shows none for `<…>` locations.
+
+**Watch for:**
+- A new way for plugins to hand back source must relocate it the same way, or its errors name `<plugin-fragment>`.
+- `body_location` is compiler-internal (`serde(skip_serializing)`): changing what plugins receive changes their output.
+- A new AST node with a location must be visited by `Statement`/`Expression::for_each_location_mut`.
+
+**Regression:** `tests/test_plugin_block_diagnostic_locations.rs`, `tests/cln/bugfixes/plugin_*_names_user_line.cln` (#27).

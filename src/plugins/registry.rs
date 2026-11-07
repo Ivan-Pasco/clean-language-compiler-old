@@ -794,7 +794,9 @@ impl PluginRegistry {
     /// 2. Convention: replace `.` with `_` and prepend `_`
     ///    (`req.param` → `_req_param`).  Only accepted when the derived name
     ///    is declared in the same plugin's `[bridge]` section.
-    /// 3. Explicit `aliases = [...]` list on the canonical
+    /// 3. The plugin's `[aliases]` section (`clean_name` → `bridge_name`),
+    ///    for names no convention derives. Fills gaps only.
+    /// 4. Explicit `aliases = [...]` list on the canonical
     ///    `foundation/platform-architecture/function-registry.toml` entry.
     ///    This covers bridges that the compiler registers directly (e.g. via
     ///    `codegen_module_builder.rs`) without a matching plugin manifest
@@ -859,6 +861,20 @@ impl PluginRegistry {
                         }
                     }
                 }
+            }
+        }
+
+        // Phase 2b: the plugin's `[aliases]` section. It names language calls
+        // that no convention derives (frame.locale's `locale.current` →
+        // `_i18n_locale`), so without it those call sites never reach their
+        // bridge import. Entries fill gaps only: an explicit `maps_to` or a
+        // convention mapping from phases 1-2 keeps its target, which leaves
+        // cross-plugin precedence (frame.server's `live.send` → `_ws_send`
+        // over frame.client's `_live_send`) as it was.
+        for manifest in self.manifests.values() {
+            for alias in &manifest.aliases.functions {
+                map.entry(alias.clean_name.clone())
+                    .or_insert_with(|| alias.bridge_name.clone());
             }
         }
 
@@ -1489,6 +1505,7 @@ mod tests {
             content: "content".to_string(),
             attributes: vec![],
             location: None,
+            body_location: None,
         };
 
         let result = registry.expand(&block);
@@ -1635,6 +1652,7 @@ mod tests {
             build: Default::default(),
             lifecycle: Default::default(),
             artifacts: Vec::new(),
+            aliases: Default::default(),
             blocks: Default::default(),
         };
 
@@ -1738,6 +1756,7 @@ mod tests {
             build: Default::default(),
             lifecycle: Default::default(),
             artifacts: Vec::new(),
+            aliases: Default::default(),
             blocks: Default::default(),
         };
 
@@ -1864,6 +1883,7 @@ mod tests {
             build: Default::default(),
             lifecycle: Default::default(),
             artifacts: Vec::new(),
+            aliases: Default::default(),
             blocks: Default::default(),
         };
 
@@ -1937,6 +1957,7 @@ mod tests {
                 build: Default::default(),
                 lifecycle: Default::default(),
                 artifacts: Vec::new(),
+                aliases: Default::default(),
                 blocks: Default::default(),
             }
         }

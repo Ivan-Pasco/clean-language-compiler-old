@@ -872,6 +872,7 @@ mod tests {
             content: "GET /users".to_string(),
             attributes: vec![],
             location: None,
+            body_location: None,
         });
 
         let rules = vec![(
@@ -900,6 +901,7 @@ mod tests {
             content: "GET /users".to_string(),
             attributes: vec![],
             location: None,
+            body_location: None,
         });
 
         let rules = vec![(
@@ -928,6 +930,7 @@ mod tests {
             content: "GET /users".to_string(),
             attributes: vec![],
             location: None,
+            body_location: None,
         });
 
         let rules = vec![(

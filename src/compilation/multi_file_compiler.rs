@@ -1895,6 +1895,7 @@ start:
                 build: Default::default(),
                 lifecycle: Default::default(),
                 artifacts: Vec::new(),
+                aliases: Default::default(),
                 blocks: Default::default(),
             };
             builder = builder.add_manifest((*name).to_string(), manifest);

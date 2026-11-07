@@ -656,6 +656,10 @@ pub enum Statement {
         content: String, // Raw content of the block (unparsed DSL)
         attributes: Vec<FrameworkAttribute>, // Optional attributes like @pk, @unique
         location: Option<SourceLocation>,
+        /// Where `content` starts in the source file (see
+        /// [`FrameworkBlock::body_location`]).
+        #[serde(skip_serializing)]
+        body_location: Option<SourceLocation>,
     },
 
     // Reset statement - reset state to initial value
@@ -785,6 +789,323 @@ impl Statement {
             Statement::ScreenBlockStmt { location, .. } => location.as_ref(),
             Statement::ValidateDeclaration { location, .. } => location.as_ref(),
             Statement::ValidateCheck { location, .. } => location.as_ref(),
+        }
+    }
+
+    /// Call `f` on every source location recorded in this statement: its own,
+    /// those of nested statements and expressions, and those of functions and
+    /// classes it declares. Used to move code parsed from a plugin fragment
+    /// back to the place the user wrote it.
+    pub fn for_each_location_mut(&mut self, f: &mut dyn FnMut(&mut SourceLocation)) {
+        if let Some(location) = self.location_mut() {
+            f(location);
+        }
+        fn block(stmts: &mut [Statement], f: &mut dyn FnMut(&mut SourceLocation)) {
+            for stmt in stmts {
+                stmt.for_each_location_mut(f);
+            }
+        }
+        match self {
+            Statement::Require { condition, .. } | Statement::Ensure { condition, .. } => {
+                condition.for_each_location_mut(f)
+            }
+            Statement::VariableDecl { initializer, .. } => {
+                if let Some(init) = initializer {
+                    init.for_each_location_mut(f);
+                }
+            }
+            Statement::FunctionsBlock { functions, .. } => {
+                for function in functions {
+                    function.for_each_location_mut(f);
+                }
+            }
+            Statement::TypeApplyBlock { assignments, .. } => {
+                for assignment in assignments {
+                    if let Some(init) = &mut assignment.initializer {
+                        init.for_each_location_mut(f);
+                    }
+                }
+            }
+            Statement::FunctionApplyBlock { expressions, .. }
+            | Statement::MethodApplyBlock { expressions, .. }
+            | Statement::PrintBlock { expressions, .. } => {
+                for expr in expressions {
+                    expr.for_each_location_mut(f);
+                }
+            }
+            Statement::ConstantApplyBlock { constants, .. } => {
+                for constant in constants {
+                    constant.value.for_each_location_mut(f);
+                }
+            }
+            Statement::Assignment { target, value, .. } => {
+                if let AssignmentTarget::Index { index, .. } = target {
+                    index.for_each_location_mut(f);
+                }
+                value.for_each_location_mut(f);
+            }
+            Statement::Print { expression, .. }
+            | Statement::LaterAssignment { expression, .. }
+            | Statement::Background { expression, .. } => expression.for_each_location_mut(f),
+            Statement::Return { value, .. } => {
+                if let Some(value) = value {
+                    value.for_each_location_mut(f);
+                }
+            }
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                condition.for_each_location_mut(f);
+                block(then_branch, f);
+                if let Some(else_branch) = else_branch {
+                    block(else_branch, f);
+                }
+            }
+            Statement::Iterate {
+                collection, body, ..
+            } => {
+                collection.for_each_location_mut(f);
+                block(body, f);
+            }
+            Statement::RangeIterate {
+                start,
+                end,
+                step,
+                body,
+                ..
+            } => {
+                start.for_each_location_mut(f);
+                end.for_each_location_mut(f);
+                if let Some(step) = step {
+                    step.for_each_location_mut(f);
+                }
+                block(body, f);
+            }
+            Statement::While {
+                condition, body, ..
+            } => {
+                condition.for_each_location_mut(f);
+                block(body, f);
+            }
+            Statement::Test { body, .. } | Statement::StandaloneErrorHandler { body, .. } => {
+                block(body, f)
+            }
+            Statement::Expression { expr, .. } => expr.for_each_location_mut(f),
+            Statement::Error { message, .. } => message.for_each_location_mut(f),
+            Statement::OnErrorBlock {
+                expression,
+                error_block,
+                ..
+            } => {
+                expression.for_each_location_mut(f);
+                block(error_block, f);
+            }
+            Statement::ClassDefinition { class, .. } => class.for_each_location_mut(f),
+            Statement::BuildBlock { rules_enabled, .. } => rules_enabled.for_each_location_mut(f),
+            Statement::ScreenBlockStmt {
+                watch_blocks,
+                functions,
+                ..
+            } => {
+                for watch in watch_blocks {
+                    if let Some(location) = &mut watch.location {
+                        f(location);
+                    }
+                    block(&mut watch.body, f);
+                }
+                for function in functions {
+                    function.for_each_location_mut(f);
+                }
+            }
+            Statement::ValidateCheck { check, .. } => {
+                check.input.for_each_location_mut(f);
+                block(&mut check.ok_branch, f);
+                block(&mut check.error_branch, f);
+            }
+            Statement::Break { .. }
+            | Statement::Continue { .. }
+            | Statement::Import { .. }
+            | Statement::Description { .. }
+            | Statement::Spec { .. }
+            | Statement::Intent { .. }
+            | Statement::SourceBlock { .. }
+            | Statement::FrameworkBlock { .. }
+            | Statement::ResetStmt { .. }
+            | Statement::ValidateDeclaration { .. } => {}
+        }
+    }
+}
+
+impl Expression {
+    /// Call `f` on every source location recorded in this expression and its
+    /// subexpressions (see [`Statement::for_each_location_mut`]).
+    pub fn for_each_location_mut(&mut self, f: &mut dyn FnMut(&mut SourceLocation)) {
+        fn all(exprs: &mut [Expression], f: &mut dyn FnMut(&mut SourceLocation)) {
+            for expr in exprs {
+                expr.for_each_location_mut(f);
+            }
+        }
+        match self {
+            Expression::Literal(_) | Expression::Variable(_) => {}
+            Expression::ListLiteral(items) => all(items, f),
+            Expression::Binary(left, _, right) | Expression::ListAccess(left, right) => {
+                left.for_each_location_mut(f);
+                right.for_each_location_mut(f);
+            }
+            Expression::Unary(_, operand) => operand.for_each_location_mut(f),
+            Expression::Call(_, arguments) => all(arguments, f),
+            Expression::NamespaceCall {
+                arguments,
+                location,
+                ..
+            }
+            | Expression::StaticMethodCall {
+                arguments,
+                location,
+                ..
+            }
+            | Expression::ObjectCreation {
+                arguments,
+                location,
+                ..
+            }
+            | Expression::BaseCall {
+                arguments,
+                location,
+            } => {
+                f(location);
+                all(arguments, f);
+            }
+            Expression::PropertyAccess {
+                object, location, ..
+            } => {
+                f(location);
+                object.for_each_location_mut(f);
+            }
+            Expression::MethodCall {
+                object,
+                arguments,
+                location,
+                ..
+            } => {
+                f(location);
+                object.for_each_location_mut(f);
+                all(arguments, f);
+            }
+            Expression::StringInterpolation(parts) => {
+                for part in parts {
+                    if let StringPart::Interpolation(expr) = part {
+                        expr.for_each_location_mut(f);
+                    }
+                }
+            }
+            Expression::OnError {
+                expression,
+                fallback,
+                location,
+            } => {
+                f(location);
+                expression.for_each_location_mut(f);
+                fallback.for_each_location_mut(f);
+            }
+            Expression::OnErrorBlock {
+                expression,
+                error_handler,
+                location,
+            } => {
+                f(location);
+                expression.for_each_location_mut(f);
+                for stmt in error_handler {
+                    stmt.for_each_location_mut(f);
+                }
+            }
+            Expression::ErrorVariable { location } | Expression::OrmQuery { location, .. } => {
+                f(location)
+            }
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+                location,
+            } => {
+                f(location);
+                condition.for_each_location_mut(f);
+                then_expr.for_each_location_mut(f);
+                else_expr.for_each_location_mut(f);
+            }
+            Expression::StartExpression {
+                expression,
+                location,
+            }
+            | Expression::NamedArgBinding {
+                value: expression,
+                location,
+                ..
+            } => {
+                f(location);
+                expression.for_each_location_mut(f);
+            }
+            Expression::ObjectLiteral { fields, location } => {
+                f(location);
+                for (_, value) in fields {
+                    value.for_each_location_mut(f);
+                }
+            }
+        }
+    }
+}
+
+impl Function {
+    /// Call `f` on every source location in this function: its own, its
+    /// parameter defaults and its body (see [`Statement::for_each_location_mut`]).
+    pub fn for_each_location_mut(&mut self, f: &mut dyn FnMut(&mut SourceLocation)) {
+        if let Some(location) = &mut self.location {
+            f(location);
+        }
+        for parameter in &mut self.parameters {
+            if let Some(default) = &mut parameter.default_value {
+                default.for_each_location_mut(f);
+            }
+        }
+        for stmt in &mut self.body {
+            stmt.for_each_location_mut(f);
+        }
+    }
+}
+
+impl Class {
+    /// Call `f` on every source location in this class: its own, field
+    /// defaults, invariants, the constructor and every method.
+    pub fn for_each_location_mut(&mut self, f: &mut dyn FnMut(&mut SourceLocation)) {
+        if let Some(location) = &mut self.location {
+            f(location);
+        }
+        for field in &mut self.fields {
+            if let Some(default) = &mut field.default_value {
+                default.for_each_location_mut(f);
+            }
+        }
+        for invariant in &mut self.invariants {
+            invariant.for_each_location_mut(f);
+        }
+        if let Some(constructor) = &mut self.constructor {
+            if let Some(location) = &mut constructor.location {
+                f(location);
+            }
+            for parameter in &mut constructor.parameters {
+                if let Some(default) = &mut parameter.default_value {
+                    default.for_each_location_mut(f);
+                }
+            }
+            for stmt in &mut constructor.body {
+                stmt.for_each_location_mut(f);
+            }
+        }
+        for method in &mut self.methods {
+            method.for_each_location_mut(f);
         }
     }
 }
@@ -1013,6 +1334,13 @@ pub struct FrameworkBlock {
     pub content: String, // Raw content of the block (unparsed DSL)
     pub attributes: Vec<FrameworkAttribute>, // Optional attributes
     pub location: Option<SourceLocation>,
+    /// Where `content` starts in the source file: `line` is the source line
+    /// of the first content line and `column` the source column of content
+    /// column 1 (the block indentation the parser stripped). `None` for
+    /// blocks the compiler builds itself. Compiler-internal; never sent to
+    /// plugins.
+    #[serde(skip_serializing)]
+    pub body_location: Option<SourceLocation>,
 }
 
 // ============================================================================

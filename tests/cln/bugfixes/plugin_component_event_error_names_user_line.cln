@@ -1,0 +1,29 @@
+// Test: bugfixes/plugin_component_event_error_names_user_line
+// Grammar: frame-ui.ebnf component_block
+// Semantic: SEM002 undefined symbol (reported as SEM007) inside a component
+//   event handler names the handler line in this file, not a plugin fragment
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[SEM007]: Function 'missingEventHelper' not found
+//   plugin_component_event_error_names_user_line.cln:22:
+//   integer n = missingEventHelper(1)
+
+plugins:
+	frame.ui
+	frame.server
+
+component: tag="demo-box"
+	state:
+		integer count = 0
+
+	events:
+		void bump()
+			integer n = missingEventHelper(1)
+			state.count = n
+
+	html:
+		<div onclick="bump">{state.count}</div>
+
+start:
+	printl("boot")

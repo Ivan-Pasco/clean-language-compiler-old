@@ -63,6 +63,7 @@ fn base_manifest(name: &str) -> PluginManifest {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
     }
 }
 
@@ -78,6 +79,7 @@ fn build_block() -> clean_language_compiler::ast::FrameworkBlock {
             byte_start: None,
             byte_end: None,
         }),
+        body_location: None,
     }
 }
 

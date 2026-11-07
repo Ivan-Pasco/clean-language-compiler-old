@@ -74,6 +74,7 @@ fn pilot_manifest() -> PluginManifest {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
     }
 }
 
@@ -89,6 +90,7 @@ fn pilot_block() -> FrameworkBlock {
             byte_start: None,
             byte_end: None,
         }),
+        body_location: None,
     }
 }
 
@@ -289,6 +291,7 @@ fn plugin008_double_handle_use_fails() {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
     };
 
     let adapter =
@@ -386,6 +389,7 @@ fn emit_error_severity2_with_return0_fails_expansion() {
         build: Default::default(),
         lifecycle: Default::default(),
         artifacts: Vec::new(),
+        aliases: Default::default(),
     };
 
     let engine = Engine::default();

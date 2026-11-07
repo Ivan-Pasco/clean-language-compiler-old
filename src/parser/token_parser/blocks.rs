@@ -534,6 +534,7 @@ impl TokenParser {
         // If so, capture the block as raw content for the frame.data plugin expander.
         if self.peek_has_orm_subclauses() {
             let block_indent_level = self.current_indent_level_or(1);
+            let body_location = self.block_body_location(block_indent_level);
             let content = self.extract_block_content_raw(block_indent_level);
             // Construct the block name as "Object.method" (or "Object" when no chain)
             let block_name = if method_chain.is_empty() {
@@ -546,6 +547,7 @@ impl TokenParser {
                 content,
                 attributes: Vec::new(),
                 location: Some(location),
+                body_location: Some(body_location),
             });
         }
 
@@ -597,6 +599,21 @@ impl TokenParser {
             expressions,
             location: Some(location),
         })
+    }
+
+    /// Where the content `extract_block_content_raw(block_indent_level)`
+    /// returns starts in the source: the line of the current token (the
+    /// block's first content line) and the column its stripped indentation
+    /// ends at. Call it right before extracting the content.
+    pub(super) fn block_body_location(
+        &self,
+        block_indent_level: usize,
+    ) -> crate::ast::SourceLocation {
+        let mut location = self.current().location.clone();
+        location.column = block_indent_level + 1;
+        location.byte_start = None;
+        location.byte_end = None;
+        location
     }
 
     /// Extract raw block content from source text using byte positions.
@@ -797,6 +814,7 @@ impl TokenParser {
         let block_indent_level = self.current_indent_level_or(1);
 
         // Extract raw content from source using byte positions
+        let body_location = self.block_body_location(block_indent_level);
         let content = self.extract_block_content_raw(block_indent_level);
 
         debug!(
@@ -810,6 +828,7 @@ impl TokenParser {
             content,
             attributes,
             location: Some(start_location),
+            body_location: Some(body_location),
         })
     }
 
@@ -949,6 +968,7 @@ impl TokenParser {
         let block_indent_level = self.current_indent_level_or(1);
 
         // Extract raw content from source using byte positions
+        let body_location = self.block_body_location(block_indent_level);
         let content = self.extract_block_content_raw(block_indent_level);
 
         debug!(
@@ -963,6 +983,7 @@ impl TokenParser {
             content,
             attributes,
             location: Some(start_location),
+            body_location: Some(body_location),
         })
     }
 

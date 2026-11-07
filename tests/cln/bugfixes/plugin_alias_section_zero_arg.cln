@@ -1,0 +1,19 @@
+// Test: bugfixes/plugin_alias_section_zero_arg
+// Grammar: plugins_declaration, function_call
+// Semantic: plugin.toml `[aliases]` names a language call that no naming
+//   convention derives — frame.locale's `locale.current` → `_i18n_locale`.
+//   The compiler ignored the section, so the call never reached its bridge
+//   import and codegen failed with COD000 "Function 'locale.current' not found
+//   in function map". wasmtime_runner has no i18n host, so this pins the compile.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected compile: success
+
+plugins:
+	frame.locale
+
+start:
+	string l = locale.current()
+	print(l)
+	locale.set("es")
+	print(locale.current())

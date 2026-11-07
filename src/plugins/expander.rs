@@ -121,6 +121,12 @@ fn registered_request_handlers(
     out
 }
 
+/// True when `location` names a source file (not a `<…>` marker for
+/// plugin-generated or compiler-synthesized code).
+fn is_user_file_location(location: &crate::ast::SourceLocation) -> bool {
+    !location.file.is_empty() && !location.file.starts_with('<') && location.line > 0
+}
+
 fn stamp_plugin_origin(stmts: &mut [Statement], plugin_name: &str) {
     let marker = format!(
         "{}{}{}",
@@ -1001,12 +1007,14 @@ impl<'a> PluginExpander<'a> {
                     content,
                     attributes,
                     location,
+                    body_location,
                 } => {
                     let block = FrameworkBlock {
                         name,
                         content,
                         attributes,
                         location,
+                        body_location,
                     };
                     // Top-level block: a plugin-generated start function is
                     // merged into the program's start function.
@@ -1038,12 +1046,14 @@ impl<'a> PluginExpander<'a> {
                     content,
                     attributes,
                     location,
+                    body_location,
                 } => {
                     let block = FrameworkBlock {
                         name,
                         content,
                         attributes,
                         location,
+                        body_location,
                     };
                     // Nested block (function body, branch, loop, test, class
                     // member): its start-function body runs at the splice
@@ -1176,10 +1186,11 @@ impl<'a> PluginExpander<'a> {
                             ref content,
                             ref location,
                         }),
-                    ..
+                    location: ref statement_location,
                 } => {
                     let block_content = format!("{} {} =\n{}", type_, name, content);
-                    match self.expand_orm_query(model, verb, block_content, location)? {
+                    let anchor = statement_location.as_ref().unwrap_or(location);
+                    match self.expand_orm_query(model, verb, block_content, location, anchor)? {
                         Some(expanded) => result.extend(expanded),
                         // No plugin registered for this expression pattern — keep the
                         // statement as-is. Semantic analysis will emit a helpful error.
@@ -1206,8 +1217,9 @@ impl<'a> PluginExpander<'a> {
                     location: ref return_location,
                 } => {
                     // No binding header — plugin emits the bare expression.
+                    let anchor = return_location.as_ref().unwrap_or(location);
                     let Some(mut expanded) =
-                        self.expand_orm_query(model, verb, content.clone(), location)?
+                        self.expand_orm_query(model, verb, content.clone(), location, anchor)?
                     else {
                         // No plugin claims this verb — leave intact so HIR emits SEM001.
                         result.push(stmt);
@@ -1247,8 +1259,14 @@ impl<'a> PluginExpander<'a> {
                             ref content,
                             ref location,
                         },
-                    ..
-                } => match self.expand_orm_query(model, verb, content.clone(), location)? {
+                    location: ref statement_location,
+                } => match self.expand_orm_query(
+                    model,
+                    verb,
+                    content.clone(),
+                    location,
+                    statement_location.as_ref().unwrap_or(location),
+                )? {
                     Some(expanded) => result.extend(expanded),
                     None => result.push(stmt),
                 },
@@ -1359,12 +1377,17 @@ impl<'a> PluginExpander<'a> {
     /// `Ok(None)` when no plugin claims the pattern so the caller keeps the
     /// original statement (HIR then reports SEM001). The returned statements
     /// are already recursively expanded.
+    ///
+    /// The statements that replace the user's statement stand for it, so
+    /// those not placed in the user's file get `statement_location` (the
+    /// user's statement); code nested in them keeps its own location.
     fn expand_orm_query(
         &mut self,
         model: &str,
         verb: &str,
         content: String,
         location: &crate::ast::SourceLocation,
+        statement_location: &crate::ast::SourceLocation,
     ) -> Result<Option<Vec<Statement>>, PluginError> {
         let block_name = format!("{}.{}", model, verb);
         if !self.registry.handles_as_expression(&block_name) {
@@ -1375,17 +1398,28 @@ impl<'a> PluginExpander<'a> {
             content,
             attributes: Vec::new(),
             location: Some(location.clone()),
+            // The content may carry a synthesized binding header line, so
+            // its lines are not the source's.
+            body_location: None,
         };
         let expansion = self.registry.expand_full(&block)?;
         let plugin_name = self.plugin_name_for_block(&block.name);
         // Statements a v3 plugin emits via `_emit_statement_into_start` land
         // at the ORM block's splice point (e.g. `n = __Model_count(...)`).
-        let expanded = self.absorb_expansion(
+        let mut expanded = self.absorb_expansion(
             expansion,
             plugin_name.as_deref(),
             StartPlacement::Inline,
             Some(&block.content),
         );
+        if is_user_file_location(statement_location) {
+            for stmt in expanded.iter_mut() {
+                let loc = stmt.location_mut();
+                if !loc.as_ref().is_some_and(is_user_file_location) {
+                    *loc = Some(statement_location.clone());
+                }
+            }
+        }
         tracing::trace!(
             block_name = %block.name,
             expanded_count = expanded.len(),
@@ -1641,6 +1675,7 @@ mod tests {
             content: "Hello, World!".to_string(),
             attributes: vec![],
             location: None,
+            body_location: None,
         }]);
 
         let mut expander = PluginExpander::new(&registry);
@@ -1666,6 +1701,7 @@ mod tests {
             content: "content".to_string(),
             attributes: vec![],
             location: None,
+            body_location: None,
         }]);
 
         let mut expander = PluginExpander::new(&registry);
@@ -1772,6 +1808,7 @@ mod tests {
             build: Default::default(),
             lifecycle,
             artifacts: Vec::new(),
+            aliases: Default::default(),
             blocks: Default::default(),
         }
     }
@@ -2143,6 +2180,7 @@ mod tests {
             content: String::new(),
             attributes: Vec::new(),
             location: None,
+            body_location: None,
         }]);
 
         let mut expander = PluginExpander::new(&registry);
@@ -2173,6 +2211,7 @@ mod tests {
             content: String::new(),
             attributes: Vec::new(),
             location: None,
+            body_location: None,
         }]);
         program.state = Some(user_state_with("user_var"));
 
@@ -2387,6 +2426,7 @@ mod tests {
             content: String::new(),
             attributes: vec![],
             location: None,
+            body_location: None,
         }
     }
 
@@ -2478,6 +2518,7 @@ mod tests {
                 content: "page".to_string(),
                 attributes: vec![],
                 location: None,
+                body_location: None,
             }],
             start_function: Some(Function::new(
                 "start".to_string(),

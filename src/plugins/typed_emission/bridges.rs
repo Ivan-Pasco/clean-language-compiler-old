@@ -954,10 +954,13 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
             }
 
             match result {
-                SingleStatementParse::Statement(stmt) => {
-                    let _ = source; // No longer captured — assemble_typed now
-                                    // routes injected content through `_inject_source_file`
-                                    // per foundation/spec/plugins/contracts/assemble.md §6.1.
+                SingleStatementParse::Statement(mut stmt) => {
+                    // assemble_typed routes injected content through
+                    // `_inject_source_file` (assemble.md §6.1); here the
+                    // source only places the parsed code in the user's file.
+                    if let Some(origin) = a.fragment_origin.as_mut() {
+                        origin.relocate_statement(&source, &mut stmt);
+                    }
                     a.alloc_stmt(stmt)
                 }
                 SingleStatementParse::ExpressionNotStatement => {
@@ -1035,8 +1038,10 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
             }
 
             match result {
-                SingleExpressionParse::Expression(expr) => {
-                    let _ = source; // No longer captured — see assemble.md §6.1.
+                SingleExpressionParse::Expression(mut expr) => {
+                    if let Some(origin) = a.fragment_origin.as_mut() {
+                        origin.relocate_expression(&source, &mut expr);
+                    }
                     a.alloc_expr(expr)
                 }
                 SingleExpressionParse::StatementNotExpression => {
