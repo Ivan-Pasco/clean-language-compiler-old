@@ -45,8 +45,10 @@ pub fn validate_generated_wasm(bytes: &[u8]) -> Result<(), CompilerError> {
             msg,
             Some(
                 "This is a compiler bug. The module failed wasmparser validation \
-                 before it was written to disk. Please report via `report_error` \
-                 (MCP) including the offset and section from this message."
+                 before it was written to disk. Please file a GitHub issue: \
+                 gh issue create --repo Ivan-Pasco/clean-language-compiler-old \
+                 --label bug --label compiler-old (include the offset and section \
+                 from this message)."
                     .to_string(),
             ),
             None,

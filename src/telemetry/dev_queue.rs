@@ -2,7 +2,7 @@
  * Local dev-mode error queue.
  *
  * Compile failures classified as dev-mode by [`dev_context`] are appended here
- * instead of being uploaded to the error dashboard. The queue lives at
+ * instead of being drafted as bug reports. The queue lives at
  * `~/.cleen/telemetry/dev_queue.json` as a JSON array of entries.
  *
  * Design:

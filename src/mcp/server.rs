@@ -661,12 +661,6 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("[MCP] Protocol: JSON-RPC 2.0");
     eprintln!("[MCP] Reading from stdin, writing to stdout");
 
-    // Background: retry locally-stored reports that were never confirmed by the
-    // backend (fingerprint still null) and flush any offline queue.
-    std::thread::spawn(|| {
-        crate::telemetry::flush_pending_telemetry(false);
-    });
-
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);
@@ -847,7 +841,7 @@ fn handle_initialize(id: serde_json::Value, params: Option<&serde_json::Value>) 
             "name": "cln",
             "version": VERSION
         },
-        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- **JAVASCRIPT IS NEVER ACCEPTABLE** in Clean Language projects. No `<script>` tags, no `.js` files, no inline DOM API calls. This applies even when you are unsure if a plugin covers the interaction. Decision protocol: (1) call `list_plugins` and search for the `_ui_*` bridge function you need; (2) wire it through a `component:` block with exported handler functions; (3) if no bridge function exists for the interaction, call `report_error` with component `frame.ui` and stop — do NOT write JavaScript. Key equivalences: `addEventListener` → `_ui_on_event`, `classList.toggle` → `_ui_toggle_class`, `querySelector` → `_ui_query_selector`, `innerHTML` → `_ui_set_inner_html`. \"I don't know how to express this in Clean\" is a signal to call `list_plugins` harder, then `report_error` if truly absent.\n- Use `report_error` when you encounter what appears to be a compiler bug\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## REPORT_ERROR — CRITICAL RULES\n- **SYNTHESIZE BEFORE REPORTING.** Before calling `report_error`, write a minimal reproduction and root-cause analysis. Do not file a bare error code with a plan to add details later — the team cannot fix a bug without a repro.\n- `minimal_repro` (REQUIRED): write the smallest possible `start:` block (or function) that triggers the same compiler failure. Write it from scratch — do NOT copy from the user's file. Reports without `minimal_repro` are rejected — the field is mandatory so structural closure verification stays possible during dashboard hygiene passes.\n- `ai_analysis`: explain which pipeline stage fails and why. This contains no user code and is always sent.\n- `suggested_fix`: if you can identify the file and line, include it (e.g. `src/codegen/mod.rs line 847: condition is inverted`).\n- The `component` field MUST identify WHERE the bug lives (the component containing the buggy code), NOT the name of the task you were running (e.g. never use 'validation', 'testing', 'docs'). Invalid component names are rejected with an error.\n- Valid components: compiler, server, node-server, framework, extension, manager, website, canvas, ui, mcp, unknown. If unsure, use 'unknown'.\n- Use `discovered_during` (optional) to record the context in which you found the bug (e.g. 'solving E0042', 'doc_coverage run') — this does not affect routing.\n- Before calling `report_error` during doc/spec validation or example checking: verify the error also reproduces when compiling the file normally with the correct plugin loaded. If the error disappears in that context, it is a false positive from missing plugin context — do NOT report it.\n- Errors discovered while solving another bug are independent reports. Report them under their correct component. Do NOT attach them to the original bug.\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `report_error` with the payload's fields mapped into the standard error-report schema\n4. Tell the user to run `clean-server errors publish <sha>` to mark it as forwarded"
+        "instructions": "You are working with the Clean Language compiler MCP server. Clean Language is a type-safe language that compiles to WebAssembly.\n\n## GETTING STARTED (call these tools in order)\n1. `get_quick_reference` — Learn syntax, types, patterns (CALL FIRST)\n2. `get_stack_recommendation` — Get recommended plugins for your project type\n3. `list_plugins` — See installed plugins with full DSL syntax\n4. `get_plugin_examples` — Read real example files from plugins\n\n## BEST PRACTICES FOR AI ASSISTANTS\n- ALWAYS call `get_quick_reference` at the start of a session before writing any Clean Language code\n- ALWAYS call `list_plugins` before using framework features (data:, endpoints:, component:, etc.)\n- Use `check` for fast type-checking during development (no WASM generation)\n- Use `get_specification` to look up detailed language rules\n- Use `get_architecture` to understand the execution model and host bridge\n- **JAVASCRIPT IS NEVER ACCEPTABLE** in Clean Language projects. No `<script>` tags, no `.js` files, no inline DOM API calls. This applies even when you are unsure if a plugin covers the interaction. Decision protocol: (1) call `list_plugins` and search for the `_ui_*` bridge function you need; (2) wire it through a `component:` block with exported handler functions; (3) if no bridge function exists for the interaction, call `report_error` with component `frame.ui` and stop — do NOT write JavaScript. Key equivalences: `addEventListener` → `_ui_on_event`, `classList.toggle` → `_ui_toggle_class`, `querySelector` → `_ui_query_selector`, `innerHTML` → `_ui_set_inner_html`. \"I don't know how to express this in Clean\" is a signal to call `list_plugins` harder, then `report_error` if truly absent.\n- Use `report_error` when you encounter what appears to be a compiler bug. It drafts a GitHub issue and returns the `gh issue create` command; nothing is sent anywhere, so show the command to the user\n- If the user reports a server runtime failure or WASM load error, call `list_server_diagnostics` BEFORE asking for reproduction details — the clean-server auto-captures structured diagnostics\n- Use `list_server_diagnostics` to surface pending compiler bugs the user may not realize are on disk\n\n## REPORT_ERROR — CRITICAL RULES\n- Bugs are filed as GitHub issues (label `compiler-old`) in the repository that owns the fix: Ivan-Pasco/clean-language-compiler-old (compiler, mcp), Ivan-Pasco/clean-server-old (server), Ivan-Pasco/cleen-framework-old (framework, frame.* plugins), Ivan-Pasco/clean-language-manager-old (manager). `report_error` picks the repository from `component`.\n- **SYNTHESIZE BEFORE REPORTING.** Before calling `report_error`, write a minimal reproduction and root-cause analysis — the team cannot fix a bug without a repro.\n- `minimal_repro` (REQUIRED): write the smallest possible `start:` block (or function) that triggers the same compiler failure. Write it from scratch — do NOT copy from the user's file.\n- `ai_analysis`: explain which pipeline stage fails and why.\n- `suggested_fix`: if you can identify the file and line, include it (e.g. `src/codegen/mod.rs line 847: condition is inverted`).\n- The `component` field MUST identify WHERE the bug lives (the component containing the buggy code), NOT the name of the task you were running (e.g. never use 'validation', 'testing', 'docs'). Invalid component names are rejected with an error.\n- Valid components: compiler, server, node-server, framework, manager, canvas, ui, mcp, unknown. If unsure, use 'unknown'.\n- Use `discovered_during` (optional) to record the context in which you found the bug (e.g. 'solving E0042', 'doc_coverage run') — this does not affect routing.\n- Before calling `report_error` during doc/spec validation or example checking: verify the error also reproduces when compiling the file normally with the correct plugin loaded. If the error disappears in that context, it is a false positive from missing plugin context — do NOT report it.\n- Errors discovered while solving another bug are independent reports. Report them under their correct component. Do NOT attach them to the original bug.\n\n## KEY RULES\n- File extension: .cln\n- Indentation: tabs only (not spaces)\n- Entry point: `start:` block\n- Types: integer, number, string, boolean, list<T>, matrix<T>, pairs\n- Functions declared in `functions:` block with return type first\n- No semicolons, no curly braces\n- `return value` (no parentheses)\n- One way to do things — follow the spec exactly\n\n## REPORTING RUNTIME_WASM_PARSE BUGS\n1. `list_server_diagnostics` → identify pending reports\n2. `show_server_diagnostic(sha)` → load the full payload\n3. `publish_diagnostic(sha)` → drafts the GitHub issue and returns the `gh issue create` command for the user to run\n4. After the user files it, tell them to run `clean-server errors publish <sha>` to mark it as forwarded"
     });
     JsonRpcResponse::success(id, result)
 }
@@ -1126,11 +1120,11 @@ fn get_available_tools() -> Vec<Tool> {
             },
         },
         // ====================================================================
-        // Error Reporting & Fix Notification Tools
+        // Bug Reporting Tools
         // ====================================================================
         Tool {
             name: "report_error".to_string(),
-            description: "Report a compiler or runtime error to the Clean Language team. BEFORE calling this tool, synthesize a minimal reproduction and root-cause analysis — do not report and plan to enrich later. A report without minimal_repro and ai_analysis is only useful as an occurrence signal; a complete report is what lets the team actually fix the bug. The report is anonymous and never includes the user's actual source code — minimal_repro must be AI-generated code that isolates the bug, not copied from the user's file.".to_string(),
+            description: "Draft a GitHub issue for a bug in the Clean Language toolchain. Nothing is sent anywhere: the result contains the issue title, body and the exact `gh issue create` command for the repository that owns the fix (label `compiler-old`). Show the command to the user and let them run it. When the MCP server runs inside the owning component's source tree, the bug is also recorded in the local dev queue (`cln dev-queue list`). BEFORE calling this tool, synthesize a minimal reproduction and root-cause analysis. minimal_repro must be AI-generated code that isolates the bug, not copied from the user's file.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
@@ -1144,8 +1138,8 @@ fn get_available_tools() -> Vec<Tool> {
                     },
                     "component": {
                         "type": "string",
-                        "description": "Which project component produced the error.",
-                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "unknown"]
+                        "description": "The component that contains the buggy code (decides the GitHub repository).",
+                        "enum": REPORT_COMPONENTS
                     },
                     "subsystem": {
                         "type": "string",
@@ -1158,7 +1152,7 @@ fn get_available_tools() -> Vec<Tool> {
                     },
                     "minimal_repro": {
                         "type": "string",
-                        "description": "REQUIRED: minimal reproduction case as a compilable Clean Language code fragment or complete .cln file that surfaces the bug. Must be AI-synthesized from scratch — write the smallest possible start: block (or function) that triggers the same compiler failure. Do NOT copy from the user's file. Reports without minimal_repro cannot be structurally verified for closure and will be rejected."
+                        "description": "REQUIRED: minimal reproduction case as a compilable Clean Language code fragment or complete .cln file that surfaces the bug. Write the smallest possible start: block (or function) that triggers the same failure. Do NOT copy from the user's file."
                     },
                     "expected_behavior": {
                         "type": "string",
@@ -1174,41 +1168,32 @@ fn get_available_tools() -> Vec<Tool> {
                     },
                     "ai_analysis": {
                         "type": "string",
-                        "description": "REQUIRED unless the bug is a pure crash with no diagnosis available. Root-cause analysis: which pipeline stage fails, why, and what the likely fix is. Does not contain user code — no privacy reason to omit it."
+                        "description": "Root-cause analysis: which pipeline stage fails, why, and what the likely fix is."
                     },
                     "friendly_summary": {
                         "type": "string",
-                        "description": "OPTIONAL but encouraged. A short plain-English summary (~80–200 chars, max 300) of what went wrong, written for non-engineers browsing the dashboard. No codenames, no API paths, no stack-trace jargon — one sentence describing what the user tried to do and what went wrong. Example: 'The page tried to read item number 5 from a list that only has 3 items, so it gave up.' Counterexample (canonical_message shape, do NOT use): 'IndexOutOfBoundsException at vector_get_unchecked(idx=5, len=3) in expand_block stage 2'. The dashboard tooltip falls back to the technical canonical_message when this is missing."
+                        "description": "Optional: one plain-English sentence (max 300 chars) describing what the user tried to do and what went wrong."
                     },
                     "suggested_fix": {
                         "type": "string",
-                        "description": "Specific fix location and change (e.g. 'src/codegen/mod.rs line 847: string comparison is inverted, change == to !='). Include when you can identify the exact line."
+                        "description": "Specific fix location and change (e.g. 'src/codegen/mod.rs line 847: string comparison is inverted'). Include when you can identify the exact line."
                     },
                     "suggested_component_file": {
                         "type": "string",
-                        "description": "Source file most likely to contain the fix (e.g. 'src/parser/token_parser.rs'). Use when you know the file but not the exact line."
-                    },
-                    "consent_level": {
-                        "type": "string",
-                        "description": "What level of detail the user consented to share. Default: error_with_code.",
-                        "enum": ["error_only", "error_with_code", "full"]
-                    },
-                    "user_contact": {
-                        "type": "string",
-                        "description": "Optional contact info if the user wants follow-up. Only include if explicitly provided by the user."
+                        "description": "Source file most likely to contain the fix (e.g. 'src/parser/token_parser.rs')."
                     },
                     "discovered_during": {
                         "type": "string",
-                        "description": "Optional: the task or context in which this error was found (e.g., 'solving E0042', 'doc_coverage run', 'canvas example validation'). Records lineage without affecting component routing. Do NOT use this as a substitute for a correct component value."
+                        "description": "Optional: the task or context in which this error was found (e.g., 'doc_coverage run'). Does not affect routing."
                     },
                     "affected_component": {
                         "type": "string",
-                        "description": "Optional: the specific component where the bug actually lives, when different from the reporting component. For example, a plugin compilation bug found while running the compiler might set component='compiler' but affected_component='framework'.",
-                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "unknown"]
+                        "description": "Optional: the specific component where the bug was observed, when different from `component`.",
+                        "enum": REPORT_COMPONENTS
                     },
                     "affected_version": {
                         "type": "string",
-                        "description": "Optional: version of the affected component where the bug was observed (e.g., '2.6.1' for frame.data 2.6.1). Distinct from the compiler version, which is captured automatically."
+                        "description": "Optional: version of the affected component where the bug was observed (e.g., '2.6.1' for frame.data 2.6.1). The compiler version is added automatically."
                     }
                 }),
                 required: vec![
@@ -1218,25 +1203,6 @@ fn get_available_tools() -> Vec<Tool> {
                     "severity".to_string(),
                     "minimal_repro".to_string(),
                 ],
-            },
-        },
-        Tool {
-            name: "check_reported_fixes".to_string(),
-            description: "Check if any previously reported errors have been fixed. Returns resolved errors with fix versions, plus a summary of open bugs for this component from ALL reporters. Call this at the start of every session.".to_string(),
-            input_schema: ToolInputSchema {
-                type_: "object".to_string(),
-                properties: json!({
-                    "include_all": {
-                        "type": "boolean",
-                        "description": "If true, returns all tracked reports regardless of status. If false (default), returns only reports with status changes since last check."
-                    },
-                    "component": {
-                        "type": "string",
-                        "description": "Component to fetch open bugs for. Defaults to 'compiler'. Use when working on a different component (e.g. 'server', 'framework', 'extension').",
-                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "unknown"]
-                    }
-                }),
-                required: vec![],
             },
         },
         Tool {
@@ -1259,7 +1225,7 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "publish_diagnostic".to_string(),
-            description: "Publish a local server diagnostic to the Clean Language error server. Reads the diagnostic from ./diagnostics/pending/<sha>, converts it to a standard error report, and submits it. IMPORTANT: Always ask the user for permission before calling this tool. The response indicates if the bug was already fixed, already known, or newly accepted. On success, moves the diagnostic to published/.".to_string(),
+            description: "Draft a GitHub issue from a local server diagnostic (./diagnostics/pending/<sha>). Nothing is sent anywhere: the result contains the issue title, body and the exact `gh issue create` command; show it to the user. The diagnostic stays in pending/ until the user files the issue and marks it with `clean-server errors publish <sha>`.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
@@ -1270,33 +1236,9 @@ fn get_available_tools() -> Vec<Tool> {
                     "diag_dir": {
                         "type": "string",
                         "description": "Path to diagnostics directory. Default: './diagnostics'"
-                    },
-                    "user_contact": {
-                        "type": "string",
-                        "description": "Optional contact info if the user wants follow-up on this bug."
                     }
                 }),
                 required: vec!["sha".to_string()],
-            },
-        },
-        Tool {
-            name: "list_component_bugs".to_string(),
-            description: "List all open bugs for a specific component from the error server. Unlike check_reported_fixes (which only shows bugs reported from this machine), this tool shows ALL bugs reported by ALL users and AI instances. Use this at session start when working on a component to discover bugs that need fixing. Requires network access to the error server.".to_string(),
-            input_schema: ToolInputSchema {
-                type_: "object".to_string(),
-                properties: json!({
-                    "component": {
-                        "type": "string",
-                        "description": "Component to query bugs for.",
-                        "enum": ["compiler", "server", "node-server", "framework", "extension", "manager", "website", "canvas", "ui", "mcp", "all"]
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Filter by bug status. Default: 'reported' (open bugs).",
-                        "enum": ["reported", "acknowledged", "in_progress", "resolved", "all"]
-                    }
-                }),
-                required: vec!["component".to_string()],
             },
         },
         Tool {
@@ -1533,11 +1475,9 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         "list_ecosystem" => tool_list_ecosystem(id.clone(), arguments),
         "get_stack_recommendation" => tool_get_stack_recommendation(id.clone(), arguments),
         "report_error" => tool_report_error(id.clone(), arguments),
-        "check_reported_fixes" => tool_check_reported_fixes(id.clone(), arguments),
         "list_server_diagnostics" => tool_list_server_diagnostics(id.clone(), arguments),
         "show_server_diagnostic" => tool_show_server_diagnostic(id.clone(), arguments),
         "publish_diagnostic" => tool_publish_diagnostic(id.clone(), arguments),
-        "list_component_bugs" => tool_list_component_bugs(id.clone(), arguments),
         "get_architecture" => tool_get_architecture(id.clone(), arguments),
         "format" => tool_format(id.clone(), arguments),
         "validate" => tool_validate(id.clone(), arguments),
@@ -3419,13 +3359,11 @@ functions:
 - `get_specification` — Full language spec by section
 - `list_error_codes` — All error codes
 - `list_plugins` — Installed plugins with full DSL syntax
-- `list_ecosystem` — ALL available plugins (installed or not)
+- `list_ecosystem` — Installed plugins with their blocks and bridge functions
 - `get_plugin_examples` — Read plugin example files
 - `get_stack_recommendation` — Recommended plugin stack for a project type
-- `report_error` — Report a likely compiler bug
-- `check_reported_fixes` — Check if your reported bugs are fixed (also shows open bugs from all reporters)
-- `publish_diagnostic` — Publish a local server diagnostic to the error server (ask user first!)
-- `list_component_bugs` — List ALL open bugs for a component from all reporters (dev team tool)
+- `report_error` — Draft a GitHub issue (and its `gh issue create` command) for a likely compiler bug
+- `publish_diagnostic` — Draft a GitHub issue from a local server diagnostic
 - `list_server_diagnostics` — List local runtime errors captured by clean-server
 
 ## Workflow
@@ -3438,19 +3376,18 @@ functions:
 7. Call `check` to type-check (fast feedback loop)
 8. Call `compile` when ready for WASM output
 9. If errors occur, call `explain_error` with the code
-10. If the code follows the spec but doesn't compile, call `report_error` immediately — do NOT write workaround code
+10. If the code follows the spec but doesn't compile, call `report_error` immediately — do NOT write workaround code — and give the user the `gh issue create` command it returns
 11. Use `get_specification` for detailed docs on specific features
-12. Call `check_reported_fixes` at session start to see if previously reported bugs are now fixed
-13. Call `list_server_diagnostics` to check for runtime errors — if unpublished diagnostics exist, ask the user to publish them
-14. If user agrees, call `publish_diagnostic` with the SHA to send the error to the Clean Language team
+12. Call `list_server_diagnostics` to check for runtime errors — if unpublished diagnostics exist, ask the user whether to report them
+13. If user agrees, call `publish_diagnostic` with the SHA and give the user the returned `gh issue create` command
 
-## Error Lifecycle (for Clean Language development team)
-When fixing bugs from the error server:
-1. Call `list_component_bugs` to see all open bugs for your component
+## Bug Lifecycle (for Clean Language development team)
+Bugs are GitHub issues labeled `compiler-old` in the repository that owns the fix:
+1. List open bugs: `gh issue list --repo Ivan-Pasco/clean-language-compiler-old --label compiler-old`
 2. Pick the highest-priority bug and write a failing test
 3. Fix the root cause in the source code
-4. Run `comita` to commit, tag, push, and wait for CI
-5. After CI passes, run `/resolve-fix <ERROR_CODE> <VERSION> "<description>"` to close the bug
+4. Commit with `fixes #N` in the message; GitHub closes the issue when the commit reaches the default branch
+5. Run `comita` to tag, push and wait for CI
 
 ## Plugin Syntax Discovery
 Plugins (like Frame) add custom blocks, keywords, and types.
@@ -3737,7 +3674,7 @@ For other content types:
             "quick_reference": quick_ref,
             "version": crate::VERSION,
             "tools_available": get_available_tools().len(),
-            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. If spec-correct code fails, call 'report_error' immediately — never write workarounds. Call 'check_reported_fixes' at session start. Call 'list_server_diagnostics' to find local runtime errors — ask the user to publish them."
+            "tip": "Use 'check' for fast iteration, 'compile' when ready for WASM. If spec-correct code fails, call 'report_error' immediately — never write workarounds — and give the user the GitHub issue command it returns. Call 'list_server_diagnostics' to find local runtime errors."
         }),
     )
 }
@@ -4404,735 +4341,208 @@ fn read_capped(args: &serde_json::Value, key: &str, max_bytes: usize) -> Option<
     })
 }
 
-// The dashboard at errors.cleanlanguage.dev shows the first 12 chars of the
-// fingerprint as the bug's visible ID. MCP responses always carry the full
-// 64-char hash AND the 12-char prefix so users can match what the dashboard
-// shows. See bug MCP-FINGERPRINT-DISPLAY-MISMATCH-DASHBOARD.
-const FINGERPRINT_SHORT_LEN: usize = 12;
+/// Component names `report_error` accepts; each maps to the GitHub
+/// repository that owns the fix (see `telemetry::normalize_component`).
+const REPORT_COMPONENTS: &[&str] = &[
+    "compiler",
+    "server",
+    "node-server",
+    "framework",
+    "manager",
+    "canvas",
+    "ui",
+    "mcp",
+    "unknown",
+];
 
-fn fingerprint_short(fp: &str) -> &str {
-    let end = fp.len().min(FINGERPRINT_SHORT_LEN);
-    &fp[..end]
+/// MCP result for a drafted bug report: the issue text, the `gh` command
+/// that files it and, for dev work, the local dev-queue record.
+fn issue_draft_result(
+    draft: &crate::telemetry::IssueDraft,
+    recorded: Option<(
+        crate::telemetry::DevContext,
+        crate::telemetry::dev_queue::AppendOutcome,
+    )>,
+) -> serde_json::Value {
+    let mut text = String::new();
+    if let Some((ctx, outcome)) = &recorded {
+        text.push_str(&format!(
+            "Recorded in the local dev queue: fingerprint {} \u{00d7}{} ({}). View with `cln dev-queue list`.\n\n",
+            outcome.fingerprint,
+            outcome.occurrences,
+            ctx.reason().unwrap_or("dev")
+        ));
+    }
+    text.push_str(&format!(
+        "Nothing was sent anywhere. File the bug in {} by running:\n\n{}",
+        draft.repo(),
+        draft.gh_command()
+    ));
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "success": true,
+        "repo": draft.repo(),
+        "title": draft.title,
+        "body": draft.body,
+        "gh_command": draft.gh_command(),
+        "recorded_in_dev_queue": recorded.is_some(),
+        "fingerprint": recorded.as_ref().map(|(_, o)| o.fingerprint.clone()),
+        "occurrences": recorded.as_ref().map(|(_, o)| o.occurrences),
+    })
 }
 
-/// Render a fingerprint for human-facing text: `#<short>  (full: <full>)`.
-fn fp_display(fp: &str) -> String {
-    format!("#{}  (full: {})", fingerprint_short(fp), fp)
-}
-
-/// Tool: report_error - Submit a structured error report
+/// Tool: report_error - Draft a GitHub issue for a toolchain bug
 fn tool_report_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
-    use crate::telemetry::{
-        report::{ReportAiContext, ReportError, ReportReproduction},
-        ErrorReport, ReportStore,
+    let required = |key: &str| -> Result<String, JsonRpcResponse> {
+        args.get(key)
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| {
+                JsonRpcResponse::error(
+                    id.clone(),
+                    error_codes::INVALID_PARAMS,
+                    format!("Missing '{}' parameter", key),
+                )
+            })
     };
-
-    // Extract required fields
-    let error_code = match args.get("error_code").and_then(|v| v.as_str()) {
-        Some(s) => s.to_string(),
-        None => {
-            return JsonRpcResponse::error(
-                id,
-                error_codes::INVALID_PARAMS,
-                "Missing 'error_code' parameter".to_string(),
-            )
-        }
+    let error_code = match required("error_code") {
+        Ok(v) => v,
+        Err(e) => return e,
     };
-
-    let error_message = match args.get("error_message").and_then(|v| v.as_str()) {
-        Some(s) => s.to_string(),
-        None => {
-            return JsonRpcResponse::error(
-                id,
-                error_codes::INVALID_PARAMS,
-                "Missing 'error_message' parameter".to_string(),
-            )
-        }
+    let error_message = match required("error_message") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let component = match required("component") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let severity = match required("severity") {
+        Ok(v) => v,
+        Err(e) => return e,
     };
 
     // SEC002: injection detection — reject all free-text fields containing web XSS
     // or LLM prompt injection patterns. Covers mandatory and all optional fields.
-    {
-        if contains_injection(&error_code) || contains_injection(&error_message) {
-            return JsonRpcResponse::error(
-                id,
-                error_codes::INVALID_PARAMS,
-                "Invalid input: error_code or error_message contains disallowed content"
-                    .to_string(),
-            );
-        }
-        let optional_text_fields = [
-            "minimal_repro",
-            "expected_behavior",
-            "actual_behavior",
-            "ai_analysis",
-            "suggested_fix",
-            "discovered_during",
-            "friendly_summary",
-        ];
-        for field in &optional_text_fields {
-            if let Some(val) = args.get(field).and_then(|v| v.as_str()) {
-                if contains_injection(val) {
-                    return JsonRpcResponse::error(
-                        id,
-                        error_codes::INVALID_PARAMS,
-                        format!(
-                            "Invalid input: field '{}' contains disallowed content",
-                            field
-                        ),
-                    );
-                }
-            }
-        }
+    if contains_injection(&error_code) || contains_injection(&error_message) {
+        return JsonRpcResponse::error(
+            id,
+            error_codes::INVALID_PARAMS,
+            "Invalid input: error_code or error_message contains disallowed content".to_string(),
+        );
     }
-    // SEC002: cap error_message at 2000 bytes to prevent payload bloat
-    let error_message = if error_message.len() > 2000 {
-        format!("{}…", &error_message[..1997])
-    } else {
-        error_message
-    };
-
-    let component = match args.get("component").and_then(|v| v.as_str()) {
-        Some(s) => s.to_string(),
-        None => {
-            return JsonRpcResponse::error(
-                id,
-                error_codes::INVALID_PARAMS,
-                "Missing 'component' parameter".to_string(),
-            )
-        }
-    };
-
-    let severity = match args.get("severity").and_then(|v| v.as_str()) {
-        Some(s) => s.to_string(),
-        None => {
-            return JsonRpcResponse::error(
-                id,
-                error_codes::INVALID_PARAMS,
-                "Missing 'severity' parameter".to_string(),
-            )
-        }
-    };
-
-    // minimal_repro is required. A report without it cannot be structurally
-    // verified for closure (dashboard hygiene retry could not proceed against
-    // 8/8 candidate fingerprints on 2026-07-04 because historical entries had
-    // empty minimal_repro). Enforce presence and non-empty content here.
-    match args.get("minimal_repro").and_then(|v| v.as_str()) {
-        Some(s) if !s.trim().is_empty() => {}
-        _ => {
-            return JsonRpcResponse::error(
-                id,
-                error_codes::INVALID_PARAMS,
-                "Missing or empty 'minimal_repro' parameter. Synthesize a minimal Clean Language reproduction (smallest start: block that triggers the same failure) and include it as `minimal_repro`. Reports without a repro cannot be verified for closure and are rejected.".to_string(),
-            )
-        }
-    };
-
-    // Extract optional fields
-    let consent_level = args
-        .get("consent_level")
-        .and_then(|v| v.as_str())
-        .unwrap_or("error_with_code");
-    let user_contact = args
-        .get("user_contact")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let explicit_subsystem = args
-        .get("subsystem")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let discovered_during = args
-        .get("discovered_during")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    // MCP001: extract new cross-component context fields
-    let raw_affected_component = args
-        .get("affected_component")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let affected_version = args
-        .get("affected_version")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    // Determine error category from code prefix.
-    // Covers both symbolic prefixes (SYN, SEM, COD, RUN, SYS) and the E-series
-    // codes used by compiler constructors (E001–E013, MEM*, VAL*, MOD*, PLG*).
-    let category = if error_code.starts_with("SYN") || error_code == "E001" {
-        "syntax"
-    } else if error_code.starts_with("SEM") || error_code == "E002" {
-        "semantic"
-    } else if error_code.starts_with("COD") || error_code.starts_with("COM") || error_code == "E007"
-    {
-        "codegen"
-    } else if error_code.starts_with("RUN") || error_code == "E009" {
-        "runtime"
-    } else if error_code.starts_with("MEM") || error_code == "E006" {
-        "memory"
-    } else if error_code.starts_with("VAL") || error_code == "E010" {
-        "validation"
-    } else if error_code.starts_with("MOD") || error_code == "E013" {
-        "module"
-    } else if error_code.starts_with("PLG") {
-        "plugin"
-    } else if error_code.starts_with("LEX") || error_code == "LEX000" {
-        "syntax"
-    } else if error_code.starts_with("SYS") {
-        "system"
-    } else {
-        "unknown"
-    };
-
-    // Auto-detect subsystem from error code prefix (if not explicitly provided)
-    let subsystem = explicit_subsystem.or_else(|| {
-        let auto = if error_code.starts_with("SYN") {
-            "parser"
-        } else if error_code.starts_with("SEM") {
-            "semantic"
-        } else if error_code.starts_with("COD") || error_code.starts_with("COM") {
-            "codegen"
-        } else if error_code.starts_with("RUN") {
-            "runtime"
-        } else if error_code.starts_with("SYS") {
-            "system"
-        } else {
-            return None;
-        };
-        Some(auto.to_string())
-    });
-
-    // Normalize legacy component names to unified taxonomy, then validate.
-    // The wildcard must never pass through arbitrary strings — that's how "validation"
-    // ended up as a component name when an AI used the task name instead of the buggy component.
-    const VALID_COMPONENTS: &[&str] = &[
-        "compiler",
-        "server",
-        "node-server",
-        "framework",
-        "extension",
-        "manager",
-        "website",
-        "canvas",
-        "ui",
-        "mcp",
-        "unknown",
+    let optional_text_fields = [
+        "minimal_repro",
+        "expected_behavior",
+        "actual_behavior",
+        "ai_analysis",
+        "suggested_fix",
+        "discovered_during",
+        "friendly_summary",
     ];
-    let component = match component.as_str() {
-        "parser" | "semantic" | "codegen" | "cli" | "syntax" | "system" => "compiler".to_string(),
-        "runtime" => "server".to_string(),
-        "plugin" => "framework".to_string(),
-        c if c.starts_with("frame.") => "framework".to_string(),
-        c if VALID_COMPONENTS.contains(&c) => c.to_string(),
+    for field in &optional_text_fields {
+        if let Some(val) = args.get(field).and_then(|v| v.as_str()) {
+            if contains_injection(val) {
+                return JsonRpcResponse::error(
+                    id,
+                    error_codes::INVALID_PARAMS,
+                    format!(
+                        "Invalid input: field '{}' contains disallowed content",
+                        field
+                    ),
+                );
+            }
+        }
+    }
+    // SEC002: cap error_message at 2000 characters to prevent payload bloat
+    let error_message = crate::error::truncate_chars(&error_message, 2000);
+
+    // A bug cannot be fixed without a reproduction.
+    let minimal_repro = match read_capped(args, "minimal_repro", 4000) {
+        Some(s) if !s.trim().is_empty() => s,
         _ => {
             return JsonRpcResponse::error(
                 id,
                 error_codes::INVALID_PARAMS,
-                format!(
-                    "Invalid component '{}'. Must be one of: {}. \
-                     Use the component that CONTAINS the buggy code — not the name \
-                     of the task or tool you were running when you found the bug. \
-                     If unsure, use 'unknown'.",
-                    component,
-                    VALID_COMPONENTS.join(", ")
-                ),
-            );
+                "Missing or empty 'minimal_repro' parameter. Synthesize a minimal Clean Language reproduction (smallest start: block that triggers the same failure) and include it as `minimal_repro`.".to_string(),
+            )
         }
     };
 
-    // MCP001: normalize affected_component using the same taxonomy as component
-    let affected_component = raw_affected_component.map(|c| match c.as_str() {
-        "parser" | "semantic" | "codegen" | "cli" | "syntax" | "system" => "compiler".to_string(),
-        "runtime" => "server".to_string(),
-        "plugin" => "framework".to_string(),
-        c if c.starts_with("frame.") => "framework".to_string(),
-        c if VALID_COMPONENTS.contains(&c) => c.to_string(),
-        _ => "unknown".to_string(),
-    });
+    // The component decides the repository. It must name WHERE the bug
+    // lives, not the task that was running when it was found.
+    let Some(canonical_component) = crate::telemetry::normalize_component(&component) else {
+        return JsonRpcResponse::error(
+            id,
+            error_codes::INVALID_PARAMS,
+            format!(
+                "Invalid component '{}'. Must be one of: {}. Use the component that CONTAINS the buggy code — not the name of the task or tool you were running when you found the bug. If unsure, use 'unknown'.",
+                component,
+                REPORT_COMPONENTS.join(", ")
+            ),
+        );
+    };
 
-    // Generate report ID
-    let report_id = generate_report_id();
-
-    // Build the report
-    let mut report = ErrorReport::new(
-        report_id.clone(),
-        ReportError {
-            code: error_code,
-            category: category.to_string(),
-            component,
-            subsystem,
-            severity,
-            message: error_message,
-            file_context: None,
-            affected_component,
-            affected_version,
-        },
-        "mcp_ai",
-        consent_level,
-    );
-
-    // Set user contact: prefer explicit param, fall back to stored email
-    if user_contact.is_some() {
-        report.user.anonymous = false;
-        report.user.contact = user_contact;
-    } else {
-        let config = crate::telemetry::TelemetryConfig::load();
-        if let Some(ref email) = config.contact_email {
-            report.user.anonymous = false;
-            report.user.contact = Some(email.clone());
-        }
-    }
-
-    // Add reproduction info (respecting consent level)
-    if consent_level != "error_only" {
-        report.reproduction = Some(ReportReproduction {
-            minimal_code: read_capped(args, "minimal_repro", 4000),
-            expected_behavior: read_capped(args, "expected_behavior", 1000),
-            actual_behavior: read_capped(args, "actual_behavior", 1000),
-            spec_reference: read_capped(args, "spec_reference", 500),
-        });
-    }
-
-    // Add AI context at error_with_code consent and above.
-    // ai_analysis and suggested_fix contain no user code — they are AI-generated
-    // reasoning about the bug. Gating them on "full" silently discards the most
-    // actionable part of a report for all default-consent calls.
-    if consent_level != "error_only" {
-        // Prepend discovered_during to analysis so the lineage is visible in the dashboard.
-        let analysis = {
-            let base = read_capped(args, "ai_analysis", 4000);
-            match (&discovered_during, &base) {
-                (Some(ctx), Some(a)) => Some(format!("Discovered during: {ctx}\n\n{a}")),
-                (Some(ctx), None) => Some(format!("Discovered during: {ctx}")),
-                (None, b) => b.clone(),
-            }
-        };
-        let suggested_fix = read_capped(args, "suggested_fix", 2000);
-        let suggested_component = args
-            .get("suggested_component_file")
+    let mut body = format!(
+        "{}\nComponent: {}{}\nSeverity: {}\n\nError {}: {}\n",
+        crate::telemetry::environment_section(),
+        canonical_component,
+        args.get("subsystem")
             .and_then(|v| v.as_str())
-            .map(String::from);
-        let friendly_summary = read_capped(args, "friendly_summary", 300);
-        // Only attach the struct if there is at least one non-null field
-        if analysis.is_some()
-            || suggested_fix.is_some()
-            || suggested_component.is_some()
-            || friendly_summary.is_some()
-        {
-            report.ai_context = Some(ReportAiContext {
-                analysis,
-                suggested_component,
-                suggested_fix,
-                confidence: None,
-                friendly_summary,
-            });
+            .map(|s| format!(" ({s})"))
+            .unwrap_or_default(),
+        severity,
+        error_code,
+        error_message
+    );
+    if let Some(affected) = args.get("affected_component").and_then(|v| v.as_str()) {
+        let version = args
+            .get("affected_version")
+            .and_then(|v| v.as_str())
+            .map(|v| format!(" {v}"))
+            .unwrap_or_default();
+        body.push_str(&format!("Affected component: {affected}{version}\n"));
+    }
+    if let Some(summary) = read_capped(args, "friendly_summary", 300) {
+        body.push_str(&format!("\n{summary}\n"));
+    }
+    body.push_str(&format!(
+        "\n### Minimal reproduction\n\n```clean\n{}\n```\n",
+        minimal_repro.trim_end()
+    ));
+    let sections = [
+        ("Expected behavior", "expected_behavior", 1000),
+        ("Actual behavior", "actual_behavior", 1000),
+        ("Spec reference", "spec_reference", 500),
+        ("Analysis", "ai_analysis", 4000),
+        ("Suggested fix", "suggested_fix", 2000),
+        ("Likely file", "suggested_component_file", 300),
+        ("Discovered during", "discovered_during", 300),
+    ];
+    for (heading, key, cap) in sections {
+        if let Some(text) = read_capped(args, key, cap) {
+            body.push_str(&format!("\n### {heading}\n\n{}\n", text.trim_end()));
         }
     }
 
-    // Dev-mode gate: when the MCP server runs inside the source tree of the
-    // component being reported, route the report to the local dev queue
-    // instead of uploading. This prevents the dashboard from filling with
-    // in-progress work-in-flight from the platform authors themselves.
-    let dev_ctx = crate::telemetry::detect_dev_context_for_component(&report.error.component);
-    if dev_ctx.is_dev() {
-        let entry = crate::telemetry::dev_queue::entry_from(
-            &dev_ctx,
-            &report.error.code,
-            &report.error.component,
-            &report.error.message,
-            report.error.file_context.as_deref(),
-            crate::VERSION,
-        );
-        let outcome = crate::telemetry::dev_queue::append(entry);
-
-        let payload = serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": format!(
-                    "Dev-mode: recorded locally (not uploaded).\nReason: {}\nComponent: {}\nError: {} \u{00d7}{} (Bug ID: {})",
-                    dev_ctx.reason().unwrap_or("dev"),
-                    report.error.component,
-                    report.error.code,
-                    outcome.occurrences,
-                    fp_display(&outcome.fingerprint),
-                ),
-            }],
-            "dev_mode": true,
-            "dev_reason": dev_ctx.reason().unwrap_or("dev"),
-            "fingerprint": outcome.fingerprint,
-            "fingerprint_short": fingerprint_short(&outcome.fingerprint),
-            "occurrences": outcome.occurrences,
-        });
-        return JsonRpcResponse::success(id, payload);
-    }
-
-    // Store locally for fix notification tracking
-    let mut store = ReportStore::load();
-    store.add_report(&report);
-    let _ = store.save();
-
-    // Attempt to submit to backend (falls back to queue)
-    let result = crate::telemetry::submit_report(&report);
-
-    // Persist the server-returned fingerprint so the local report is confirmed.
-    if let Some(fp) = result.fingerprint() {
-        store.update_fingerprint(&report.report_id, fp);
-        let _ = store.save();
-    }
-
-    match result {
-        crate::telemetry::SubmitResult::AlreadyFixed {
-            report_id,
-            fingerprint,
-            fixed_in_version,
-            fix_description,
-            message,
-        } => {
-            // Update local store to mark as resolved
-            store.update_status(
-                &report_id,
-                crate::telemetry::report::ReportStatus::Resolved,
-                Some(fixed_in_version.clone()),
-                fix_description.clone(),
-                None,
-            );
-            let _ = store.save();
-
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": true,
-                    "already_fixed": true,
-                    "report_id": report_id,
-                    "fingerprint": fingerprint,
-                    "fingerprint_short": fingerprint.as_deref().map(fingerprint_short),
-                    "fixed_in_version": fixed_in_version,
-                    "fix_description": fix_description,
-                    "upgrade_command": "cleen install latest",
-                    "message": message,
-                    "action": "This bug is already fixed. Do NOT write workaround code. Update the compiler with: cleen install latest"
-                }),
-            )
-        }
-        crate::telemetry::SubmitResult::Known {
-            report_id,
-            fingerprint,
-            occurrences,
-            current_status,
-            message,
-        } => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true,
-                "known_issue": true,
-                "report_id": report_id,
-                "fingerprint": fingerprint,
-                "fingerprint_short": fingerprint.as_deref().map(fingerprint_short),
-                "occurrences": occurrences,
-                "current_status": current_status,
-                "message": message,
-                "action": "This is a known issue being worked on. Write spec-correct code and note the limitation. Do NOT write workarounds."
-            }),
+    let draft = crate::telemetry::IssueDraft::new(
+        canonical_component,
+        format!(
+            "{}: {}",
+            error_code,
+            crate::error::truncate_chars(&error_message.replace('\n', " "), 80)
         ),
-        crate::telemetry::SubmitResult::Submitted {
-            report_id,
-            fingerprint,
-            tracking_url: _,
-        } => {
-            let header = match fingerprint.as_deref() {
-                Some(fp) => format!("Bug ID: {}\nReport ID: {}", fp_display(fp), report_id),
-                None => format!("Report ID: {}", report_id),
-            };
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "content": [{
-                        "type": "text",
-                        "text": format!(
-                            "Error report submitted successfully.\n{}\n\nUse `check_reported_fixes` to track the status of this report.",
-                            header
-                        )
-                    }],
-                    "success": true,
-                    "report_id": report_id,
-                    "fingerprint": fingerprint,
-                    "fingerprint_short": fingerprint.as_deref().map(fingerprint_short)
-                }),
-            )
-        }
-        crate::telemetry::SubmitResult::Queued {
-            report_id,
-            local_path,
-        } => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true,
-                "queued": true,
-                "report_id": report_id,
-                "local_path": local_path,
-                "message": "Report saved locally. It will be sent when connectivity to the error reporting service is available."
-            }),
-        ),
-        crate::telemetry::SubmitResult::RateLimited {
-            report_id,
-            local_path,
-            retry_after_seconds,
-        } => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true,
-                "queued": true,
-                "rate_limited": true,
-                "report_id": report_id,
-                "local_path": local_path,
-                "retry_after_seconds": retry_after_seconds,
-                "message": format!(
-                    "Report saved locally. Server rate-limited; retry will occur after {}s.",
-                    retry_after_seconds
-                )
-            }),
-        ),
-        crate::telemetry::SubmitResult::Error { message } => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": false,
-                "error": message,
-                "message": "Failed to save error report. The error has been noted locally."
-            }),
-        ),
-    }
-}
-
-/// Tool: check_reported_fixes - Check for updates on previously reported errors
-fn tool_check_reported_fixes(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
-    use crate::telemetry::{report::ReportStatus, ReportStore};
-
-    let include_all = args
-        .get("include_all")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let mut store = ReportStore::load();
-    let all_reports = store.get_all_reports();
-
-    if all_reports.is_empty() {
-        return JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true,
-                "fixes": [],
-                "pending": [],
-                "current_version": crate::VERSION,
-                "has_updates": false,
-                "message": "No error reports tracked on this machine."
-            }),
-        );
-    }
-
-    // Collect report IDs for backend status check
-    let report_ids: Vec<String> = all_reports
-        .iter()
-        .filter(|r| r.status != ReportStatus::Resolved || include_all)
-        .map(|r| r.report_id.clone())
-        .collect();
-
-    // Try to fetch updates from backend (returns empty vec if offline)
-    let updates = crate::telemetry::submit::check_report_statuses(&report_ids);
-
-    // Apply any updates from backend
-    for update in &updates {
-        let status = match update.status.as_str() {
-            "acknowledged" => ReportStatus::Acknowledged,
-            "in_progress" => ReportStatus::InProgress,
-            "resolved" => ReportStatus::Resolved,
-            "wont_fix" => ReportStatus::WontFix,
-            _ => continue,
-        };
-
-        store.update_status(
-            &update.report_id,
-            status,
-            update.fixed_in_version.clone(),
-            update.fix_description.clone(),
-            update.fix_pr.clone(),
-        );
-    }
-
-    // Save any status updates
-    if !updates.is_empty() {
-        let _ = store.save();
-    }
-
-    // Build response — split into fixes (resolved) and pending (everything else)
-    let all_reports = store.get_all_reports();
-
-    let fixes: Vec<serde_json::Value> = all_reports
-        .iter()
-        .filter(|r| r.status == ReportStatus::Resolved)
-        .filter(|r| include_all || !r.notified)
-        .map(|r| {
-            json!({
-                "report_id": r.report_id,
-                "error_code": r.error_code,
-                "summary": r.summary,
-                "status": "resolved",
-                "fixed_in_version": r.resolved_in,
-                "fix_description": r.fix_description,
-                "fix_pr": r.fix_pr,
-                "update_command": r.resolved_in.as_ref().map(|v| format!("cleen install {}", v))
-            })
-        })
-        .collect();
-
-    let pending: Vec<serde_json::Value> = all_reports
-        .iter()
-        .filter(|r| r.status != ReportStatus::Resolved)
-        .map(|r| {
-            json!({
-                "report_id": r.report_id,
-                "error_code": r.error_code,
-                "summary": r.summary,
-                "status": r.status.to_string(),
-                "reported_at": r.reported_at.to_rfc3339()
-            })
-        })
-        .collect();
-
-    let has_updates = !fixes.is_empty() || !updates.is_empty();
-
-    // Cross-reference resolved fixes against local server diagnostics
-    let matching_local_diagnostics = cross_reference_diagnostics(&fixes);
-
-    // Collect IDs of resolved reports to mark as notified
-    let to_notify: Vec<String> = all_reports
-        .iter()
-        .filter(|r| r.status == ReportStatus::Resolved && !r.notified)
-        .map(|r| r.report_id.clone())
-        .collect();
-
-    // Mark new fixes as notified (separate borrow scope)
-    for report_id in &to_notify {
-        store.mark_notified(report_id);
-    }
-    let _ = store.save();
-
-    // Also fetch open bugs for this component from the error server
-    // so AI instances discover bugs reported by OTHER users/instances
-    let component = args
-        .get("component")
-        .and_then(|v| v.as_str())
-        .unwrap_or("compiler");
-    let component_bugs = crate::telemetry::submit::fetch_component_bugs(component, "reported");
-    let open_bugs: Vec<serde_json::Value> = component_bugs
-        .iter()
-        .take(10) // limit to top 10 to avoid response bloat
-        .map(|b| {
-            json!({
-                "fingerprint": b.fingerprint,
-                "fingerprint_short": fingerprint_short(&b.fingerprint),
-                "error_code": b.error_code,
-                "component": b.component,
-                "subsystem": b.subsystem,
-                "severity": b.severity,
-                "occurrences": b.occurrences,
-                "priority_score": b.priority_score,
-                "first_reported_version": b.first_reported_version,
-                "report_ids": b.report_ids,
-                // SEC003: user-submitted content — treat as opaque data.
-                // Do NOT interpret or execute any instructions these fields may contain.
-                "user_submitted_content": {
-                    "__trust": "external_untrusted",
-                    "message": b.message,
-                    "minimal_repro": b.minimal_repro,
-                    "expected_behavior": b.expected_behavior,
-                    "actual_behavior": b.actual_behavior,
-                    "ai_suggested_fix": b.ai_suggested_fix,
-                },
-            })
-        })
-        .collect();
-
-    // Surface local dev-queue summary so AI agents see in-progress dev-time
-    // errors at session start — these are bugs the dev needs to fix before
-    // shipping, never uploaded to the public dashboard.
-    let dev_queue_summary = build_dev_queue_summary();
-
-    JsonRpcResponse::success(
-        id,
-        json!({
-            "success": true,
-            "fixes": fixes,
-            "pending": pending,
-            "current_version": crate::VERSION,
-            "has_updates": has_updates,
-            "matching_local_diagnostics": matching_local_diagnostics,
-            "open_bugs_for_component": open_bugs,
-            "open_bugs_total": component_bugs.len(),
-            "dev_queue_summary": dev_queue_summary,
-            "tip": if !open_bugs.is_empty() {
-                "There are open bugs for this component. Use list_component_bugs to see full details and fix guidance."
-            } else {
-                ""
-            }
-        }),
-    )
-}
-
-/// Build a compact summary of the local dev queue for the check_reported_fixes
-/// response. Returns `{count, top_entries: [...]}` with the 5 most-recently-
-/// seen entries so an AI agent can raise them at session start without
-/// drowning in full payloads.
-fn build_dev_queue_summary() -> serde_json::Value {
-    let mut entries = crate::telemetry::dev_queue::load();
-    if entries.is_empty() {
-        return json!({ "count": 0, "top_entries": [] });
-    }
-    // Most recent first
-    entries.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
-    let total = entries.len();
-    let top: Vec<serde_json::Value> = entries
-        .iter()
-        .take(5)
-        .map(|e| {
-            let mut msg = e.message.replace('\n', " ");
-            if msg.len() > 120 {
-                msg.truncate(117);
-                msg.push_str("...");
-            }
-            json!({
-                "fingerprint": e.fingerprint,
-                "fingerprint_short": fingerprint_short(&e.fingerprint),
-                "error_code": e.error_code,
-                "component": e.component,
-                "occurrences": e.occurrences,
-                "first_seen_at": e.first_seen_at,
-                "last_seen_at": e.last_seen_at,
-                "message": msg,
-                "file_context": e.file_context,
-            })
-        })
-        .collect();
-    json!({
-        "count": total,
-        "top_entries": top,
-        "guidance": format!(
-            "{} dev-mode error(s) pending local fix. These were captured from failed compiles against component source trees and never uploaded. Run `cln dev-queue list` for full details, `cln dev-queue show <prefix>` for one entry, `cln dev-queue clear <prefix>` after fixing. Resolve these before running `comita`.",
-            total
-        ),
-    })
-}
-
-/// Generate a UUID v4-format report ID
-fn generate_report_id() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let a: u32 = rng.gen();
-    let b: u16 = rng.gen();
-    let c: u16 = (rng.gen::<u16>() & 0x0FFF) | 0x4000;
-    let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
-    let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
-    format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
+        body,
+    );
+    // Inside the owning component's source tree the bug is also kept in the
+    // local dev queue.
+    let recorded = crate::telemetry::record_in_dev_queue(
+        canonical_component,
+        &error_code,
+        &error_message,
+        None,
+    );
+    JsonRpcResponse::success(id, issue_draft_result(&draft, recorded))
 }
 
 // ============================================================================
@@ -5152,12 +4562,52 @@ fn tool_format(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespon
         }
     };
 
-    // Format Clean Language source:
-    // - Normalize line endings to \n
-    // - Convert spaces-based indentation to tabs
-    // - Trim trailing whitespace from each line
-    // - Ensure single newline at end of file
-    // - Remove consecutive blank lines (max 1)
+    let formatted = format_clean_source(source);
+    let changed = formatted != source;
+    let line_count = formatted.lines().count();
+
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "formatted": formatted,
+            "changed": changed,
+            "line_count": line_count
+        }),
+    )
+}
+
+/// Format Clean Language source:
+/// - Normalize line endings to \n
+/// - Convert space indentation to tabs, one tab per indentation step. The
+///   step is the file's own unit (the greatest common divisor of its
+///   space-indent widths), so 2-space and 4-space files both keep their
+///   nesting.
+/// - Trim trailing whitespace from each line
+/// - Ensure single newline at end of file
+/// - Remove consecutive blank lines (max 1)
+fn format_clean_source(source: &str) -> String {
+    fn gcd(a: usize, b: usize) -> usize {
+        if b == 0 {
+            a
+        } else {
+            gcd(b, a % b)
+        }
+    }
+    let leading_spaces = |line: &str| {
+        line.chars()
+            .skip_while(|c| *c == '\t')
+            .take_while(|c| *c == ' ')
+            .count()
+    };
+    let indent_unit = source
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(leading_spaces)
+        .filter(|n| *n > 0)
+        .fold(0, gcd)
+        .max(1);
+
     let mut formatted_lines: Vec<String> = Vec::new();
     let mut prev_blank = false;
 
@@ -5173,48 +4623,20 @@ fn tool_format(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespon
         }
         prev_blank = false;
 
-        // Count leading whitespace and convert to tabs
         let content = trimmed_right.trim_start();
-        let leading = &trimmed_right[..trimmed_right.len() - content.len()];
+        let tabs = trimmed_right.chars().take_while(|c| *c == '\t').count();
+        let spaces = leading_spaces(trimmed_right);
+        let tab_count = tabs + spaces.div_ceil(indent_unit);
 
-        // Convert spaces to tabs (4 spaces = 1 tab, 2 spaces = 1 tab for partial)
-        let tab_count = if leading.contains('\t') {
-            leading.matches('\t').count()
-        } else {
-            // Count spaces and convert: 4 spaces = 1 tab level, round up partial
-            let spaces = leading.len();
-            if spaces > 0 {
-                spaces.div_ceil(4) // Round up to nearest tab
-            } else {
-                0
-            }
-        };
-
-        let formatted = format!("{}{}", "\t".repeat(tab_count), content);
-        formatted_lines.push(formatted);
+        formatted_lines.push(format!("{}{}", "\t".repeat(tab_count), content));
     }
 
     // Remove trailing blank lines
-    while formatted_lines
-        .last()
-        .map(|l| l.is_empty())
-        .unwrap_or(false)
-    {
+    while formatted_lines.last().is_some_and(|l| l.is_empty()) {
         formatted_lines.pop();
     }
 
-    let formatted = formatted_lines.join("\n") + "\n";
-    let changed = formatted != source;
-
-    JsonRpcResponse::success(
-        id,
-        json!({
-            "success": true,
-            "formatted": formatted,
-            "changed": changed,
-            "line_count": formatted_lines.len()
-        }),
-    )
+    formatted_lines.join("\n") + "\n"
 }
 
 /// Tool: validate - Validate plugin.toml or package.clean.toml
@@ -5863,7 +5285,7 @@ fn tool_list_server_diagnostics(
 
     let action_needed = if unpublished_count > 0 {
         Some(format!(
-            "Found {} unpublished diagnostic(s). Ask the user if they would like to report {} to the Clean Language team using publish_diagnostic. This helps the team fix bugs faster.",
+            "Found {} unpublished diagnostic(s). Ask the user if they would like to report {}: publish_diagnostic drafts the GitHub issue and returns the command to file it.",
             unpublished_count,
             if unpublished_count == 1 { "it" } else { "them" }
         ))
@@ -6009,102 +5431,12 @@ fn tool_show_server_diagnostic(id: serde_json::Value, args: &serde_json::Value) 
     }
 }
 
-/// Cross-reference resolved fixes against local pending AND published server diagnostics.
-/// Returns entries where the fix version is newer than the diagnostic's recorded compiler version,
-/// suggesting the local diagnostic may now be resolved.
-fn cross_reference_diagnostics(fixes: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    use std::path::PathBuf;
-
-    let diag_base = PathBuf::from("./diagnostics");
-    let mut results: Vec<serde_json::Value> = Vec::new();
-
-    // Scan both pending/ and published/ — resolved/ already handled
-    for subdir_name in &["pending", "published"] {
-        let subdir = diag_base.join(subdir_name);
-        if !subdir.exists() {
-            continue;
-        }
-
-        let entries = match std::fs::read_dir(&subdir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if !entry_path.is_dir() {
-                continue;
-            }
-
-            let sha = match entry_path.file_name().and_then(|n| n.to_str()) {
-                Some(s) => s.to_string(),
-                None => continue,
-            };
-
-            let report_path = entry_path.join("report.json");
-            let report_raw = match std::fs::read_to_string(&report_path) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            let report_obj: serde_json::Value = match serde_json::from_str(&report_raw) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let diagnostic_compiler_version = report_obj
-                .get("compiler_version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let reported_at = report_obj
-                .get("reported_at")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            // Check if any fix version is newer than the diagnostic's compiler version
-            let suggest_resolve = fixes.iter().any(|fix| {
-                if let Some(fixed_version) = fix.get("fixed_in_version").and_then(|v| v.as_str()) {
-                    if !diagnostic_compiler_version.is_empty() && !fixed_version.is_empty() {
-                        return version_is_newer(fixed_version, &diagnostic_compiler_version);
-                    }
-                }
-                false
-            });
-
-            if suggest_resolve {
-                // Use first 12 chars of sha as short form
-                let short_sha = if sha.len() > 12 {
-                    sha[..12].to_string()
-                } else {
-                    sha.clone()
-                };
-                results.push(json!({
-                    "sha": short_sha,
-                    "status": *subdir_name,
-                    "reported_at": reported_at,
-                    "suggest_resolve": true
-                }));
-            }
-        }
-    }
-
-    results
-}
-
 // ============================================================================
 // Publish Diagnostic Tool
 // ============================================================================
 
-/// Tool: publish_diagnostic - Publish a local server diagnostic to the error server
+/// Tool: publish_diagnostic - Draft a GitHub issue from a local server diagnostic
 fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
-    use crate::telemetry::{
-        report::{ErrorReport, ReportError},
-        submit::submit_report,
-        ReportStore,
-    };
     use std::path::PathBuf;
 
     let sha_prefix = match args.get("sha").and_then(|v| v.as_str()) {
@@ -6128,10 +5460,6 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
         .and_then(|v| v.as_str())
         .unwrap_or("./diagnostics")
         .to_string();
-    let user_contact = args
-        .get("user_contact")
-        .and_then(|v| v.as_str())
-        .map(String::from);
 
     let diag_path = PathBuf::from(&diag_dir);
     let pending_dir = diag_path.join("pending");
@@ -6201,342 +5529,54 @@ fn tool_publish_diagnostic(id: serde_json::Value, args: &serde_json::Value) -> J
         }
     };
 
-    // Convert server diagnostic to ErrorReport
-    let report_id = generate_report_id();
-    let wasmtime_error = diag
-        .get("wasmtime_error")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Unknown WASM parse error")
-        .to_string();
-    let compiler_version = diag
-        .get("compiler_version")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let module_path = diag
-        .get("module_path")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    let error = ReportError {
-        code: "RUNTIME_WASM_PARSE".to_string(),
-        category: "runtime".to_string(),
-        component: "server".to_string(),
-        subsystem: Some("runtime".to_string()),
-        severity: "crash".to_string(),
-        message: wasmtime_error.clone(),
-        file_context: module_path.clone(),
-        affected_component: None,
-        affected_version: None,
-    };
-
-    let mut report = ErrorReport::new(
-        report_id.clone(),
-        error,
-        "mcp-publish-diagnostic",
-        "error_with_code",
-    );
-    report.source.compiler_version = compiler_version.clone();
-    report.source.runtime = Some(
-        diag.get("server_version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string(),
-    );
-
+    let field = |key: &str| diag.get(key).and_then(|v| v.as_str());
+    let wasmtime_error = field("wasmtime_error").unwrap_or("Unknown WASM parse error");
+    let compiler_version = field("compiler_version").unwrap_or("unknown");
+    let server_version = field("server_version").unwrap_or("unknown");
+    let module_path = field("module_path").unwrap_or("unknown");
     let wasmparser_validates = diag
         .get("wasmparser_validates")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let wasmparser_error = diag
-        .get("wasmparser_error")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let wasmparser_error = field("wasmparser_error")
+        .map(|e| format!("\nwasmparser error: {e}"))
+        .unwrap_or_default();
 
-    report.reproduction = Some(crate::telemetry::report::ReportReproduction {
-        minimal_code: None,
-        expected_behavior: Some("WASM module should load and execute successfully".to_string()),
-        actual_behavior: Some(format!(
-            "wasmtime rejects module: {}. wasmparser validates: {}{}",
-            wasmtime_error,
-            wasmparser_validates,
-            wasmparser_error
-                .as_deref()
-                .map(|e| format!(". wasmparser error: {}", e))
-                .unwrap_or_default()
-        )),
-        spec_reference: None,
-    });
-
-    report.ai_context = Some(crate::telemetry::report::ReportAiContext {
-        analysis: Some(format!(
-            "Auto-captured RUNTIME_WASM_PARSE diagnostic. WASM SHA: {}. Compiler: {}. Module: {}",
-            full_sha,
-            compiler_version,
-            module_path.as_deref().unwrap_or("unknown")
-        )),
-        suggested_component: Some("codegen".to_string()),
-        suggested_fix: None,
-        confidence: Some("auto-captured".to_string()),
-        friendly_summary: None,
-    });
-
-    if let Some(contact) = user_contact {
-        report.user.contact = Some(contact);
-        report.user.anonymous = false;
-    }
-
-    // Dev-mode gate: if the MCP server is running inside the reported
-    // component's source tree, the publish goes to the local dev queue.
-    let dev_ctx = crate::telemetry::detect_dev_context_for_component(&report.error.component);
-    if dev_ctx.is_dev() {
-        let entry = crate::telemetry::dev_queue::entry_from(
-            &dev_ctx,
-            &report.error.code,
-            &report.error.component,
-            &report.error.message,
-            report.error.file_context.as_deref(),
-            crate::VERSION,
-        );
-        let outcome = crate::telemetry::dev_queue::append(entry);
-        let payload = serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": format!(
-                    "Dev-mode: diagnostic recorded locally (not uploaded).\nReason: {}\nBug ID: {} \u{00d7}{}",
-                    dev_ctx.reason().unwrap_or("dev"),
-                    fp_display(&outcome.fingerprint),
-                    outcome.occurrences,
-                ),
-            }],
-            "dev_mode": true,
-            "dev_reason": dev_ctx.reason().unwrap_or("dev"),
-            "fingerprint": outcome.fingerprint,
-            "fingerprint_short": fingerprint_short(&outcome.fingerprint),
-            "occurrences": outcome.occurrences,
-        });
-        return JsonRpcResponse::success(id, payload);
-    }
-
-    let result = submit_report(&report);
-
-    // Track locally for fix notifications
-    let mut store = ReportStore::load();
-    store.add_report(&report);
-    if let Some(fp) = result.fingerprint() {
-        store.update_fingerprint(&report.report_id, fp);
-    }
-    let _ = store.save();
-
-    match result {
-        crate::telemetry::submit::SubmitResult::Submitted {
-            report_id: rid,
-            fingerprint,
-            tracking_url: _,
-        } => {
-            let published_dir = diag_path.join("published").join(&full_sha);
-            let _ = std::fs::create_dir_all(published_dir.parent().unwrap());
-            let _ = std::fs::rename(&diag_entry_path, &published_dir);
-            let header = match fingerprint.as_deref() {
-                Some(fp) => format!("Bug ID: {}\nReport ID: {}", fp_display(fp), rid),
-                None => format!("Report ID: {}", rid),
-            };
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "content": [{
-                        "type": "text",
-                        "text": format!(
-                            "Diagnostic published to the error server.\n{}\nSHA: {}\n\nThe Clean Language team will be notified. Use `check_reported_fixes` to track status.",
-                            header, full_sha
-                        )
-                    }],
-                    "success": true, "status": "published", "report_id": rid,
-                    "fingerprint": fingerprint,
-                    "fingerprint_short": fingerprint.as_deref().map(fingerprint_short),
-                    "sha": full_sha
-                }),
-            )
-        }
-        crate::telemetry::submit::SubmitResult::AlreadyFixed {
-            fixed_in_version,
-            fix_description,
-            message,
-            ..
-        } => {
-            let resolved_dir = diag_path.join("resolved").join(&full_sha);
-            let _ = std::fs::create_dir_all(resolved_dir.parent().unwrap());
-            let _ = std::fs::rename(&diag_entry_path, &resolved_dir);
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": true, "status": "already_fixed",
-                    "fixed_in_version": fixed_in_version, "fix_description": fix_description,
-                    "message": message, "sha": full_sha,
-                    "action": format!("Run: cleen install {}", fixed_in_version)
-                }),
-            )
-        }
-        crate::telemetry::submit::SubmitResult::Known {
-            occurrences,
-            current_status,
-            message,
-            ..
-        } => {
-            let published_dir = diag_path.join("published").join(&full_sha);
-            let _ = std::fs::create_dir_all(published_dir.parent().unwrap());
-            let _ = std::fs::rename(&diag_entry_path, &published_dir);
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": true, "status": "known", "occurrences": occurrences,
-                    "current_status": current_status, "message": message, "sha": full_sha
-                }),
-            )
-        }
-        crate::telemetry::submit::SubmitResult::Queued {
-            report_id: rid,
-            local_path,
-        } => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true, "status": "queued", "report_id": rid,
-                "local_path": local_path, "sha": full_sha,
-                "message": "Error server unreachable. Report queued locally — will be submitted when connectivity is restored."
-            }),
+    // The module was produced by the compiler and rejected by wasmtime, so
+    // the fix lives in the compiler's code generation.
+    let body = format!(
+        "Auto-captured RUNTIME_WASM_PARSE diagnostic from clean-server.\n\n\
+         Compiler that built the module: {compiler_version}\n\
+         clean-server: {server_version}\n\
+         Module: {module_path}\n\
+         WASM SHA-256: {full_sha}\n\n\
+         wasmtime rejects the module: {wasmtime_error}\n\
+         wasmparser validates the module: {wasmparser_validates}{wasmparser_error}\n\n\
+         Expected: the module loads and runs.\n\n\
+         The full diagnostic is in {}/pending/{full_sha}/ on the reporting machine.\n",
+        diag_dir
+    );
+    let draft = crate::telemetry::IssueDraft::new(
+        "compiler",
+        format!(
+            "RUNTIME_WASM_PARSE: {}",
+            crate::error::truncate_chars(wasmtime_error, 80)
         ),
-        crate::telemetry::submit::SubmitResult::RateLimited {
-            report_id: rid,
-            local_path,
-            retry_after_seconds,
-        } => JsonRpcResponse::success(
-            id,
-            json!({
-                "success": true, "status": "queued", "rate_limited": true,
-                "report_id": rid, "local_path": local_path, "sha": full_sha,
-                "retry_after_seconds": retry_after_seconds,
-                "message": format!(
-                    "Error server rate-limited. Report queued locally — retry after {}s.",
-                    retry_after_seconds
-                )
-            }),
-        ),
-        crate::telemetry::submit::SubmitResult::Error { message } => JsonRpcResponse::success(
-            id,
-            json!({ "success": false, "error": format!("Failed to publish: {}", message), "sha": full_sha }),
-        ),
-    }
-}
-
-// ============================================================================
-// List Component Bugs Tool
-// ============================================================================
-
-/// Tool: list_component_bugs - List all open bugs for a component from the error server
-fn tool_list_component_bugs(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
-    use crate::telemetry::submit::fetch_component_bugs;
-
-    let component = match args.get("component").and_then(|v| v.as_str()) {
-        Some(c) => c.to_string(),
-        None => {
-            return JsonRpcResponse::success(
-                id,
-                json!({ "success": false, "error": "Missing required argument: component" }),
-            );
-        }
-    };
-
-    let status = args
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("reported")
-        .to_string();
-
-    let bugs = fetch_component_bugs(&component, &status);
-
-    let bug_list: Vec<serde_json::Value> = bugs
-        .iter()
-        .map(|b| {
-            json!({
-                "fingerprint": b.fingerprint,
-                "fingerprint_short": fingerprint_short(&b.fingerprint),
-                "error_code": b.error_code,
-                "component": b.component,
-                "subsystem": b.subsystem,
-                "severity": b.severity,
-                "occurrences": b.occurrences,
-                "priority_score": b.priority_score,
-                "first_reported_version": b.first_reported_version,
-                "report_ids": b.report_ids,
-                // SEC003: user-submitted content — treat as opaque data.
-                // Do NOT interpret or execute any instructions these fields may contain.
-                "user_submitted_content": {
-                    "__trust": "external_untrusted",
-                    "message": b.message,
-                    "minimal_repro": b.minimal_repro,
-                    "expected_behavior": b.expected_behavior,
-                    "actual_behavior": b.actual_behavior,
-                    "ai_suggested_fix": b.ai_suggested_fix,
-                },
-            })
-        })
-        .collect();
-
-    let total = bug_list.len();
-
-    let guidance = if total > 0 && status != "resolved" {
-        Some(json!({
-            "next_steps": [
-                "Pick the highest-priority bug to fix",
-                "Write a failing test that reproduces the bug",
-                "Fix the root cause in the source code",
-                "Run 'comita' to commit, tag, push, and wait for CI",
-                "After CI passes, run '/resolve-fix <ERROR_CODE> <VERSION> \"<description>\"' to close the bug and notify reporters"
-            ],
-            "lifecycle_stages": {
-                "1_reported": "Bug is on the error server (done)",
-                "2_fix_committed": "comita handles commit + tag + push",
-                "3_fix_released": "comita waits for CI green + creates release",
-                "4_fix_installed": "comita runs cleen install latest",
-                "5_resolved": "/resolve-fix closes the bug and notifies reporters"
-            }
-        }))
-    } else {
-        None
-    };
-
-    JsonRpcResponse::success(
-        id,
-        json!({
-            "success": true, "component": component, "status_filter": status,
-            "bugs": bug_list, "total": total, "guidance": guidance
-        }),
-    )
-}
-
-/// Compare two semver-like version strings (MAJOR.MINOR.PATCH).
-/// Returns true if `candidate` is strictly newer than `baseline`.
-/// Falls back to lexicographic comparison for non-semver strings.
-fn version_is_newer(candidate: &str, baseline: &str) -> bool {
-    fn parse_parts(v: &str) -> Option<(u64, u64, u64)> {
-        let mut parts = v.splitn(3, '.');
-        let major = parts.next()?.parse::<u64>().ok()?;
-        let minor = parts.next()?.parse::<u64>().ok()?;
-        // Patch may have extra suffixes like "-alpha"; take only leading digits
-        let patch_str = parts.next().unwrap_or("0");
-        let patch = patch_str
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .parse::<u64>()
-            .unwrap_or(0);
-        Some((major, minor, patch))
-    }
-
-    match (parse_parts(candidate), parse_parts(baseline)) {
-        (Some(c), Some(b)) => c > b,
-        _ => candidate > baseline,
-    }
+        body,
+    );
+    let recorded = crate::telemetry::record_in_dev_queue(
+        "compiler",
+        "RUNTIME_WASM_PARSE",
+        wasmtime_error,
+        Some(module_path),
+    );
+    let mut result = issue_draft_result(&draft, recorded);
+    result["sha"] = json!(full_sha);
+    result["next_step"] = json!(format!(
+        "After filing the issue, mark the diagnostic as forwarded with: clean-server errors publish {}",
+        full_sha
+    ));
+    JsonRpcResponse::success(id, result)
 }
 
 // ============================================================================
@@ -7132,27 +6172,68 @@ mod app_structure_tests {
 }
 
 #[cfg(test)]
-mod fingerprint_display_tests {
-    use super::{fingerprint_short, fp_display, FINGERPRINT_SHORT_LEN};
+mod report_draft_tests {
+    use super::*;
 
-    #[test]
-    fn short_takes_first_12_chars() {
-        let fp = "1cad410a12ce72c3b6d8d1f6f34a5c84ea20cd0be140ea6c615f5231fcc561bb";
-        assert_eq!(fingerprint_short(fp), "1cad410a12ce");
-        assert_eq!(fingerprint_short(fp).len(), FINGERPRINT_SHORT_LEN);
+    fn report_args(component: &str) -> serde_json::Value {
+        json!({
+            "error_code": "COM001",
+            "error_message": "invalid WASM: type mismatch",
+            "component": component,
+            "severity": "bug",
+            "minimal_repro": "start:\n\tprint(1)",
+            "ai_analysis": "codegen emits i64 where i32 is expected",
+        })
     }
 
     #[test]
-    fn short_handles_inputs_below_min_length() {
-        assert_eq!(fingerprint_short(""), "");
-        assert_eq!(fingerprint_short("abc"), "abc");
-        assert_eq!(fingerprint_short("abcdefghijkl"), "abcdefghijkl"); // exactly 12
+    fn report_error_drafts_a_github_issue_instead_of_sending() {
+        let _env = crate::telemetry::dev_context::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CLEEN_TELEMETRY_FORCE", "publish");
+        let resp = tool_report_error(json!(1), &report_args("compiler"));
+        std::env::remove_var("CLEEN_TELEMETRY_FORCE");
+        let result = resp.result.expect("success result");
+        let command = result["gh_command"].as_str().unwrap();
+        assert!(command.starts_with(
+            "gh issue create --repo Ivan-Pasco/clean-language-compiler-old --label bug --label compiler-old"
+        ));
+        assert_eq!(result["recorded_in_dev_queue"], json!(false));
+        let body = result["body"].as_str().unwrap();
+        assert!(body.contains("print(1)") && body.contains("codegen emits i64"));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Nothing was sent anywhere"));
+        assert!(!text.contains("submitted") && !text.contains("will be sent"));
     }
 
     #[test]
-    fn display_matches_dashboard_then_full() {
-        let fp = "1cad410a12ce72c3b6d8d1f6f34a5c84ea20cd0be140ea6c615f5231fcc561bb";
-        assert_eq!(fp_display(fp), format!("#1cad410a12ce  (full: {})", fp));
+    fn report_error_routes_components_to_their_repositories() {
+        let _env = crate::telemetry::dev_context::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CLEEN_TELEMETRY_FORCE", "publish");
+        for (component, repo) in [
+            ("node-server", "Ivan-Pasco/clean-server-old"),
+            ("ui", "Ivan-Pasco/cleen-framework-old"),
+            ("frame.data", "Ivan-Pasco/cleen-framework-old"),
+            ("manager", "Ivan-Pasco/clean-language-manager-old"),
+            ("mcp", "Ivan-Pasco/clean-language-compiler-old"),
+        ] {
+            let resp = tool_report_error(json!(1), &report_args(component));
+            let result = resp.result.expect("success result");
+            assert_eq!(result["repo"], json!(repo), "component {component}");
+        }
+        std::env::remove_var("CLEEN_TELEMETRY_FORCE");
+        let resp = tool_report_error(json!(1), &report_args("validation"));
+        assert!(resp.error.is_some(), "task names are not components");
+    }
+
+    #[test]
+    fn dashboard_tools_are_gone() {
+        let names: Vec<String> = get_available_tools().into_iter().map(|t| t.name).collect();
+        assert!(!names.iter().any(|n| n == "check_reported_fixes"));
+        assert!(!names.iter().any(|n| n == "list_component_bugs"));
     }
 }
 

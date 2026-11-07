@@ -113,14 +113,14 @@ Full documentation: [documentation/](./documentation/)
 4. Implement semantic analysis in `src/semantic/`
 5. Add code generation in `src/codegen/`
 6. Write tests, update documentation and spec
-7. Errors found → add to `TASKS.md`
+7. Errors found → file a GitHub issue (`cln report` prints the command)
 
 ## Code Quality Rules
 
 - No placeholder implementations — all code must be functional
 - No `todo!()` macros in production code
 - Strict semantic versioning: `MAJOR.MINOR.PATCH` only
-- Track bugs and tasks in `TASKS.md`
+- Track bugs as GitHub issues labeled `compiler-old`
 - Fix root causes, not symptoms
 - No backwards compatibility hacks needed — the spec is the source of truth
 
@@ -133,7 +133,7 @@ Full documentation: [documentation/](./documentation/)
 
 ## MCP Ecosystem Catalog
 
-When plugins change in the ecosystem, update `src/mcp/server.rs` → `get_ecosystem_catalog()`.
+The MCP `list_ecosystem` tool reads the installed plugin manifests (`~/.cleen/plugins/*/plugin.toml`) at call time; there is no hardcoded catalog to update.
 
 ## Cross-Component Work Policy
 
@@ -143,12 +143,12 @@ Do NOT directly edit code in other components. You CAN read other components to 
 
 | What you found | Channel | Why |
 |---|---|---|
-| A **bug** (crash, wrong output, spec violation, regression) | **`report_error` MCP tool** — MANDATORY | Fingerprint dedup, occurrence tracking, automatic user notification on fix, visible on the ecosystem dashboard at errors.cleanlanguage.dev. This is the canonical bug-tracking path per `../CLAUDE.md` § "Cross-Component Bug Reporting". |
+| A **bug** (crash, wrong output, spec violation, regression) | **GitHub issue** — MANDATORY: `gh issue create --repo Ivan-Pasco/<repo>-old --label bug --label compiler-old` in the repo that owns the fix (`cln report` and the MCP `report_error` tool print the exact command) | The errors dashboard is offline; GitHub issues are the bug tracker, closed with `fixes #N` in the fixing commit. |
 | A **design proposal, directive change, schema/API request, architectural ask** | Markdown file in `../foundation/management/cross-component-prompts/` | Requires discussion, not auto-fix. Not a bug. |
 
-**Never** write a markdown prompt for something that is a bug. Bug reports that sit in a markdown file are invisible to the dashboard dedup, don't notify users when fixed, and can't be pulled via `list_component_bugs`.
+**Never** write a markdown prompt for something that is a bug. Bug reports that sit in a markdown file are not tracked; file a GitHub issue.
 
-If in doubt: it's a bug → `report_error`.
+If in doubt: it's a bug → GitHub issue.
 
 ## Documentation Sync Protocol
 
