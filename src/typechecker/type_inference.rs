@@ -5418,12 +5418,17 @@ impl<'a> TypeInference<'a> {
                     .lookup_symbol(&format!("{}.{}", type_name, method))
                     .is_some();
             if !registered {
+                let qualified = format!("{}.{}", type_name, method);
+                let hint = crate::error::ErrorUtils::legacy_builtin_hint(&qualified)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "See the {} methods in the standard library reference",
+                            type_name
+                        )
+                    });
                 self.errors.push(CompilerError::semantic_error_with_code(
                     format!("Method '{}' not found on a {} value", method, type_name),
-                    Some(format!(
-                        "See the {} methods in the standard library reference",
-                        type_name
-                    )),
+                    Some(hint),
                     Some(location.clone()),
                     "FUNC001",
                 ));

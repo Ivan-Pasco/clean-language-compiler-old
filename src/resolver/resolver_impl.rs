@@ -4089,39 +4089,16 @@ impl NameResolver {
     /// First tries a curated table of common legacy misnames (parseInt →
     /// string.toInteger, etc.); falls back to a Levenshtein-near neighbour
     /// search over the symbol table so the hint always names something that
-    /// exists in the current build. Mirrors `build_did_you_mean_hint` in
-    /// `src/codegen/mir_codegen/instructions.rs`.
+    /// exists in the current build.
     ///
     /// Reported bugs this helps: ceb568e0aaa7, 8653d059d75d (`parseInt`
     /// at resolver stage), fd9d187c30a0 (function `t` not found).
     fn did_you_mean_function(&self, target: &str) -> Option<String> {
-        let curated: &[(&str, &str)] = &[
-            ("parseInt", "string.toInteger"),
-            ("parseInteger", "string.toInteger"),
-            ("parseFloat", "string.toNumber"),
-            ("parseNumber", "string.toNumber"),
-            ("parseBoolean", "string.toBoolean"),
-            ("string.toInt", "string.toInteger"),
-            ("string.toFloat", "string.toNumber"),
-            ("string.parseInt", "string.toInteger"),
-            ("string.parseFloat", "string.toNumber"),
-            ("Integer.parse", "string.toInteger"),
-            ("Number.parse", "string.toNumber"),
-        ];
-        for (misname, canonical) in curated {
-            if *misname == target {
-                // Skip the symbol-table existence check: at resolver stage the
-                // canonical name (e.g. `string.toInteger`) may not yet be visible
-                // as a symbol — dotted namespace methods are resolved via
-                // MethodCall dispatch, not standalone Call lookup. The curated
-                // table is small and hand-audited, so returning it unconditionally
-                // is safe and matches the codegen-side behavior once dispatch has
-                // registered the dotted alias.
-                return Some(format!(
-                    "'{}' is not a Clean built-in — use `{}` instead. See foundation/spec/stdlib-reference.md.",
-                    target, canonical
-                ));
-            }
+        // The canonical name (e.g. `string.toInteger`) may not be visible as
+        // a symbol yet at resolver stage — dotted namespace methods resolve
+        // via MethodCall dispatch — so the alias hint is returned as is.
+        if let Some(hint) = crate::error::ErrorUtils::legacy_builtin_hint(target) {
+            return Some(hint);
         }
 
         // Fuzzy match: collect symbol names from the table and rank by

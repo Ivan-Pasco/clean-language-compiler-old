@@ -4100,27 +4100,9 @@ fn build_did_you_mean_hint(
     target: &str,
     function_map: &std::collections::HashMap<String, u32>,
 ) -> Option<String> {
-    // Curated fast-path aliases (misname → canonical Clean name).
-    // Kept small and only for high-signal cases so the hint stays trustworthy.
-    let curated: &[(&str, &str)] = &[
-        ("parseInt", "string.toInteger"),
-        ("parseInteger", "string.toInteger"),
-        ("parseFloat", "string.toNumber"),
-        ("parseNumber", "string.toNumber"),
-        ("parseBoolean", "string.toBoolean"),
-        ("string.toInt", "string.toInteger"),
-        ("string.toFloat", "string.toNumber"),
-        ("string.parseInt", "string.toInteger"),
-        ("string.parseFloat", "string.toNumber"),
-        ("Integer.parse", "string.toInteger"),
-        ("Number.parse", "string.toNumber"),
-    ];
-    for (misname, canonical) in curated {
-        if *misname == target && function_map.contains_key(*canonical) {
-            return Some(format!(
-                "'{}' is not a Clean built-in — use `{}` instead. See foundation/spec/stdlib-reference.md.",
-                target, canonical
-            ));
+    if let Some(canonical) = crate::error::ErrorUtils::legacy_builtin_alias(target) {
+        if function_map.contains_key(canonical) {
+            return crate::error::ErrorUtils::legacy_builtin_hint(target);
         }
     }
 

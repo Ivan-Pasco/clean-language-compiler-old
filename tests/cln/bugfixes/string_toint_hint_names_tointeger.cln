@@ -1,0 +1,13 @@
+// Test: bugfixes/string_toint_hint_names_tointeger
+// Semantic: FUNC001 — an unknown string method is a type error; for common
+//   foreign names the hint names the Clean built-in to use instead
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   Method 'toInt' not found on a string value
+//   use `string.toInteger` instead
+
+start:
+	string s = "42"
+	integer n = s.toInt()
+	print(n)

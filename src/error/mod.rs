@@ -670,7 +670,42 @@ pub fn truncate_chars(text: &str, max_chars: usize) -> String {
 /// Utility functions for enhanced error reporting
 pub struct ErrorUtils;
 
+/// Common names from other languages, mapped to the Clean built-in that does
+/// the same job. Small and hand-audited so the hint stays trustworthy.
+const LEGACY_BUILTIN_ALIASES: &[(&str, &str)] = &[
+    ("parseInt", "string.toInteger"),
+    ("parseInteger", "string.toInteger"),
+    ("parseFloat", "string.toNumber"),
+    ("parseNumber", "string.toNumber"),
+    ("parseBoolean", "string.toBoolean"),
+    ("string.toInt", "string.toInteger"),
+    ("string.toFloat", "string.toNumber"),
+    ("string.parseInt", "string.toInteger"),
+    ("string.parseFloat", "string.toNumber"),
+    ("Integer.parse", "string.toInteger"),
+    ("Number.parse", "string.toNumber"),
+];
+
 impl ErrorUtils {
+    /// The Clean built-in to use instead of a common foreign name such as
+    /// `parseInt` or `string.toInt`, if the name is a known misname.
+    pub fn legacy_builtin_alias(name: &str) -> Option<&'static str> {
+        LEGACY_BUILTIN_ALIASES
+            .iter()
+            .find(|(misname, _)| *misname == name)
+            .map(|(_, canonical)| *canonical)
+    }
+
+    /// Hint text for a known misname: "'x' is not a Clean built-in — use `y`".
+    pub fn legacy_builtin_hint(name: &str) -> Option<String> {
+        Self::legacy_builtin_alias(name).map(|canonical| {
+            format!(
+                "'{}' is not a Clean built-in — use `{}` instead. See foundation/spec/stdlib-reference.md.",
+                name, canonical
+            )
+        })
+    }
+
     /// Generate suggestions for similar identifiers using Levenshtein distance
     pub fn suggest_similar_names(
         target: &str,
