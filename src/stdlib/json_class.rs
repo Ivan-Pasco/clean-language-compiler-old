@@ -13,6 +13,9 @@
 //!   list or pairs map when it is boxed to `any`;
 //! - `__json_from_cln_list_boxed` — the same for a list whose elements are
 //!   already boxed (`list<any>`, mapped lists of class instances);
+//! - `__json_to_cln_list` / `__any_convert` — the reverse: a boxed JSON
+//!   array or object as a `list<any>`, or as a typed list or pairs map
+//!   converted element by element, where an `any` becomes one;
 //! - `__json_try_decode_v2` / `__json_decode_v2_or_raise` — the sentinel
 //!   checks after a `_json_decode_v2` call (D5).
 //!
@@ -50,6 +53,53 @@ const NOT_A_LIST_MESSAGE: &str = "value is not a list";
 pub const ANY_LENGTH: &str = "__any_length";
 /// The error `__any_length` raises for a value that has no length.
 const NO_LENGTH_MESSAGE: &str = "value has no length";
+/// The error `__json_decode_v2_or_raise` raises (stdlib-reference.md §8, D5).
+const JSON_PARSE_FAILURE_MESSAGE: &str = "JSON parse failure";
+
+/// The helper converting a boxed `any` to a typed list or pairs map:
+/// `__any_convert(any_ptr, descriptor, position) -> value`. The descriptor
+/// is a string constant naming the target type, one code per level
+/// (`list<list<integer>>` is `[[i`, `pairs<string, number>` cannot be
+/// written: pairs values are 4 bytes wide); `position` is the index of the
+/// code to convert to.
+pub const ANY_CONVERT: &str = "__any_convert";
+
+/// Descriptor codes of [`ANY_CONVERT`].
+pub mod any_descriptor {
+    /// `any`: the box itself.
+    pub const ANY: u8 = b'a';
+    /// `integer` (32-bit): an integer value.
+    pub const INTEGER: u8 = b'i';
+    /// `integer:64`: an integer value (list elements only).
+    pub const INTEGER_64: u8 = b'l';
+    /// `number`: a number or integer value (list elements only).
+    pub const NUMBER: u8 = b'n';
+    /// `boolean`: a boolean value.
+    pub const BOOLEAN: u8 = b'b';
+    /// `string`: a string value; null is `""`, as `string s = value` gives.
+    pub const STRING: u8 = b's';
+    /// A class instance boxed into `any`.
+    pub const INSTANCE: u8 = b'c';
+    /// `list<T>`, followed by the code of `T`: a JSON array.
+    pub const LIST: u8 = b'[';
+    /// `pairs<string, V>`, followed by the code of `V`: a JSON object.
+    pub const PAIRS: u8 = b'{';
+}
+
+/// The error `__any_convert` raises when the value does not have the
+/// target type.
+fn conversion_message(code: u8) -> &'static str {
+    use any_descriptor::*;
+    match code {
+        INTEGER | INTEGER_64 => "value is not an integer",
+        NUMBER => "value is not a number",
+        BOOLEAN => "value is not a boolean",
+        STRING => "value is not a string",
+        INSTANCE => "value is not a class instance",
+        LIST => NOT_A_LIST_MESSAGE,
+        _ => "value is not an object",
+    }
+}
 
 /// JSON support functions registered into every module.
 pub struct JsonClass;
@@ -210,18 +260,70 @@ impl JsonClass {
             Self::generate_any_length_instructions(err_raise_index, no_length_message),
         )?;
 
+        // __any_convert(any_ptr: i32, descriptor: i32, position: i32) -> i32
+        // A boxed JSON array or object as the typed Clean list or pairs map
+        // the descriptor names (see `ANY_CONVERT`), converted element by
+        // element. Null gives null; a value of another type raises an error,
+        // so `onError` can catch it.
+        let pairs_new_index = codegen
+            .get_function_index("__pairs_new")
+            .expect("__pairs_new must be registered before the JSON helpers");
+        let pairs_set_index = codegen
+            .get_function_index("__pairs_set")
+            .expect("__pairs_set must be registered before the JSON helpers");
+        let mut messages = Vec::new();
+        for code in [
+            any_descriptor::INTEGER,
+            any_descriptor::INTEGER_64,
+            any_descriptor::NUMBER,
+            any_descriptor::BOOLEAN,
+            any_descriptor::STRING,
+            any_descriptor::INSTANCE,
+            any_descriptor::LIST,
+            any_descriptor::PAIRS,
+        ] {
+            messages.push((
+                code,
+                codegen.get_or_create_string_offset(conversion_message(code))?,
+            ));
+        }
+        let runtime = AnyConvertRuntime {
+            self_index: codegen.next_function_index(),
+            list_allocate: list_allocate_index,
+            pairs_new: pairs_new_index,
+            pairs_set: pairs_set_index,
+            err_raise: err_raise_index,
+            empty_string: codegen.get_or_create_string_offset("")?,
+            messages,
+        };
+        let any_convert_index = register_stdlib_function_with_locals(
+            codegen,
+            ANY_CONVERT,
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // any_ptr, descriptor, position
+            Some(WasmType::I32),
+            &[WasmType::I32; 10], // 3..=12, see `AnyConvertRuntime`
+            runtime.instructions(),
+        )?;
+        debug_assert_eq!(any_convert_index, runtime.self_index);
+
         // __json_decode_v2_or_raise(raw: i32) -> i32
         // Post-check wrapper around a `_json_decode_v2` bridge return value.
-        // Per D5 raises (via WASM unreachable trap) when the bridge returned
-        // the 0 sentinel; otherwise returns the pointer unchanged. Emitted
-        // by mir_builder/expressions.rs for `json.textToData` / `json.decode`.
+        // Per D5 raises the error "JSON parse failure" when the bridge
+        // returned the 0 sentinel; otherwise returns the pointer unchanged.
+        // Emitted by mir_builder/types.rs for `json.textToData` /
+        // `json.decode`.
+        let parse_failure_message =
+            codegen.get_or_create_string_offset(JSON_PARSE_FAILURE_MESSAGE)?;
         register_stdlib_function_with_locals(
             codegen,
             "__json_decode_v2_or_raise",
             &[WasmType::I32],    // raw bridge result (0 on parse failure)
             Some(WasmType::I32), // returns non-zero boxed-Any pointer
             &[],
-            Self::generate_json_decode_v2_or_raise_instructions(),
+            Self::generate_json_decode_v2_or_raise_instructions(
+                err_raise_index,
+                parse_failure_message,
+            ),
         )?;
 
         Ok(())
@@ -1192,21 +1294,513 @@ impl JsonClass {
     /// Layout:
     ///   local 0: raw (param)
     ///
-    /// Semantics (Delivery 2 §D5): if raw != 0, return raw; else trap via
-    /// WASM `unreachable`. The trap is Clean's raise mechanism at the WASM
-    /// level — the runtime host translates it into a `error()` with message
-    /// "JSON parse failure" for the caller.
-    fn generate_json_decode_v2_or_raise_instructions() -> Vec<Instruction<'static>> {
+    /// Semantics (Delivery 2 §D5): if raw != 0, return raw; else raise the
+    /// error "JSON parse failure" (`__err_raise`), which an `onError`
+    /// handler catches; outside every handler it stops the program.
+    fn generate_json_decode_v2_or_raise_instructions(
+        err_raise_idx: u32,
+        parse_failure_message: u32,
+    ) -> Vec<Instruction<'static>> {
         vec![
-            // if raw == 0 → trap
+            // if raw == 0 → raise
             Instruction::LocalGet(0),
             Instruction::I32Eqz,
             Instruction::If(wasm_encoder::BlockType::Empty),
-            Instruction::Unreachable,
+            Instruction::I32Const(parse_failure_message as i32),
+            Instruction::Call(err_raise_idx),
+            Instruction::I32Const(0),
+            Instruction::Return,
             Instruction::End,
             // return raw
             Instruction::LocalGet(0),
         ]
+    }
+}
+
+/// What the body of [`ANY_CONVERT`] calls.
+///
+/// Locals: 0 any_ptr, 1 descriptor, 2 position (parameters); 3 code,
+/// 4 tag, 5 payload, 6 count, 7 result, 8 i, 9 element code, 10 element,
+/// 11 element tag, 12 slot address.
+struct AnyConvertRuntime {
+    self_index: u32,
+    list_allocate: u32,
+    pairs_new: u32,
+    pairs_set: u32,
+    err_raise: u32,
+    empty_string: u32,
+    /// The error message of each descriptor code.
+    messages: Vec<(u8, u32)>,
+}
+
+impl AnyConvertRuntime {
+    const ANY: u32 = 0;
+    const DESCRIPTOR: u32 = 1;
+    const POSITION: u32 = 2;
+    const CODE: u32 = 3;
+    const TAG: u32 = 4;
+    const PAYLOAD: u32 = 5;
+    const COUNT: u32 = 6;
+    const RESULT: u32 = 7;
+    const I: u32 = 8;
+    const ELEMENT_CODE: u32 = 9;
+    const ELEMENT: u32 = 10;
+    const ELEMENT_TAG: u32 = 11;
+    const SLOT: u32 = 12;
+
+    fn word(offset: u64) -> MemArg {
+        MemArg {
+            offset,
+            align: 2,
+            memory_index: 0,
+        }
+    }
+
+    fn double(offset: u64) -> MemArg {
+        MemArg {
+            offset,
+            align: 3,
+            memory_index: 0,
+        }
+    }
+
+    /// Raise the error of descriptor `code` and return 0.
+    fn raise(&self, code: u8) -> Vec<Instruction<'static>> {
+        let message = self
+            .messages
+            .iter()
+            .find(|(c, _)| *c == code)
+            .map(|(_, offset)| *offset)
+            .expect("every descriptor code has a message");
+        vec![
+            Instruction::I32Const(message as i32),
+            Instruction::Call(self.err_raise),
+            Instruction::I32Const(0),
+            Instruction::Return,
+        ]
+    }
+
+    /// `if <local> == code { body }`.
+    fn when_code(
+        local: u32,
+        code: u8,
+        body: Vec<Instruction<'static>>,
+    ) -> Vec<Instruction<'static>> {
+        let mut v = vec![
+            Instruction::LocalGet(local),
+            Instruction::I32Const(code as i32),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ];
+        v.extend(body);
+        v.push(Instruction::End);
+        v
+    }
+
+    /// Return 0 when an error raised in a nested conversion is pending.
+    fn return_if_raised() -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::GlobalGet(crate::codegen::native_stdlib::ERROR_STATE_GLOBAL),
+            Instruction::I32Const(1),
+            Instruction::I32And,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+        ]
+    }
+
+    /// Leave 1 when the payload is a class instance (its first word is an
+    /// object header, class_json.rs).
+    fn payload_is_instance() -> Vec<Instruction<'static>> {
+        use crate::mir::mir_types::{CLASS_HEADER_MARK, CLASS_HEADER_MARK_MASK};
+        vec![
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::I32Const(CLASS_HEADER_MARK_MASK as i32),
+            Instruction::I32And,
+            Instruction::I32Const(CLASS_HEADER_MARK as i32),
+            Instruction::I32Eq,
+        ]
+    }
+
+    /// `return payload` when the tag is `tag`, otherwise raise.
+    fn scalar(&self, code: u8, tag: i32) -> Vec<Instruction<'static>> {
+        let mut body = vec![
+            Instruction::LocalGet(Self::TAG),
+            Instruction::I32Const(tag),
+            Instruction::I32Eq,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::Return,
+            Instruction::End,
+        ];
+        body.extend(self.raise(code));
+        Self::when_code(Self::CODE, code, body)
+    }
+
+    fn instructions(&self) -> Vec<Instruction<'static>> {
+        use any_descriptor::*;
+        use wasm_encoder::BlockType;
+        let mut v = vec![
+            // code = descriptor[4 + position]
+            Instruction::LocalGet(Self::DESCRIPTOR),
+            Instruction::LocalGet(Self::POSITION),
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 4,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(Self::CODE),
+        ];
+        // `any`: the box itself.
+        v.extend(Self::when_code(
+            Self::CODE,
+            ANY,
+            vec![Instruction::LocalGet(Self::ANY), Instruction::Return],
+        ));
+        // A null pointer reads as the null tag. Null converts to null ("" for
+        // a string), as the scalar conversions give.
+        v.extend([
+            Instruction::LocalGet(Self::ANY),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::I32Const(JSON_TAG_NULL),
+            Instruction::Else,
+            Instruction::LocalGet(Self::ANY),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::End,
+            Instruction::LocalTee(Self::TAG),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+        ]);
+        v.extend(Self::when_code(
+            Self::CODE,
+            STRING,
+            vec![
+                Instruction::I32Const(self.empty_string as i32),
+                Instruction::Return,
+            ],
+        ));
+        v.extend([
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(Self::ANY),
+            Instruction::I32Load(Self::word(4)),
+            Instruction::LocalSet(Self::PAYLOAD),
+        ]);
+        // The 4-byte scalars: the payload word of a value of that type. An
+        // integer target takes the low word of the i64 (as `integer x =
+        // value` does).
+        v.extend(self.scalar(INTEGER, JSON_TAG_INTEGER));
+        v.extend(self.scalar(BOOLEAN, JSON_TAG_BOOLEAN));
+        v.extend(self.scalar(STRING, JSON_TAG_STRING));
+        // A class instance (an object whose payload has an object header).
+        let mut instance = vec![
+            Instruction::LocalGet(Self::TAG),
+            Instruction::I32Const(JSON_TAG_OBJECT),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+        ];
+        instance.extend(Self::payload_is_instance());
+        instance.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::End,
+        ]);
+        instance.extend(self.raise(INSTANCE));
+        v.extend(Self::when_code(Self::CODE, INSTANCE, instance));
+        v.extend(self.list_conversion());
+        v.extend(self.pairs_conversion());
+        // The descriptor is a compiler constant: any other code is a
+        // compiler bug.
+        v.push(Instruction::Unreachable);
+        v
+    }
+
+    /// `list<T>`: a JSON array, each element converted to `T`.
+    fn list_conversion(&self) -> Vec<Instruction<'static>> {
+        use any_descriptor::*;
+        use wasm_encoder::BlockType;
+        let mut body = vec![
+            Instruction::LocalGet(Self::TAG),
+            Instruction::I32Const(JSON_TAG_ARRAY),
+            Instruction::I32Ne,
+            Instruction::If(BlockType::Empty),
+        ];
+        body.extend(self.raise(LIST));
+        body.extend([
+            Instruction::End,
+            // count = array[0]; element code = descriptor[5 + position]
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::LocalSet(Self::COUNT),
+            Instruction::LocalGet(Self::DESCRIPTOR),
+            Instruction::LocalGet(Self::POSITION),
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 5,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(Self::ELEMENT_CODE),
+            // The list keeps room for 8 elements at least, as a list literal
+            // does, so `.add()` has space. Capacity counts 4-byte slots: a
+            // `number` or `integer:64` element takes two.
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32Const(8),
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32Const(8),
+            Instruction::I32GtU,
+            Instruction::Select,
+        ]);
+        body.extend(Self::wide_element_test());
+        body.extend([
+            Instruction::If(BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::I32Const(2),
+            Instruction::Else,
+            Instruction::I32Const(1),
+            Instruction::End,
+            Instruction::I32Mul,
+            Instruction::Call(self.list_allocate),
+            Instruction::LocalTee(Self::RESULT),
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32Store(Self::word(0)),
+            Instruction::I32Const(0),
+            Instruction::LocalSet(Self::I),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(Self::I),
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // element = array[4 + i*4]
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Load(Self::word(4)),
+            Instruction::LocalSet(Self::ELEMENT),
+        ]);
+        // An 8-byte element is converted here; any other through a nested
+        // conversion of the element.
+        body.extend(Self::wide_element_test());
+        body.extend([Instruction::If(BlockType::Empty)]);
+        body.extend(self.wide_element());
+        body.extend([
+            Instruction::Else,
+            // slot = list + 16 + i*4
+            Instruction::LocalGet(Self::RESULT),
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(Self::SLOT),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::LocalGet(Self::DESCRIPTOR),
+            Instruction::LocalGet(Self::POSITION),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::Call(self.self_index),
+            Instruction::LocalSet(Self::ELEMENT),
+        ]);
+        body.extend(Self::return_if_raised());
+        body.extend([
+            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::I32Store(Self::word(16)),
+            Instruction::End,
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(Self::I),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(Self::RESULT),
+            Instruction::Return,
+        ]);
+        Self::when_code(Self::CODE, LIST, body)
+    }
+
+    /// Leave 1 when the element code is `number` or `integer:64`.
+    fn wide_element_test() -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::LocalGet(Self::ELEMENT_CODE),
+            Instruction::I32Const(any_descriptor::NUMBER as i32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(Self::ELEMENT_CODE),
+            Instruction::I32Const(any_descriptor::INTEGER_64 as i32),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+        ]
+    }
+
+    /// Store element `i` (a `number` or `integer:64`) at `list + 16 + i*8`.
+    /// A number element takes a number or an integer (widened); an
+    /// `integer:64` element an integer; both take null as 0.
+    fn wide_element(&self) -> Vec<Instruction<'static>> {
+        use any_descriptor::*;
+        use wasm_encoder::BlockType;
+        let mut v = vec![
+            // slot = list + i*8 (the elements start at offset 16)
+            Instruction::LocalGet(Self::RESULT),
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalSet(Self::SLOT),
+            // element tag (a null pointer is null)
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::I32Const(JSON_TAG_NULL),
+            Instruction::Else,
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::End,
+            Instruction::LocalSet(Self::ELEMENT_TAG),
+        ];
+        let tag_is = |tag: i32| {
+            vec![
+                Instruction::LocalGet(Self::ELEMENT_TAG),
+                Instruction::I32Const(tag),
+                Instruction::I32Eq,
+            ]
+        };
+        // number
+        let mut number = tag_is(JSON_TAG_NUMBER);
+        number.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::F64Load(Self::double(4)),
+            Instruction::F64Store(Self::double(16)),
+            Instruction::Else,
+        ]);
+        number.extend(tag_is(JSON_TAG_INTEGER));
+        number.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::I64Load(Self::double(4)),
+            Instruction::F64ConvertI64S,
+            Instruction::F64Store(Self::double(16)),
+            Instruction::Else,
+        ]);
+        number.extend(tag_is(JSON_TAG_NULL));
+        number.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::SLOT),
+            Instruction::F64Const(0.0),
+            Instruction::F64Store(Self::double(16)),
+            Instruction::Else,
+        ]);
+        number.extend(self.raise(NUMBER));
+        number.extend([Instruction::End, Instruction::End, Instruction::End]);
+        v.extend(Self::when_code(Self::ELEMENT_CODE, NUMBER, number));
+        // integer:64
+        let mut wide_integer = tag_is(JSON_TAG_INTEGER);
+        wide_integer.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::I64Load(Self::double(4)),
+            Instruction::I64Store(Self::double(16)),
+            Instruction::Else,
+        ]);
+        wide_integer.extend(tag_is(JSON_TAG_NULL));
+        wide_integer.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::SLOT),
+            Instruction::I64Const(0),
+            Instruction::I64Store(Self::double(16)),
+            Instruction::Else,
+        ]);
+        wide_integer.extend(self.raise(INTEGER_64));
+        wide_integer.extend([Instruction::End, Instruction::End]);
+        v.extend(Self::when_code(
+            Self::ELEMENT_CODE,
+            INTEGER_64,
+            wide_integer,
+        ));
+        v
+    }
+
+    /// `pairs<string, V>`: a JSON object (not a class instance), each value
+    /// converted to `V`; the keys are the object's keys.
+    fn pairs_conversion(&self) -> Vec<Instruction<'static>> {
+        use any_descriptor::*;
+        use wasm_encoder::BlockType;
+        // The payload is read as an instance only when the value is an
+        // object (another payload need not be an address).
+        let mut body = vec![
+            Instruction::LocalGet(Self::TAG),
+            Instruction::I32Const(JSON_TAG_OBJECT),
+            Instruction::I32Ne,
+            Instruction::If(BlockType::Empty),
+        ];
+        body.extend(self.raise(PAIRS));
+        body.push(Instruction::End);
+        body.extend(Self::payload_is_instance());
+        body.push(Instruction::If(BlockType::Empty));
+        body.extend(self.raise(PAIRS));
+        body.extend([
+            Instruction::End,
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::LocalTee(Self::COUNT),
+            Instruction::Call(self.pairs_new),
+            Instruction::LocalSet(Self::RESULT),
+            Instruction::I32Const(0),
+            Instruction::LocalSet(Self::I),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(Self::I),
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            // slot = object + i*8: the entry `[key_ptr @4][value_ptr @8]`
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalTee(Self::SLOT),
+            Instruction::I32Load(Self::word(8)),
+            Instruction::LocalGet(Self::DESCRIPTOR),
+            Instruction::LocalGet(Self::POSITION),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::Call(self.self_index),
+            Instruction::LocalSet(Self::ELEMENT),
+        ]);
+        body.extend(Self::return_if_raised());
+        body.extend([
+            // result = pairs.set(result, key, value): the map moves when it
+            // grows.
+            Instruction::LocalGet(Self::RESULT),
+            Instruction::LocalGet(Self::SLOT),
+            Instruction::I32Load(Self::word(4)),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::Call(self.pairs_set),
+            Instruction::LocalSet(Self::RESULT),
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(Self::I),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(Self::RESULT),
+            Instruction::Return,
+        ]);
+        Self::when_code(Self::CODE, PAIRS, body)
     }
 }
 

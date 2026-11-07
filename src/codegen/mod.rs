@@ -242,6 +242,12 @@ impl CodeGenerator {
         self.function_map.get(function_name).copied()
     }
 
+    /// The index the next registered function receives: what a function
+    /// that calls itself needs before it is registered.
+    pub fn next_function_index(&self) -> u32 {
+        self.function_count
+    }
+
     /// Enable reachability-based filtering of Layer 2/3 external-I/O imports.
     ///
     /// After this is set, `register_import_function` will skip any gated

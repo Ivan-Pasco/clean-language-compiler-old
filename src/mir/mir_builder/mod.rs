@@ -131,6 +131,10 @@ pub struct MirBuilder {
     /// `error(...)` traps on the spot, so the unwinding checks emitted after
     /// calls are removed when the program is built.
     pub(super) uses_error_regions: bool,
+
+    /// `any` values converted to a type no conversion exists for
+    /// (`emit_unbox_any`), reported when the program is built.
+    pub(super) any_conversion_errors: Vec<CompilerError>,
 }
 
 /// Context for building a single function
@@ -166,6 +170,9 @@ pub(super) struct FunctionBuildContext {
 
     /// `onError` regions being built in this function, innermost last.
     pub(super) error_regions: Vec<ErrorRegion>,
+
+    /// The declared return type: what a returned `any` is converted to.
+    pub(super) return_type: ConcreteType,
 }
 
 /// An `onError` region of the function being built: the protected
@@ -253,6 +260,7 @@ impl MirBuilder {
             pending_class_invariants: Vec::new(),
             release_mode: false,
             uses_error_regions: false,
+            any_conversion_errors: Vec::new(),
         }
     }
 
@@ -972,6 +980,7 @@ impl MirBuilder {
         // initializers are interned above).
         mir_program.string_pool = self.string_pool.clone();
 
+        lowering_errors.append(&mut self.any_conversion_errors);
         if !lowering_errors.is_empty() {
             return Err(lowering_errors);
         }

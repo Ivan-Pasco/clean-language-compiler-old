@@ -68,6 +68,7 @@ impl MirBuilder {
             // Ensure statements are encountered in the function body.
             ensure_conditions: initial_ensure_conditions,
             error_regions: Vec::new(),
+            return_type: tast_function.return_type.clone(),
         };
 
         // For class methods and constructors, add implicit 'this' parameter as the first parameter

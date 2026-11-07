@@ -1,0 +1,38 @@
+// Test: bugfixes/json_parse_failure_is_catchable
+// Grammar: on_error_expression, on_error_block
+// Semantic: stdlib-reference.md §8 (D5: `json.textToData` on invalid input raises "JSON parse failure", caught with `onError`)
+// Fixed in: compiler 0.33.176
+// Expected output:
+//   fallback=true
+//   decode=true
+//   caught=JSON parse failure
+//   inner=caught in caller
+//   valid=1
+//
+// Regression: `json.textToData` and `json.decode` on invalid JSON executed
+// `unreachable`, which stopped the program: `onError` never ran. The parse
+// failure now raises the error "JSON parse failure", which an `onError`
+// handler catches (and which still stops a program that has none).
+
+start:
+	any data = json.textToData("not json") onError null
+	printl("fallback=" + (data == null).toString())
+	any other = json.decode("[1,") onError null
+	printl("decode=" + (other == null).toString())
+	printl("caught=" + messageOf("nope"))
+	string inner = parseOrMessage("[") onError "caught in caller"
+	printl("inner=" + inner)
+	any good = json.textToData("{\"a\": 1}") onError null
+	printl("valid=" + good.a.toString())
+
+functions:
+	string messageOf(string text)
+		string message = "none"
+		any value = json.textToData(text)
+		onError:
+			message = error
+		return message
+
+	string parseOrMessage(string text)
+		any value = json.textToData(text)
+		return value.toString()

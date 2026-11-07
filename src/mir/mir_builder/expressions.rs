@@ -2979,7 +2979,19 @@ impl MirBuilder {
                             self.add_instruction(context, instruction);
                             return Ok(result_id);
                         }
-                        (ConcreteType::Any, "isEmpty") => {
+                        // `.isEmpty()` / `.isNotEmpty()` of an `any`: whether
+                        // the array, object or string it holds has length 0
+                        // (null is empty); a value with no length raises, as
+                        // `.length()` does. `value.isEmpty` reads the word at
+                        // the pointer, which for a box is the type tag.
+                        (ConcreteType::Any, "isEmpty" | "isNotEmpty") => {
+                            let length_id = self.emit_named_call(
+                                context,
+                                crate::stdlib::json_class::ANY_LENGTH,
+                                vec![MirOperand::Value(receiver_id)],
+                                MirType::I32,
+                                &expression.location,
+                            );
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
                             self.register_temp_local(
@@ -2988,42 +3000,39 @@ impl MirBuilder {
                                 MirType::I32, // Boolean
                                 expression.location.clone(),
                             );
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::NamedFunction {
-                                        name: "value.isEmpty".to_string(),
-                                        symbol_id: SymbolId(0),
-                                    },
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
+                            let op = if method_name == "isEmpty" {
+                                MirBinaryOp::Eq
+                            } else {
+                                MirBinaryOp::Ne
                             };
-                            self.add_instruction(context, instruction);
+                            self.add_instruction(
+                                context,
+                                MirInstruction {
+                                    dest: Some(result_id),
+                                    operation: MirOperation::BinaryOp {
+                                        op,
+                                        left: MirOperand::Value(length_id),
+                                        right: MirOperand::Constant(MirConstant::Integer(0)),
+                                    },
+                                    location: expression.location.clone(),
+                                },
+                            );
                             return Ok(result_id);
                         }
-                        (ConcreteType::Any, "isNotEmpty") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-                            self.register_temp_local(
-                                context,
-                                result_id,
-                                MirType::I32, // Boolean
-                                expression.location.clone(),
-                            );
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::NamedFunction {
-                                        name: "value.isNotEmpty".to_string(),
-                                        symbol_id: SymbolId(0),
-                                    },
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
-                            };
-                            self.add_instruction(context, instruction);
-                            return Ok(result_id);
+                        // The type checker accepts only the methods above on
+                        // an `any` (FUNC001); the fallback below would call
+                        // an unrelated function.
+                        (ConcreteType::Any, other) => {
+                            return Err(vec![CompilerError::semantic_error_with_code(
+                                format!("Method '{}' not found on an `any` value", other),
+                                Some(
+                                    "Assign the value to a typed variable first, e.g. \
+                                     `string text = value`"
+                                        .to_string(),
+                                ),
+                                Some(expression.location.clone()),
+                                "FUNC001",
+                            )]);
                         }
                         // For other built-in methods, fall back to treating as instance method
                         _ => {
