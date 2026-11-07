@@ -911,27 +911,28 @@ impl<'a> TypeInference<'a> {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if self.symbol_table.is_builtin(symbol_id) {
                     match &symbol.kind {
+                        // Skip if already registered (to preserve manual overrides above)
                         crate::resolver::SymbolKind::Function {
                             parameters,
                             return_type,
-                        } => {
-                            // Skip if already registered (to preserve manual overrides above)
-                            self.type_env.entry(symbol_id).or_insert_with(|| {
-                                let concrete_params: Vec<ConcreteType> = parameters
-                                    .iter()
-                                    .map(Self::hir_type_to_concrete_type)
-                                    .collect();
-                                let concrete_return = return_type
-                                    .as_ref()
-                                    .map(|t| Box::new(Self::hir_type_to_concrete_type(t)))
-                                    .unwrap_or_else(|| Box::new(ConcreteType::Null));
+                        } if !self.type_env.contains_key(&symbol_id) => {
+                            let concrete_params: Vec<ConcreteType> = parameters
+                                .iter()
+                                .map(|t| self.hir_type_to_concrete(t))
+                                .collect();
+                            let concrete_return = return_type
+                                .as_ref()
+                                .map(|t| Box::new(self.hir_type_to_concrete(t)))
+                                .unwrap_or_else(|| Box::new(ConcreteType::Null));
 
+                            self.type_env.insert(
+                                symbol_id,
                                 ConcreteType::Function {
                                     parameters: concrete_params,
                                     return_type: concrete_return,
                                     is_background: false,
-                                }
-                            });
+                                },
+                            );
                         }
                         _ => {
                             // Skip non-function builtins (classes, namespaces, etc.)
@@ -949,45 +950,7 @@ impl<'a> TypeInference<'a> {
         for symbol_id in all_symbols {
             if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                 if let crate::resolver::SymbolKind::StateVariable { var_type, .. } = &symbol.kind {
-                    // Convert HirType to ConcreteType and register in type environment.
-                    //
-                    // The static mapper returns `Unknown` for any `HirType::Named` that
-                    // isn't one of the primitive aliases (integer/number/string/boolean/
-                    // void). User-defined class instances declared as state globals
-                    // (e.g. `state: MyToolbar instance = MyToolbar()` from frame.ui's
-                    // expand_component output) would land as Unknown here. The MIR
-                    // builder's method-call type-inference then falls back to the locals
-                    // map — which sees the class instance as `MirType::I32` (its WASM
-                    // pointer) and remaps that to `ConcreteType::Integer`. The codegen
-                    // then looks up `integer.<method>` and fails with "Function
-                    // 'integer.<method>' not found in function map".
-                    //
-                    // Upgrade: when the static mapper yields Unknown for a Named type
-                    // whose name matches a class symbol already in the table, register
-                    // it as `ConcreteType::Class { symbol_id, ... }` instead. Class
-                    // signatures are registered later in `infer_program` but the
-                    // resolver pass that ran before us already populated the symbol
-                    // table with class symbols, so the lookup succeeds here.
-                    let mut concrete_type = Self::hir_type_to_concrete_type(var_type);
-                    if matches!(concrete_type, ConcreteType::Unknown) {
-                        if let crate::hir::HirType::Named { name, .. } = var_type {
-                            if let Some(class_symbol_id) = self.symbol_table.lookup_symbol(name) {
-                                if let Some(class_symbol) =
-                                    self.symbol_table.get_symbol(class_symbol_id)
-                                {
-                                    if matches!(
-                                        class_symbol.kind,
-                                        crate::resolver::SymbolKind::Class { .. }
-                                    ) {
-                                        concrete_type = ConcreteType::Class {
-                                            symbol_id: class_symbol_id,
-                                            type_args: Vec::new(),
-                                        };
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    let concrete_type = self.hir_type_to_concrete(var_type);
                     self.type_env.insert(symbol_id, concrete_type);
                     tracing::trace!(
                         "Registered state variable '{}' (SymbolId {:?}) with type",
@@ -996,71 +959,6 @@ impl<'a> TypeInference<'a> {
                     );
                 }
             }
-        }
-    }
-
-    /// Convert HirType to ConcreteType for builtin function type mapping
-    fn hir_type_to_concrete_type(hir_type: &HirType) -> ConcreteType {
-        match hir_type {
-            HirType::Integer => ConcreteType::Integer,
-            HirType::Number => ConcreteType::Number,
-            HirType::String => ConcreteType::String,
-            HirType::Boolean => ConcreteType::Boolean,
-            HirType::Void => ConcreteType::Null,
-            // Precision types - preserve bit width through type inference
-            HirType::Integer8 => ConcreteType::IntegerSized {
-                bits: 8,
-                unsigned: false,
-            },
-            HirType::Integer8u => ConcreteType::IntegerSized {
-                bits: 8,
-                unsigned: true,
-            },
-            HirType::Integer16 => ConcreteType::IntegerSized {
-                bits: 16,
-                unsigned: false,
-            },
-            HirType::Integer16u => ConcreteType::IntegerSized {
-                bits: 16,
-                unsigned: true,
-            },
-            HirType::Integer32 => ConcreteType::IntegerSized {
-                bits: 32,
-                unsigned: false,
-            },
-            HirType::Integer32u => ConcreteType::IntegerSized {
-                bits: 32,
-                unsigned: true,
-            },
-            HirType::Integer64 => ConcreteType::IntegerSized {
-                bits: 64,
-                unsigned: false,
-            },
-            HirType::Integer64u => ConcreteType::IntegerSized {
-                bits: 64,
-                unsigned: true,
-            },
-            HirType::Number32 => ConcreteType::NumberSized { bits: 32 },
-            HirType::Number64 => ConcreteType::NumberSized { bits: 64 },
-            // Builtin signatures such as `string.split -> list<string>` and
-            // `validator.getErrors -> list<string>` carry composite types.
-            // Mapping them to Unknown typed the call result as `any`, so the
-            // returned list pointer was unboxed as a tagged value.
-            HirType::List(element_type) => {
-                ConcreteType::Array(Box::new(Self::hir_type_to_concrete_type(element_type)))
-            }
-            HirType::Named { name, .. } => {
-                // For now, map named types to concrete types by name
-                match name.as_str() {
-                    "integer" => ConcreteType::Integer,
-                    "number" => ConcreteType::Number,
-                    "string" => ConcreteType::String,
-                    "boolean" => ConcreteType::Boolean,
-                    "void" => ConcreteType::Undefined,
-                    _ => ConcreteType::Unknown,
-                }
-            }
-            _ => ConcreteType::Unknown,
         }
     }
 
@@ -5524,13 +5422,12 @@ impl<'a> TypeInference<'a> {
                         if let Some(m) = methods.iter().find(|m| m.name == method_name) {
                             // HirType::Void → ConcreteType::Undefined so the
                             // auto-return path in MIR treats void-method calls
-                            // as truly void (no local push before return).
-                            // The static hir_type_to_concrete_type maps Void
-                            // to ConcreteType::Null which triggers a spurious
-                            // implicit-return-value branch downstream.
+                            // as truly void (no local push before return);
+                            // hir_type_to_concrete maps Void to Null, which
+                            // triggers a spurious implicit-return-value branch.
                             let ret = match &m.return_type {
                                 crate::hir::HirType::Void => ConcreteType::Undefined,
-                                other => Self::hir_type_to_concrete_type(other),
+                                other => self.hir_type_to_concrete(other),
                             };
                             return Ok(ret);
                         }
@@ -5563,7 +5460,7 @@ impl<'a> TypeInference<'a> {
                         } = &symbol.kind
                         {
                             // Convert HirType to ConcreteType
-                            let concrete_type = Self::hir_type_to_concrete_type(return_type);
+                            let concrete_type = self.hir_type_to_concrete(return_type);
                             tracing::debug!(
                                 class_symbol = symbol_id.0,
                                 method_name = %method_name,

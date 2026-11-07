@@ -1,0 +1,38 @@
+// Test: bugfixes/method_returning_class_has_class_type
+// Grammar: method_call, field_access
+// Semantic: type-system.md §Class types — a method declared to return a
+//   class returns a value of that class type.
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   label=seven
+//   size=7
+//
+// Regression: the type checker gave a class (or capability) method that
+// returns a class the type Unknown, so a field or method used on its result
+// was not checked or resolved against that class.
+
+start:
+	Factory f = Factory()
+	Item made = f.make(7)
+	printl("label=" + f.make(7).label)
+	printl("size=" + f.make(7).doubleHalf().toString())
+
+class Item
+	public:
+		string label
+		integer size
+
+	constructor(string l, integer s)
+		label = l
+		size = s
+
+	functions:
+		public:
+			integer doubleHalf()
+				return size
+
+class Factory
+	functions:
+		public:
+			Item make(integer n)
+				return Item("seven", n)
