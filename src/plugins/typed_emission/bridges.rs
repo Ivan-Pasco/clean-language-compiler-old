@@ -3084,6 +3084,9 @@ mod tests {
         assert_eq!(map_binary_op("=="), Some(BinaryOperator::Equal));
         assert_eq!(map_binary_op("and"), Some(BinaryOperator::And));
         assert_eq!(map_binary_op("???"), None);
+        // grammar.ebnf power_op is `^` only.
+        assert_eq!(map_binary_op("^"), Some(BinaryOperator::Power));
+        assert_eq!(map_binary_op("**"), None);
     }
 
     // ── Declaration emitters ──────────────────────────────────────────────────
