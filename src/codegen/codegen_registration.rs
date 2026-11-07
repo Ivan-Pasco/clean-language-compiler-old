@@ -722,45 +722,53 @@ impl super::CodeGenerator {
         use crate::stdlib::math_class::MathClass;
         use crate::types::WasmType;
 
-        // FIRST: Register math imports that MathClass will alias
-        // These must be registered before MathClass tries to create aliases
+        // FIRST: the host math imports MathClass aliases (`math.sin` →
+        // `math_sin`). Each import is emitted only when the program reaches
+        // it under either name (Import Minimality Rule): `x ^ y` needs
+        // `math_pow` alone, not every transcendental function.
+        const UNARY: &[(&str, &[&str])] = &[
+            ("math_sin", &["math.sin"]),
+            ("math_cos", &["math.cos"]),
+            ("math_tan", &["math.tan"]),
+            ("math_asin", &["math.asin"]),
+            ("math_acos", &["math.acos"]),
+            ("math_atan", &["math.atan"]),
+            ("math_sinh", &["math.sinh"]),
+            ("math_cosh", &["math.cosh"]),
+            ("math_tanh", &["math.tanh"]),
+            ("math_ln", &["math.ln", "math.log"]),
+            ("math_log10", &["math.log10"]),
+            ("math_log2", &["math.log2"]),
+            ("math_exp", &["math.exp"]),
+            ("math_exp2", &["math.exp2"]),
+        ];
+        const BINARY: &[(&str, &[&str])] =
+            &[("math_pow", &["math.pow"]), ("math_atan2", &["math.atan2"])];
 
-        // Core trig functions
-        self.register_import_function(
-            "env",
-            "math_pow",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-        )?;
-        self.register_import_function("env", "math_sin", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_cos", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_tan", &[WasmType::F64], Some(WasmType::F64))?;
-
-        // Inverse trig functions
-        self.register_import_function("env", "math_asin", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_acos", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_atan", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function(
-            "env",
-            "math_atan2",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-        )?;
-
-        // Hyperbolic functions
-        self.register_import_function("env", "math_sinh", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_cosh", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_tanh", &[WasmType::F64], Some(WasmType::F64))?;
-
-        // Logarithmic and exponential functions
-        self.register_import_function("env", "math_ln", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_log10", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_log2", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_exp", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_exp2", &[WasmType::F64], Some(WasmType::F64))?;
-
+        for (import, aliases) in UNARY {
+            if self.is_reachable_name(import, aliases) {
+                self.register_import_function(
+                    "env",
+                    import,
+                    &[WasmType::F64],
+                    Some(WasmType::F64),
+                )?;
+            }
+        }
+        for (import, aliases) in BINARY {
+            if self.is_reachable_name(import, aliases) {
+                self.register_import_function(
+                    "env",
+                    import,
+                    &[WasmType::F64, WasmType::F64],
+                    Some(WasmType::F64),
+                )?;
+            }
+        }
         // Random number generation — returns f64 in [0.0, 1.0)
-        self.register_import_function("env", "math_random", &[], Some(WasmType::F64))?;
+        if self.is_reachable_name("math_random", &["math.random"]) {
+            self.register_import_function("env", "math_random", &[], Some(WasmType::F64))?;
+        }
 
         // THEN: Create MathClass instance which creates aliases and native functions
         let math_class = MathClass::new();

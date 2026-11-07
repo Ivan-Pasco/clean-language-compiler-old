@@ -318,3 +318,22 @@ fn reachable_preamble_bridge_alias_is_registered() {
         result.err()
     );
 }
+
+#[test]
+fn power_operator_imports_math_pow_only() {
+    // `^` lowers to `math.pow`. Before each math import was gated on its own
+    // reachability, any `math.*` use imported all 17 host math functions
+    // (sin, cos, ..., random).
+    let source = "start:\n\tinteger a = 2 ^ 10\n\tprint(a)\n\tnumber b = 2.0 ^ 0.5\n\tprint(b)\n";
+    let imports = list_imports(&compile_source(source));
+    let math: Vec<&String> = imports.iter().filter(|n| n.starts_with("math")).collect();
+    assert_eq!(math, vec!["math_pow"], "math imports: {math:?}");
+}
+
+#[test]
+fn math_log_alias_imports_math_ln() {
+    let source = "start:\n\tnumber x = math.log(2.0)\n\tprint(x)\n";
+    let imports = list_imports(&compile_source(source));
+    let math: Vec<&String> = imports.iter().filter(|n| n.starts_with("math")).collect();
+    assert_eq!(math, vec!["math_ln"], "math imports: {math:?}");
+}

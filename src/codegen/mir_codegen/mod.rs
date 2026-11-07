@@ -948,9 +948,10 @@ impl MirCodeGenerator<'_> {
                 );
             }
 
-            // Math operations pull in 16 transcendental imports plus
-            // wrapper functions. Skip entirely if the module never
-            // references `math.*` / `math_*` (Import Minimality Rule).
+            // Math operations: native helpers plus the host imports each
+            // reachable function needs (`register_math_operations` gates every
+            // import). Skip entirely if the module never references
+            // `math.*` / `math_*` (Import Minimality Rule).
             if self.wasm_generator.has_reachable_prefix("math_")
                 || self.wasm_generator.has_reachable_prefix("math.")
             {

@@ -250,6 +250,17 @@ impl CodeGenerator {
         }
     }
 
+    /// Returns true if the program reaches `name` or one of its `aliases`.
+    ///
+    /// When reachability has not been populated (legacy compilation path),
+    /// returns true so registration behaves as before.
+    pub fn is_reachable_name(&self, name: &str, aliases: &[&str]) -> bool {
+        match &self.reachable_imports {
+            Some(set) => set.contains(name) || aliases.iter().any(|alias| set.contains(*alias)),
+            None => true,
+        }
+    }
+
     /// Returns true if any reachable call name starts with the given prefix.
     /// Used by stdlib class registration to decide whether to generate
     /// wrapper functions (e.g. skip HttpClass wrappers entirely when no
