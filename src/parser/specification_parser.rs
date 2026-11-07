@@ -14,6 +14,8 @@ pub struct SpecificationParser {
     plugin_keywords: Vec<String>,
     /// When true, skip section ordering enforcement (for plugin output)
     lenient_section_order: bool,
+    /// Set by the first `parse_program`, which moves the token stream out.
+    consumed: bool,
 }
 
 impl SpecificationParser {
@@ -23,6 +25,7 @@ impl SpecificationParser {
             file_path,
             plugin_keywords: Vec::new(),
             lenient_section_order: false,
+            consumed: false,
         }
     }
 
@@ -42,6 +45,7 @@ impl SpecificationParser {
             file_path,
             plugin_keywords,
             lenient_section_order: false,
+            consumed: false,
         }
     }
 
@@ -55,6 +59,15 @@ impl SpecificationParser {
     /// This method uses the new TokenParser that consumes tokens directly,
     /// following the architecture of rustc's parser (see rust-lang/rustc-dev-guide).
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
+        if self.consumed {
+            return Err(CompilerError::parse_error(
+                "parse_program was already called on this parser; its token stream is consumed"
+                    .to_string(),
+                None,
+                Some("Create a new SpecificationParser for each parse.".to_string()),
+            ));
+        }
+        self.consumed = true;
         let mut parser = if self.plugin_keywords.is_empty() {
             TokenParser::new(
                 std::mem::take(&mut self.token_stream),
@@ -73,5 +86,31 @@ impl SpecificationParser {
         }
 
         parser.parse_program()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+    use crate::lexer::specification_token::TokenStream;
+
+    /// Regression: a second `parse_program` on the same parser used to index
+    /// `tokens[len - 1]` on the emptied stream and panic.
+    #[test]
+    fn second_parse_is_an_error_not_a_panic() {
+        let source = SourceCode::new("start:\n\tprint(1)\n".to_string(), "t.cln".to_string());
+        let tokens = SpecificationLexer::new(&source).tokenize().unwrap();
+        let mut parser = SpecificationParser::new(tokens, "t.cln".to_string());
+        assert!(parser.parse_program().is_ok());
+        assert!(parser.parse_program().is_err());
+    }
+
+    /// An empty token stream parses to an empty program instead of panicking.
+    #[test]
+    fn empty_token_stream_does_not_panic() {
+        let mut parser = SpecificationParser::new(TokenStream::default(), "t.cln".to_string());
+        let program = parser.parse_program().unwrap();
+        assert!(program.functions.is_empty());
     }
 }

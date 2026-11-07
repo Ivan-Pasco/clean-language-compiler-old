@@ -81,7 +81,7 @@ impl TokenParser {
     pub fn new(token_stream: TokenStream, _file_path: String) -> Self {
         Self {
             source_content: token_stream.source_content,
-            tokens: token_stream.tokens,
+            tokens: Self::terminated(token_stream.tokens),
             cursor: 0,
             errors: Vec::new(),
             paren_depth: 0,
@@ -105,7 +105,7 @@ impl TokenParser {
     ) -> Self {
         Self {
             source_content: token_stream.source_content,
-            tokens: token_stream.tokens,
+            tokens: Self::terminated(token_stream.tokens),
             cursor: 0,
             errors: Vec::new(),
             paren_depth: 0,
@@ -114,6 +114,21 @@ impl TokenParser {
             lenient_section_order: false,
             pending_synthetic_classes: Vec::new(),
         }
+    }
+
+    /// The cursor utilities index `tokens[len - 1]`, so the stream must never
+    /// be empty. The lexer always ends a stream with `Eof`; an empty stream
+    /// (for example a `TokenStream::default()`, or a stream already taken by a
+    /// previous parse) gets one here.
+    fn terminated(mut tokens: Vec<Token>) -> Vec<Token> {
+        if !tokens.last().is_some_and(|t| t.kind == TokenKind::Eof) {
+            let location = tokens
+                .last()
+                .map(|t| t.location.clone())
+                .unwrap_or_default();
+            tokens.push(Token::simple(TokenKind::Eof, location));
+        }
+        tokens
     }
 
     /// Enable lenient section ordering (for plugin output parsing).
