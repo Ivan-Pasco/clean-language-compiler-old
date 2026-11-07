@@ -34,18 +34,27 @@ pub enum MemorySafetyError {
 }
 
 /// Owner of the WASM data section, with bounds validation for each segment.
+///
+/// Segments that follow each other (allowing for alignment padding) are
+/// merged, so the string literals become one data segment rather than one
+/// per literal.
 pub(crate) struct MemoryUtils {
-    data_section: DataSection,
+    /// `(address, bytes)` of each data segment, in placement order.
+    segments: Vec<(u32, Vec<u8>)>,
     /// Lowest address static data may occupy (`DATA_SECTION_START`).
     data_start: usize,
 }
+
+/// Largest gap between two segments that is filled with zero bytes to merge
+/// them (string literals are 4-byte aligned, so they leave at most 3).
+const MAX_MERGE_GAP: u32 = 8;
 
 impl MemoryUtils {
     /// Create an empty data section whose segments must lie in
     /// `[data_start, MAX_MEMORY_SIZE)`.
     pub(crate) fn new(data_start: usize) -> Self {
         Self {
-            data_section: DataSection::new(),
+            segments: Vec::new(),
             data_start,
         }
     }
@@ -58,8 +67,15 @@ impl MemoryUtils {
     ) -> Result<(), MemorySafetyError> {
         self.validate_memory_access(offset as usize, data.len())?;
 
-        let offset_expr = ConstExpr::i32_const(offset as i32);
-        self.data_section.active(0, &offset_expr, data.to_vec());
+        if let Some((start, bytes)) = self.segments.last_mut() {
+            let end = *start + bytes.len() as u32;
+            if offset >= end && offset - end <= MAX_MERGE_GAP {
+                bytes.resize((offset - *start) as usize, 0);
+                bytes.extend_from_slice(data);
+                return Ok(());
+            }
+        }
+        self.segments.push((offset, data.to_vec()));
         Ok(())
     }
 
@@ -93,9 +109,17 @@ impl MemoryUtils {
         Ok(())
     }
 
-    /// Get the data section
-    pub(crate) fn get_data_section(&self) -> &DataSection {
-        &self.data_section
+    /// The data section: one active segment per run of adjacent data.
+    pub(crate) fn data_section(&self) -> DataSection {
+        let mut section = DataSection::new();
+        for (offset, bytes) in &self.segments {
+            section.active(
+                0,
+                &ConstExpr::i32_const(*offset as i32),
+                bytes.iter().copied(),
+            );
+        }
+        section
     }
 }
 
@@ -107,6 +131,23 @@ mod tests {
     fn accepts_segment_inside_data_region() {
         let mut mem = MemoryUtils::new(1024);
         assert!(mem.add_data_segment(4096, b"\x05\0\0\0hello").is_ok());
+    }
+
+    #[test]
+    fn adjacent_segments_merge_into_one() {
+        let mut mem = MemoryUtils::new(1024);
+        mem.add_data_segment(4096, b"\x02\0\0\0hi").unwrap();
+        // 4-byte alignment leaves a 2-byte gap.
+        mem.add_data_segment(4104, b"\x01\0\0\0x").unwrap();
+        // Far away: a separate segment.
+        mem.add_data_segment(8192, b"\x00\0\0\0").unwrap();
+        assert_eq!(
+            mem.segments,
+            vec![
+                (4096, b"\x02\0\0\0hi\0\0\x01\0\0\0x".to_vec()),
+                (8192, b"\x00\0\0\0".to_vec()),
+            ]
+        );
     }
 
     #[test]

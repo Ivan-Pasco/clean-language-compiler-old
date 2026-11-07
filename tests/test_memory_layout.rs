@@ -1,6 +1,8 @@
 //! The linear-memory layout documented at `codegen::DATA_SECTION_START`:
-//! string literals from 4 KB, then the 64 KB transient arena pool, then the
-//! heap, whose start is the initial `__heap_ptr`.
+//! string literals from 4 KB, packed into one data segment, then the 64 KB
+//! transient arena pool, then the heap, whose start is the initial
+//! `__heap_ptr`. Each literal used to get its own data segment plus 16 bytes
+//! of padding nothing read.
 //!
 //! Also guards the removal of `string_builder_reclaim` / `heap_ptr_snapshot`,
 //! two helpers nothing has called since the 0.30.375 reclaim rollback that
@@ -69,10 +71,12 @@ fn heap_starts_after_strings_and_transient_pool() {
         .max()
         .expect("data");
     let pool_base = (strings_end + 7) & !7;
-    assert!(
-        heap_start as u32 >= pool_base + TRANSIENT_POOL_SIZE,
-        "the heap ({heap_start}) must start past the strings ({strings_end}) and the transient pool"
+    assert_eq!(
+        heap_start as u32,
+        pool_base + TRANSIENT_POOL_SIZE,
+        "the heap starts right after the strings ({strings_end}) and the transient pool"
     );
+    assert_eq!(segments.len(), 1, "string literals form one data segment");
 }
 
 #[test]

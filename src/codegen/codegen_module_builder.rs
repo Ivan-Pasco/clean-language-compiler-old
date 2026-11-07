@@ -78,12 +78,10 @@ impl super::CodeGenerator {
                 )
             })?;
 
-        // Update offset counter with padding for next string
-        // NOTE: Ensure 4-byte alignment for next string
+        // The next string starts at the next 4-byte boundary: its length
+        // prefix is read with `i32.load` (align 2).
         let total_size = 4 + string_bytes.len() as u32; // length prefix + content
-        let string_size_with_padding = total_size + 16;
-        let aligned_size = (string_size_with_padding + 3) & !3; // Round up to nearest multiple of 4
-        self.string_offset_counter += aligned_size;
+        self.string_offset_counter += (total_size + 3) & !3;
 
         // Store in string pool for reuse
         self.string_pool.insert(s.to_string(), current_offset);

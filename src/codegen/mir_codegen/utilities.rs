@@ -1336,8 +1336,8 @@ impl MirCodeGenerator<'_> {
         module.section(&code_section);
 
         // 7. Data section (string literals)
-        let data_section = self.wasm_generator.memory_utils.get_data_section();
-        module.section(data_section);
+        let data_section = self.wasm_generator.memory_utils.data_section();
+        module.section(&data_section);
 
         // 8. clean:build custom section — compiler provenance for diagnostics.
         // Read by host runtimes (e.g. clean-server) when reporting WASM parse
