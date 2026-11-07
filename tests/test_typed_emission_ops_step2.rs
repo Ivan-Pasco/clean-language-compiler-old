@@ -564,27 +564,6 @@ fn emission_ops_hash_mismatch_produces_plugin006_error() {
     );
 }
 
-#[test]
-fn emission_ops_hash_absent_produces_warning_text() {
-    let msg = WasmPluginLoader::format_emission_ops_hash_absent_warning(
-        "frame.locale",
-        Path::new("/tmp/frame.locale"),
-    );
-    assert!(
-        msg.contains("PLUGIN-OPS-ABSENT"),
-        "absent warning must include PLUGIN-OPS-ABSENT code; got: {}",
-        msg
-    );
-    assert!(
-        msg.contains("emission_ops_hash"),
-        "absent warning must name the field"
-    );
-    assert!(
-        msg.contains("typed-emission.md"),
-        "absent warning must cite the spec"
-    );
-}
-
 // ─── Test 7: emission_ops_hash three cases (Phase D — absent is always an error) ──
 //
 // Cases:

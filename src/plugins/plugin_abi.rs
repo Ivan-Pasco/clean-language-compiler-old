@@ -172,14 +172,15 @@ pub struct PluginCompatibility {
     #[serde(default)]
     pub expansion_version: Option<String>,
     /// SHA-256 (lowercase hex, 64 chars) of the `typed-emission-ops.toml` file the
-    /// plugin was compiled against. Validated at load time against `EMISSION_OPS_HASH`.
-    ///
-    /// Three-case loader (typed-emission.md §3.10 / Layer D step 2):
+    /// plugin was compiled against. Validated at load time against
+    /// `EMISSION_OPS_HASH` for plugins that run the typed-emission ABI
+    /// (`expansion_version = "3.0.0"` with a plugin.wasm):
     ///   - Match   → load silently.
     ///   - Mismatch → refuse with PLUGIN006.
-    ///   - Absent  → warn, load (refuse when `--strict-emission-ops` is active).
+    ///   - Absent  → refuse with PLUGIN006.
     ///
-    /// Plugins compiled without typed-op bridge support omit this field.
+    /// Bridge-only and string-emission (`expansion_version` absent or
+    /// `"1.0.0"`) plugins never call the typed-op bridges and are not checked.
     #[serde(default)]
     pub emission_ops_hash: Option<String>,
 }
@@ -920,15 +921,9 @@ pub const DEFAULT_RUNTIME_ABI_VERSION: &str = "1.0.0";
 pub const SUPPORTED_EXPANSION_VERSIONS: &[&str] = &["1.0.0", "3.0.0"];
 
 /// SHA-256 (lowercase hex) of `foundation/spec/plugins/contracts/typed-emission-ops.toml`
-/// at the time this compiler was built. Plugins that declare `emission_ops_hash`
-/// in `[compatibility]` are validated against this value at load time.
-///
-/// Three-case loader behaviour (typed-emission.md §3.10 / Layer D step 2):
-///   - Match   → load silently; plugin may use `_expr_binop_op` / `_expr_unop_op`.
-///   - Mismatch → refuse with PLUGIN006 (actionable reinstall message).
-///   - Absent  → warn only; plugin loads but lacks typed-op bridge capability.
-///
-/// When `--strict-emission-ops` is set, the Absent case is promoted to Refuse.
+/// at the time this compiler was built. Checked against a typed-emission plugin's `emission_ops_hash` at load
+/// time: a missing or different hash refuses the plugin with PLUGIN006 (see
+/// `PluginCompatibility::emission_ops_hash`).
 ///
 /// The build script (`build.rs`) computes this hash from the raw file bytes.
 /// Sentinel "0000…0000" (64 zeros) means the spec TOML was not present at
