@@ -1,0 +1,13 @@
+// Test: bugfixes/block_comment_only_line
+// Grammar: comment, empty_line, simple_indented_block
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   1
+//   2
+
+start:
+	integer a = 1
+/* an unindented block comment */
+	print(a)
+		/* a deeper one */ // and a line comment
+	print(a + 1)

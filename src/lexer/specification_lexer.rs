@@ -158,14 +158,11 @@ impl<'a> SpecificationLexer<'a> {
             return Ok(Token::simple(TokenKind::Newline, start_location));
         }
 
-        if let Some(&'/') = self.peek() {
-            if let Some(chars) = self.peek_chars(2) {
-                if chars[1] == '/' {
-                    // Comment line - handle the comment normally without recursion
-                    self.at_line_start = false;
-                    return self.handle_slash();
-                }
-            }
+        // A comment-only line (`// ...`, or a `/* ... */` with nothing after
+        // it) is not a statement line: it must not open or close a block.
+        if self.at_comment_only_line() {
+            self.at_line_start = false;
+            return self.handle_slash();
         }
 
         self.at_line_start = false;
@@ -229,6 +226,28 @@ impl<'a> SpecificationLexer<'a> {
                 self.next_token_after_indentation()
             }
         }
+    }
+
+    /// True when the rest of the current line is only a comment: a `//`
+    /// comment, or a `/* ... */` block comment (possibly spanning lines)
+    /// followed by nothing but whitespace or a `//` comment. Nothing is
+    /// consumed.
+    fn at_comment_only_line(&self) -> bool {
+        let rest = &self.source_content[self.current_pos..];
+        if rest.starts_with("//") {
+            return true;
+        }
+        let Some(body) = rest.strip_prefix("/*") else {
+            return false;
+        };
+        let Some(close) = body.find("*/") else {
+            // Unterminated: let the comment reader report it.
+            return true;
+        };
+        let after = &body[close + 2..];
+        let line_rest = after.split('\n').next().unwrap_or("");
+        let trimmed = line_rest.trim_start_matches([' ', '\t', '\r']);
+        trimmed.is_empty() || trimmed.starts_with("//")
     }
 
     /// Get next token after handling indentation (prevents recursion)
@@ -1649,6 +1668,34 @@ mod regression_tests {
                 TokenKind::Identifier("b5ed7".to_string())
             ]
         );
+    }
+
+    /// Regression: a line holding only a `/* ... */` comment is a comment
+    /// line like `// ...`. Unindented, it used to emit a Dedent and close the
+    /// enclosing block, so the following statement fell out of `start:`.
+    #[test]
+    fn block_comment_only_line_keeps_block_open() {
+        let plain = "start:\n\tinteger a = 1\n\tprint(a)\n";
+        let layout = |src: &str| -> Vec<TokenKind> {
+            kinds(src)
+                .into_iter()
+                .filter(|k| {
+                    !matches!(
+                        k,
+                        TokenKind::Comment(_) | TokenKind::BlockComment(_) | TokenKind::Newline
+                    )
+                })
+                .collect()
+        };
+        for src in [
+            "start:\n\tinteger a = 1\n/* c */\n\tprint(a)\n",
+            "start:\n\tinteger a = 1\n\t\t\t/* c */ // d\n\tprint(a)\n",
+            "start:\n\tinteger a = 1\n/* one\ntwo */\n\tprint(a)\n",
+        ] {
+            assert_eq!(layout(src), layout(plain), "{}", src.escape_debug());
+        }
+        // Code after the comment keeps its indentation.
+        assert!(kinds("start:\n\t/* c */ print(1)\n").contains(&TokenKind::Indent(1)));
     }
 
     /// Real exponents and base-prefixed integers keep working.
