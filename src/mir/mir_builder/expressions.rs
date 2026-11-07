@@ -1468,6 +1468,33 @@ impl MirBuilder {
                     "Method call receiver"
                 );
 
+                // `obj.toString()` on a class that declares no `toString()`
+                // (nor inherits one) is the class name (07-statements.md
+                // "Default Class Behavior").
+                if let ConcreteType::Class {
+                    symbol_id: class_symbol,
+                    ..
+                } = &receiver_actual_type
+                {
+                    if method_name == "toString" && method_symbol.0 == 0 && arguments.is_empty() {
+                        if let Some(class_name) = self
+                            .all_classes
+                            .iter()
+                            .find(|c| c.symbol_id == *class_symbol)
+                            .map(|c| c.name.clone())
+                        {
+                            let name_literal = TastExpression {
+                                kind: TastExpressionKind::Literal {
+                                    value: TastLiteral::String(class_name),
+                                },
+                                expr_type: ConcreteType::String,
+                                location: expression.location.clone(),
+                            };
+                            return self.build_expression(context, &name_literal);
+                        }
+                    }
+                }
+
                 // Capability-typed receiver — emit dynamic dispatch via
                 // MirOperation::CallCapability. The receiver's class-id (at
                 // offset 0 of its instance header) drives the class switch
