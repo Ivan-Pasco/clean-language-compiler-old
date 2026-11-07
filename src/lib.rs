@@ -598,8 +598,7 @@ pub fn parse_to_ast(source: &str, file_path: &str) -> Result<ast::Program, Vec<C
     let tokens = lexer.tokenize().map_err(|e| vec![CompilerError::from(e)])?;
 
     // Stage 2: Parsing to AST
-    let mut parser =
-        SpecificationParser::with_plugin_keywords(tokens, file_path.to_string(), Vec::new());
+    let mut parser = SpecificationParser::with_plugin_keywords(tokens, Vec::new());
     let ast = parser.parse_program().map_err(|e| vec![e])?;
 
     Ok(ast)
@@ -758,11 +757,8 @@ fn run_single_source_frontend(
 
     // Stage 2: Parsing. Plugin keywords let the parser recognise
     // plugin-defined blocks (e.g. `data User`).
-    let mut parser = SpecificationParser::with_plugin_keywords(
-        tokens,
-        file_path.to_string(),
-        registry.get_all_block_keywords(),
-    );
+    let mut parser =
+        SpecificationParser::with_plugin_keywords(tokens, registry.get_all_block_keywords());
     let parsed_ast = parser.parse_program().map_err(|e| vec![e])?;
     let function_count = parsed_ast.functions.len();
     let type_count = parsed_ast.classes.len();
@@ -1009,8 +1005,7 @@ pub fn lint_source(
     let tokens = lexer.tokenize().map_err(|e| vec![CompilerError::from(e)])?;
 
     let plugin_keywords = registry.get_all_block_keywords();
-    let mut parser =
-        SpecificationParser::with_plugin_keywords(tokens, file_path.to_string(), plugin_keywords);
+    let mut parser = SpecificationParser::with_plugin_keywords(tokens, plugin_keywords);
     let program = parser.parse_program().map_err(|e| vec![e])?;
 
     // The pre-expansion snapshot IS the just-parsed program — we run lint

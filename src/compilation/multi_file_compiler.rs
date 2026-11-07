@@ -1275,11 +1275,7 @@ impl MultiFileCompiler {
         } else {
             Vec::new()
         };
-        let mut parser = SpecificationParser::with_plugin_keywords(
-            tokens,
-            file_path.to_string_lossy().to_string(),
-            plugin_keywords,
-        );
+        let mut parser = SpecificationParser::with_plugin_keywords(tokens, plugin_keywords);
         let ast = parser.parse_program()?;
 
         // Extract imports from AST, preserving file import flag
@@ -1432,11 +1428,7 @@ impl MultiFileCompiler {
         } else {
             Vec::new()
         };
-        let mut parser = SpecificationParser::with_plugin_keywords(
-            tokens,
-            file_path.to_string_lossy().to_string(),
-            plugin_keywords,
-        );
+        let mut parser = SpecificationParser::with_plugin_keywords(tokens, plugin_keywords);
         let mut parsed_ast = parser.parse_program()?;
 
         // Stage 2.5a: Plugin Enforcement

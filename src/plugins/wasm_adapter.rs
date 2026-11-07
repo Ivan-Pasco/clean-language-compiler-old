@@ -3107,7 +3107,7 @@ impl WasmPluginAdapter {
         let tokens = lexer
             .tokenize()
             .map_err(|e| anyhow!("Failed to tokenize plugin output: {}", e))?;
-        let mut parser = SpecificationParser::new(tokens, "<plugin-output>".to_string());
+        let mut parser = SpecificationParser::new(tokens);
         // Plugin output may have sections in any order (e.g., external: before functions: before start:)
         parser.set_lenient_section_order(true);
         parser
@@ -5844,7 +5844,7 @@ start:
         let tokens = lexer
             .tokenize()
             .expect("tokenize must not fail for valid plugin output");
-        let mut parser = SpecificationParser::new(tokens, "<test-plugin-output>".to_string());
+        let mut parser = SpecificationParser::new(tokens);
         // Mimic parse_plugin_code: lenient section ordering for plugin output
         parser.set_lenient_section_order(true);
         let program = parser
@@ -5898,7 +5898,7 @@ start:
         let source_code = SourceCode::new(reordered.to_string(), "<test-reordered>".to_string());
         let mut lexer = SpecificationLexer::new(&source_code);
         let tokens = lexer.tokenize().expect("tokenize must not fail");
-        let mut parser = SpecificationParser::new(tokens, "<test-reordered>".to_string());
+        let mut parser = SpecificationParser::new(tokens);
         parser.set_lenient_section_order(true);
         let program = parser
             .parse_program()

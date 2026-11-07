@@ -9,7 +9,6 @@ use crate::lexer::specification_token::TokenStream;
 /// without source reconstruction. See token_parser.rs for the token-driven implementation.
 pub struct SpecificationParser {
     token_stream: TokenStream,
-    file_path: String,
     /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
     plugin_keywords: Vec<String>,
     /// When true, skip section ordering enforcement (for plugin output)
@@ -19,10 +18,9 @@ pub struct SpecificationParser {
 }
 
 impl SpecificationParser {
-    pub fn new(token_stream: TokenStream, file_path: String) -> Self {
+    pub fn new(token_stream: TokenStream) -> Self {
         Self {
             token_stream,
-            file_path,
             plugin_keywords: Vec::new(),
             lenient_section_order: false,
             consumed: false,
@@ -35,14 +33,9 @@ impl SpecificationParser {
     /// a trailing colon. For example, with `plugin_keywords = ["data"]`:
     /// - `data User` is parsed as a framework block (plugin keyword)
     /// - `endpoints:` is parsed as a framework block (has colon)
-    pub fn with_plugin_keywords(
-        token_stream: TokenStream,
-        file_path: String,
-        plugin_keywords: Vec<String>,
-    ) -> Self {
+    pub fn with_plugin_keywords(token_stream: TokenStream, plugin_keywords: Vec<String>) -> Self {
         Self {
             token_stream,
-            file_path,
             plugin_keywords,
             lenient_section_order: false,
             consumed: false,
@@ -69,14 +62,10 @@ impl SpecificationParser {
         }
         self.consumed = true;
         let mut parser = if self.plugin_keywords.is_empty() {
-            TokenParser::new(
-                std::mem::take(&mut self.token_stream),
-                self.file_path.clone(),
-            )
+            TokenParser::new(std::mem::take(&mut self.token_stream))
         } else {
             TokenParser::with_plugin_keywords(
                 std::mem::take(&mut self.token_stream),
-                self.file_path.clone(),
                 std::mem::take(&mut self.plugin_keywords),
             )
         };
@@ -101,7 +90,7 @@ mod tests {
     fn second_parse_is_an_error_not_a_panic() {
         let source = SourceCode::new("start:\n\tprint(1)\n".to_string(), "t.cln".to_string());
         let tokens = SpecificationLexer::new(&source).tokenize().unwrap();
-        let mut parser = SpecificationParser::new(tokens, "t.cln".to_string());
+        let mut parser = SpecificationParser::new(tokens);
         assert!(parser.parse_program().is_ok());
         assert!(parser.parse_program().is_err());
     }
@@ -109,7 +98,7 @@ mod tests {
     /// An empty token stream parses to an empty program instead of panicking.
     #[test]
     fn empty_token_stream_does_not_panic() {
-        let mut parser = SpecificationParser::new(TokenStream::default(), "t.cln".to_string());
+        let mut parser = SpecificationParser::new(TokenStream::default());
         let program = parser.parse_program().unwrap();
         assert!(program.functions.is_empty());
     }

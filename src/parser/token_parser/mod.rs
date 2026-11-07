@@ -78,7 +78,7 @@ pub struct TokenParser {
 }
 
 impl TokenParser {
-    pub fn new(token_stream: TokenStream, _file_path: String) -> Self {
+    pub fn new(token_stream: TokenStream) -> Self {
         Self {
             source_content: token_stream.source_content,
             tokens: Self::terminated(token_stream.tokens),
@@ -98,11 +98,7 @@ impl TokenParser {
     /// a trailing colon. For example, with `plugin_keywords = ["data"]`:
     /// - `data User` is parsed as a framework block (plugin keyword)
     /// - `endpoints:` is parsed as a framework block (has colon)
-    pub fn with_plugin_keywords(
-        token_stream: TokenStream,
-        _file_path: String,
-        plugin_keywords: Vec<String>,
-    ) -> Self {
+    pub fn with_plugin_keywords(token_stream: TokenStream, plugin_keywords: Vec<String>) -> Self {
         Self {
             source_content: token_stream.source_content,
             tokens: Self::terminated(token_stream.tokens),

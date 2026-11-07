@@ -316,11 +316,7 @@ fn parse_with_token_parser(wrapped: &str) -> Option<Program> {
         .read()
         .map(|k| k.clone())
         .unwrap_or_default();
-    let mut parser = SpecificationParser::with_plugin_keywords(
-        tokens,
-        "<plugin-fragment>".to_string(),
-        keywords,
-    );
+    let mut parser = SpecificationParser::with_plugin_keywords(tokens, keywords);
     parser.set_lenient_section_order(true);
     parser.parse_program().ok()
 }

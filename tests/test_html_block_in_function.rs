@@ -22,8 +22,7 @@ fn find_framework_blocks_in_functions(
         .tokenize()
         .expect("Lexer should tokenize HTML content without errors");
 
-    let mut parser =
-        SpecificationParser::with_plugin_keywords(tokens, "test.cln".to_string(), keywords);
+    let mut parser = SpecificationParser::with_plugin_keywords(tokens, keywords);
     let program = match parser.parse_program() {
         Ok(p) => p,
         Err(_) => return Vec::new(),

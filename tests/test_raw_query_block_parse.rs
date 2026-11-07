@@ -10,7 +10,7 @@ use clean_language_compiler::parser::SpecificationParser;
 fn start_body(source: &str) -> Vec<Statement> {
     let code = SourceCode::new(source.to_string(), "raw_query.cln".to_string());
     let tokens = SpecificationLexer::new(&code).tokenize().expect("lexes");
-    let mut parser = SpecificationParser::new(tokens, "raw_query.cln".to_string());
+    let mut parser = SpecificationParser::new(tokens);
     let program = parser.parse_program().expect("parses");
     program
         .start_function

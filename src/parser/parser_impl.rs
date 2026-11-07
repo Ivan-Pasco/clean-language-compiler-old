@@ -49,7 +49,6 @@ impl ErrorRecoveringParser {
 }
 
 pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program, CompilerError> {
-    let _file_path = "unknown";
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut start_function = None;
