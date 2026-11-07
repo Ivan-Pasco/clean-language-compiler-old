@@ -7406,9 +7406,8 @@ impl HirBuilder {
         )
     }
 
-    /// `Call` equivalent of `method_stores_argument`. Recognises both
-    /// the dotted (`list.push`) and snake_case (`list_push`) surface
-    /// forms of the storing operations.
+    /// `Call` equivalent of `method_stores_argument`: the dotted
+    /// (`list.push`) surface form of the storing operations.
     fn function_name_stores_argument(function: &str) -> bool {
         matches!(
             function,
@@ -7418,14 +7417,7 @@ impl HirBuilder {
                 | "list.set"
                 | "list.unshift"
                 | "list.fill"
-                | "list_push"
-                | "list_add"
-                | "list_insert"
-                | "list_set"
-                | "list_unshift"
-                | "list_fill"
                 | "pairs.set"
-                | "pairs_set"
         )
     }
 
