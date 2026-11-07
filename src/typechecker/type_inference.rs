@@ -7,12 +7,12 @@ use super::constraint_solver::ConstraintSolver;
 use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
-    TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStateScope,
-    TastStatement, TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
+    TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
+    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
-use crate::hir::{HirBinaryOp, HirStateScope, HirType, HirUnaryOp};
+use crate::hir::{HirBinaryOp, HirType, HirUnaryOp};
 use crate::resolver::{
     GlobalSymbolTable, ResolvedHirBlock, ResolvedHirClass, ResolvedHirExpression,
     ResolvedHirFunction, ResolvedHirLValue, ResolvedHirMethod, ResolvedHirParameter,
@@ -1196,7 +1196,6 @@ impl<'a> TypeInference<'a> {
 
         Ok(TastWatchBlock {
             targets: watch.targets.clone(),
-            target_symbol_ids: watch.target_symbol_ids.clone(),
             body: tast_body,
             location: watch.location.clone(),
         })
@@ -1630,7 +1629,7 @@ impl<'a> TypeInference<'a> {
     ) {
         let is_void_return = matches!(
             declared_return_type,
-            ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Never
+            ConcreteType::Null | ConcreteType::Undefined
         );
         if is_void_return || Self::block_definitely_returns(body) {
             return;
@@ -1696,8 +1695,7 @@ impl<'a> TypeInference<'a> {
                 name: field.name.clone(),
                 field_type,
                 default_value,
-                is_static: false,   // ResolvedHirField doesn't have is_static field
-                is_readonly: false, // Would get from HIR
+                is_static: false, // ResolvedHirField doesn't have is_static field
                 visibility: Visibility::Public, // Would get from HIR
                 location: field.location.clone(),
             });
@@ -1771,9 +1769,6 @@ impl<'a> TypeInference<'a> {
             methods: tast_methods,
             constructors: tast_constructors, // Now properly populated
             parent_class: class.parent,
-            interfaces: Vec::new(),         // Would handle interfaces
-            generic_params: Vec::new(),     // Would handle generics
-            is_abstract: false,             // Would get from HIR
             visibility: Visibility::Public, // Would get from HIR
             invariants: tast_invariants,
             location: class.location.clone(),
@@ -1979,7 +1974,6 @@ impl<'a> TypeInference<'a> {
                         collect_refs_expr(fallback, out);
                     }
                     Cast { expression, .. } => collect_refs_expr(expression, out),
-                    Assignment { value, .. } => collect_refs_expr(value, out),
                     Range {
                         start, end, step, ..
                     } => {
@@ -2225,16 +2219,10 @@ impl<'a> TypeInference<'a> {
             tast_rules.push(rule);
         }
 
-        let scope = match state_block.scope {
-            HirStateScope::App => TastStateScope::App,
-            HirStateScope::Screen => TastStateScope::Screen,
-        };
-
         Ok(TastStateBlock {
             declarations: tast_declarations,
             computed: tast_computed,
             rules: tast_rules,
-            scope,
             location: state_block.location.clone(),
         })
     }
@@ -3264,11 +3252,6 @@ impl<'a> TypeInference<'a> {
                 operand,
                 location,
             } => self.infer_unary_op_expression(op, operand, location)?,
-            ResolvedHirExpression::Assignment {
-                target,
-                value,
-                location,
-            } => self.infer_assignment_expression(target, value, location)?,
             ResolvedHirExpression::Constructor {
                 class_name,
                 class_symbol_id,
@@ -4302,37 +4285,6 @@ impl<'a> TypeInference<'a> {
         ))
     }
 
-    /// Helper: infer an `Assignment` expression.
-    fn infer_assignment_expression(
-        &mut self,
-        target: &ResolvedHirLValue,
-        value: &ResolvedHirExpression,
-        location: &SourceLocation,
-    ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
-        let tast_value = self.infer_expression(value)?;
-
-        // For assignment expressions, the type is the type of the assigned value
-        let assignment_type = tast_value.expr_type.clone();
-
-        // Validate assignment target - complex LValues not yet fully supported
-        match target {
-            ResolvedHirLValue::Variable { .. } => {
-                // Simple variable assignment is supported
-            }
-            _ => {
-                // For complex LValues (field access, array indexing, etc.), emit error
-                self.errors.push(CompilerError::type_error(
-                    "Complex assignment targets not yet fully supported in type inference",
-                    None,
-                    Some(location.clone()),
-                ));
-            }
-        }
-
-        // Assignment expressions return the assigned value in Clean Language
-        Ok((tast_value.kind, assignment_type, location.clone()))
-    }
-
     /// Helper: infer a `Constructor` expression.
     fn infer_constructor_expression(
         &mut self,
@@ -4664,8 +4616,8 @@ impl<'a> TypeInference<'a> {
             crate::ast::Value::List(elements) => {
                 // Infer list type from elements
                 if elements.is_empty() {
-                    // Empty list - type will be inferred from context
-                    // For now, return Unknown which will be unified with expected type
+                    // An empty list literal takes its element type from the
+                    // declaration or parameter it is assigned to.
                     (TastLiteral::Null, ConcreteType::Unknown)
                 } else {
                     // Infer element type from first element (could be improved)
@@ -6303,13 +6255,9 @@ impl<'a> TypeInference<'a> {
                     if let Some(symbol) = self.symbol_table.get_symbol(symbol_id) {
                         match &symbol.kind {
                             SymbolKind::Class { .. } => {
-                                // Note: Generic type arguments are not yet supported
-                                // Clean Language uses 'any' for generic placeholder types
-                                // Full generic instantiation (e.g., List<String>) requires:
-                                // 1. Parser support for type argument syntax
-                                // 2. HIR support for carrying type arguments
-                                // 3. Type inference for generic parameters
-                                // For now, classes are instantiated without type arguments
+                                // Classes have no type parameters (a generic
+                                // placeholder is written `any`), so a class type
+                                // carries no type arguments.
                                 ConcreteType::Class {
                                     symbol_id,
                                     type_args: Vec::new(),
@@ -6329,7 +6277,8 @@ impl<'a> TypeInference<'a> {
                                 }
                             }
                             _ => {
-                                // For other named types (functions, variables), treat as unknown for now
+                                // A name that is not a type (a function or a
+                                // variable) has no type; the resolver reports it.
                                 ConcreteType::Unknown
                             }
                         }
@@ -6368,8 +6317,9 @@ impl<'a> TypeInference<'a> {
                 )
             }
             HirType::Inferred { .. } => {
-                // Type inference placeholders are handled by the constraint solver
-                // For now, return Unknown and let constraint solver handle it
+                // The symbol's type is set where its value is bound (a loop
+                // variable takes the list's element type, a `later` binding
+                // its expression's type); the placeholder itself has none.
                 ConcreteType::Unknown
             }
             HirType::Any => {
@@ -6669,9 +6619,6 @@ fn find_io_call_in_expression(expr: &TastExpression) -> Option<String> {
         } => find_io_call_in_expression(condition)
             .or_else(|| find_io_call_in_expression(then_expr))
             .or_else(|| find_io_call_in_expression(else_expr)),
-        TastExpressionKind::Cast { expression, .. } => find_io_call_in_expression(expression),
-        TastExpressionKind::TypeCheck { expression, .. } => find_io_call_in_expression(expression),
-        TastExpressionKind::Await { expression } => find_io_call_in_expression(expression),
         TastExpressionKind::OnError {
             expression,
             fallback,

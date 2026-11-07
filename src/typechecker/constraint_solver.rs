@@ -6,7 +6,7 @@
 use super::tast::{ConcreteType, TypeConstraint};
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 /// Type variable identifier for constraint solving
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,7 +47,6 @@ pub struct ConstraintSolver<'a> {
 #[derive(Debug)]
 pub struct SolverResult {
     pub substitution: Substitution,
-    pub remaining_constraints: Vec<TypeConstraint>,
     pub errors: Vec<CompilerError>,
 }
 
@@ -105,65 +104,15 @@ impl<'a> ConstraintSolver<'a> {
 
     /// Solve all constraints and return the result
     pub fn solve(mut self) -> SolverResult {
-        // Process constraints until none remain or we can't make progress.
-        //
-        // The iteration cap is a safety net against pathological infinite loops
-        // in `solve_constraint`. Genuine non-progress is already detected by the
-        // `try_alternative_strategies` `break` below — so we don't need the cap
-        // to catch stalls, only true loops.
-        //
-        // Each plugin-generated `data:` block expands into many constraints
-        // (~250 with frame.data — the class declaration, two generic result
-        // types `PagedResult<T>` and `CursorResult<T>`, the `find`, `first`,
-        // `save`, `delete`, `paginate`, `cursor` methods, and the implicit
-        // `this` references inside each). A realistic project with 50 data
-        // models therefore submits ~12500 constraints; one with 100 models
-        // submits ~25000. The previous 10000-iteration cap rejected the
-        // former. Setting the cap to 100000 covers projects up to ~400 data
-        // models — comfortably ahead of any realistic application — while
-        // still trapping an actual runaway. See SEM001 (fingerprint
-        // 7cc56e80f714).
-        let mut iterations = 0;
-        let max_iterations = 100_000;
-
-        while !self.constraints.is_empty() && iterations < max_iterations {
-            let initial_count = self.constraints.len();
-
-            // Try to solve one constraint
-            if let Some(constraint) = self.constraints.pop_front() {
-                if let Err(error) = self.solve_constraint(constraint) {
-                    self.errors.push(error);
-                }
+        // Each step consumes one constraint; solving never adds constraints.
+        while let Some(constraint) = self.constraints.pop_front() {
+            if let Err(error) = self.solve_constraint(constraint) {
+                self.errors.push(error);
             }
-
-            // Check if we made progress
-            if self.constraints.len() == initial_count {
-                // No progress made, try different solving strategies
-                if !self.try_alternative_strategies() {
-                    break; // Can't make any more progress
-                }
-            }
-
-            iterations += 1;
-        }
-
-        if iterations >= max_iterations {
-            self.errors.push(CompilerError::type_error(
-                "Type inference timeout: too many constraint solving iterations",
-                None,
-                Some(SourceLocation {
-                    file: "<constraint_solver>".to_string(),
-                    line: 0,
-                    column: 0,
-                    byte_start: None,
-                    byte_end: None,
-                }),
-            ));
         }
 
         SolverResult {
             substitution: self.substitution,
-            remaining_constraints: self.constraints.into_iter().collect(),
             errors: self.errors,
         }
     }
@@ -847,86 +796,6 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
-    /// Try alternative solving strategies when stuck
-    fn try_alternative_strategies(&mut self) -> bool {
-        // Apply default types to unconstrained variables
-        self.apply_default_types()
-    }
-
-    /// Apply default types to unconstrained type variables
-    fn apply_default_types(&mut self) -> bool {
-        let mut made_progress = false;
-
-        // Find unconstrained type variables in remaining constraints
-        let mut unconstrained_vars = HashSet::new();
-
-        for constraint in &self.constraints {
-            match constraint {
-                TypeConstraint::Equality { left, right, .. } => {
-                    self.collect_type_vars(left, &mut unconstrained_vars);
-                    self.collect_type_vars(right, &mut unconstrained_vars);
-                }
-                TypeConstraint::Subtype {
-                    subtype, supertype, ..
-                } => {
-                    self.collect_type_vars(subtype, &mut unconstrained_vars);
-                    self.collect_type_vars(supertype, &mut unconstrained_vars);
-                }
-            }
-        }
-
-        // Remove already substituted variables
-        for var_id in self.substitution.keys() {
-            unconstrained_vars.remove(var_id);
-        }
-
-        // Apply default types (Unknown for now)
-        for var_id in unconstrained_vars {
-            self.substitution.insert(var_id, ConcreteType::Unknown);
-            made_progress = true;
-        }
-
-        made_progress
-    }
-
-    /// Collect type variables from a type
-    fn collect_type_vars(&self, type_: &ConcreteType, vars: &mut HashSet<TypeVarId>) {
-        match type_ {
-            ConcreteType::Generic { name, .. } => {
-                if let Ok(var_id) = name.parse::<usize>() {
-                    vars.insert(TypeVarId(var_id));
-                }
-            }
-            ConcreteType::Array(element_type) => {
-                self.collect_type_vars(element_type, vars);
-            }
-            ConcreteType::Matrix(element_type) => {
-                self.collect_type_vars(element_type, vars);
-            }
-            ConcreteType::Function {
-                parameters,
-                return_type,
-                ..
-            } => {
-                for param in parameters {
-                    self.collect_type_vars(param, vars);
-                }
-                self.collect_type_vars(return_type, vars);
-            }
-            ConcreteType::Class { type_args, .. } | ConcreteType::Interface { type_args, .. } => {
-                for arg in type_args {
-                    self.collect_type_vars(arg, vars);
-                }
-            }
-            ConcreteType::Union(types) => {
-                for t in types {
-                    self.collect_type_vars(t, vars);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Check if child_id is a subclass of parent_id
     fn is_subclass_of(
         &self,
@@ -989,7 +858,6 @@ mod tests {
         let result = solver.solve();
 
         assert!(result.errors.is_empty());
-        assert!(result.remaining_constraints.is_empty());
     }
 
     #[test]

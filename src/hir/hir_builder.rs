@@ -5813,16 +5813,6 @@ impl HirBuilder {
             HirExpression::Cast { expression, .. } => {
                 Self::analyze_expr_for_accumulator(expression, acc_name, out);
             }
-            HirExpression::Assignment { target, value, .. } => {
-                // An assignment-expression to `acc` is an escape we don't model.
-                if let HirLValue::Variable { name, .. } = target {
-                    if name == acc_name {
-                        out.disqualified = true;
-                    }
-                }
-                Self::analyze_lvalue_for_accumulator(target, acc_name, out);
-                Self::analyze_expr_for_accumulator(value, acc_name, out);
-            }
             HirExpression::NamespaceCall { arguments, .. } => {
                 for arg in arguments {
                     Self::analyze_expr_for_accumulator(arg, acc_name, out);

@@ -1977,22 +1977,6 @@ impl MirCodeGenerator<'_> {
                                 "Void function - no return value to store or drop"
                             );
                         }
-                        MirType::StringTuple => {
-                            // StringTuple functions return a SINGLE i32 pointer
-                            // The pointer references memory formatted as: [4-byte length][content bytes]
-                            // Just store the pointer directly - no Drop needed
-                            tracing::trace!(
-                                function_name = ?function_name,
-                                "Handling StringTuple return (storing single i32 pointer)"
-                            );
-
-                            self.store_to_local_with_conversion(
-                                dest,
-                                Some(signature.return_type.clone()),
-                            )?;
-
-                            tracing::trace!("Stored StringTuple return as single i32 pointer");
-                        }
                         _ => {
                             // Regular single-value return - with type conversion if needed
                             // NOTE: Pass return type for automatic f64->i32 conversion

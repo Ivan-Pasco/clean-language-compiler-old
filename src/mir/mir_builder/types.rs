@@ -775,7 +775,6 @@ impl MirBuilder {
             }
             TastLiteral::Boolean(b) => MirConstant::Boolean(*b),
             TastLiteral::Null => MirConstant::Null,
-            TastLiteral::Undefined => MirConstant::Undefined,
         }
     }
 
@@ -798,7 +797,6 @@ impl MirBuilder {
             TastLiteral::String(_) => MirType::Ptr(Box::new(MirType::I8)), // String as i8 pointer
             TastLiteral::Boolean(_) => MirType::Bool,
             TastLiteral::Null => MirType::Ptr(Box::new(MirType::Void)),
-            TastLiteral::Undefined => MirType::Void,
         }
     }
 
@@ -925,7 +923,6 @@ impl MirBuilder {
                     _ => ConcreteType::Null, // Fallback for other pointer types
                 }
             }
-            MirType::StringTuple => ConcreteType::String,
             MirType::Function {
                 parameters,
                 return_type,
@@ -938,8 +935,6 @@ impl MirBuilder {
             MirType::I8 | MirType::I16 | MirType::I64 => ConcreteType::Integer,
             MirType::U8 | MirType::U16 | MirType::U32 | MirType::U64 => ConcreteType::Integer,
             MirType::F32 => ConcreteType::Number,
-            MirType::Array(_, _) => ConcreteType::Array(Box::new(ConcreteType::Integer)),
-            MirType::Struct(_) => ConcreteType::Null,
             MirType::Any => ConcreteType::Any, // Boxed any type
         }
     }
@@ -1072,11 +1067,6 @@ impl MirBuilder {
 
             // Bitwise operators (And/Or work on integers, lowered to i32.and/i32.or in WASM)
             // The type system ensures these are used on integer types
-            BinaryOperator::BitwiseAnd => MirBinaryOp::And,
-            BinaryOperator::BitwiseOr => MirBinaryOp::Or,
-            BinaryOperator::BitwiseXor => MirBinaryOp::Xor,
-            BinaryOperator::LeftShift => MirBinaryOp::Shl,
-            BinaryOperator::RightShift => MirBinaryOp::Shr,
 
             // CRITICAL: These operators should NEVER reach here - they must be handled in build_expression
             BinaryOperator::Power => {
@@ -1085,42 +1075,19 @@ impl MirBuilder {
             BinaryOperator::Concatenate => {
                 panic!("BUG: String concatenation should be handled in build_expression as string.concat call, not converted to MIR operator")
             }
-            // BOOK: null-coalescing - NullCoalesce must be handled in build_expression with select instruction
             BinaryOperator::NullCoalesce => {
-                panic!("BUG: NullCoalesce operator should be handled in build_expression with select instruction, not converted to MIR operator")
+                panic!("BUG: NullCoalesce operator should be handled in build_expression as a two-way branch, not converted to MIR operator")
             }
         }
     }
 
     /// Convert TAST unary operator to MIR unary operator
-    ///
-    /// Note: Some unary operators (Plus, Increment, Decrement) cannot be directly
-    /// represented in MIR and should be handled specially in build_expression.
     pub(super) fn convert_unary_op(&self, op: &UnaryOperator) -> MirUnaryOp {
         match op {
-            // Direct unary operators
             UnaryOperator::Negate => MirUnaryOp::Neg,
             UnaryOperator::Not => MirUnaryOp::Not,
-            UnaryOperator::BitwiseNot => MirUnaryOp::BitNot,
             // BOOK: required-operator - Postfix ! assertion for null check
             UnaryOperator::Required => MirUnaryOp::Required,
-
-            // CRITICAL: These operators should NEVER reach here - they must be handled in build_expression
-            UnaryOperator::Plus => {
-                panic!("BUG: Unary plus should be handled in build_expression as no-op, not converted to MIR operator")
-            }
-            UnaryOperator::PreIncrement => {
-                panic!("BUG: Pre-increment should be desugared to assignment (x = x + 1) in build_expression, not converted to MIR operator")
-            }
-            UnaryOperator::PostIncrement => {
-                panic!("BUG: Post-increment should be desugared to assignment (temp = x; x = x + 1; temp) in build_expression, not converted to MIR operator")
-            }
-            UnaryOperator::PreDecrement => {
-                panic!("BUG: Pre-decrement should be desugared to assignment (x = x - 1) in build_expression, not converted to MIR operator")
-            }
-            UnaryOperator::PostDecrement => {
-                panic!("BUG: Post-decrement should be desugared to assignment (temp = x; x = x - 1; temp) in build_expression, not converted to MIR operator")
-            }
         }
     }
 

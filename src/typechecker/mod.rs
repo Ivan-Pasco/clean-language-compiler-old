@@ -16,7 +16,8 @@ use crate::resolver::*;
 use std::collections::HashMap;
 
 pub mod constraint_solver;
-pub mod property_tests;
+#[cfg(test)]
+mod property_tests;
 pub mod tast;
 pub mod type_inference;
 

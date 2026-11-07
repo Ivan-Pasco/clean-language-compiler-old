@@ -559,9 +559,6 @@ impl HirValidator {
             HirExpression::Cast { expression, .. } => {
                 Self::scan_expr_for_route_registrations(context, expression);
             }
-            HirExpression::Assignment { value, .. } => {
-                Self::scan_expr_for_route_registrations(context, value);
-            }
             HirExpression::NamespaceCall { arguments, .. } => {
                 for arg in arguments {
                     Self::scan_expr_for_route_registrations(context, arg);
@@ -1394,38 +1391,6 @@ impl HirValidator {
             } => {
                 Self::validate_expression(context, expression);
                 Self::validate_type(context, target_type, location);
-            }
-
-            HirExpression::Assignment {
-                target,
-                value,
-                location,
-            } => {
-                // CONC001: writing to a module-level state variable inside a `background:`
-                // expression is an unsynchronised write.  Flag it the same way as a read.
-                if context.inside_background {
-                    if let HirLValue::Variable {
-                        name: lval_name, ..
-                    } = target
-                    {
-                        if context.state_var_names.contains(lval_name.as_str()) {
-                            context.error_with_code(
-                                &format!(
-                                    "Shared state variable '{}' is assigned inside a \
-                                     `background:` block without synchronisation — this is \
-                                     an unsynchronised concurrent write (CONC001). Use an \
-                                     atomic/mutex wrapper or perform the mutation before \
-                                     scheduling the background task.",
-                                    lval_name
-                                ),
-                                location.clone(),
-                                "CONC001",
-                            );
-                        }
-                    }
-                }
-                Self::validate_lvalue(context, target);
-                Self::validate_expression(context, value);
             }
 
             HirExpression::NamespaceCall {

@@ -76,16 +76,6 @@ impl MirPipeline {
         }
     }
 
-    /// Create a new MIR pipeline with custom configuration
-    pub fn with_config(config: MirConfig) -> Self {
-        let empty_symbol_table = std::sync::Arc::new(crate::resolver::GlobalSymbolTable::new());
-        Self {
-            builder: MirBuilder::new(empty_symbol_table),
-            optimizer: MirOptimizer::with_config(&config),
-            config,
-        }
-    }
-
     /// Lower TAST to optimized MIR
     pub fn lower(&mut self, tast: TastProgram) -> Result<MirResult, Vec<CompilerError>> {
         tracing::debug!(

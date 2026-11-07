@@ -45,8 +45,6 @@ impl MirBuilder {
             next_block_id: 1, // Block 0 is entry block
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: false,
                 entry_point: tast_function.name == "start",
                 exported: tast_function.name == "start",
             },
@@ -771,8 +769,6 @@ impl MirBuilder {
             next_block_id: 1,
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: true,
                 entry_point: false,
                 exported: false,
             },
@@ -966,8 +962,6 @@ impl MirBuilder {
             next_block_id: 4,
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: true,
                 entry_point: false,
                 exported: false,
             },

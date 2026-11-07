@@ -488,7 +488,6 @@ impl MirBuilder {
             ConcreteType::Union(_) => 4,           // Pointer (boxed)
             ConcreteType::Generic { .. } => 4,     // Treat as pointer
             ConcreteType::Unknown => 4,            // Default
-            ConcreteType::Never => 0,              // Never returns
             ConcreteType::Namespace => 4,          // Not really used in memory
             ConcreteType::Any => 12,               // Boxed: [tag:i32][value1:i32][value2:i32]
             // Optional<T> has the same runtime representation as T (none = 0/null)

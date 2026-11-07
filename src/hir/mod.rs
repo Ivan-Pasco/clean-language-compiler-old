@@ -472,13 +472,6 @@ pub enum HirExpression {
         location: SourceLocation,
     },
 
-    /// Assignment expression (returns the assigned value)
-    Assignment {
-        target: HirLValue,
-        value: Box<HirExpression>,
-        location: SourceLocation,
-    },
-
     /// Namespace function call (e.g., math.sin, string.length)
     NamespaceCall {
         namespace: String,
@@ -612,7 +605,6 @@ impl HirExpression {
             HirExpression::Array { location, .. } => location,
             HirExpression::Constructor { location, .. } => location,
             HirExpression::Cast { location, .. } => location,
-            HirExpression::Assignment { location, .. } => location,
             HirExpression::NamespaceCall { location, .. } => location,
             HirExpression::StaticMethodCall { location, .. } => location,
             HirExpression::OnError { location, .. } => location,

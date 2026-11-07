@@ -61,8 +61,6 @@ fn build_program_with_function(func_name: &str) -> MirProgram {
         next_block_id: 1,
         if_merges: Default::default(),
         attributes: MirFunctionAttributes {
-            inline: false,
-            pure: false,
             entry_point: false,
             exported: true,
         },
@@ -106,8 +104,6 @@ fn build_program_with_function(func_name: &str) -> MirProgram {
         next_block_id: 1,
         if_merges: Default::default(),
         attributes: MirFunctionAttributes {
-            inline: false,
-            pure: false,
             entry_point: true,
             exported: true,
         },
@@ -266,8 +262,6 @@ fn gen002_duplicate_symbol_ids_same_name_exports_exactly_once() {
             next_block_id: 1,
             if_merges: Default::default(),
             attributes: MirFunctionAttributes {
-                inline: false,
-                pure: false,
                 entry_point: false,
                 exported: true,
             },
@@ -315,8 +309,6 @@ fn gen002_duplicate_symbol_ids_same_name_exports_exactly_once() {
         next_block_id: 1,
         if_merges: Default::default(),
         attributes: MirFunctionAttributes {
-            inline: false,
-            pure: false,
             entry_point: true,
             exported: true,
         },

@@ -769,32 +769,6 @@ impl MirBuilder {
             }
 
             TastExpressionKind::UnaryOperation { operator, operand } => {
-                // NOTE: Handle unary Plus as a no-op (identity operation)
-                if matches!(operator, UnaryOperator::Plus) {
-                    // Unary plus is a no-op - just return the operand value unchanged
-                    return self.build_expression(context, operand);
-                }
-
-                // NOTE: Increment/Decrement operators need special desugaring
-                // These operators should have been desugared by the TAST phase, but if they reach here,
-                // we need to handle them properly with proper state mutation
-                match operator {
-                    UnaryOperator::PreIncrement
-                    | UnaryOperator::PostIncrement
-                    | UnaryOperator::PreDecrement
-                    | UnaryOperator::PostDecrement => {
-                        return Err(vec![CompilerError::validation_error(
-                            format!(
-                                "Increment/decrement operators must be desugared before MIR lowering. \
-                                 Operator {:?} cannot be directly lowered to MIR.",
-                                operator
-                            ),
-                            expression.location.clone(),
-                        )]);
-                    }
-                    _ => {}
-                }
-
                 let operand_id = self.build_expression(context, operand)?;
 
                 // `value!` checks for null; a plain integer, number or boolean
@@ -4762,14 +4736,6 @@ impl MirBuilder {
 
                 trace!("Range array created");
                 Ok(list_value_id)
-            }
-
-            _ => {
-                // Unsupported expression type - return error with details
-                Err(vec![CompilerError::validation_error(
-                    format!("Expression type not yet implemented: {:?}", expression.kind),
-                    expression.location.clone(),
-                )])
             }
         }
     }

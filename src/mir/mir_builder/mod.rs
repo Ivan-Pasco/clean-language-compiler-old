@@ -256,12 +256,6 @@ impl MirBuilder {
         }
     }
 
-    /// Enable release mode: `always:` invariant checks will be stripped.
-    pub fn with_release_mode(mut self, release: bool) -> Self {
-        self.release_mode = release;
-        self
-    }
-
     /// Build MIR from TAST program
     pub fn build(&mut self, tast: TastProgram) -> Result<MirProgram, Vec<CompilerError>> {
         // Store all classes for inheritance lookups
