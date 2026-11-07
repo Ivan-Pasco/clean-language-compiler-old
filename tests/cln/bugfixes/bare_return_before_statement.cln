@@ -1,0 +1,18 @@
+// Test: bugfixes/bare_return_before_statement
+// Grammar: return_statement, simple_indented_block
+// Semantic: a bare `return` followed by another statement on the next line
+//   used to fail with "Unexpected token in expression: Indent(3)"
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   x
+
+start:
+	f(0)
+
+functions:
+	void f(integer n)
+		if n > 0
+			print("pos")
+			return
+			print("unreachable")
+		print("x")

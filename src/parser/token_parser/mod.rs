@@ -619,6 +619,27 @@ impl TokenParser {
         0 // Default to level 0 if no Indent/Dedent found
     }
 
+    /// True when nothing but comments follows on source line `line`: the
+    /// next significant token is a line break, a layout token, end of file,
+    /// or a token on a later line. Nothing is consumed.
+    pub(super) fn statement_ends_after(&self, line: usize) -> bool {
+        let next = self.tokens[self.cursor.min(self.tokens.len() - 1)..]
+            .iter()
+            .find(|t| !matches!(t.kind, TokenKind::Comment(_) | TokenKind::BlockComment(_)));
+        match next {
+            None => true,
+            Some(token) => {
+                matches!(
+                    token.kind,
+                    TokenKind::Newline
+                        | TokenKind::Eof
+                        | TokenKind::Indent(_)
+                        | TokenKind::Dedent(_)
+                ) || token.location.line != line
+            }
+        }
+    }
+
     /// Skip whitespace tokens (newlines, comments)
     /// When inside parentheses or braces, also skip Indent/Dedent for multiline expressions
     pub(super) fn skip_whitespace(&mut self) {

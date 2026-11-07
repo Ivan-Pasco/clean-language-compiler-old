@@ -578,17 +578,15 @@ impl TokenParser {
 
     pub(super) fn parse_return(&mut self) -> Result<Statement, CompilerError> {
         let return_token = self.expect(&TokenKind::Return)?;
-        self.skip_whitespace();
 
-        // Check if there's a return value expression
-        // If we see Newline, Eof, or Dedent, there's no return value
-        let value = if !matches!(
-            self.current_kind(),
-            TokenKind::Newline | TokenKind::Eof | TokenKind::Dedent(_)
-        ) {
-            Some(self.parse_expression()?)
-        } else {
+        // grammar.ebnf `return_statement = "return" , [ expression ]`: the
+        // value, if any, is on the same line. Decide before skipping
+        // whitespace, which would also skip the line break.
+        let value = if self.statement_ends_after(return_token.location.line) {
             None
+        } else {
+            self.skip_whitespace();
+            Some(self.parse_expression()?)
         };
 
         Ok(Statement::Return {

@@ -123,3 +123,28 @@ fn invalid_precision_widths_are_rejected() {
         assert!(parse(&src).is_ok(), "{} must parse", good);
     }
 }
+
+/// A bare `return` followed by another statement at the same level used to
+/// fail with "Unexpected token in expression: Indent(n)": the line break was
+/// skipped before the no-value check.
+#[test]
+fn bare_return_followed_by_a_statement() {
+    use clean_language_compiler::ast::Statement;
+    let program = parse(
+        "start:\n\tf()\n\nfunctions:\n\tvoid f()\n\t\treturn\n\t\tprint(1)\n\tinteger g()\n\t\treturn // done\n",
+    )
+    .unwrap_or_else(|e| panic!("must parse: {:?}", e));
+    let f = program.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(matches!(f.body[0], Statement::Return { value: None, .. }));
+    assert_eq!(f.body.len(), 2);
+    let g = program.functions.iter().find(|f| f.name == "g").unwrap();
+    assert!(matches!(g.body[0], Statement::Return { value: None, .. }));
+    // A value on the same line is still the return value.
+    let program = parse("start:\n\tf()\n\nfunctions:\n\tinteger f()\n\t\treturn /* x */ 5\n")
+        .unwrap_or_else(|e| panic!("must parse: {:?}", e));
+    let f = program.functions.iter().find(|f| f.name == "f").unwrap();
+    assert!(matches!(
+        f.body[0],
+        Statement::Return { value: Some(_), .. }
+    ));
+}
