@@ -1,0 +1,32 @@
+// Test: bugfixes/math_and_number_args_follow_callee_params
+// Grammar: function_call, function_declaration
+// Semantic: type-system.md §5 (integer to number widening at calls)
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   4
+//   7
+//   12
+//   20
+//   2.5
+//
+// Arguments of every call whose name starts with `math.` or `number` were
+// converted to f64 by guesswork. A user function named `numberOf...` with an
+// integer parameter got an f64 argument (invalid WASM), and `integer:64`
+// constants passed to a math function were not converted at all. Arguments
+// now convert to the parameter types of the runtime function being called.
+
+start:
+	print(math.sqrt(16))
+	integer:64 big = 7
+	print(math.max(big, 3))
+	print(numberDoubled(6))
+	print(numberOfWheels(5))
+	number half = 2.5
+	print(half.toString())
+
+functions:
+	integer numberDoubled(integer n)
+		return n * 2
+
+	integer numberOfWheels(integer cars)
+		return cars * 4

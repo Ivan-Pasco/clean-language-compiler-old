@@ -14,6 +14,7 @@ mod codegen_registration;
 pub mod const_eval;
 mod memory;
 pub mod mir_codegen;
+mod module_dce;
 pub mod native_stdlib;
 mod type_manager;
 pub mod validate;
@@ -29,15 +30,25 @@ use type_manager::TypeManager;
 /// Type id stored in a list's header (offset 8).
 pub const LIST_TYPE_ID: u32 = 4;
 
-/// Data-section layout offset: static data (string pool, globals) is placed
-/// starting at byte 1024 in WASM linear memory.  This is *not* the runtime
-/// heap start — see `native_stdlib::HEAP_START` (1 MB) for that.
+/// Lowest address a data segment may occupy: the first kilobyte is the
+/// null-pointer guard.
 ///
-/// Layout:
-///   [0 .. 1 KB]           Reserved (null-pointer guard, stack scratch)
-///   [1 KB .. ~1 MB]       Data section (string literals, static data)
-///   [1 MB .. top]         Runtime heap (bump allocator, `__heap_ptr` global)
+/// Linear memory layout:
+///   [0 .. 1 KB)            Reserved (null-pointer guard)
+///   [4 KB .. string end)    String literals (`STRING_POOL_START`), placed by
+///                           `get_or_create_string_offset`
+///   [string end .. +64 KB)  Transient arena pool (`TRANSIENT_POOL_SIZE`),
+///                           starting at the string end aligned to 8
+///   [pool end .. top)       Main bump heap: the initial `__heap_ptr`
+///
+/// The heap start depends on the program's string literals; it is computed
+/// in `MirCodeGenerator::finalize_module` and exported as `__heap_ptr`, the
+/// only place hosts take it from. Static data must end below
+/// `MAX_MEMORY_SIZE` (1 MB, `memory.rs`).
 pub const DATA_SECTION_START: usize = 1024;
+
+/// Address of the first string literal.
+pub const STRING_POOL_START: u32 = 4096;
 
 /// Code generator for Clean Language
 pub struct CodeGenerator {
@@ -64,6 +75,10 @@ pub struct CodeGenerator {
     /// call into an `integer` local (or vice versa) emitted invalid WASM —
     /// see CODEGEN_F64 fingerprint `1a20405b`.
     wasm_function_return_types: HashMap<String, Option<WasmType>>,
+    /// Type-section index of every import and runtime helper, by function
+    /// index (MIR functions are not recorded). Gives a call site the
+    /// callee's parameter types (`function_param_types`).
+    function_type_indices: HashMap<u32, u32>,
     file_import_indices: HashMap<String, u32>,
     http_import_indices: HashMap<String, u32>,
 
@@ -71,7 +86,8 @@ pub struct CodeGenerator {
     string_offset_counter: u32,
     string_pool: HashMap<String, u32>,
 
-    // Configuration for runtime imports
+    // False only for the unit-test generator (`new_minimal`): no runtime
+    // imports or helpers are registered.
     include_runtime_imports: bool,
 
     // Reachability-based tree-shaking for Layer 2/3 external-I/O imports.
@@ -102,7 +118,9 @@ impl CodeGenerator {
         Self::new_with_config(true)
     }
 
-    /// Create a new code generator for testing without runtime imports
+    /// Create a code generator without runtime imports or helpers, for unit
+    /// tests of individual code generation steps.
+    #[cfg(test)]
     pub fn new_minimal() -> Self {
         Self::new_with_config(false)
     }
@@ -123,11 +141,12 @@ impl CodeGenerator {
             function_map: HashMap::new(),
             function_names: Vec::new(),
             wasm_function_return_types: HashMap::new(),
+            function_type_indices: HashMap::new(),
             file_import_indices: HashMap::new(),
             http_import_indices: HashMap::new(),
 
             // String management for imports
-            string_offset_counter: 4096, // Start at 4KB to avoid conflicts
+            string_offset_counter: STRING_POOL_START,
             string_pool: HashMap::new(),
 
             // Configuration for runtime imports
@@ -151,22 +170,25 @@ impl CodeGenerator {
             .add_function_type_single(params, return_type)
     }
 
+    /// Import `module.field` and return its function index, or `None` when
+    /// the import is tree-shaken: a reachability-gated import (see
+    /// `is_reachability_gated_import`) that no reachable code calls. A
+    /// tree-shaken import has no index, so nothing may call it.
     pub fn register_import_function(
         &mut self,
         module: &str,
         field: &str,
         params: &[WasmType],
         return_type: Option<WasmType>,
-    ) -> Result<u32, CompilerError> {
-        // NOTE: Check if function is already registered to prevent duplicates
-        // This allows multiple registration calls to be idempotent
+    ) -> Result<Option<u32>, CompilerError> {
+        // Registering the same import twice returns the first index.
         if let Some(&existing_index) = self.function_map.get(field) {
             tracing::debug!(
                 function = field,
                 existing_index = existing_index,
                 "Function already registered, returning existing index"
             );
-            return Ok(existing_index);
+            return Ok(Some(existing_index));
         }
 
         // Reachability-gated tree-shaking (Import Minimality Rule,
@@ -183,9 +205,7 @@ impl CodeGenerator {
                     function = field,
                     "Skipping unused reachability-gated import (tree-shake)"
                 );
-                // Return a sentinel index. Nothing calls an unreachable
-                // import, so this value is never consumed.
-                return Ok(u32::MAX);
+                return Ok(None);
             }
         }
 
@@ -194,6 +214,7 @@ impl CodeGenerator {
             .import(module, field, EntityType::Function(type_index));
         let func_index = self.function_count;
         self.function_map.insert(field.to_string(), func_index);
+        self.function_type_indices.insert(func_index, type_index);
         self.imported_functions.insert(field.to_string());
         self.function_names.push(field.to_string());
         self.wasm_function_return_types
@@ -207,7 +228,14 @@ impl CodeGenerator {
             "Registered new import function"
         );
 
-        Ok(func_index)
+        Ok(Some(func_index))
+    }
+
+    /// The WASM parameter types of the import or runtime helper `name`.
+    pub(crate) fn function_param_types(&self, name: &str) -> Option<Vec<WasmType>> {
+        let index = self.function_map.get(name)?;
+        let type_index = self.function_type_indices.get(index)?;
+        self.type_manager.param_types(*type_index)
     }
 
     /// Get function index from function map (safe alternative to hardcoded indices)
@@ -241,6 +269,17 @@ impl CodeGenerator {
             for name in names {
                 set.insert(name.to_string());
             }
+        }
+    }
+
+    /// Returns true if the program reaches `name` or one of its `aliases`.
+    ///
+    /// When reachability has not been populated (legacy compilation path),
+    /// returns true so registration behaves as before.
+    pub fn is_reachable_name(&self, name: &str, aliases: &[&str]) -> bool {
+        match &self.reachable_imports {
+            Some(set) => set.contains(name) || aliases.iter().any(|alias| set.contains(*alias)),
+            None => true,
         }
     }
 

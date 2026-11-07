@@ -289,3 +289,16 @@ The JSON hosts only understand JSON-tree fragments, so every value bound for a J
 **Watch for:** every name added to the reachable set must be added before the preamble fixpoint, which walks the body of each kept helper. Adding names after it keeps a helper whose callees (`__json_escape`) were dropped, and codegen fails with "Function '__json_escape' not found in function map".
 
 **Regression:** `tests/cln/bugfixes/method_named_like_plugin_helper.cln` (found in the website app, `FormatHttpResponse.notFound`).
+
+## 22. Exports, Reserved Names and the Final Dead-Function Pass
+
+**What:** The module exports only what hosts look up (`src/codegen/mir_codegen/exports.rs`): `memory`, `__heap_ptr`, `malloc`/`free`/`scope_push`/`scope_pop`, `_start`, `_run_tests`, `handle_event_N`, `__indirect_function_table`, and every program function (plugin-generated ones included) under its own name. Imports and runtime helpers are not exported. Program functions, imports and runtime helpers share `function_map`, so `check_function_names` rejects (SEM003) a source-file function that takes a runtime name and any function that takes a module export name; plugin-generated functions may take runtime language names (frame.server's `redirect`).
+
+After `finalize_module` assembles the module, `codegen::module_dce` drops every defined function not reachable from the exports, the element segments and the start function, and renumbers the rest. Imports are kept (the Import Minimality Rule decides them at registration). Table slots keep their positions (a function value is its slot, `slot N holds function N`), only the function stored in each slot is renumbered.
+
+**Watch for:**
+- A host that needs a new export by name: add it to `exports.rs`, or the dead-function pass removes the function as well.
+- Runtime code that refers to a function by index outside `call` / `return_call` / `ref.func` / element segments / exports (for example an index baked into an `i32.const` that is not a table slot): the pass cannot see it and renumbers the function. Function values must stay table slots.
+- New module shapes (non-function imports, passive element segments, `ref.func` in globals): `module_dce` returns such modules unchanged; extend it rather than working around it.
+
+**Regression:** `tests/test_module_exports.rs`, `tests/cln/bugfixes/function_named_like_runtime_helper_rejected.cln`, `tests/cln/bugfixes/function_named_memory_rejected.cln`, unit tests in `src/codegen/module_dce.rs`.

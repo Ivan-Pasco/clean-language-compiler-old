@@ -13,22 +13,34 @@ use super::{ALIGNMENT, HEAP_PTR_GLOBAL};
 ///   - local 0: size (i32) - requested allocation size
 ///
 /// Returns:
-///   - i32: pointer to allocated memory, or 0 (null) on allocation failure
+///   - i32: pointer to allocated memory, or 0 (null) when the allocation
+///     cannot be made: a negative size, a block that would pass the end of
+///     the 32-bit address space, or a `memory.grow` the host refuses
 ///
 /// Algorithm:
-///   1. Read current heap pointer from global 0
-///   2. Align the requested size to 8 bytes
-///   3. Calculate new heap pointer
-///   4. Grow memory if new_ptr exceeds current memory size
-///   5. If memory.grow fails (returns -1), return 0 without advancing heap_ptr
-///   6. Store new heap pointer
-///   7. Return original pointer
+///   1. Read the heap pointer from global 0, aligned up to 8 bytes
+///   2. Reject a negative size
+///   3. Align the size to 8 bytes; new_ptr = ptr + aligned size
+///   4. Reject a new_ptr that wrapped around the address space
+///   5. Grow memory by exactly the pages new_ptr needs beyond memory.size
+///   6. Store the new heap pointer and return the block
 pub fn gen_malloc() -> Vec<Instruction<'static>> {
-    vec![
+    let return_null_if = |condition: Vec<Instruction<'static>>| {
+        let mut instructions = condition;
+        instructions.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Return,
+            Instruction::End,
+        ]);
+        instructions
+    };
+    let mut instructions = vec![
         // local 0: size (parameter)
-        // local 1: current_ptr (to be allocated)
-        // local 2: aligned_size
-        // local 3: new_ptr (used for memory.grow check)
+        // local 1: ptr (the block)
+        // local 2: aligned size
+        // local 3: new_ptr (heap pointer after the block)
+        // local 4: pages the heap needs
 
         // Read current heap pointer, aligned up to ALIGNMENT -> local 1.
         // MEMORY_MODEL.md requires 8-byte aligned heap allocations; other
@@ -40,37 +52,55 @@ pub fn gen_malloc() -> Vec<Instruction<'static>> {
         Instruction::I32Const(!(ALIGNMENT - 1) as i32),
         Instruction::I32And,
         Instruction::LocalSet(1),
-        // Calculate aligned size: (size + 7) & ~7 -> local 2
-        Instruction::LocalGet(0),                      // size
-        Instruction::I32Const((ALIGNMENT - 1) as i32), // 7
+    ];
+    // A negative size is not an allocation.
+    instructions.extend(return_null_if(vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Const(0),
+        Instruction::I32LtS,
+    ]));
+    instructions.extend([
+        // Aligned size: (size + 7) & ~7 -> local 2 (cannot overflow: size <= i32::MAX)
+        Instruction::LocalGet(0),
+        Instruction::I32Const((ALIGNMENT - 1) as i32),
         Instruction::I32Add,
-        Instruction::I32Const(!(ALIGNMENT - 1) as i32), // 0xFFFFFFF8
+        Instruction::I32Const(!(ALIGNMENT - 1) as i32),
         Instruction::I32And,
-        Instruction::LocalSet(2), // aligned_size
-        // Calculate new heap pointer: current_ptr + aligned_size -> local 3
-        Instruction::LocalGet(1), // current_ptr
-        Instruction::LocalGet(2), // aligned_size
+        Instruction::LocalSet(2),
+        // new_ptr = ptr + aligned size -> local 3
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(2),
         Instruction::I32Add,
-        Instruction::LocalSet(3), // new_ptr
-        // Grow memory if new_ptr exceeds current memory size.
-        // memory.size returns pages (64KB each), so current_bytes = pages * 65536.
-        // If new_ptr > current_bytes, grow by enough pages.
-        Instruction::LocalGet(3),   // new_ptr
-        Instruction::MemorySize(0), // current pages
-        Instruction::I32Const(16),  // shift left by 16 = multiply by 65536
-        Instruction::I32Shl,        // current_bytes
-        Instruction::I32GtU,        // new_ptr > current_bytes?
-        Instruction::If(BlockType::Empty),
-        // Need to grow: pages_needed = (new_ptr - current_bytes + 65535) / 65536
-        // Simplified: grow by (new_ptr >> 16) - memory.size + 1 pages (at least 1)
-        Instruction::LocalGet(3), // new_ptr
-        Instruction::I32Const(16),
-        Instruction::I32ShrU,       // new_ptr / 65536
-        Instruction::MemorySize(0), // current pages
-        Instruction::I32Sub,        // pages above current
+        Instruction::LocalSet(3),
+    ]);
+    // The block would end past 4 GiB (the addition wrapped).
+    instructions.extend(return_null_if(vec![
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32LtU,
+    ]));
+    instructions.extend([
+        // Pages needed to address [0, new_ptr): ceil(new_ptr / 65536),
+        // computed as ((new_ptr - 1) >> 16) + 1 so it cannot overflow
+        // (new_ptr >= ptr, which is at least the heap start, never 0).
+        // Counting in pages also avoids `memory.size << 16`, which
+        // overflows at 4 GiB.
+        Instruction::LocalGet(3),
         Instruction::I32Const(1),
-        Instruction::I32Add,        // +1 to ensure enough
-        Instruction::MemoryGrow(0), // grow memory, returns old size or -1
+        Instruction::I32Sub,
+        Instruction::I32Const(16),
+        Instruction::I32ShrU,
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalTee(4),
+        Instruction::MemorySize(0),
+        Instruction::I32GtU,
+        Instruction::If(BlockType::Empty),
+        // Grow by the missing pages; memory.grow returns the old size or -1.
+        Instruction::LocalGet(4),
+        Instruction::MemorySize(0),
+        Instruction::I32Sub,
+        Instruction::MemoryGrow(0),
         // If memory.grow returned -1, the host refused to grow (declared max or
         // host-side cap reached). Return 0 (null) without advancing heap_ptr so
         // callers / host bridges can detect failure cleanly instead of writing
@@ -87,7 +117,8 @@ pub fn gen_malloc() -> Vec<Instruction<'static>> {
         Instruction::GlobalSet(HEAP_PTR_GLOBAL),
         // Return original pointer
         Instruction::LocalGet(1),
-    ]
+    ]);
+    instructions
 }
 
 /// Generate instructions for native free

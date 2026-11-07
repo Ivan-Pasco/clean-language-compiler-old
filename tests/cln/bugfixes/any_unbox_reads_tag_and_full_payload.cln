@@ -1,0 +1,70 @@
+// Test: bugfixes/any_unbox_reads_tag_and_full_payload
+// Grammar: variable_declaration, method_call
+// Semantic: type-system.md §7 (explicit conversions), §9 (any);
+//   stdlib-reference.md §3 (conversions never halt); BOXED_ANY_ABI.md §2-3
+//   (an integer box holds the full i64)
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   10000000000
+//   10000000000
+//   1
+//   0
+//   2147483647
+//   -2147483648
+//   -7
+//   true
+//   seven is true
+//   zero is false
+//   true
+//   yes is true
+//   0
+//   0
+//
+// Converting an `any` read the payload by guesswork: an integer box was read
+// as its low 32 bits (10000000000 became 1410065408), a boolean box read as a
+// number gave the bits of a denormal (5e-324), a number outside the integer
+// range trapped in i32.trunc_f64_s, `.toBoolean()` on an integer or number
+// returned false, and a boolean target parsed the string "true" as an integer.
+
+start:
+	string text = "{\"big\": 10000000000, \"yes\": true, \"no\": false, \"huge\": 1e300, \"tiny\": -1e300, \"neg\": -7, \"half\": 0.5, \"seven\": 7, \"flag\": \"true\", \"zero\": 0}"
+	any data = json.decode(text)
+
+	number big = data.big
+	print(big)
+	integer:64 wide = data.big
+	print(wide)
+
+	number yes = data.yes
+	print(yes)
+	number no = data.no
+	print(no)
+
+	integer huge = data.huge
+	print(huge)
+	integer tiny = data.tiny
+	print(tiny)
+	integer neg = data.neg
+	print(neg)
+
+	boolean half = data.half
+	print(half)
+	any seven = data.seven
+	if seven.toBoolean()
+		print("seven is true")
+	any zero = data.zero
+	if zero.toBoolean()
+		print("zero is true")
+	else
+		print("zero is false")
+	boolean flag = data.flag
+	print(flag)
+	any yesAny = data.yes
+	if yesAny.toBoolean()
+		print("yes is true")
+
+	any missing = data.missing
+	integer missingInt = missing
+	print(missingInt)
+	number missingNum = missing
+	print(missingNum)

@@ -278,12 +278,6 @@ impl MirCodeGenerator<'_> {
             }
             if let Instruction::Call(func_idx) = instruction {
                 debug_mir!(idx = idx, func_idx = func_idx, "Instruction: Call");
-                if *func_idx == u32::MAX {
-                    panic!(
-                        "BUG: Call(u32::MAX) in function '{}' at instruction index {} — tree-shaken import index leaked into MIR function body",
-                        function.name, idx
-                    );
-                }
             }
             wasm_function.instruction(instruction);
             instruction_count += 1;
@@ -300,21 +294,10 @@ impl MirCodeGenerator<'_> {
         // - Paths that fall through will naturally END the function (valid for void functions)
         // Adding a DROP here causes validation errors when the stack is already empty.
 
-        // CONSTRUCTOR FIX: Add implicit return of 'this' pointer for constructors
-        // Constructors must return the instance pointer (i32) which is parameter 0
-        let is_constructor =
-            function.name == "constructor" || function.name.ends_with(".constructor");
-        if is_constructor {
-            debug_mir!(
-                function_name = %function.name,
-                "Adding implicit return of 'this' for constructor"
-            );
-            wasm_function.instruction(&Instruction::LocalGet(0));
-        }
-
-        // NOTE: For non-void functions, ensure all paths return
-        // If the function returns a value and doesn't end with a Return instruction, add Unreachable
-        // NOTE: Check for both Void and Ptr(Void)
+        // Every path of a non-void function ends in a `return` (the MIR
+        // builder terminates the last block; a constructor's returns `this`).
+        // A body that ends in a structured block whose arms all return still
+        // needs a value on the fall-through edge to validate: `unreachable`.
         // Ptr(Void) represents a void function (no return value) in some code paths
         let is_void_return = matches!(function.return_type, MirType::Void)
             || matches!(&function.return_type, MirType::Ptr(inner) if matches!(**inner, MirType::Void));
@@ -324,7 +307,7 @@ impl MirCodeGenerator<'_> {
             .last()
             .is_some_and(|inst| matches!(inst, Instruction::Return | Instruction::Unreachable));
 
-        if is_non_void && !last_instruction_is_return && !is_constructor {
+        if is_non_void && !last_instruction_is_return {
             debug_mir!(
                 function_name = %function.name,
                 return_type = ?function.return_type,

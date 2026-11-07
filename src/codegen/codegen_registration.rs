@@ -228,37 +228,6 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("string_builder_finalize", sb_finalize_idx);
 
-        // NATIVE: string_builder_reclaim — selective per-iter heap reclaim
-        // for accumulator-rewritten loops. Resets HEAP_PTR to
-        // `max(init_mark, builder_ptr + 8 + capacity)`, freeing every
-        // transient allocation made above the builder's tail this iter.
-        // Closes the per-iter conditional-helper leak path that left
-        // CMP-SSR-MALLOC-OOM-PAGE-RENDER reproducible after the 0.30.368
-        // chained-RHS matcher.
-        let sb_reclaim_instructions = native_stdlib::string_builder::gen_string_builder_reclaim();
-        let sb_reclaim_idx = self.register_function_with_locals(
-            "__string_builder_reclaim",
-            &[WasmType::I32, WasmType::I32], // builder_ptr, init_mark
-            None,                            // void
-            &[WasmType::I32],                // local 2: builder_end
-            &sb_reclaim_instructions,
-        )?;
-        self.add_function_alias("string_builder_reclaim", sb_reclaim_idx);
-
-        // NATIVE: heap_ptr_snapshot — capture the current HEAP_PTR value.
-        // Paired with `string_builder_reclaim` at the bottom of each
-        // accumulator-rewritten loop iteration. Distinct from
-        // `__scope_push` so the rewrite cannot be confused with a
-        // host-side reclaim frame.
-        let snapshot_instructions = native_stdlib::string_builder::gen_heap_ptr_snapshot();
-        let snapshot_idx = self.register_function(
-            "__heap_ptr_snapshot",
-            &[],
-            Some(WasmType::I32),
-            &snapshot_instructions,
-        )?;
-        self.add_function_alias("heap_ptr_snapshot", snapshot_idx);
-
         // NATIVE: transient arena (transient_scope_enter / _exit /
         // transient_alloc) — second bump region for per-iteration
         // intermediates inside accumulator-rewritten loops. Replaces the
@@ -722,45 +691,53 @@ impl super::CodeGenerator {
         use crate::stdlib::math_class::MathClass;
         use crate::types::WasmType;
 
-        // FIRST: Register math imports that MathClass will alias
-        // These must be registered before MathClass tries to create aliases
+        // FIRST: the host math imports MathClass aliases (`math.sin` →
+        // `math_sin`). Each import is emitted only when the program reaches
+        // it under either name (Import Minimality Rule): `x ^ y` needs
+        // `math_pow` alone, not every transcendental function.
+        const UNARY: &[(&str, &[&str])] = &[
+            ("math_sin", &["math.sin"]),
+            ("math_cos", &["math.cos"]),
+            ("math_tan", &["math.tan"]),
+            ("math_asin", &["math.asin"]),
+            ("math_acos", &["math.acos"]),
+            ("math_atan", &["math.atan"]),
+            ("math_sinh", &["math.sinh"]),
+            ("math_cosh", &["math.cosh"]),
+            ("math_tanh", &["math.tanh"]),
+            ("math_ln", &["math.ln", "math.log"]),
+            ("math_log10", &["math.log10"]),
+            ("math_log2", &["math.log2"]),
+            ("math_exp", &["math.exp"]),
+            ("math_exp2", &["math.exp2"]),
+        ];
+        const BINARY: &[(&str, &[&str])] =
+            &[("math_pow", &["math.pow"]), ("math_atan2", &["math.atan2"])];
 
-        // Core trig functions
-        self.register_import_function(
-            "env",
-            "math_pow",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-        )?;
-        self.register_import_function("env", "math_sin", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_cos", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_tan", &[WasmType::F64], Some(WasmType::F64))?;
-
-        // Inverse trig functions
-        self.register_import_function("env", "math_asin", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_acos", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_atan", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function(
-            "env",
-            "math_atan2",
-            &[WasmType::F64, WasmType::F64],
-            Some(WasmType::F64),
-        )?;
-
-        // Hyperbolic functions
-        self.register_import_function("env", "math_sinh", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_cosh", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_tanh", &[WasmType::F64], Some(WasmType::F64))?;
-
-        // Logarithmic and exponential functions
-        self.register_import_function("env", "math_ln", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_log10", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_log2", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_exp", &[WasmType::F64], Some(WasmType::F64))?;
-        self.register_import_function("env", "math_exp2", &[WasmType::F64], Some(WasmType::F64))?;
-
+        for (import, aliases) in UNARY {
+            if self.is_reachable_name(import, aliases) {
+                self.register_import_function(
+                    "env",
+                    import,
+                    &[WasmType::F64],
+                    Some(WasmType::F64),
+                )?;
+            }
+        }
+        for (import, aliases) in BINARY {
+            if self.is_reachable_name(import, aliases) {
+                self.register_import_function(
+                    "env",
+                    import,
+                    &[WasmType::F64, WasmType::F64],
+                    Some(WasmType::F64),
+                )?;
+            }
+        }
         // Random number generation — returns f64 in [0.0, 1.0)
-        self.register_import_function("env", "math_random", &[], Some(WasmType::F64))?;
+        if self.is_reachable_name("math_random", &["math.random"]) {
+            self.register_import_function("env", "math_random", &[], Some(WasmType::F64))?;
+        }
 
         // THEN: Create MathClass instance which creates aliases and native functions
         let math_class = MathClass::new();
@@ -908,16 +885,14 @@ impl super::CodeGenerator {
 
         // Register string_compare as an import that compares two strings
         // Returns 1 if equal, 0 if not equal
-        let idx = self.register_import_function(
+        // The alias exists only when the import does (it is tree-shaken
+        // when no string comparison is reachable).
+        if let Some(idx) = self.register_import_function(
             "env",
             "string_compare",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-        )?;
-
-        // Add canonical alias — skip when the import was tree-shaken (u32::MAX sentinel)
-        // to avoid inserting a bogus index that would generate an invalid Call instruction.
-        if idx != u32::MAX {
+        )? {
             self.add_function_alias("string.compare", idx);
         }
 
@@ -931,16 +906,14 @@ impl super::CodeGenerator {
 
         // Register string_replace as an import that replaces all occurrences of a substring
         // Parameters: (string_ptr: i32, search_ptr: i32, replace_ptr: i32) -> i32
-        let idx = self.register_import_function(
+        // The aliases exist only when the import does (it is tree-shaken
+        // when no replace is reachable).
+        if let Some(idx) = self.register_import_function(
             "env",
             "string_replace",
             &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-        )?;
-
-        // Add canonical aliases — skip when the import was tree-shaken (u32::MAX sentinel)
-        // to avoid inserting a bogus index that would generate an invalid Call instruction.
-        if idx != u32::MAX {
+        )? {
             self.add_function_alias("string.replace", idx);
             // replaceAll uses the same host function (replaces all occurrences)
             self.add_function_alias("string.replaceAll", idx);

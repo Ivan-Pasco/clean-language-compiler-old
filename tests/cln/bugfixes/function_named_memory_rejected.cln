@@ -1,0 +1,20 @@
+// Test: bugfixes/function_named_memory_rejected
+// Grammar: function_declaration
+// Semantic: SEM003 symbol redefinition (a function may not take a name the
+//   module exports itself)
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[SEM003]: function name 'memory' is reserved
+//   help: rename the function
+//
+// Every program function is exported under its name, and the module also
+// exports its linear memory as `memory`: a function named `memory` produced
+// a module with a duplicate export, which hosts reject.
+
+start:
+	print(memory(2))
+
+functions:
+	integer memory(integer pages)
+		return pages * 65536
