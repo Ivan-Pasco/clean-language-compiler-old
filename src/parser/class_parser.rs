@@ -312,18 +312,16 @@ fn parse_constructor_parameter(pair: Pair<Rule>) -> Result<Parameter, CompilerEr
         let name = second_part.as_str().to_string();
         Ok(Parameter::new(name, type_))
     } else {
-        // We have just an identifier, infer type as string for now
-        if first_part.as_rule() != Rule::identifier && first_part.as_rule() != Rule::parameter_name
-        {
-            return Err(CompilerError::parse_error(
-                "Expected identifier for parameter name".to_string(),
-                None,
-                Some("Parameters must have valid identifiers".to_string()),
-            ));
-        }
-        let name = first_part.as_str().to_string();
-        let type_ = crate::ast::Type::String; // Default type for untyped constructor parameters
-        Ok(Parameter::new(name, type_))
+        // A parameter without a type: the token parser (parse_constructor)
+        // requires `type name` too, so do not guess one.
+        Err(CompilerError::parse_error(
+            format!(
+                "Constructor parameter '{}' needs a type",
+                first_part.as_str()
+            ),
+            Some(super::get_location(&first_part)),
+            Some("Write the parameter as `type name`, e.g. `string name`.".to_string()),
+        ))
     }
 }
 

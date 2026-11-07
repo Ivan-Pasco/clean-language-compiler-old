@@ -12,8 +12,7 @@
 use super::TokenParser;
 use crate::ast::{
     Capability, CapabilityMethod, Class, Constructor, Expression, Field, Function,
-    FunctionModifier, FunctionSyntax, ImportItem, ListBehavior, Parameter, Statement, Type,
-    Visibility,
+    FunctionModifier, ImportItem, ListBehavior, Parameter, Statement, Type, Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
@@ -21,6 +20,7 @@ use tracing::warn;
 
 impl TokenParser {
     pub(super) fn parse_function(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         self.expect(&TokenKind::Function)?;
         self.skip_whitespace();
 
@@ -48,10 +48,7 @@ impl TokenParser {
         };
 
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name,
@@ -61,7 +58,6 @@ impl TokenParser {
             return_type,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             // Private by default per the 2026-06-25 visibility flip;
             // a function becomes Public only when it appears inside a
             // `public:` sub-section (parse_public_functions_section).
@@ -75,6 +71,7 @@ impl TokenParser {
     /// Example: start:
     ///             print("Hello")
     pub(super) fn parse_start_function(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let start_token = self.expect(&TokenKind::Start)?;
         let location = start_token.location.clone();
 
@@ -84,10 +81,7 @@ impl TokenParser {
         self.expect(&TokenKind::Colon)?;
 
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name: "start".to_string(),
@@ -97,7 +91,6 @@ impl TokenParser {
             return_type: Type::Void,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: Visibility::Public,
             modifier: FunctionModifier::None,
             location: Some(location),
@@ -122,15 +115,7 @@ impl TokenParser {
 
         // Determine the functions block's indentation level
         // Functions should be indented one level from the "functions:" line (which is at level 0)
-        let functions_block_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                *level
-            } else {
-                1 // Default to level 1
-            }
-        } else {
-            1 // Default to level 1
-        };
+        let functions_block_level = self.current_indent_level_or(1);
 
         // Parse functions until we hit a dedent or EOF
         // Functions in a functions: block are indented relative to the "functions:" line
@@ -364,6 +349,7 @@ impl TokenParser {
     /// Parse a single function within a functions: block
     /// Functions in a block have the format: [return_type] name(params)
     pub(super) fn parse_function_in_block(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let start_location = self.current().location.clone();
 
         // Save position in case we need to backtrack
@@ -475,10 +461,7 @@ impl TokenParser {
 
         self.expect(&TokenKind::RightParen)?;
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Parse function body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name: func_name,
@@ -488,7 +471,6 @@ impl TokenParser {
             return_type,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             // Private by default per the 2026-06-25 visibility flip;
             // a function becomes Public only when it appears inside a
             // `public:` sub-section (parse_public_functions_section).
@@ -519,6 +501,7 @@ impl TokenParser {
     /// with "Unsupported statement type: Colon" because the trailing colon
     /// in `onMount():` had no place in the standard method grammar.
     pub(super) fn parse_event_handler_in_block(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let start_location = self.current().location.clone();
 
         // Method name.
@@ -569,7 +552,7 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Body — same indented-block handling as functions: methods.
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name: func_name,
@@ -579,7 +562,6 @@ impl TokenParser {
             return_type: Type::Void,
             body,
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: Visibility::Public,
             modifier: FunctionModifier::None,
             location: Some(start_location),
@@ -710,16 +692,7 @@ impl TokenParser {
                     self.skip_whitespace();
 
                     // Determine the functions block indentation level
-                    let functions_indent_level =
-                        if matches!(self.current_kind(), TokenKind::Indent(_)) {
-                            if let TokenKind::Indent(level) = self.current_kind() {
-                                *level
-                            } else {
-                                1
-                            }
-                        } else {
-                            1
-                        };
+                    let functions_indent_level = self.current_indent_level_or(1);
 
                     // Parse methods in the functions block
                     while !self.is_at_end() {
@@ -898,16 +871,7 @@ impl TokenParser {
                         self.expect(&TokenKind::Colon)?;
                         self.skip_whitespace();
 
-                        let events_indent_level =
-                            if matches!(self.current_kind(), TokenKind::Indent(_)) {
-                                if let TokenKind::Indent(level) = self.current_kind() {
-                                    *level
-                                } else {
-                                    1
-                                }
-                            } else {
-                                1
-                            };
+                        let events_indent_level = self.current_indent_level_or(1);
 
                         // Mirror the methods-parsing loop from the Functions arm.
                         while !self.is_at_end() {
@@ -1386,7 +1350,7 @@ impl TokenParser {
                     if matches!(next_indent_level, Some(level) if level > body_indent_level) {
                         // Consume the newline; parse_block will consume the Indent.
                         self.bump(); // consume Newline
-                        Some(self.parse_block()?)
+                        Some(self.parse_block(body_indent_level)?)
                     } else {
                         // No default body — consume just the newline to advance.
                         self.bump();
@@ -1491,6 +1455,7 @@ impl TokenParser {
     }
 
     pub(super) fn parse_constructor(&mut self) -> Result<Constructor, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let constructor_token = self.expect(&TokenKind::Constructor)?;
         let location = constructor_token.location.clone();
 
@@ -1538,10 +1503,7 @@ impl TokenParser {
 
         self.expect(&TokenKind::RightParen)?;
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Parse constructor body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Constructor {
             parameters,
@@ -1886,7 +1848,8 @@ impl TokenParser {
             self.bump(); // tentatively consume ':'
 
             if let TokenKind::IntegerLiteral(size) = self.current_kind() {
-                let bits = *size as u8;
+                let size = *size;
+                let size_location = self.current().location.clone();
                 self.bump(); // consume the size
 
                 // Check for 'u' suffix for unsigned
@@ -1901,15 +1864,45 @@ impl TokenParser {
                     false
                 };
 
-                // Apply precision modifier based on base type
+                // Widths from foundation/spec/type-system.md §2 "Precision Modifiers".
+                let valid = match base_type {
+                    Type::Integer => matches!(size, 8 | 16 | 32 | 64),
+                    Type::Number => matches!(size, 32 | 64) && !unsigned,
+                    _ => {
+                        return Err(CompilerError::parse_error(
+                            format!("Precision modifiers are only supported for integer and number types, not {:?}", base_type),
+                            Some(size_location),
+                            Some("Use :bits syntax only with integer or number types".to_string()),
+                        ))
+                    }
+                };
+                if !valid {
+                    let base = if matches!(base_type, Type::Integer) {
+                        "integer"
+                    } else {
+                        "number"
+                    };
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Invalid precision '{}:{}{}'",
+                            base,
+                            size,
+                            if unsigned { "u" } else { "" }
+                        ),
+                        Some(size_location),
+                        Some(if base == "integer" {
+                            "integer supports :8, :16, :32 and :64, each optionally followed by u"
+                                .to_string()
+                        } else {
+                            "number supports :32 and :64".to_string()
+                        }),
+                    ));
+                }
+                // In range: 8..=64.
+                let bits = size as u8;
                 match base_type {
                     Type::Integer => Type::IntegerSized { bits, unsigned },
-                    Type::Number => Type::NumberSized { bits },
-                    _ => return Err(CompilerError::parse_error(
-                        format!("Precision modifiers are only supported for integer and number types, not {:?}", base_type),
-                        Some(self.current().location.clone()),
-                        Some("Use :bits syntax only with integer or number types".to_string()),
-                    ))
+                    _ => Type::NumberSized { bits },
                 }
             } else {
                 // Not a precision modifier — restore cursor so the colon stays for the caller
@@ -1930,23 +1923,53 @@ impl TokenParser {
         }
     }
 
-    /// Parse a block of statements at the current indentation level
-    /// Returns when it encounters a Dedent that exits this block level
-    pub(super) fn parse_block(&mut self) -> Result<Vec<Statement>, CompilerError> {
+    /// Parse an indented block (grammar.ebnf `indented_block`): the body of
+    /// a construct whose header line sits at indentation `header_level`.
+    /// The body must start on a following line indented deeper than the
+    /// header. Returns at the Dedent that leaves the block.
+    pub(super) fn parse_block(
+        &mut self,
+        header_level: usize,
+    ) -> Result<Vec<Statement>, CompilerError> {
         let mut statements = Vec::new();
 
-        // Consume the leading Indent token to determine our indentation level
-        // If there's no Indent, we're at level 0 (top level of a function)
-        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                let level_value = *level;
-                self.bump(); // Consume the Indent token
-                level_value
-            } else {
-                0
+        let block_indent_level = match self.current_kind() {
+            TokenKind::Indent(level) if *level > header_level => {
+                let level = *level;
+                self.bump();
+                level
             }
-        } else {
-            0
+            // A header with nothing under it (`start:` holding only a
+            // comment, before the next top-level section or the end of the
+            // file) has an empty body: no following line could be mistaken
+            // for its body.
+            TokenKind::Eof => return Ok(statements),
+            TokenKind::Dedent(level) if *level <= header_level => return Ok(statements),
+            kind if header_level == 0
+                && !matches!(kind, TokenKind::Indent(_))
+                && self.current().location.column == 1 =>
+            {
+                return Ok(statements)
+            }
+            _ => {
+                let token = self.current();
+                return Err(CompilerError::parse_error(
+                    match token.kind {
+                        TokenKind::Indent(_) | TokenKind::Dedent(_) | TokenKind::Eof => {
+                            "Expected an indented block: the next line must be indented deeper than the line that opens the block".to_string()
+                        }
+                        _ => format!(
+                            "Expected an indented block on the next line, found {:?}",
+                            token.kind
+                        ),
+                    },
+                    Some(token.location.clone()),
+                    Some(
+                        "Put the body on the next line, indented one tab deeper than the line that opens it."
+                            .to_string(),
+                    ),
+                ));
+            }
         };
 
         while !self.is_at_end() {
@@ -2010,7 +2033,30 @@ impl TokenParser {
             }
 
             match self.parse_statement() {
-                Ok(stmt) => statements.push(stmt),
+                Ok(stmt) => {
+                    statements.push(stmt);
+                    // One statement per line (grammar.ebnf `simple_indented_block`
+                    // separates statements with NEWLINE). A declaration keyword
+                    // glued to the line gets its own "must start on its own
+                    // line" error from the check at the top of the loop.
+                    let declaration_follows = matches!(
+                        self.current_kind(),
+                        TokenKind::Function | TokenKind::Class | TokenKind::Functions
+                    );
+                    if let Some(line) = self.previous_significant_line() {
+                        if !declaration_follows && !self.statement_ends_after(line) {
+                            let token = self.current();
+                            self.errors.push(CompilerError::parse_error(
+                                format!(
+                                    "Expected a new line after the statement, found {:?}",
+                                    token.kind
+                                ),
+                                Some(token.location.clone()),
+                                Some("Put each statement on its own line.".to_string()),
+                            ));
+                        }
+                    }
+                }
                 Err(e) => {
                     self.errors.push(e);
                     self.bump(); // Skip error token
@@ -2026,13 +2072,9 @@ impl TokenParser {
     ) -> Result<crate::lexer::specification_token::Token, CompilerError> {
         match self.current_kind() {
             TokenKind::Identifier(_) => Ok(self.bump()),
-            // source, build, spec, intent are contextual keywords that carry no syntactic
-            // weight in most positions — allow them as plain identifiers so field names,
-            // function names, and parameters can use these words without triggering a parse
-            // error (e.g., `source: string nullable` in a data model field list).
-            TokenKind::Source | TokenKind::Build | TokenKind::Spec | TokenKind::Intent => {
-                Ok(self.bump())
-            }
+            // Contextual keywords are names here too (field, function and
+            // parameter names such as `source: string nullable`).
+            kind if Self::is_contextual_name(kind) => Ok(self.bump()),
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(
@@ -2050,31 +2092,13 @@ impl TokenParser {
     ) -> Result<crate::lexer::specification_token::Token, CompilerError> {
         match self.current_kind() {
             TokenKind::Identifier(_) => Ok(self.bump()),
-            // Allow keywords to be used as names in certain contexts (for property/method names and variable names)
-            TokenKind::Test
-            | TokenKind::Unit
-            | TokenKind::Error
-            | TokenKind::Input
-            | TokenKind::Step
-            | TokenKind::Description
-            | TokenKind::And
-            | TokenKind::Or
-            | TokenKind::Not
-            | TokenKind::Start
-            | TokenKind::Rules
-            | TokenKind::Computed
-            | TokenKind::State
-            | TokenKind::Guard
-            | TokenKind::Watch
-            | TokenKind::Reset
-            | TokenKind::Screen
-            | TokenKind::Source
-            | TokenKind::Build
-            | TokenKind::Spec
-            | TokenKind::Intent
-            // `can` opens a capability declaration only at the top level; as a
-            // member name it is an ordinary method (`auth.can("posts.write")`).
-            | TokenKind::Can => Ok(self.bump()),
+            kind if Self::is_contextual_name(kind) => Ok(self.bump()),
+            // Operator words and `start` are names in member/method position,
+            // and `can` opens a capability declaration only at the top level;
+            // as a member name it is an ordinary method (`auth.can("posts.write")`).
+            TokenKind::And | TokenKind::Or | TokenKind::Not | TokenKind::Start | TokenKind::Can => {
+                Ok(self.bump())
+            }
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(

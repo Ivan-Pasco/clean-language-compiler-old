@@ -1,0 +1,12 @@
+// Test: bugfixes/integer_min_literal
+// Grammar: integer_literal, unary_expression, sized_type
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   -9223372036854775808
+//   true
+
+start:
+	integer:64 lowest = -9223372036854775808
+	print(lowest)
+	integer:64 highest = 9223372036854775807
+	print(lowest < highest)

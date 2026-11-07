@@ -14,17 +14,6 @@ pub enum TokenKind {
     IntegerLiteral(i64),   // 42, -17 (default)
     NumberLiteral(f64),    // 3.14, 6.02e23 (default)
     StringLiteral(String), // "Hello, World!"
-    BooleanLiteral(bool),  // true, false
-
-    // Precision Literals (§3.2 - AST specification precision modifiers)
-    Integer8Literal(i8),    // integer:8
-    Integer8uLiteral(u8),   // integer:8u
-    Integer16Literal(i16),  // integer:16
-    Integer16uLiteral(u16), // integer:16u
-    Integer32Literal(i32),  // integer:32
-    Integer64Literal(i64),  // integer:64
-    Number32Literal(f32),   // number:32
-    Number64Literal(f64),   // number:64
 
     // Keywords (all from Clean Language Specification - complete list)
     And,         // and
@@ -114,14 +103,9 @@ pub enum TokenKind {
     Comma,        // ,
     Dot,          // .
     Colon,        // :
-    Semicolon,    // ;
     Bang,         // ! (used in != operator context)
     Question,     // ? (nullable-type suffix: T?)
     At,           // @ (framework attribute prefix)
-
-    // Range operators (§9.2 - Range expressions)
-    Range,          // .. for ranges like 1..10
-    RangeInclusive, // ..= for inclusive ranges (if supported)
 
     // String interpolation (§2.3.2)
     InterpolationStart, // "Hello {
@@ -130,17 +114,25 @@ pub enum TokenKind {
 
     // Special tokens
     Identifier(String), // Variable names, function names, etc.
-    Newline,            // \n (significant for Clean Language)
-    Indent(usize),      // Tab levels for indentation
-    Dedent(usize),      // Reduced tab levels
-    Eof,                // End of file
+    /// A character that is not Clean Language syntax (`'`, `&`, `#`, `\\`,
+    /// a non-alphabetic non-ASCII character). It only exists so plugin-owned
+    /// blocks (`html:`, `style:`, ...) can capture it by byte range; the
+    /// parser rejects it anywhere else.
+    RawChar(char),
+    Newline,       // \n (significant for Clean Language)
+    Indent(usize), // Tab levels for indentation
+    Dedent(usize), // Reduced tab levels
+    Eof,           // End of file
 
     // Comments (not in AST but needed for parsing)
     Comment(String),      // // single line comments
     BlockComment(String), // /* block comments */
 
     // Error recovery
-    Invalid { text: String, message: String },
+    Invalid {
+        text: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for TokenKind {
@@ -150,17 +142,6 @@ impl fmt::Display for TokenKind {
             TokenKind::IntegerLiteral(n) => write!(f, "{}", n),
             TokenKind::NumberLiteral(n) => write!(f, "{}", n),
             TokenKind::StringLiteral(s) => write!(f, "\"{}\"", s),
-            TokenKind::BooleanLiteral(b) => write!(f, "{}", b),
-
-            // Precision literals
-            TokenKind::Integer8Literal(n) => write!(f, "{}:8", n),
-            TokenKind::Integer8uLiteral(n) => write!(f, "{}:8u", n),
-            TokenKind::Integer16Literal(n) => write!(f, "{}:16", n),
-            TokenKind::Integer16uLiteral(n) => write!(f, "{}:16u", n),
-            TokenKind::Integer32Literal(n) => write!(f, "{}:32", n),
-            TokenKind::Integer64Literal(n) => write!(f, "{}:64", n),
-            TokenKind::Number32Literal(n) => write!(f, "{}:32", n),
-            TokenKind::Number64Literal(n) => write!(f, "{}:64", n),
 
             // Keywords
             TokenKind::And => write!(f, "and"),
@@ -245,12 +226,9 @@ impl fmt::Display for TokenKind {
             TokenKind::Comma => write!(f, ","),
             TokenKind::Dot => write!(f, "."),
             TokenKind::Colon => write!(f, ":"),
-            TokenKind::Semicolon => write!(f, ";"),
             TokenKind::Bang => write!(f, "!"),
             TokenKind::Question => write!(f, "?"),
             TokenKind::At => write!(f, "@"),
-            TokenKind::Range => write!(f, ".."),
-            TokenKind::RangeInclusive => write!(f, "..="),
 
             // String interpolation
             TokenKind::InterpolationStart => write!(f, "STRING_INTERP_START"),
@@ -259,6 +237,7 @@ impl fmt::Display for TokenKind {
 
             // Special
             TokenKind::Identifier(name) => write!(f, "{}", name),
+            TokenKind::RawChar(c) => write!(f, "{}", c),
             TokenKind::Newline => write!(f, "\\n"),
             TokenKind::Indent(level) => write!(f, "INDENT({})", level),
             TokenKind::Dedent(level) => write!(f, "DEDENT({})", level),
@@ -308,60 +287,19 @@ impl fmt::Display for Token {
     }
 }
 
-/// Token stream with source mapping information
-#[derive(Debug, Clone)]
+/// Token stream produced by the lexer
+#[derive(Debug, Clone, Default)]
 pub struct TokenStream {
     pub tokens: Vec<Token>,
-    pub source_map: SourceMap,
     /// Original source text for raw content extraction in framework blocks
     pub source_content: String,
 }
 
 impl TokenStream {
-    pub fn new(tokens: Vec<Token>, source_map: SourceMap, source_content: String) -> Self {
+    pub fn new(tokens: Vec<Token>, source_content: String) -> Self {
         Self {
             tokens,
-            source_map,
             source_content,
-        }
-    }
-}
-
-impl Default for TokenStream {
-    fn default() -> Self {
-        Self {
-            tokens: Vec::new(),
-            source_map: SourceMap {
-                file_path: String::new(),
-                line_starts: vec![0],
-                total_bytes: 0,
-            },
-            source_content: String::new(),
-        }
-    }
-}
-
-/// Source map for tracking original source positions
-#[derive(Debug, Clone)]
-pub struct SourceMap {
-    pub file_path: String,
-    pub line_starts: Vec<usize>, // Byte positions where each line starts
-    pub total_bytes: usize,
-}
-
-impl SourceMap {
-    pub fn new(file_path: String, source_content: &str) -> Self {
-        let mut line_starts = vec![0];
-        for (byte_pos, ch) in source_content.char_indices() {
-            if ch == '\n' {
-                line_starts.push(byte_pos + ch.len_utf8());
-            }
-        }
-
-        Self {
-            file_path,
-            line_starts,
-            total_bytes: source_content.len(),
         }
     }
 }

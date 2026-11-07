@@ -1890,7 +1890,7 @@ mod class005_tests {
         let source_code = SourceCode::new(source.to_string(), "test.cln".to_string());
         let mut lexer = SpecificationLexer::new(&source_code);
         let tokens = lexer.tokenize().expect("lex failed");
-        let mut parser = SpecificationParser::new(tokens, "test.cln".to_string());
+        let mut parser = SpecificationParser::new(tokens);
         let ast = parser.parse_program().expect("parse failed");
         let mut hir_builder = HirBuilder::new();
         hir_builder.build_hir(ast).expect("hir build failed").hir

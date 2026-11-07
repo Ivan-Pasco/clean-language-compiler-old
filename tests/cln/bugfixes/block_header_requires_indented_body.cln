@@ -1,0 +1,15 @@
+// Test: bugfixes/block_header_requires_indented_body
+// Grammar: if_statement, indented_block
+// Semantic: an `if` with no deeper-indented body used to take the following
+//   lines at its own level as its body
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   Expected an indented block
+//   block_header_requires_indented_body.cln:14:1
+
+start:
+	integer x = 1
+	if x > 5
+	print("in")
+	print("after")

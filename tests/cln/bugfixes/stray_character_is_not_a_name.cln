@@ -1,0 +1,14 @@
+// Test: bugfixes/stray_character_is_not_a_name
+// Grammar: identifier, variable_declaration
+// Semantic: characters such as & # and quote marks only exist for plugin
+//   blocks (html:, style:); they used to lex as identifiers, so
+//   `integer & = 3` compiled
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   Expected variable name after type
+//   stray_character_is_not_a_name.cln:13:10
+
+start:
+	integer & = 3
+	print("ok")

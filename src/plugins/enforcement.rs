@@ -499,11 +499,6 @@ fn collect_call_names_from_statement(stmt: &Statement, names: &mut Vec<String>) 
         Statement::Test { body, .. } | Statement::StandaloneErrorHandler { body, .. } => {
             collect_call_names_from_statements(body, names)
         }
-        Statement::TestsBlock { tests, .. } => {
-            for test in tests {
-                collect_call_names_from_test_case(test, names);
-            }
-        }
         Statement::Expression { expr, .. } => collect_call_names_from_expr(expr, names),
         Statement::OnErrorBlock {
             expression,
@@ -730,15 +725,10 @@ fn collect_call_names_from_expr(expr: &Expression, names: &mut Vec<String>) {
             collect_call_names_from_expr(then_expr, names);
             collect_call_names_from_expr(else_expr, names);
         }
-        Expression::StartExpression { expression, .. }
-        | Expression::LaterAssignment { expression, .. } => {
+        Expression::StartExpression { expression, .. } => {
             collect_call_names_from_expr(expression, names)
         }
         Expression::NamedArgBinding { value, .. } => collect_call_names_from_expr(value, names),
-        Expression::Range { start, end, .. } => {
-            collect_call_names_from_expr(start, names);
-            collect_call_names_from_expr(end, names);
-        }
         Expression::ObjectLiteral { fields, .. } => {
             for (_, value) in fields {
                 collect_call_names_from_expr(value, names);
@@ -749,8 +739,7 @@ fn collect_call_names_from_expr(expr: &Expression, names: &mut Vec<String>) {
         Expression::OrmQuery { .. }
         | Expression::Literal(_)
         | Expression::Variable(_)
-        | Expression::ErrorVariable { .. }
-        | Expression::Input { .. } => {}
+        | Expression::ErrorVariable { .. } => {}
     }
 }
 

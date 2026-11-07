@@ -1,0 +1,14 @@
+// Test: bugfixes/negative_numbers_in_list_literal
+// Grammar: list_literal, list_element, number_literal
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   -2
+//   -1.5
+//   3
+
+start:
+	list<integer> xs = [1, -2, 3]
+	print(xs[1])
+	list<number> ys = [-1.5, 2.0]
+	print(ys[0])
+	print(xs.length())

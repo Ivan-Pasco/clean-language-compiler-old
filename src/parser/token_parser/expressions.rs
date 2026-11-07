@@ -217,6 +217,22 @@ impl TokenParser {
             TokenKind::Minus => {
                 let _op_token = self.bump();
                 self.skip_whitespace();
+                // `-9223372036854775808`: the lexer reads the magnitude 2^63
+                // as i64::MIN, which is the value of the whole literal.
+                if matches!(self.current_kind(), TokenKind::IntegerLiteral(i64::MIN))
+                    && !matches!(
+                        self.peek_kind(),
+                        Some(
+                            TokenKind::Dot
+                                | TokenKind::LeftParen
+                                | TokenKind::LeftBracket
+                                | TokenKind::Bang
+                        )
+                    )
+                {
+                    self.bump();
+                    return Ok(Expression::Literal(Value::Integer(i64::MIN)));
+                }
                 let operand = self.parse_unary()?;
                 Ok(Expression::Unary(
                     crate::ast::UnaryOperator::Negate,
@@ -240,27 +256,8 @@ impl TokenParser {
     fn is_named_arg_start(&self) -> bool {
         // Current token must be an identifier or a contextual keyword that is allowed
         // as a parameter name.
-        let is_name = matches!(
-            self.current_kind(),
-            TokenKind::Identifier(_)
-                | TokenKind::Rules
-                | TokenKind::Computed
-                | TokenKind::State
-                | TokenKind::Guard
-                | TokenKind::Watch
-                | TokenKind::Reset
-                | TokenKind::Screen
-                | TokenKind::Source
-                | TokenKind::Build
-                | TokenKind::Spec
-                | TokenKind::Intent
-                | TokenKind::Description
-                | TokenKind::Input
-                | TokenKind::Unit
-                | TokenKind::Step
-                | TokenKind::Test
-                | TokenKind::Error
-        );
+        let is_name = matches!(self.current_kind(), TokenKind::Identifier(_))
+            || Self::is_contextual_name(self.current_kind());
         if !is_name {
             return false;
         }
@@ -486,12 +483,7 @@ impl TokenParser {
                             self.eat(&TokenKind::Newline);
                             self.skip_whitespace();
 
-                            let block_indent_level =
-                                if let TokenKind::Indent(level) = self.current_kind() {
-                                    *level
-                                } else {
-                                    1
-                                };
+                            let block_indent_level = self.current_indent_level_or(1);
 
                             let content = self.extract_block_content_raw(block_indent_level);
 
@@ -517,6 +509,19 @@ impl TokenParser {
 
     pub(super) fn parse_primary(&mut self) -> Result<Expression, CompilerError> {
         match self.current_kind() {
+            TokenKind::IntegerLiteral(i64::MIN) => {
+                // Only `-9223372036854775808` (handled in parse_unary) is in
+                // range; the bare magnitude 2^63 is not an i64.
+                let token = self.current();
+                Err(CompilerError::parse_error(
+                    format!("Integer literal {} is out of range", token.text),
+                    Some(token.location.clone()),
+                    Some(
+                        "Integers are 64-bit: -9223372036854775808 to 9223372036854775807"
+                            .to_string(),
+                    ),
+                ))
+            }
             TokenKind::IntegerLiteral(n) => {
                 let value = *n;
                 self.bump();
@@ -535,11 +540,6 @@ impl TokenParser {
             TokenKind::InterpolationStart => {
                 // Parse string interpolation: "Hello {name}!"
                 self.parse_string_interpolation()
-            }
-            TokenKind::BooleanLiteral(b) => {
-                let value = *b;
-                self.bump();
-                Ok(Expression::Literal(Value::Boolean(value)))
             }
             TokenKind::True => {
                 self.bump();
@@ -579,28 +579,11 @@ impl TokenParser {
                 // Parse the following expression (typically a function call)
                 self.parse_primary()
             }
-            // Allow keywords to be used as identifiers in expressions (for class/type names and variable names)
-            TokenKind::Test
-            | TokenKind::Error
-            | TokenKind::Unit
-            | TokenKind::Input
-            | TokenKind::Step
-            | TokenKind::Description
-            | TokenKind::Rules
-            | TokenKind::Computed
-            | TokenKind::State
-            | TokenKind::Guard
-            | TokenKind::Watch
-            | TokenKind::Reset
-            | TokenKind::Screen
-            | TokenKind::Source
-            | TokenKind::Build
-            | TokenKind::Spec
-            | TokenKind::Intent => {
+            // Contextual keywords used as names (variables, class/type names).
+            kind if Self::is_contextual_name(kind) => {
                 let token = self.bump();
-                // Use the actual token text to preserve the exact identifier (e.g., "Test", not "test")
-                let name = token.text.clone();
-                Ok(Expression::Variable(name))
+                // Keep the token text so `Test` stays `Test`, not `test`.
+                Ok(Expression::Variable(token.text))
             }
             TokenKind::This => {
                 self.bump();
@@ -639,6 +622,13 @@ impl TokenParser {
                     let starts_parenthesized = matches!(self.current_kind(), TokenKind::LeftParen);
                     let element_location = self.current().location.clone();
                     let element = self.parse_expression()?;
+                    // Only a bare `-2` is a signed literal; `(-2)` stays the
+                    // parenthesized expression it was written as.
+                    let element = if starts_parenthesized {
+                        element
+                    } else {
+                        Self::fold_signed_literal(element)
+                    };
                     if !starts_parenthesized
                         && !matches!(element, Expression::Literal(_) | Expression::Variable(_))
                     {
@@ -805,6 +795,22 @@ impl TokenParser {
                     None,
                 ))
             }
+        }
+    }
+
+    /// A minus sign directly applied to a numeric literal is part of the
+    /// literal (grammar.ebnf `decimal_integer = [ "-" ] , DIGIT , ...`), so
+    /// `[1, -2, 3]` is a list of literals.
+    fn fold_signed_literal(expr: Expression) -> Expression {
+        match expr {
+            Expression::Unary(crate::ast::UnaryOperator::Negate, operand) => match *operand {
+                Expression::Literal(Value::Integer(n)) => {
+                    Expression::Literal(Value::Integer(n.wrapping_neg()))
+                }
+                Expression::Literal(Value::Number(n)) => Expression::Literal(Value::Number(-n)),
+                other => Expression::Unary(crate::ast::UnaryOperator::Negate, Box::new(other)),
+            },
+            other => other,
         }
     }
 

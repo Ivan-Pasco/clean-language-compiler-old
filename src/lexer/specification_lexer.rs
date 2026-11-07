@@ -14,21 +14,11 @@ use std::str::Chars;
 pub struct SourceCode {
     pub content: String,
     pub file_path: String,
-    pub encoding: SourceEncoding,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SourceEncoding {
-    Utf8,
 }
 
 impl SourceCode {
     pub fn new(content: String, file_path: String) -> Self {
-        Self {
-            content,
-            file_path,
-            encoding: SourceEncoding::Utf8,
-        }
+        Self { content, file_path }
     }
 }
 
@@ -43,7 +33,7 @@ enum InterpolationPart {
 pub struct SpecificationLexer<'a> {
     input: Peekable<Chars<'a>>,
     source_content: &'a str,
-    source_map: SourceMap,
+    file_path: String,
     current_pos: usize,
     line: usize,
     column: usize,
@@ -55,12 +45,10 @@ pub struct SpecificationLexer<'a> {
 impl<'a> SpecificationLexer<'a> {
     /// Create new lexer from source code
     pub fn new(source: &'a SourceCode) -> Self {
-        let source_map = SourceMap::new(source.file_path.clone(), &source.content);
-
         Self {
             input: source.content.chars().peekable(),
             source_content: &source.content,
-            source_map,
+            file_path: source.file_path.clone(),
             current_pos: 0,
             line: 1,
             column: 1,
@@ -93,16 +81,7 @@ impl<'a> SpecificationLexer<'a> {
             }
         }
 
-        Ok(TokenStream::new(
-            tokens,
-            self.source_map.clone(),
-            self.source_content.to_string(),
-        ))
-    }
-
-    /// Get the source map for this lexer
-    pub fn source_map(&self) -> &SourceMap {
-        &self.source_map
+        Ok(TokenStream::new(tokens, self.source_content.to_string()))
     }
 
     /// Get next token from input
@@ -158,14 +137,11 @@ impl<'a> SpecificationLexer<'a> {
             return Ok(Token::simple(TokenKind::Newline, start_location));
         }
 
-        if let Some(&'/') = self.peek() {
-            if let Some(chars) = self.peek_chars(2) {
-                if chars[1] == '/' {
-                    // Comment line - handle the comment normally without recursion
-                    self.at_line_start = false;
-                    return self.handle_slash();
-                }
-            }
+        // A comment-only line (`// ...`, or a `/* ... */` with nothing after
+        // it) is not a statement line: it must not open or close a block.
+        if self.at_comment_only_line() {
+            self.at_line_start = false;
+            return self.handle_slash();
         }
 
         self.at_line_start = false;
@@ -231,6 +207,28 @@ impl<'a> SpecificationLexer<'a> {
         }
     }
 
+    /// True when the rest of the current line is only a comment: a `//`
+    /// comment, or a `/* ... */` block comment (possibly spanning lines)
+    /// followed by nothing but whitespace or a `//` comment. Nothing is
+    /// consumed.
+    fn at_comment_only_line(&self) -> bool {
+        let rest = &self.source_content[self.current_pos..];
+        if rest.starts_with("//") {
+            return true;
+        }
+        let Some(body) = rest.strip_prefix("/*") else {
+            return false;
+        };
+        let Some(close) = body.find("*/") else {
+            // Unterminated: let the comment reader report it.
+            return true;
+        };
+        let after = &body[close + 2..];
+        let line_rest = after.split('\n').next().unwrap_or("");
+        let trimmed = line_rest.trim_start_matches([' ', '\t', '\r']);
+        trimmed.is_empty() || trimmed.starts_with("//")
+    }
+
     /// Get next token after handling indentation (prevents recursion)
     fn next_token_after_indentation(&mut self) -> Result<Token, LexError> {
         // Skip whitespace (but preserve newlines and tabs)
@@ -251,7 +249,7 @@ impl<'a> SpecificationLexer<'a> {
                 // String literals
                 '"' => self.read_string_literal(),
 
-                // Numbers (including precision modifiers)
+                // Numbers
                 c if c.is_ascii_digit() => self.read_number_literal(),
 
                 // Identifiers and keywords
@@ -307,10 +305,6 @@ impl<'a> SpecificationLexer<'a> {
                     self.advance();
                     Ok(Token::simple(TokenKind::Comma, start_location))
                 }
-                ';' => {
-                    self.advance();
-                    Ok(Token::simple(TokenKind::Semicolon, start_location))
-                }
                 ':' => {
                     self.advance();
                     Ok(Token::simple(TokenKind::Colon, start_location))
@@ -339,43 +333,30 @@ impl<'a> SpecificationLexer<'a> {
                 }
 
                 // Characters that are not valid Clean Language syntax outside of
-                // framework blocks (html:, component:, etc.) but MUST flow through the
-                // token stream so plugin-owned blocks can capture them via byte-range
-                // raw extraction. The parser's extract_block_content_raw() reads bytes
-                // directly from the source — the token kind for these characters is
-                // irrelevant, only their presence (so the lexer doesn't error) and their
-                // byte position matter.
+                // framework blocks (html:, component:, style:, ...) but MUST flow
+                // through the token stream so plugin-owned blocks can capture
+                // them via byte-range raw extraction
+                // (TokenParser::extract_block_content_raw reads the source bytes;
+                // only the token's presence and byte position matter).
                 //
                 // Pass-through set:
                 //   '\''         — html attribute values like alt='Photo'
                 //   '&'          — html entities like &rarr;, &middot;
                 //   '\\'         — escaped braces `\{` `\}` in html: text (CSS rules)
+                //   ';'          — CSS declarations in style: blocks
                 //   '#'          — html fragment ids like href="#top" and the
                 //                  "#{var}" pattern that precedes an interpolation
                 //   non-ASCII    — raw text content like →, ©, emoji, multibyte chars
                 //
-                // If any of these appear outside a framework block, the parser will
-                // catch them later as an unexpected-token error in the right context.
+                // They lex as RawChar, which no parser rule accepts, so outside a
+                // framework block they are an "unexpected token" error (they used
+                // to lex as identifiers, which made `integer & = 3` compile).
                 // Reproduces LEX001 (fingerprint 41310e98b853...) and SYN001
                 // (fingerprint 9bc6a62dab24...) when removed.
-                '\'' | '&' | '#' | '\\' => {
-                    let loc = start_location.clone();
-                    let c = self.advance().unwrap();
-                    Ok(Token::new(
-                        TokenKind::Identifier(c.to_string()),
-                        loc,
-                        c.to_string(),
-                    ))
-                }
-
-                c if !c.is_ascii() => {
+                c if matches!(c, '\'' | '&' | '#' | '\\' | ';') || !c.is_ascii() => {
                     let loc = start_location.clone();
                     let ch = self.advance().unwrap();
-                    Ok(Token::new(
-                        TokenKind::Identifier(ch.to_string()),
-                        loc,
-                        ch.to_string(),
-                    ))
+                    Ok(Token::new(TokenKind::RawChar(ch), loc, ch.to_string()))
                 }
 
                 // Invalid character
@@ -656,6 +637,11 @@ impl<'a> SpecificationLexer<'a> {
         let mut sub_depth: u32 = 1;
         let mut paren_depth: u32 = 0;
         let mut bracket_depth: u32 = 0;
+        // Last non-whitespace character and the identifier/keyword ending
+        // there, to tell a nested string literal (`{f("q")}`) from the
+        // closing quote of the outer string (`"a {b" + "c}"`).
+        let mut prev = '{';
+        let mut word = String::new();
         while let Some(&c) = ahead.peek() {
             match c {
                 '{' => sub_depth += 1,
@@ -669,6 +655,35 @@ impl<'a> SpecificationLexer<'a> {
                 ')' => paren_depth = paren_depth.saturating_sub(1),
                 '[' => bracket_depth += 1,
                 ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                // A quote where an operand is expected opens a nested string
+                // literal (grammar.ebnf `string_interpolation` holds a full
+                // expression): skip it so its quotes and braces are not taken
+                // for the outer string's.
+                '"' if Self::operand_expected(prev, &word) => {
+                    // On failure the outer string ends at this quote, so the
+                    // probe reports only what came before it.
+                    let quote_at = scanned;
+                    ahead.next();
+                    scanned += 1;
+                    loop {
+                        match ahead.next() {
+                            Some('"') => break,
+                            Some('\\') => {
+                                if ahead.next().is_none() {
+                                    return (false, quote_at);
+                                }
+                                scanned += 1;
+                            }
+                            Some('\n') | None => return (false, quote_at),
+                            Some(_) => {}
+                        }
+                        scanned += 1;
+                    }
+                    scanned += 1;
+                    prev = '"';
+                    word.clear();
+                    continue;
+                }
                 // End-of-string or newline before the matching brace — the user
                 // did not close the interpolation, treat as literal.
                 '"' | '\n' => return (false, scanned),
@@ -686,6 +701,16 @@ impl<'a> SpecificationLexer<'a> {
                 ',' if paren_depth == 0 && bracket_depth == 0 => return (false, scanned),
                 _ => {}
             }
+            if c.is_alphanumeric() || c == '_' {
+                if !(prev.is_alphanumeric() || prev == '_') {
+                    word.clear();
+                }
+                word.push(c);
+                prev = c;
+            } else if !c.is_whitespace() {
+                prev = c;
+                word.clear();
+            }
             ahead.next();
             scanned += 1;
         }
@@ -693,6 +718,23 @@ impl<'a> SpecificationLexer<'a> {
         // Ran off the end of the input: the string itself is unterminated and
         // the interpolated-string reader reports it.
         (true, scanned)
+    }
+
+    /// Whether an operand (here: a nested string literal) may follow the
+    /// interpolation text seen so far, given its last non-whitespace
+    /// character and the word ending there.
+    ///
+    /// A quote right after the opening `{` is not included: `"{" + x + "}"`
+    /// is the common way to build braces, so there the quote ends the outer
+    /// string and the brace is literal text.
+    fn operand_expected(prev: char, word: &str) -> bool {
+        matches!(
+            prev,
+            '(' | '[' | ',' | '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '^'
+        ) || matches!(
+            word,
+            "and" | "or" | "not" | "is" | "default" | "onError" | "then" | "else"
+        )
     }
 
     /// Read expression tokens inside interpolation {}.
@@ -769,7 +811,7 @@ impl<'a> SpecificationLexer<'a> {
         Ok(())
     }
 
-    /// Read number literal with optional precision modifier
+    /// Read a number literal
     fn read_number_literal(&mut self) -> Result<Token, LexError> {
         let start_location = self.current_location();
         let start_pos = self.current_pos;
@@ -819,198 +861,41 @@ impl<'a> SpecificationLexer<'a> {
             is_float = true;
         }
 
-        // Check for precision modifier - only if followed by valid digits
-        if let Some(&':') = self.peek() {
-            // Look ahead to see if this is actually a precision modifier
-            if self.is_valid_precision_modifier_ahead() {
-                self.advance(); // Skip ':'
-                let precision = self.read_precision_modifier(is_float)?;
+        let text = self.source_text_range(start_pos, self.current_pos);
 
-                let text = self.source_text_range(start_pos, self.current_pos);
-
-                // Create precision-specific token
-                if is_float {
-                    match precision {
-                        PrecisionModifier::Number32 => {
-                            let value: f32 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Number32Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Number64 => {
-                            let value: f64 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Number64Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        _ => Err(LexError::InvalidPrecisionModifier {
-                            modifier: format!("{:?}", precision),
-                            location: start_location,
-                        }),
-                    }
-                } else {
-                    match precision {
-                        PrecisionModifier::Integer8 => {
-                            let value: i8 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Integer8Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Integer8u => {
-                            let value: u8 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Integer8uLiteral(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Integer16 => {
-                            let value: i16 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Integer16Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Integer16u => {
-                            let value: u16 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Integer16uLiteral(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Integer32 => {
-                            let value: i32 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Integer32Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Integer64 => {
-                            let value: i64 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Integer64Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Number32 => {
-                            let value: f32 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Number32Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                        PrecisionModifier::Number64 => {
-                            let value: f64 =
-                                number_text.parse().map_err(|_| LexError::InvalidNumber {
-                                    text: text.clone(),
-                                    location: start_location.clone(),
-                                })?;
-                            Ok(Token::new(
-                                TokenKind::Number64Literal(value),
-                                start_location,
-                                text,
-                            ))
-                        }
-                    }
-                }
-            } else {
-                // Colon found but not a precision modifier - treat as default number
-                let text = self.source_text_range(start_pos, self.current_pos);
-
-                if is_float {
-                    let value: f64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
-                        text: text.clone(),
-                        location: start_location.clone(),
-                    })?;
-                    Ok(Token::new(
-                        TokenKind::NumberLiteral(value),
-                        start_location,
-                        text,
-                    ))
-                } else {
-                    let value: i64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
-                        text: text.clone(),
-                        location: start_location.clone(),
-                    })?;
-                    Ok(Token::new(
-                        TokenKind::IntegerLiteral(value),
-                        start_location,
-                        text,
-                    ))
-                }
-            }
+        if is_float {
+            let value: f64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
+                text: text.clone(),
+                location: start_location.clone(),
+            })?;
+            Ok(Token::new(
+                TokenKind::NumberLiteral(value),
+                start_location,
+                text,
+            ))
         } else {
-            // Default precision
-            let text = self.source_text_range(start_pos, self.current_pos);
+            let value =
+                Self::decimal_integer(&number_text).ok_or_else(|| LexError::InvalidNumber {
+                    text: text.clone(),
+                    location: start_location.clone(),
+                })?;
+            Ok(Token::new(
+                TokenKind::IntegerLiteral(value),
+                start_location,
+                text,
+            ))
+        }
+    }
 
-            if is_float {
-                let value: f64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
-                    text: text.clone(),
-                    location: start_location.clone(),
-                })?;
-                Ok(Token::new(
-                    TokenKind::NumberLiteral(value),
-                    start_location,
-                    text,
-                ))
-            } else {
-                let value: i64 = number_text.parse().map_err(|_| LexError::InvalidNumber {
-                    text: text.clone(),
-                    location: start_location.clone(),
-                })?;
-                Ok(Token::new(
-                    TokenKind::IntegerLiteral(value),
-                    start_location,
-                    text,
-                ))
-            }
+    /// Value of a decimal integer literal. `9223372036854775808` (2^63) does
+    /// not fit in i64 on its own but is the magnitude of `i64::MIN`, so it
+    /// lexes as `i64::MIN`; the parser accepts it only right after a unary
+    /// minus and reports it as out of range anywhere else.
+    fn decimal_integer(text: &str) -> Option<i64> {
+        match text.parse::<i64>() {
+            Ok(value) => Some(value),
+            Err(_) if text.parse::<u64>() == Ok(1u64 << 63) => Some(i64::MIN),
+            Err(_) => None,
         }
     }
 
@@ -1098,78 +983,6 @@ impl<'a> SpecificationLexer<'a> {
             }
         }
         true
-    }
-
-    /// Read precision modifier (8, 8u, 16, 16u, 32, 64)
-    /// Check if what follows the current ':' looks like a valid precision modifier
-    fn is_valid_precision_modifier_ahead(&self) -> bool {
-        // Collect the potential modifier string and check if it's valid
-        let mut modifier = String::new();
-        let mut check_pos = 1; // Start after the ':'
-        let max_lookahead = 4; // Prevent infinite loops
-
-        while check_pos <= max_lookahead {
-            if let Some(ch) = self.peek_at_offset(check_pos) {
-                if ch.is_ascii_digit() || ch == 'u' {
-                    modifier.push(ch);
-                    check_pos += 1;
-                } else {
-                    break;
-                }
-            } else {
-                // End of input
-                break;
-            }
-        }
-
-        // Check if it matches known precision modifiers
-        matches!(modifier.as_str(), "8" | "8u" | "16" | "16u" | "32" | "64")
-    }
-
-    fn peek_at_offset(&self, offset: usize) -> Option<char> {
-        // Get a slice starting from current position, then get the nth character
-        self.source_content
-            .get(self.current_pos..)?
-            .chars()
-            .nth(offset)
-    }
-
-    fn read_precision_modifier(&mut self, is_float: bool) -> Result<PrecisionModifier, LexError> {
-        let mut modifier = String::new();
-
-        while let Some(&ch) = self.peek() {
-            if ch.is_ascii_digit() || ch == 'u' {
-                modifier.push(ch);
-                self.advance();
-            } else {
-                break;
-            }
-        }
-
-        match modifier.as_str() {
-            "8" => Ok(PrecisionModifier::Integer8),
-            "8u" => Ok(PrecisionModifier::Integer8u),
-            "16" => Ok(PrecisionModifier::Integer16),
-            "16u" => Ok(PrecisionModifier::Integer16u),
-            "32" => {
-                if is_float {
-                    Ok(PrecisionModifier::Number32)
-                } else {
-                    Ok(PrecisionModifier::Integer32)
-                }
-            }
-            "64" => {
-                if is_float {
-                    Ok(PrecisionModifier::Number64)
-                } else {
-                    Ok(PrecisionModifier::Integer64)
-                }
-            }
-            _ => Err(LexError::InvalidPrecisionModifier {
-                modifier,
-                location: self.current_location(),
-            }),
-        }
     }
 
     /// Read identifier or keyword
@@ -1320,7 +1133,7 @@ impl<'a> SpecificationLexer<'a> {
         }
     }
 
-    /// Handle dot (. or .. or floating-point literal starting with .)
+    /// Handle dot (`.` or a floating-point literal starting with `.`)
     fn handle_dot(&mut self) -> Result<Token, LexError> {
         let start_location = self.current_location();
         let start_pos = self.current_pos;
@@ -1356,15 +1169,6 @@ impl<'a> SpecificationLexer<'a> {
                     start_location,
                     text,
                 ));
-            } else if ch == '.' {
-                // Range operator (..)
-                self.advance(); // Skip second '.'
-                if let Some(&'=') = self.peek() {
-                    self.advance(); // Skip '='
-                    return Ok(Token::simple(TokenKind::RangeInclusive, start_location));
-                } else {
-                    return Ok(Token::simple(TokenKind::Range, start_location));
-                }
             }
         }
 
@@ -1419,12 +1223,7 @@ impl<'a> SpecificationLexer<'a> {
     }
 
     fn current_location(&self) -> SourceLocation {
-        SourceLocation::with_byte_span(
-            self.line,
-            self.column,
-            &self.source_map.file_path,
-            self.current_pos,
-        )
+        SourceLocation::with_byte_span(self.line, self.column, &self.file_path, self.current_pos)
     }
 
     fn source_text_range(&self, start: usize, end: usize) -> String {
@@ -1440,18 +1239,6 @@ impl<'a> SpecificationLexer<'a> {
             String::new()
         }
     }
-}
-
-#[derive(Debug, Clone)]
-enum PrecisionModifier {
-    Integer8,
-    Integer8u,
-    Integer16,
-    Integer16u,
-    Integer32,
-    Integer64,
-    Number32,
-    Number64,
 }
 
 // Error types for lexer
@@ -1475,12 +1262,6 @@ pub enum LexError {
         location: SourceLocation,
     },
 
-    #[error("Invalid precision modifier '{modifier}' at {location}")]
-    InvalidPrecisionModifier {
-        modifier: String,
-        location: SourceLocation,
-    },
-
     #[error("Invalid indentation at {location}")]
     InvalidIndentation {
         expected_levels: Vec<usize>,
@@ -1492,27 +1273,61 @@ pub enum LexError {
     SpacesInIndentation { location: SourceLocation },
 }
 
-impl From<LexError> for CompilerError {
-    fn from(error: LexError) -> Self {
-        // Surface SYN004 (unterminated construct) at the conversion site so the rest of
-        // the toolchain receives a Syntax variant carrying both a SourceLocation and the
-        // spec error code. Other LexError kinds remain in the catch-all LexError variant
-        // until they too earn an explicit classification.
-        match &error {
-            LexError::UnterminatedString { location } => CompilerError::syntax_error_with_code(
-                error.to_string(),
-                Some("Close the string literal with the matching quote.".to_string()),
-                Some(location.clone()),
-                "SYN004",
-            ),
-            LexError::UnterminatedComment { location } => CompilerError::syntax_error_with_code(
-                error.to_string(),
-                Some("Close the comment with `*/`.".to_string()),
-                Some(location.clone()),
-                "SYN004",
-            ),
-            _ => CompilerError::LexError(error),
+impl LexError {
+    /// Where the error was found. Every lexer error carries the position of
+    /// the offending character, so diagnostics never fall back to 1:1.
+    pub fn location(&self) -> &SourceLocation {
+        match self {
+            LexError::InvalidCharacter { location, .. }
+            | LexError::UnterminatedString { location }
+            | LexError::UnterminatedComment { location }
+            | LexError::InvalidNumber { location, .. }
+            | LexError::InvalidIndentation { location, .. }
+            | LexError::SpacesInIndentation { location } => location,
         }
+    }
+
+    /// The spec error code (foundation/spec/error-codes.md, SYN001-SYN005).
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            LexError::InvalidCharacter { .. } => "SYN001",
+            LexError::InvalidIndentation { .. } | LexError::SpacesInIndentation { .. } => "SYN003",
+            LexError::UnterminatedString { .. } | LexError::UnterminatedComment { .. } => "SYN004",
+            LexError::InvalidNumber { .. } => "SYN005",
+        }
+    }
+
+    fn help(&self) -> String {
+        match self {
+            LexError::InvalidCharacter { .. } => {
+                "This character is only allowed inside strings, comments and framework blocks."
+            }
+            LexError::UnterminatedString { .. } => {
+                "Close the string literal with the matching quote."
+            }
+            LexError::UnterminatedComment { .. } => "Close the comment with `*/`.",
+            LexError::InvalidNumber { .. } => {
+                "Integer literals must fit in 64 bits (-9223372036854775808 to 9223372036854775807)."
+            }
+            LexError::InvalidIndentation { .. } => {
+                "Dedent to the indentation level of an enclosing block."
+            }
+            LexError::SpacesInIndentation { .. } => "Indent with tabs only.",
+        }
+        .to_string()
+    }
+}
+
+impl From<LexError> for CompilerError {
+    /// Every lexer error becomes a located syntax error, so the reporter and
+    /// the language server point at the offending character.
+    fn from(error: LexError) -> Self {
+        CompilerError::syntax_error_with_code(
+            error.to_string(),
+            Some(error.help()),
+            Some(error.location().clone()),
+            error.error_code(),
+        )
     }
 }
 
@@ -1611,6 +1426,98 @@ mod regression_tests {
                 TokenKind::Identifier("b5ed7".to_string())
             ]
         );
+    }
+
+    /// Regression: a line holding only a `/* ... */` comment is a comment
+    /// line like `// ...`. Unindented, it used to emit a Dedent and close the
+    /// enclosing block, so the following statement fell out of `start:`.
+    #[test]
+    fn block_comment_only_line_keeps_block_open() {
+        let plain = "start:\n\tinteger a = 1\n\tprint(a)\n";
+        let layout = |src: &str| -> Vec<TokenKind> {
+            kinds(src)
+                .into_iter()
+                .filter(|k| {
+                    !matches!(
+                        k,
+                        TokenKind::Comment(_) | TokenKind::BlockComment(_) | TokenKind::Newline
+                    )
+                })
+                .collect()
+        };
+        for src in [
+            "start:\n\tinteger a = 1\n/* c */\n\tprint(a)\n",
+            "start:\n\tinteger a = 1\n\t\t\t/* c */ // d\n\tprint(a)\n",
+            "start:\n\tinteger a = 1\n/* one\ntwo */\n\tprint(a)\n",
+        ] {
+            assert_eq!(layout(src), layout(plain), "{}", src.escape_debug());
+        }
+        // Code after the comment keeps its indentation.
+        assert!(kinds("start:\n\t/* c */ print(1)\n").contains(&TokenKind::Indent(1)));
+    }
+
+    /// Regression: a string literal inside an interpolation (`{f("q")}`)
+    /// ended the outer string at its first quote.
+    #[test]
+    fn string_literal_inside_interpolation() {
+        let k = kinds("\"v={f(\"q\")} w={a + \"}\"}\"");
+        assert!(
+            k.contains(&TokenKind::StringLiteral("q".to_string())),
+            "{:?}",
+            k
+        );
+        assert!(
+            k.contains(&TokenKind::StringLiteral("}".to_string())),
+            "{:?}",
+            k
+        );
+        assert_eq!(
+            k.iter()
+                .filter(|k| matches!(k, TokenKind::InterpolationEnd))
+                .count(),
+            1,
+            "{:?}",
+            k
+        );
+        // A quote right after `{` closes the outer string: building braces
+        // by concatenation keeps working.
+        let k = kinds("json = \"{\" + body + \"}\"\nx = 1");
+        assert_eq!(k[2], TokenKind::StringLiteral("{".to_string()), "{:?}", k);
+        assert_eq!(k[6], TokenKind::StringLiteral("}".to_string()), "{:?}", k);
+        let k = kinds("r = r.replace(\"{\", \"\\\\{\")\nx = 1");
+        assert!(
+            k.contains(&TokenKind::StringLiteral("{".to_string())),
+            "{:?}",
+            k
+        );
+        // A quote after an operand still closes the outer string: the brace
+        // stays literal text.
+        let k = kinds("\"a {b\" + \"c}\"");
+        assert_eq!(
+            k[..3],
+            [
+                TokenKind::StringLiteral("a {b".to_string()),
+                TokenKind::Plus,
+                TokenKind::StringLiteral("c}".to_string()),
+            ]
+        );
+    }
+
+    /// Characters only plugin blocks use lex as RawChar, never as
+    /// identifiers, so the parser cannot take them for names.
+    #[test]
+    fn stray_characters_are_raw_chars() {
+        for (src, c) in [
+            ("&", '&'),
+            ("#", '#'),
+            ("'", '\''),
+            ("\\", '\\'),
+            ("→", '→'),
+        ] {
+            assert_eq!(kinds(src)[0], TokenKind::RawChar(c), "{}", src);
+        }
+        // Non-ASCII letters are still identifier characters.
+        assert_eq!(kinds("é")[0], TokenKind::Identifier("é".to_string()));
     }
 
     /// Real exponents and base-prefixed integers keep working.

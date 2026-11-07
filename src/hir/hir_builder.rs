@@ -635,9 +635,7 @@ impl HirBuilder {
                 }
                 Statement::ClassDefinition { location, .. } => Some((3, "class", location.clone())),
                 // Auxiliary — exempt from ordering.
-                Statement::ScreenBlockStmt { .. }
-                | Statement::FrameworkBlock { .. }
-                | Statement::TestsBlock { .. } => None,
+                Statement::ScreenBlockStmt { .. } | Statement::FrameworkBlock { .. } => None,
                 _ => None,
             }
         }
@@ -681,16 +679,7 @@ impl HirBuilder {
     pub(crate) fn is_constant_state_value(value: &Value) -> bool {
         matches!(
             value,
-            Value::Integer(_)
-                | Value::Number(_)
-                | Value::Boolean(_)
-                | Value::String(_)
-                | Value::Integer8(_)
-                | Value::Integer8u(_)
-                | Value::Integer16(_)
-                | Value::Integer16u(_)
-                | Value::Integer32(_)
-                | Value::Integer64(_)
+            Value::Integer(_) | Value::Number(_) | Value::Boolean(_) | Value::String(_)
         )
     }
 
@@ -802,63 +791,6 @@ impl HirBuilder {
                     let loc = location.clone().unwrap_or_default();
                     let mut expanded = self.desugar_validate_declaration(schema, &loc)?;
                     validate_preamble.append(&mut expanded);
-                }
-                Statement::TestsBlock {
-                    tests: test_cases,
-                    location,
-                } => {
-                    // Lower each test case into a HirTest node whose body returns
-                    // (test_expression == expected_value) as a boolean.
-                    let loc = location.clone().unwrap_or_default();
-                    for (idx, test_case) in test_cases.iter().enumerate() {
-                        let test_loc = test_case.location.clone().unwrap_or_else(|| loc.clone());
-                        match &test_case.kind {
-                            crate::ast::TestCaseKind::Expression {
-                                test_expression,
-                                expected_value,
-                            } => {
-                                let lhs = self.build_expression(test_expression)?;
-                                let rhs = self.build_expression(expected_value)?;
-                                let equality = HirExpression::BinaryOp {
-                                    left: Box::new(lhs),
-                                    op: HirBinaryOp::Equal,
-                                    right: Box::new(rhs),
-                                    location: test_loc.clone(),
-                                };
-                                let body = HirBlock {
-                                    statements: vec![HirStatement::Return {
-                                        value: Some(equality),
-                                        location: test_loc.clone(),
-                                    }],
-                                    location: test_loc.clone(),
-                                };
-                                let name = test_case
-                                    .description
-                                    .clone()
-                                    .unwrap_or_else(|| format!("test_{}", idx));
-                                tests.push(HirTest {
-                                    name,
-                                    description: test_case.description.clone(),
-                                    body,
-                                    location: test_loc,
-                                });
-                            }
-                            crate::ast::TestCaseKind::Endpoint(endpoint) => {
-                                let name = test_case
-                                    .description
-                                    .clone()
-                                    .unwrap_or_else(|| format!("test_{}", idx));
-                                let body =
-                                    self.build_endpoint_test_body(endpoint, test_loc.clone())?;
-                                tests.push(HirTest {
-                                    name,
-                                    description: test_case.description.clone(),
-                                    body,
-                                    location: test_loc,
-                                });
-                            }
-                        }
-                    }
                 }
                 Statement::FrameworkBlock { name, location, .. } => {
                     // COMPILER-IMPLICIT-PLUGIN-ACTIVATION (dashboard fp 73cfeba24d14).
@@ -1508,13 +1440,11 @@ impl HirBuilder {
                     location: SourceLocation::default(),
                 })
             }
-            Type::TypeParameter(_) | Type::Function(..) | Type::Future(_) => {
-                Err(CompilerError::syntax_error(
-                    format!("Type '{}' is not supported here", ast_type),
-                    None,
-                    self.statement_location.clone(),
-                ))
-            }
+            Type::TypeParameter(_) => Err(CompilerError::syntax_error(
+                format!("Type '{}' is not supported here", ast_type),
+                None,
+                self.statement_location.clone(),
+            )),
         }
     }
 
@@ -2169,7 +2099,6 @@ impl HirBuilder {
                 start,
                 end,
                 step,
-                inclusive,
                 body,
                 location,
             } => {
@@ -2186,7 +2115,9 @@ impl HirBuilder {
                     start: Box::new(hir_start),
                     end: Box::new(hir_end),
                     step: hir_step,
-                    inclusive: *inclusive,
+                    // `iterate i in a to b` includes `b` (the optional
+                    // `inclusive` keyword is only for readability).
+                    inclusive: true,
                     location: location.clone().unwrap_or_default(),
                 };
 
@@ -2312,7 +2243,6 @@ impl HirBuilder {
             Statement::Iterate { .. } | Statement::RangeIterate { .. } => "'iterate'",
             Statement::While { .. } => "'while'",
             Statement::Test { .. } => "A 'test' block (tests belong in a 'tests:' block)",
-            Statement::TestsBlock { .. } => "A 'tests:' block",
             Statement::Expression { .. } => "An expression statement",
             Statement::Error { .. } => "'error(...)'",
             Statement::Import { .. } => "An 'import:' block",
@@ -2815,24 +2745,6 @@ impl HirBuilder {
                 })
             }
 
-            Expression::Range {
-                start,
-                end,
-                inclusive,
-                location,
-            } => {
-                let hir_start = self.build_expression(start)?;
-                let hir_end = self.build_expression(end)?;
-
-                Ok(HirExpression::Range {
-                    start: Box::new(hir_start),
-                    end: Box::new(hir_end),
-                    step: None, // Expression::Range doesn't have step; it's in Statement::RangeIterate
-                    inclusive: *inclusive,
-                    location: location.clone(),
-                })
-            }
-
             Expression::ObjectLiteral { fields, location } => {
                 let mut hir_fields = Vec::with_capacity(fields.len());
                 for (key, value) in fields {
@@ -2955,13 +2867,10 @@ impl HirBuilder {
                 "SEM001",
             )),
 
-            // `expr onError:` blocks, the `error` variable, `later` and
-            // `input` have statement forms that are lowered elsewhere; in
-            // expression position they have no lowering.
-            Expression::OnErrorBlock { location, .. }
-            | Expression::ErrorVariable { location }
-            | Expression::LaterAssignment { location, .. }
-            | Expression::Input { location, .. } => Err(CompilerError::syntax_error(
+            // `expr onError:` blocks and the `error` variable have statement
+            // forms that are lowered elsewhere; in expression position they
+            // have no lowering.
+            Expression::OnErrorBlock { location, .. } | Expression::ErrorVariable { location } => Err(CompilerError::syntax_error(
                 "This expression form is not supported here".to_string(),
                 None,
                 Some(location.clone()),
@@ -3007,14 +2916,6 @@ impl HirBuilder {
             Value::Number(_) => HirType::Number,
             Value::String(_) => HirType::String,
             Value::Boolean(_) => HirType::Boolean,
-            Value::Integer8(_) => HirType::Integer8,
-            Value::Integer8u(_) => HirType::Integer8u,
-            Value::Integer16(_) => HirType::Integer16,
-            Value::Integer16u(_) => HirType::Integer16u,
-            Value::Integer32(_) => HirType::Integer32,
-            Value::Integer64(_) => HirType::Integer64,
-            Value::Number32(_) => HirType::Number32,
-            Value::Number64(_) => HirType::Number64,
             Value::List(elements) => {
                 let element_type = if let Some(first) = elements.first() {
                     Box::new(self.value_to_hir_type(first))
@@ -7905,16 +7806,7 @@ impl HirBuilder {
                         // Type check: length constraint arguments must be integer literals.
                         // spec/semantic-rules.md: `length` constraint bounds must be integer.
                         if let Expression::Literal(ref v) = **min {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate length constraint: min argument must be integer, found {}",
@@ -7925,16 +7817,7 @@ impl HirBuilder {
                             }
                         }
                         if let Expression::Literal(ref v) = **max {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate length constraint: max argument must be integer, found {}",
@@ -7977,19 +7860,7 @@ impl HirBuilder {
                         // Type check: min constraint argument must be number or integer.
                         // spec/semantic-rules.md: `min` constraint value must be numeric.
                         if let Expression::Literal(ref v) = **expr {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                                    | Value::Number(_)
-                                    | Value::Number32(_)
-                                    | Value::Number64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_) | Value::Number(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate min constraint: argument must be number or integer, found {}",
@@ -8020,19 +7891,7 @@ impl HirBuilder {
                         // Type check: max constraint argument must be number or integer.
                         // spec/semantic-rules.md: `max` constraint value must be numeric.
                         if let Expression::Literal(ref v) = **expr {
-                            if !matches!(
-                                v,
-                                Value::Integer(_)
-                                    | Value::Integer8(_)
-                                    | Value::Integer8u(_)
-                                    | Value::Integer16(_)
-                                    | Value::Integer16u(_)
-                                    | Value::Integer32(_)
-                                    | Value::Integer64(_)
-                                    | Value::Number(_)
-                                    | Value::Number32(_)
-                                    | Value::Number64(_)
-                            ) {
+                            if !matches!(v, Value::Integer(_) | Value::Number(_)) {
                                 return Err(CompilerError::validation_error(
                                     format!(
                                         "validate max constraint: argument must be number or integer, found {}",

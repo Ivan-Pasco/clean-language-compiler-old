@@ -5,8 +5,8 @@ use super::type_parser::parse_type;
 use super::Rule;
 use super::{get_location, CleanParser};
 use crate::ast::{
-    Expression, Function, FunctionModifier, FunctionSyntax, ImportItem, Parameter, Program,
-    Statement, TestCase, Type, Visibility,
+    Expression, Function, FunctionModifier, ImportItem, Parameter, Program, Statement, TestCase,
+    Type, Visibility,
 };
 use crate::error::{CompilerError, ErrorUtils};
 use pest::{iterators::Pair, Parser};
@@ -49,7 +49,6 @@ impl ErrorRecoveringParser {
 }
 
 pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program, CompilerError> {
-    let _file_path = "unknown";
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut start_function = None;
@@ -163,7 +162,6 @@ pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program,
             return_type: Type::Void,
             body: filtered_statements,
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: Visibility::Public,
             modifier: FunctionModifier::None,
             location: None,
@@ -219,7 +217,6 @@ pub fn parse_start_block(pair: Pair<Rule>) -> Result<Function, CompilerError> {
         return_type,
         body,
         description: None,
-        syntax: FunctionSyntax::Simple,
         visibility: Visibility::Public,
         modifier: FunctionModifier::None,
         location,
@@ -324,19 +321,13 @@ pub fn parse_functions_block_traditional(
             for func_item in item.into_inner() {
                 match func_item.as_rule() {
                     Rule::function_in_block => {
-                        match parse_function_in_block(func_item) {
-                            Ok(func) => functions.push(func),
-                            Err(_) => continue, // Recovery: skip failed function
-                        }
+                        functions.push(parse_function_in_block(func_item)?);
                     }
                     Rule::class_function_line => {
                         // Handle the new class_function_line rule
                         for inner in func_item.into_inner() {
                             if inner.as_rule() == Rule::function_in_block {
-                                match parse_function_in_block(inner) {
-                                    Ok(func) => functions.push(func),
-                                    Err(_) => continue, // Recovery: skip failed function
-                                }
+                                functions.push(parse_function_in_block(inner)?);
                             }
                         }
                     }
@@ -748,7 +739,6 @@ pub fn parse_function_in_block(func_pair: Pair<Rule>) -> Result<Function, Compil
         return_type,
         body,
         description,
-        syntax: FunctionSyntax::Block,
         visibility: Visibility::Public,
         modifier: FunctionModifier::None,
         location,
@@ -988,11 +978,17 @@ fn parse_type_from_str(type_str: &str) -> Result<crate::ast::Type, CompilerError
         "any" => Ok(Type::Any),
         "void" => Ok(Type::Void),
         "none" => Ok(Type::None),
-        _other => {
-            // Could be a class type or complex type
-            // For now, treat unknown types as any (generic external types)
-            Ok(Type::Any)
-        }
+        other => Err(CompilerError::parse_error(
+            format!(
+                "Unsupported type '{}' in an external function declaration",
+                other
+            ),
+            None,
+            Some(
+                "External functions take integer, number, string, boolean, any, void or none."
+                    .to_string(),
+            ),
+        )),
     }
 }
 

@@ -1175,7 +1175,6 @@ mod tests {
             return_type: Type::Void,
             body,
             description: None,
-            syntax: crate::ast::FunctionSyntax::Simple,
             visibility: crate::ast::Visibility::Public,
             modifier: crate::ast::FunctionModifier::None,
             location: Some(loc(1, "app/pages/home.cln")),

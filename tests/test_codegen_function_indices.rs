@@ -56,8 +56,6 @@ fn program_referencing(missing: MirOperand) -> MirProgram {
         next_block_id: 1,
         if_merges: Default::default(),
         attributes: MirFunctionAttributes {
-            inline: false,
-            pure: false,
             entry_point: true,
             exported: true,
         },

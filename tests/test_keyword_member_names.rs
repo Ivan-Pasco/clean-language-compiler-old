@@ -12,7 +12,7 @@ fn parse(source: &str) -> Result<Vec<Statement>, String> {
     let tokens = SpecificationLexer::new(&code)
         .tokenize()
         .map_err(|e| format!("{:?}", e))?;
-    let mut parser = SpecificationParser::new(tokens, "kw.cln".to_string());
+    let mut parser = SpecificationParser::new(tokens);
     let program = parser.parse_program().map_err(|e| e.to_string())?;
     Ok(program
         .start_function

@@ -78,10 +78,10 @@ pub struct TokenParser {
 }
 
 impl TokenParser {
-    pub fn new(token_stream: TokenStream, _file_path: String) -> Self {
+    pub fn new(token_stream: TokenStream) -> Self {
         Self {
             source_content: token_stream.source_content,
-            tokens: token_stream.tokens,
+            tokens: Self::terminated(token_stream.tokens),
             cursor: 0,
             errors: Vec::new(),
             paren_depth: 0,
@@ -98,14 +98,10 @@ impl TokenParser {
     /// a trailing colon. For example, with `plugin_keywords = ["data"]`:
     /// - `data User` is parsed as a framework block (plugin keyword)
     /// - `endpoints:` is parsed as a framework block (has colon)
-    pub fn with_plugin_keywords(
-        token_stream: TokenStream,
-        _file_path: String,
-        plugin_keywords: Vec<String>,
-    ) -> Self {
+    pub fn with_plugin_keywords(token_stream: TokenStream, plugin_keywords: Vec<String>) -> Self {
         Self {
             source_content: token_stream.source_content,
-            tokens: token_stream.tokens,
+            tokens: Self::terminated(token_stream.tokens),
             cursor: 0,
             errors: Vec::new(),
             paren_depth: 0,
@@ -116,36 +112,62 @@ impl TokenParser {
         }
     }
 
+    /// The cursor utilities index `tokens[len - 1]`, so the stream must never
+    /// be empty. The lexer always ends a stream with `Eof`; an empty stream
+    /// (for example a `TokenStream::default()`, or a stream already taken by a
+    /// previous parse) gets one here.
+    fn terminated(mut tokens: Vec<Token>) -> Vec<Token> {
+        if !tokens.last().is_some_and(|t| t.kind == TokenKind::Eof) {
+            let location = tokens
+                .last()
+                .map(|t| t.location.clone())
+                .unwrap_or_default();
+            tokens.push(Token::simple(TokenKind::Eof, location));
+        }
+        tokens
+    }
+
     /// Enable lenient section ordering (for plugin output parsing).
     /// When enabled, the 5 core sections can appear in any order.
     pub fn set_lenient_section_order(&mut self, lenient: bool) {
         self.lenient_section_order = lenient;
     }
 
-    /// Try to extract a variable name from the current token.
-    /// Accepts identifiers and contextual keywords that can be used as variable
-    /// names (e.g., `rules`, `computed`, `state`, `guard`, `watch`, `reset`,
-    /// `screen`, `source`, `build`, `spec`, `intent`).
+    /// Keywords that are also accepted as names: variables, parameters,
+    /// named-argument labels, function and field names. They only have
+    /// their keyword meaning at the start of their own construct (`state:`,
+    /// `rules:`, `iterate ... step`), so `integer step = 1` declares a
+    /// variable that can then be read and assigned like any other.
+    /// This is the single list every name position uses.
+    pub(super) fn is_contextual_name(kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::Rules
+                | TokenKind::Computed
+                | TokenKind::State
+                | TokenKind::Guard
+                | TokenKind::Watch
+                | TokenKind::Reset
+                | TokenKind::Screen
+                | TokenKind::Source
+                | TokenKind::Build
+                | TokenKind::Spec
+                | TokenKind::Intent
+                | TokenKind::Description
+                | TokenKind::Input
+                | TokenKind::Unit
+                | TokenKind::Step
+                | TokenKind::Test
+                | TokenKind::Error
+        )
+    }
+
+    /// The current token as a variable name: an identifier or a contextual
+    /// keyword (see [`Self::is_contextual_name`]).
     pub(super) fn try_extract_var_name(&self) -> Option<String> {
         match self.current_kind() {
             TokenKind::Identifier(name) => Some(name.clone()),
-            TokenKind::Rules
-            | TokenKind::Computed
-            | TokenKind::State
-            | TokenKind::Guard
-            | TokenKind::Watch
-            | TokenKind::Reset
-            | TokenKind::Screen
-            | TokenKind::Source
-            | TokenKind::Build
-            | TokenKind::Spec
-            | TokenKind::Intent
-            | TokenKind::Description
-            | TokenKind::Input
-            | TokenKind::Unit
-            | TokenKind::Step
-            | TokenKind::Test
-            | TokenKind::Error => Some(self.current().text.clone()),
+            kind if Self::is_contextual_name(kind) => Some(self.current().text.clone()),
             _ => None,
         }
     }
@@ -586,6 +608,34 @@ impl TokenParser {
         &self.tokens[pos]
     }
 
+    /// The level of the Indent token at the cursor, or `default` when the
+    /// cursor is not at an Indent. Nothing is consumed.
+    pub(super) fn current_indent_level_or(&self, default: usize) -> usize {
+        match self.current_kind() {
+            TokenKind::Indent(level) => *level,
+            _ => default,
+        }
+    }
+
+    /// Consume the Dedent tokens that close the blocks of a compound
+    /// statement (if/while) whose header sits at `header_level`, stopping
+    /// at a Dedent that belongs to an enclosing block. Leaves the cursor
+    /// where an `else` at the header's level would be.
+    pub(super) fn consume_dedents_to(&mut self, header_level: usize) {
+        while let TokenKind::Dedent(level) = self.current_kind() {
+            let level = *level;
+            if level < header_level {
+                // Belongs to a parent block.
+                break;
+            }
+            self.bump();
+            self.skip_whitespace();
+            if level == header_level {
+                break;
+            }
+        }
+    }
+
     /// Get the current block's indentation level by looking at recent Indent/Dedent tokens
     /// Returns 0 if no Indent/Dedent token found (top-level)
     pub(super) fn get_current_indent_level(&self) -> usize {
@@ -601,6 +651,46 @@ impl TokenParser {
             }
         }
         0 // Default to level 0 if no Indent/Dedent found
+    }
+
+    /// Source line of the last token consumed that is not layout or a
+    /// comment, i.e. where the previous construct ended.
+    pub(super) fn previous_significant_line(&self) -> Option<usize> {
+        self.tokens[..self.cursor.min(self.tokens.len())]
+            .iter()
+            .rev()
+            .find(|t| {
+                !matches!(
+                    t.kind,
+                    TokenKind::Newline
+                        | TokenKind::Indent(_)
+                        | TokenKind::Dedent(_)
+                        | TokenKind::Comment(_)
+                        | TokenKind::BlockComment(_)
+                )
+            })
+            .map(|t| t.location.line)
+    }
+
+    /// True when nothing but comments follows on source line `line`: the
+    /// next significant token is a line break, a layout token, end of file,
+    /// or a token on a later line. Nothing is consumed.
+    pub(super) fn statement_ends_after(&self, line: usize) -> bool {
+        let next = self.tokens[self.cursor.min(self.tokens.len() - 1)..]
+            .iter()
+            .find(|t| !matches!(t.kind, TokenKind::Comment(_) | TokenKind::BlockComment(_)));
+        match next {
+            None => true,
+            Some(token) => {
+                matches!(
+                    token.kind,
+                    TokenKind::Newline
+                        | TokenKind::Eof
+                        | TokenKind::Indent(_)
+                        | TokenKind::Dedent(_)
+                ) || token.location.line != line
+            }
+        }
     }
 
     /// Skip whitespace tokens (newlines, comments)

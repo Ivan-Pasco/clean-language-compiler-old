@@ -1,0 +1,17 @@
+// Test: bugfixes/range_iterate_includes_end
+// Grammar: range_iterate_statement (the "inclusive" contextual keyword)
+// Semantic: a range includes its end with or without the optional
+//   `inclusive` keyword (pinned when RangeIterate::inclusive was removed)
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   1
+//   2
+//   3
+//   0
+//   2
+
+start:
+	iterate i in 1 to 3 inclusive
+		print(i)
+	iterate j in 0 to 2 step 2
+		print(j)

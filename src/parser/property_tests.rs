@@ -7,10 +7,12 @@ mod tests {
 
     proptest! {
         #[test]
-        fn test_parser_doesnt_panic_on_random_input(s in "[\\x20-\\x7E]*") {
-            // Parser should never panic on ASCII printable characters
-            // Note: Unicode handling bug found - would need fixing in error.rs
-            let _ = CleanParser::parse_program(&s);
+        fn test_parser_doesnt_panic_on_random_input(s in "\\PC*") {
+            // The parser and its error formatting must never panic, on ASCII
+            // or on multibyte (non-control) Unicode input.
+            if let Err(e) = CleanParser::parse_program(&s) {
+                let _ = e.to_string();
+            }
         }
 
         #[test]

@@ -407,7 +407,6 @@ fn parse_range_iterate_statement(
         start,
         end,
         step,
-        inclusive: true, // pest parser grammar doesn't expose inclusive; default true
         body,
         location: Some(ast_location),
     })

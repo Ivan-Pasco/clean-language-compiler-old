@@ -1092,7 +1092,6 @@ impl<'a> PluginExpander<'a> {
                     start,
                     end,
                     step,
-                    inclusive,
                     body,
                     location,
                 } => {
@@ -1102,7 +1101,6 @@ impl<'a> PluginExpander<'a> {
                         start,
                         end,
                         step,
-                        inclusive,
                         body: expanded_body,
                         location,
                     });
@@ -1888,7 +1886,6 @@ mod tests {
 
     #[test]
     fn test_lifecycle_slots_run_before_user_start() {
-        use crate::ast::FunctionSyntax;
         let registry = PluginRegistry::builder()
             .add(LifecycleMockPlugin {
                 marker: "L",
@@ -1914,7 +1911,6 @@ mod tests {
                 location: None,
             }],
             description: None,
-            syntax: FunctionSyntax::Simple,
             visibility: crate::ast::Visibility::Public,
             modifier: crate::ast::FunctionModifier::None,
             location: None,

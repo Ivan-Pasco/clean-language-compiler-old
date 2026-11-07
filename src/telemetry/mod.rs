@@ -480,7 +480,6 @@ fn extract_error_info(error: &crate::error::CompilerError) -> ErrorInfo {
                 LexError::UnterminatedString { .. } => "LEX002",
                 LexError::UnterminatedComment { .. } => "LEX003",
                 LexError::InvalidNumber { .. } => "LEX004",
-                LexError::InvalidPrecisionModifier { .. } => "LEX005",
                 LexError::InvalidIndentation { .. } => "LEX006",
                 LexError::SpacesInIndentation { .. } => "LEX007",
             };

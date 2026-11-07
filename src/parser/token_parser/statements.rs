@@ -55,26 +55,12 @@ impl TokenParser {
                 self.skip_whitespace();
 
                 // Check if this is a variable declaration (Test varName = ...)
-                if let TokenKind::Identifier(var_name) = self.current_kind() {
-                    let var_name = var_name.clone();
-                    let var_location = self.current().location.clone();
-                    self.bump(); // consume variable name
-                    self.skip_whitespace();
-
-                    // Check for initializer
-                    let initializer = if self.eat(&TokenKind::Assign) {
-                        self.skip_whitespace();
-                        Some(self.parse_expression()?)
-                    } else {
-                        None
-                    };
-
-                    Ok(Statement::VariableDecl {
-                        name: var_name,
-                        type_: Type::Object(first_name), // Test is a class type
-                        initializer,
-                        location: Some(var_location),
-                    })
+                if let TokenKind::Identifier(_) = self.current_kind() {
+                    // Test is a class type here.
+                    self.parse_declaration_tail(
+                        Type::Object(first_name),
+                        "Expected variable name after type",
+                    )
                 } else {
                     // Not a variable declaration, might be a function call like Test()
                     // Move cursor back to reparse as expression
@@ -87,383 +73,8 @@ impl TokenParser {
                 }
             }
             TokenKind::Identifier(name) => {
-                // Could be:
-                // 1. Type name for variable declaration (e.g., "integer x = 42" or "list<integer> nums = [1,2,3]")
-                // 2. Variable assignment (e.g., "x = 42")
-                // 3. Expression statement (e.g., "someFunction()" or "x.toString()")
-
                 let first_name = name.clone();
-                let first_location = self.current().location.clone();
-                let first_cursor = self.cursor; // saved before consuming first_name
-
-                // Check if this is a type name (for variable declaration)
-                let is_type_keyword = matches!(
-                    first_name.as_str(),
-                    "integer"
-                        | "number"
-                        | "string"
-                        | "boolean"
-                        | "void"
-                        | "list"
-                        | "matrix"
-                        | "pairs"
-                        | "any"
-                );
-
-                if is_type_keyword {
-                    // IMPORTANT: Check if this is actually a namespace/method call (e.g., list.add())
-                    // If followed by a dot, it's NOT a type declaration
-                    // Save current position (we're AT the type identifier)
-                    let saved_cursor = self.cursor;
-
-                    self.bump(); // consume type identifier
-                    self.skip_whitespace();
-
-                    // If followed by a dot, this is a namespace/method call, not a type declaration
-                    if self.check(&TokenKind::Dot) {
-                        // Restore cursor and treat as a regular identifier (not a type keyword)
-                        // This will allow it to be parsed as a method/namespace call below
-                        self.cursor = saved_cursor;
-                        // Fall through to the non-type-keyword handling code
-                    } else if self.check(&TokenKind::Colon) {
-                        // Could be either:
-                        // 1. TYPE: apply block (followed by newline/indent)
-                        // 2. TYPE:precision variable declaration (followed by integer literal)
-
-                        // Look ahead to distinguish
-                        self.bump(); // consume colon
-                        self.skip_whitespace();
-
-                        // Check what follows the colon
-                        let is_precision_modifier =
-                            matches!(self.current_kind(), TokenKind::IntegerLiteral(_));
-
-                        // Restore cursor to the original position (at type identifier)
-                        self.cursor = saved_cursor;
-
-                        if is_precision_modifier {
-                            // This is a variable declaration with precision modifier: TYPE:bits var = val
-                            // Fall through to parse as variable declaration
-                        } else {
-                            // This is a TYPE: apply block
-                            return self.parse_type_apply_block();
-                        }
-
-                        // At this point, cursor is positioned AT the type identifier
-                        // Parse the type (which will handle precision modifiers)
-                        let type_ = self.parse_type()?;
-                        self.skip_whitespace();
-
-                        // Next token should be the variable name
-                        // Allow contextual keywords (like `rules`, `state`) as variable names
-                        if let Some(var_name) = self.try_extract_var_name() {
-                            let var_location = self.current().location.clone();
-                            self.bump(); // consume variable name
-                            self.skip_whitespace();
-
-                            // Check for initializer
-                            let initializer = if self.eat(&TokenKind::Assign) {
-                                self.skip_whitespace();
-                                Some(self.parse_expression()?)
-                            } else {
-                                None
-                            };
-
-                            return Ok(Statement::VariableDecl {
-                                name: var_name,
-                                type_,
-                                initializer,
-                                location: Some(var_location),
-                            });
-                        } else {
-                            return Err(CompilerError::parse_error(
-                                "Expected variable name after type".to_string(),
-                                Some(self.current().location.clone()),
-                                None,
-                            ));
-                        }
-                    } else {
-                        // Not a colon - this is a regular variable declaration
-                        // Restore cursor to the original position
-                        self.cursor = saved_cursor;
-
-                        // At this point, cursor is positioned AT the type identifier
-                        // Parse the type (which will handle precision modifiers)
-                        let type_ = self.parse_type()?;
-                        self.skip_whitespace();
-
-                        // Next token should be the variable name
-                        // Allow contextual keywords (like `rules`, `state`) as variable names
-                        if let Some(var_name) = self.try_extract_var_name() {
-                            let var_location = self.current().location.clone();
-                            self.bump(); // consume variable name
-                            self.skip_whitespace();
-
-                            // Check for initializer
-                            let initializer = if self.eat(&TokenKind::Assign) {
-                                self.skip_whitespace();
-                                Some(self.parse_expression()?)
-                            } else {
-                                None
-                            };
-
-                            return Ok(Statement::VariableDecl {
-                                name: var_name,
-                                type_,
-                                initializer,
-                                location: Some(var_location),
-                            });
-                        } else {
-                            return Err(CompilerError::parse_error(
-                                "Expected variable name after type".to_string(),
-                                Some(self.current().location.clone()),
-                                None,
-                            ));
-                        }
-                    }
-                }
-
-                // Not a type keyword - could be:
-                // 1. Function/method apply block (e.g., "print:" or "obj.method:")
-                // 2. Custom class name for variable declaration (e.g., "Test varName = ...")
-                // 3. Variable assignment (e.g., "x = 42")
-                // 4. Expression statement (e.g., "someFunction()" or "x.toString()")
-
-                // Peek ahead to see if this is an apply block
-                self.bump(); // consume identifier
-                self.skip_whitespace();
-
-                // Check for apply block: identifier: or identifier.method:
-                if self.check(&TokenKind::Colon) {
-                    // Check if identifier is a registered plugin block name (e.g., html, component)
-                    if self.plugin_keywords.contains(&first_name) {
-                        // This is a plugin framework block inside a function body
-                        self.cursor = first_cursor;
-                        return self.parse_framework_block();
-                    }
-                    // This is a function apply block: FUNCTION:
-                    // Move cursor back to re-parse the identifier
-                    self.cursor = first_cursor;
-                    return self.parse_function_apply_block();
-                } else if self.check(&TokenKind::Dot) {
-                    // Could be:
-                    // 1. Method apply block: OBJECT.METHOD:
-                    // 2. Property assignment: OBJECT.PROPERTY = VALUE
-                    // 3. Expression statement: OBJECT.METHOD()
-                    // Only (1) is decided here; (2) and (3) by the `Dot` branch below.
-                    // Save current position (after the object name)
-                    let saved_cursor = self.cursor;
-
-                    // Walk the property chain to see if it ends with ':'
-                    let mut has_colon = false;
-                    while self.eat(&TokenKind::Dot) {
-                        self.skip_whitespace();
-                        if self.at_member_name() {
-                            self.bump(); // consume property name
-                            self.skip_whitespace();
-                            if self.check(&TokenKind::Colon) {
-                                has_colon = true;
-                                break;
-                            } else if self.check(&TokenKind::Assign) {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Restore cursor
-                    self.cursor = saved_cursor;
-
-                    if has_colon {
-                        // This is a method apply block: OBJECT.METHOD:
-                        // Move cursor back to re-parse from the object name
-                        self.cursor = first_cursor;
-                        return self.parse_method_apply_block();
-                    }
-                    // Not an apply block: a property assignment or an expression,
-                    // handled by the `Dot` branch below.
-                }
-
-                // Check if next token is an Identifier or keyword that can be used as a variable name
-                // (e.g., "Test test" where "test" is a keyword but can be used as a variable name)
-                let next_could_be_var_name = matches!(
-                    self.current_kind(),
-                    TokenKind::Identifier(_) | TokenKind::Test | TokenKind::Error | TokenKind::Unit
-                ) || self.at_generic_type_declaration();
-
-                if next_could_be_var_name {
-                    // Next token is an Identifier - this could be a variable declaration
-                    // with a custom class type: ClassName varName = ...
-                    // Move cursor back to re-parse as type
-                    self.cursor = first_cursor;
-
-                    // Parse the type
-                    let type_ = self.parse_type()?;
-                    self.skip_whitespace();
-
-                    // Next token should be the variable name (could be identifier or keyword)
-                    let var_name = match self.current_kind() {
-                        TokenKind::Identifier(name) => name.clone(),
-                        TokenKind::Test => "test".to_string(),
-                        TokenKind::Error => "error".to_string(),
-                        TokenKind::Unit => "unit".to_string(),
-                        _ => {
-                            return Err(CompilerError::parse_error(
-                                "Expected variable name after custom type".to_string(),
-                                Some(self.current().location.clone()),
-                                None,
-                            ));
-                        }
-                    };
-                    let var_location = self.current().location.clone();
-                    self.bump(); // consume variable name
-                    self.skip_whitespace();
-
-                    // Check for initializer
-                    let initializer = if self.eat(&TokenKind::Assign) {
-                        self.skip_whitespace();
-                        Some(self.parse_expression()?)
-                    } else {
-                        None
-                    };
-
-                    Ok(Statement::VariableDecl {
-                        name: var_name,
-                        type_,
-                        initializer,
-                        location: Some(var_location),
-                    })
-                } else if self.check(&TokenKind::Assign) {
-                    // This is a simple assignment: VAR = EXPR
-                    self.bump(); // consume =
-                    self.skip_whitespace();
-                    let value = self.parse_expression()?;
-
-                    Ok(Statement::Assignment {
-                        target: AssignmentTarget::Variable(first_name),
-                        value,
-                        location: Some(first_location),
-                    })
-                } else if self.check(&TokenKind::Dot) {
-                    // Could be a property-chain assignment: `obj.prop = val`
-                    // or `obj.a.b = val`, or just a method-call expression.
-                    // foundation/spec/grammar.ebnf `assignment_target`:
-                    //   identifier , "." , identifier , { "." , identifier }
-                    // Peek ahead: collect dot-separated identifiers, then check for `=`.
-                    let mut path: Vec<String> = Vec::new();
-                    let save_cursor = self.cursor;
-
-                    // Consume the leading dot and subsequent identifier segments.
-                    while self.check(&TokenKind::Dot) {
-                        self.bump(); // consume .
-                        if self.at_member_name() {
-                            // Any keyword is a member name after `.`.
-                            path.push(self.bump().text);
-                        } else {
-                            // Not a member name after the dot — not a property assignment.
-                            break;
-                        }
-                    }
-
-                    self.skip_whitespace();
-                    if !path.is_empty() && self.check(&TokenKind::Assign) {
-                        // Property-chain assignment.
-                        self.bump(); // consume =
-                        self.skip_whitespace();
-                        let value = self.parse_expression()?;
-                        Ok(Statement::Assignment {
-                            target: AssignmentTarget::Property {
-                                object: first_name,
-                                path,
-                            },
-                            value,
-                            location: Some(first_location),
-                        })
-                    } else if path.len() == 1 && path[0] == "check" {
-                        // Validate check statement: `schemaName.check expr:\n\tok: ...\n\terror: ...`
-                        // Rewind to the dot, consume it, then call parse_validate_check_stmt
-                        // which will consume the "check" identifier itself.
-                        self.cursor = save_cursor;
-                        self.bump(); // consume the "."
-                        self.skip_whitespace();
-                        self.parse_validate_check_stmt(first_name, first_location)
-                    } else {
-                        // Not an assignment — backtrack to first_name and parse the
-                        // whole thing as an expression (e.g. `nums.add(4)`, `s.replace(a,b)`).
-                        // Restoring only to save_cursor (the dot) leaves parse_expression()
-                        // facing a bare `.`, which causes "Unexpected token: Dot".
-                        self.cursor = first_cursor;
-                        let expr = self.parse_expression()?;
-                        Ok(Statement::Expression {
-                            expr,
-                            location: Some(first_location),
-                        })
-                    }
-                } else if self.check(&TokenKind::LeftBracket) {
-                    // This could be an indexed assignment: VAR[index] = value
-                    // or an expression statement: VAR[index]
-                    // Parse the full LHS expression first
-                    self.cursor = first_cursor; // Go back to the identifier
-
-                    let lhs_expr = self.parse_expression()?;
-                    self.skip_whitespace();
-
-                    // Check if this is an assignment
-                    if self.check(&TokenKind::Assign) {
-                        self.bump(); // consume =
-                        self.skip_whitespace();
-                        let value = self.parse_expression()?;
-
-                        // grammar.ebnf `assignment_target`: identifier [ index ].
-                        // Any other indexed receiver (`m[0][1]`, `f()[0]`) is not
-                        // assignable.
-                        if let Expression::ListAccess(list, index) = lhs_expr {
-                            if let Expression::Variable(collection) = *list {
-                                return Ok(Statement::Assignment {
-                                    target: AssignmentTarget::Index { collection, index },
-                                    value,
-                                    location: Some(first_location),
-                                });
-                            }
-                        }
-                        Err(CompilerError::parse_error(
-                            "Unsupported assignment target".to_string(),
-                            Some(first_location),
-                            Some(
-                                "Only a variable, a single list index (`xs[i]`) or a property path (`obj.a.b`) can be assigned to"
-                                    .to_string(),
-                            ),
-                        ))
-                    } else {
-                        // Not an assignment, just an expression statement
-                        Ok(Statement::Expression {
-                            expr: lhs_expr,
-                            location: Some(first_location),
-                        })
-                    }
-                } else {
-                    // This could be an expression statement with operators: x + 1, x * y, etc.
-                    // Or just a bare identifier
-                    // Parse as full expression to handle all cases
-                    self.cursor = first_cursor; // Go back to the identifier
-
-                    let expr = self.parse_expression()?;
-
-                    // Check for onError: block
-                    if let Some((error_block, _error_loc)) = self.try_parse_on_error_block()? {
-                        return Ok(Statement::OnErrorBlock {
-                            expression: expr,
-                            error_block,
-                            location: Some(first_location),
-                        });
-                    }
-
-                    Ok(Statement::Expression {
-                        expr,
-                        location: Some(first_location),
-                    })
-                }
+                self.parse_identifier_statement(first_name)
             }
             TokenKind::StringLiteral(_)
             | TokenKind::IntegerLiteral(_)
@@ -530,40 +141,12 @@ impl TokenParser {
                     )),
                 }
             }
-            // Contextual keywords used as variable names in statements
-            // (e.g., `rules = rules + ","` or `rules.trim()`)
-            TokenKind::Rules
-            | TokenKind::Computed
-            | TokenKind::State
-            | TokenKind::Guard
-            | TokenKind::Watch
-            | TokenKind::Screen
-            | TokenKind::Source
-            | TokenKind::Build => {
+            // A contextual keyword used as a name (`step = step + 1`,
+            // `rules.trim()`): the same statement forms as an identifier.
+            // Keywords with a statement of their own are matched above.
+            kind if Self::is_contextual_name(kind) => {
                 let first_name = self.current().text.clone();
-                let first_location = self.current().location.clone();
-                self.bump(); // consume keyword token
-                self.skip_whitespace();
-
-                if self.check(&TokenKind::Assign) {
-                    // Simple assignment: keyword = EXPR
-                    self.bump(); // consume =
-                    self.skip_whitespace();
-                    let value = self.parse_expression()?;
-                    Ok(Statement::Assignment {
-                        target: AssignmentTarget::Variable(first_name),
-                        value,
-                        location: Some(first_location),
-                    })
-                } else {
-                    // Expression statement (e.g., rules.something())
-                    self.cursor -= 1;
-                    let expr = self.parse_expression()?;
-                    Ok(Statement::Expression {
-                        expr,
-                        location: Some(first_location),
-                    })
-                }
+                self.parse_identifier_statement(first_name)
             }
             _ => {
                 let token = self.current();
@@ -576,19 +159,324 @@ impl TokenParser {
         }
     }
 
-    pub(super) fn parse_return(&mut self) -> Result<Statement, CompilerError> {
-        let return_token = self.expect(&TokenKind::Return)?;
+    /// The rest of a variable declaration after its type: `name [= value]`
+    /// (grammar.ebnf `variable_declaration`). The cursor is at the name.
+    fn parse_declaration_tail(
+        &mut self,
+        type_: Type,
+        missing_name: &str,
+    ) -> Result<Statement, CompilerError> {
+        let Some(name) = self.try_extract_var_name() else {
+            return Err(CompilerError::parse_error(
+                missing_name.to_string(),
+                Some(self.current().location.clone()),
+                None,
+            ));
+        };
+        let location = self.current().location.clone();
+        self.bump(); // consume the variable name
         self.skip_whitespace();
-
-        // Check if there's a return value expression
-        // If we see Newline, Eof, or Dedent, there's no return value
-        let value = if !matches!(
-            self.current_kind(),
-            TokenKind::Newline | TokenKind::Eof | TokenKind::Dedent(_)
-        ) {
+        let initializer = if self.eat(&TokenKind::Assign) {
+            self.skip_whitespace();
             Some(self.parse_expression()?)
         } else {
             None
+        };
+        Ok(Statement::VariableDecl {
+            name,
+            type_,
+            initializer,
+            location: Some(location),
+        })
+    }
+
+    /// A statement starting with a name (an identifier or a contextual
+    /// keyword used as one): a variable declaration, an assignment, an
+    /// apply block or an expression statement. The cursor is at the name.
+    fn parse_identifier_statement(
+        &mut self,
+        first_name: String,
+    ) -> Result<Statement, CompilerError> {
+        // Could be:
+        // 1. Type name for variable declaration (e.g., "integer x = 42" or "list<integer> nums = [1,2,3]")
+        // 2. Variable assignment (e.g., "x = 42")
+        // 3. Expression statement (e.g., "someFunction()" or "x.toString()")
+
+        let first_location = self.current().location.clone();
+        let first_cursor = self.cursor; // saved before consuming first_name
+
+        // Check if this is a type name (for variable declaration)
+        let is_type_keyword = matches!(
+            first_name.as_str(),
+            "integer"
+                | "number"
+                | "string"
+                | "boolean"
+                | "void"
+                | "list"
+                | "matrix"
+                | "pairs"
+                | "any"
+        );
+
+        if is_type_keyword {
+            // IMPORTANT: Check if this is actually a namespace/method call (e.g., list.add())
+            // If followed by a dot, it's NOT a type declaration
+            // Save current position (we're AT the type identifier)
+            let saved_cursor = self.cursor;
+
+            self.bump(); // consume type identifier
+            self.skip_whitespace();
+
+            // If followed by a dot, this is a namespace/method call, not a type declaration
+            if self.check(&TokenKind::Dot) {
+                // Restore cursor and treat as a regular identifier (not a type keyword)
+                // This will allow it to be parsed as a method/namespace call below
+                self.cursor = saved_cursor;
+                // Fall through to the non-type-keyword handling code
+            } else {
+                if self.check(&TokenKind::Colon) {
+                    // Either a TYPE: apply block or a TYPE:bits declaration;
+                    // an integer after the colon means a precision modifier.
+                    self.bump(); // consume colon
+                    self.skip_whitespace();
+                    let is_precision_modifier =
+                        matches!(self.current_kind(), TokenKind::IntegerLiteral(_));
+                    self.cursor = saved_cursor;
+                    if !is_precision_modifier {
+                        return self.parse_type_apply_block();
+                    }
+                }
+                // A variable declaration: parse the type (with any precision
+                // modifier) from the type identifier.
+                self.cursor = saved_cursor;
+                let type_ = self.parse_type()?;
+                self.skip_whitespace();
+                return self.parse_declaration_tail(type_, "Expected variable name after type");
+            }
+        }
+
+        // Not a type keyword - could be:
+        // 1. Function/method apply block (e.g., "print:" or "obj.method:")
+        // 2. Custom class name for variable declaration (e.g., "Test varName = ...")
+        // 3. Variable assignment (e.g., "x = 42")
+        // 4. Expression statement (e.g., "someFunction()" or "x.toString()")
+
+        // Peek ahead to see if this is an apply block
+        self.bump(); // consume identifier
+        self.skip_whitespace();
+
+        // Check for apply block: identifier: or identifier.method:
+        if self.check(&TokenKind::Colon) {
+            // Check if identifier is a registered plugin block name (e.g., html, component)
+            if self.plugin_keywords.contains(&first_name) {
+                // This is a plugin framework block inside a function body
+                self.cursor = first_cursor;
+                return self.parse_framework_block();
+            }
+            // This is a function apply block: FUNCTION:
+            // Move cursor back to re-parse the identifier
+            self.cursor = first_cursor;
+            return self.parse_function_apply_block();
+        } else if self.check(&TokenKind::Dot) {
+            // Could be:
+            // 1. Method apply block: OBJECT.METHOD:
+            // 2. Property assignment: OBJECT.PROPERTY = VALUE
+            // 3. Expression statement: OBJECT.METHOD()
+            // Only (1) is decided here; (2) and (3) by the `Dot` branch below.
+            // Save current position (after the object name)
+            let saved_cursor = self.cursor;
+
+            // Walk the property chain to see if it ends with ':'
+            let mut has_colon = false;
+            while self.eat(&TokenKind::Dot) {
+                self.skip_whitespace();
+                if self.at_member_name() {
+                    self.bump(); // consume property name
+                    self.skip_whitespace();
+                    if self.check(&TokenKind::Colon) {
+                        has_colon = true;
+                        break;
+                    } else if self.check(&TokenKind::Assign) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // Restore cursor
+            self.cursor = saved_cursor;
+
+            if has_colon {
+                // This is a method apply block: OBJECT.METHOD:
+                // Move cursor back to re-parse from the object name
+                self.cursor = first_cursor;
+                return self.parse_method_apply_block();
+            }
+            // Not an apply block: a property assignment or an expression,
+            // handled by the `Dot` branch below.
+        }
+
+        // Check if next token is an Identifier or keyword that can be used as a variable name
+        // (e.g., "Test test" where "test" is a keyword but can be used as a variable name)
+        let next_could_be_var_name =
+            self.try_extract_var_name().is_some() || self.at_generic_type_declaration();
+
+        if next_could_be_var_name {
+            // Next token is an Identifier - this could be a variable declaration
+            // with a custom class type: ClassName varName = ...
+            // Move cursor back to re-parse as type
+            self.cursor = first_cursor;
+
+            // Parse the type
+            let type_ = self.parse_type()?;
+            self.skip_whitespace();
+
+            self.parse_declaration_tail(type_, "Expected variable name after custom type")
+        } else if self.check(&TokenKind::Assign) {
+            // This is a simple assignment: VAR = EXPR
+            self.bump(); // consume =
+            self.skip_whitespace();
+            let value = self.parse_expression()?;
+
+            Ok(Statement::Assignment {
+                target: AssignmentTarget::Variable(first_name),
+                value,
+                location: Some(first_location),
+            })
+        } else if self.check(&TokenKind::Dot) {
+            // Could be a property-chain assignment: `obj.prop = val`
+            // or `obj.a.b = val`, or just a method-call expression.
+            // foundation/spec/grammar.ebnf `assignment_target`:
+            //   identifier , "." , identifier , { "." , identifier }
+            // Peek ahead: collect dot-separated identifiers, then check for `=`.
+            let mut path: Vec<String> = Vec::new();
+            let save_cursor = self.cursor;
+
+            // Consume the leading dot and subsequent identifier segments.
+            while self.check(&TokenKind::Dot) {
+                self.bump(); // consume .
+                if self.at_member_name() {
+                    // Any keyword is a member name after `.`.
+                    path.push(self.bump().text);
+                } else {
+                    // Not a member name after the dot — not a property assignment.
+                    break;
+                }
+            }
+
+            self.skip_whitespace();
+            if !path.is_empty() && self.check(&TokenKind::Assign) {
+                // Property-chain assignment.
+                self.bump(); // consume =
+                self.skip_whitespace();
+                let value = self.parse_expression()?;
+                Ok(Statement::Assignment {
+                    target: AssignmentTarget::Property {
+                        object: first_name,
+                        path,
+                    },
+                    value,
+                    location: Some(first_location),
+                })
+            } else if path.len() == 1 && path[0] == "check" {
+                // Validate check statement: `schemaName.check expr:\n\tok: ...\n\terror: ...`
+                // Rewind to the dot, consume it, then call parse_validate_check_stmt
+                // which will consume the "check" identifier itself.
+                self.cursor = save_cursor;
+                self.bump(); // consume the "."
+                self.skip_whitespace();
+                self.parse_validate_check_stmt(first_name, first_location)
+            } else {
+                // Not an assignment — backtrack to first_name and parse the
+                // whole thing as an expression (e.g. `nums.add(4)`, `s.replace(a,b)`).
+                // Restoring only to save_cursor (the dot) leaves parse_expression()
+                // facing a bare `.`, which causes "Unexpected token: Dot".
+                self.cursor = first_cursor;
+                let expr = self.parse_expression()?;
+                Ok(Statement::Expression {
+                    expr,
+                    location: Some(first_location),
+                })
+            }
+        } else if self.check(&TokenKind::LeftBracket) {
+            // This could be an indexed assignment: VAR[index] = value
+            // or an expression statement: VAR[index]
+            // Parse the full LHS expression first
+            self.cursor = first_cursor; // Go back to the identifier
+
+            let lhs_expr = self.parse_expression()?;
+            self.skip_whitespace();
+
+            // Check if this is an assignment
+            if self.check(&TokenKind::Assign) {
+                self.bump(); // consume =
+                self.skip_whitespace();
+                let value = self.parse_expression()?;
+
+                // grammar.ebnf `assignment_target`: identifier [ index ].
+                // Any other indexed receiver (`m[0][1]`, `f()[0]`) is not
+                // assignable.
+                if let Expression::ListAccess(list, index) = lhs_expr {
+                    if let Expression::Variable(collection) = *list {
+                        return Ok(Statement::Assignment {
+                            target: AssignmentTarget::Index { collection, index },
+                            value,
+                            location: Some(first_location),
+                        });
+                    }
+                }
+                Err(CompilerError::parse_error(
+                    "Unsupported assignment target".to_string(),
+                    Some(first_location),
+                    Some(
+                        "Only a variable, a single list index (`xs[i]`) or a property path (`obj.a.b`) can be assigned to"
+                            .to_string(),
+                    ),
+                ))
+            } else {
+                // Not an assignment, just an expression statement
+                Ok(Statement::Expression {
+                    expr: lhs_expr,
+                    location: Some(first_location),
+                })
+            }
+        } else {
+            // This could be an expression statement with operators: x + 1, x * y, etc.
+            // Or just a bare identifier
+            // Parse as full expression to handle all cases
+            self.cursor = first_cursor; // Go back to the identifier
+
+            let expr = self.parse_expression()?;
+
+            // Check for onError: block
+            if let Some((error_block, _error_loc)) = self.try_parse_on_error_block()? {
+                return Ok(Statement::OnErrorBlock {
+                    expression: expr,
+                    error_block,
+                    location: Some(first_location),
+                });
+            }
+
+            Ok(Statement::Expression {
+                expr,
+                location: Some(first_location),
+            })
+        }
+    }
+
+    pub(super) fn parse_return(&mut self) -> Result<Statement, CompilerError> {
+        let return_token = self.expect(&TokenKind::Return)?;
+
+        // grammar.ebnf `return_statement = "return" , [ expression ]`: the
+        // value, if any, is on the same line. Decide before skipping
+        // whitespace, which would also skip the line break.
+        let value = if self.statement_ends_after(return_token.location.line) {
+            None
+        } else {
+            self.skip_whitespace();
+            Some(self.parse_expression()?)
         };
 
         Ok(Statement::Return {
@@ -681,33 +569,15 @@ impl TokenParser {
         let condition = self.parse_expression()?;
         self.skip_whitespace();
 
-        let then_branch = self.parse_block()?;
+        let then_branch = self.parse_block(if_indent_level)?;
 
         self.skip_whitespace();
 
-        // Consume Dedent tokens until we return to the if statement's own level
-        // This allows us to see if there's an else clause at the same level as the if
-        while let TokenKind::Dedent(dedent_level) = self.current_kind() {
-            let level = *dedent_level; // Copy the value to avoid borrow issues
-            if level < if_indent_level {
-                // This Dedent would take us below the if statement's level
-                // Don't consume it - it belongs to a parent block
-                break;
-            }
-            self.bump();
-            self.skip_whitespace();
-
-            // After consuming a dedent, if we've reached the if statement's level, stop
-            if level == if_indent_level {
-                break;
-            }
-        }
+        self.consume_dedents_to(if_indent_level);
 
         // Check for else or else if at the same level as the if statement
         let else_branch = if self.eat(&TokenKind::Else) {
             self.skip_whitespace();
-            // DON'T skip indentation - let parse_block() handle it
-
             // Check for "else if" pattern - recursively parse as nested if
             if self.check(&TokenKind::If) {
                 // Parse the nested if as a single-statement block
@@ -715,7 +585,7 @@ impl TokenParser {
                 Some(vec![nested_if])
             } else {
                 // Regular else block
-                Some(self.parse_block()?)
+                Some(self.parse_block(if_indent_level)?)
             }
         } else {
             None
@@ -741,27 +611,11 @@ impl TokenParser {
         let condition = self.parse_expression()?;
         self.skip_whitespace();
 
-        let body = self.parse_block()?;
+        let body = self.parse_block(while_indent_level)?;
 
         self.skip_whitespace();
 
-        // Consume Dedent tokens until we return to the while statement's own level
-        // This ensures proper positioning for the next statement at the same level
-        while let TokenKind::Dedent(dedent_level) = self.current_kind() {
-            let level = *dedent_level; // Copy the value to avoid borrow issues
-            if level < while_indent_level {
-                // This Dedent would take us below the while statement's level
-                // Don't consume it - it belongs to a parent block
-                break;
-            }
-            self.bump();
-            self.skip_whitespace();
-
-            // After consuming a dedent, if we've reached the while statement's level, stop
-            if level == while_indent_level {
-                break;
-            }
-        }
+        self.consume_dedents_to(while_indent_level);
 
         Ok(Statement::While {
             condition,
@@ -772,6 +626,7 @@ impl TokenParser {
 
     pub(super) fn parse_for(&mut self) -> Result<Statement, CompilerError> {
         // For is represented as Iterate in Clean Language
+        let header_level = self.get_current_indent_level();
         let for_token = self.expect(&TokenKind::For)?;
         self.skip_whitespace();
 
@@ -784,9 +639,7 @@ impl TokenParser {
 
         let collection = self.parse_expression()?;
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Statement::Iterate {
             iterator,
@@ -798,6 +651,7 @@ impl TokenParser {
 
     /// Parse iterate statement: iterate item in collection or iterate i in start..end
     pub(super) fn parse_iterate(&mut self) -> Result<Statement, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let iterate_token = self.expect(&TokenKind::Iterate)?;
         self.skip_whitespace();
 
@@ -825,22 +679,13 @@ impl TokenParser {
             let end = self.parse_expression()?;
             self.skip_whitespace();
 
-            // Check for optional "inclusive" contextual keyword (spec §grammar.ebnf range_expression)
-            // Check for optional "inclusive" contextual keyword.
-            // spec/grammar.ebnf: range_expression = ... , "to" , ... , [ "inclusive" ] ;
-            // "inclusive" is not a reserved keyword — lexed as Identifier("inclusive").
-            // Both forms are treated as inclusive; the keyword exists for readability.
-            let inclusive = if let Some(tok) = self.tokens.get(self.cursor) {
-                if matches!(&tok.kind, TokenKind::Identifier(s) if s == "inclusive") {
-                    self.bump();
-                    self.skip_whitespace();
-                    true
-                } else {
-                    true // default: range is inclusive
-                }
-            } else {
-                true
-            };
+            // Optional "inclusive" contextual keyword (grammar.ebnf: not
+            // reserved, lexed as an identifier). Ranges always include the
+            // end; the keyword only exists for readability.
+            if matches!(self.current_kind(), TokenKind::Identifier(s) if s == "inclusive") {
+                self.bump();
+                self.skip_whitespace();
+            }
 
             // Check for optional "step" clause
             let step = if self.check(&TokenKind::Step) {
@@ -852,30 +697,29 @@ impl TokenParser {
             };
 
             self.skip_whitespace();
-            let body = self.parse_block()?;
+            let body = self.parse_block(header_level)?;
 
             Ok(Statement::RangeIterate {
                 iterator,
                 start: start_or_collection,
                 end,
                 step,
-                inclusive,
                 body,
                 location: Some(iterate_token.location),
             })
         } else {
-            // Regular collection iteration: iterate item in collection
-            // Check if there's an optional "step" clause (shouldn't be used with collections, but handle it)
-            let _step = if self.check(&TokenKind::Step) {
-                self.bump(); // consume "step"
-                self.skip_whitespace();
-                Some(Box::new(self.parse_expression()?))
-            } else {
-                None
-            };
+            // Regular collection iteration: iterate item in collection.
+            // grammar.ebnf: only `range_iterate_statement` has a `step` clause.
+            if self.check(&TokenKind::Step) {
+                return Err(CompilerError::parse_error(
+                    "'step' is only allowed when iterating over a range".to_string(),
+                    Some(self.current().location.clone()),
+                    Some("Use `iterate i in start to end step n`, or drop the step.".to_string()),
+                ));
+            }
 
             self.skip_whitespace();
-            let body = self.parse_block()?;
+            let body = self.parse_block(header_level)?;
 
             Ok(Statement::Iterate {
                 iterator,
@@ -1057,6 +901,7 @@ impl TokenParser {
     pub(super) fn try_parse_on_error_block(
         &mut self,
     ) -> Result<Option<(Vec<Statement>, crate::ast::SourceLocation)>, CompilerError> {
+        let header_level = self.get_current_indent_level();
         self.skip_whitespace();
 
         // Check for onError keyword
@@ -1082,10 +927,7 @@ impl TokenParser {
         self.bump(); // consume :
         self.skip_whitespace();
 
-        // Use parse_block() to handle all the indentation logic properly
-        // parse_block() will consume the Indent token, parse all statements,
-        // and handle Dedent tokens correctly
-        let error_block = self.parse_block()?;
+        let error_block = self.parse_block(header_level)?;
 
         Ok(Some((error_block, error_location)))
     }

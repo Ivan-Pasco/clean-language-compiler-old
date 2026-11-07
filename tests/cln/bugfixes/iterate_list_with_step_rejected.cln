@@ -1,0 +1,13 @@
+// Test: bugfixes/iterate_list_with_step_rejected
+// Grammar: iterate_statement, range_iterate_statement (only ranges take step)
+// Semantic: `iterate x in xs step 2` used to parse the step and drop it
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   'step' is only allowed when iterating over a range
+//   iterate_list_with_step_rejected.cln:12:18
+
+start:
+	list<integer> xs = [1, 2, 3]
+	iterate x in xs step 2
+		print(x)
