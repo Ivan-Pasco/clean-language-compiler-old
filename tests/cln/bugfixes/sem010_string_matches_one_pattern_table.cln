@@ -3,7 +3,7 @@
 // Semantic: SEM010 — the pattern name of string.matches() is checked at
 //   compile time against one table shared by the type checker and the MIR
 //   builder. `slug` is a spec pattern no runtime host implements yet.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   error[SEM010]: Pattern 'slug' is not implemented by the runtime yet

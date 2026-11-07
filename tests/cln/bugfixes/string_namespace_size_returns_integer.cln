@@ -3,7 +3,7 @@
 // Regression: string.size was missing from the typechecker's namespace
 //   tables, so its result typed as unknown and the integer was unboxed as
 //   if it were an `any` pointer, printing an empty line.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   5
 //   5

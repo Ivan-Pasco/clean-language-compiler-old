@@ -2,7 +2,7 @@
 // Grammar: method_call, field_access
 // Semantic: type-system.md §Class types — a method declared to return a
 //   class returns a value of that class type.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   label=seven
 //   size=7

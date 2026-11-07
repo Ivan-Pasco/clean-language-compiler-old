@@ -1,6 +1,6 @@
 // Test: bugfixes/one_statement_per_line
 // Grammar: simple_indented_block (statements are separated by NEWLINE)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   Expected a new line after the statement

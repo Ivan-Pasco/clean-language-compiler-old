@@ -1,7 +1,7 @@
 // Test: bugfixes/apply_block_function_and_method
 // Grammar: function_apply_block, method_apply_block (grammar.ebnf §6.12)
 // Semantic: an apply block calls the function or method once per indented item
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   shout: a
 //   shout: b

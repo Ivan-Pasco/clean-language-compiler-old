@@ -1,7 +1,7 @@
 // Test: bugfixes/constructor_ending_in_if_else_returns_instance
 // Grammar: class_declaration, constructor, if_statement
 // Semantic: specification 15-classes-and-objects.md (a constructor yields the new instance)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   big 10
 //   small 3

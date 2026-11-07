@@ -2,7 +2,7 @@
 // Grammar: static_method_call
 // Semantic: SEM001 — the arguments of `Class.method(...)` match the method's
 //   parameters, wherever the class is declared.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   error[SEM001]: A value of type string cannot be used as integer

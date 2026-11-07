@@ -2,7 +2,7 @@
 // Grammar: range_iterate_statement (the "inclusive" contextual keyword)
 // Semantic: a range includes its end with or without the optional
 //   `inclusive` keyword (pinned when RangeIterate::inclusive was removed)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   1
 //   2

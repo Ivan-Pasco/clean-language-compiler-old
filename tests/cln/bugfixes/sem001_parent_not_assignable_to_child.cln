@@ -2,7 +2,7 @@
 // Grammar: assignment_statement, function_call
 // Semantic: type-system.md §5 Assignability — a child class is assignable to
 //   its parent class; a parent class value is not a child.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   A value of class 'Animal' cannot be used as 'Dog'

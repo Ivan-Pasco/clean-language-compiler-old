@@ -1,7 +1,7 @@
 // Test: bugfixes/duplicate_start_block_rejected
 // Grammar: start_block (a program has at most one)
 // Semantic: SEM003 — a second `start:` block redefines the entry point
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   SEM003

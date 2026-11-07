@@ -3,7 +3,7 @@
 // Semantic: characters such as & # and quote marks only exist for plugin
 //   blocks (html:, style:); they used to lex as identifiers, so
 //   `integer & = 3` compiled
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   Expected variable name after type

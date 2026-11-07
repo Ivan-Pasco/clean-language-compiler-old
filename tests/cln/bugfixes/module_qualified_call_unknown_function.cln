@@ -1,7 +1,7 @@
 // Test: bugfixes/module_qualified_call_unknown_function
 // Grammar: import_block, method_call (module.function(args))
 // Semantic: SEM002 — calling a function the module does not declare is an error
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   missing

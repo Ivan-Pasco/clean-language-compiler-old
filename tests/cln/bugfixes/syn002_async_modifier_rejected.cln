@@ -1,7 +1,7 @@
 // Test: bugfixes/syn002_async_modifier_rejected
 // Grammar: function_in_block (no modifier slot)
 // Semantic: SYN002 — `async` is not a function modifier
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   SYN002

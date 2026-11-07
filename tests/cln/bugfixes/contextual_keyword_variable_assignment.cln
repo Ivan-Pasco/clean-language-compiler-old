@@ -3,7 +3,7 @@
 // Semantic: contextual keywords accepted as variable names (step, unit,
 //   input, ...) used to be declarable and readable but not assignable
 //   ("Unsupported statement type: Step")
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   3
 //   10

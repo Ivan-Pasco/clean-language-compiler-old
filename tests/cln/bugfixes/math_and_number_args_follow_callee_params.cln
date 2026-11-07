@@ -1,7 +1,7 @@
 // Test: bugfixes/math_and_number_args_follow_callee_params
 // Grammar: function_call, function_declaration
 // Semantic: type-system.md §5 (integer to number widening at calls)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   4
 //   7

@@ -3,7 +3,7 @@
 // Semantic: IDX001 — a list index is an integer. A diagnostic about an
 //   expression that carries no position of its own (an operator, an index)
 //   names the line of its statement.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   error[IDX001]: List index must be integer, found string

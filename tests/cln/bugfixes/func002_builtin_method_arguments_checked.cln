@@ -2,7 +2,7 @@
 // Grammar: method_call
 // Semantic: FUNC002 / SEM001 — a built-in method (stdlib-reference.md §4)
 //   takes its declared number and types of arguments.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   error[FUNC002]: 'string.substring' expects 2 argument(s), got 0

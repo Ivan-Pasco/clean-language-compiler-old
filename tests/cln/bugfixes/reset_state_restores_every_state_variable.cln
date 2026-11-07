@@ -2,7 +2,7 @@
 // Grammar: reset_statement = "reset" , ( "state" | identifier )
 // Semantic: `reset state` returns every state variable to its declared
 //   initial value (specification 1.0 §23); a `.unique` list keeps its behavior
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   5 hi 2
 //   1 start 0

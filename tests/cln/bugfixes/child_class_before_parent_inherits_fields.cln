@@ -2,7 +2,7 @@
 // Grammar: class_declaration ("is" parent)
 // Semantic: inheritance — a class may be declared before its parent and still
 //   use the fields it inherits
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   Rex 4
 

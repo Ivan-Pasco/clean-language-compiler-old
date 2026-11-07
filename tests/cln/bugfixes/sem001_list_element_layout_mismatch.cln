@@ -4,7 +4,7 @@
 //   list<number> is never a list<integer>. A list<integer> stores 4-byte
 //   elements and a list<number> 8-byte ones, so the list itself cannot be
 //   reused as the other type; a list literal still widens.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   A value of type Array<number> cannot be used as Array<integer>

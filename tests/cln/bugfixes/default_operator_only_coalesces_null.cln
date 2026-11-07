@@ -3,7 +3,7 @@
 // Semantic: 06-expressions.md §Default Operator — `default` only checks for
 //   null, never for 0, false or ""; the fallback is evaluated only when the
 //   value is null. `!` on a plain integer/number/boolean never traps.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   zero=0
 //   off=false

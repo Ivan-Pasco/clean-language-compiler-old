@@ -1,7 +1,7 @@
 // Test: bugfixes/duplicate_parameter_rejected
 // Grammar: parameter_list
 // Semantic: SEM003 — two parameters of one function share a name
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   SEM003

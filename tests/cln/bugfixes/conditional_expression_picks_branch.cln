@@ -1,6 +1,6 @@
 // Test: bugfixes/conditional_expression_picks_branch
 // Grammar: conditional_expression
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   yes
 //   no

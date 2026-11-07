@@ -2,7 +2,7 @@
 // Grammar: variable_declaration, additive_expression
 // Semantic: SCOPE001 — the error about a name inside an expression points at
 //   the line of its statement, not 0:0
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   notDeclared

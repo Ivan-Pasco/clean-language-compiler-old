@@ -1,7 +1,7 @@
 // Test: bugfixes/list_literals_allocate_through_growing_heap
 // Grammar: list_literal ("[" expression { "," expression } "]")
 // Semantic: list literals allocate on the heap (specification 20-memory-management.md)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   60000
 //   1800150000

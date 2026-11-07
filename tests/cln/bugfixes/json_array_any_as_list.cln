@@ -1,7 +1,7 @@
 // Test: bugfixes/json_array_any_as_list
 // Grammar: iterate_statement, variable_declaration, method_call
 // Semantic: type-system.md §9 (`any` is not type-checked); stdlib-reference.md §8 (a JSON array is a `list<any>`)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   indexed=b
 //   count=3

@@ -2,7 +2,7 @@
 // Grammar: class_declaration (always: block)
 // Semantic: SCOPE001 — an invariant naming an undeclared variable is an error,
 //   not a silently dropped invariant
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   notAField

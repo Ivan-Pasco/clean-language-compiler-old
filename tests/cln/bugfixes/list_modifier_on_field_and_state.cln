@@ -2,7 +2,7 @@
 // Grammar: list_type (behavior suffix), class_field, state_declaration
 // Semantic: `.unique` on a class field or state variable keeps the list free
 //   of duplicates, as it does on a local
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   2
 //   2

@@ -1,7 +1,7 @@
 // Test: bugfixes/later_assignment_still_accepted
 // Grammar: later_assignment, start_expression
 // Semantic: removing the non-spec `later f()` expression keeps the spec'd statement form
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected compile: success
 

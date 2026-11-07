@@ -1,7 +1,7 @@
 // Test: bugfixes/onerror_handler_reads_error_message
 // Grammar: on_error_expression, on_error_block, standalone_on_error, primary ("error")
 // Semantic: 14-error-handling.md — "The error is available as error."
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   fallback=one
 //   got two

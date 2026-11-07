@@ -2,7 +2,7 @@
 // Grammar: assignment_statement, index_expression
 // Semantic: IDX003 — a pairs is indexed with its declared key type; an
 //   element assigned through brackets has the pairs' value type.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   b=3
 //   one

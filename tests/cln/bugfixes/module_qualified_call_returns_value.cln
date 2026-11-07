@@ -1,7 +1,7 @@
 // Test: bugfixes/module_qualified_call_returns_value
 // Grammar: import_block, method_call (module.function(args))
 // Semantic: SEM002 — a module-qualified call binds to the module's function
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   helpers loaded
 //   9

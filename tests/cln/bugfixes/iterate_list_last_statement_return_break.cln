@@ -1,6 +1,6 @@
 // Test: bugfixes/iterate_list_last_statement_return_break
 // Grammar: iterate_statement, return_statement, break_statement
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   first=7
 //   count=1

@@ -2,7 +2,7 @@
 // Grammar: index_expression, assignment_statement
 // Semantic: IDX003 — a pairs is indexed (read or assigned) with a key of
 //   its declared key type.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   error[IDX003]: Pairs key must be string, found integer

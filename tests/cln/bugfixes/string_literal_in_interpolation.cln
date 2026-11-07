@@ -1,6 +1,6 @@
 // Test: bugfixes/string_literal_in_interpolation
 // Grammar: string_interpolation, string_literal
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   v=q!
 //   n=a!b

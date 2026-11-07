@@ -2,7 +2,7 @@
 // Grammar: assignment, variable_declaration, class_declaration
 // Semantic: SCOPE — a local variable named like a field shadows the field
 //   for writes as for reads; the field keeps its value
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   field=10
 //   local=7

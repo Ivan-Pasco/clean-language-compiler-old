@@ -2,7 +2,7 @@
 // Grammar: function_call
 // Semantic: SEM002 — `list_get` is not a Clean Language function (lists use
 //   method syntax, stdlib-reference.md §Lists); calling it is an undefined name
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   list_get

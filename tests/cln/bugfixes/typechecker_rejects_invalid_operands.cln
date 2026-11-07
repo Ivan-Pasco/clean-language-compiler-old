@@ -3,7 +3,7 @@
 // Semantic: SEM004 — `not` takes a boolean, arithmetic takes numbers, and a
 //   string or list has no `length` field (it is the `length()` method);
 //   SEM002 — an assigned field must exist.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   error[SEM004]: 'not' cannot be applied to a value of type integer

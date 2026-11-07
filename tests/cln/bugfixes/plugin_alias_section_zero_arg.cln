@@ -5,7 +5,7 @@
 //   The compiler ignored the section, so the call never reached its bridge
 //   import and codegen failed with COD000 "Function 'locale.current' not found
 //   in function map". wasmtime_runner has no i18n host, so this pins the compile.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected compile: success
 

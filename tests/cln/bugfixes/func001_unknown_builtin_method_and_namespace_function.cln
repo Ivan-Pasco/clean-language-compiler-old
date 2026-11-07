@@ -2,7 +2,7 @@
 // Grammar: method_call, static_method_call
 // Semantic: FUNC001 — a method or namespace function that does not exist is
 //   reported by the type checker, at the call.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   error[FUNC001]: Method 'fooBar' not found on a string value

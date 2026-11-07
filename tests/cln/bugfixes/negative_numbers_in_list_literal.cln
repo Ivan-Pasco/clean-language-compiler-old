@@ -1,6 +1,6 @@
 // Test: bugfixes/negative_numbers_in_list_literal
 // Grammar: list_literal, list_element, number_literal
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   -2
 //   -1.5

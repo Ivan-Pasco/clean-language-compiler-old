@@ -3,7 +3,7 @@
 // Semantic: type-system.md §7 (explicit conversions), §9 (any);
 //   stdlib-reference.md §3 (conversions never halt); BOXED_ANY_ABI.md §2-3
 //   (an integer box holds the full i64)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   10000000000
 //   10000000000

@@ -1,7 +1,7 @@
 // Test: bugfixes/conversion_methods_use_the_value_not_memory
 // Grammar: method_call ("." method_name "(" ")")
 // Semantic: type conversions (stdlib-reference.md §3, specification 04-type-system.md)
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   1
 //   0

@@ -1,7 +1,7 @@
 // Test: bugfixes/runtime_string_equals_literal_by_content
 // Grammar: comparison_expression, string_literal
 // Semantic: type-system.md "string" equality compares text
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   true
 //   false

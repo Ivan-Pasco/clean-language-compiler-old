@@ -2,7 +2,7 @@
 // Grammar: sized_type, size_specifier
 // Semantic: foundation/spec/type-system.md section 2 lists the valid widths;
 //   integer:264 used to be truncated to integer:8
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   Invalid precision 'integer:264'

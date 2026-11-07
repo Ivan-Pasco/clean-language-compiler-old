@@ -2,7 +2,7 @@
 // Grammar: equality_expression
 // Semantic: type-system.md §any — `==` on two `any` values compares the
 //   values they hold, not the addresses of their boxes.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   same int: true
 //   diff int: false

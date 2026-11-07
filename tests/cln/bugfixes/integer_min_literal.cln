@@ -1,6 +1,6 @@
 // Test: bugfixes/integer_min_literal
 // Grammar: integer_literal, unary_expression, sized_type
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   -9223372036854775808
 //   true

@@ -1,7 +1,7 @@
 // Test: bugfixes/reset_unknown_name_rejected
 // Grammar: reset_statement = "reset" , ( "state" | identifier )
 // Semantic: SEM002 — `reset name` must name a state variable
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   SEM002

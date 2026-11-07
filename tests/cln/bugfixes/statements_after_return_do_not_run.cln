@@ -5,7 +5,7 @@
 // Regression: MIR lowering kept lowering the rest of the block after a
 //   return, so their side effects ran before the return took effect. A
 //   function-level onError: handler after the final return must still run.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   10
 //   20

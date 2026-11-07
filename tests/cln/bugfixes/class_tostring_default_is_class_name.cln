@@ -2,7 +2,7 @@
 // Grammar: method_call
 // Semantic: 07-statements.md "Default Class Behavior" — a class without a
 //   `toString()` converts to its class name; a declared one is used.
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 //   Thing
 //   custom label

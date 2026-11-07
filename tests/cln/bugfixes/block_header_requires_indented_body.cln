@@ -2,7 +2,7 @@
 // Grammar: if_statement, indented_block
 // Semantic: an `if` with no deeper-indented body used to take the following
 //   lines at its own level as its body
-// Fixed in: compiler 0.33.174
+// Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   Expected an indented block
