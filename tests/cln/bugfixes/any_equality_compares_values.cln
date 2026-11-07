@@ -1,0 +1,36 @@
+// Test: bugfixes/any_equality_compares_values
+// Grammar: equality_expression
+// Semantic: type-system.md §any — `==` on two `any` values compares the
+//   values they hold, not the addresses of their boxes.
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   same int: true
+//   diff int: false
+//   same text: true
+//   int vs text: false
+//   ne: true
+//   objects: true
+//
+// Regression: `any == any` compared the two box pointers, so two separately
+// decoded equal values were never equal.
+
+start:
+	any a = json.decode("12")
+	any b = json.decode("12")
+	any c = json.decode("13")
+	any s = json.decode("\"12\"")
+	any t = json.decode("\"12\"")
+	any o1 = json.decode("{\"k\":1}")
+	any o2 = json.decode("{\"k\":1}")
+	boolean sameInt = a == b
+	printl("same int: " + sameInt.toString())
+	boolean diffInt = a == c
+	printl("diff int: " + diffInt.toString())
+	boolean sameText = s == t
+	printl("same text: " + sameText.toString())
+	boolean intVsText = a == s
+	printl("int vs text: " + intVsText.toString())
+	boolean ne = a != c
+	printl("ne: " + ne.toString())
+	boolean objects = o1 == o2
+	printl("objects: " + objects.toString())

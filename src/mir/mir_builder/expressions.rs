@@ -599,9 +599,8 @@ impl MirBuilder {
                     // compares the boxed-any pointer bits to the literal's first
                     // 4 bytes and silently always evaluates false.
                     //
-                    // Mixed any+any comparisons are left as raw pointer equality
-                    // for now (well-defined for object identity, no silent
-                    // mis-evaluation).
+                    // Two `any` operands of `==` / `!=` compare their values
+                    // (`emit_any_values_equal`), not their box pointers.
                     //
                     // Regression tests:
                     //   tests/test_any_int_compare.rs    (ANY_INT_COMPARE_USES_POINTER)
@@ -678,6 +677,42 @@ impl MirBuilder {
                     } else {
                         (right_id, right_mir_type)
                     };
+
+                    if left_is_any
+                        && right_is_any
+                        && matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    {
+                        let equal = self.emit_any_values_equal(
+                            context,
+                            left_id,
+                            right_id,
+                            &expression.location,
+                        );
+                        if matches!(operator, BinaryOperator::Equal) {
+                            return Ok(equal);
+                        }
+                        let result_id = ValueId(context.function.next_value_id);
+                        context.function.next_value_id += 1;
+                        self.register_temp_local(
+                            context,
+                            result_id,
+                            MirType::I32,
+                            expression.location.clone(),
+                        );
+                        self.add_instruction(
+                            context,
+                            MirInstruction {
+                                dest: Some(result_id),
+                                operation: MirOperation::BinaryOp {
+                                    op: MirBinaryOp::Eq,
+                                    left: MirOperand::Value(equal),
+                                    right: MirOperand::Constant(MirConstant::Integer(0)),
+                                },
+                                location: expression.location.clone(),
+                            },
+                        );
+                        return Ok(result_id);
+                    }
 
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;

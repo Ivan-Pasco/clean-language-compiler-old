@@ -1312,6 +1312,46 @@ impl MirBuilder {
     }
 }
 
+impl MirBuilder {
+    /// Emit an i32 boolean: whether two `any` values are equal. They are
+    /// equal when they box the same kind of value (same type tag; a null
+    /// pointer counts as the null tag) with the same text — numbers,
+    /// booleans and strings by value, lists and objects by their JSON text.
+    pub(super) fn emit_any_values_equal(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        left: ValueId,
+        right: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let left_tag = self.emit_non_null_test(context, left, &ConcreteType::Any, location);
+        let right_tag = self.emit_non_null_test(context, right, &ConcreteType::Any, location);
+        let left_text = self.emit_any_to_string(context, left, location);
+        let right_text = self.emit_any_to_string(context, right, location);
+        let mut binary = |builder: &mut Self, op: MirBinaryOp, a: ValueId, b: ValueId| {
+            let id = ValueId(context.function.next_value_id);
+            context.function.next_value_id += 1;
+            builder.register_temp_local(context, id, MirType::I32, location.clone());
+            builder.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(id),
+                    operation: MirOperation::BinaryOp {
+                        op,
+                        left: MirOperand::Value(a),
+                        right: MirOperand::Value(b),
+                    },
+                    location: location.clone(),
+                },
+            );
+            id
+        };
+        let same_tag = binary(self, MirBinaryOp::Eq, left_tag, right_tag);
+        let same_text = binary(self, MirBinaryOp::Eq, left_text, right_text);
+        binary(self, MirBinaryOp::And, same_tag, same_text)
+    }
+}
+
 /// One arm of [`MirBuilder::build_two_way_value`].
 pub(super) enum BranchArm<'e> {
     /// A value computed before the branch, typed as the given expression.
