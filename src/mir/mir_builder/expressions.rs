@@ -389,93 +389,41 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
-                // BOOK: null-coalescing - Handle NullCoalesce operator (value default fallback)
-                // Returns left if not null, otherwise returns right
-                // IMPORTANT: 0, false, "" are NOT null - only the null literal is null
+                // `value default fallback` (06-expressions.md §Default Operator):
+                // the fallback is evaluated only when `value` is null. Only
+                // null coalesces — `0`, `false` and `""` are values.
                 if matches!(operator, BinaryOperator::NullCoalesce) {
-                    use crate::typechecker::tast::{TastExpressionKind, TastLiteral};
-
-                    // Check if left is definitely null (literal null or Null type)
-                    let left_is_null_literal = matches!(
+                    let left_is_null = matches!(
                         &left.kind,
                         TastExpressionKind::Literal {
                             value: TastLiteral::Null
                         }
-                    );
-                    let left_is_null_type = matches!(&left.expr_type, ConcreteType::Null);
-
-                    if left_is_null_literal || left_is_null_type {
-                        // Left is definitely null - just return the fallback (right)
+                    ) || matches!(&left.expr_type, ConcreteType::Null);
+                    if left_is_null {
                         return self.build_expression(context, right);
                     }
-
-                    // Check if left is definitely NOT null (non-null literal)
-                    let left_is_non_null_literal = match &left.kind {
-                        TastExpressionKind::Literal { value } => {
-                            !matches!(value, TastLiteral::Null)
-                        }
-                        _ => false,
-                    };
-
-                    if left_is_non_null_literal {
-                        // Left is definitely NOT null - just return the original (left)
+                    // A non-null literal, and a plain integer, number or
+                    // boolean (only `T?` holds null), is never null.
+                    let left_is_non_null_literal = matches!(
+                        &left.kind,
+                        TastExpressionKind::Literal { value } if !matches!(value, TastLiteral::Null)
+                    );
+                    if left_is_non_null_literal || Self::is_non_nullable_value_type(&left.expr_type)
+                    {
                         return self.build_expression(context, left);
                     }
 
-                    // For variables and other expressions, we need runtime checking
-                    // However, since we don't have proper nullable types yet, we use a
-                    // special "null marker" approach: null is represented as a pointer value
-                    // of 0 for reference types, but for primitives (int, bool), 0/false are valid values.
-                    //
-                    // Current behavior: If we can't determine at compile time, we check
-                    // if the expression type could be null. For now, we just return the left value
-                    // since we can't distinguish null from 0/false at runtime for primitives.
-                    //
-                    // Note: A proper nullable type system (Option<T> or T?) would improve this.
-
-                    // For now, evaluate left and return it (we don't have runtime null tracking)
-                    // This handles the case where left is a variable that could be null
-                    // In the future, we'll track nullability in the type system
                     let left_id = self.build_expression(context, left)?;
-
-                    // Get the MIR type of the left expression
-                    let left_mir_type = context
-                        .function
-                        .locals
-                        .get(&left_id)
-                        .map(|local| local.local_type.clone())
-                        .unwrap_or_else(|| MirType::from_concrete_type(&left.expr_type));
-
-                    // Evaluate right expression (the fallback value) - needed for later
-                    let right_id = self.build_expression(context, right)?;
-
-                    // Create result local with same type as left
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    let non_null =
+                        self.emit_non_null_test(context, left_id, &left.expr_type, &left.location);
+                    return self.build_two_way_value(
                         context,
-                        result_id,
-                        left_mir_type.clone(),
-                        expression.location.clone(),
+                        non_null,
+                        BranchArm::Built(left_id, left),
+                        BranchArm::Lazy(right),
+                        &expression.expr_type,
+                        &expression.location,
                     );
-
-                    // Generate select instruction: if left != 0 then left else right
-                    // NOTE: This only works correctly for reference types (pointers) where
-                    // null = 0 and valid values are non-zero. For primitives like int and bool,
-                    // this will incorrectly treat 0 and false as null.
-                    // A proper nullable type system would allow distinguishing null from valid zero values.
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Select {
-                            condition: MirOperand::Value(left_id),
-                            true_value: MirOperand::Value(left_id),
-                            false_value: MirOperand::Value(right_id),
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // Check if this is string concatenation (String + String or String + other)
@@ -813,6 +761,15 @@ impl MirBuilder {
                 }
 
                 let operand_id = self.build_expression(context, operand)?;
+
+                // `value!` checks for null; a plain integer, number or boolean
+                // is never null, and `0` / `false` must pass the check.
+                if matches!(operator, UnaryOperator::Required)
+                    && Self::is_non_nullable_value_type(&operand.expr_type)
+                {
+                    return Ok(operand_id);
+                }
+
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 

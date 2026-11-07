@@ -1218,6 +1218,100 @@ impl MirBuilder {
     }
 }
 
+impl MirBuilder {
+    /// A plain `integer`, `number` or `boolean` (of any width): only the
+    /// nullable form `T?` (`ConcreteType::Optional`) can hold null.
+    pub(super) fn is_non_nullable_value_type(t: &ConcreteType) -> bool {
+        matches!(
+            t,
+            ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::Boolean
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::NumberSized { .. }
+        )
+    }
+
+    /// Emit an i32 that is non-zero when `value_id` (of type `value_type`)
+    /// is not null. Null is the zero value of the representation (a null
+    /// pointer, or `none` of a `T?`); an `any` is also null when it boxes
+    /// the null tag (what a JSON `null` decodes to).
+    pub(super) fn emit_non_null_test(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let value_mir_type = context
+            .function
+            .locals
+            .get(&value_id)
+            .map(|l| l.local_type.clone())
+            .unwrap_or_else(|| self.convert_concrete_type(value_type));
+        let new_i32 = |builder: &mut Self, context: &mut FunctionBuildContext| {
+            let id = ValueId(context.function.next_value_id);
+            context.function.next_value_id += 1;
+            builder.register_temp_local(context, id, MirType::I32, location.clone());
+            id
+        };
+        if matches!(value_mir_type, MirType::Any) {
+            // tag = ptr != 0 ? load(ptr) : 0 — reading the tag word of a
+            // null pointer reads address 0, which is never trapped; the
+            // select discards it.
+            let tag = new_i32(self, context);
+            self.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(tag),
+                    operation: MirOperation::Load {
+                        source: MirOperand::Value(value_id),
+                    },
+                    location: location.clone(),
+                },
+            );
+            let result = new_i32(self, context);
+            self.add_instruction(
+                context,
+                MirInstruction {
+                    dest: Some(result),
+                    operation: MirOperation::Select {
+                        condition: MirOperand::Value(value_id),
+                        true_value: MirOperand::Value(tag),
+                        false_value: MirOperand::Constant(MirConstant::Integer(
+                            AnyTypeTag::Null.as_i32() as i64,
+                        )),
+                    },
+                    location: location.clone(),
+                },
+            );
+            return result;
+        }
+        let zero = match value_mir_type {
+            MirType::F32 | MirType::F64 => MirConstant::Float(0.0),
+            MirType::I64 | MirType::U64 => MirConstant::Integer64(0),
+            // An i32 value (a pointer, or a `T?` of an i32 type) is its own
+            // test: a branch on it is taken when it is non-zero. Comparing
+            // a string pointer with 0 would compare string contents.
+            _ => return value_id,
+        };
+        let result = new_i32(self, context);
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result),
+                operation: MirOperation::BinaryOp {
+                    op: MirBinaryOp::Ne,
+                    left: MirOperand::Value(value_id),
+                    right: MirOperand::Constant(zero),
+                },
+                location: location.clone(),
+            },
+        );
+        result
+    }
+}
+
 /// One arm of [`MirBuilder::build_two_way_value`].
 pub(super) enum BranchArm<'e> {
     /// A value computed before the branch, typed as the given expression.
