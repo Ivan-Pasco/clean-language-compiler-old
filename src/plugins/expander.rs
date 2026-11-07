@@ -287,20 +287,59 @@ fn merge_state_block(target: &mut Option<StateBlock>, incoming: Option<StateBloc
 /// when no match is found we skip emission for that class entirely (the
 /// loader-side call site will simply log "not found", same as before).
 ///
-/// Name collisions (a user `functions:` block already declaring a function
-/// with the same name as a shim) are resolved by the user winning: we skip
-/// the shim. The user's function reaches the export table the normal way,
-/// and the event handler method becomes effectively shadowed for loader
-/// dispatch — an explicit user override.
-pub fn emit_event_handler_shims(program: &mut Program) {
+/// Name collisions:
+/// - a user `functions:` block already declaring a function with the same
+///   name as a shim: the user wins and the shim is skipped. The user's
+///   function reaches the export table the normal way, and the event handler
+///   method becomes shadowed for loader dispatch — an explicit user override;
+/// - the same shim already present (this pass runs again on an expanded
+///   program): skipped;
+/// - two components declaring an event handler with the same name: an
+///   error. The browser dispatches by bare export name
+///   (`instance.exports[handlerName]`, frame-ui-semantics UI-B006), so one
+///   export cannot serve both components and either choice would silently
+///   send one component's events to the other.
+pub fn emit_event_handler_shims(program: &mut Program) -> Result<(), PluginError> {
     use crate::ast::{Expression, FunctionModifier, Statement, Type, Visibility};
 
+    /// The state variable an existing shim dispatches through, if `func`
+    /// is a shim emitted by this pass.
+    fn shim_target(func: &Function) -> Option<&str> {
+        let is_shim_location = func
+            .location
+            .as_ref()
+            .is_some_and(|l| l.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER);
+        match func.body.as_slice() {
+            [Statement::Expression {
+                expr: Expression::MethodCall { object, method, .. },
+                ..
+            }] if is_shim_location && method == &func.name => match object.as_ref() {
+                Expression::Variable(name) => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn handler_conflict(handler: &str, first: &str, second: &str) -> PluginError {
+        PluginError::ValidationFailed {
+            plugin_name: "(event handlers)".to_string(),
+            message: format!(
+                "event handler `{}` is declared by both `{}` and `{}`; the browser \
+                 dispatches events by export name, so handler names must be unique across \
+                 components (frame-ui-semantics UI-B006). Rename one of the handlers.",
+                handler, first, second
+            ),
+            location: None,
+        }
+    }
+
     if program.classes.is_empty() {
-        return;
+        return Ok(());
     }
     let state_decls = match &program.state {
         Some(state) => &state.declarations,
-        None => return,
+        None => return Ok(()),
     };
 
     let mut shims: Vec<Function> = Vec::new();
@@ -324,11 +363,26 @@ pub fn emit_event_handler_shims(program: &mut Program) {
             if !matches!(method.modifier, FunctionModifier::EventHandler) {
                 continue;
             }
-            // User-defined top-level function with the same name wins.
-            if program.functions.iter().any(|f| f.name == method.name) {
-                continue;
+            if let Some(existing) = program.functions.iter().find(|f| f.name == method.name) {
+                match shim_target(existing) {
+                    // This shim was emitted by an earlier run of this pass.
+                    Some(target) if target == state_var_name => continue,
+                    // A shim for another component's handler.
+                    Some(target) => {
+                        return Err(handler_conflict(&method.name, target, &state_var_name))
+                    }
+                    // A user-defined top-level function wins.
+                    None => continue,
+                }
             }
-            if shims.iter().any(|f| f.name == method.name) {
+            if let Some(target) = shims
+                .iter()
+                .find(|f| f.name == method.name)
+                .and_then(shim_target)
+            {
+                if target != state_var_name {
+                    return Err(handler_conflict(&method.name, target, &state_var_name));
+                }
                 continue;
             }
             // Tag the shim with PLUGIN_OUTPUT_V2_ROOT_MARKER so it survives
@@ -387,6 +441,7 @@ pub fn emit_event_handler_shims(program: &mut Program) {
         }
     }
     program.functions.extend(shims);
+    Ok(())
 }
 
 /// Prepend statements to the program's start function body, creating the
@@ -718,7 +773,7 @@ impl<'a> PluginExpander<'a> {
             prepend_to_start(&mut program, slot_prelude);
         }
 
-        emit_event_handler_shims(&mut program);
+        emit_event_handler_shims(&mut program)?;
 
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
@@ -920,7 +975,7 @@ impl<'a> PluginExpander<'a> {
 
         self.merge_pending_into(&mut program)?;
 
-        emit_event_handler_shims(&mut program);
+        emit_event_handler_shims(&mut program)?;
 
         tracing::debug!(
             blocks_expanded = self.blocks_expanded,
@@ -2519,5 +2574,92 @@ mod tests {
         let mut expander = PluginExpander::new(&registry);
         expander.expand_program(program).unwrap();
         assert!(expander.check_permissions().is_ok());
+    }
+
+    /// A component class with one `events:` handler and the state global
+    /// holding its instance.
+    fn component(
+        class_name: &str,
+        instance: &str,
+        handler: &str,
+    ) -> (Class, crate::ast::StateDeclaration) {
+        use crate::ast::{FunctionModifier, StateDeclaration, Type};
+        let mut class = Class::new(class_name.to_string(), None);
+        let mut method = Function::new(handler.to_string(), vec![], Type::Void, vec![], None);
+        method.modifier = FunctionModifier::EventHandler;
+        class.methods.push(method);
+        let decl = StateDeclaration::new(
+            instance.to_string(),
+            Type::Object(class_name.to_string()),
+            Expression::ObjectCreation {
+                class_name: class_name.to_string(),
+                arguments: vec![],
+                location: crate::ast::SourceLocation::new(0, 0, "test"),
+            },
+            None,
+        );
+        (class, decl)
+    }
+
+    fn program_with_components(components: Vec<(Class, crate::ast::StateDeclaration)>) -> Program {
+        use crate::ast::{StateBlock, StateScope};
+        let mut program = make_test_program(vec![]);
+        let mut state = StateBlock::new(StateScope::App, None);
+        for (class, decl) in components {
+            program.classes.push(class);
+            state.declarations.push(decl);
+        }
+        program.state = Some(state);
+        program
+    }
+
+    /// Two components declaring the same event handler cannot share the one
+    /// export the browser dispatches to: that is an error, not a silent drop.
+    #[test]
+    fn same_named_handlers_in_two_components_are_an_error() {
+        let mut program = program_with_components(vec![
+            component("Toolbar", "instance_toolbar", "save"),
+            component("Editor", "instance_editor", "save"),
+        ]);
+        let err = emit_event_handler_shims(&mut program)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`save`"), "{}", err);
+        assert!(
+            err.contains("instance_toolbar") && err.contains("instance_editor"),
+            "{}",
+            err
+        );
+    }
+
+    /// The pass runs twice on the entry module (expander, then the
+    /// multi-file compiler); the second run keeps the shims it made.
+    #[test]
+    fn event_handler_shims_are_idempotent() {
+        let mut program = program_with_components(vec![
+            component("Toolbar", "instance_toolbar", "save"),
+            component("Editor", "instance_editor", "open"),
+        ]);
+        emit_event_handler_shims(&mut program).unwrap();
+        emit_event_handler_shims(&mut program).unwrap();
+        let names: Vec<&str> = program.functions.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["save", "open"]);
+    }
+
+    /// A user function with a handler's name overrides the shim.
+    #[test]
+    fn user_function_overrides_event_handler_shim() {
+        let mut program =
+            program_with_components(vec![component("Toolbar", "instance_toolbar", "save")]);
+        program.functions.push(Function::new(
+            "save".to_string(),
+            vec![],
+            crate::ast::Type::Void,
+            vec![],
+            None,
+        ));
+        emit_event_handler_shims(&mut program).unwrap();
+        assert_eq!(program.functions.len(), 1);
+        assert!(program.functions[0].location.is_none());
     }
 }

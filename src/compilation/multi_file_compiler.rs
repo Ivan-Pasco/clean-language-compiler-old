@@ -1561,7 +1561,19 @@ impl MultiFileCompiler {
         // the expander already ran, this is the second invocation and is a
         // no-op (shims already emitted are detected by name collision and
         // skipped).
-        crate::plugins::expander::emit_event_handler_shims(&mut ast);
+        crate::plugins::expander::emit_event_handler_shims(&mut ast).map_err(|e| {
+            CompilerError::syntax_error(
+                e.to_string(),
+                Some("Event handler export conflict".to_string()),
+                Some(SourceLocation {
+                    file: file_path.to_string_lossy().to_string(),
+                    line: 1,
+                    column: 1,
+                    byte_start: None,
+                    byte_end: None,
+                }),
+            )
+        })?;
 
         // Stage 3: Build HIR
         let generic_instances = self
