@@ -56,6 +56,10 @@ pub struct NameResolver {
     /// Default argument values for language alias functions that have `param_defaults`.
     /// Keyed by language function name. Values are per-param default strings (empty = required).
     language_fn_defaults: std::collections::HashMap<String, Vec<String>>,
+    /// Name a module is called through (its own name, or the alias of
+    /// `import: Module as M`) → the module's name. `M.fn(args)` on such a
+    /// name binds to the module's function `fn`.
+    module_namespaces: std::collections::HashMap<String, String>,
 }
 
 impl NameResolver {
@@ -77,6 +81,7 @@ impl NameResolver {
             pending_language_helper_aliases: std::collections::HashMap::new(),
             pending_language_fn_defs: std::collections::HashMap::new(),
             language_fn_defaults: std::collections::HashMap::new(),
+            module_namespaces: std::collections::HashMap::new(),
         }
     }
 
@@ -117,7 +122,6 @@ impl NameResolver {
         } else {
             None
         };
-        let resolved_imports = self.resolve_imports(&hir.imports)?;
         let resolved_tests = self.resolve_tests(&hir.tests)?;
 
         // Resolve state block if present
@@ -359,7 +363,6 @@ impl NameResolver {
             functions: resolved_functions,
             classes: resolved_classes,
             start_function: resolved_start_function,
-            imports: resolved_imports,
             tests: resolved_tests,
             state: resolved_state,
             watch_blocks: resolved_watch_blocks,
@@ -1063,17 +1066,24 @@ impl NameResolver {
         // Register imported modules as Namespace symbols in the global scope.
         // This must happen in the first pass so that `Module.function()` call
         // sites can be resolved regardless of where they appear in the source.
+        // `import: Module as M` makes the module callable as `M` only.
         for import in &hir.imports {
+            let namespace_name = match (&import.items, &import.alias) {
+                (None, Some(alias)) => alias.clone(),
+                _ => import.module_name.clone(),
+            };
             if !self
                 .symbol_table
-                .has_symbol_in_current_scope(&import.module_name)
+                .has_symbol_in_current_scope(&namespace_name)
             {
-                let _ns_id = self.symbol_table.create_symbol(
-                    import.module_name.clone(),
+                self.symbol_table.create_symbol(
+                    namespace_name.clone(),
                     SymbolKind::Namespace { functions: vec![] },
                     self.symbol_table.current_scope_id(),
                     import.location.clone(),
                 );
+                self.module_namespaces
+                    .insert(namespace_name, import.module_name.clone());
             }
         }
 
@@ -1676,61 +1686,6 @@ impl NameResolver {
             body: resolved_body,
             location: method.location,
         })
-    }
-
-    /// Resolve imports (basic implementation)
-    fn resolve_imports(&mut self, imports: &[HirImport]) -> Result<Vec<ResolvedHirImport>, ()> {
-        let mut resolved_imports = Vec::new();
-
-        for import in imports {
-            // Create a placeholder module entry
-            let module_id = self.symbol_table.create_module(
-                import.module_name.clone(),
-                format!("{}.cln", import.module_name),
-            );
-
-            // Register the module name as a Namespace symbol in the current scope.
-            // This allows `ModuleName.function(args)` syntax to resolve correctly:
-            // the resolver recognises the receiver as a Namespace and emits a qualified call.
-            let _namespace_symbol_id = self.symbol_table.create_symbol(
-                import.module_name.clone(),
-                SymbolKind::Namespace { functions: vec![] },
-                self.symbol_table.current_scope_id(),
-                import.location.clone(),
-            );
-
-            let resolved_items = if let Some(items) = &import.items {
-                let mut resolved_items = Vec::new();
-                for item in items {
-                    // Register each explicitly-imported item as a Function symbol.
-                    // The full resolution of parameter/return types happens during
-                    // the actual module compilation; here we create placeholders that
-                    // are sufficient for the resolver to proceed without errors.
-                    let symbol_id = self.symbol_table.create_symbol(
-                        item.clone(),
-                        SymbolKind::Function {
-                            parameters: vec![],
-                            return_type: None,
-                        },
-                        self.symbol_table.current_scope_id(),
-                        import.location.clone(),
-                    );
-                    resolved_items.push((item.clone(), symbol_id));
-                }
-                Some(resolved_items)
-            } else {
-                None
-            };
-
-            resolved_imports.push(ResolvedHirImport {
-                module_name: import.module_name.clone(),
-                module_id,
-                items: resolved_items,
-                location: import.location.clone(),
-            });
-        }
-
-        Ok(resolved_imports)
     }
 
     /// Resolve tests
@@ -2901,6 +2856,11 @@ impl NameResolver {
                             location: location.clone(),
                         });
                     } else if let SymbolKind::Namespace { .. } = &class_symbol.kind {
+                        if let Some(result) = self
+                            .resolve_module_function_call(class_name, method, arguments, location)
+                        {
+                            return result;
+                        }
                         // This is a namespace function call (e.g., logical.and, conditional.integer, string.length)
                         // NOTE: Use dot notation to match stdlib function registration
                         let qualified_name = format!("{}.{}", class_name, method);
@@ -3513,8 +3473,12 @@ impl NameResolver {
 
             match symbol_kind {
                 Some(SymbolKind::Namespace { .. }) => {
-                    // This is a legitimate namespace, continue with normal namespace processing
-                    // Continue to normal namespace processing below
+                    if let Some(result) =
+                        self.resolve_module_function_call(namespace, function, arguments, location)
+                    {
+                        return result;
+                    }
+                    // A built-in namespace: normal namespace processing below.
                 }
                 Some(SymbolKind::Class { methods, .. }) => {
                     // This is a static method call on a class (e.g., MathUtils.add(5, 3))
@@ -3620,6 +3584,61 @@ impl NameResolver {
             arguments: resolved_arguments,
             location: location.clone(),
         })
+    }
+
+    /// `Module.fn(args)` where `Module` names an imported module (or its
+    /// `as` alias). The module's functions are part of the program, so the
+    /// call binds to the program function `fn`. Returns `None` when
+    /// `namespace` is not an imported module, or when `namespace.fn` is a
+    /// declared namespace function, so the caller resolves it as a namespace
+    /// call.
+    fn resolve_module_function_call(
+        &mut self,
+        namespace: &str,
+        function: &str,
+        arguments: &[HirExpression],
+        location: &SourceLocation,
+    ) -> Option<Result<ResolvedHirExpression, ()>> {
+        let module = self.module_namespaces.get(namespace)?.clone();
+        let declared = self
+            .symbol_table
+            .lookup_symbol_in_scope(function, ScopeId(0))
+            .filter(|&id| {
+                !self.symbol_table.is_builtin(id)
+                    && self
+                        .symbol_table
+                        .get_symbol(id)
+                        .is_some_and(|s| matches!(s.kind, SymbolKind::Function { .. }))
+            });
+        let Some(function_symbol_id) = declared else {
+            if self
+                .symbol_table
+                .lookup_symbol(&format!("{}.{}", namespace, function))
+                .is_some()
+            {
+                return None;
+            }
+            self.error_with_code(
+                &format!("Function '{}' not found in module '{}'", function, module),
+                "SEM007",
+                location.clone(),
+            );
+            return Some(Err(()));
+        };
+        let mut resolved_arguments = Vec::with_capacity(arguments.len());
+        for arg in arguments {
+            match self.resolve_expression(arg) {
+                Ok(resolved) => resolved_arguments.push(resolved),
+                Err(()) => return Some(Err(())),
+            }
+        }
+        self.inject_param_defaults(function, &mut resolved_arguments, location);
+        Some(Ok(ResolvedHirExpression::Call {
+            function: function.to_string(),
+            function_symbol_id,
+            arguments: resolved_arguments,
+            location: location.clone(),
+        }))
     }
 
     /// Resolve a `StaticMethodCall` expression (e.g., `compare.integer.greaterThan(…)`).

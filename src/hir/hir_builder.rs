@@ -670,6 +670,30 @@ impl HirBuilder {
         )
     }
 
+    /// Lower one `import:` item. File path imports (`"./module.cln"`) are
+    /// resolved by the multi-file compiler before HIR is built, so they yield
+    /// nothing here.
+    ///
+    ///   `Math`              → module `Math`, every item
+    ///   `math.sqrt`         → module `math`, item `sqrt`
+    ///   `Utils as U`        → module `Utils` called as `U`
+    ///   `Json.decode as jd` → item `decode` of `Json`, also called as `jd`
+    fn build_import(item: &crate::ast::ImportItem, location: &SourceLocation) -> Option<HirImport> {
+        if item.is_file_import {
+            return None;
+        }
+        let (module_name, items) = match item.name.split_once('.') {
+            Some((module, symbol)) => (module.to_string(), Some(vec![symbol.to_string()])),
+            None => (item.name.clone(), None),
+        };
+        Some(HirImport {
+            module_name,
+            items,
+            alias: item.alias.clone(),
+            location: location.clone(),
+        })
+    }
+
     /// Build HIR from an AST program
     pub fn build_hir(&mut self, program: Program) -> Result<HirValidationResult, CompilerError> {
         // Enforce the spec-mandated section ordering before any other processing.
@@ -720,40 +744,14 @@ impl HirBuilder {
                 }
                 Statement::Import {
                     imports: import_list,
-                    ..
+                    location,
                 } => {
-                    for import_item in import_list {
-                        // File path imports ("./module.cln") are resolved by the multi-file
-                        // compiler before HIR is built — skip them here to avoid creating
-                        // HirImport entries with empty module names (SEM007).
-                        if import_item.is_file_import {
-                            continue;
-                        }
-
-                        // Parse import name to separate module and symbol
-                        // Examples:
-                        //   "Math" → module: "Math", items: None (whole module)
-                        //   "math.sqrt" → module: "math", items: Some(["sqrt"]) (specific symbol)
-                        //   "Utils as U" → module: "Utils", items: None, (alias handled separately)
-                        //   "Json.decode as jd" → module: "Json", items: Some(["decode"]), (alias handled separately)
-
-                        let (module_name, symbol_items) =
-                            if let Some(dot_pos) = import_item.name.find('.') {
-                                // Contains dot - import specific symbol(s)
-                                let module = &import_item.name[..dot_pos];
-                                let symbol = &import_item.name[dot_pos + 1..];
-                                (module.to_string(), Some(vec![symbol.to_string()]))
-                            } else {
-                                // No dot - import whole module
-                                (import_item.name.clone(), None)
-                            };
-
-                        imports.push(HirImport {
-                            module_name,
-                            items: symbol_items,
-                            location: SourceLocation::default(),
-                        });
-                    }
+                    let loc = location.clone().unwrap_or_default();
+                    imports.extend(
+                        import_list
+                            .iter()
+                            .filter_map(|item| Self::build_import(item, &loc)),
+                    );
                 }
                 Statement::ValidateDeclaration { schema, location } => {
                     // Top-level `validate name:` blocks desugar into validator.* builder calls.
@@ -875,27 +873,15 @@ impl HirBuilder {
         }
 
         // Process imports from program.imports (top-level import declarations)
-        // The parser stores `import Module` statements in program.imports, not in statements.
-        for import_item in &program.imports {
-            // File path imports ("./module.cln") are resolved by the multi-file compiler
-            // before HIR is built — skip them here to avoid SEM007 (empty module name).
-            if import_item.is_file_import {
-                continue;
-            }
-
-            let (module_name, symbol_items) = if let Some(dot_pos) = import_item.name.find('.') {
-                let module = &import_item.name[..dot_pos];
-                let symbol = &import_item.name[dot_pos + 1..];
-                (module.to_string(), Some(vec![symbol.to_string()]))
-            } else {
-                (import_item.name.clone(), None)
-            };
-            imports.push(crate::hir::HirImport {
-                module_name,
-                items: symbol_items,
-                location: SourceLocation::default(),
-            });
-        }
+        // The parser stores `import:` blocks in program.imports, not in statements.
+        // The items carry no source position of their own.
+        let unknown = SourceLocation::default();
+        imports.extend(
+            program
+                .imports
+                .iter()
+                .filter_map(|item| Self::build_import(item, &unknown)),
+        );
 
         // Process standalone functions from program.functions
         for func in &program.functions {

@@ -28,7 +28,6 @@ pub struct ResolvedHirProgram {
     pub functions: Vec<ResolvedHirFunction>,
     pub classes: Vec<ResolvedHirClass>,
     pub start_function: Option<ResolvedHirFunction>,
-    pub imports: Vec<ResolvedHirImport>,
     pub tests: Vec<ResolvedHirTest>,
     pub state: Option<ResolvedHirStateBlock>,
     /// Top-level watch blocks (reactive state observers)
@@ -156,15 +155,6 @@ pub struct ResolvedHirMethod {
     pub parameters: Vec<ResolvedHirParameter>,
     pub return_type: HirType,
     pub body: ResolvedHirBlock,
-    pub location: SourceLocation,
-}
-
-/// Resolved HIR Import with resolved module references
-#[derive(Debug, Clone)]
-pub struct ResolvedHirImport {
-    pub module_name: String,
-    pub module_id: ModuleId,
-    pub items: Option<Vec<(String, SymbolId)>>, // (name, resolved symbol)
     pub location: SourceLocation,
 }
 

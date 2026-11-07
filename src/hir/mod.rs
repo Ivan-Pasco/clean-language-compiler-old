@@ -219,6 +219,8 @@ pub struct HirMethod {
 pub struct HirImport {
     pub module_name: String,
     pub items: Option<Vec<String>>, // None = import all, Some = specific items
+    /// `as` name: the module's (`Utils as U`) or the item's (`Json.decode as jd`).
+    pub alias: Option<String>,
     pub location: SourceLocation,
 }
 

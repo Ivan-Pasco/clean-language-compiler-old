@@ -1,0 +1,14 @@
+// Test: bugfixes/module_qualified_call_unknown_function
+// Grammar: import_block, method_call (module.function(args))
+// Semantic: SEM002 — calling a function the module does not declare is an error
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   missing
+
+import:
+	module_call_helpers
+
+start:
+	integer v = module_call_helpers.missing(4)
+	print(v)
