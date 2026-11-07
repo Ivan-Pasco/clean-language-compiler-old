@@ -9,9 +9,10 @@ impl MirBuilder {
         context: &mut FunctionBuildContext,
         instruction: MirInstruction,
     ) {
-        // A call to a Clean function (or `error(...)`) may raise: follow it
-        // with the `onError` unwinding check (removed again when the program
-        // has no `onError` region).
+        // A call to a Clean function (or `error(...)`, or a conversion or
+        // `.length()` of an `any`) may raise: follow it with the `onError`
+        // unwinding check (removed again when the program has no `onError`
+        // region).
         let may_raise = match &instruction.operation {
             MirOperation::Call {
                 function: MirOperand::Function(_),
@@ -20,7 +21,12 @@ impl MirBuilder {
             MirOperation::Call {
                 function: MirOperand::NamedFunction { name, .. },
                 ..
-            } => name == "__err_raise",
+            } => matches!(
+                name.as_str(),
+                "__err_raise"
+                    | crate::stdlib::json_class::JSON_TO_CLN_LIST
+                    | crate::stdlib::json_class::ANY_LENGTH
+            ),
             _ => false,
         };
         if let Some(block_id) = self.current_block {

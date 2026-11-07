@@ -431,7 +431,7 @@ impl MirBuilder {
 
     /// Emit a call to the function or bridge named `name` into a fresh
     /// temporary of type `result_type`.
-    fn emit_named_call(
+    pub(super) fn emit_named_call(
         &mut self,
         context: &mut FunctionBuildContext,
         name: &str,
@@ -642,6 +642,22 @@ impl MirBuilder {
                 MirType::I32,
                 location,
             );
+        }
+
+        // A `list<any>` target: a boxed JSON array is a `list<any>`
+        // (stdlib-reference.md §8), but its JSON-tree layout is not a Clean
+        // list's, so the elements are copied into one.
+        if let ConcreteType::Array(element_type) = target_type {
+            if matches!(**element_type, ConcreteType::Any) {
+                let list_type = self.convert_concrete_type(target_type);
+                return self.emit_named_call(
+                    context,
+                    crate::stdlib::json_class::JSON_TO_CLN_LIST,
+                    vec![MirOperand::Value(value_id)],
+                    list_type,
+                    location,
+                );
+            }
         }
 
         let result_id = ValueId(context.function.next_value_id);

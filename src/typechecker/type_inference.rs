@@ -2718,20 +2718,23 @@ impl<'a> TypeInference<'a> {
                 let tast_iterable = self.infer_expression(iterable)?;
 
                 // `iterate x in items` walks a list (a range is a list of
-                // integers); the loop variable has the element type.
+                // integers); the loop variable has the element type. An
+                // `any` is not type-checked (type-system.md §9): it is
+                // walked as the `list<any>` a JSON array is
+                // (stdlib-reference.md §8), and a value that is not a list
+                // raises at run time.
                 let element_type = match &tast_iterable.expr_type {
                     ConcreteType::Array(element_type) => (**element_type).clone(),
+                    ConcreteType::Any => ConcreteType::Any,
                     // Already reported where the type became unknown.
                     ConcreteType::Unknown => ConcreteType::Unknown,
                     other => {
-                        let help = if matches!(other, ConcreteType::Any) {
-                            "Declare the value as a list first, e.g. `list<any> items = value`, then iterate over `items`"
-                        } else {
-                            "`iterate` walks the elements of a list or a range (`iterate i in 1 to 10`)"
-                        };
                         return Err(CompilerError::semantic_error_with_code(
                             format!("Cannot iterate over a value of type {}", other),
-                            Some(help.to_string()),
+                            Some(
+                                "`iterate` walks the elements of a list or a range (`iterate i in 1 to 10`)"
+                                    .to_string(),
+                            ),
                             Some(tast_iterable.location.clone()),
                             "SEM004",
                         ));
@@ -5471,6 +5474,9 @@ impl<'a> TypeInference<'a> {
         match (receiver_type, method_name) {
             // `any` converts to text; its other methods are resolved at runtime.
             (ConcreteType::Any, "toString") => Ok(ConcreteType::String),
+            // The length of the array, object or string the `any` holds,
+            // as an `any` (type-system.md §9).
+            (ConcreteType::Any, "length") => Ok(ConcreteType::Any),
 
             // Capability-typed receiver (`Draw thing; thing.draw()`).
             // Method resolution goes through the capability's method contract,
