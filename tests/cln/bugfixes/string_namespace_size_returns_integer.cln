@@ -1,0 +1,19 @@
+// Test: bugfixes/string_namespace_size_returns_integer
+// Semantic: string.f(text, args) has the same result type as text.f(args)
+// Regression: string.size was missing from the typechecker's namespace
+//   tables, so its result typed as unknown and the integer was unboxed as
+//   if it were an `any` pointer, printing an empty line.
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   5
+//   5
+//   el
+//   true
+
+start:
+	print(string.size("hello"))
+	string word = "abcde"
+	integer n = string.size(word)
+	print(n)
+	print(string.substring("hello", 1, 3))
+	print(string.contains("hello", "ell"))

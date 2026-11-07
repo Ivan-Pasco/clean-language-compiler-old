@@ -6023,6 +6023,35 @@ impl<'a> TypeInference<'a> {
                         });
                     }
                 }
+                // `string.f(text, args…)` is the namespace form of the method
+                // call `text.f(args…)` and has the same result type. Without
+                // this, a `string.` function missing from the symbol table
+                // (e.g. `string.size`) typed as unknown and its integer
+                // result was unboxed as if it were an `any` pointer.
+                if class_name == "string" {
+                    let method = arguments.first().and_then(|receiver| {
+                        Self::builtin_method_signature(&receiver.expr_type, method_name)
+                    });
+                    return match method {
+                        Some(method) => {
+                            validate_arg_count(
+                                arg_count.clamp(method.required + 1, method.params.len() + 1),
+                                arg_count,
+                                &full_method_name,
+                            )?;
+                            Ok(method.return_type)
+                        }
+                        None => Err(CompilerError::semantic_error_with_code(
+                            format!("Function '{}' not found", full_method_name),
+                            Some(
+                                "See the `string.` functions in the standard library reference"
+                                    .to_string(),
+                            ),
+                            Some(location.clone()),
+                            "FUNC001",
+                        )),
+                    };
+                }
                 // The `json.` namespace has exactly the functions above
                 // (stdlib-reference.md §8). Other built-in namespaces also
                 // have functions the code generator provides by name.
