@@ -142,6 +142,7 @@ impl std::error::Error for PluginError {}
 ///     .build()
 ///     .expect("Failed to build registry");
 /// ```
+#[derive(Clone)]
 pub struct PluginRegistry {
     /// Map from block identifier (e.g., "endpoints") to plugin
     handlers: HashMap<String, Arc<dyn FrameworkPlugin>>,

@@ -836,7 +836,22 @@ pub fn compile_with_plugins_and_opt_level(
     if !undeclared.is_empty() {
         return Err(undeclared);
     }
-    compile_source_with_detected_plugins(source, file_path, opt_level)
+    let registry = std::sync::Arc::new(registry.clone());
+    with_entry_file(source, file_path, |entry, search_paths| {
+        let caller_host_class = target_host_class_override();
+        let result = compile_multi_file_impl(
+            entry,
+            search_paths,
+            opt_level,
+            None,
+            MemoryTier::default_for_target("server"),
+            false,
+            false,
+            Some(registry),
+        );
+        set_target_host_class_override(caller_host_class);
+        result.map(|(wasm, _build_state)| wasm)
+    })
 }
 
 /// True when bridge-host mismatches must be hard errors: either the
@@ -1648,6 +1663,7 @@ pub fn compile_multi_file_with_memory_tier<P: AsRef<std::path::Path>>(
         target_default,
         client_mode,
         false,
+        None,
     )
 }
 
@@ -1687,7 +1703,8 @@ pub fn type_check_project<P: AsRef<std::path::Path>>(
     // See `compile_with_external_plugins_and_opt_level`: a package
     // `target:` must not leak into later work on this thread.
     let caller_host_class = target_host_class_override();
-    let frontend = run_multi_file_frontend(entry_path.as_ref(), search_paths, 2, false, false);
+    let frontend =
+        run_multi_file_frontend(entry_path.as_ref(), search_paths, 2, false, false, None);
     set_target_host_class_override(caller_host_class);
     let mut frontend = frontend?;
     remap_entry_paths(&mut frontend.warnings);
@@ -1713,6 +1730,7 @@ fn compile_multi_file_impl(
     target_default: MemoryTier,
     client_mode: bool,
     release: bool,
+    given_registry: Option<std::sync::Arc<plugins::PluginRegistry>>,
 ) -> Result<(Vec<u8>, std::collections::BTreeMap<String, String>), Vec<CompilerError>> {
     use crate::mir::{lower_tast_to_mir_release, lower_tast_to_mir_with_opt_level};
 
@@ -1735,7 +1753,14 @@ fn compile_multi_file_impl(
         lang_to_helper,
         build_state: build_state_arc,
         ..
-    } = run_multi_file_frontend(entry_path, search_paths, opt_level, client_mode, release)?;
+    } = run_multi_file_frontend(
+        entry_path,
+        search_paths,
+        opt_level,
+        client_mode,
+        release,
+        given_registry,
+    )?;
     let mut warnings = warnings;
     remap_entry_paths(&mut warnings);
     report_compile_warnings(&warnings);
@@ -1860,6 +1885,7 @@ fn run_multi_file_frontend(
     opt_level: u8,
     client_mode: bool,
     release: bool,
+    given_registry: Option<std::sync::Arc<plugins::PluginRegistry>>,
 ) -> Result<MultiFileFrontend, Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
     use crate::typechecker::TypeChecker;
@@ -1903,13 +1929,22 @@ fn run_multi_file_frontend(
     // Without this clone the populated state would be dropped with the
     // registry, leaving the manifest writer and artifact orchestrator
     // unable to see writes. See `contracts/lifecycle.md` §2.5.
-    let build_state_arc: Option<plugins::BuildState> = if plugin_names.is_empty() {
+    //
+    // A library caller that built its own registry (`compile_with_plugins`)
+    // compiles with exactly that registry instead of loading installed
+    // plugins by name.
+    let given_build_state = given_registry.as_ref().map(|r| r.build_state().clone());
+    let build_state_arc: Option<plugins::BuildState> = if given_build_state.is_some() {
+        given_build_state
+    } else if plugin_names.is_empty() {
         None
     } else {
         Some(plugins::new_build_state())
     };
 
-    let registry = if let Some(ref bs) = build_state_arc {
+    let registry = if given_registry.is_some() {
+        given_registry
+    } else if let Some(ref bs) = build_state_arc {
         tracing::info!(plugins = ?plugin_names, "Loading plugins for multi-file compilation");
 
         let mut loader = plugins::WasmPluginLoader::new().map_err(|e| {
@@ -2524,6 +2559,7 @@ pub fn compile_multi_file_release<P: AsRef<std::path::Path>>(
         target_default,
         false,
         true,
+        None,
     )
 }
 
