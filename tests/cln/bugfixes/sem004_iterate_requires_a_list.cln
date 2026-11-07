@@ -1,0 +1,18 @@
+// Test: bugfixes/sem004_iterate_requires_a_list
+// Grammar: iterate_statement
+// Semantic: SEM004 — `iterate x in value` walks a list (or a range); any
+//   other value, including an `any`, is rejected with a hint.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[SEM004]: Cannot iterate over a value of type any
+//   sem004_iterate_requires_a_list.cln:17:
+//   help: Declare the value as a list first
+//
+// Regression: iterating a non-list gave the loop variable a type variable
+// that was never resolved, and the loop read garbage.
+
+start:
+	any data = json.decode("[1, 2]")
+	iterate x in data
+		printl(x)

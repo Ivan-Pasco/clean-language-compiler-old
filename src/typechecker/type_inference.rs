@@ -30,9 +30,6 @@ pub struct TypeInference<'a> {
     /// Generated type constraints
     constraints: Vec<TypeConstraint>,
 
-    /// Type variable generator
-    constraint_solver: ConstraintSolver<'a>,
-
     /// Symbol table from resolution phase
     symbol_table: &'a GlobalSymbolTable,
 
@@ -77,7 +74,6 @@ struct BuiltinMethod {
 #[derive(Debug)]
 pub struct InferenceResult {
     pub tast: TastProgram,
-    pub type_env: HashMap<SymbolId, ConcreteType>,
     pub errors: Vec<CompilerError>,
     pub warnings: Vec<CompilerError>,
 }
@@ -88,7 +84,6 @@ impl<'a> TypeInference<'a> {
         Self {
             type_env: HashMap::new(),
             constraints: Vec::new(),
-            constraint_solver: ConstraintSolver::with_symbol_table(symbol_table),
             symbol_table,
             required_param_counts: HashMap::new(),
             class_conformance: HashMap::new(),
@@ -129,20 +124,13 @@ impl<'a> TypeInference<'a> {
                 .or_default()
                 .insert(*cap_sym);
         }
-        // Forward the map to the constraint solver so it can validate
-        // Class → Interface (capability) unifications without needing to
-        // walk the resolver's descriptor map at each unification site.
-        self.constraint_solver
-            .set_class_conformance(self.class_conformance.clone());
-
         // Infer types for all program elements
         let tast_program = self.infer_program(&program);
 
-        // Solve generated constraints
-        let mut solver = std::mem::replace(
-            &mut self.constraint_solver,
-            ConstraintSolver::with_symbol_table(self.symbol_table),
-        );
+        // Solve the generated constraints. The conformance map lets the
+        // solver validate Class → Interface (capability) unifications.
+        let mut solver = ConstraintSolver::with_symbol_table(self.symbol_table);
+        solver.set_class_conformance(std::mem::take(&mut self.class_conformance));
         solver.add_constraints(std::mem::take(&mut self.constraints));
         let solver_result = solver.solve();
 
@@ -151,7 +139,6 @@ impl<'a> TypeInference<'a> {
 
         InferenceResult {
             tast: tast_program,
-            type_env: self.type_env,
             errors: self.errors,
             warnings: self.warnings,
         }
@@ -2742,18 +2729,24 @@ impl<'a> TypeInference<'a> {
                 // Infer iterable type
                 let tast_iterable = self.infer_expression(iterable)?;
 
-                // Extract element type from iterable (Array<T> -> T)
+                // `iterate x in items` walks a list (a range is a list of
+                // integers); the loop variable has the element type.
                 let element_type = match &tast_iterable.expr_type {
                     ConcreteType::Array(element_type) => (**element_type).clone(),
-                    _ => {
-                        // Add constraint that iterable must be an array
-                        let element_var = self.create_type_variable();
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: tast_iterable.expr_type.clone(),
-                            right: ConcreteType::Array(Box::new(element_var.clone())),
-                            location: location.clone(),
-                        });
-                        element_var
+                    // Already reported where the type became unknown.
+                    ConcreteType::Unknown => ConcreteType::Unknown,
+                    other => {
+                        let help = if matches!(other, ConcreteType::Any) {
+                            "Declare the value as a list first, e.g. `list<any> items = value`, then iterate over `items`"
+                        } else {
+                            "`iterate` walks the elements of a list or a range (`iterate i in 1 to 10`)"
+                        };
+                        return Err(CompilerError::semantic_error_with_code(
+                            format!("Cannot iterate over a value of type {}", other),
+                            Some(help.to_string()),
+                            Some(tast_iterable.location.clone()),
+                            "SEM004",
+                        ));
                     }
                 };
 
@@ -3483,9 +3476,8 @@ impl<'a> TypeInference<'a> {
         let tast_left = self.infer_expression(left)?;
         let tast_right = self.infer_expression(right)?;
 
-        // Resolve types with current substitutions before binary operation type inference
-        let resolved_left_type = self.resolve_type(&tast_left.expr_type);
-        let resolved_right_type = self.resolve_type(&tast_right.expr_type);
+        let resolved_left_type = tast_left.expr_type.clone();
+        let resolved_right_type = tast_right.expr_type.clone();
 
         let result_type =
             self.infer_binary_operation(op, &resolved_left_type, &resolved_right_type, location)?;
@@ -3938,8 +3930,7 @@ impl<'a> TypeInference<'a> {
             }
         }
 
-        // Resolve receiver type with current substitutions before method lookup
-        let resolved_receiver_type = self.resolve_type(&tast_receiver.expr_type);
+        let resolved_receiver_type = tast_receiver.expr_type.clone();
 
         // Use resolved type for method resolution
         let return_type = self.infer_method_return_type(method, &resolved_receiver_type)?;
@@ -5156,7 +5147,7 @@ impl<'a> TypeInference<'a> {
         // `integer x = math.abs(integer_val)` does not produce a false SEM004 error.
         // These checks MUST run before the type_env lookup which would return Number.
         if function_name == "math.abs" || function_name == "math_abs" {
-            let arg_type = arguments.first().map(|a| self.resolve_type(&a.expr_type));
+            let arg_type = arguments.first().map(|a| a.expr_type.clone());
             return Ok(match arg_type.as_ref() {
                 Some(ConcreteType::Integer) => ConcreteType::Integer,
                 _ => ConcreteType::Number,
@@ -5169,7 +5160,7 @@ impl<'a> TypeInference<'a> {
         {
             let both_int = arguments
                 .iter()
-                .all(|a| matches!(self.resolve_type(&a.expr_type), ConcreteType::Integer));
+                .all(|a| matches!(a.expr_type, ConcreteType::Integer));
             return Ok(if both_int {
                 ConcreteType::Integer
             } else {
@@ -6418,11 +6409,6 @@ impl<'a> TypeInference<'a> {
         self.constraints.push(constraint);
     }
 
-    /// Apply current substitution to resolve a type
-    fn resolve_type(&self, type_: &ConcreteType) -> ConcreteType {
-        self.constraint_solver.apply_substitution(type_)
-    }
-
     /// Check whether `child_id` is the same as or a subclass (transitively) of `parent_id`.
     fn class_is_subclass_of(&self, child_id: SymbolId, parent_id: SymbolId) -> bool {
         if child_id == parent_id {
@@ -6474,16 +6460,6 @@ impl<'a> TypeInference<'a> {
                 // Otherwise, fall back to Unknown for error recovery
                 _ => ConcreteType::Unknown,
             }
-        }
-    }
-
-    /// Create a fresh type variable for type inference
-    fn create_type_variable(&mut self) -> ConcreteType {
-        // Generate a unique type variable by borrowing from the constraint solver
-        let type_var_id = self.constraint_solver.fresh_type_var();
-        ConcreteType::Generic {
-            name: type_var_id.0.to_string(),
-            bounds: Vec::new(),
         }
     }
 
