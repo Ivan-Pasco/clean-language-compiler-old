@@ -137,30 +137,41 @@ impl TokenParser {
         self.lenient_section_order = lenient;
     }
 
-    /// Try to extract a variable name from the current token.
-    /// Accepts identifiers and contextual keywords that can be used as variable
-    /// names (e.g., `rules`, `computed`, `state`, `guard`, `watch`, `reset`,
-    /// `screen`, `source`, `build`, `spec`, `intent`).
+    /// Keywords that are also accepted as names: variables, parameters,
+    /// named-argument labels, function and field names. They only have
+    /// their keyword meaning at the start of their own construct (`state:`,
+    /// `rules:`, `iterate ... step`), so `integer step = 1` declares a
+    /// variable that can then be read and assigned like any other.
+    /// This is the single list every name position uses.
+    pub(super) fn is_contextual_name(kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::Rules
+                | TokenKind::Computed
+                | TokenKind::State
+                | TokenKind::Guard
+                | TokenKind::Watch
+                | TokenKind::Reset
+                | TokenKind::Screen
+                | TokenKind::Source
+                | TokenKind::Build
+                | TokenKind::Spec
+                | TokenKind::Intent
+                | TokenKind::Description
+                | TokenKind::Input
+                | TokenKind::Unit
+                | TokenKind::Step
+                | TokenKind::Test
+                | TokenKind::Error
+        )
+    }
+
+    /// The current token as a variable name: an identifier or a contextual
+    /// keyword (see [`Self::is_contextual_name`]).
     pub(super) fn try_extract_var_name(&self) -> Option<String> {
         match self.current_kind() {
             TokenKind::Identifier(name) => Some(name.clone()),
-            TokenKind::Rules
-            | TokenKind::Computed
-            | TokenKind::State
-            | TokenKind::Guard
-            | TokenKind::Watch
-            | TokenKind::Reset
-            | TokenKind::Screen
-            | TokenKind::Source
-            | TokenKind::Build
-            | TokenKind::Spec
-            | TokenKind::Intent
-            | TokenKind::Description
-            | TokenKind::Input
-            | TokenKind::Unit
-            | TokenKind::Step
-            | TokenKind::Test
-            | TokenKind::Error => Some(self.current().text.clone()),
+            kind if Self::is_contextual_name(kind) => Some(self.current().text.clone()),
             _ => None,
         }
     }

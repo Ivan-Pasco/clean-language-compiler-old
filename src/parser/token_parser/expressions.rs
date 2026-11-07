@@ -256,27 +256,8 @@ impl TokenParser {
     fn is_named_arg_start(&self) -> bool {
         // Current token must be an identifier or a contextual keyword that is allowed
         // as a parameter name.
-        let is_name = matches!(
-            self.current_kind(),
-            TokenKind::Identifier(_)
-                | TokenKind::Rules
-                | TokenKind::Computed
-                | TokenKind::State
-                | TokenKind::Guard
-                | TokenKind::Watch
-                | TokenKind::Reset
-                | TokenKind::Screen
-                | TokenKind::Source
-                | TokenKind::Build
-                | TokenKind::Spec
-                | TokenKind::Intent
-                | TokenKind::Description
-                | TokenKind::Input
-                | TokenKind::Unit
-                | TokenKind::Step
-                | TokenKind::Test
-                | TokenKind::Error
-        );
+        let is_name = matches!(self.current_kind(), TokenKind::Identifier(_))
+            || Self::is_contextual_name(self.current_kind());
         if !is_name {
             return false;
         }
@@ -608,28 +589,11 @@ impl TokenParser {
                 // Parse the following expression (typically a function call)
                 self.parse_primary()
             }
-            // Allow keywords to be used as identifiers in expressions (for class/type names and variable names)
-            TokenKind::Test
-            | TokenKind::Error
-            | TokenKind::Unit
-            | TokenKind::Input
-            | TokenKind::Step
-            | TokenKind::Description
-            | TokenKind::Rules
-            | TokenKind::Computed
-            | TokenKind::State
-            | TokenKind::Guard
-            | TokenKind::Watch
-            | TokenKind::Reset
-            | TokenKind::Screen
-            | TokenKind::Source
-            | TokenKind::Build
-            | TokenKind::Spec
-            | TokenKind::Intent => {
+            // Contextual keywords used as names (variables, class/type names).
+            kind if Self::is_contextual_name(kind) => {
                 let token = self.bump();
-                // Use the actual token text to preserve the exact identifier (e.g., "Test", not "test")
-                let name = token.text.clone();
-                Ok(Expression::Variable(name))
+                // Keep the token text so `Test` stays `Test`, not `test`.
+                Ok(Expression::Variable(token.text))
             }
             TokenKind::This => {
                 self.bump();

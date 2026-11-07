@@ -1,0 +1,21 @@
+// Test: bugfixes/contextual_keyword_variable_assignment
+// Grammar: assignment, variable_declaration
+// Semantic: contextual keywords accepted as variable names (step, unit,
+//   input, ...) used to be declarable and readable but not assignable
+//   ("Unsupported statement type: Step")
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   3
+//   10
+//   ok
+
+start:
+	integer step = 1
+	step = step + 2
+	print(step)
+	integer unit = 5
+	unit = unit * 2
+	print(unit)
+	string source = "o"
+	source = source + "k"
+	print(source)

@@ -2097,13 +2097,9 @@ impl TokenParser {
     ) -> Result<crate::lexer::specification_token::Token, CompilerError> {
         match self.current_kind() {
             TokenKind::Identifier(_) => Ok(self.bump()),
-            // source, build, spec, intent are contextual keywords that carry no syntactic
-            // weight in most positions — allow them as plain identifiers so field names,
-            // function names, and parameters can use these words without triggering a parse
-            // error (e.g., `source: string nullable` in a data model field list).
-            TokenKind::Source | TokenKind::Build | TokenKind::Spec | TokenKind::Intent => {
-                Ok(self.bump())
-            }
+            // Contextual keywords are names here too (field, function and
+            // parameter names such as `source: string nullable`).
+            kind if Self::is_contextual_name(kind) => Ok(self.bump()),
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(
@@ -2121,31 +2117,13 @@ impl TokenParser {
     ) -> Result<crate::lexer::specification_token::Token, CompilerError> {
         match self.current_kind() {
             TokenKind::Identifier(_) => Ok(self.bump()),
-            // Allow keywords to be used as names in certain contexts (for property/method names and variable names)
-            TokenKind::Test
-            | TokenKind::Unit
-            | TokenKind::Error
-            | TokenKind::Input
-            | TokenKind::Step
-            | TokenKind::Description
-            | TokenKind::And
-            | TokenKind::Or
-            | TokenKind::Not
-            | TokenKind::Start
-            | TokenKind::Rules
-            | TokenKind::Computed
-            | TokenKind::State
-            | TokenKind::Guard
-            | TokenKind::Watch
-            | TokenKind::Reset
-            | TokenKind::Screen
-            | TokenKind::Source
-            | TokenKind::Build
-            | TokenKind::Spec
-            | TokenKind::Intent
-            // `can` opens a capability declaration only at the top level; as a
-            // member name it is an ordinary method (`auth.can("posts.write")`).
-            | TokenKind::Can => Ok(self.bump()),
+            kind if Self::is_contextual_name(kind) => Ok(self.bump()),
+            // Operator words and `start` are names in member/method position,
+            // and `can` opens a capability declaration only at the top level;
+            // as a member name it is an ordinary method (`auth.can("posts.write")`).
+            TokenKind::And | TokenKind::Or | TokenKind::Not | TokenKind::Start | TokenKind::Can => {
+                Ok(self.bump())
+            }
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(
