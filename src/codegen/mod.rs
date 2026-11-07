@@ -215,12 +215,6 @@ impl CodeGenerator {
         self.function_map.get(function_name).copied()
     }
 
-    /// Get the next function index that will be assigned
-    /// This is useful for forward references in mutually recursive functions
-    pub fn get_next_function_index(&self) -> u32 {
-        self.function_count
-    }
-
     /// Enable reachability-based filtering of Layer 2/3 external-I/O imports.
     ///
     /// After this is set, `register_import_function` will skip any gated

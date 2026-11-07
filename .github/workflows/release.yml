@@ -51,6 +51,9 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        # build.rs embeds the last 50 commits for the MCP get_changelog tool.
+        fetch-depth: 50
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable

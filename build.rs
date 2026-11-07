@@ -1,12 +1,15 @@
 //! Build script for the Clean Language compiler.
 //!
-//! Two responsibilities:
+//! Responsibilities:
 //!
-//! 1. **Function-registry vendor**: copies
+//! 1. **Spec vendoring**: copies
 //!    `foundation/platform-architecture/function-registry.toml` into
-//!    `src/plugins/function-registry.toml` when the sibling foundation
-//!    workspace is present, so `include_str!` always picks up edits during
-//!    local development.
+//!    `src/plugins/function-registry.toml`, the runtime-ABI schema into
+//!    `src/plugins/runtime-abi-v1.toml`, and `foundation/spec/error-codes.md`
+//!    plus `foundation/spec/semantic-rules.md` into `src/error/spec/`, and
+//!    the specification chapters into `src/mcp/specification/` when
+//!    the sibling foundation workspace is present, so `include_str!` always
+//!    picks up edits during local development.
 //!
 //! 2. **Typed-emission op-code hash**: computes the SHA-256 of
 //!    `foundation/spec/plugins/contracts/typed-emission-ops.toml` and emits
@@ -166,6 +169,113 @@ fn main() {
         }
     }
     println!("cargo:rerun-if-changed={}", vendored_abi.display());
+
+    // ── 1c. Error-code catalog vendor ───────────────────────────────────────
+    // `cln explain` and the MCP error tools read the error-code registry and
+    // the rule definitions from vendored copies under src/error/spec/
+    // (embedded with `include_str!` in src/error/catalog.rs). Refresh them
+    // from the foundation workspace when it is present.
+    for name in ["error-codes.md", "semantic-rules.md"] {
+        let vendored = manifest_dir.join("src/error/spec").join(name);
+        if let Some(src) = manifest_dir
+            .parent()
+            .map(|p| p.join("foundation/spec").join(name))
+        {
+            if src.is_file() {
+                let bytes =
+                    std::fs::read(&src).unwrap_or_else(|e| panic!("read {}: {e}", src.display()));
+                let existing = std::fs::read(&vendored).unwrap_or_default();
+                if existing != bytes {
+                    std::fs::write(&vendored, &bytes)
+                        .unwrap_or_else(|e| panic!("write {}: {e}", vendored.display()));
+                }
+                println!("cargo:rerun-if-changed={}", src.display());
+            }
+        }
+        println!("cargo:rerun-if-changed={}", vendored.display());
+    }
+
+    // ── 1d. Language specification vendor ───────────────────────────────────
+    // The MCP `get_specification` tool serves the specification chapters
+    // embedded from src/mcp/specification/. Refresh the copies from the
+    // foundation workspace when it is present, then generate the list of
+    // embedded chapters for `include!` in src/mcp/server.rs.
+    let vendored_spec = manifest_dir.join("src/mcp/specification");
+    let foundation_spec = manifest_dir.parent().and_then(|p| {
+        [
+            "foundation/docs/specification",
+            "foundation/docs/specification 1.0",
+        ]
+        .iter()
+        .map(|d| p.join(d))
+        .find(|d| d.join("README.md").is_file())
+    });
+    if let Some(src_dir) = foundation_spec {
+        std::fs::create_dir_all(&vendored_spec).expect("create src/mcp/specification");
+        for entry in std::fs::read_dir(&src_dir).expect("read foundation specification") {
+            let path = entry.expect("specification entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let bytes =
+                std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let target = vendored_spec.join(path.file_name().expect("file name"));
+            if std::fs::read(&target).unwrap_or_default() != bytes {
+                std::fs::write(&target, &bytes)
+                    .unwrap_or_else(|e| panic!("write {}: {e}", target.display()));
+            }
+        }
+        println!("cargo:rerun-if-changed={}", src_dir.display());
+    }
+    let mut chapters: Vec<PathBuf> = std::fs::read_dir(&vendored_spec)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension().and_then(|e| e.to_str()) == Some("md")
+                        && p.file_name().and_then(|n| n.to_str()) != Some("README.md")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    chapters.sort();
+    let mut generated = String::from("&[\n");
+    for chapter in &chapters {
+        generated.push_str(&format!(
+            "    ({:?}, include_str!({:?})),\n",
+            chapter
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default(),
+            chapter.display().to_string()
+        ));
+        println!("cargo:rerun-if-changed={}", chapter.display());
+    }
+    generated.push(']');
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    std::fs::write(out_dir.join("spec_chapters.rs"), generated).expect("write spec_chapters.rs");
+    println!("cargo:rerun-if-changed={}", vendored_spec.display());
+
+    // ── 1e. Release history for the MCP `get_changelog` tool ─────────────────
+    // The compiler's own recent commits, captured at build time so an
+    // installed `cln` reports its history instead of whatever repository the
+    // MCP client happens to run in. Empty when built outside a git checkout.
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&manifest_dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    let history = git(&["log", "--no-decorate", "--format=%h %s", "-50"]).unwrap_or_default();
+    std::fs::write(out_dir.join("changelog.txt"), history).expect("write changelog.txt");
+    if let Some(reflog) = git(&["rev-parse", "--git-path", "logs/HEAD"]) {
+        let reflog = manifest_dir.join(reflog.trim());
+        println!("cargo:rerun-if-changed={}", reflog.display());
+    }
 
     // ── 2. Typed-emission op-code hash ───────────────────────────────────────
     //

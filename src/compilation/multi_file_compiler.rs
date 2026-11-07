@@ -23,6 +23,44 @@ struct ExtractedImport {
     name: String,
     /// True if this is a file path import
     is_file_import: bool,
+    /// Where the import is written, for import-cycle and resolution errors
+    location: SourceLocation,
+}
+
+/// Line and column (1-based, in characters) of the `import:` entry for
+/// `name` in `source`; `(1, 1)` when it cannot be found. File imports match
+/// the quoted path, module imports the module name before any `.member` or
+/// ` as alias`.
+fn import_position(source: &str, name: &str, is_file_import: bool) -> (usize, usize) {
+    let mut in_import_block = false;
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        let entry = if let Some(rest) = trimmed.strip_prefix("import:") {
+            in_import_block = true;
+            rest.trim()
+        } else if in_import_block && line.starts_with([' ', '\t']) {
+            trimmed
+        } else {
+            if !trimmed.is_empty() && !trimmed.starts_with("//") {
+                in_import_block = false;
+            }
+            continue;
+        };
+        if entry.is_empty() || entry.starts_with("//") {
+            continue;
+        }
+        let entry_name = if is_file_import {
+            entry.trim_matches('"').split('"').next().unwrap_or("")
+        } else {
+            entry.split([' ', '.']).next().unwrap_or("")
+        };
+        if entry_name == name {
+            // `find` returns a char boundary, so the prefix slice is valid.
+            let byte = line.find(entry).unwrap_or(0);
+            return (index + 1, line[..byte].chars().count() + 1);
+        }
+    }
+    (1, 1)
 }
 
 /// Metadata extracted from a project manifest (main.cln with package: block)
@@ -101,11 +139,6 @@ impl MultiFileCompilerConfig {
     pub fn with_search_paths(mut self, paths: Vec<PathBuf>) -> Self {
         self.search_paths = paths;
         self
-    }
-
-    /// Add a search path
-    pub fn add_search_path<P: AsRef<Path>>(&mut self, path: P) {
-        self.search_paths.push(path.as_ref().to_path_buf());
     }
 
     /// Set the optimization level
@@ -518,7 +551,17 @@ impl MultiFileCompiler {
             }
         }
 
-        // Determine compilation order
+        // Determine compilation order. Modules are named by name and path so
+        // an import-cycle error reads `main (main.cln) -> utils (...)`.
+        let module_ids: Vec<CompilationModuleId> = graph.modules().copied().collect();
+        for id in module_ids {
+            if let Some(module) = unit.get_module(id) {
+                graph.set_module_name(
+                    id,
+                    format!("{} ({})", module.name, module.file_path.display()),
+                );
+            }
+        }
         let order = graph
             .topological_sort(unit.entry_module)
             .map_err(|e| vec![e])?;
@@ -1156,17 +1199,7 @@ impl MultiFileCompiler {
                                     };
 
                                 // Add to graph
-                                graph.add_dependency(
-                                    current_id,
-                                    dep_id,
-                                    SourceLocation {
-                                        file: file_path.to_string_lossy().to_string(),
-                                        line: 1,
-                                        column: 1,
-                                        byte_start: None,
-                                        byte_end: None,
-                                    },
-                                );
+                                graph.add_dependency(current_id, dep_id, import.location.clone());
 
                                 // Queue for processing
                                 if !processed.contains(&dep_id) {
@@ -1313,7 +1346,15 @@ impl MultiFileCompiler {
 
             if !seen.contains(&key) {
                 seen.insert(key.clone());
+                let (line, column) = import_position(source, &key, import.is_file_import);
                 imports.push(ExtractedImport {
+                    location: SourceLocation {
+                        file: file_path.to_string_lossy().to_string(),
+                        line,
+                        column,
+                        byte_start: None,
+                        byte_end: None,
+                    },
                     name: key,
                     is_file_import: import.is_file_import,
                 });

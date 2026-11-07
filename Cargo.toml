@@ -4,7 +4,7 @@ version = "0.33.173"
 authors = ["Ivan Pasco Lizarraga"]
 edition = "2021"
 homepage = "https://www.cleanlanguage.dev"
-repository = "https://github.com/cleanlang/clean-language-compiler"
+repository = "https://github.com/Ivan-Pasco/clean-language-compiler-old"
 description = "A modern, type-safe programming language that compiles to WebAssembly"
 license = "MIT"
 readme = "README.md"
@@ -24,9 +24,8 @@ wasmparser = "0.121"
 wat = "1.0.71"
 wasmprinter = "0.251"
 
-# WebAssembly Runtimes (feature-gated)  
+# WebAssembly runtime (plugin sandbox and wasmtime_runner)
 wasmtime = { version = "46.0", optional = true }
-wasmer = { version = "7.2", optional = true, features = ["cranelift", "sys"] }
 
 # Error handling
 thiserror = "1.0"
@@ -68,9 +67,6 @@ indexmap = "2.0"
 
 # Development tools
 tempfile = "3.8"
-
-# HTTP client for real network requests (using native-tls for better macOS compatibility)
-reqwest = { version = "0.11", features = ["blocking", "json", "native-tls"], default-features = false }
 
 # Language Server Protocol
 tower-lsp = "0.20"
@@ -160,17 +156,12 @@ grcov = "0.8"
 # File system utilities
 walkdir = "2.4"
 
-# Main compiler binary - Complete feature set
-# This is the ONE command for everything: compile, run, test, package, lint, debug
+# Main compiler binary: compile, build, check, run, test, lint, debug, serve
 [[bin]]
 name = "cln"
 path = "src/main.rs"
 
 # Essential debugging tools
-[[bin]]
-name = "debug_parser"
-path = "src/bin/debug_parser.rs"
-
 [[bin]]
 name = "debug_wasm"
 path = "src/bin/debug_wasm.rs"
@@ -189,32 +180,13 @@ path = "src/bin/wasm2wat.rs"
 name = "wasmtime_runner"
 path = "src/bin/wasmtime_runner.rs"
 
-# Testing and quality assurance tools
-[[bin]]
-name = "test_runner"
-path = "src/bin/test_runner.rs"
-
-[[bin]]
-name = "coverage_report"
-path = "src/bin/coverage_report.rs"
-
-[[bin]]
-name = "performance_benchmark"
-path = "src/bin/performance_benchmark.rs"
-
-
-
 [lib]
 name = "clean_language_compiler"
 path = "src/lib.rs"
 
-# Feature flags for WebAssembly runtime selection
 [features]
 default = ["wasmtime-runtime"]
 wasmtime-runtime = ["wasmtime"]
-# Temporarily disabled due to version conflicts - kept for config compatibility
-wasmer-runtime = ["wasmer"]
-both-runtimes = ["wasmtime-runtime", "wasmer-runtime"]
 
 # Benchmark configuration
 [[bench]]

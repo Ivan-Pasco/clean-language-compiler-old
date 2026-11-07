@@ -1,0 +1,29 @@
+// Test: bugfixes/conversion_methods_use_the_value_not_memory
+// Grammar: method_call ("." method_name "(" ")")
+// Semantic: type conversions (stdlib-reference.md §3, specification 04-type-system.md)
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   1
+//   0
+//   1
+//   false
+//   true
+//   3
+//
+// Regression: the method-style conversion bodies treated every receiver as a
+// pointer to a boxed value, so `true.toNumber()` and `true.toInteger()`
+// loaded whatever bytes sat at address 1 (printing 0), and
+// `integer.toBoolean()` / `number.toInteger()` read memory the same way.
+
+start:
+	boolean t = true
+	boolean f = false
+	print(t.toNumber())
+	print(f.toInteger())
+	print(t.toInteger())
+	integer zero = 0
+	print(zero.toBoolean())
+	integer seven = 7
+	print(seven.toBoolean())
+	number pi = 3.75
+	print(pi.toInteger())

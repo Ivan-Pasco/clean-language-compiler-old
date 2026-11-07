@@ -335,8 +335,7 @@ fn error_byte_offset(error: &CompilerError) -> Option<usize> {
         | CompilerError::IO { context }
         | CompilerError::Runtime { context }
         | CompilerError::Validation { context }
-        | CompilerError::Module { context }
-        | CompilerError::Testing { context } => context.location.as_ref(),
+        | CompilerError::Module { context } => context.location.as_ref(),
         CompilerError::PluginError { location, .. } => location.as_ref(),
         CompilerError::LexError(_) => None,
     };

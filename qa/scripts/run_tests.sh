@@ -41,11 +41,10 @@ show_usage() {
     echo "  unit        - Unit tests only"
     echo "  integration - Integration tests only"
     echo "  benchmark   - Performance benchmarks only"
-    echo "  coverage    - Coverage analysis only"
     echo "  property    - Property-based tests only"
     echo "  validate    - Validate test files against spec"
     echo "  fix         - Run test failure protocol checker"
-    echo "  all         - Everything (full + coverage + property)"
+    echo "  all         - Everything (full + compilation + property)"
     echo
     echo "Examples:"
     echo "  $0 quick     # Fast testing for development"
@@ -72,7 +71,7 @@ case "$COMMAND" in
         echo -e "${GREEN}✅ Compilation: PASSED${NC}"
         
         echo "2️⃣ Running parser tests..."
-        cargo run --bin test_runner --quiet
+        cargo test --lib parser:: --quiet
         echo -e "${GREEN}✅ Parser tests: PASSED${NC}"
         
         echo "3️⃣ Running basic unit tests..."
@@ -104,14 +103,9 @@ case "$COMMAND" in
     "benchmark")
         echo -e "${YELLOW}🚀 Running Performance Benchmarks...${NC}"
         echo
-        cargo run --bin performance_benchmark
+        cargo bench --bench compiler_benchmarks
         ;;
         
-    "coverage")
-        echo -e "${YELLOW}📊 Running Coverage Analysis...${NC}"
-        echo
-        cargo run --bin coverage_report
-        ;;
         
     "property")
         echo -e "${YELLOW}🎲 Running Property-Based Tests...${NC}"
@@ -203,11 +197,7 @@ case "$COMMAND" in
         COMPILATION_RESULT=$?
         echo
         
-        echo "Phase 3: Coverage Analysis"
-        cargo run --bin coverage_report
-        echo
-        
-        echo "Phase 4: Property-Based Tests"
+        echo "Phase 3: Property-Based Tests"
         cargo test parser::property_tests --lib
         echo
         

@@ -18,13 +18,10 @@ cargo check
 ### **Step 2: Run Complete Test Suite**
 ```bash
 # Run the comprehensive test runner
-cargo run --bin test_runner
+./scripts/comprehensive_test_runner.sh
 
 # Run performance benchmarks
-cargo run --bin performance_benchmark
-
-# Run coverage analysis
-cargo run --bin coverage_report
+cargo bench --bench compiler_benchmarks
 
 # Run all tests via Makefile
 make quality-gate
@@ -56,14 +53,14 @@ cargo test --test integration_ir_pipeline
 
 ### **Phase 3: Custom Test Tools**
 ```bash
-# Test runner (comprehensive)
-cargo run --bin test_runner
+# Compile every test file (comprehensive)
+./scripts/comprehensive_test_runner.sh
+
+# Regression pins
+python3 scripts/check_regressions.py
 
 # Performance benchmarks
-cargo run --bin performance_benchmark
-
-# Coverage analysis
-cargo run --bin coverage_report
+cargo bench --bench compiler_benchmarks
 ```
 
 ### **Phase 4: Quality Checks**
@@ -224,7 +221,7 @@ cargo clippy         # Lint code
 cargo test --lib     # Library tests only
 cargo test --bin     # Binary tests only
 cargo test --test    # Integration tests only
-cargo check --bin test_runner  # Check specific binary
+cargo check --bin cln         # Check specific binary
 ```
 
 ### **Makefile Targets**
@@ -320,7 +317,7 @@ grep -r "parse_program" src/
 1. **Start Fresh**: `cargo clean && cargo check`
 2. **Run Basic Tests**: `cargo test --lib --tests`
 3. **Run Integration Tests**: `cargo test --test "*"`
-4. **Run Custom Tools**: `cargo run --bin test_runner`
+4. **Run Custom Tools**: `./scripts/comprehensive_test_runner.sh`
 5. **Check Quality**: `make quality-gate`
 6. **Fix Issues**: Address errors systematically
 7. **Verify Fixes**: Re-run tests to confirm

@@ -1,198 +1,165 @@
 /*!
- * Error Reporting and Telemetry Module
+ * Local error recording and bug-report drafting.
  *
- * Provides opt-in error reporting, local report storage, and fix notification.
- * Privacy-first: all telemetry is opt-in and never sends user source code.
+ * Nothing in this module talks to the network. Bugs in the old Clean
+ * Language toolchain are filed as GitHub issues (label `compiler-old`) in the
+ * repository that owns the fix; this module prepares those issues and, while
+ * the platform authors work inside a component source tree, records
+ * failures in a local dev queue.
  *
  * # Architecture
  *
- * - `config`: Telemetry preferences stored in ~/.cleen/telemetry/config.toml
- * - `report`: ErrorReport schema and local ReportStore for fix tracking
- * - `queue`: Offline queue for reports when backend is unreachable
- * - `submit`: HTTP submission to the Error API (graceful fallback)
+ * - `config`: the `telemetry` on/off switch in ~/.cleen/telemetry/config.toml
+ * - `dev_context`: classifies a run as dev work (component source tree,
+ *   `target/` build) or a normal user run
+ * - `dev_queue`: the local dev-mode error queue (`cln dev-queue`)
+ * - [`IssueDraft`]: the `gh issue create` command for a bug report
  */
 
 pub mod config;
 pub mod dev_context;
 pub mod dev_queue;
-pub mod queue;
-pub mod report;
-pub mod submit;
 
-pub use config::{ConsentLevel, TelemetryConfig};
+pub use config::TelemetryConfig;
 pub use dev_context::{
     detect as detect_dev_context, detect_for_component as detect_dev_context_for_component,
     DevContext,
 };
-pub use queue::PendingQueue;
-pub use report::{ErrorReport, ReportError, ReportStatus, ReportStore, TrackedReport};
-pub use submit::{
-    batch_check_and_verify, check_report_statuses, fetch_component_bugs, submit_report,
-    ComponentBug, ReportVerification, StatusUpdate, SubmitResult,
-};
 
-use std::io::{self, BufRead, IsTerminal, Write};
+/// Components that own a GitHub repository for the old toolchain, with the
+/// repository that bug reports for them go to.
+const ISSUE_REPOS: &[(&str, &str)] = &[
+    ("compiler", "Ivan-Pasco/clean-language-compiler-old"),
+    ("server", "Ivan-Pasco/clean-server-old"),
+    ("framework", "Ivan-Pasco/cleen-framework-old"),
+    ("manager", "Ivan-Pasco/clean-language-manager-old"),
+];
 
-/// Show the first-run telemetry opt-in prompt if the user hasn't been asked yet.
-/// Returns true if telemetry was enabled, false if declined or already prompted.
-/// Non-blocking: skips the prompt if stdin is not a terminal (CI, pipes, etc.).
-pub fn maybe_prompt_telemetry() -> bool {
-    let mut config = TelemetryConfig::load();
-
-    // Already prompted — nothing to do
-    if config.prompted {
-        return config.enabled;
-    }
-
-    // Don't prompt in non-interactive contexts (CI, pipes, MCP)
-    if !io::stdin().is_terminal() {
-        // Enable bug reporting silently in non-interactive mode
-        if !config.prompted {
-            config.prompted = true;
-            config.enabled = true;
-            let _ = config.save();
-        }
-        return true;
-    }
-
-    // --- Developer onboarding (first run) ---
-    println!();
-    println!("  Welcome to Clean Language v{}!", crate::VERSION);
-    println!();
-
-    // Step 1: Name (optional)
-    print!("  Your name (Enter to skip): ");
-    let _ = io::stdout().flush();
-    let name = io::stdin()
-        .lock()
-        .lines()
-        .next()
-        .and_then(|l| l.ok())
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    if !name.is_empty() {
-        config.developer_name = Some(name.clone());
-    }
-
-    // Step 2: Email (frame as staying connected to the ecosystem)
-    println!();
-    println!("  Your email connects you to Clean Language:");
-    println!("    - New releases and what's in them");
-    println!("    - Bug fixes for issues you report");
-    println!("    - Plugin updates for your stack");
-    println!("    - Security advisories");
-    println!();
-    println!("  Stored locally — never shared with third parties.");
-    println!();
-    print!("  Email (Enter to skip): ");
-    let _ = io::stdout().flush();
-    let email = io::stdin()
-        .lock()
-        .lines()
-        .next()
-        .and_then(|l| l.ok())
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    if !email.is_empty() && email.contains('@') {
-        config.contact_email = Some(email);
-    }
-
-    // Bug reporting is always enabled — it's a feature, not an opt-in
-    config.prompted = true;
-    config.enabled = true;
-    let _ = config.save();
-
-    // Confirmation
-    println!();
-    if let Some(ref dev_name) = config.developer_name {
-        println!("  Welcome, {}!", dev_name);
-    } else {
-        println!("  Setup complete.");
-    }
-    if config.contact_email.is_some() {
-        println!("  You'll be notified when bugs you report are fixed.");
-    }
-    println!("  Update anytime: cln config");
-    println!();
-
-    true
+/// Map a component name (including the aliases used in bug reports, such as
+/// `parser`, `node-server` or a `frame.*` plugin name) to one of the
+/// components in [`ISSUE_REPOS`]. `None` when the name is not recognised.
+pub fn normalize_component(component: &str) -> Option<&'static str> {
+    let normalized = match component {
+        "compiler" | "parser" | "semantic" | "codegen" | "cli" | "syntax" | "system" | "mcp"
+        | "unknown" => "compiler",
+        "server" | "node-server" | "runtime" => "server",
+        "framework" | "plugin" | "ui" | "canvas" => "framework",
+        c if c.starts_with("frame.") => "framework",
+        "manager" => "manager",
+        _ => return None,
+    };
+    Some(normalized)
 }
 
-/// Prompt for email at bug-report time if not yet configured.
-/// Called when a compilation error is about to be reported.
-/// Returns the email if provided, or None.
-pub fn maybe_prompt_email_on_bug() -> Option<String> {
-    let mut config = TelemetryConfig::load();
+/// The component names accepted by [`normalize_component`] as canonical names.
+pub fn issue_components() -> impl Iterator<Item = &'static str> {
+    ISSUE_REPOS.iter().map(|(component, _)| *component)
+}
 
-    // Already has email — nothing to do
-    if config.contact_email.is_some() {
-        return config.contact_email.clone();
+/// A bug report ready to be filed as a GitHub issue.
+#[derive(Debug, Clone)]
+pub struct IssueDraft {
+    /// Canonical component (one of [`issue_components`]).
+    pub component: &'static str,
+    pub title: String,
+    pub body: String,
+}
+
+impl IssueDraft {
+    /// Draft an issue for `component` (any name [`normalize_component`]
+    /// accepts; unknown names go to the compiler repository).
+    pub fn new(component: &str, title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            component: normalize_component(component).unwrap_or("compiler"),
+            title: title.into(),
+            body: body.into(),
+        }
     }
 
-    // Don't prompt in non-interactive contexts
-    if !io::stdin().is_terminal() {
+    /// `owner/name` of the repository that owns the fix.
+    pub fn repo(&self) -> &'static str {
+        ISSUE_REPOS
+            .iter()
+            .find(|(component, _)| *component == self.component)
+            .map(|(_, repo)| *repo)
+            .unwrap_or(ISSUE_REPOS[0].1)
+    }
+
+    /// The exact shell command that files this issue.
+    pub fn gh_command(&self) -> String {
+        format!(
+            "gh issue create --repo {} --label bug --label compiler-old --title {} --body {}",
+            self.repo(),
+            shell_quote(&self.title),
+            shell_quote(&self.body)
+        )
+    }
+}
+
+/// Quote `text` as one POSIX shell word.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+/// Environment lines included in every drafted issue.
+pub fn environment_section() -> String {
+    format!(
+        "Compiler: cln {}\nOS: {} ({})",
+        crate::VERSION,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
+}
+
+/// Record a bug in the local dev queue when this run is dev work on
+/// `component` (see [`dev_context`]). Returns the queue outcome, or `None`
+/// for a normal user run, where nothing is stored.
+pub fn record_in_dev_queue(
+    component: &str,
+    error_code: &str,
+    message: &str,
+    file_context: Option<&str>,
+) -> Option<(DevContext, dev_queue::AppendOutcome)> {
+    let ctx = detect_dev_context_for_component(component);
+    if !ctx.is_dev() {
         return None;
     }
-
-    println!();
-    println!("  Get notified when this bug is fixed, plus releases and updates.");
-    print!("  Email (Enter to skip): ");
-    let _ = io::stdout().flush();
-
-    let email = io::stdin()
-        .lock()
-        .lines()
-        .next()
-        .and_then(|l| l.ok())
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    if !email.is_empty() && email.contains('@') {
-        config.contact_email = Some(email.clone());
-        let _ = config.save();
-        println!("  Saved. You can remove it anytime: cln config set email clear");
-        Some(email)
-    } else {
-        None
-    }
+    let entry = dev_queue::entry_from(
+        &ctx,
+        error_code,
+        component,
+        message,
+        file_context,
+        crate::VERSION,
+    );
+    let outcome = dev_queue::append(entry);
+    Some((ctx, outcome))
 }
 
-/// Report a compilation failure via telemetry (if enabled).
-/// Called automatically after a failed `cln compile` invocation.
-/// `source_content` is the raw source text — used to extract a location
-/// snippet for the reproduction field when consent allows.
-/// Non-blocking: runs submission in the background thread.
+/// Handle a failed `cln compile` / `cln build` when `telemetry` is on.
+///
+/// Errors in the user's own code (syntax, types, missing files) are the
+/// compiler working correctly and are ignored. A failure that points at a
+/// compiler or plugin bug is recorded in the local dev queue when the run is
+/// dev work; otherwise the GitHub issue command for it is printed to stderr.
+/// Never prompts and never blocks the compile.
 pub fn report_compile_failure(
     errors: &[crate::error::CompilerError],
     source_file: &str,
     source_content: Option<&str>,
 ) {
-    let config = TelemetryConfig::load();
-    if !config.enabled {
+    if !TelemetryConfig::load().enabled {
         return;
     }
 
     // Take the first error as representative
-    let first_error = match errors.first() {
-        Some(e) => e,
-        None => return,
+    let Some(first_error) = errors.first() else {
+        return;
     };
-
-    // Only auto-report errors that indicate a compiler/plugin bug. Errors in
-    // the user's source code (syntax, types, lex, missing files, etc.) are the
-    // compiler *working correctly* — surfacing them to the bug dashboard
-    // pollutes it with non-bugs and inflates occurrence counts against issues
-    // that aren't actionable. See errors.cleanlanguage.dev scope: it tracks
-    // bugs in the Clean Language toolchain, not in user programs.
     if !is_likely_compiler_bug(first_error) {
         tracing::debug!(
             error_kind = ?std::mem::discriminant(first_error),
-            "Skipping auto-report: error is user-caused, not a compiler bug"
+            "Not a compiler bug: error is in the user's code"
         );
         return;
     }
@@ -200,9 +167,8 @@ pub fn report_compile_failure(
     let info = extract_error_info(first_error);
 
     // Dev-context gate: when the platform authors are iterating on Clean
-    // Language itself, route the failure to a local dev queue instead of the
-    // public dashboard. Signals: the running binary is a `target/` build, or
-    // the .cln source sits inside a known component tree. Env var
+    // Language itself (a `target/` build, or a source inside a component
+    // tree), record the failure in the local dev queue. Env var
     // `CLEEN_TELEMETRY_FORCE=publish|local` overrides auto-detect.
     let dev_ctx = dev_context::detect(source_file);
     if dev_ctx.is_dev() {
@@ -215,408 +181,55 @@ pub fn report_compile_failure(
             crate::VERSION,
         );
         let outcome = dev_queue::append(entry);
-        // Surface the hint on stderr so a developer watching their terminal
-        // sees "this went to the dev queue, here's the count" right after
-        // the error itself. Kept to one line so it doesn't crowd the error.
+        // One line on stderr right after the error itself.
         eprintln!(
             "[dev-queue] {} recorded locally ({} \u{00d7}{}) \u{2014} `cln dev-queue list`",
             info.code, outcome.fingerprint, outcome.occurrences
         );
-        tracing::debug!(
-            reason = ?dev_ctx.reason(),
-            fingerprint = %outcome.fingerprint,
-            occurrences = outcome.occurrences,
-            "Dev-mode failure captured in local dev_queue; skipping dashboard upload"
-        );
         return;
     }
 
-    // Client-side dedup: skip if the same (error_code, message) was already
-    // submitted within the last 60 seconds. Prevents a test-suite run from
-    // flooding the dashboard with N identical reports when N files trigger the
-    // same compiler bug simultaneously.
-    {
-        let store = ReportStore::load();
-        if store.has_recent_duplicate(&info.code, &info.message) {
-            tracing::debug!(
-                error_code = %info.code,
-                "Skipping duplicate error report (within 60s dedup window)"
-            );
-            return;
-        }
-    }
-
-    // Strip to basename only — the full path is machine-specific, leaks the
-    // user's directory structure, and is useless to the team for reproduction.
+    // Only the file name: the full path is machine-specific.
     let file_hint = std::path::Path::new(source_file)
         .file_name()
         .and_then(|n| n.to_str())
-        .map(String::from);
-
-    let report_id = generate_report_id();
-    let mut report = ErrorReport::new(
-        report_id,
-        ReportError {
-            code: info.code,
-            category: info.category,
-            component: info.component,
-            subsystem: info.subsystem,
-            severity: "bug".to_string(),
-            message: info.message,
-            file_context: file_hint,
-            affected_component: None,
-            affected_version: None,
-        },
-        "cli_telemetry",
-        &config.consent_level.to_string(),
-    );
-
-    // Attach reproduction context when consent allows.
-    // error_only → no code; error_with_code (default) → location snippet + inferred expected.
-    if config.consent_level.to_string() != "error_only" {
-        // Try location-based snippet first; fall back to file head so a repro is
-        // present even when the error carries no line info.
-        let snippet = source_content.and_then(|src| {
-            extract_location_snippet(first_error, src).or_else(|| extract_file_head_snippet(src))
-        });
-        report.reproduction = Some(report::ReportReproduction {
-            minimal_code: snippet,
-            // Infer expected behavior from the error type — useful for triage even
-            // when no human writes it explicitly.
-            expected_behavior: Some(infer_expected_behavior(first_error).to_string()),
-            actual_behavior: Some(first_error.to_string()),
-            spec_reference: None,
-        });
-    }
-
-    // Layer A guard: if no reproduction snippet is available, do not submit.
-    // A dashboard entry without a repro cannot be compile-verified by the
-    // hygiene pipeline and provides no actionable signal. The user still sees
-    // the compile error locally; only the useless upload is skipped.
-    if !report_has_minimal_repro(&report) {
-        tracing::debug!(
-            target: "compiler::telemetry",
-            error_code = %report.error.code,
-            "Skipping automatic error report — no reproducible snippet available"
-        );
-        return;
-    }
-
-    // Attach email: use stored email, or prompt if first bug report
-    if let Some(ref email) = config.contact_email {
-        report.user.anonymous = false;
-        report.user.contact = Some(email.clone());
-    } else if let Some(email) = maybe_prompt_email_on_bug() {
-        report.user.anonymous = false;
-        report.user.contact = Some(email);
-    }
-
-    // Track locally
-    let mut store = ReportStore::load();
-    store.add_report(&report);
-    let _ = store.save();
-
-    // Submit in background thread — don't block the CLI.
-    // Capture the server-returned fingerprint so the local record is confirmed.
-    let report_id = report.report_id.clone();
-    std::thread::spawn(move || {
-        let result = submit_report(&report);
-        if let Some(fp) = result.fingerprint() {
-            let mut store = ReportStore::load();
-            store.update_fingerprint(&report_id, fp);
-            let _ = store.save();
-        }
+        .unwrap_or(source_file);
+    let snippet = source_content.and_then(|src| {
+        extract_location_snippet(first_error, src).or_else(|| extract_file_head_snippet(src))
     });
-}
-
-/// Check if the compiler version has changed since last run.
-/// If so, check for fix notifications and flush the pending queue.
-pub fn check_version_change() {
-    let mut config = TelemetryConfig::load();
-    let current_version = crate::VERSION;
-
-    let version_changed = config.last_seen_version.as_deref() != Some(current_version);
-
-    if version_changed {
-        config.last_seen_version = Some(current_version.to_string());
-        let _ = config.save();
-
-        // On version change, check for fix notifications
-        if config.enabled {
-            check_fix_notifications();
-            flush_pending_telemetry(true);
-        }
+    let mut body = format!(
+        "{}\n\nFile: {}\nError {} ({}{}): {}\n\nExpected: {}\n",
+        environment_section(),
+        file_hint,
+        info.code,
+        info.category,
+        info.subsystem
+            .as_deref()
+            .map(|s| format!(", {s}"))
+            .unwrap_or_default(),
+        info.message,
+        infer_expected_behavior(first_error)
+    );
+    if let Some(snippet) = snippet {
+        body.push_str(&format!(
+            "\nSource around the error:\n```\n{snippet}\n```\n"
+        ));
     }
-}
-
-/// Flush any queued reports and retry reports that were saved locally but never
-/// confirmed by the backend (fingerprint never captured).
-///
-/// Safe to call at any time; does nothing if telemetry is disabled. When `verbose`
-/// is true, prints a short summary to stderr for CLI contexts; MCP contexts should
-/// pass false so stdout/stderr stay clean.
-pub fn flush_pending_telemetry(verbose: bool) {
-    let config = TelemetryConfig::load();
-    if !config.enabled {
-        return;
-    }
-
-    // Respect server-side backoff. If the server recently told us to back off,
-    // skip the entire flush — even a single POST under rate-limit would
-    // burn our quota and the resubmission path would just re-queue each one.
-    if let Some(seconds_remaining) = submit::backoff_seconds_remaining_public() {
-        if verbose {
-            eprintln!(
-                "[telemetry] server rate-limit active ({}s remaining); skipping flush.",
-                seconds_remaining
-            );
-        } else {
-            tracing::debug!(
-                seconds_remaining,
-                "Skipping telemetry flush: server rate-limit active"
-            );
-        }
-        return;
-    }
-
-    // 1) Flush the offline queue: reports that failed to POST are saved as full
-    //    ErrorReport JSON under ~/.cleen/telemetry/pending_reports/.
-    //    Capped at 10 per cycle with a 200ms gap between submissions to avoid
-    //    hitting the dashboard with a sudden burst when a long backlog drains.
-    let mut queue_sent = 0usize;
-    // Set once a submission fails: the service is unreachable or refusing
-    // reports, so nothing else is attempted this cycle.
-    let mut service_unavailable = false;
-    if let Some(queue) = PendingQueue::new() {
-        if queue.count() > 0 {
-            let mut store = ReportStore::load();
-            let mut store_dirty = false;
-            let mut sent_this_cycle = 0usize;
-            let flush_result = queue.flush(|report| {
-                if sent_this_cycle >= 10 {
-                    return false; // leave remainder for next flush cycle
-                }
-                let result = submit_report(report);
-                if let Some(fp) = result.fingerprint() {
-                    store.update_fingerprint(&report.report_id, fp);
-                    store_dirty = true;
-                }
-                let ok = result.is_delivered();
-                if !ok {
-                    service_unavailable = true;
-                }
-                if ok {
-                    sent_this_cycle += 1;
-                    // Small gap so the dashboard doesn't see a wall of reports
-                    // arrive at the same timestamp. 200ms is imperceptible to the
-                    // CLI user (flush runs on version change, not hot path).
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                }
-                ok
-            });
-            if store_dirty {
-                let _ = store.save();
-            }
-            queue_sent = flush_result.sent;
-        }
-    }
-
-    // 2) Retry reports that live in reported_errors.json with no fingerprint.
-    //    Historically these were accepted by the server but the client discarded
-    //    the returned fingerprint, so the local record was never confirmed.
-    //    Re-POST is safe: the server deduplicates by content hash.
-    let mut retry_confirmed = 0usize;
-    let store = ReportStore::load();
-    let unposted = store.unposted_report_ids();
-    if !unposted.is_empty() && !service_unavailable {
-        let mut store = store;
-        for report_id in unposted {
-            let tracked = match store
-                .get_all_reports()
-                .iter()
-                .find(|r| r.report_id == report_id)
-                .cloned()
-            {
-                Some(r) => r,
-                None => continue,
-            };
-
-            let minimal = ErrorReport {
-                schema_version: "1.0.0".to_string(),
-                report_id: tracked.report_id.clone(),
-                timestamp: tracked.reported_at,
-                source: report::ReportSource {
-                    channel: "retry".to_string(),
-                    compiler_version: tracked.compiler_version.clone(),
-                    os: std::env::consts::OS.to_string(),
-                    arch: std::env::consts::ARCH.to_string(),
-                    runtime: None,
-                },
-                error: ReportError {
-                    code: tracked.error_code.clone(),
-                    category: "unknown".to_string(),
-                    component: tracked
-                        .component
-                        .clone()
-                        .unwrap_or_else(|| "compiler".to_string()),
-                    subsystem: tracked.subsystem.clone(),
-                    severity: tracked
-                        .severity
-                        .clone()
-                        .unwrap_or_else(|| "bug".to_string()),
-                    message: tracked.summary.clone(),
-                    file_context: None,
-                    affected_component: None,
-                    affected_version: None,
-                },
-                reproduction: None,
-                ai_context: None,
-                user: report::ReportUser {
-                    anonymous: config.contact_email.is_none(),
-                    contact: config.contact_email.clone(),
-                    consent_level: config.consent_level.to_string(),
-                },
-            };
-
-            // Same guard as the primary path: retry reports without a repro
-            // are useless to the dashboard hygiene pipeline. Skip rather than
-            // resubmit an empty-minimal_code entry.
-            if !report_has_minimal_repro(&minimal) {
-                tracing::debug!(
-                    target: "compiler::telemetry",
-                    report_id = %tracked.report_id,
-                    "Skipping retry submission — tracked report has no reproducible snippet"
-                );
-                continue;
-            }
-
-            let result = submit_report(&minimal);
-            if let Some(fp) = result.fingerprint() {
-                store.update_fingerprint(&tracked.report_id, fp);
-                retry_confirmed += 1;
-            }
-            if !result.is_delivered() {
-                service_unavailable = true;
-                break;
-            }
-        }
-        if retry_confirmed > 0 {
-            let _ = store.save();
-        }
-    }
-
-    if verbose {
-        if service_unavailable {
-            let pending = PendingQueue::new().map(|q| q.count()).unwrap_or(0);
-            eprintln!(
-                "[telemetry] error service unavailable; {} report(s) stay queued for a later retry.",
-                pending
-            );
-        }
-        if queue_sent > 0 {
-            eprintln!(
-                "Sent {} queued error report(s) to the Clean Language team.",
-                queue_sent
-            );
-        }
-        if retry_confirmed > 0 {
-            eprintln!(
-                "Confirmed {} previously-reported error(s) with the server.",
-                retry_confirmed
-            );
-        }
-    }
-}
-
-/// Check for fix notifications after a compiler update.
-/// Shows a message if any previously reported bugs have been resolved.
-/// Designed to run after `cleen install` or on version change.
-pub fn check_fix_notifications() {
-    let config = TelemetryConfig::load();
-    if !config.enabled {
-        return;
-    }
-
-    let mut store = ReportStore::load();
-    let unresolved_ids: Vec<String> = store
-        .get_all_reports()
-        .iter()
-        .filter(|r| r.status == ReportStatus::Reported || r.status == ReportStatus::InProgress)
-        .map(|r| r.report_id.clone())
-        .collect();
-
-    if unresolved_ids.is_empty() {
-        return;
-    }
-
-    // Check backend for status updates
-    let updates = check_report_statuses(&unresolved_ids);
-
-    let mut fixed_count = 0;
-    let mut fixed_messages: Vec<String> = Vec::new();
-
-    for update in &updates {
-        let new_status = match update.status.as_str() {
-            "resolved" => ReportStatus::Resolved,
-            "acknowledged" => ReportStatus::Acknowledged,
-            "in_progress" => ReportStatus::InProgress,
-            "wont_fix" => ReportStatus::WontFix,
-            _ => continue,
-        };
-
-        if new_status == ReportStatus::Resolved {
-            fixed_count += 1;
-            let version_info = update
-                .fixed_in_version
-                .as_deref()
-                .map(|v| format!(" in version {}", v))
-                .unwrap_or_default();
-            let desc = update.fix_description.as_deref().unwrap_or("Bug fixed");
-            fixed_messages.push(format!(
-                "  \u{2713} {} \u{2014} {}{}",
-                update.report_id.get(..8).unwrap_or(&update.report_id),
-                desc,
-                version_info
-            ));
-        }
-
-        store.update_status(
-            &update.report_id,
-            new_status,
-            update.fixed_in_version.clone(),
-            update.fix_description.clone(),
-            update.fix_pr.clone(),
-        );
-        store.mark_notified(&update.report_id);
-    }
-
-    let _ = store.save();
-
-    if fixed_count > 0 {
-        println!();
-        println!(
-            "Good news! {} bug(s) you reported have been fixed:",
-            fixed_count
-        );
-        for msg in &fixed_messages {
-            println!("{}", msg);
-        }
-        println!();
-        println!("Run `cln fixes` for full details.");
-        println!();
-    }
-}
-
-/// Return true iff the report carries a non-empty minimal_code snippet.
-/// Used as a submission guard so entries without a repro never reach the
-/// shared dashboard (Path C Session 2a', 2026-07-06).
-fn report_has_minimal_repro(report: &ErrorReport) -> bool {
-    report
-        .reproduction
-        .as_ref()
-        .and_then(|r| r.minimal_code.as_deref())
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
+    body.push_str("\nReplace the source excerpt with a minimal reproduction before filing.\n");
+    let draft = IssueDraft::new(
+        &info.component,
+        format!(
+            "{}: {}",
+            info.code,
+            crate::error::truncate_chars(&info.message, 80)
+        ),
+        body,
+    );
+    eprintln!(
+        "\nThis looks like a bug in the Clean Language toolchain ({}), not in your code.\nTo report it, review and run:\n  {}",
+        info.component,
+        draft.gh_command()
+    );
 }
 
 /// Fallback snippet: the first ~50 lines of the source. Used when the error
@@ -649,8 +262,7 @@ fn extract_location_snippet(error: &crate::error::CompilerError, source: &str) -
         | crate::error::CompilerError::Memory { context }
         | crate::error::CompilerError::IO { context }
         | crate::error::CompilerError::Validation { context }
-        | crate::error::CompilerError::Module { context }
-        | crate::error::CompilerError::Testing { context } => {
+        | crate::error::CompilerError::Module { context } => {
             // Use pre-attached snippet if already present
             if let Some(ref s) = context.source_snippet {
                 return Some(s.clone());
@@ -861,17 +473,6 @@ fn extract_error_info(error: &crate::error::CompilerError) -> ErrorInfo {
             subsystem: Some("module".to_string()),
             message: context.message.clone(),
         },
-        crate::error::CompilerError::Testing { context } => ErrorInfo {
-            code: context
-                .error_code
-                .as_deref()
-                .unwrap_or("TST000")
-                .to_string(),
-            category: "testing".to_string(),
-            component: "compiler".to_string(),
-            subsystem: Some("testing".to_string()),
-            message: context.message.clone(),
-        },
         crate::error::CompilerError::LexError(lex_err) => {
             use crate::lexer::specification_lexer::LexError;
             let code = match lex_err {
@@ -925,23 +526,10 @@ fn location_of(error: &crate::error::CompilerError) -> Option<&crate::ast::Sourc
         | E::Memory { context }
         | E::IO { context }
         | E::Validation { context }
-        | E::Module { context }
-        | E::Testing { context } => context.location.as_ref(),
+        | E::Module { context } => context.location.as_ref(),
         E::LexError(_) => None,
         E::PluginError { location, .. } => location.as_ref(),
     }
-}
-
-/// Generate a UUID v4-format report ID
-fn generate_report_id() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let a: u32 = rng.gen();
-    let b: u16 = rng.gen();
-    let c: u16 = (rng.gen::<u16>() & 0x0FFF) | 0x4000;
-    let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
-    let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
-    format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
 }
 
 #[cfg(test)]
@@ -1113,63 +701,6 @@ mod tests {
         let info = extract_error_info(&err);
         assert_eq!(info.component, "framework");
         assert_eq!(info.subsystem.as_deref(), Some("plugin"));
-    }
-
-    fn make_report_with_repro(minimal_code: Option<String>) -> ErrorReport {
-        let mut report = ErrorReport::new(
-            "test-report-id".to_string(),
-            ReportError {
-                code: "COD000".to_string(),
-                category: "codegen".to_string(),
-                component: "compiler".to_string(),
-                subsystem: Some("codegen".to_string()),
-                severity: "bug".to_string(),
-                message: "test".to_string(),
-                file_context: None,
-                affected_component: None,
-                affected_version: None,
-            },
-            "cli_telemetry",
-            "error_with_code",
-        );
-        report.reproduction = Some(report::ReportReproduction {
-            minimal_code,
-            expected_behavior: None,
-            actual_behavior: None,
-            spec_reference: None,
-        });
-        report
-    }
-
-    #[test]
-    fn telemetry_skips_submission_when_repro_is_none() {
-        let mut report = make_report_with_repro(None);
-        report.reproduction = None;
-        assert!(!report_has_minimal_repro(&report));
-    }
-
-    #[test]
-    fn telemetry_skips_submission_when_repro_minimal_code_is_none() {
-        let report = make_report_with_repro(None);
-        assert!(!report_has_minimal_repro(&report));
-    }
-
-    #[test]
-    fn telemetry_skips_submission_when_repro_is_empty_string() {
-        let report = make_report_with_repro(Some(String::new()));
-        assert!(!report_has_minimal_repro(&report));
-    }
-
-    #[test]
-    fn telemetry_skips_submission_when_repro_is_whitespace() {
-        let report = make_report_with_repro(Some("   \n\t  ".to_string()));
-        assert!(!report_has_minimal_repro(&report));
-    }
-
-    #[test]
-    fn telemetry_submits_when_repro_is_populated() {
-        let report = make_report_with_repro(Some("start:\n    print(1)".to_string()));
-        assert!(report_has_minimal_repro(&report));
     }
 
     #[test]

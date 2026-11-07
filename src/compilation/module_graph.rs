@@ -6,7 +6,7 @@
 use super::CompilationModuleId;
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Represents an edge in the module dependency graph
 #[derive(Debug, Clone)]
@@ -19,20 +19,26 @@ pub struct DependencyEdge {
     pub location: SourceLocation,
 }
 
-/// Module dependency graph for managing compilation order
+/// Module dependency graph for managing compilation order.
+///
+/// Ordered collections keep cycle reports and the compilation order the
+/// same on every run.
 #[derive(Debug, Default)]
 pub struct ModuleGraph {
     /// Adjacency list: module -> modules it imports
-    dependencies: HashMap<CompilationModuleId, Vec<CompilationModuleId>>,
+    dependencies: BTreeMap<CompilationModuleId, Vec<CompilationModuleId>>,
 
     /// Reverse adjacency list: module -> modules that import it
-    dependents: HashMap<CompilationModuleId, Vec<CompilationModuleId>>,
+    dependents: BTreeMap<CompilationModuleId, Vec<CompilationModuleId>>,
 
     /// All edges with their source locations
     edges: Vec<DependencyEdge>,
 
     /// All nodes (modules) in the graph
-    nodes: HashSet<CompilationModuleId>,
+    nodes: BTreeSet<CompilationModuleId>,
+
+    /// Display names (module name and file) used in diagnostics
+    names: BTreeMap<CompilationModuleId, String>,
 }
 
 impl ModuleGraph {
@@ -46,6 +52,18 @@ impl ModuleGraph {
         self.nodes.insert(id);
         self.dependencies.entry(id).or_default();
         self.dependents.entry(id).or_default();
+    }
+
+    /// Name a module for diagnostics, e.g. `utils (src/utils.cln)`.
+    pub fn set_module_name(&mut self, id: CompilationModuleId, name: impl Into<String>) {
+        self.names.insert(id, name.into());
+    }
+
+    fn display_name(&self, id: CompilationModuleId) -> String {
+        self.names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| format!("module #{}", id.0))
     }
 
     /// Add a dependency edge: `from` imports `to`
@@ -88,8 +106,8 @@ impl ModuleGraph {
     ///
     /// Returns `Ok(())` if no cycles exist, or `Err` with the cycle path if found.
     pub fn check_cycles(&self) -> Result<(), CompilerError> {
-        let mut visited = HashSet::new();
-        let mut rec_stack = HashSet::new();
+        let mut visited = BTreeSet::new();
+        let mut rec_stack = BTreeSet::new();
         let mut path = Vec::new();
 
         for &node in &self.nodes {
@@ -109,8 +127,8 @@ impl ModuleGraph {
     fn detect_cycle_dfs(
         &self,
         node: CompilationModuleId,
-        visited: &mut HashSet<CompilationModuleId>,
-        rec_stack: &mut HashSet<CompilationModuleId>,
+        visited: &mut BTreeSet<CompilationModuleId>,
+        rec_stack: &mut BTreeSet<CompilationModuleId>,
         path: &mut Vec<CompilationModuleId>,
     ) -> Option<Vec<CompilationModuleId>> {
         visited.insert(node);
@@ -140,7 +158,7 @@ impl ModuleGraph {
     fn create_cycle_error(&self, cycle: &[CompilationModuleId]) -> CompilerError {
         let cycle_str = cycle
             .iter()
-            .map(|id| format!("{:?}", id))
+            .map(|&id| self.display_name(id))
             .collect::<Vec<_>>()
             .join(" -> ");
 
@@ -173,7 +191,7 @@ impl ModuleGraph {
         self.check_cycles()?;
 
         // Kahn's algorithm for topological sort
-        let mut in_degree: HashMap<CompilationModuleId, usize> = HashMap::new();
+        let mut in_degree: BTreeMap<CompilationModuleId, usize> = BTreeMap::new();
         let mut queue = VecDeque::new();
         let mut result = Vec::new();
 
@@ -323,6 +341,50 @@ mod tests {
         graph.add_dependency(c, a, test_location());
 
         assert!(graph.check_cycles().is_err());
+    }
+
+    #[test]
+    fn cycle_error_names_modules_and_the_import_location() {
+        let mut graph = ModuleGraph::new();
+        let a = CompilationModuleId(0);
+        let b = CompilationModuleId(1);
+        graph.set_module_name(a, "main (main.cln)");
+        graph.set_module_name(b, "utils (utils.cln)");
+        let import_in_b = SourceLocation {
+            file: "utils.cln".to_string(),
+            line: 2,
+            column: 2,
+            byte_start: None,
+            byte_end: None,
+        };
+        graph.add_dependency(a, b, test_location());
+        graph.add_dependency(b, a, import_in_b);
+
+        let err = graph.check_cycles().unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("main (main.cln) -> utils (utils.cln) -> main (main.cln)"),
+            "{message}"
+        );
+        assert!(!message.contains("CompilationModuleId"), "{message}");
+        let loc = err.context().unwrap().location.as_ref().unwrap();
+        assert_eq!((loc.file.as_str(), loc.line), ("utils.cln", 2));
+    }
+
+    #[test]
+    fn topological_order_is_deterministic() {
+        let build = || {
+            let mut graph = ModuleGraph::new();
+            let main = CompilationModuleId(0);
+            for i in 1..20 {
+                graph.add_dependency(main, CompilationModuleId(i), test_location());
+            }
+            graph.topological_sort(main).unwrap()
+        };
+        let first = build();
+        for _ in 0..10 {
+            assert_eq!(build(), first);
+        }
     }
 
     #[test]

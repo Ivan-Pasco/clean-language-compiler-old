@@ -1,6 +1,6 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
+use crate::stdlib::register_stdlib_function;
 use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
@@ -18,9 +18,7 @@ impl MethodStyleManager {
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
         // Register all method-style functions systematically
         self.register_utility_methods(codegen)?;
-        self.register_validation_methods(codegen)?;
         self.register_conversion_methods(codegen)?;
-        self.register_boundary_methods(codegen)?;
         // All method-style functions registered successfully
         Ok(())
     }
@@ -85,102 +83,52 @@ impl MethodStyleManager {
         Ok(())
     }
 
-    /// Register validation methods for assertions
-    fn register_validation_methods(
-        &self,
-        codegen: &mut CodeGenerator,
-    ) -> Result<(), CompilerError> {
-        // Register validation methods for all types
-        let types = ["integer", "number", "string", "boolean", "value"];
-
-        for type_name in &types {
-            // Assert that condition is true
-            register_stdlib_function(
-                codegen,
-                &format!("{type_name}.mustBeTrue"),
-                &[WasmType::I32, WasmType::I32], // value pointer, condition
-                None,                            // void
-                self.generate_must_be_true(),
-            )?;
-
-            // Assert that condition is false
-            register_stdlib_function(
-                codegen,
-                &format!("{type_name}.mustBeFalse"),
-                &[WasmType::I32, WasmType::I32], // value pointer, condition
-                None,                            // void
-                self.generate_must_be_false(),
-            )?;
-
-            // Assert that two values are equal
-            register_stdlib_function(
-                codegen,
-                &format!("{type_name}.mustBeEqual"),
-                &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
-                None,                            // void
-                self.generate_must_be_equal(),
-            )?;
-
-            // Assert that two values are not equal
-            register_stdlib_function(
-                codegen,
-                &format!("{type_name}.mustNotBeEqual"),
-                &[WasmType::I32, WasmType::I32], // value1 pointer, value2 pointer
-                None,                            // void
-                self.generate_must_not_be_equal(),
-            )?;
-        }
-
-        Ok(())
-    }
-
-    /// Register type conversion methods
+    /// Register type conversion methods (stdlib-reference §3).
+    ///
+    /// Each body works on the receiver's own representation: integers and
+    /// booleans arrive as i32 values, numbers as f64. `integer.toString`,
+    /// `boolean.toString`, `string.toInteger` and `string.toNumber` are
+    /// aliases to the native converters, registered with the memory
+    /// operations.
     fn register_conversion_methods(
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // Register conversion methods for all types
-        let types = ["integer", "number", "string", "boolean", "value"];
-
-        for type_name in &types {
-            // String conversion
-            register_stdlib_function(
-                codegen,
-                &format!("{type_name}.toString"),
-                &[WasmType::I32],    // value pointer
-                Some(WasmType::I32), // string pointer
-                self.generate_value_to_string(),
-            )?;
-
-            // Integer conversion - needs extra local for type tag
-            register_stdlib_function_with_locals(
-                codegen,
-                &format!("{type_name}.toInteger"),
-                &[WasmType::I32],    // value pointer
-                Some(WasmType::I32), // integer value
-                &[WasmType::I32],    // local 1: type tag storage
-                self.generate_value_to_integer(),
-            )?;
-
-            // Number conversion - handle both I32 and F64 inputs
-            register_stdlib_function(
-                codegen,
-                &format!("{type_name}.toNumber"),
-                &[WasmType::I32],    // value pointer (for most types)
-                Some(WasmType::F64), // number value
-                self.generate_value_to_number_from_ptr(),
-            )?;
-
-            // Boolean conversion — a string reads its text (see below).
-            if *type_name != "string" {
-                register_stdlib_function(
-                    codegen,
-                    &format!("{type_name}.toBoolean"),
-                    &[WasmType::I32],    // value pointer
-                    Some(WasmType::I32), // boolean value
-                    self.generate_value_to_boolean(),
-                )?;
-            }
+        use WasmType::{F64, I32};
+        let conversions: [(&str, WasmType, WasmType, Vec<Instruction<'static>>); 9] = [
+            // A string is already a string.
+            ("string.toString", I32, I32, vec![Instruction::LocalGet(0)]),
+            (
+                "integer.toInteger",
+                I32,
+                I32,
+                vec![Instruction::LocalGet(0)],
+            ),
+            (
+                "integer.toNumber",
+                I32,
+                F64,
+                vec![Instruction::LocalGet(0), Instruction::F64ConvertI32S],
+            ),
+            ("integer.toBoolean", I32, I32, Self::nonzero_i32()),
+            // Truncates toward zero; NaN and out-of-range values saturate.
+            (
+                "number.toInteger",
+                F64,
+                I32,
+                vec![Instruction::LocalGet(0), Instruction::I32TruncSatF64S],
+            ),
+            ("number.toNumber", F64, F64, vec![Instruction::LocalGet(0)]),
+            ("boolean.toBoolean", I32, I32, Self::nonzero_i32()),
+            ("boolean.toInteger", I32, I32, Self::nonzero_i32()),
+            ("boolean.toNumber", I32, F64, {
+                let mut body = Self::nonzero_i32();
+                body.push(Instruction::F64ConvertI32U);
+                body
+            }),
+        ];
+        for (name, param, result, body) in conversions {
+            register_stdlib_function(codegen, name, &[param], Some(result), body)?;
         }
 
         // string.toBoolean: "true" and "1" are true; "false", "0" and any
@@ -193,41 +141,21 @@ impl MethodStyleManager {
             self.generate_string_to_boolean(),
         )?;
 
-        // Special case for number.toNumber that takes F64 directly
-        register_stdlib_function(
-            codegen,
-            "number.toNumber",
-            &[WasmType::F64],    // value (f64)
-            Some(WasmType::F64), // number value
-            self.generate_value_to_number(),
-        )?;
+        // number.toString is the host float formatter.
+        if let Some(float_to_string) = codegen.get_function_index("float_to_string") {
+            codegen.add_function_alias("number.toString", float_to_string);
+        }
 
         Ok(())
     }
 
-    /// Register boundary/range methods
-    fn register_boundary_methods(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
-        // Keep integer value within bounds
-        register_stdlib_function_with_locals(
-            codegen,
-            "integer.keepBetween",
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // value, min, max
-            Some(WasmType::I32),                            // clamped value
-            &[WasmType::I32],                               // local 3 for intermediate result
-            self.generate_integer_keep_between(),
-        )?;
-
-        // Keep number value within bounds
-        register_stdlib_function_with_locals(
-            codegen,
-            "number.keepBetween",
-            &[WasmType::F64, WasmType::F64, WasmType::F64], // value, min, max
-            Some(WasmType::F64),                            // clamped value
-            &[WasmType::F64],                               // local 3 for intermediate result
-            self.generate_number_keep_between(),
-        )?;
-
-        Ok(())
+    /// `local 0 != 0` as an i32 boolean.
+    fn nonzero_i32() -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::LocalGet(0),
+            Instruction::I32Const(0),
+            Instruction::I32Ne,
+        ]
     }
 
     /// Generate WASM for value.length() method
@@ -391,182 +319,6 @@ impl MethodStyleManager {
         ]
     }
 
-    /// Generate WASM for value.mustBeTrue() method
-    fn generate_must_be_true(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value_ptr (0), condition (1)
-            // Asserts that condition is true
-            Instruction::LocalGet(1), // condition
-            Instruction::I32Eqz,
-            Instruction::If(BlockType::Empty),
-            // Condition is false - trigger error
-            // For now, just return (in production would throw exception)
-            Instruction::Unreachable,
-            Instruction::End,
-        ]
-    }
-
-    /// Generate WASM for value.mustBeFalse() method
-    fn generate_must_be_false(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value_ptr (0), condition (1)
-            // Asserts that condition is false
-            Instruction::LocalGet(1), // condition
-            Instruction::If(BlockType::Empty),
-            // Condition is true - trigger error
-            Instruction::Unreachable,
-            Instruction::End,
-        ]
-    }
-
-    /// Generate WASM for value.mustBeEqual() method
-    fn generate_must_be_equal(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value1_ptr (0), value2_ptr (1)
-            // Asserts that values are equal
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::I32Ne,
-            Instruction::If(BlockType::Empty),
-            // Values are not equal - trigger error
-            Instruction::Unreachable,
-            Instruction::End,
-        ]
-    }
-
-    /// Generate WASM for value.mustNotBeEqual() method
-    fn generate_must_not_be_equal(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value1_ptr (0), value2_ptr (1)
-            // Asserts that values are not equal
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(1),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Empty),
-            // Values are equal - trigger error
-            Instruction::Unreachable,
-            Instruction::End,
-        ]
-    }
-
-    /// Generate WASM for value.toString() method
-    fn generate_value_to_string(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value_ptr (0)
-            // Returns: string pointer
-
-            // For now, return the input value as-is (assuming it's already a string pointer)
-            // In a full implementation, this would check the object type and convert appropriately
-            Instruction::LocalGet(0),
-        ]
-    }
-
-    /// Generate WASM for value.toInteger() method
-    /// Handles boxed Any values from JSON parsing
-    /// Memory layout: [type_tag: i32][value: f64 or i32 pointer]
-    fn generate_value_to_integer(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value_ptr (0)
-            // Returns: integer value
-            //
-            // Boxed Any format from JSON:
-            // - Offset 0: type tag (i32)
-            //   - 0 = null
-            //   - 1 = false
-            //   - 2 = true
-            //   - 3 = number (f64 at offset 4)
-            //   - 4 = string (string ptr at offset 4)
-            //   - 5 = array
-            //   - 6 = object
-            // - Offset 4: value (f64 for numbers, i32 ptr for others)
-
-            // Check for null pointer (safety check)
-            Instruction::LocalGet(0),
-            Instruction::I32Eqz,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0), // null returns 0
-            Instruction::Else,
-            // Load type tag from offset 0
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(1), // Store type tag in local 1
-            // Check if type tag is 3 (number)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(3),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            // Type is number - load f64 from offset 4 and convert to i32
-            Instruction::LocalGet(0),
-            Instruction::F64Load(MemArg {
-                offset: 4,
-                align: 3,
-                memory_index: 0,
-            }),
-            Instruction::I32TruncF64S, // Convert f64 to i32
-            Instruction::Else,
-            // Check for boolean true (type tag 2)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(2),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(1), // true = 1
-            Instruction::Else,
-            // For null/false/other, return 0
-            Instruction::I32Const(0),
-            Instruction::End,
-            Instruction::End,
-            Instruction::End,
-        ]
-    }
-
-    /// Generate WASM for value.toNumber() method
-    fn generate_value_to_number(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value (f64)
-            // Returns: number value (same as input for numbers)
-            Instruction::LocalGet(0),
-        ]
-    }
-
-    /// Generate WASM for value.toNumber() method from pointer
-    fn generate_value_to_number_from_ptr(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value_ptr (0)
-            // Returns: number value (f64)
-
-            // Load value from pointer and convert to f64
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::F64ConvertI32S, // Convert i32 to f64
-        ]
-    }
-
-    /// Generate WASM for value.toBoolean() method
-    fn generate_value_to_boolean(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value_ptr (0)
-            // Returns: boolean value (1 or 0)
-
-            // Convert value to boolean
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::I32Const(0),
-            Instruction::I32Ne, // 0 = false, non-zero = true
-        ]
-    }
-
     /// Generate WASM for string.toBoolean(): compares the length-prefixed
     /// text with "true" (4 bytes) and "1" (1 byte).
     fn generate_string_to_boolean(&self) -> Vec<Instruction> {
@@ -614,56 +366,4 @@ impl MethodStyleManager {
             Instruction::End,
         ]
     }
-
-    /// Generate WASM for integer.keepBetween() method
-    fn generate_integer_keep_between(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value (0), min (1), max (2)
-            // Returns: clamped value
-
-            // Clamp to minimum: select(min, value, value < min)
-            Instruction::LocalGet(1), // min
-            Instruction::LocalGet(0), // value
-            Instruction::LocalGet(0), // value
-            Instruction::LocalGet(1), // min
-            Instruction::I32LtS,      // value < min (condition)
-            Instruction::Select,      // Choose min if value < min, else value
-            // Store intermediate result in local 3 (without leaving on stack)
-            Instruction::LocalSet(3), // Store clamped-to-min value (consuming stack)
-            // Clamp to maximum: select(max, clamped_value, clamped_value > max)
-            Instruction::LocalGet(2), // max
-            Instruction::LocalGet(3), // clamped_value
-            Instruction::LocalGet(3), // clamped_value
-            Instruction::LocalGet(2), // max
-            Instruction::I32GtS,      // clamped_value > max (condition)
-            Instruction::Select,      // Choose max if > max, else clamped_value
-        ]
-    }
-
-    /// Generate WASM for number.keepBetween() method
-    fn generate_number_keep_between(&self) -> Vec<Instruction> {
-        vec![
-            // Parameters: value (0), min (1), max (2)
-            // Returns: clamped value
-
-            // Clamp to minimum: select(min, value, value < min)
-            Instruction::LocalGet(1), // min
-            Instruction::LocalGet(0), // value
-            Instruction::LocalGet(0), // value
-            Instruction::LocalGet(1), // min
-            Instruction::F64Lt,       // value < min (condition)
-            Instruction::Select,      // Choose min if value < min, else value
-            // Store intermediate result in local 3 (without leaving on stack)
-            Instruction::LocalSet(3), // Store clamped-to-min value (consuming stack)
-            // Clamp to maximum: select(max, clamped_value, clamped_value > max)
-            Instruction::LocalGet(2), // max
-            Instruction::LocalGet(3), // clamped_value
-            Instruction::LocalGet(3), // clamped_value
-            Instruction::LocalGet(2), // max
-            Instruction::F64Gt,       // clamped_value > max (condition)
-            Instruction::Select,      // Choose max if > max, else clamped_value
-        ]
-    }
-
-    // Helper methods removed - replaced with direct memory access for better performance and reliability
 }

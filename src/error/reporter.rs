@@ -7,7 +7,7 @@
 //! - Multi-error reporting
 
 use super::*;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 /// Color codes for terminal output
 #[derive(Debug, Clone)]
@@ -27,8 +27,10 @@ pub struct Colors {
 }
 
 impl Colors {
+    /// Colors for stderr: only when `use_colors` is set, stderr is a
+    /// terminal and NO_COLOR is not set.
     pub fn new(use_colors: bool) -> Self {
-        if use_colors && atty::is(atty::Stream::Stderr) {
+        if use_colors && std::env::var_os("NO_COLOR").is_none() && io::stderr().is_terminal() {
             Self {
                 reset: "\x1b[0m",
                 bold: "\x1b[1m",
@@ -62,11 +64,22 @@ impl Colors {
     }
 }
 
+/// How one kind of error is rendered.
+struct ErrorKind {
+    /// Header used when the error is shown without a code.
+    title: &'static str,
+    /// Code shown when the error carries none (`None`: show the title).
+    default_code: Option<&'static str>,
+    /// Show `error[CODE]: message` when a code is available, instead of the
+    /// title followed by the message.
+    prefer_code: bool,
+    /// Show the source lines around the error location.
+    show_source: bool,
+}
+
 /// Error reporter with comprehensive formatting
 pub struct ErrorReporter {
     colors: Colors,
-    show_source: bool,
-    show_suggestions: bool,
     max_suggestions: usize,
     indent: String,
 }
@@ -75,18 +88,9 @@ impl ErrorReporter {
     pub fn new(use_colors: bool) -> Self {
         Self {
             colors: Colors::new(use_colors),
-            show_source: true,
-            show_suggestions: true,
             max_suggestions: 5,
             indent: "  ".to_string(),
         }
-    }
-
-    /// Configure reporter options
-    pub fn configure(&mut self, show_source: bool, show_suggestions: bool, max_suggestions: usize) {
-        self.show_source = show_source;
-        self.show_suggestions = show_suggestions;
-        self.max_suggestions = max_suggestions;
     }
 
     /// Report a single error with full formatting
@@ -95,50 +99,109 @@ impl ErrorReporter {
         error: &CompilerError,
         source_code: Option<&str>,
     ) -> Result<(), io::Error> {
-        let mut stderr = io::stderr();
+        self.write_error(&mut io::stderr(), error, source_code)
+    }
 
-        match error {
-            CompilerError::Syntax { context } => {
-                self.report_syntax_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::Type { context } => {
-                self.report_type_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::Memory { context } => {
-                self.report_memory_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::Codegen { context } => {
-                self.report_codegen_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::IO { context } => {
-                self.report_io_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::Runtime { context } => {
-                self.report_runtime_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::Validation { context } => {
-                self.report_validation_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::Module { context } => {
-                self.report_module_error(&mut stderr, context, source_code)?;
-            }
-            CompilerError::Testing { context } => {
-                self.report_validation_error(&mut stderr, context, source_code)?;
-            }
+    fn write_error(
+        &self,
+        writer: &mut dyn Write,
+        error: &CompilerError,
+        source_code: Option<&str>,
+    ) -> Result<(), io::Error> {
+        let c = &self.colors;
+        let (context, kind, color) = match error {
+            CompilerError::Syntax { context } => (
+                context,
+                ErrorKind {
+                    title: "Syntax Error",
+                    default_code: Some("SYN001"),
+                    prefer_code: true,
+                    show_source: true,
+                },
+                c.bright_red,
+            ),
+            CompilerError::Type { context } => (
+                context,
+                ErrorKind {
+                    title: "Type Error",
+                    default_code: Some("TYP001"),
+                    prefer_code: true,
+                    show_source: true,
+                },
+                c.red,
+            ),
+            CompilerError::Validation { context } => (
+                context,
+                ErrorKind {
+                    title: "Validation Error",
+                    default_code: None,
+                    prefer_code: true,
+                    show_source: true,
+                },
+                c.yellow,
+            ),
+            CompilerError::Memory { context } => (
+                context,
+                ErrorKind {
+                    title: "Memory Error",
+                    default_code: None,
+                    prefer_code: false,
+                    show_source: true,
+                },
+                c.magenta,
+            ),
+            CompilerError::Codegen { context } => (
+                context,
+                ErrorKind {
+                    title: "Code Generation Error",
+                    default_code: None,
+                    prefer_code: false,
+                    show_source: false,
+                },
+                c.yellow,
+            ),
+            CompilerError::IO { context } => (
+                context,
+                ErrorKind {
+                    title: "I/O Error",
+                    default_code: None,
+                    prefer_code: false,
+                    show_source: false,
+                },
+                c.cyan,
+            ),
+            CompilerError::Runtime { context } => (
+                context,
+                ErrorKind {
+                    title: "Runtime Error",
+                    default_code: None,
+                    prefer_code: false,
+                    show_source: false,
+                },
+                c.bright_red,
+            ),
+            CompilerError::Module { context } => (
+                context,
+                ErrorKind {
+                    title: "Module Error",
+                    default_code: None,
+                    prefer_code: false,
+                    show_source: false,
+                },
+                c.blue,
+            ),
             CompilerError::LexError(lex_error) => {
-                // Handle lexical errors
-                writeln!(stderr, "Lexical error: {}", lex_error)?;
+                return writeln!(writer, "Lexical error: {}", lex_error);
             }
             CompilerError::PluginError { message, location } => {
-                // Handle plugin errors
-                writeln!(stderr, "Plugin error: {}", message)?;
+                writeln!(writer, "Plugin error: {}", message)?;
                 if let Some(loc) = location {
-                    writeln!(stderr, "  at {}:{}:{}", loc.file, loc.line, loc.column)?;
+                    writeln!(writer, "  at {}:{}:{}", loc.file, loc.line, loc.column)?;
                 }
+                return Ok(());
             }
-        }
-
-        Ok(())
+        };
+        self.write_context(writer, context, source_code, &kind, color)
     }
 
     /// Report multiple errors with summary
@@ -158,7 +221,7 @@ impl ErrorReporter {
             if i > 0 {
                 writeln!(stderr)?; // Separator between errors
             }
-            self.report_error(error, source_code)?;
+            self.write_error(&mut stderr, error, source_code)?;
         }
 
         // Summary
@@ -168,23 +231,27 @@ impl ErrorReporter {
         Ok(())
     }
 
-    fn report_syntax_error(
+    fn write_context(
         &self,
         writer: &mut dyn Write,
         context: &ErrorContext,
         source_code: Option<&str>,
+        kind: &ErrorKind,
+        color: &str,
     ) -> Result<(), io::Error> {
-        // Use error code if available, otherwise use type-based code
-        let error_code = context.error_code.as_deref().unwrap_or("SYN001");
-        self.write_error_header_with_code(
-            writer,
-            &context.message,
-            error_code,
-            self.colors.bright_red,
-        )?;
+        let code = context.error_code.as_deref().or(kind.default_code);
+        match code {
+            Some(code) if kind.prefer_code => {
+                self.write_error_header_with_code(writer, &context.message, code, color)?;
+            }
+            _ => {
+                self.write_error_header(writer, kind.title, color)?;
+                self.write_error_message(writer, &context.message)?;
+            }
+        }
         self.write_error_location(writer, context)?;
 
-        if self.show_source {
+        if kind.show_source {
             self.write_source_context(writer, context, source_code)?;
         }
 
@@ -192,152 +259,8 @@ impl ErrorReporter {
             self.write_help_message(writer, help)?;
         }
 
-        if self.show_suggestions && !context.suggestions.is_empty() {
+        if !context.suggestions.is_empty() {
             self.write_suggestions(writer, &context.suggestions)?;
-        }
-
-        Ok(())
-    }
-
-    fn report_type_error(
-        &self,
-        writer: &mut dyn Write,
-        context: &ErrorContext,
-        source_code: Option<&str>,
-    ) -> Result<(), io::Error> {
-        let error_code = context.error_code.as_deref().unwrap_or("TYP001");
-        self.write_error_header_with_code(writer, &context.message, error_code, self.colors.red)?;
-        self.write_error_location(writer, context)?;
-
-        if self.show_source {
-            self.write_source_context(writer, context, source_code)?;
-        }
-
-        if let Some(help) = &context.help {
-            self.write_help_message(writer, help)?;
-        }
-
-        if self.show_suggestions && !context.suggestions.is_empty() {
-            self.write_suggestions(writer, &context.suggestions)?;
-        }
-
-        Ok(())
-    }
-
-    fn report_memory_error(
-        &self,
-        writer: &mut dyn Write,
-        context: &ErrorContext,
-        source_code: Option<&str>,
-    ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Memory Error", self.colors.magenta)?;
-        self.write_error_message(writer, &context.message)?;
-        self.write_error_location(writer, context)?;
-
-        if self.show_source {
-            self.write_source_context(writer, context, source_code)?;
-        }
-
-        if let Some(help) = &context.help {
-            self.write_help_message(writer, help)?;
-        }
-
-        Ok(())
-    }
-
-    fn report_codegen_error(
-        &self,
-        writer: &mut dyn Write,
-        context: &ErrorContext,
-        _source_code: Option<&str>,
-    ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Code Generation Error", self.colors.yellow)?;
-        self.write_error_message(writer, &context.message)?;
-        self.write_error_location(writer, context)?;
-
-        if let Some(help) = &context.help {
-            self.write_help_message(writer, help)?;
-        }
-
-        Ok(())
-    }
-
-    fn report_io_error(
-        &self,
-        writer: &mut dyn Write,
-        context: &ErrorContext,
-        _source_code: Option<&str>,
-    ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "I/O Error", self.colors.cyan)?;
-        self.write_error_message(writer, &context.message)?;
-        self.write_error_location(writer, context)?;
-
-        if let Some(help) = &context.help {
-            self.write_help_message(writer, help)?;
-        }
-
-        Ok(())
-    }
-
-    fn report_runtime_error(
-        &self,
-        writer: &mut dyn Write,
-        context: &ErrorContext,
-        _source_code: Option<&str>,
-    ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Runtime Error", self.colors.bright_red)?;
-        self.write_error_message(writer, &context.message)?;
-        self.write_error_location(writer, context)?;
-
-        // Show stack trace for runtime errors
-        if !context.stack_trace.is_empty() {
-            self.write_stack_trace(writer, &context.stack_trace)?;
-        }
-
-        if let Some(help) = &context.help {
-            self.write_help_message(writer, help)?;
-        }
-
-        Ok(())
-    }
-
-    fn report_validation_error(
-        &self,
-        writer: &mut dyn Write,
-        context: &ErrorContext,
-        source_code: Option<&str>,
-    ) -> Result<(), io::Error> {
-        if let Some(code) = context.error_code.as_deref() {
-            self.write_error_header_with_code(writer, &context.message, code, self.colors.yellow)?;
-        } else {
-            self.write_error_header(writer, "Validation Error", self.colors.yellow)?;
-            self.write_error_message(writer, &context.message)?;
-        }
-        self.write_error_location(writer, context)?;
-
-        if self.show_source {
-            self.write_source_context(writer, context, source_code)?;
-        }
-
-        if let Some(help) = &context.help {
-            self.write_help_message(writer, help)?;
-        }
-
-        Ok(())
-    }
-
-    fn report_module_error(
-        &self,
-        writer: &mut dyn Write,
-        context: &ErrorContext,
-        _source_code: Option<&str>,
-    ) -> Result<(), io::Error> {
-        self.write_error_header(writer, "Module Error", self.colors.blue)?;
-        self.write_error_message(writer, &context.message)?;
-        self.write_error_location(writer, context)?;
-
-        if let Some(help) = &context.help {
-            self.write_help_message(writer, help)?;
         }
 
         Ok(())
@@ -442,7 +365,13 @@ impl ErrorReporter {
                         let underline_len = self.calculate_underline_length(line, col, context);
 
                         // Show error indicator with ^^^^ underline
-                        let spaces = " ".repeat(col);
+                        // Keep tabs from the source line so the caret lines up
+                        // under tab-indented code.
+                        let spaces: String = line
+                            .chars()
+                            .take(col)
+                            .map(|c| if c == '\t' { '\t' } else { ' ' })
+                            .collect();
                         let underline = "^".repeat(underline_len);
                         writeln!(
                             writer,
@@ -459,18 +388,8 @@ impl ErrorReporter {
 
                         // Show inline error message
                         if !context.message.is_empty() {
-                            // Truncate message if too long. Slice on a char
-                            // boundary — messages contain UTF-8 punctuation
-                            // like `—` that panic on raw byte indexing.
-                            let inline_msg = if context.message.chars().count() > 50 {
-                                let mut end = 47;
-                                while end > 0 && !context.message.is_char_boundary(end) {
-                                    end -= 1;
-                                }
-                                format!("{}...", &context.message[..end])
-                            } else {
-                                context.message.clone()
-                            };
+                            // Truncate long messages by characters, not bytes.
+                            let inline_msg = super::truncate_chars(&context.message, 50);
                             writeln!(
                                 writer,
                                 "{}{:>width$} |{} {}{}{}{}",
@@ -503,63 +422,40 @@ impl ErrorReporter {
         Ok(())
     }
 
-    /// Calculate the length of the underline based on context
+    /// Calculate the length of the underline based on context.
+    ///
+    /// `col` is a 0-based *character* column (source locations count
+    /// characters, not bytes), so all indexing here goes through `chars()`.
     fn calculate_underline_length(&self, line: &str, col: usize, context: &ErrorContext) -> usize {
-        // Try to extract a reasonable span from the error context
-        // Look for identifiers, keywords, or tokens at the error position
+        let chars: Vec<char> = line.chars().collect();
+        if col >= chars.len() {
+            return 1;
+        }
+        let remaining: String = chars[col..].iter().collect();
 
-        // If message mentions a specific identifier, try to find it
+        // If the message names an identifier that sits at the column, underline it.
         if let Some(identifier) = self.extract_identifier_from_message(&context.message) {
-            if col < line.len() {
-                // Check if the identifier is at the column position
-                let remaining = &line[col..];
-                if remaining.starts_with(&identifier) {
-                    return identifier.len().max(1);
-                }
+            if remaining.starts_with(&identifier) {
+                return identifier.chars().count().max(1);
             }
         }
 
-        // Try to find the extent of the current token at column position
-        if col < line.len() {
-            let chars: Vec<char> = line.chars().collect();
-            let mut len = 0;
-
-            // Skip to the character at col
-            let mut char_idx = 0;
-            let mut byte_idx = 0;
-            for (i, c) in chars.iter().enumerate() {
-                if byte_idx >= col {
-                    char_idx = i;
-                    break;
-                }
-                byte_idx += c.len_utf8();
-            }
-
-            // Extend to the end of the current token (identifier, keyword, or symbol)
-            let first_char = chars.get(char_idx).copied().unwrap_or(' ');
-            if first_char.is_alphanumeric() || first_char == '_' {
-                // Identifier or keyword
-                for c in chars[char_idx..].iter() {
-                    if c.is_alphanumeric() || *c == '_' {
-                        len += 1;
-                    } else {
-                        break;
-                    }
-                }
-            } else if !first_char.is_whitespace() {
-                // Operator or symbol - take 1-2 characters
-                len = 1;
-                if char_idx + 1 < chars.len()
-                    && !chars[char_idx + 1].is_alphanumeric()
-                    && !chars[char_idx + 1].is_whitespace()
-                {
-                    len = 2;
+        // Otherwise extend to the end of the token at the column position.
+        let first_char = chars[col];
+        if first_char.is_alphanumeric() || first_char == '_' {
+            return chars[col..]
+                .iter()
+                .take_while(|c| c.is_alphanumeric() || **c == '_')
+                .count();
+        }
+        if !first_char.is_whitespace() {
+            // Operator or symbol - take 1-2 characters
+            if let Some(next) = chars.get(col + 1) {
+                if !next.is_alphanumeric() && !next.is_whitespace() {
+                    return 2;
                 }
             }
-
-            if len > 0 {
-                return len;
-            }
+            return 1;
         }
 
         // Default: single caret
@@ -636,39 +532,6 @@ impl ErrorReporter {
         Ok(())
     }
 
-    fn write_stack_trace(
-        &self,
-        writer: &mut dyn Write,
-        stack_trace: &[StackFrame],
-    ) -> Result<(), io::Error> {
-        writeln!(
-            writer,
-            "{}{}stack trace:{}",
-            self.indent, self.colors.cyan, self.colors.reset
-        )?;
-
-        for frame in stack_trace {
-            if let Some(location) = &frame.location {
-                writeln!(
-                    writer,
-                    "{}  {} in {} at {}:{}",
-                    self.indent,
-                    self.colors.cyan,
-                    frame.function_name,
-                    location.file,
-                    location.line
-                )?;
-            } else {
-                writeln!(
-                    writer,
-                    "{}  {} in {}",
-                    self.indent, self.colors.cyan, frame.function_name
-                )?;
-            }
-        }
-        Ok(())
-    }
-
     fn write_error_summary(
         &self,
         writer: &mut dyn Write,
@@ -687,7 +550,6 @@ impl ErrorReporter {
                 CompilerError::Runtime { .. } => "runtime",
                 CompilerError::Validation { .. } => "validation",
                 CompilerError::Module { .. } => "module",
-                CompilerError::Testing { .. } => "testing",
                 CompilerError::LexError(_) => "lexical",
                 CompilerError::PluginError { .. } => "plugin",
             };
@@ -719,23 +581,49 @@ impl Default for ErrorReporter {
     }
 }
 
-/// Simple function to detect if terminal supports colors
-mod atty {
-    #[cfg(unix)]
-    pub fn is(stream: Stream) -> bool {
-        use std::os::unix::io::AsRawFd;
-        match stream {
-            Stream::Stderr => unsafe { libc::isatty(std::io::stderr().as_raw_fd()) != 0 },
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::SourceLocation;
+
+    fn context_at(message: &str, line: usize, column: usize) -> ErrorContext {
+        let mut ctx = ErrorContext::new(message, None, ErrorType::Syntax, None);
+        ctx.location = Some(SourceLocation {
+            line,
+            column,
+            file: "test.cln".to_string(),
+            byte_start: None,
+            byte_end: None,
+        });
+        ctx
+    }
+
+    #[test]
+    fn underline_uses_character_columns_after_multibyte_text() {
+        // The `bad` identifier starts at character column 19 (0-based) but at
+        // byte offset 21, so treating the column as a byte index sliced into
+        // the middle of the line and could land inside a multi-byte `é`.
+        let line = "\tstring s = \"éé\" + bad";
+        let reporter = ErrorReporter::new(false);
+        let ctx = context_at("Undefined variable 'bad'", 1, 20);
+        assert_eq!(reporter.calculate_underline_length(line, 19, &ctx), 3);
+        for col in 0..line.chars().count() + 2 {
+            reporter.calculate_underline_length(line, col, &ctx);
         }
     }
 
-    #[cfg(not(unix))]
-    pub fn is(_stream: Stream) -> bool {
-        // Conservative approach for non-Unix systems
-        std::env::var("NO_COLOR").is_err()
-    }
-
-    pub enum Stream {
-        Stderr,
+    #[test]
+    fn source_context_renders_multibyte_lines() {
+        let source = "start:\n\tprint(\"ñandú — ok\" + missing)\n";
+        let ctx = context_at("Undefined variable 'missing'", 2, 23);
+        let reporter = ErrorReporter::new(false);
+        let mut out = Vec::new();
+        reporter
+            .write_source_context(&mut out, &ctx, Some(source))
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("^^^^^^^"), "caret line missing: {text}");
+        // The caret prefix keeps the tab so it lines up under the code.
+        assert!(text.contains("| \t"), "tab not preserved: {text:?}");
     }
 }

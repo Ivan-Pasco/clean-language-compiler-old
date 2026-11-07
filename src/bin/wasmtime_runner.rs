@@ -11,7 +11,8 @@ use wasmtime::{Caller, Extern, Linker, Memory, Module, Result, Store};
 // runtime heap.  Must match `native_stdlib::HEAP_START` (1,048,576) in
 // `src/codegen/native_stdlib/mod.rs`.  See MEMORY_POLICY.md section 7 for the
 // full memory layout:  [0..1KB] reserved, [1KB..1MB] data section, [1MB..] heap.
-static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(1048576);
+const HEAP_START: usize = 1048576;
+static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(HEAP_START);
 
 // Scope marks for arena-style memory management
 // When entering a scope (loop, function), push current offset
@@ -83,11 +84,44 @@ fn allocate_string_in_memory(
     offset as i32
 }
 
+/// The UTF-8 text at `ptr..ptr + len` in the module's memory; traps on a
+/// missing memory export, an out-of-bounds range or invalid UTF-8.
+fn read_utf8(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> Result<String> {
+    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+        return Err(wasmtime::Error::msg("module exports no memory"));
+    };
+    let start = ptr as u32 as usize;
+    let end = start + len as u32 as usize;
+    let bytes = memory
+        .data(&*caller)
+        .get(start..end)
+        .ok_or_else(|| wasmtime::Error::msg(format!("string {start}..{end} is out of bounds")))?;
+    String::from_utf8(bytes.to_vec()).map_err(|e| wasmtime::Error::msg(e.to_string()))
+}
+
+/// Call an exported function; on a trap print the whole error chain (the
+/// trap message, e.g. an unavailable host function, sits under the WASM
+/// backtrace) and exit 1.
+fn call_or_exit(func: &wasmtime::Func, store: &mut Store<()>, results: &mut [wasmtime::Val]) {
+    if let Err(e) = func.call(&mut *store, &[], results) {
+        eprintln!("Error: {e:?}");
+        std::process::exit(1);
+    }
+}
+
+/// Trap raised when a program calls a host function this runner cannot
+/// provide.
+fn unavailable(name: &str) -> wasmtime::Error {
+    wasmtime::Error::msg(format!(
+        "host function `{name}` is not available in wasmtime_runner; run this program on clean-server (or another host that provides it)"
+    ))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {program} <wasm_file>", program = args[0]);
-        return Ok(());
+        std::process::exit(1);
     }
 
     let wasm_file = &args[1];
@@ -214,115 +248,212 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{value}");
     })?;
 
-    // Add file operation stubs (they won't be used in this test)
+    // File bridges work on the local file system. `file_read` and the host
+    // functions this standalone runner does not provide (HTTP, console
+    // input, server request context, sessions, auth, UI, async, endpoint
+    // tests) trap with a clear message when called, so a program that needs
+    // them fails loudly instead of running on fake results.
     linker.func_wrap(
         "env",
         "file_write",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |mut caller: Caller<'_, ()>,
+         path_ptr: i32,
+         path_len: i32,
+         ptr: i32,
+         len: i32|
+         -> Result<i32> {
+            let path = read_utf8(&mut caller, path_ptr, path_len)?;
+            let content = read_utf8(&mut caller, ptr, len)?;
+            Ok(i32::from(fs::write(path, content).is_ok()))
+        },
     )?;
-    linker.func_wrap("env", "file_read", |_: i32, _: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "file_exists", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "file_delete", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap(
+        "env",
+        "file_read",
+        |_: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("file_read")) },
+    )?;
+    linker.func_wrap(
+        "env",
+        "file_exists",
+        |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> Result<i32> {
+            let path = read_utf8(&mut caller, ptr, len)?;
+            Ok(i32::from(std::path::Path::new(&path).exists()))
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "file_delete",
+        |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> Result<i32> {
+            let path = read_utf8(&mut caller, ptr, len)?;
+            Ok(i32::from(fs::remove_file(path).is_ok()))
+        },
+    )?;
     linker.func_wrap(
         "env",
         "file_append",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |mut caller: Caller<'_, ()>,
+         path_ptr: i32,
+         path_len: i32,
+         ptr: i32,
+         len: i32|
+         -> Result<i32> {
+            use std::io::Write as _;
+            let path = read_utf8(&mut caller, path_ptr, path_len)?;
+            let content = read_utf8(&mut caller, ptr, len)?;
+            let appended = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut f| f.write_all(content.as_bytes()));
+            Ok(i32::from(appended.is_ok()))
+        },
     )?;
-    linker.func_wrap("env", "http_get", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_get", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("http_get"))
+    })?;
     linker.func_wrap(
         "env",
         "http_post",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("http_post")) },
     )?;
-    linker.func_wrap("env", "http_put", |_: i32, _: i32, _: i32, _: i32| -> i32 {
-        0
+    linker.func_wrap(
+        "env",
+        "http_put",
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("http_put")) },
+    )?;
+    linker.func_wrap("env", "http_delete", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("http_delete"))
     })?;
-    linker.func_wrap("env", "http_delete", |_: i32, _: i32| -> i32 { 0 })?;
     linker.func_wrap(
         "env",
         "http_patch",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("http_patch")) },
     )?;
-    linker.func_wrap("env", "http_head", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "http_options", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "http_head", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("http_head"))
+    })?;
+    linker.func_wrap("env", "http_options", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("http_options"))
+    })?;
 
     // JSON bridges (stdlib-reference §8): the real implementation, so JSON
     // programs run end to end without a clean-server host.
     register_json_bridges(&mut linker)?;
 
     // Add additional required imports
-    linker.func_wrap("env", "input", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "input_integer", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "input_float", |_: i32| -> f64 { 0.0 })?;
-    linker.func_wrap("env", "input_yesno", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "input", |_: i32| -> Result<i32> {
+        Err(unavailable("input"))
+    })?;
+    linker.func_wrap("env", "input_integer", |_: i32| -> Result<i32> {
+        Err(unavailable("input_integer"))
+    })?;
+    linker.func_wrap("env", "input_float", |_: i32| -> Result<f64> {
+        Err(unavailable("input_float"))
+    })?;
+    linker.func_wrap("env", "input_yesno", |_: i32| -> Result<i32> {
+        Err(unavailable("input_yesno"))
+    })?;
     linker.func_wrap(
         "env",
         "input_range",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("input_range")) },
     )?;
 
     // HTTP imports with headers
     linker.func_wrap(
         "env",
         "http_get_with_headers",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> {
+            Err(unavailable("http_get_with_headers"))
+        },
     )?;
     linker.func_wrap(
         "env",
         "http_post_with_headers",
-        |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> Result<i32> {
+            Err(unavailable("http_post_with_headers"))
+        },
     )?;
     linker.func_wrap(
         "env",
         "http_post_json",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("http_post_json")) },
     )?;
     linker.func_wrap(
         "env",
         "http_put_json",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("http_put_json")) },
     )?;
     linker.func_wrap(
         "env",
         "http_patch_json",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("http_patch_json")) },
     )?;
     linker.func_wrap(
         "env",
         "http_post_form",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("http_post_form")) },
     )?;
-    linker.func_wrap("env", "http_set_user_agent", |_: i32, _: i32| {})?;
-    linker.func_wrap("env", "http_set_timeout", |_: i32| {})?;
-    linker.func_wrap("env", "http_set_max_redirects", |_: i32| {})?;
-    linker.func_wrap("env", "http_enable_cookies", |_: i32| {})?;
-    linker.func_wrap("env", "http_get_response_code", || -> i32 { 0 })?;
-    linker.func_wrap("env", "http_get_response_headers", || -> i32 { 0 })?;
-    linker.func_wrap("env", "http_encode_url", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "http_decode_url", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "http_build_query", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap(
+        "env",
+        "http_set_user_agent",
+        |_: i32, _: i32| -> Result<()> { Err(unavailable("http_set_user_agent")) },
+    )?;
+    linker.func_wrap("env", "http_set_timeout", |_: i32| -> Result<()> {
+        Err(unavailable("http_set_timeout"))
+    })?;
+    linker.func_wrap("env", "http_set_max_redirects", |_: i32| -> Result<()> {
+        Err(unavailable("http_set_max_redirects"))
+    })?;
+    linker.func_wrap("env", "http_enable_cookies", |_: i32| -> Result<()> {
+        Err(unavailable("http_enable_cookies"))
+    })?;
+    linker.func_wrap("env", "http_get_response_code", || -> Result<i32> {
+        Err(unavailable("http_get_response_code"))
+    })?;
+    linker.func_wrap("env", "http_get_response_headers", || -> Result<i32> {
+        Err(unavailable("http_get_response_headers"))
+    })?;
+    linker.func_wrap("env", "http_encode_url", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("http_encode_url"))
+    })?;
+    linker.func_wrap("env", "http_decode_url", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("http_decode_url"))
+    })?;
+    linker.func_wrap("env", "http_build_query", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("http_build_query"))
+    })?;
 
-    // HTTP server stub functions (not fully implemented)
     linker.func_wrap(
         "env",
         "_http_route",
-        |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("_http_route")) },
     )?;
-    linker.func_wrap("env", "_http_listen", |_: i32| -> i32 { 0 })?;
-    // Dev capture stub — real impl in clean-server; standalone runner returns 0 ptr
-    linker.func_wrap("env", "_dev_snapshot", || -> i32 { 0 })?;
-    // State reset stubs (runtime resets are no-ops in standalone test runner)
-    linker.func_wrap("env", "_state_reset_all", || {})?;
+    linker.func_wrap("env", "_http_listen", |_: i32| -> Result<i32> {
+        Err(unavailable("_http_listen"))
+    })?;
+    linker.func_wrap("env", "_dev_snapshot", || -> Result<i32> {
+        Err(unavailable("_dev_snapshot"))
+    })?;
+    // `_state_reset_all` resets the host allocator between handler runs
+    // (as clean-server does); host allocations then restart at the larger
+    // of the heap start and the module's `__heap_ptr`.
+    linker.func_wrap("env", "_state_reset_all", || {
+        *NEXT_ALLOCATION_OFFSET.lock().unwrap() = HEAP_START;
+        SCOPE_MARKS.lock().unwrap().clear();
+    })?;
+    // Per the function registry this is a no-op for a bump allocator.
     linker.func_wrap("env", "_state_reset_named", |_: i32| {})?;
-    // frame.ui bridge stubs — never fire when html: blocks are inlined at HIR time;
-    // present only so re-exported wrappers link. Returning 0 is safe because these
-    // never appear on a live call path in the SSR-TRAP investigation shape.
+    // frame.ui bridges: linked so re-exported wrappers instantiate; calling
+    // one needs the browser/server host.
     linker.func_wrap(
         "env",
         "_ui_render_page",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("_ui_render_page")) },
     )?;
-    linker.func_wrap("env", "_html_escape", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_html_escape", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("_html_escape"))
+    })?;
     // Heap-probe stubs for --emit-heap-probes / --emit-bridge-probes instrumentation.
     // Real impl lives in the errors-dashboard capture harness; standalone runner
     // prints callsite_id + resulting heap ptr when CLN_WASMTIME_PROBE=1 is set,
@@ -336,56 +467,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "_probe_ptr_dump", || -> i32 { 0 })?;
     linker.func_wrap("env", "_probe_ptr_reset", || {})?;
 
-    // Server sleep stub
-    linker.func_wrap("env", "_server_sleep", |_: i64| {})?;
+    // server.sleep(milliseconds)
+    linker.func_wrap("env", "_server_sleep", |ms: i64| {
+        std::thread::sleep(std::time::Duration::from_millis(ms.max(0) as u64));
+    })?;
 
-    // Async bridge stubs — fire-and-forget and await-result are no-ops in standalone runner
-    linker.func_wrap("env", "_async_fire", |_: i32, _: i32, _: i32, _: i32| {})?;
+    linker.func_wrap(
+        "env",
+        "_async_fire",
+        |_: i32, _: i32, _: i32, _: i32| -> Result<()> { Err(unavailable("_async_fire")) },
+    )?;
     linker.func_wrap(
         "env",
         "_async_await",
-        |_: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("_async_await")) },
     )?;
 
-    linker.func_wrap("env", "_req_param", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "_req_query", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "_req_body", || -> i32 { 0 })?;
-    linker.func_wrap("env", "_req_body_bytes", || -> i32 { 0 })?;
-    linker.func_wrap("env", "_fs_write_bytes", |_: i32, _: i32, _: i32| -> i32 {
-        0
+    linker.func_wrap("env", "_req_param", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("_req_param"))
     })?;
-    linker.func_wrap("env", "_crypto_sha256_bytes", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "_req_header", |_: i32, _: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "_req_method", || -> i32 { 0 })?;
-    linker.func_wrap("env", "_req_path", || -> i32 { 0 })?;
-    linker.func_wrap("env", "_req_cookie", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_req_query", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("_req_query"))
+    })?;
+    linker.func_wrap("env", "_req_body", || -> Result<i32> {
+        Err(unavailable("_req_body"))
+    })?;
+    linker.func_wrap("env", "_req_body_bytes", || -> Result<i32> {
+        Err(unavailable("_req_body_bytes"))
+    })?;
+    linker.func_wrap(
+        "env",
+        "_fs_write_bytes",
+        |_: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("_fs_write_bytes")) },
+    )?;
+    linker.func_wrap("env", "_crypto_sha256_bytes", |_: i32| -> Result<i32> {
+        Err(unavailable("_crypto_sha256_bytes"))
+    })?;
+    linker.func_wrap("env", "_req_header", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("_req_header"))
+    })?;
+    linker.func_wrap("env", "_req_method", || -> Result<i32> {
+        Err(unavailable("_req_method"))
+    })?;
+    linker.func_wrap("env", "_req_path", || -> Result<i32> {
+        Err(unavailable("_req_path"))
+    })?;
+    linker.func_wrap("env", "_req_cookie", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("_req_cookie"))
+    })?;
     linker.func_wrap(
         "env",
         "_http_route_protected",
-        |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> Result<i32> {
+            Err(unavailable("_http_route_protected"))
+        },
     )?;
     // Session: _session_store(user_id: i32, rolePtr: i32, roleLen: i32, claimsPtr: i32, claimsLen: i32) -> i32
     linker.func_wrap(
         "env",
         "_session_store",
-        |_: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+        |_: i32, _: i32, _: i32, _: i32, _: i32| -> Result<i32> {
+            Err(unavailable("_session_store"))
+        },
     )?;
     // Session: _session_get() -> i32
-    linker.func_wrap("env", "_session_get", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_session_get", || -> Result<i32> {
+        Err(unavailable("_session_get"))
+    })?;
     // Session: _session_delete() -> i32
-    linker.func_wrap("env", "_session_delete", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_session_delete", || -> Result<i32> {
+        Err(unavailable("_session_delete"))
+    })?;
     // Session: _http_set_cookie(cookiePtr: i32, cookieLen: i32) -> i32
-    linker.func_wrap("env", "_http_set_cookie", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_http_set_cookie", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("_http_set_cookie"))
+    })?;
     // Auth: _auth_get_session() -> i32
-    linker.func_wrap("env", "_auth_get_session", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_auth_get_session", || -> Result<i32> {
+        Err(unavailable("_auth_get_session"))
+    })?;
     // Auth: _auth_require_auth() -> i32
-    linker.func_wrap("env", "_auth_require_auth", || -> i32 { 0 })?;
+    linker.func_wrap("env", "_auth_require_auth", || -> Result<i32> {
+        Err(unavailable("_auth_require_auth"))
+    })?;
     // Auth: _auth_require_role(rolePtr: i32, roleLen: i32) -> i32
-    linker.func_wrap("env", "_auth_require_role", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap(
+        "env",
+        "_auth_require_role",
+        |_: i32, _: i32| -> Result<i32> { Err(unavailable("_auth_require_role")) },
+    )?;
     // Auth: _auth_can(permPtr: i32, permLen: i32) -> i32
-    linker.func_wrap("env", "_auth_can", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_auth_can", |_: i32, _: i32| -> Result<i32> {
+        Err(unavailable("_auth_can"))
+    })?;
     // Auth: _auth_has_any_role(rolesPtr: i32, rolesLen: i32) -> i32
-    linker.func_wrap("env", "_auth_has_any_role", |_: i32, _: i32| -> i32 { 0 })?;
+    linker.func_wrap(
+        "env",
+        "_auth_has_any_role",
+        |_: i32, _: i32| -> Result<i32> { Err(unavailable("_auth_has_any_role")) },
+    )?;
 
     // Math function imports - proper implementations
     linker.func_wrap("env", "math_pow", |base: f64, exp: f64| -> f64 {
@@ -426,6 +606,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "math.exp2", |x: f64| -> f64 { x.exp2() })?;
     linker.func_wrap("env", "math_sqrt", |x: f64| -> f64 { x.sqrt() })?;
     linker.func_wrap("env", "math.sqrt", |x: f64| -> f64 { x.sqrt() })?;
+    linker.func_wrap("env", "math_trunc", |x: f64| -> f64 { x.trunc() })?;
+    linker.func_wrap("env", "math_min", |a: f64, b: f64| -> f64 { a.min(b) })?;
+    linker.func_wrap("env", "math_max", |a: f64, b: f64| -> f64 { a.max(b) })?;
+    linker.func_wrap("env", "math_sign", |x: f64| -> f64 {
+        if x > 0.0 {
+            1.0
+        } else if x < 0.0 {
+            -1.0
+        } else {
+            x
+        }
+    })?;
+    linker.func_wrap("env", "math_pi", || -> f64 { std::f64::consts::PI })?;
+    linker.func_wrap("env", "math_e", || -> f64 { std::f64::consts::E })?;
+    // Uniform in [0.0, 1.0) from the thread-local CSPRNG.
+    linker.func_wrap("env", "math_random", || -> f64 { rand::random::<f64>() })?;
     linker.func_wrap("env", "math_floor", |x: f64| -> f64 { x.floor() })?;
     linker.func_wrap("env", "math.floor", |x: f64| -> f64 { x.floor() })?;
     linker.func_wrap("env", "math_ceil", |x: f64| -> f64 { x.ceil() })?;
@@ -881,16 +1077,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // Endpoint test bridge stubs (no live server in runner — always return 0)
+    // Endpoint tests need a live server.
     linker.func_wrap(
         "env",
         "_test_http_request",
-        |_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
-            0
-        },
+        |_: i32,
+         _: i32,
+         _: i32,
+         _: i32,
+         _: i32,
+         _: i32,
+         _: i32,
+         _: i32,
+         _: i32,
+         _: i32|
+         -> Result<i32> { Err(unavailable("_test_http_request")) },
     )?;
-    linker.func_wrap("env", "_test_response_status", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "_test_response_body", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "_test_response_status", |_: i32| -> Result<i32> {
+        Err(unavailable("_test_response_status"))
+    })?;
+    linker.func_wrap("env", "_test_response_body", |_: i32| -> Result<i32> {
+        Err(unavailable("_test_response_body"))
+    })?;
 
     // String trim functions
     linker.func_wrap(
@@ -1277,7 +1485,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // Add method-style function stubs
+    // Method-style conversions imported by name
     linker.func_wrap(
         "env",
         "integer.toString",
@@ -1302,7 +1510,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "integer.toBoolean", |value: i32| -> i32 {
         i32::from(value != 0)
     })?;
-    linker.func_wrap("env", "integer.length", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "integer.length", |_: i32| -> Result<i32> {
+        Err(unavailable("integer.length"))
+    })?;
 
     linker.func_wrap(
         "env",
@@ -1328,13 +1538,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     linker.func_wrap("env", "number.toBoolean", |value: f64| -> i32 {
         i32::from(value != 0.0)
     })?;
-    linker.func_wrap("env", "number.length", |_: f64| -> i32 { 0 })?;
+    linker.func_wrap("env", "number.length", |_: f64| -> Result<i32> {
+        Err(unavailable("number.length"))
+    })?;
 
     linker.func_wrap("env", "string.toString", |value: i32| -> i32 { value })?;
-    linker.func_wrap("env", "string.toInteger", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "string.toNumber", |_: i32| -> f64 { 0.0 })?;
-    linker.func_wrap("env", "string.toBoolean", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "string.length", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "string.toInteger", |_: i32| -> Result<i32> {
+        Err(unavailable("string.toInteger"))
+    })?;
+    linker.func_wrap("env", "string.toNumber", |_: i32| -> Result<f64> {
+        Err(unavailable("string.toNumber"))
+    })?;
+    linker.func_wrap("env", "string.toBoolean", |_: i32| -> Result<i32> {
+        Err(unavailable("string.toBoolean"))
+    })?;
+    linker.func_wrap("env", "string.length", |_: i32| -> Result<i32> {
+        Err(unavailable("string.length"))
+    })?;
 
     linker.func_wrap(
         "env",
@@ -1358,10 +1578,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         f64::from(value)
     })?;
     linker.func_wrap("env", "boolean.toBoolean", |value: i32| -> i32 { value })?;
-    linker.func_wrap("env", "boolean.length", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "boolean.length", |_: i32| -> Result<i32> {
+        Err(unavailable("boolean.length"))
+    })?;
 
-    linker.func_wrap("env", "string.toUpperCase", |_: i32| -> i32 { 0 })?;
-    linker.func_wrap("env", "string.toLowerCase", |_: i32| -> i32 { 0 })?;
+    linker.func_wrap("env", "string.toUpperCase", |_: i32| -> Result<i32> {
+        Err(unavailable("string.toUpperCase"))
+    })?;
+    linker.func_wrap("env", "string.toLowerCase", |_: i32| -> Result<i32> {
+        Err(unavailable("string.toLowerCase"))
+    })?;
     // string.concat is registered above with 2-param implementation (length-prefixed pointers)
 
     // Add string_split function: splits a string by delimiter and returns a list of strings
@@ -1805,7 +2031,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => wasmtime::Val::I32(0),
             })
             .collect();
-        func.call(&mut store, &[], &mut results)?;
+        call_or_exit(&func, &mut store, &mut results);
         println!("--- End Output ---");
         // Post-run heap footprint report — opt-in via CLN_WASMTIME_HEAP_REPORT=1.
         // Handy for SSR-style leak investigations where you want to compare
@@ -1839,7 +2065,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("🧪 Running tests (_run_tests)...");
         println!("--- Test Output ---");
         let mut results = vec![wasmtime::Val::I32(0)];
-        func.call(&mut store, &[], &mut results)?;
+        call_or_exit(&func, &mut store, &mut results);
         println!("--- End Test Output ---");
         if let Some(wasmtime::Val::I32(failures)) = results.first() {
             if *failures == 0 {

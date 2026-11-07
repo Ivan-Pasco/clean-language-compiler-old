@@ -295,32 +295,6 @@ impl std::fmt::Display for MemoryTier {
     }
 }
 
-/// Initialize structured logging with the specified level
-///
-/// This should be called once at application startup. Valid levels are:
-/// - "error" - Only errors
-/// - "warn"  - Warnings and errors
-/// - "info"  - Info, warnings, and errors (default)
-/// - "debug" - Debug and above (shows compilation stages)
-/// - "trace" - All messages (very verbose)
-///
-/// # Example
-/// ```no_run
-/// use clean_language_compiler::init_logging;
-/// init_logging("debug");
-/// ```
-pub fn init_logging(level: &str) {
-    use tracing_subscriber::{fmt, EnvFilter};
-
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
-
-    fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .compact()
-        .init();
-}
-
 // ----------------------------------------------------------------------------
 // Plugin Contracts v2 — CLI-supplied host class overrides
 // ----------------------------------------------------------------------------
@@ -337,6 +311,9 @@ pub fn init_logging(level: &str) {
 // See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
 
 thread_local! {
+    /// `CompilationTarget` requested by `compile_with_target`; `None` builds
+    /// with the code generator's default (server) target.
+    static COMPILATION_TARGET: std::cell::Cell<Option<CompilationTarget>> = const { std::cell::Cell::new(None) };
     static TARGET_HOST_CLASS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static STRICT_HOSTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Plugin Contracts v2 Phase B — when set, `compile_multi_file_with_memory_tier`
@@ -532,12 +509,13 @@ pub fn target_to_host_class(target: &str) -> Option<&'static str> {
     }
 }
 
-/// Compiles Clean Language source code to WebAssembly using the specification-compliant 7-stage pipeline
+/// Compiles Clean Language source code to WebAssembly.
 ///
-/// **Note:** This compiles with NO plugins (pure Clean Language).
-/// For framework features (endpoints:, data:, component:), use a framework compiler that provides plugins.
+/// Uses the same multi-file pipeline as `cln compile` (see
+/// [`compile_with_external_plugins_and_opt_level`]); the source is compiled
+/// as `main.cln`.
 pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_pure(source, "<unknown>")
+    compile_source_with_detected_plugins(source, "main.cln", 2)
 }
 
 /// Compiles Clean Language source code to WebAssembly with file path for better error reporting
@@ -567,10 +545,7 @@ pub fn compile_with_opt_level(
     file_path: &str,
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
-    let registry = plugins::PluginRegistry::builder()
-        .build()
-        .expect("Empty registry should always build");
-    compile_with_plugins_and_opt_level(source, file_path, &registry, opt_level)
+    compile_source_with_detected_plugins(source, file_path, opt_level)
 }
 
 /// Parses Clean Language source code and returns the AST (stages 1-2 only).
@@ -620,312 +595,6 @@ pub struct TypeCheckResult {
     pub duration_ms: u64,
     /// Diagnostics (warnings, info) collected during type-checking
     pub diagnostics: Vec<CompilerError>,
-}
-
-/// Performs fast type-checking on a Clean Language source file.
-///
-/// Runs compilation stages 1-5 only (Lexer → Parser → HIR → Resolver → Type Checker),
-/// skipping MIR lowering and WASM code generation. This is significantly faster than
-/// a full compilation and is designed for IDE integration and AI tooling.
-///
-/// # Arguments
-/// * `source` - The Clean Language source code
-/// * `file_path` - Path to the source file (used for error reporting)
-///
-/// # Returns
-/// * `Ok(TypeCheckResult)` - Type-checking succeeded with metadata
-/// * `Err(Vec<CompilerError>)` - Type-checking errors
-pub fn type_check(source: &str, file_path: &str) -> Result<TypeCheckResult, Vec<CompilerError>> {
-    let registry = plugins::PluginRegistry::builder()
-        .build()
-        .expect("Empty registry should always build");
-    type_check_with_plugins(source, file_path, &registry)
-}
-
-/// Performs fast type-checking with plugin support.
-///
-/// Same as `type_check()` but with plugin registry for framework-aware checking.
-pub fn type_check_with_plugins(
-    source: &str,
-    file_path: &str,
-    registry: &plugins::PluginRegistry,
-) -> Result<TypeCheckResult, Vec<CompilerError>> {
-    let start_time = std::time::Instant::now();
-    let bridge_functions = registry_extended_bridges(registry);
-    let frontend = run_single_source_frontend(
-        source,
-        file_path,
-        registry,
-        &bridge_functions,
-        registry.bridge_functions(),
-    )?;
-
-    Ok(TypeCheckResult {
-        success: true,
-        function_count: frontend.function_count,
-        type_count: frontend.type_count,
-        duration_ms: start_time.elapsed().as_millis() as u64,
-        diagnostics: user_facing_warnings(&frontend.warnings),
-    })
-}
-
-/// Output of the single-source front end (stages 1-5).
-struct SingleSourceFrontend {
-    type_result: crate::typechecker::TypeCheckResult,
-    /// Non-fatal diagnostics from HIR validation, resolution and type checking.
-    warnings: Vec<CompilerError>,
-    /// Number of functions in the parsed source (before plugin expansion).
-    function_count: usize,
-    /// Number of classes in the parsed source (before plugin expansion).
-    type_count: usize,
-}
-
-/// The plugin registry's bridge functions plus the registry-only `_prefixed`
-/// entries from `function-registry.toml` (see [`extend_with_registry_bridges`]).
-fn registry_extended_bridges(registry: &plugins::PluginRegistry) -> Vec<plugins::BridgeFunction> {
-    let mut bridge_functions = registry.bridge_functions().to_vec();
-    extend_with_registry_bridges(&mut bridge_functions);
-    bridge_functions
-}
-
-/// Build an `external` declaration for a bridge function, typed from its
-/// plugin.toml signature.
-fn bridge_external(
-    name: &str,
-    param_types: &[String],
-    param_defaults: &[String],
-    return_type: ast::Type,
-    module: &str,
-) -> ast::ExternalFunction {
-    let parameters = param_types
-        .iter()
-        .enumerate()
-        .map(|(i, type_str)| {
-            // An empty default means "required"; anything else is a literal
-            // default (integer or string).
-            let default_value = param_defaults
-                .get(i)
-                .filter(|s| !s.is_empty())
-                .map(|s| match s.parse::<i64>() {
-                    Ok(n) => ast::Expression::Literal(ast::Value::Integer(n)),
-                    Err(_) => ast::Expression::Literal(ast::Value::String(s.clone())),
-                });
-            ast::Parameter {
-                name: format!("arg{}", i),
-                type_: parse_bridge_type(type_str),
-                default_value,
-            }
-        })
-        .collect();
-    ast::ExternalFunction {
-        name: name.to_string(),
-        parameters,
-        return_type,
-        module: module.to_string(),
-        location: None,
-    }
-}
-
-/// Stages 1-5 of single-source compilation (lex, parse, plugin enforcement
-/// and expansion, bridge declarations, HIR, validation, resolution, type
-/// checking). Shared by [`type_check_with_plugins`],
-/// [`compile_with_plugins_and_opt_level`] and [`compile_with_target`] so that
-/// checking a file and compiling it can never disagree about whether it is
-/// valid.
-///
-/// `bridge_functions` (the full set, including registry-only entries)
-/// become `external` declarations. `resolver_bridges` (the plugins' own
-/// declarations) are registered eagerly in the resolver and supply the
-/// handler-registering bridges for CONC002; registry-only bridges resolve on
-/// demand with their canonical types instead. The registry provides block
-/// keywords, expansion, enforcement rules, language aliases and plugin types.
-fn run_single_source_frontend(
-    source: &str,
-    file_path: &str,
-    registry: &plugins::PluginRegistry,
-    bridge_functions: &[plugins::BridgeFunction],
-    resolver_bridges: &[plugins::BridgeFunction],
-) -> Result<SingleSourceFrontend, Vec<CompilerError>> {
-    use crate::hir::hir_builder::HirBuilder;
-    use crate::hir::validation::HirValidator;
-    use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
-    use crate::parser::SpecificationParser;
-    use crate::plugins::PluginExpander;
-    use crate::typechecker::TypeChecker;
-
-    // Stage 1: Lexical analysis
-    let source_code = SourceCode::new(source.to_string(), file_path.to_string());
-    let mut lexer = SpecificationLexer::new(&source_code);
-    let tokens = lexer
-        .tokenize()
-        .map_err(|e| vec![CompilerError::LexError(e)])?;
-
-    // Stage 2: Parsing. Plugin keywords let the parser recognise
-    // plugin-defined blocks (e.g. `data User`).
-    let mut parser = SpecificationParser::with_plugin_keywords(
-        tokens,
-        file_path.to_string(),
-        registry.get_all_block_keywords(),
-    );
-    let parsed_ast = parser.parse_program().map_err(|e| vec![e])?;
-    let function_count = parsed_ast.functions.len();
-    let type_count = parsed_ast.classes.len();
-    tracing::debug!(
-        functions = function_count,
-        statements = parsed_ast.statements.len(),
-        classes = type_count,
-        "Stage 2 complete: AST created"
-    );
-
-    // Stage 2.5a: Plugin enforcement - project structure conventions
-    let enforcement_rules: Vec<(String, plugins::plugin_abi::PluginEnforcement)> = registry
-        .loaded_manifests()
-        .iter()
-        .filter(|(_, m)| {
-            !m.enforcement.restricted_functions.is_empty()
-                || !m.enforcement.required_blocks.is_empty()
-                || !m.enforcement.block_folder_rules.is_empty()
-        })
-        .map(|(name, m)| (name.clone(), m.enforcement.clone()))
-        .collect();
-    if !enforcement_rules.is_empty() {
-        let enforcement_result =
-            plugins::enforcement::enforce_rules(&parsed_ast, file_path, &enforcement_rules);
-        for warning in &enforcement_result.warnings {
-            eprintln!(
-                "warning[{}]: {} ({})",
-                warning.plugin, warning.message, warning.suggestion
-            );
-        }
-        if !enforcement_result.errors.is_empty() {
-            return Err(enforcement_result
-                .errors
-                .into_iter()
-                .map(|e| CompilerError::PluginError {
-                    message: format!("{} ({})", e.message, e.suggestion),
-                    location: None,
-                })
-                .collect());
-        }
-    }
-
-    // Stage 2.5b: Plugin expansion - framework blocks become Clean AST
-    let mut expander = PluginExpander::new(registry)
-        .with_build_context(plugins::BuildContext::new().with_entry(file_path));
-    let mut ast = expander.expand_program(parsed_ast).map_err(|e| {
-        vec![CompilerError::syntax_error(
-            e.to_string(),
-            Some("Plugin expansion failed".to_string()),
-            None,
-        )]
-    })?;
-    expander.check_permissions().map_err(|e| vec![e])?;
-
-    // Stage 2.6: Bridge functions become `external` declarations so they are
-    // type-checked and resolved. Language-level names (`db.query`) are added
-    // as aliases with the bridge's signature, overridden by the plugin's
-    // language function definition (`params`, `returns`, `param_defaults`).
-    let lang_to_bridge = registry.language_to_bridge_map();
-    let lang_to_helper = registry.language_to_helper_map();
-    let lang_fn_defs: std::collections::HashMap<
-        String,
-        crate::plugins::plugin_abi::PluginFunctionDef,
-    > = registry
-        .language_function_defs()
-        .into_iter()
-        .map(|(k, v)| (k, v.clone()))
-        .collect();
-    for bf in bridge_functions {
-        // Skip names already declared by an `external:` block or the expander.
-        if ast.externals.iter().any(|e| e.name == bf.name) {
-            continue;
-        }
-        ast.externals.push(bridge_external(
-            &bf.name,
-            &bf.params,
-            &[],
-            parse_bridge_type(&bf.returns),
-            &bf.module,
-        ));
-    }
-    let bridge_by_name: std::collections::HashMap<&str, &plugins::BridgeFunction> =
-        bridge_functions
-            .iter()
-            .map(|bf| (bf.name.as_str(), bf))
-            .collect();
-    for (lang_name, bridge_name) in &lang_to_bridge {
-        // A function the expander generated under this name would clash
-        // with the external in the resolver's top-level registration.
-        if ast.externals.iter().any(|e| e.name == *lang_name)
-            || ast.functions.iter().any(|f| f.name == *lang_name)
-        {
-            continue;
-        }
-        let Some(bf) = bridge_by_name.get(bridge_name.as_str()) else {
-            continue;
-        };
-        let lang_def = lang_fn_defs.get(lang_name.as_str());
-        let param_types = lang_def
-            .and_then(|d| d.params.as_ref())
-            .unwrap_or(&bf.params);
-        let param_defaults = lang_def
-            .map(|d| d.param_defaults.as_slice())
-            .unwrap_or_default();
-        let return_type = lang_def
-            .and_then(|d| d.returns.as_deref())
-            .map(parse_bridge_type)
-            .unwrap_or_else(|| parse_bridge_type(&bf.returns));
-        ast.externals.push(bridge_external(
-            lang_name,
-            param_types,
-            param_defaults,
-            return_type,
-            &bf.module,
-        ));
-    }
-
-    // Stage 2.7: Phantom class stubs for plugin-declared types so HIR
-    // validation accepts them as named types.
-    inject_plugin_type_stubs(&mut ast, registry);
-
-    // Stage 3: AST to HIR
-    let mut hir_builder =
-        HirBuilder::new().with_generic_instance_classes(registry.generic_instance_classes());
-    let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
-
-    // Stage 3b: HIR semantic validation. Bridges declaring
-    // `registers_handler_at_arg` mark plugin-emitted route handlers as
-    // request-context sites for CONC002 (ARCH-CONC002-HARDCODES-HTTP-ROUTE).
-    let handler_bridges = handler_bridges_from_slice(resolver_bridges);
-    let validation_warnings =
-        HirValidator::validate_with_handler_bridges(&hir_result.hir, &handler_bridges)?;
-
-    // Stage 4: Name resolution. Language function defs give aliases their
-    // precise plugin-declared types instead of the raw bridge signature
-    // (COM001, fp ee1a83f9).
-    let resolution_result = resolve_with_plugin_names(
-        hir_result.hir,
-        resolver_bridges,
-        lang_to_bridge,
-        lang_fn_defs,
-        lang_to_helper,
-    )?;
-    let resolved_hir = resolution_result.resolved_hir;
-
-    // Stage 5: Type checking. Aliases with `param_defaults` need explicit
-    // required-parameter counts: the resolver encodes types, not optionality.
-    let required_counts = required_param_counts(registry, &resolved_hir);
-    let type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
-
-    let mut warnings = validation_warnings;
-    warnings.extend(type_result.warnings.iter().cloned());
-
-    Ok(SingleSourceFrontend {
-        type_result,
-        warnings,
-        function_count,
-        type_count,
-    })
 }
 
 /// Type-checks a source through the same front end as `cln compile`
@@ -1024,28 +693,12 @@ pub fn lint_source(
     Ok(reports)
 }
 
-/// Compiles Clean Language source code with NO plugins (pure language)
+/// Compiles Clean Language source code through the `cln compile` pipeline.
 ///
-/// This is for compiling pure Clean Language code without framework extensions.
-/// Framework DSL blocks (endpoints:, data:, component:) will fail with "unknown block" errors.
-///
-/// # Arguments
-/// * `source` - The Clean Language source code
-/// * `file_path` - Path for error reporting
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
-/// * `Err(Vec<CompilerError>)` - Compilation errors
-///
-/// # Example
-/// ```ignore
-/// let wasm = compile_pure(source, "main.cln")?;
-/// ```
+/// Plugins named in the source's `plugins:` block are loaded; a source
+/// without one compiles as pure Clean Language.
 pub fn compile_pure(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    let registry = plugins::PluginRegistry::builder()
-        .build()
-        .expect("Empty registry should always build");
-    compile_with_plugins(source, file_path, &registry)
+    compile_source_with_detected_plugins(source, file_path, 2)
 }
 
 /// Alias for [`compile_with_external_plugins_and_opt_level`].
@@ -1111,31 +764,6 @@ fn report_compile_warnings(warnings: &[CompilerError]) {
     }
 }
 
-/// Parses a bridge function type string into an AST Type
-///
-/// Bridge functions in plugin.toml use string type names like "string", "integer", etc.
-/// This function converts those strings to the corresponding AST Type.
-fn parse_bridge_type(type_str: &str) -> ast::Type {
-    match type_str.to_lowercase().as_str() {
-        "string" => ast::Type::String,
-        "integer" | "int" | "i32" | "i64" => ast::Type::Integer,
-        "number" | "float" | "f64" => ast::Type::Number,
-        "boolean" | "bool" => ast::Type::Boolean,
-        "void" | "()" => ast::Type::Void,
-        "any" => ast::Type::Any,
-        // Handle generic types like "list<string>"
-        s if s.starts_with("list<") && s.ends_with('>') => {
-            let inner = &s[5..s.len() - 1];
-            ast::Type::List(
-                Box::new(parse_bridge_type(inner)),
-                ast::ListBehavior::Default,
-            )
-        }
-        // Default to Any for unknown types
-        _ => ast::Type::Any,
-    }
-}
-
 /// Merge two HIR state blocks. Used by the multi-file pipeline to fold each
 /// non-entry module's `state:` declarations into the merged state alongside
 /// the entry module's. Without this, plugin-emitted state blocks (e.g.
@@ -1169,66 +797,17 @@ fn merge_hir_state(
     }
 }
 
-/// Injects synthetic phantom class stubs for types declared in loaded plugin manifests.
+/// Compiles Clean Language source code with the plugins of `registry`.
 ///
-/// Plugin manifests list their custom types (e.g. `Request`, `Response` from frame.server)
-/// under `[[language.types]]`. Without this step those type names are invisible to the
-/// HIR validator's `context.classes` lookup, causing a spurious "Undefined type" error
-/// whenever a `functions:` block uses a plugin type as a parameter type.
-fn inject_plugin_type_stubs(ast: &mut ast::Program, registry: &plugins::PluginRegistry) {
-    for manifest in registry.loaded_manifests().values() {
-        for type_def in &manifest.language.types {
-            if ast.classes.iter().any(|c| c.name == type_def.name) {
-                continue;
-            }
-            let fields = type_def
-                .fields
-                .iter()
-                .map(|f| ast::Field {
-                    name: f.name.clone(),
-                    type_: parse_bridge_type(&f.type_),
-                    visibility: ast::Visibility::Public,
-                    is_static: false,
-                    default_value: None,
-                })
-                .collect();
-            ast.classes.push(ast::Class {
-                name: type_def.name.clone(),
-                type_parameters: Vec::new(),
-                description: Some(type_def.description.clone()),
-                base_class: None,
-                base_class_type_args: Vec::new(),
-                fields,
-                methods: Vec::new(),
-                constructor: None,
-                invariants: Vec::new(),
-                capabilities: Vec::new(),
-                location: None,
-            });
-        }
-    }
-}
-
-/// Compiles Clean Language source code with custom plugin registry
-///
-/// This is the main compilation entry point for frameworks that provide DSL plugins.
-/// The plugin registry determines which DSL blocks are supported.
-///
-/// # Arguments
-/// * `source` - The Clean Language source code
-/// * `file_path` - Path for error reporting
-/// * `registry` - Plugin registry with registered DSL handlers
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
-/// * `Err(Vec<CompilerError>)` - Compilation errors
+/// Compilation runs through the `cln compile` pipeline, which loads the
+/// plugins named in the source's `plugins:` block. Every plugin in
+/// `registry` must be declared there; a registry plugin the source does not
+/// declare is reported as a PLUGIN001 error instead of being silently
+/// ignored.
 ///
 /// # Example
 /// ```ignore
-/// use clean_language_compiler::plugins::PluginRegistry;
-/// use frame_compiler_plugins::create_frame_registry;
-///
-/// let registry = create_frame_registry()?;
+/// let registry = WasmPluginLoader::new()?.load_plugins(&["frame.server".to_string()])?;
 /// let wasm = compile_with_plugins(source, "main.cln", &registry)?;
 /// ```
 pub fn compile_with_plugins(
@@ -1240,89 +819,30 @@ pub fn compile_with_plugins(
     compile_with_plugins_and_opt_level(source, file_path, registry, 2)
 }
 
-/// Compiles Clean Language source code with custom plugin registry and optimization level
-///
-/// # Arguments
-/// * `source` - The Clean Language source code
-/// * `file_path` - Path for error reporting
-/// * `registry` - Plugin registry with registered DSL handlers
-/// * `opt_level` - Optimization level (0-3)
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
-/// * `Err(Vec<CompilerError>)` - Compilation errors
+/// [`compile_with_plugins`] with an optimization level (0-3).
 pub fn compile_with_plugins_and_opt_level(
     source: &str,
     file_path: &str,
     registry: &plugins::PluginRegistry,
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
-    use crate::codegen::mir_codegen::MirCodeGenerator;
-    use crate::mir::lower_tast_to_mir_with_opt_level;
-
-    tracing::info!(
-        opt_level = opt_level,
-        "Starting compilation with optimization level"
-    );
-
-    // Stages 1-5. The code generator gets the same registry-extended bridge
-    // list so imports carry their registry signature (e.g. `_time_now`
-    // returns i64), as in the multi-file pipeline.
-    let bridge_functions = registry_extended_bridges(registry);
-    let frontend = run_single_source_frontend(
-        source,
-        file_path,
-        registry,
-        &bridge_functions,
-        registry.bridge_functions(),
-    )?;
-    report_compile_warnings(&frontend.warnings);
-
-    // Stage 6: TAST to MIR lowering and optimization
-    let mir_result = lower_tast_to_mir_with_opt_level(frontend.type_result.tast, opt_level)?;
-
-    // Stage 7: WASM code generation
-    let mut mir_codegen = MirCodeGenerator::default();
-    // Without plugin bridges the code generator's built-in importers own
-    // every import; the registry-only entries are only needed alongside
-    // plugin bridges.
-    if !registry.bridge_functions().is_empty() {
-        mir_codegen.set_bridge_functions(bridge_functions);
+    let declared = extract_plugins(source);
+    let undeclared: Vec<CompilerError> = registry
+        .registered_plugins()
+        .iter()
+        .filter(|name| !declared.contains(name))
+        .map(|name| CompilerError::PluginError {
+            message: format!(
+                "[PLUGIN001] plugin '{}' is in the registry but not in the source's plugins: block",
+                name
+            ),
+            location: None,
+        })
+        .collect();
+    if !undeclared.is_empty() {
+        return Err(undeclared);
     }
-    // Dot-notation plugin calls (e.g. `db.query`) route to their WASM import.
-    let lang_to_bridge = registry.language_to_bridge_map();
-    if !lang_to_bridge.is_empty() {
-        mir_codegen.set_language_to_bridge_map(lang_to_bridge);
-    }
-    let lang_to_helper = registry.language_to_helper_map();
-    if !lang_to_helper.is_empty() {
-        mir_codegen.set_language_to_helper_map(lang_to_helper);
-    }
-
-    // Host class, strict-hosts and ABI version are configured as in the
-    // multi-file pipeline; otherwise host-mismatched bridges are emitted as
-    // real imports instead of deferred stubs and the codegen's function
-    // indices drift from the import table (COM001, fp ee1a83f9).
-    let host_class = target_host_class_override().unwrap_or_else(|| {
-        mir_codegen
-            .infer_host_class_from_mir(&mir_result.program)
-            .unwrap_or_else(|| "server".to_string())
-    });
-    mir_codegen.set_host_class(Some(host_class));
-    mir_codegen.set_strict_hosts(strict_hosts_enabled());
-    if let Some(abi) = plugin_abi_version_override() {
-        mir_codegen.set_abi_version(Some(abi));
-    }
-
-    let codegen_result = mir_codegen.generate(mir_result.program)?;
-    let wasm_bytes = codegen_result.wasm_bytes;
-    crate::codegen::validate::validate_generated_wasm(&wasm_bytes).map_err(|e| vec![e])?;
-    tracing::info!(
-        bytes = wasm_bytes.len(),
-        "Compilation complete: WASM generated"
-    );
-
-    Ok(wasm_bytes)
+    compile_source_with_detected_plugins(source, file_path, opt_level)
 }
 
 /// True when bridge-host mismatches must be hard errors: either the
@@ -1333,38 +853,6 @@ fn strict_hosts_enabled() -> bool {
         || std::env::var("CLEAN_STRICT_HOSTS")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
-}
-
-/// Compiles Clean Language source code with external WASM plugins loaded from ~/.cleen/plugins/
-///
-/// This function automatically discovers plugins based on `plugins:` blocks in the source code.
-/// Plugins must be installed using `cleen plugin add <name>` before they can be used.
-///
-/// # Arguments
-/// * `source` - The Clean Language source code (may contain `plugins:` blocks)
-/// * `file_path` - Path for error reporting
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
-/// * `Err(Vec<CompilerError>)` - Compilation errors
-///
-/// # Example
-/// ```ignore
-/// // Source code with plugins block:
-/// // plugins:
-/// //     frame.web
-/// //     frame.data
-/// //
-/// // endpoints:
-/// //     GET "/users" -> listUsers
-/// //
-/// let wasm = compile_with_external_plugins(source, "app.cln")?;
-/// ```
-pub fn compile_with_external_plugins(
-    source: &str,
-    file_path: &str,
-) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_with_external_plugins_and_opt_level(source, file_path, 2)
 }
 
 /// Compiles Clean Language source code with external WASM plugins and custom optimization level
@@ -1406,13 +894,43 @@ pub fn compile_with_external_plugins_and_opt_level(
     })
 }
 
+thread_local! {
+    /// While a library compile runs from a scratch copy of its source (see
+    /// [`with_entry_file`]): the scratch directory (as written and
+    /// canonicalized) and the directory of the path the caller asked for.
+    static ENTRY_PATH_ALIAS: std::cell::RefCell<Option<(Vec<std::path::PathBuf>, std::path::PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Rewrite diagnostic locations that point into the scratch copy of a
+/// library compile's source back to the caller's path, so warnings and
+/// errors name the file the caller gave instead of a temp directory.
+fn remap_entry_paths(diagnostics: &mut [CompilerError]) {
+    ENTRY_PATH_ALIAS.with(|alias| {
+        let alias = alias.borrow();
+        let Some((scratch_dirs, display_dir)) = alias.as_ref() else {
+            return;
+        };
+        for diagnostic in diagnostics.iter_mut() {
+            let Some(location) = diagnostic.location_mut() else {
+                continue;
+            };
+            let file = std::path::Path::new(&location.file);
+            if let Some(rest) = scratch_dirs.iter().find_map(|d| file.strip_prefix(d).ok()) {
+                location.file = display_dir.join(rest).to_string_lossy().into_owned();
+            }
+        }
+    });
+}
+
 /// Run `run` on an on-disk entry file holding `source`.
 ///
 /// The multi-file pipeline discovers modules and runs plugin lifecycle hooks
 /// from a real entry file. When `file_path` already holds `source` verbatim
 /// it is used directly; otherwise the source is written to a scratch
 /// directory under the same file name (so file-name-based plugin behaviour
-/// is preserved) and removed afterwards.
+/// is preserved) and removed afterwards. Diagnostics produced from the
+/// scratch copy name `file_path`, not the scratch directory.
 fn with_entry_file<T>(
     source: &str,
     file_path: &str,
@@ -1453,7 +971,21 @@ fn with_entry_file<T>(
             None,
         )]
     })?;
-    run(&entry, vec![scratch.path().to_path_buf()])
+    let mut scratch_dirs = vec![scratch.path().to_path_buf()];
+    if let Ok(canonical) = scratch.path().canonicalize() {
+        scratch_dirs.push(canonical);
+    }
+    let display_dir = requested_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let previous = ENTRY_PATH_ALIAS.with(|a| a.replace(Some((scratch_dirs, display_dir))));
+    let result = run(&entry, vec![scratch.path().to_path_buf()]).map_err(|mut errors| {
+        remap_entry_paths(&mut errors);
+        errors
+    });
+    ENTRY_PATH_ALIAS.with(|a| *a.borrow_mut() = previous);
+    result
 }
 
 /// Compiles Clean Language source code with a specific compilation target
@@ -1464,15 +996,9 @@ fn with_entry_file<T>(
 /// - `Plugin`: Minimal imports for WASM plugins (no server functions)
 /// - `Standalone`: Standard CLI/library compilation
 ///
-/// # Arguments
-/// * `source` - The Clean Language source code
-/// * `file_path` - Path for error reporting
-/// * `target` - Compilation target (Server, Plugin, or Standalone)
-/// * `opt_level` - Optimization level (0-3)
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
-/// * `Err(Vec<CompilerError>)` - Compilation errors
+/// Compilation runs through the `cln compile` pipeline. A `Plugin` build
+/// takes its `[bridge]` declarations and Clean Runtime ABI version from the
+/// sibling `plugin.toml`, as `cln compile --target plugin` does.
 ///
 /// # Example
 /// ```ignore
@@ -1487,66 +1013,17 @@ pub fn compile_with_target(
     target: CompilationTarget,
     opt_level: u8,
 ) -> Result<Vec<u8>, Vec<CompilerError>> {
-    use crate::codegen::mir_codegen::MirCodeGenerator;
-    use crate::mir::lower_tast_to_mir_with_opt_level;
-
-    tracing::info!(
-        opt_level = opt_level,
-        target = ?target,
-        "Starting compilation with target"
-    );
-
-    // A sibling `plugin.toml` supplies the `[bridge]` declarations when a
-    // plugin source is compiled, so they resolve through the canonical
-    // `register_plugin_bridge_imports` path with `expand_strings` semantics
-    // and match the host registration in `src/plugins/wasm_adapter.rs`.
-    // Declaring the same bridges in an `external:` block instead collapses
-    // each `string` param to one i32 and maps `void` returns to i32,
-    // disagreeing with `function-registry.toml`.
-    let mut source_bridges: Vec<plugins::BridgeFunction> = Vec::new();
-    extend_with_source_plugin_bridges(std::path::Path::new(file_path), &mut source_bridges);
-
-    let registry = plugins::PluginRegistry::builder()
-        .build()
-        .expect("Empty registry should always build");
-    let frontend = run_single_source_frontend(
-        source,
-        file_path,
-        &registry,
-        &source_bridges,
-        &source_bridges,
-    )?;
-    report_compile_warnings(&frontend.warnings);
-
-    // Stage 6: TAST to MIR lowering
-    let mir_result = lower_tast_to_mir_with_opt_level(frontend.type_result.tast, opt_level)?;
-
-    // Stage 7: WASM code generation for the requested target
-    let mut mir_codegen = MirCodeGenerator::with_target(target);
-    if !source_bridges.is_empty() {
-        mir_codegen.set_bridge_functions(source_bridges);
-    }
-
-    // Plugin builds carry the Clean Runtime ABI version from the sibling
-    // `plugin.toml`'s `[compatibility].abi_version` (default 1.0.0) in a
-    // `clean.abi_version` custom section; user-code builds get no stamp.
-    // See foundation/spec/plugins/contracts/runtime-abi.md §4.
+    let previous_target = COMPILATION_TARGET.with(|t| t.replace(Some(target)));
+    let previous_abi = plugin_abi_version_override();
     if matches!(target, CompilationTarget::Plugin) {
-        let abi = resolve_plugin_abi_version_for_path(std::path::Path::new(file_path));
-        mir_codegen.set_abi_version(Some(abi));
+        set_plugin_abi_version_override(Some(resolve_plugin_abi_version_for_path(
+            std::path::Path::new(file_path),
+        )));
     }
-
-    let codegen_result = mir_codegen.generate(mir_result.program)?;
-    crate::codegen::validate::validate_generated_wasm(&codegen_result.wasm_bytes)
-        .map_err(|e| vec![e])?;
-
-    tracing::info!(
-        bytes = codegen_result.wasm_bytes.len(),
-        target = ?target,
-        "Compilation complete with target"
-    );
-
-    Ok(codegen_result.wasm_bytes)
+    let result = compile_source_with_detected_plugins(source, file_path, opt_level);
+    set_plugin_abi_version_override(previous_abi);
+    COMPILATION_TARGET.with(|t| t.set(previous_target));
+    result
 }
 
 /// Compiles Clean Language source code for use as a WASM plugin
@@ -2218,7 +1695,8 @@ pub fn type_check_project<P: AsRef<std::path::Path>>(
     let caller_host_class = target_host_class_override();
     let frontend = run_multi_file_frontend(entry_path.as_ref(), search_paths, 2, false, false);
     set_target_host_class_override(caller_host_class);
-    let frontend = frontend?;
+    let mut frontend = frontend?;
+    remap_entry_paths(&mut frontend.warnings);
     Ok(TypeCheckResult {
         success: true,
         function_count: frontend.function_count,
@@ -2264,6 +1742,8 @@ fn compile_multi_file_impl(
         build_state: build_state_arc,
         ..
     } = run_multi_file_frontend(entry_path, search_paths, opt_level, client_mode, release)?;
+    let mut warnings = warnings;
+    remap_entry_paths(&mut warnings);
     report_compile_warnings(&warnings);
 
     // Stage 6: TAST to MIR. Release builds strip `always:` invariant checks.
@@ -2303,7 +1783,10 @@ fn compile_multi_file_impl(
 
     // Stage 7: WASM generation with memory tier
     use crate::codegen::mir_codegen::MirCodeGenerator;
-    let mut mir_codegen = MirCodeGenerator::default();
+    let mut mir_codegen = match COMPILATION_TARGET.with(|t| t.get()) {
+        Some(target) => MirCodeGenerator::with_target(target),
+        None => MirCodeGenerator::default(),
+    };
     mir_codegen.set_memory_tier(memory_tier);
 
     if !bridge_functions.is_empty() {
@@ -2475,6 +1958,7 @@ fn run_multi_file_frontend(
         use crate::hir::{HirFunction, HirProgram};
 
         let mut all_functions: Vec<HirFunction> = Vec::new();
+        let mut duplicate_functions: Vec<CompilerError> = Vec::new();
         let mut all_classes = Vec::new();
         let mut all_capabilities: Vec<crate::hir::HirCapability> = Vec::new();
         let mut start_function: Option<crate::hir::HirFunction> = None;
@@ -2518,9 +2002,34 @@ fn run_multi_file_frontend(
                     // re-emit helpers (e.g. __redirect_0) already generated by a non-entry
                     // module's block expansion, producing two MIR entries with different
                     // SymbolIds but the same name, corrupting the export table (GEN002).
+                    // Two functions written in source files with the same name are a
+                    // redefinition (SEM003): keeping the first would silently call it
+                    // from the module that wrote the second.
                     for func in &hir.functions {
-                        if !all_functions.iter().any(|f| f.name == func.name) {
-                            all_functions.push(func.clone());
+                        match all_functions.iter().find(|f| f.name == func.name) {
+                            None => all_functions.push(func.clone()),
+                            Some(existing)
+                                if is_user_source_location(&existing.location)
+                                    && is_user_source_location(&func.location) =>
+                            {
+                                duplicate_functions.push(CompilerError::semantic_error_with_code(
+                                    format!(
+                                        "Function '{}' is defined in {} (line {}) and again in {} (line {})",
+                                        func.name,
+                                        existing.location.file,
+                                        existing.location.line,
+                                        func.location.file,
+                                        func.location.line
+                                    ),
+                                    Some(
+                                        "Imported modules share one function namespace; rename one of the functions"
+                                            .to_string(),
+                                    ),
+                                    Some(func.location.clone()),
+                                    "SEM003",
+                                ));
+                            }
+                            Some(_) => {}
                         }
                     }
                     for class in &hir.classes {
@@ -2705,6 +2214,10 @@ fn run_multi_file_frontend(
                 owner_screen: None,
                 location: location.clone(),
             });
+        }
+
+        if !duplicate_functions.is_empty() {
+            return Err(duplicate_functions);
         }
 
         HirProgram {

@@ -13,12 +13,13 @@
 #![allow(clippy::format_in_format_args)]
 #![allow(clippy::useless_asref)]
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use clean_language_compiler::codegen::bridge_generator::{BridgeGenerator, BridgeTarget};
+use clean_language_compiler::compile_with_file;
 use clean_language_compiler::debug::DebugUtils;
 use clean_language_compiler::error::{CompilerError, ErrorReporter};
-use clean_language_compiler::{compile_with_file, runtime::runtime_manager::RuntimeManager};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 mod cli;
@@ -27,13 +28,45 @@ use cli::options_export;
 /// Configuration for output formatting
 #[derive(Clone)]
 struct OutputConfig {
+    /// Color stdout output (allowed and stdout is a terminal).
     use_colors: bool,
+    /// Colors not switched off by `--no-color` / NO_COLOR. Stderr writers
+    /// check their own stream for a terminal.
+    colors_allowed: bool,
     json_mode: bool,
     quiet: bool,
 }
 
 impl OutputConfig {
-    /// Report compilation errors using the appropriate format
+    fn from_args(args: &Args) -> Self {
+        // Colors only when stdout is a terminal and the user has not opted
+        // out with `--no-color` or the NO_COLOR convention.
+        let colors_allowed = !args.no_color && std::env::var_os("NO_COLOR").is_none();
+        Self {
+            use_colors: colors_allowed && std::io::stdout().is_terminal(),
+            colors_allowed,
+            json_mode: args.json,
+            quiet: args.quiet,
+        }
+    }
+
+    /// The ANSI escape `code` when colors are on, otherwise an empty string.
+    fn paint(&self, code: &'static str) -> &'static str {
+        if self.use_colors {
+            code
+        } else {
+            ""
+        }
+    }
+
+    /// Progress and success messages are human text: hidden by `--quiet`
+    /// (errors only) and by `--json` (stdout carries only JSON).
+    fn shows_progress(&self) -> bool {
+        !self.quiet && !self.json_mode
+    }
+
+    /// Report compilation errors using the appropriate format. Errors are
+    /// always shown, including under `--quiet`.
     fn report_errors(&self, errors: &[CompilerError], source: Option<&str>) {
         if self.json_mode {
             // Output JSON diagnostics for IDE integration
@@ -43,9 +76,9 @@ impl OutputConfig {
                 "{}",
                 serde_json::to_string_pretty(&diagnostics).unwrap_or_default()
             );
-        } else if !self.quiet {
-            // Use the ErrorReporter for beautiful terminal output
-            let reporter = ErrorReporter::new(self.use_colors);
+        } else {
+            // ErrorReporter writes to stderr and only colors a terminal.
+            let reporter = ErrorReporter::new(self.colors_allowed);
             let _ = reporter.report_errors(errors, source);
         }
     }
@@ -136,16 +169,12 @@ enum Commands {
         lib_paths: Vec<PathBuf>,
 
         /// Optimization level (0-3)
-        #[arg(short = 'O', long, default_value_t = 2)]
+        #[arg(short = 'O', long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(0..=3))]
         opt_level: u8,
 
         /// Memory budget tier (embedded, minimal, standard, heavy, canvas)
         #[arg(long, default_value = None)]
         memory_tier: Option<String>,
-
-        /// Include debug information
-        #[arg(short, long)]
-        debug: bool,
     },
     /// Compile a Clean Language file to WebAssembly
     Compile {
@@ -157,25 +186,20 @@ enum Commands {
         output: String,
 
         /// Optimization level (0-3)
-        #[arg(short = 'l', long, default_value_t = 2)]
+        #[arg(short = 'l', long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(0..=3))]
         opt_level: u8,
 
-        /// Target platform for bridge generation (auto, browser, node, ios, android, server).
+        /// Target platform for bridge generation (auto, browser, node, ios, android, server, plugin).
         /// `auto` (default) infers the host class from the reachable bridge functions:
         /// if every reachable browser/server-restricted bridge accepts `browser`, that is chosen;
         /// otherwise the build defaults to `server`.
         /// Fixes 270f8fc643db (standalone client entries no longer misclassified as `server`).
-        #[arg(short, long, default_value = "auto")]
+        #[arg(short, long, default_value = "auto", value_parser = COMPILE_TARGETS)]
         target: String,
 
         /// Memory budget tier (embedded, minimal, standard, heavy, canvas)
         #[arg(long, default_value = None)]
         memory_tier: Option<String>,
-
-        /// Accepted for compatibility with existing build scripts; has no
-        /// effect. Plugins are always loaded from the source's `plugins:` block.
-        #[arg(long, hide = true)]
-        plugins: bool,
 
         /// Release mode: strip always: invariant checks for smaller, faster output
         #[arg(long)]
@@ -217,13 +241,6 @@ enum Commands {
         #[arg(long)]
         emit_bridge_probes: bool,
 
-        /// Contract 5 Phase B: accept `--no-lint` so scripts written for the
-        /// eventual Phase D flip already work. Lint is OFF by default in
-        /// `cln compile` throughout Phase B — this flag is a no-op until the
-        /// default flips. See `foundation/spec/framework/contracts/lint-extension.md` §9.
-        #[arg(long, hide = true)]
-        no_lint: bool,
-
         /// Override plugin resolution: `<name>=<path>`. Repeatable. Path may
         /// point at a directory containing `plugin.wasm` + `plugin.toml`, or
         /// at the `plugin.wasm` file itself (sibling `plugin.toml` must exist).
@@ -234,7 +251,7 @@ enum Commands {
         #[arg(long = "plugin-override", value_name = "NAME=PATH")]
         plugin_override: Vec<String>,
     },
-    /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
+    /// Run the tests: blocks of Clean Language source files (.cln)
     Test {
         /// .cln files (or directories) containing tests: blocks to run
         #[arg(short, long)]
@@ -243,8 +260,6 @@ enum Commands {
         #[arg(value_name = "FILE")]
         files: Vec<String>,
     },
-    /// Run simple compilation tests
-    SimpleTest {},
     /// Debug a Clean Language file with enhanced error reporting
     Debug {
         /// Input file to debug
@@ -280,10 +295,6 @@ enum Commands {
         #[arg(long)]
         show_tree: bool,
 
-        /// Enable error recovery mode
-        #[arg(long)]
-        recover_errors: bool,
-
         /// Output AST as JSON
         #[arg(long)]
         ast_json: bool,
@@ -313,10 +324,6 @@ enum Commands {
         /// Enable debug output
         #[arg(short, long)]
         debug: bool,
-
-        /// Watch for file changes and auto-reload
-        #[arg(short, long)]
-        watch: bool,
     },
     /// Export compile options to JSON for IDE integration
     Options {
@@ -330,18 +337,8 @@ enum Commands {
     },
     /// Explain an error code in detail
     Explain {
-        /// Error code to explain (e.g., SYN001, TYP001)
+        /// Error code to explain (e.g., SYN001, SEM003)
         code: String,
-    },
-    /// Show WebAssembly runtime information
-    Runtime {
-        /// Detect and show current runtime
-        #[arg(long)]
-        detect: bool,
-
-        /// List all available runtimes
-        #[arg(long)]
-        list: bool,
     },
     /// Fast type-check a Clean Language file (no WASM generation)
     Check {
@@ -367,24 +364,14 @@ enum Commands {
     /// Generate MCP configuration JSON for AI agent integration
     #[command(name = "mcp-config")]
     McpConfig {
-        /// Output format: claude-desktop, vscode, generic (default: generic)
-        #[arg(short, long, default_value = "generic")]
+        /// Output format (default: generic)
+        #[arg(short, long, default_value = "generic", value_parser = ["generic", "claude-desktop", "claude", "claude-code", "vscode", "cursor"])]
         format: String,
     },
     /// Configure compiler settings (e.g., telemetry)
     #[command(subcommand)]
     Config(ConfigCommands),
-    /// View fix status of reported compiler errors
-    Fixes {
-        /// Show fixes since this version
-        #[arg(long)]
-        since: Option<String>,
-
-        /// Show only pending (unresolved) reports
-        #[arg(long)]
-        pending: bool,
-    },
-    /// Report a compiler error manually
+    /// Record a compiler bug locally and print the GitHub issue command to file it
     Report {
         /// Error code to report (e.g., SYN001)
         #[arg(long)]
@@ -397,20 +384,14 @@ enum Commands {
         /// Description of the issue
         #[arg(long)]
         description: Option<String>,
+
+        /// Component that owns the fix
+        #[arg(long, default_value = "compiler", value_parser = ["compiler", "server", "framework", "manager"])]
+        component: String,
     },
-    /// Telemetry maintenance (flush pending reports, retry unconfirmed reports)
-    #[command(subcommand)]
-    Telemetry(TelemetryCommands),
     /// Inspect and manage the local dev-mode error queue
     #[command(name = "dev-queue", subcommand)]
     DevQueue(DevQueueCommands),
-}
-
-#[derive(Subcommand, Debug)]
-enum TelemetryCommands {
-    /// Re-POST any locally-stored error reports that never received a fingerprint
-    /// from the backend, plus drain the offline queue.
-    Flush,
 }
 
 #[derive(Subcommand, Debug)]
@@ -442,22 +423,46 @@ enum DevQueueCommands {
 enum ConfigCommands {
     /// Get a configuration value
     Get {
-        /// Configuration key (e.g., 'telemetry')
+        /// Configuration key
+        #[arg(value_parser = ["telemetry"])]
         key: String,
     },
     /// Set a configuration value
     Set {
-        /// Configuration key (e.g., 'telemetry')
+        /// Configuration key
+        #[arg(value_parser = ["telemetry"])]
         key: String,
-        /// Value to set (e.g., 'on', 'off')
+        /// Value to set
+        #[arg(value_parser = ["on", "off"])]
         value: String,
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+/// Accepted `cln compile --target` values (see `target_to_host_class` and the
+/// bridge-generation match in `handle_compile`).
+const COMPILE_TARGETS: [&str; 13] = [
+    "auto", "server", "browser", "web", "node", "nodejs", "ios", "macos", "apple", "android",
+    "wasi", "native", "plugin",
+];
 
+#[tokio::main]
+async fn main() {
+    // Exit quietly when stdout is closed early (`cln ... | head`) instead of
+    // panicking inside `println!`: restore the default SIGPIPE action that
+    // the Rust runtime replaces with "ignore".
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
+    let args = Args::parse();
+    if let Err(e) = run(args).await {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging based on verbosity level
     let log_level = match (args.quiet, args.verbose) {
         (true, _) => "error", // --quiet: only errors
@@ -472,29 +477,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("RUST_LOG", log_level);
     }
 
-    // Initialize tracing subscriber
+    let output_config = OutputConfig::from_args(&args);
+
+    // Initialize tracing subscriber (logs go to stderr)
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_target(false)
-        .with_ansi(!args.no_color)
+        .with_writer(std::io::stderr)
+        .with_ansi(output_config.colors_allowed && std::io::stderr().is_terminal())
         .init();
-
-    // Store global output options for error reporting
-    let output_config = OutputConfig {
-        use_colors: !args.no_color,
-        json_mode: args.json,
-        quiet: args.quiet,
-    };
-
-    // Telemetry: first-run prompt + version change checks (interactive commands only)
-    if !args.quiet && !args.json {
-        if let Commands::Compile { .. } | Commands::Build { .. } | Commands::Run { .. } =
-            &args.command
-        {
-            clean_language_compiler::telemetry::maybe_prompt_telemetry();
-            clean_language_compiler::telemetry::check_version_change();
-        }
-    }
 
     match args.command {
         Commands::Build {
@@ -503,7 +494,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             lib_paths,
             opt_level,
             memory_tier,
-            debug,
         } => {
             handle_build(
                 input,
@@ -511,10 +501,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 lib_paths,
                 opt_level,
                 memory_tier,
-                debug,
                 &output_config,
             )
-            .await?
+            .await
         }
         Commands::Compile {
             input,
@@ -522,180 +511,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             opt_level,
             target,
             memory_tier,
-            plugins: _,
             release,
             strict_hosts,
             emit_heap_probes,
             emit_bridge_probes,
-            // Contract 5 Phase B: `no_lint` is accepted on the CLI but not
-            // yet plumbed to the compile pipeline — lint is OFF by default
-            // in Phase B, so the flag has nothing to disable. Wired
-            // through the dispatch site to keep the clap-derive struct and
-            // the handler call site in sync; wired to `handle_compile`
-            // when the default flips in Phase D.
-            no_lint: _,
             plugin_override,
         } => {
             handle_compile(
-                input,
-                output,
-                opt_level,
-                target,
-                memory_tier,
-                release,
-                strict_hosts,
-                emit_heap_probes,
-                emit_bridge_probes,
-                plugin_override,
+                CompileRequest {
+                    input,
+                    output,
+                    opt_level,
+                    target,
+                    memory_tier,
+                    release,
+                    strict_hosts,
+                    emit_heap_probes,
+                    emit_bridge_probes,
+                    plugin_override,
+                },
                 &output_config,
             )
-            .await?
+            .await
         }
-        Commands::Test { dirs, files } => handle_test(args.verbose > 0, dirs, files).await?,
-        Commands::SimpleTest {} => handle_simple_test(args.verbose > 0).await?,
+        Commands::Test { dirs, files } => handle_test(dirs, files, &output_config).await,
         Commands::Debug {
             input,
             show_ast,
             check_style,
-        } => handle_debug(input, show_ast, check_style, &output_config).await?,
+        } => handle_debug(input, show_ast, check_style, &output_config).await,
         Commands::Lint {
             input,
             errors_only,
             plugin_override,
-        } => handle_lint(input, errors_only, plugin_override, &output_config).await?,
+        } => handle_lint(input, errors_only, plugin_override, &output_config).await,
         Commands::Parse {
             input,
             show_tree,
-            recover_errors,
             ast_json,
         } => {
             if ast_json {
-                handle_ast_json(input, &output_config).await?
+                handle_ast_json(input, &output_config).await
             } else {
-                handle_parse(input, show_tree, recover_errors, &output_config).await?
+                handle_parse(input, show_tree, &output_config).await
             }
         }
-        Commands::Run { input, debug } => handle_run(input, debug, &output_config).await?,
+        Commands::Run { input, debug } => handle_run(input, debug, &output_config).await,
         Commands::Options {
             export_json,
             output,
         } => {
             if export_json {
                 let output_path = output.map(PathBuf::from);
-                options_export::export_compile_options(output_path)?;
+                options_export::export_compile_options(&Args::command(), output_path)
             } else {
-                eprintln!("Use --export-json to export compile options");
-                std::process::exit(1);
+                Err("Use --export-json to export compile options".into())
             }
         }
-        Commands::Explain { code } => handle_explain(&code, &output_config)?,
-        Commands::Runtime { detect, list } => handle_runtime(detect, list, &output_config)?,
+        Commands::Explain { code } => handle_explain(&code, &output_config),
         Commands::Serve {
             input,
             port,
             host,
             debug,
-            watch,
-        } => handle_serve(input, port, host, debug, watch, &output_config).await?,
+        } => handle_serve(input, port, host, debug, &output_config).await,
         Commands::Check {
             input,
             plugin_override,
-        } => handle_check(input, plugin_override, &output_config).await?,
+        } => handle_check(input, plugin_override, &output_config).await,
         Commands::Watch { path, json_stream } => {
-            handle_watch(path, json_stream, &output_config).await?
+            handle_watch(path, json_stream, &output_config).await
         }
-        Commands::McpServer {} => clean_language_compiler::mcp::run_mcp_server().await?,
-        Commands::McpConfig { format } => handle_mcp_config(&format)?,
-        Commands::Config(config_cmd) => handle_config(config_cmd, &output_config)?,
-        Commands::Fixes { since, pending } => handle_fixes(since, pending, &output_config)?,
+        Commands::McpServer {} => clean_language_compiler::mcp::run_mcp_server().await,
+        Commands::McpConfig { format } => handle_mcp_config(&format),
+        Commands::Config(config_cmd) => handle_config(config_cmd, &output_config),
         Commands::Report {
             error,
             code,
             description,
-        } => handle_report(error, code, description, &output_config)?,
-        Commands::Telemetry(cmd) => match cmd {
-            TelemetryCommands::Flush => {
-                clean_language_compiler::telemetry::flush_pending_telemetry(true);
-            }
-        },
-        Commands::DevQueue(cmd) => handle_dev_queue(cmd)?,
+            component,
+        } => handle_report(error, code, description, &component, &output_config),
+        Commands::DevQueue(cmd) => handle_dev_queue(cmd),
     }
-
-    Ok(())
 }
 
-fn handle_runtime(
-    detect: bool,
-    list: bool,
-    output_config: &OutputConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let green = if output_config.use_colors {
-        "\x1b[32m"
-    } else {
-        ""
-    };
-    let cyan = if output_config.use_colors {
-        "\x1b[36m"
-    } else {
-        ""
-    };
-    let yellow = if output_config.use_colors {
-        "\x1b[33m"
-    } else {
-        ""
-    };
-    let reset = if output_config.use_colors {
-        "\x1b[0m"
-    } else {
-        ""
-    };
-
-    if list || !detect {
-        println!("\n{}WebAssembly Runtimes{}", cyan, reset);
-        println!("{}", "=".repeat(50));
-
-        let runtimes = RuntimeManager::list_available_runtimes();
-        for runtime in &runtimes {
-            let status = if runtime.available {
-                format!("{}✓ Available{}", green, reset)
-            } else {
-                format!("{}✗ Not compiled{}", yellow, reset)
-            };
-
-            println!("\n{}{}{} ({})", cyan, runtime.name, reset, status);
-            println!("  Version: {}", runtime.version);
-            println!("  {}", runtime.description);
-            println!("  Features: {}", runtime.features.join(", "));
-        }
-        println!();
+/// Human description of a `-O`/`-l` optimization level (0-3, enforced by clap).
+fn opt_level_description(opt_level: u8) -> &'static str {
+    match opt_level {
+        0 => "none (fastest compilation)",
+        1 => "light",
+        2 => "standard",
+        _ => "aggressive (speed + size)",
     }
-
-    if detect {
-        use clean_language_compiler::runtime::runtime_trait::RuntimeConfig;
-
-        let config = RuntimeConfig::default();
-        match RuntimeManager::select_runtime(&config) {
-            Ok(selected) => {
-                println!("\n{}Selected Runtime{}", cyan, reset);
-                println!("{}", "=".repeat(50));
-                println!("  Runtime: {}{}{}", green, selected, reset);
-                println!("  Mode: Auto-detected based on configuration");
-
-                let recommendations = RuntimeManager::get_runtime_recommendations(selected);
-                println!("\n{}Recommendations:{}", cyan, reset);
-                for rec in recommendations {
-                    println!("  • {}", rec);
-                }
-                println!();
-            }
-            Err(e) => {
-                eprintln!("Error detecting runtime: {}", e);
-                return Err(e.into());
-            }
-        }
-    }
-
-    Ok(())
 }
 
 async fn handle_serve(
@@ -703,84 +610,52 @@ async fn handle_serve(
     port: u16,
     host: String,
     debug: bool,
-    _watch: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
+    let green = output_config.paint("\x1b[32m");
+    let cyan = output_config.paint("\x1b[36m");
+    let reset = output_config.paint("\x1b[0m");
 
-    let green = if output_config.use_colors {
-        "\x1b[32m"
-    } else {
-        ""
-    };
-    let cyan = if output_config.use_colors {
-        "\x1b[36m"
-    } else {
-        ""
-    };
-    let reset = if output_config.use_colors {
-        "\x1b[0m"
-    } else {
-        ""
-    };
+    // Locate the server before compiling so a missing install fails fast.
+    let server_path = find_clean_server()?;
 
-    // Step 1: Compile the input file to WASM
-    let wasm_output = format!("/tmp/cln-serve-{}.wasm", std::process::id());
+    // Step 1: Compile into a private build directory. It holds the WASM, the
+    // build manifest and any plugin artifacts, and is removed when this
+    // function returns on every path (success, compile failure, server exit).
+    let build_dir = tempfile::Builder::new().prefix("cln-serve-").tempdir()?;
+    let wasm_output = build_dir.path().join("app.wasm");
 
-    if !output_config.quiet {
+    if output_config.shows_progress() {
         println!("{}Compiling{} {} to WASM...", cyan, reset, input);
     }
 
     // Compile for the server target (plugins load from the source's `plugins:` block)
-    let compile_result = handle_compile(
-        input.clone(),
-        wasm_output.clone(),
-        2,                    // opt_level
-        "server".to_string(), // target - no bridge needed for serve
-        None,                 // memory_tier - use target default
-        false,                // release mode: off for serve
-        false,                // strict_hosts off for serve
-        false,                // emit_heap_probes off for serve
-        false,                // emit_bridge_probes off for serve
-        Vec::new(),           // plugin_override — none for serve
+    handle_compile(
+        CompileRequest {
+            input,
+            output: wasm_output.to_string_lossy().into_owned(),
+            opt_level: 2,
+            target: "server".to_string(),
+            memory_tier: None,
+            release: false,
+            strict_hosts: false,
+            emit_heap_probes: false,
+            emit_bridge_probes: false,
+            plugin_override: Vec::new(),
+        },
         output_config,
     )
-    .await;
+    .await?;
 
-    if let Err(e) = compile_result {
-        eprintln!("Compilation failed: {}", e);
-        return Err(e);
-    }
-
-    // Step 2: Find clean-server
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let server_paths = [
-        format!("{}/.cleen/server/1.0.0/clean-server", home),
-        "/usr/local/bin/clean-server".to_string(),
-    ];
-
-    let server_path = server_paths
-        .iter()
-        .find(|p| std::path::Path::new(p).exists());
-
-    let server_path = match server_path {
-        Some(p) => p.clone(),
-        None => {
-            eprintln!("Error: clean-server not found. Install it with:");
-            eprintln!("   cleen server install");
-            return Err("clean-server not found".into());
-        }
-    };
-
-    if !output_config.quiet {
+    if output_config.shows_progress() {
         println!(
             "{}Starting server{} on http://{}:{}",
             green, reset, host, port
         );
     }
 
-    // Step 3: Run clean-server with the compiled WASM
-    let mut cmd = Command::new(&server_path);
+    // Step 2: Run clean-server with the compiled WASM
+    let mut cmd = std::process::Command::new(&server_path);
     cmd.arg(&wasm_output)
         .arg("--port")
         .arg(port.to_string())
@@ -791,16 +666,58 @@ async fn handle_serve(
         cmd.arg("--verbose");
     }
 
-    let status = cmd.status()?;
-
-    // Clean up temp file
-    let _ = std::fs::remove_file(&wasm_output);
-
+    let status = cmd
+        .status()
+        .map_err(|e| format!("Failed to launch {}: {}", server_path.display(), e))?;
     if !status.success() {
         return Err(format!("Server exited with status: {}", status).into());
     }
 
     Ok(())
+}
+
+/// Locate the `clean-server` binary installed by `cleen`: `~/.cleen/bin/`
+/// first, then the newest version under `~/.cleen/server/<version>/`, then
+/// `/usr/local/bin`.
+fn find_clean_server() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(cleen) = dirs::home_dir().map(|h| h.join(".cleen")) {
+        let bin = cleen
+            .join("bin")
+            .join(format!("clean-server{}", std::env::consts::EXE_SUFFIX));
+        if bin.is_file() {
+            return Ok(bin);
+        }
+        if let Some(found) = newest_versioned_binary(&cleen.join("server"), "clean-server") {
+            return Ok(found);
+        }
+    }
+    let system = PathBuf::from("/usr/local/bin/clean-server");
+    if system.is_file() {
+        return Ok(system);
+    }
+    Err("clean-server not found in ~/.cleen/bin, ~/.cleen/server/<version>/ or /usr/local/bin. Install it with: cleen server install".into())
+}
+
+/// `<base>/<version>/<binary>` for the highest semver `<version>` directory
+/// that contains the binary.
+fn newest_versioned_binary(base: &Path, binary: &str) -> Option<PathBuf> {
+    let parse = |s: &str| -> (u32, u32, u32) {
+        let mut parts = s.trim_start_matches('v').split('.');
+        let mut next = || parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        (next(), next(), next())
+    };
+    let mut versions: Vec<String> = fs::read_dir(base)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    versions.sort_by_key(|v| std::cmp::Reverse(parse(v)));
+    let exe = format!("{binary}{}", std::env::consts::EXE_SUFFIX);
+    versions
+        .iter()
+        .map(|ver| base.join(ver).join(&exe))
+        .find(|p| p.is_file())
 }
 
 async fn handle_watch(
@@ -875,16 +792,13 @@ async fn handle_watch(
                             eprintln!("{text}");
                         }
                     }
-                    let green = if output_config.use_colors {
-                        "\x1b[32m"
-                    } else {
-                        ""
-                    };
-                    let reset = if output_config.use_colors {
-                        "\x1b[0m"
-                    } else {
-                        ""
-                    };
+                    // This status line goes to stderr, so color only a terminal there.
+                    let (green, reset) =
+                        if output_config.colors_allowed && std::io::stderr().is_terminal() {
+                            ("\x1b[32m", "\x1b[0m")
+                        } else {
+                            ("", "")
+                        };
                     eprintln!("{}OK{} {} ({}ms)", green, reset, file_str, duration_ms);
                 }
             }
@@ -967,7 +881,7 @@ struct ResolvedPluginOverride {
 fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     let Some((name, raw_path)) = arg.split_once('=') else {
         return Err(format!(
-            "error: --plugin-override expects `<name>=<path>`, got `{}`",
+            "--plugin-override expects `<name>=<path>`, got `{}`",
             arg
         ));
     };
@@ -975,7 +889,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     let raw_path = raw_path.trim();
     if name.is_empty() || raw_path.is_empty() {
         return Err(format!(
-            "error: --plugin-override expects `<name>=<path>`, got `{}`",
+            "--plugin-override expects `<name>=<path>`, got `{}`",
             arg
         ));
     }
@@ -991,14 +905,14 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
         (dir, path.clone())
     } else {
         return Err(format!(
-            "error: --plugin-override {}={} — path is neither a directory nor a .wasm file",
+            "--plugin-override {}={} — path is neither a directory nor a .wasm file",
             name, raw_path
         ));
     };
 
     if !wasm_path.exists() {
         return Err(format!(
-            "error: --plugin-override {}={} — plugin.wasm not found at {}",
+            "--plugin-override {}={} — plugin.wasm not found at {}",
             name,
             raw_path,
             wasm_path.display()
@@ -1008,7 +922,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     let toml_path = dir.join("plugin.toml");
     if !toml_path.exists() {
         return Err(format!(
-            "error: --plugin-override {}={} — sibling plugin.toml not found at {}",
+            "--plugin-override {}={} — sibling plugin.toml not found at {}",
             name,
             raw_path,
             toml_path.display()
@@ -1022,7 +936,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     // load error and we prefer the direct hard-error path there.
     let toml_text = std::fs::read_to_string(&toml_path).map_err(|e| {
         format!(
-            "error: --plugin-override {}={} — failed to read {}: {}",
+            "--plugin-override {}={} — failed to read {}: {}",
             name,
             raw_path,
             toml_path.display(),
@@ -1031,7 +945,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     })?;
     let parsed: toml::Value = toml::from_str(&toml_text).map_err(|e| {
         format!(
-            "error: --plugin-override {}={} — malformed plugin.toml at {}: {}",
+            "--plugin-override {}={} — malformed plugin.toml at {}: {}",
             name,
             raw_path,
             toml_path.display(),
@@ -1104,7 +1018,7 @@ fn apply_plugin_overrides(
                 loaded.iter().cloned().collect::<Vec<_>>().join(", ")
             };
             return Err(format!(
-                "error: --plugin-override {}=... but no file loads plugin '{}'. \
+                "--plugin-override {}=... but no file loads plugin '{}'. \
                  Plugins loaded by this project: {}.",
                 r.name, r.name, loaded_list
             ));
@@ -1167,14 +1081,11 @@ async fn handle_check(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = read_source(&input)?;
 
-    if let Err(msg) = apply_plugin_overrides(
+    apply_plugin_overrides(
         &plugin_override,
         &[(input.clone(), source.clone())],
-        output_config.quiet,
-    ) {
-        eprintln!("{}", msg);
-        return Err(msg.into());
-    }
+        !output_config.shows_progress(),
+    )?;
 
     let start_time = std::time::Instant::now();
 
@@ -1205,16 +1116,8 @@ async fn handle_check(
                         eprintln!("{text}");
                     }
                 }
-                let green = if output_config.use_colors {
-                    "\x1b[32m"
-                } else {
-                    ""
-                };
-                let reset = if output_config.use_colors {
-                    "\x1b[0m"
-                } else {
-                    ""
-                };
+                let green = output_config.paint("\x1b[32m");
+                let reset = output_config.paint("\x1b[0m");
                 println!(
                     "{}OK{} {} ({} functions, {} types, {}ms)",
                     green,
@@ -1270,7 +1173,6 @@ async fn handle_build(
     lib_paths: Vec<PathBuf>,
     opt_level: u8,
     memory_tier_str: Option<String>,
-    debug: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Determine output filename
@@ -1281,17 +1183,10 @@ async fn handle_build(
             .unwrap_or_else(|| "output.wasm".to_string())
     });
 
-    if !output_config.quiet {
-        let opt_desc = match opt_level {
-            0 => "none (fastest compilation)",
-            1 => "light",
-            2 => "standard",
-            3 => "aggressive (speed + size)",
-            _ => "unknown",
-        };
-        let debug_mode = if debug { " [debug]" } else { "" };
+    if output_config.shows_progress() {
         println!(
-            "Building {input} -> {output_file} (optimization: -O{opt_level} {opt_desc}){debug_mode}"
+            "Building {input} -> {output_file} (optimization: -O{opt_level} {})",
+            opt_level_description(opt_level)
         );
 
         if !lib_paths.is_empty() {
@@ -1299,77 +1194,143 @@ async fn handle_build(
         }
     }
 
-    // Parse explicit CLI tier (if any) and compute target default
     let explicit_tier = parse_memory_tier_flag(memory_tier_str.as_deref())?;
     let target_default = clean_language_compiler::MemoryTier::default_for_target("auto");
 
-    // Use the multi-file compiler with memory tier. The second tuple element is
-    // the build_state snapshot populated by plugin `_build_state_set` calls
-    // during `expand_block`; it's threaded into the artifact orchestrator and
-    // the build manifest below so `has_build_state.*` predicates and the
-    // manifest's `build_state` field reflect compile-time writes. Without
-    // this thread-through, both consumers see an empty map and predicate-gated
-    // artifacts (e.g. frame.ui's `frontend.wasm`) silently fail to emit
-    // (PLUGIN_BUILD_STATE_NOT_PERSISTED).
-    let (wasm_binary, build_state) = clean_language_compiler::compile_multi_file_with_memory_tier(
+    let (wasm_binary, build_state) = compile_entry(
         &input,
         lib_paths,
         opt_level,
         explicit_tier,
         target_default,
         false,
-    )
-    .map_err(|errors| {
-        let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-        output_config.report_errors(&errors, None);
-        format!(
-            "Build failed with {} error(s): {}",
-            errors.len(),
-            error_messages.join("; ")
-        )
-    })?;
+        output_config,
+    )?;
 
-    // Write output
-    fs::write(&output_file, &wasm_binary)?;
+    write_build_outputs(
+        &input,
+        &output_file,
+        &wasm_binary,
+        &build_state,
+        opt_level,
+        output_config,
+    )?;
 
-    if !output_config.quiet {
+    if output_config.json_mode {
+        print_success_json(&input, &output_file, &wasm_binary);
+    } else if output_config.shows_progress() {
         println!("Build successful! Generated {output_file}");
     }
 
-    // Collect extra artifacts produced by the build (e.g. frontend.wasm under
-    // BUILD_FRONTEND). They are emitted to disk in this block and recorded
-    // into the build-manifest.json at the end.
-    let mut extra_artifacts: Vec<(
-        String,
-        String,
-        &'static str,
-        bool,
-        &'static str,
-        Vec<u8>,
-        Option<String>,
-    )> = Vec::new();
-
-    // Plugin Contracts v2 — declarative artifact orchestration.
-    // Loaded plugins that declare `[[artifacts]]` entries in their plugin.toml
-    // drive the artifact pass. See contracts/artifacts.md §7.
-    extra_artifacts.extend(orchestrate_artifacts(
-        &input,
-        &output_file,
-        opt_level,
-        output_config.quiet,
-        &build_state,
-    )?);
-
-    write_build_manifest(
-        Path::new(&output_file),
-        &wasm_binary,
-        extra_artifacts,
-        Some(Path::new(&input)),
-        output_config.quiet,
-        &build_state,
-    );
-
     Ok(())
+}
+
+/// Plugin build state captured during compilation (`_build_state_set`).
+type BuildStateSnapshot = std::collections::BTreeMap<String, String>;
+
+/// Compile `input` through the multi-file pipeline shared by `build`,
+/// `compile` and `serve`. On failure the errors are reported once, with the
+/// entry source for context, and a short summary error is returned.
+///
+/// The second element of the result is the build_state snapshot populated by
+/// plugin `_build_state_set` calls during `expand_block`; it feeds the
+/// artifact orchestrator and the build manifest so `has_build_state.*`
+/// predicates and the manifest's `build_state` field reflect compile-time
+/// writes (PLUGIN_BUILD_STATE_NOT_PERSISTED).
+fn compile_entry(
+    input: &str,
+    search_paths: Vec<PathBuf>,
+    opt_level: u8,
+    explicit_tier: Option<clean_language_compiler::MemoryTier>,
+    target_default: clean_language_compiler::MemoryTier,
+    release: bool,
+    output_config: &OutputConfig,
+) -> Result<(Vec<u8>, BuildStateSnapshot), Box<dyn std::error::Error>> {
+    let result = if release {
+        clean_language_compiler::compile_multi_file_release(
+            input,
+            search_paths,
+            opt_level,
+            explicit_tier,
+            target_default,
+        )
+    } else {
+        clean_language_compiler::compile_multi_file_with_memory_tier(
+            input,
+            search_paths,
+            opt_level,
+            explicit_tier,
+            target_default,
+            false,
+        )
+    };
+    result.map_err(|errors| {
+        let source = fs::read_to_string(input).ok();
+        output_config.report_errors(&errors, source.as_deref());
+        clean_language_compiler::telemetry::report_compile_failure(
+            &errors,
+            input,
+            source.as_deref(),
+        );
+        format!(
+            "Compilation failed with {} error{}",
+            errors.len(),
+            if errors.len() == 1 { "" } else { "s" }
+        )
+        .into()
+    })
+}
+
+/// Write the main WASM, any plugin-declared `[[artifacts]]` and the build
+/// manifest next to `output`.
+fn write_build_outputs(
+    input: &str,
+    output: &str,
+    wasm_binary: &[u8],
+    build_state: &BuildStateSnapshot,
+    opt_level: u8,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = Path::new(output)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(output, wasm_binary)?;
+
+    let quiet = !output_config.shows_progress();
+    // Plugin Contracts v2 — declarative artifact orchestration. Loaded
+    // plugins that declare `[[artifacts]]` entries in their plugin.toml drive
+    // the artifact pass. See contracts/artifacts.md §7.
+    let extra_artifacts = orchestrate_artifacts(input, output, opt_level, quiet, build_state)?;
+
+    // Plugin Contracts v2 — emit build-manifest.json alongside the WASM so
+    // hosts can locate artifacts by purpose rather than path coincidence.
+    // See foundation/spec/plugins/contracts/artifacts.md §5.
+    write_build_manifest(
+        Path::new(output),
+        wasm_binary,
+        extra_artifacts,
+        Some(Path::new(input)),
+        quiet,
+        build_state,
+    );
+    Ok(())
+}
+
+/// `--json` success result for `build` and `compile`.
+fn print_success_json(input: &str, output: &str, wasm_binary: &[u8]) {
+    let json = serde_json::json!({
+        "success": true,
+        "file": input,
+        "output": output,
+        "bytes": wasm_binary.len(),
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    );
 }
 
 /// Plugin Contracts v2 — orchestrate `[[artifacts]]` emission for the build.
@@ -1576,19 +1537,37 @@ fn write_build_manifest(
     }
 }
 
-async fn handle_compile(
+/// Options of one `cln compile` invocation (also used by `cln serve`).
+struct CompileRequest {
     input: String,
     output: String,
     opt_level: u8,
     target: String,
-    memory_tier_str: Option<String>,
+    memory_tier: Option<String>,
     release: bool,
     strict_hosts: bool,
     emit_heap_probes: bool,
     emit_bridge_probes: bool,
     plugin_override: Vec<String>,
+}
+
+async fn handle_compile(
+    request: CompileRequest,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let CompileRequest {
+        input,
+        output,
+        opt_level,
+        target,
+        memory_tier: memory_tier_str,
+        release,
+        strict_hosts,
+        emit_heap_probes,
+        emit_bridge_probes,
+        plugin_override,
+    } = request;
+
     // --plugin-override validation runs before any codegen setup so a bad flag
     // fails fast without side effects on the compile pipeline overrides below.
     if !plugin_override.is_empty() {
@@ -1598,14 +1577,11 @@ async fn handle_compile(
                 input, e
             )
         })?;
-        if let Err(msg) = apply_plugin_overrides(
+        apply_plugin_overrides(
             &plugin_override,
             &[(input.clone(), source_for_check)],
-            output_config.quiet,
-        ) {
-            eprintln!("{}", msg);
-            return Err(msg.into());
-        }
+            !output_config.shows_progress(),
+        )?;
     } else {
         clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
     }
@@ -1616,11 +1592,9 @@ async fn handle_compile(
     // validator silently defaulted to "server" and replaced every
     // browser-only bridge call with a `0`-returning stub.
     // See bridge-host-classes.md §6 and `set_target_host_class_override`.
-    if let Some(hc) = clean_language_compiler::target_to_host_class(&target) {
-        clean_language_compiler::set_target_host_class_override(Some(hc.to_string()));
-    } else {
-        clean_language_compiler::set_target_host_class_override(None);
-    }
+    clean_language_compiler::set_target_host_class_override(
+        clean_language_compiler::target_to_host_class(&target).map(str::to_string),
+    );
     clean_language_compiler::set_strict_hosts_override(strict_hosts);
     // STATE-A heap-probe hunt — thread --emit-heap-probes and its
     // bridge-scoped superset --emit-bridge-probes. Both feed the same
@@ -1635,40 +1609,28 @@ async fn handle_compile(
     // section. Cleared for every other target so user-code builds carry no
     // stamp per foundation/spec/plugins/contracts/runtime-abi.md §4
     // ("user code doesn't get the stamp — it's plugin-specific").
-    if target.to_lowercase() == "plugin" {
+    if target == "plugin" {
         let abi = clean_language_compiler::resolve_plugin_abi_version_for_path(Path::new(&input));
         clean_language_compiler::set_plugin_abi_version_override(Some(abi));
     } else {
         clean_language_compiler::set_plugin_abi_version_override(None);
     }
-    if !output_config.quiet {
-        let opt_desc = match opt_level {
-            0 => "none (fastest compilation)",
-            1 => "light",
-            2 => "standard",
-            3 => "aggressive (speed + size)",
-            _ => "unknown",
-        };
+    if output_config.shows_progress() {
         let target_info = if target != "server" {
             format!(" [target: {}]", target)
         } else {
             String::new()
         };
         println!(
-            "Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc}){target_info}"
+            "Compiling {input} to {output} (optimization: -O{opt_level} {}){target_info}",
+            opt_level_description(opt_level)
         );
     }
 
-    // Get the input file path and its directory for search paths
-    let input_path = Path::new(&input);
-    let search_paths = if let Some(parent) = input_path.parent() {
-        if parent.as_os_str().is_empty() {
-            vec![PathBuf::from(".")]
-        } else {
-            vec![parent.to_path_buf()]
-        }
-    } else {
-        vec![PathBuf::from(".")]
+    // The input file's directory is the module search path.
+    let search_paths = match Path::new(&input).parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => vec![parent.to_path_buf()],
+        _ => vec![PathBuf::from(".")],
     };
 
     tracing::debug!(
@@ -1683,54 +1645,36 @@ async fn handle_compile(
     let explicit_tier = parse_memory_tier_flag(memory_tier_str.as_deref())?;
     let target_default = clean_language_compiler::MemoryTier::default_for_target(&target);
 
-    // Use multi-file compilation to support file path imports
-    // This automatically handles `import "path/to/file.cln"` syntax
-    // as well as module imports like `import Math`
-    let wasm_binary_result = if release {
-        clean_language_compiler::compile_multi_file_release(
-            input_path,
-            search_paths,
-            opt_level,
-            explicit_tier,
-            target_default,
-        )
-    } else {
-        clean_language_compiler::compile_multi_file_with_memory_tier(
-            input_path,
-            search_paths,
-            opt_level,
-            explicit_tier,
-            target_default,
-            false,
-        )
-    };
-    let (wasm_binary, build_state) = match wasm_binary_result {
-        Ok(output) => output,
-        Err(errors) => {
-            let source = fs::read_to_string(&input).unwrap_or_default();
-            output_config.report_errors(&errors, Some(&source));
-            // Auto-report compile failure if telemetry is enabled
-            clean_language_compiler::telemetry::report_compile_failure(
-                &errors,
-                &input,
-                Some(&source),
-            );
-            return Err(format!("Compilation failed with {} errors", errors.len()).into());
-        }
-    };
+    // Multi-file compilation resolves `import "path/to/file.cln"` as well as
+    // module imports like `import Math`.
+    let (wasm_binary, build_state) = compile_entry(
+        &input,
+        search_paths,
+        opt_level,
+        explicit_tier,
+        target_default,
+        release,
+        output_config,
+    )?;
 
-    if let Some(parent) = Path::new(&output).parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::write(&output, &wasm_binary)?;
+    // Plugin Contracts v2 — the orchestrator runs for `cln compile` as well
+    // as `cln build`, so plugin-declared [[artifacts]] (e.g. frame.ui's
+    // frontend.wasm with required_when = "has_client_init") are produced and
+    // recorded in the build manifest.
+    write_build_outputs(
+        &input,
+        &output,
+        &wasm_binary,
+        &build_state,
+        opt_level,
+        output_config,
+    )?;
 
     // STATE-A heap-probe hunt — when `--emit-heap-probes` is on, drain the
     // callsite list captured during codegen and write it to a
     // `<output>.probes.json` sidecar. The sidecar maps `callsite_id` back to
     // caller + source location so node-server's `_probe_ptr_dump` output
-    // can be correlated with the source `.cln` that produced it. See ack
-    // in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
+    // can be correlated with the source `.cln` that produced it.
     if emit_heap_probes || emit_bridge_probes {
         let callsites = clean_language_compiler::take_heap_probe_callsites();
         let module_name = Path::new(&output)
@@ -1743,50 +1687,21 @@ async fn handle_compile(
             "callsites": callsites,
         });
         let sidecar_path = format!("{}.probes.json", output);
-        match serde_json::to_vec_pretty(&sidecar) {
-            Ok(bytes) => {
-                fs::write(&sidecar_path, bytes)?;
-                if !output_config.quiet {
-                    println!(
-                        "Wrote heap-probe sidecar: {} ({} callsites)",
-                        sidecar_path,
-                        callsites.len()
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!("⚠️  Failed to serialize heap-probe sidecar: {}", e);
-            }
+        fs::write(&sidecar_path, serde_json::to_vec_pretty(&sidecar)?)?;
+        if output_config.shows_progress() {
+            println!(
+                "Wrote heap-probe sidecar: {} ({} callsites)",
+                sidecar_path,
+                callsites.len()
+            );
         }
     }
 
-    // Plugin Contracts v2 — orchestrate plugin-declared [[artifacts]] before
-    // writing the manifest. Previously only `cln build` ran the orchestrator
-    // and `cln compile` silently produced no side-channel artifacts (no
-    // frontend.wasm even when frame.ui's manifest declared it with
-    // required_when = "has_client_init"). See orchestrate_artifacts() and
-    // compiler-build-state-bridge-runtime-trap.md lead 2.
-    let extra_artifacts = orchestrate_artifacts(
-        &input,
-        &output,
-        opt_level,
-        output_config.quiet,
-        &build_state,
-    )?;
-
-    // Plugin Contracts v2 — emit build-manifest.json alongside the WASM so
-    // hosts can locate artifacts by purpose rather than path coincidence.
-    // See foundation/spec/plugins/contracts/artifacts.md §5.
-    write_build_manifest(
-        Path::new(&output),
-        &wasm_binary,
-        extra_artifacts,
-        Some(Path::new(&input)),
-        output_config.quiet,
-        &build_state,
-    );
-
-    println!("Successfully compiled to {output}");
+    if output_config.json_mode {
+        print_success_json(&input, &output, &wasm_binary);
+    } else if output_config.shows_progress() {
+        println!("Successfully compiled to {output}");
+    }
 
     // PLUGIN-BUILD-STAMP — stamp `built_with_compiler` into an adjacent
     // plugin.toml so wasm_loader's check_plugin_build_compatibility recognises
@@ -1800,24 +1715,15 @@ async fn handle_compile(
     // would silently skip half the plugins. The stamp itself is meta-info
     // that affects nothing except plugin loading — a false positive on a
     // non-plugin compile that happens to live next to a plugin.toml is harmless.
-    stamp_plugin_toml_if_present(&output);
+    stamp_plugin_toml_if_present(&output, output_config);
 
-    // Generate bridge files based on target
-    let bridge_target = match target.to_lowercase().as_str() {
+    // Generate bridge files based on target (values are restricted by clap).
+    let bridge_target = match target.as_str() {
         "browser" | "web" => Some(BridgeTarget::Browser),
         "node" | "nodejs" => Some(BridgeTarget::Node),
         "ios" | "macos" | "apple" => Some(BridgeTarget::iOS),
         "android" => Some(BridgeTarget::Android),
-        "server" | "wasi" | "native" | "plugin" | "auto" => None, // No bridge files for these targets
-        _ => {
-            if !output_config.quiet {
-                println!(
-                    "⚠️  Unknown target '{}', skipping bridge generation",
-                    target
-                );
-            }
-            None
-        }
+        _ => None, // server, wasi, native, plugin, auto: no bridge files
     };
 
     if let Some(bridge_target) = bridge_target {
@@ -1831,7 +1737,7 @@ async fn handle_compile(
         let generator = BridgeGenerator::new(bridge_target, output_dir, &wasm_filename);
         match generator.generate() {
             Ok(result) => {
-                if !output_config.quiet && !result.generated_files.is_empty() {
+                if output_config.shows_progress() && !result.generated_files.is_empty() {
                     println!("Generated {} bridge files:", bridge_target.name());
                     for file in &result.generated_files {
                         println!("  → {}", file.display());
@@ -1839,7 +1745,7 @@ async fn handle_compile(
                 }
             }
             Err(e) => {
-                eprintln!("⚠️  Failed to generate bridge files: {}", e);
+                eprintln!("warning: failed to generate bridge files: {}", e);
             }
         }
     }
@@ -1852,7 +1758,7 @@ async fn handle_compile(
 /// can recognise the build. Scans the output file's parent and grandparent
 /// for a plugin.toml — matches the cleen layout where build.sh writes the
 /// WASM alongside or one directory below the manifest.
-fn stamp_plugin_toml_if_present(output_file: &str) {
+fn stamp_plugin_toml_if_present(output_file: &str, output_config: &OutputConfig) {
     let out_path = Path::new(output_file);
     let candidates = [
         out_path.parent().map(|p| p.join("plugin.toml")),
@@ -1866,7 +1772,7 @@ fn stamp_plugin_toml_if_present(output_file: &str) {
         if candidate.exists() {
             if let Err(e) = write_build_stamp(candidate) {
                 eprintln!("warning: could not stamp {}: {}", candidate.display(), e);
-            } else {
+            } else if output_config.shows_progress() {
                 eprintln!(
                     "[Plugin Build] Stamped {} with compiler {}",
                     candidate.display(),
@@ -1882,38 +1788,66 @@ fn stamp_plugin_toml_if_present(output_file: &str) {
 /// section of a plugin.toml without disturbing other content or comments.
 fn write_build_stamp(toml_path: &Path) -> std::io::Result<()> {
     let content = fs::read_to_string(toml_path)?;
-    let version = env!("CARGO_PKG_VERSION");
-    let stamp_line = format!("built_with_compiler = \"{}\"", version);
+    fs::write(
+        toml_path,
+        stamp_build_section(&content, env!("CARGO_PKG_VERSION")),
+    )
+}
 
-    let updated = if content.contains("built_with_compiler") {
-        content
-            .lines()
-            .map(|l| {
-                if l.trim_start().starts_with("built_with_compiler") {
-                    stamp_line.clone()
-                } else {
-                    l.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else if content.contains("[build]") {
-        content
-            .lines()
-            .flat_map(|l| {
-                if l.trim() == "[build]" {
-                    vec![l.to_string(), stamp_line.clone()]
-                } else {
-                    vec![l.to_string()]
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        format!("{}\n\n[build]\n{}\n", content.trim_end(), stamp_line)
+/// `content` with `[build].built_with_compiler` set to `version`: the key's
+/// line is replaced when `[build]` already has it, inserted after the
+/// `[build]` header when it does not, and a `[build]` section is appended
+/// when there is none. Mentions of the key in comments or other sections are
+/// left alone, and a trailing newline is kept.
+fn stamp_build_section(content: &str, version: &str) -> String {
+    let stamp_line = format!("built_with_compiler = \"{}\"", version);
+    let is_stamp_key = |line: &str| {
+        line.trim_start()
+            .strip_prefix("built_with_compiler")
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    };
+    let section_of = |line: &str| {
+        let t = line.trim();
+        (t.starts_with('[') && !t.starts_with("[["))
+            .then(|| t.trim_matches(|c| c == '[' || c == ']').trim().to_string())
     };
 
-    fs::write(toml_path, updated)
+    let lines: Vec<&str> = content.lines().collect();
+    let mut section = String::new();
+    let mut build_header: Option<usize> = None;
+    let mut existing_key: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(name) = section_of(line) {
+            section = name;
+            if section == "build" && build_header.is_none() {
+                build_header = Some(i);
+            }
+        } else if section == "build" && existing_key.is_none() && is_stamp_key(line) {
+            existing_key = Some(i);
+        }
+    }
+
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    match (existing_key, build_header) {
+        (Some(i), _) => out[i] = stamp_line,
+        (None, Some(h)) => out.insert(h + 1, stamp_line),
+        (None, None) => {
+            while out.last().is_some_and(|l| l.trim().is_empty()) {
+                out.pop();
+            }
+            if !out.is_empty() {
+                out.push(String::new());
+            }
+            out.push("[build]".to_string());
+            out.push(stamp_line);
+            return out.join("\n") + "\n";
+        }
+    }
+    let mut joined = out.join("\n");
+    if content.ends_with('\n') {
+        joined.push('\n');
+    }
+    joined
 }
 
 /// Parse `--memory-tier` CLI flag value into `Option<MemoryTier>`.
@@ -1938,9 +1872,9 @@ fn parse_memory_tier_flag(
 }
 
 async fn handle_test(
-    verbose: bool,
     dirs: Vec<String>,
     files: Vec<String>,
+    output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Collect .cln files from positional args and --dirs flag
     let mut cln_files: Vec<String> = files;
@@ -1949,38 +1883,32 @@ async fn handle_test(
         if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("cln") {
             cln_files.push(dir.clone());
         } else if p.is_dir() {
-            if let Ok(entries) = fs::read_dir(p) {
-                for entry in entries.flatten() {
-                    let ep = entry.path();
-                    if ep.extension().and_then(|s| s.to_str()) == Some("cln") {
-                        if let Some(s) = ep.to_str() {
-                            cln_files.push(s.to_string());
-                        }
-                    }
-                }
-            }
+            let mut found: Vec<String> = fs::read_dir(p)?
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|ep| ep.extension().and_then(|s| s.to_str()) == Some("cln"))
+                .filter_map(|ep| ep.to_str().map(str::to_string))
+                .collect();
+            found.sort();
+            cln_files.extend(found);
+        } else {
+            return Err(format!("'{dir}' is not a .cln file or a directory").into());
         }
     }
 
     if cln_files.is_empty() {
-        // No .cln files given — fall back to compiler unit tests
-        println!("Running compiler test suite...");
-        let mut cmd = std::process::Command::new("cargo");
-        cmd.arg("test");
-        if verbose {
-            cmd.arg("--verbose");
-        }
-        let status = cmd.status()?;
-        if status.success() {
-            println!("All tests passed!");
-            return Ok(());
-        }
-        return Err("Some tests failed".into());
+        return Err(
+            "no test files given. Usage: cln test <FILE.cln>... or cln test --dirs <DIR>".into(),
+        );
     }
 
+    // Compiled test modules live in a private directory removed on return.
+    let work_dir = tempfile::Builder::new().prefix("cln-test-").tempdir()?;
     let mut any_failed = false;
-    for cln_path in &cln_files {
-        println!("Running tests in: {cln_path}");
+    for (index, cln_path) in cln_files.iter().enumerate() {
+        if output_config.shows_progress() {
+            println!("Running tests in: {cln_path}");
+        }
         let source = match fs::read_to_string(cln_path) {
             Ok(s) => s,
             Err(e) => {
@@ -1993,29 +1921,17 @@ async fn handle_test(
         let wasm_binary = match clean_language_compiler::compile_with_file(&source, cln_path) {
             Ok(b) => b,
             Err(errors) => {
-                eprintln!("  Compilation failed ({} errors):", errors.len());
-                for err in &errors {
-                    eprintln!("    {err}");
-                }
+                output_config.report_errors(&errors, Some(&source));
                 any_failed = true;
                 continue;
             }
         };
 
-        // Write to a temp file and execute via wasmtime_runner (which provides all
-        // required host imports including _state_reset_all) or fall back to clean-runner.
-        let stem = cln_path.trim_end_matches(".cln");
-        let temp_wasm = format!("{stem}.test.tmp.wasm");
-        if let Err(e) = fs::write(&temp_wasm, &wasm_binary) {
-            eprintln!("  Cannot write temp WASM: {e}");
-            any_failed = true;
-            continue;
-        }
-
-        let result = execute_via_local_runner(&temp_wasm, verbose);
-        let _ = fs::remove_file(&temp_wasm);
-
-        if let Err(e) = result {
+        // Execute via wasmtime_runner (which provides all required host
+        // imports including _state_reset_all) or fall back to clean-runner.
+        let temp_wasm = work_dir.path().join(format!("test_{index}.wasm"));
+        fs::write(&temp_wasm, &wasm_binary)?;
+        if let Err(e) = execute_via_local_runner(&temp_wasm.to_string_lossy()) {
             eprintln!("  {e}");
             any_failed = true;
         }
@@ -2025,32 +1941,6 @@ async fn handle_test(
         Err("One or more test files had failures".into())
     } else {
         Ok(())
-    }
-}
-
-async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Running simple compilation tests...");
-    if verbose {
-        println!("Verbose output enabled");
-    }
-
-    let test_source = "start:\n\tinteger x = 42\n\tprint(x)\n";
-
-    match compile_with_file(test_source, "simple_test.clean") {
-        Ok(wasm_binary) => {
-            println!(
-                "✓ Simple test passed: {} bytes of WASM generated",
-                wasm_binary.len()
-            );
-            Ok(())
-        }
-        Err(errors) => {
-            eprintln!("✗ Simple test failed with {} errors:", errors.len());
-            for (i, error) in errors.iter().enumerate() {
-                eprintln!("Error {}: {}", i + 1, error);
-            }
-            Err("Simple test failed".into())
-        }
     }
 }
 
@@ -2146,10 +2036,7 @@ async fn handle_lint(
                 (f.clone(), src)
             })
             .collect();
-        if let Err(msg) = apply_plugin_overrides(&plugin_override, &sources, output_config.quiet) {
-            eprintln!("{}", msg);
-            return Err(msg.into());
-        }
+        apply_plugin_overrides(&plugin_override, &sources, !output_config.shows_progress())?;
     } else {
         clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
     }
@@ -2352,46 +2239,41 @@ async fn handle_ast_json(
 async fn handle_parse(
     input: String,
     show_tree: bool,
-    recover_errors: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("📝 Parsing file: {input}");
-
     let source = read_source(&input)?;
 
-    if show_tree {
-        print_parsed_ast(&source, &input, output_config)?;
-    }
-
-    println!("🔄 Using 7-stage compilation pipeline for parsing...\n");
-
-    match compile_with_file(&source, &input) {
-        Ok(wasm_binary) => {
-            println!("✅ Parsing and compilation succeeded!");
-            println!("Generated {} bytes of WASM", wasm_binary.len());
-
-            if recover_errors {
-                println!("ℹ️  Error recovery mode not needed - compilation succeeded");
-            }
-            Ok(())
-        }
+    // Lexing and parsing only (stages 1-2): no type checking, no codegen.
+    let ast = match clean_language_compiler::parse_to_ast(&source, &input) {
+        Ok(ast) => ast,
         Err(errors) => {
-            println!(
-                "❌ Parsing/compilation failed with {} error(s):\n",
-                errors.len()
-            );
-
-            for (i, error) in errors.iter().enumerate() {
-                println!("Error {}: {}", i + 1, error);
-            }
-
-            println!("\n💡 Suggestions:");
-            println!("  • Check the Clean Language syntax documentation");
-            println!("  • Ensure proper indentation (tabs, not spaces)");
-            println!("  • Verify function and variable declarations follow specification");
-            Err(format!("Parsing failed with {} error(s)", errors.len()).into())
+            output_config.report_errors(&errors, Some(&source));
+            return Err(format!(
+                "Parsing failed with {} error{}",
+                errors.len(),
+                if errors.len() == 1 { "" } else { "s" }
+            )
+            .into());
         }
+    };
+
+    if show_tree {
+        DebugUtils::print_ast(&ast);
     }
+    if output_config.shows_progress() {
+        println!(
+            "Parsed {input}: {} imports, {} functions, {} classes{}",
+            ast.imports.len(),
+            ast.functions.len(),
+            ast.classes.len(),
+            if ast.start_function.is_some() {
+                ", start block"
+            } else {
+                ""
+            }
+        );
+    }
+    Ok(())
 }
 
 async fn handle_run(
@@ -2406,7 +2288,7 @@ async fn handle_run(
     let input_path = Path::new(&input);
     match input_path.extension().and_then(|s| s.to_str()) {
         Some("cln") => {
-            if !output_config.quiet {
+            if output_config.shows_progress() {
                 println!("🔧 Compiling Clean Language file: {input}");
             }
 
@@ -2421,22 +2303,21 @@ async fn handle_run(
                 }
             };
 
-            // Write to a temp file and hand off to clean-runner
-            let file_stem = input.trim_end_matches(".cln");
-            let temp_wasm = format!("{file_stem}.temp.wasm");
+            // Hand the module to clean-runner from a private directory that
+            // is removed when this function returns.
+            let work_dir = tempfile::Builder::new().prefix("cln-run-").tempdir()?;
+            let temp_wasm = work_dir.path().join("app.wasm");
             fs::write(&temp_wasm, &wasm_binary)?;
-            if !output_config.quiet {
+            if output_config.shows_progress() {
                 println!("🚀 Running compiled WebAssembly...");
             }
-            let result = execute_via_clean_runner(&temp_wasm, debug);
-            let _ = fs::remove_file(&temp_wasm);
-            result
+            execute_via_clean_runner(&temp_wasm.to_string_lossy())
         }
         Some("wasm") => {
             if debug {
                 println!("🚀 Running WebAssembly file: {input}");
             }
-            execute_via_clean_runner(&input, debug)
+            execute_via_clean_runner(&input)
         }
         Some(ext) => Err(format!(
             "Unsupported file extension '.{ext}'. Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
@@ -2492,10 +2373,7 @@ fn find_wasmtime_runner() -> Result<String, Box<dyn std::error::Error>> {
 ///
 /// wasmtime_runner is preferred because it ships with the compiler and provides all required
 /// host imports (including _state_reset_all) and natively supports the _run_tests export.
-fn execute_via_local_runner(
-    wasm_path: &str,
-    debug: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn execute_via_local_runner(wasm_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Prefer the bundled wasmtime_runner for standalone test execution.
     if let Ok(runner) = find_wasmtime_runner() {
         let status = std::process::Command::new(&runner)
@@ -2514,46 +2392,14 @@ fn execute_via_local_runner(
     }
 
     // Fall back to clean-runner if wasmtime_runner is not available.
-    execute_via_clean_runner(wasm_path, debug)
+    execute_via_clean_runner(wasm_path)
 }
 
 fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
     // 1. cleen-managed location: ~/.cleen/clean-runner/<version>/clean-runner (highest semver)
-    if let Some(home) = std::env::var_os("HOME") {
-        let base = std::path::Path::new(&home)
-            .join(".cleen")
-            .join("clean-runner");
-        if base.exists() {
-            if let Ok(entries) = std::fs::read_dir(&base) {
-                let mut versions: Vec<String> = entries
-                    .flatten()
-                    .filter(|e| e.path().is_dir())
-                    .filter_map(|e| e.file_name().into_string().ok())
-                    .collect();
-                versions.sort_by(|a, b| {
-                    let parse = |s: &str| -> (u32, u32, u32) {
-                        let mut parts = s.trim_start_matches('v').split('.');
-                        let major = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-                        let minor = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-                        let patch = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-                        (major, minor, patch)
-                    };
-                    parse(b).cmp(&parse(a))
-                });
-                for ver in &versions {
-                    let candidate = base.join(ver).join("clean-runner");
-                    if candidate.exists() {
-                        return Ok(candidate.to_string_lossy().into_owned());
-                    }
-                    #[cfg(windows)]
-                    {
-                        let win = base.join(ver).join("clean-runner.exe");
-                        if win.exists() {
-                            return Ok(win.to_string_lossy().into_owned());
-                        }
-                    }
-                }
-            }
+    if let Some(base) = dirs::home_dir().map(|h| h.join(".cleen").join("clean-runner")) {
+        if let Some(found) = newest_versioned_binary(&base, "clean-runner") {
+            return Ok(found.to_string_lossy().into_owned());
         }
     }
 
@@ -2568,13 +2414,10 @@ fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
         return Ok("clean-runner".to_string());
     }
 
-    Err("clean-runner not found. Install it with: cleen runner install latest".into())
+    Err("clean-runner not found under ~/.cleen/clean-runner/<version>/ or on PATH".into())
 }
 
-fn execute_via_clean_runner(
-    wasm_path: &str,
-    _debug: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn execute_via_clean_runner(wasm_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let runner = find_clean_runner()?;
     let status = std::process::Command::new(&runner)
         .arg(wasm_path)
@@ -2591,493 +2434,71 @@ fn execute_via_clean_runner(
     }
 }
 
-// Test runner removed - not compatible with 7-stage pipeline
-// Tests should be implemented as separate .cln files and compiled individually
-
 fn handle_explain(
     code: &str,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let code_upper = code.to_uppercase();
+    use clean_language_compiler::error::catalog;
 
-    // Get error explanation
-    let explanation = get_error_explanation(&code_upper);
+    let Some(entry) = catalog::lookup(code) else {
+        let known: Vec<&str> = catalog::all().iter().map(|e| e.code.as_str()).collect();
+        let message = format!(
+            "Unknown error code '{}'. Known codes: {}",
+            code.trim(),
+            known.join(", ")
+        );
+        if output_config.json_mode {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "success": false,
+                    "code": code.trim().to_uppercase(),
+                    "error": message,
+                }))?
+            );
+        }
+        return Err(message.into());
+    };
 
     if output_config.json_mode {
         let json = serde_json::json!({
-            "code": code_upper,
-            "category": get_error_category(&code_upper),
-            "title": explanation.title,
-            "description": explanation.description,
-            "example": explanation.example,
-            "fix": explanation.fix,
+            "success": true,
+            "code": entry.code,
+            "name": entry.name,
+            "category": entry.category,
+            "severity": entry.severity,
+            "summary": entry.summary,
+            "title": entry.title,
+            "details": entry.details,
         });
         println!("{}", serde_json::to_string_pretty(&json)?);
-    } else {
-        // Terminal output with colors
-        let colors = if output_config.use_colors {
-            (
-                "\x1b[1m", "\x1b[0m", "\x1b[36m", "\x1b[33m", "\x1b[32m", "\x1b[2m",
-            )
-        } else {
-            ("", "", "", "", "", "")
-        };
-        let (bold, reset, cyan, yellow, green, dim) = colors;
-
-        if explanation.title == "Unknown Error Code" {
-            eprintln!(
-                "{}error{}: Unknown error code '{}'",
-                bold, reset, code_upper
-            );
-            eprintln!();
-            eprintln!("Available error codes:");
-            eprintln!("  {}Syntax errors:{} SYN001-SYN010", cyan, reset);
-            eprintln!("  {}Type errors:{}   TYP001-TYP010", cyan, reset);
-            eprintln!("  {}Memory errors:{} MEM001-MEM005", cyan, reset);
-            eprintln!("  {}Runtime errors:{} RUN001-RUN005", cyan, reset);
-            eprintln!();
-            eprintln!("Use 'cln explain <code>' to learn more about a specific error.");
-            return Ok(());
-        }
-
-        println!();
-        println!(
-            "{}error[{}]{}: {}",
-            bold, code_upper, reset, explanation.title
-        );
-        println!();
-        println!("{}Description:{}", cyan, reset);
-        for line in explanation.description.lines() {
-            println!("  {}", line);
-        }
-
-        if !explanation.example.is_empty() {
-            println!();
-            println!("{}Example of problematic code:{}", yellow, reset);
-            println!();
-            for line in explanation.example.lines() {
-                println!("  {}{}{}", dim, line, reset);
-            }
-        }
-
-        if !explanation.fix.is_empty() {
-            println!();
-            println!("{}How to fix:{}", green, reset);
-            for line in explanation.fix.lines() {
-                println!("  {}", line);
-            }
-        }
-
-        println!();
+        return Ok(());
     }
 
+    let bold = output_config.paint("\x1b[1m");
+    let cyan = output_config.paint("\x1b[36m");
+    let reset = output_config.paint("\x1b[0m");
+    let title = entry.title.as_deref().unwrap_or(&entry.name);
+    println!();
+    println!(
+        "{bold}{}[{}]{reset}: {}",
+        entry.severity.to_lowercase(),
+        entry.code,
+        title
+    );
+    println!();
+    println!("{cyan}Category:{reset} {}", entry.category);
+    println!("{cyan}Name:{reset}     {}", entry.name);
+    println!();
+    println!("{}", entry.summary);
+    if let Some(details) = &entry.details {
+        if !details.is_empty() {
+            println!();
+            println!("{details}");
+        }
+    }
+    println!();
     Ok(())
-}
-
-struct ErrorExplanation {
-    title: &'static str,
-    description: &'static str,
-    example: &'static str,
-    fix: &'static str,
-}
-
-fn get_error_category(code: &str) -> &'static str {
-    if code.len() < 3 {
-        return "Unknown";
-    }
-    match &code[..3] {
-        "SYN" => "Syntax",
-        "TYP" => "Type",
-        "MEM" => "Memory",
-        "RUN" => "Runtime",
-        "COD" => "Codegen",
-        "VAL" => "Validation",
-        "MOD" => "Module",
-        _ => "Unknown",
-    }
-}
-
-fn get_error_explanation(code: &str) -> ErrorExplanation {
-    match code {
-        // Syntax Errors (SYN001-SYN010)
-        "SYN001" => ErrorExplanation {
-            title: "Unexpected token",
-            description: "The parser encountered a token that doesn't fit the expected syntax.\n\
-                         This usually happens when there's a typo, missing punctuation, or incorrect\n\
-                         language construct usage.",
-            example: "start:\n\
-                      \tinteger x = // missing value here\n\
-                      \tprint x",
-            fix: "Check the line indicated for:\n\
-                  - Missing values or expressions\n\
-                  - Typos in keywords (integer, string, boolean, etc.)\n\
-                  - Missing operators or punctuation",
-        },
-        "SYN002" => ErrorExplanation {
-            title: "Missing closing delimiter",
-            description: "A parenthesis, bracket, or brace was opened but never closed.\n\
-                         All delimiters must be properly balanced in Clean Language.",
-            example: "start:\n\
-                      \tprint(\"Hello world\"",
-            fix: "Find the opening delimiter and add its matching close:\n\
-                  - ( must be closed with )\n\
-                  - [ must be closed with ]\n\
-                  - { must be closed with }",
-        },
-        "SYN003" => ErrorExplanation {
-            title: "Invalid indentation",
-            description: "Clean Language uses tabs for indentation. Spaces or mixed indentation\n\
-                         will cause this error. Each nested block requires one additional tab.",
-            example: "start:\n\
-                        integer x = 5  // Using spaces instead of tab",
-            fix: "Use tabs for indentation, not spaces.\n\
-                  Configure your editor to insert tabs when pressing Tab.\n\
-                  Each block level should be indented by exactly one tab.",
-        },
-        "SYN004" => ErrorExplanation {
-            title: "Invalid string literal",
-            description: "A string literal is malformed. This could be due to:\n\
-                         - Unclosed quotes\n\
-                         - Invalid escape sequences\n\
-                         - Line breaks within single-line strings",
-            example: "start:\n\
-                      \tstring s = \"Hello  // missing closing quote",
-            fix: "Ensure strings are properly quoted:\n\
-                  - Single-line strings: use matching \" quotes\n\
-                  - Escape special characters: \\n, \\t, \\\", \\\\",
-        },
-        "SYN005" => ErrorExplanation {
-            title: "Invalid number literal",
-            description: "A number literal is malformed. Clean Language supports:\n\
-                         - Integers: 42, -17, 0\n\
-                         - Floats: 3.14, -2.5, 1.0e10",
-            example: "start:\n\
-                      \tnumber x = 3.14.5  // Invalid: multiple decimal points",
-            fix: "Check the number format:\n\
-                  - Only one decimal point allowed\n\
-                  - Scientific notation: 1e10, 2.5e-3\n\
-                  - No spaces within numbers",
-        },
-        "SYN006" => ErrorExplanation {
-            title: "Expected expression",
-            description: "An expression was expected but not found. This occurs when:\n\
-                         - An operator is missing its operand\n\
-                         - A function call has empty arguments where one is required\n\
-                         - An assignment is missing its right-hand side",
-            example: "start:\n\
-                      \tinteger x =   // missing expression after =",
-            fix: "Provide a valid expression:\n\
-                  - Literals: 42, \"text\", true\n\
-                  - Variables: myVar\n\
-                  - Operations: a + b\n\
-                  - Function calls: getValue()",
-        },
-        "SYN007" => ErrorExplanation {
-            title: "Invalid identifier",
-            description: "The identifier name is not valid. Identifiers must:\n\
-                         - Start with a letter or underscore\n\
-                         - Contain only letters, numbers, and underscores\n\
-                         - Not be a reserved keyword",
-            example: "start:\n\
-                      \tinteger 123abc = 5  // Cannot start with number",
-            fix: "Use valid identifier names:\n\
-                  - Good: myVar, _private, count123\n\
-                  - Bad: 123var, my-var, class (reserved)",
-        },
-        "SYN008" => ErrorExplanation {
-            title: "Missing function body",
-            description: "A function was declared but has no body. All functions must have\n\
-                         at least one statement in their body.",
-            example: "myFunc()\n\
-                      // No body - next line is a different function\n\
-                      start:",
-            fix: "Add at least one statement to the function body:\n\
-                  myFunc()\n\
-                  \treturn 0\n\n\
-                  Or use 'pass' for empty functions that will be implemented later.",
-        },
-        "SYN009" => ErrorExplanation {
-            title: "Unexpected end of file",
-            description: "The file ended unexpectedly while the parser was expecting more content.\n\
-                         This usually means an unclosed block or incomplete statement.",
-            example: "start:\n\
-                      \tif x > 0\n\
-                      \t\t// File ends here without closing the if block",
-            fix: "Ensure all blocks and statements are complete:\n\
-                  - Close all if/else/while/for blocks\n\
-                  - Complete all function bodies\n\
-                  - End strings and comments properly",
-        },
-        "SYN010" => ErrorExplanation {
-            title: "Reserved keyword used as identifier",
-            description: "A reserved keyword is being used where an identifier is expected.\n\
-                         Keywords like 'if', 'while', 'class', etc. cannot be used as variable\n\
-                         or function names.",
-            example: "start:\n\
-                      \tinteger class = 5  // 'class' is a reserved keyword",
-            fix: "Choose a different name that is not a keyword.\n\
-                  Reserved keywords include: if, else, while, for, class, function,\n\
-                  return, true, false, null, integer, string, boolean, number, etc.",
-        },
-
-        // Type Errors (TYP001-TYP010)
-        "TYP001" => ErrorExplanation {
-            title: "Type mismatch",
-            description: "The type of an expression doesn't match what was expected.\n\
-                         Clean Language is strongly typed - you cannot implicitly convert\n\
-                         between incompatible types.",
-            example: "start:\n\
-                      \tinteger x = \"hello\"  // Cannot assign string to integer",
-            fix: "Ensure types match or use explicit conversion:\n\
-                  - Use type conversion: x.toInteger(), x.toString()\n\
-                  - Declare with correct type: string x = \"hello\"\n\
-                  - Use appropriate literal: integer x = 42",
-        },
-        "TYP002" => ErrorExplanation {
-            title: "Undefined variable",
-            description: "A variable is being used that hasn't been declared.\n\
-                         Variables must be declared with their type before use.",
-            example: "start:\n\
-                      \tprint undeclaredVar  // Variable not declared",
-            fix: "Declare the variable before using it:\n\
-                  integer myVar = 0\n\
-                  print myVar\n\n\
-                  Or check for typos in the variable name.",
-        },
-        "TYP003" => ErrorExplanation {
-            title: "Undefined function",
-            description: "A function is being called that hasn't been defined.\n\
-                         Functions must be defined before they are called.",
-            example: "start:\n\
-                      \tresult = unknownFunc()  // Function not defined",
-            fix: "Define the function before calling it:\n\
-                  unknownFunc() -> integer\n\
-                  \treturn 42\n\n\
-                  Or check for typos in the function name.",
-        },
-        "TYP004" => ErrorExplanation {
-            title: "Invalid operation for type",
-            description: "An operation was attempted that is not valid for the given type.\n\
-                         For example, arithmetic on strings or string concatenation on booleans.",
-            example: "start:\n\
-                      \tstring s = \"hello\"\n\
-                      \tinteger x = s + 5  // Cannot add integer to string",
-            fix: "Use operations appropriate for the type:\n\
-                  - Arithmetic (+, -, *, /): numbers only\n\
-                  - Comparison (==, !=): same types\n\
-                  - String concat: strings only\n\
-                  - Use type conversion if needed",
-        },
-        "TYP005" => ErrorExplanation {
-            title: "Wrong number of arguments",
-            description: "A function was called with the wrong number of arguments.\n\
-                         The number of arguments must match the function signature.",
-            example: "add(a: integer, b: integer) -> integer\n\
-                      \treturn a + b\n\n\
-                      start()\n\
-                      \tresult = add(5)  // Missing second argument",
-            fix: "Provide the correct number of arguments.\n\
-                  Check the function signature for required parameters.\n\
-                  Optional parameters with defaults don't need to be provided.",
-        },
-        "TYP006" => ErrorExplanation {
-            title: "Return type mismatch",
-            description: "A function returns a value that doesn't match its declared return type.\n\
-                         The return statement must provide a value of the correct type.",
-            example: "getValue() -> integer\n\
-                      \treturn \"hello\"  // Returns string, expected integer",
-            fix: "Return a value matching the declared type:\n\
-                  - Change the return statement value\n\
-                  - Change the function's return type\n\
-                  - Add type conversion if appropriate",
-        },
-        "TYP007" => ErrorExplanation {
-            title: "Cannot infer type",
-            description: "The compiler cannot determine the type of an expression.\n\
-                         This may happen with complex expressions or missing type annotations.",
-            example: "start:\n\
-                      \tx = someComplexExpression  // Type unclear",
-            fix: "Provide an explicit type annotation:\n\
-                  integer x = someComplexExpression\n\n\
-                  Or simplify the expression so the type is clear.",
-        },
-        "TYP008" => ErrorExplanation {
-            title: "Undefined method",
-            description: "A method was called on a type that doesn't have that method.\n\
-                         Check the available methods for the type you're using.",
-            example: "start:\n\
-                      \tinteger x = 42\n\
-                      \tx.unknownMethod()  // Method doesn't exist on integer",
-            fix: "Use a method that exists for the type:\n\
-                  - integer: toString(), toNumber(), toBoolean()\n\
-                  - string: length(), toUpperCase(), toLowerCase()\n\
-                  - array: length(), push(), pop(), get(), set()",
-        },
-        "TYP009" => ErrorExplanation {
-            title: "Undefined class",
-            description: "A class is being used that hasn't been defined.\n\
-                         Classes must be defined before they can be instantiated.",
-            example: "start:\n\
-                      \tp = UndefinedClass.new()  // Class not defined",
-            fix: "Define the class before using it:\n\
-                  class MyClass\n\
-                  \tinteger value\n\
-                  \tnew(v: integer)\n\
-                  \t\tvalue = v\n\n\
-                  Or import it if defined in another module.",
-        },
-        "TYP010" => ErrorExplanation {
-            title: "Incompatible types in comparison",
-            description: "Two values of incompatible types are being compared.\n\
-                         Comparisons require operands of the same type.",
-            example: "start:\n\
-                      \tif 5 == \"five\"  // Cannot compare integer and string\n\
-                      \t\tprint \"equal\"",
-            fix: "Convert values to the same type before comparing:\n\
-                  if 5 == \"five\".toInteger()\n\n\
-                  Or compare values of the same type.",
-        },
-
-        // Memory Errors (MEM001-MEM005)
-        "MEM001" => ErrorExplanation {
-            title: "Stack overflow",
-            description: "The program's call stack has exceeded its maximum size.\n\
-                         This is usually caused by infinite or very deep recursion.",
-            example: "infiniteRecursion()\n\
-                      \tinfiniteRecursion()  // No base case!\n\n\
-                      start()\n\
-                      \tinfiniteRecursion()",
-            fix: "Add a base case to recursive functions:\n\
-                  factorial(n: integer) -> integer\n\
-                  \tif n <= 1\n\
-                  \t\treturn 1\n\
-                  \treturn n * factorial(n - 1)",
-        },
-        "MEM002" => ErrorExplanation {
-            title: "Out of memory",
-            description: "The program has exhausted available memory.\n\
-                         This can happen with very large data structures or memory leaks.",
-            example: "start:\n\
-                      \tlist = []\n\
-                      \twhile true\n\
-                      \t\tlist.push(\"data\")  // Infinite list growth",
-            fix: "Limit data structure sizes:\n\
-                  - Set maximum sizes for collections\n\
-                  - Process data in chunks\n\
-                  - Release unused data",
-        },
-        "MEM003" => ErrorExplanation {
-            title: "Null pointer access",
-            description: "Attempted to access a null or undefined reference.\n\
-                         This occurs when using an uninitialized or cleared variable.",
-            example: "start:\n\
-                      \tp = null\n\
-                      \tprint p.value  // Accessing property of null",
-            fix: "Check for null before accessing:\n\
-                  if p != null\n\
-                  \tprint p.value\n\n\
-                  Or ensure the variable is properly initialized.",
-        },
-        "MEM004" => ErrorExplanation {
-            title: "Index out of bounds",
-            description: "An array or list was accessed with an invalid index.\n\
-                         Indices must be >= 0 and < length.",
-            example: "start:\n\
-                      \tarr = [1, 2, 3]\n\
-                      \tprint arr[5]  // Only indices 0, 1, 2 are valid",
-            fix: "Ensure index is within bounds:\n\
-                  if index >= 0 && index < arr.length()\n\
-                  \tprint arr[index]\n\n\
-                  Or use safe access methods with default values.",
-        },
-        "MEM005" => ErrorExplanation {
-            title: "Memory allocation failed",
-            description: "The system could not allocate requested memory.\n\
-                         This is typically a system-level resource issue.",
-            example: "// Attempting to allocate very large array\n\
-                      data = Array<integer>.new(999999999999)",
-            fix: "Request smaller allocations:\n\
-                  - Use reasonable data structure sizes\n\
-                  - Process data in smaller batches\n\
-                  - Check system available memory",
-        },
-
-        // Runtime Errors (RUN001-RUN005)
-        "RUN001" => ErrorExplanation {
-            title: "Division by zero",
-            description: "Attempted to divide a number by zero.\n\
-                         Division by zero is undefined in mathematics and programming.",
-            example: "start:\n\
-                      \tresult = 10 / 0  // Division by zero",
-            fix: "Check the divisor before dividing:\n\
-                  if divisor != 0\n\
-                  \tresult = value / divisor\n\
-                  else\n\
-                  \tprint \"Cannot divide by zero\"",
-        },
-        "RUN002" => ErrorExplanation {
-            title: "Integer overflow",
-            description: "An integer operation resulted in a value too large to represent.\n\
-                         Clean Language integers have a maximum value.",
-            example: "start:\n\
-                      \tx = 2147483647\n\
-                      \tx = x + 1  // Overflows 32-bit integer",
-            fix: "Use appropriate numeric types:\n\
-                  - Use 'number' (float) for very large values\n\
-                  - Check bounds before arithmetic\n\
-                  - Consider BigInteger for arbitrary precision",
-        },
-        "RUN003" => ErrorExplanation {
-            title: "Invalid cast",
-            description: "A type conversion failed because the value cannot be converted.\n\
-                         Not all values can be converted between types.",
-            example: "start:\n\
-                      \ts = \"hello\"\n\
-                      \tn = s.toInteger()  // \"hello\" cannot become integer",
-            fix: "Validate values before conversion:\n\
-                  - Check string format before parsing\n\
-                  - Handle conversion failures gracefully\n\
-                  - Use try/onError for safe conversion",
-        },
-        "RUN004" => ErrorExplanation {
-            title: "Reference error",
-            description: "A null or invalid reference was accessed at runtime.\n\
-                         Raised by the `expr!` unwrap operator when applied to a null value.",
-            example: "start:\n\
-                      \tmaybe = getUser()  // returns null\n\
-                      \tuser = maybe!      // traps: null unwrap",
-            fix: "Check for null before unwrapping, or handle the null case explicitly:\n\
-                  - Use `if maybe is not empty` to guard the unwrap\n\
-                  - Return a default value instead of unwrapping\n\
-                  - Validate input at system boundaries",
-        },
-        "RUN005" => ErrorExplanation {
-            title: "Assertion failure",
-            description: "A runtime assertion evaluated to false.\n\
-                         Raised by `require:` preconditions and `always:` class invariants when the\n\
-                         checked condition is not satisfied.",
-            example: "class Counter\n\
-                      \tinteger value\n\
-                      \talways:\n\
-                      \t\tvalue >= 0\n\
-                      \tfunctions:\n\
-                      \t\tpublic:\n\
-                      \t\t\tvoid decrementBy(integer n)\n\
-                      \t\t\t\tvalue = value - n  // traps on return if value < 0",
-            fix: "Repair the caller so the checked condition holds, or relax the condition:\n\
-                  - Validate arguments before calling the method\n\
-                  - Adjust the `require:` / `always:` expression to match the intended contract\n\
-                  - Compile with `--release` to strip class invariants when perf is critical",
-        },
-
-        // Default for unknown codes
-        _ => ErrorExplanation {
-            title: "Unknown Error Code",
-            description: "This error code is not recognized.",
-            example: "",
-            fix: "",
-        },
-    }
 }
 
 fn handle_mcp_config(format: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -3165,7 +2586,7 @@ fn handle_mcp_config(format: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // ============================================================================
-// Config, Fixes, and Report command handlers
+// Config, dev-queue and report command handlers
 // ============================================================================
 
 fn handle_config(
@@ -3174,40 +2595,24 @@ fn handle_config(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use clean_language_compiler::telemetry::TelemetryConfig;
 
+    // Keys and values are restricted by clap (`telemetry`, `on`/`off`).
     match cmd {
-        ConfigCommands::Get { key } => match key.as_str() {
-            "telemetry" => {
-                let config = TelemetryConfig::load();
-                if output_config.json_mode {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&config).unwrap_or_else(|_| "{}".to_string())
-                    );
-                } else {
-                    println!("Telemetry: {}", if config.enabled { "on" } else { "off" });
-                    println!("Consent level: {}", config.consent_level);
-                    println!("Anonymous ID: {}", config.anonymous_id);
-                    println!(
-                        "Email: {}",
-                        config.contact_email.as_deref().unwrap_or("(not set)")
-                    );
-                }
+        ConfigCommands::Get { .. } => {
+            let config = TelemetryConfig::load();
+            if output_config.json_mode {
+                println!("{}", serde_json::json!({ "telemetry": config.enabled }));
+            } else {
+                println!("Telemetry: {}", if config.enabled { "on" } else { "off" });
+                println!(
+                    "When on, a failed compile caused by a toolchain bug is recorded in the local dev queue or answered with the GitHub issue command to report it. Nothing is sent over the network."
+                );
             }
-            "email" => {
-                let config = TelemetryConfig::load();
-                println!("{}", config.contact_email.as_deref().unwrap_or("(not set)"));
-            }
-            other => {
-                eprintln!("Unknown config key: {}", other);
-                eprintln!("Available keys: telemetry, email");
-                std::process::exit(1);
-            }
-        },
-        ConfigCommands::Set { key, value } => match key.as_str() {
-            "telemetry" => {
-                let mut config = TelemetryConfig::load();
-                config.enabled = matches!(value.as_str(), "on" | "true" | "yes" | "1");
-                config.save()?;
+        }
+        ConfigCommands::Set { value, .. } => {
+            let mut config = TelemetryConfig::load();
+            config.enabled = value == "on";
+            config.save()?;
+            if output_config.shows_progress() {
                 println!(
                     "Telemetry {}",
                     if config.enabled {
@@ -3217,24 +2622,7 @@ fn handle_config(
                     }
                 );
             }
-            "email" => {
-                let mut config = TelemetryConfig::load();
-                if value.is_empty() || value == "off" || value == "none" || value == "clear" {
-                    config.contact_email = None;
-                    config.save()?;
-                    println!("Email cleared");
-                } else {
-                    config.contact_email = Some(value);
-                    config.save()?;
-                    println!("Email saved. You'll be notified when reported bugs are fixed.");
-                }
-            }
-            other => {
-                eprintln!("Unknown config key: {}", other);
-                eprintln!("Available keys: telemetry, email");
-                std::process::exit(1);
-            }
-        },
+        }
     }
     Ok(())
 }
@@ -3262,12 +2650,10 @@ fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Err
                 let msg = if full {
                     e.message.clone()
                 } else {
-                    let mut s = e.message.replace('\n', " ");
-                    if s.len() > 80 {
-                        s.truncate(77);
-                        s.push_str("...");
-                    }
-                    s
+                    clean_language_compiler::error::truncate_chars(
+                        &e.message.replace('\n', " "),
+                        80,
+                    )
                 };
                 let ts = e.last_seen_at.trim_end_matches('Z').replace('T', " ");
                 println!(
@@ -3340,282 +2726,169 @@ fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn handle_fixes(
-    since: Option<String>,
-    pending_only: bool,
-    output_config: &OutputConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use clean_language_compiler::telemetry::{ReportStatus, ReportStore};
-
-    let store = ReportStore::load();
-    let reports = store.get_all_reports();
-
-    if reports.is_empty() {
-        if output_config.json_mode {
-            println!("{{\"reports\": []}}");
-        } else {
-            println!("No reported errors tracked on this machine.");
-            println!("Use the MCP report_error tool or `cln report` to report compiler bugs.");
-        }
-        return Ok(());
-    }
-
-    // Apply filters
-    let filtered: Vec<_> = reports
-        .iter()
-        .filter(|r| {
-            if pending_only {
-                return r.status != ReportStatus::Resolved;
-            }
-            if let Some(ref ver) = since {
-                return r.compiler_version.as_str() >= ver.as_str();
-            }
-            true
-        })
-        .collect();
-
-    if output_config.json_mode {
-        let json_reports: Vec<serde_json::Value> = filtered
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "report_id": r.report_id,
-                    "error_code": r.error_code,
-                    "summary": r.summary,
-                    "status": r.status.to_string(),
-                    "resolved_in": r.resolved_in,
-                    "reported_at": r.reported_at.to_rfc3339()
-                })
-            })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&json_reports)?);
-        return Ok(());
-    }
-
-    println!("Your reported errors — Fix Status");
-    println!("{}", "\u{2501}".repeat(50));
-    println!();
-
-    let mut resolved_count = 0;
-    for r in &filtered {
-        let symbol = match r.status {
-            ReportStatus::Resolved => {
-                resolved_count += 1;
-                "\u{2713}"
-            }
-            ReportStatus::InProgress | ReportStatus::Acknowledged => "\u{25F7}",
-            ReportStatus::WontFix => "\u{2717}",
-            ReportStatus::Reported => "\u{25CB}",
-        };
-
-        let status_detail = match &r.status {
-            ReportStatus::Resolved => r
-                .resolved_in
-                .as_ref()
-                .map(|v| format!("Fixed in {}", v))
-                .unwrap_or_else(|| "Fixed".to_string()),
-            ReportStatus::InProgress => "In progress".to_string(),
-            ReportStatus::Acknowledged => "Acknowledged".to_string(),
-            ReportStatus::WontFix => "Won't fix".to_string(),
-            ReportStatus::Reported => {
-                let days = (chrono::Utc::now() - r.reported_at).num_days();
-                if days == 0 {
-                    "Reported today".to_string()
-                } else if days == 1 {
-                    "Reported yesterday".to_string()
-                } else {
-                    format!("Reported {} days ago", days)
-                }
-            }
-        };
-
-        println!(
-            "{} {:<8} {:<40} {}",
-            symbol,
-            r.error_code,
-            truncate_string(&r.summary, 40),
-            status_detail
-        );
-    }
-
-    println!();
-    println!(
-        "You've reported {} errors. {} have been fixed.",
-        filtered.len(),
-        resolved_count
-    );
-
-    Ok(())
-}
-
 fn handle_report(
     error: Option<String>,
     code: Option<String>,
     description: Option<String>,
-    _output_config: &OutputConfig,
+    component: &str,
+    output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use clean_language_compiler::telemetry::{
-        submit_report, ErrorReport, ReportError, ReportStore,
-    };
+    use clean_language_compiler::telemetry::{self, IssueDraft};
 
     let error_code = error.unwrap_or_else(|| "USR001".to_string());
     let message = description.unwrap_or_else(|| "Manually reported error".to_string());
 
-    // Generate report ID
-    let report_id = {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let a: u32 = rng.gen();
-        let b: u16 = rng.gen();
-        let c: u16 = (rng.gen::<u16>() & 0x0FFF) | 0x4000;
-        let d: u16 = (rng.gen::<u16>() & 0x3FFF) | 0x8000;
-        let e: u64 = rng.gen::<u64>() & 0xFFFF_FFFF_FFFF;
-        format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}", a, b, c, d, e)
-    };
-
-    let mut report = ErrorReport::new(
-        report_id.clone(),
-        ReportError {
-            code: error_code.clone(),
-            category: "unknown".to_string(),
-            component: "compiler".to_string(),
-            subsystem: None,
-            severity: "bug".to_string(),
-            message: message.clone(),
-            file_context: None,
-            affected_component: None,
-            affected_version: None,
-        },
-        "manual",
-        "error_with_code",
+    let mut body = format!(
+        "{}\n\nError {}: {}\n",
+        telemetry::environment_section(),
+        error_code,
+        message
+    );
+    if let Some(repro) = &code {
+        body.push_str(&format!(
+            "\nMinimal reproduction:\n```clean\n{repro}\n```\n"
+        ));
+    }
+    let draft = IssueDraft::new(
+        component,
+        format!(
+            "{}: {}",
+            error_code,
+            clean_language_compiler::error::truncate_chars(&message, 80)
+        ),
+        body,
     );
 
-    if let Some(ref repro_code) = code {
-        report.reproduction = Some(
-            clean_language_compiler::telemetry::report::ReportReproduction {
-                minimal_code: Some(repro_code.clone()),
-                expected_behavior: None,
-                actual_behavior: None,
-                spec_reference: None,
-            },
-        );
-    }
+    // Inside the component's own source tree the report also goes to the
+    // local dev queue (override with CLEEN_TELEMETRY_FORCE=publish).
+    let recorded = telemetry::record_in_dev_queue(draft.component, &error_code, &message, None);
 
-    // Attach stored email if available
-    {
-        let config = clean_language_compiler::telemetry::TelemetryConfig::load();
-        if let Some(ref email) = config.contact_email {
-            report.user.anonymous = false;
-            report.user.contact = Some(email.clone());
-        }
-    }
-
-    // Dev-mode gate: if this `cln report` invocation is happening inside a
-    // component source tree, record to the local dev queue instead of
-    // publishing. Override with CLEEN_TELEMETRY_FORCE=publish.
-    let dev_ctx = clean_language_compiler::telemetry::detect_dev_context_for_component(
-        &report.error.component,
-    );
-    if dev_ctx.is_dev() {
-        let entry = clean_language_compiler::telemetry::dev_queue::entry_from(
-            &dev_ctx,
-            &report.error.code,
-            &report.error.component,
-            &report.error.message,
-            report.error.file_context.as_deref(),
-            clean_language_compiler::VERSION,
-        );
-        let outcome = clean_language_compiler::telemetry::dev_queue::append(entry);
-        println!(
-            "Recorded locally in dev queue (not uploaded).\nReason: {}\nComponent: {}\nError: {} \u{00d7}{} (fingerprint {})",
-            dev_ctx.reason().unwrap_or("dev"),
-            report.error.component,
-            report.error.code,
-            outcome.occurrences,
-            outcome.fingerprint,
-        );
-        println!("View: cln dev-queue list  |  Override: CLEEN_TELEMETRY_FORCE=publish");
+    if output_config.json_mode {
+        let json = serde_json::json!({
+            "recorded_in_dev_queue": recorded.is_some(),
+            "fingerprint": recorded.as_ref().map(|(_, o)| o.fingerprint.clone()),
+            "repo": draft.repo(),
+            "title": draft.title,
+            "body": draft.body,
+            "gh_command": draft.gh_command(),
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
         return Ok(());
     }
 
-    // Track locally
-    let mut store = ReportStore::load();
-    store.add_report(&report);
-    let _ = store.save();
-
-    // Submit
-    let result = submit_report(&report);
-
-    match result {
-        clean_language_compiler::telemetry::SubmitResult::AlreadyFixed {
-            fixed_in_version,
-            fix_description,
-            message,
-            ..
-        } => {
-            println!("{}", message);
-            println!("Fixed in: v{}", fixed_in_version);
-            if let Some(desc) = fix_description {
-                println!("Fix: {}", desc);
-            }
-            println!("Update with: cleen install latest");
-        }
-        clean_language_compiler::telemetry::SubmitResult::Known {
-            occurrences,
-            current_status,
-            message,
-            ..
-        } => {
-            println!("{}", message);
-            println!("Status: {} ({} reports)", current_status, occurrences);
-        }
-        clean_language_compiler::telemetry::SubmitResult::Submitted {
-            report_id,
-            fingerprint,
-            tracking_url,
-        } => {
-            println!("Error report submitted successfully!");
-            println!("Report ID: {}", report_id);
-            if let Some(fp) = fingerprint {
-                println!("Fingerprint: {}", fp);
-            }
-            println!("Tracking: {}", tracking_url);
-        }
-        clean_language_compiler::telemetry::SubmitResult::Queued {
-            report_id,
-            local_path,
-        } => {
-            println!("Report saved locally (backend not yet available).");
-            println!("Report ID: {}", report_id);
-            println!("Local path: {}", local_path);
-            println!("It will be sent when the error reporting service is available.");
-        }
-        clean_language_compiler::telemetry::SubmitResult::RateLimited {
-            report_id,
-            local_path,
-            retry_after_seconds,
-        } => {
-            println!("Report saved locally — backend is rate-limiting submissions.");
-            println!("Report ID: {}", report_id);
-            println!("Local path: {}", local_path);
-            println!("Retry will be attempted after {}s.", retry_after_seconds);
-        }
-        clean_language_compiler::telemetry::SubmitResult::Error { message } => {
-            eprintln!("Failed to save report: {}", message);
-        }
+    if let Some((ctx, outcome)) = &recorded {
+        println!(
+            "Recorded in the local dev queue: {} \u{00d7}{} (fingerprint {})\nReason: {}\nView: cln dev-queue list",
+            error_code,
+            outcome.occurrences,
+            outcome.fingerprint,
+            ctx.reason().unwrap_or("dev"),
+        );
+        println!();
     }
-
+    println!(
+        "Nothing was sent anywhere. File the bug in {} with:",
+        draft.repo()
+    );
     println!();
-    println!("Thank you for helping improve Clean Language!");
-
+    println!("{}", draft.gh_command());
     Ok(())
 }
 
-/// Truncate a string to max_len, adding "..." if truncated
-fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stamp_appends_build_section_with_trailing_newline() {
+        let out = stamp_build_section("[plugin]\nname = \"p\"\n", "1.2.3");
+        assert_eq!(
+            out,
+            "[plugin]\nname = \"p\"\n\n[build]\nbuilt_with_compiler = \"1.2.3\"\n"
+        );
+    }
+
+    #[test]
+    fn stamp_replaces_existing_key_and_keeps_trailing_newline() {
+        let toml = "[plugin]\nname = \"p\"\n\n[build]\nbuilt_with_compiler = \"0.0.1\"\n";
+        assert_eq!(
+            stamp_build_section(toml, "1.2.3"),
+            "[plugin]\nname = \"p\"\n\n[build]\nbuilt_with_compiler = \"1.2.3\"\n"
+        );
+    }
+
+    #[test]
+    fn stamp_ignores_the_key_in_comments_and_other_sections() {
+        // Only a comment mentions the key: the stamp must still be written.
+        let toml =
+            "# built_with_compiler is set by cln\n[plugin]\nname = \"p\"\n[build]\nnote = \"x\"\n";
+        let out = stamp_build_section(toml, "1.2.3");
+        assert!(out.contains("# built_with_compiler is set by cln\n"));
+        assert!(out.contains("[build]\nbuilt_with_compiler = \"1.2.3\"\nnote = \"x\"\n"));
+        assert!(out.ends_with('\n'));
+
+        // A same-named key in another table is not the build stamp.
+        let other = "[plugin]\nbuilt_with_compiler = \"keep\"\n";
+        let out = stamp_build_section(other, "1.2.3");
+        assert!(out.contains("[plugin]\nbuilt_with_compiler = \"keep\"\n"));
+        assert!(out.ends_with("[build]\nbuilt_with_compiler = \"1.2.3\"\n"));
+    }
+
+    #[test]
+    fn options_export_lists_only_real_compile_options() {
+        let schema = options_export::CompileOptionsSchema::generate(&Args::command())
+            .expect("schema builds from the clap definition");
+        let targets: Vec<&str> = schema.targets.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(targets, COMPILE_TARGETS.to_vec());
+        assert!(schema.runtimes.is_empty());
+        let flags: Vec<&str> = schema.flags.iter().map(|f| f.id.as_str()).collect();
+        for real in ["release", "strict_hosts", "verbose", "quiet", "json"] {
+            assert!(flags.contains(&real), "{real} missing from {flags:?}");
+        }
+        assert!(!flags.contains(&"debug"), "cln compile has no --debug");
+        assert_eq!(schema.optimizations.len(), 4);
+        assert!(schema.optimizations[2].default);
+    }
+
+    #[test]
+    fn invalid_option_values_are_rejected() {
+        for args in [
+            vec![
+                "cln", "compile", "a.cln", "-o", "a.wasm", "--target", "bogus",
+            ],
+            vec!["cln", "compile", "a.cln", "-o", "a.wasm", "-l", "9"],
+            vec!["cln", "build", "a.cln", "-O", "9"],
+            vec!["cln", "config", "set", "telemetry", "maybe"],
+            vec!["cln", "mcp-config", "--format", "bogus"],
+        ] {
+            assert!(
+                Args::try_parse_from(&args).is_err(),
+                "{args:?} must be rejected"
+            );
+        }
+        assert!(Args::try_parse_from([
+            "cln", "compile", "a.cln", "-o", "a.wasm", "--target", "browser", "-l", "3"
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn newest_versioned_binary_picks_highest_semver() {
+        let dir = tempfile::tempdir().unwrap();
+        for ver in ["1.9.9", "1.10.2", "1.10.10", "0.99.0"] {
+            let d = dir.path().join(ver);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("clean-server"), "").unwrap();
+        }
+        // A newer version directory without the binary is skipped.
+        fs::create_dir_all(dir.path().join("2.0.0")).unwrap();
+        assert_eq!(
+            newest_versioned_binary(dir.path(), "clean-server"),
+            Some(dir.path().join("1.10.10").join("clean-server"))
+        );
+        assert_eq!(
+            newest_versioned_binary(&dir.path().join("missing"), "x"),
+            None
+        );
     }
 }

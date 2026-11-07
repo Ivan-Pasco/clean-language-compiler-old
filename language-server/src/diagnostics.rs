@@ -163,11 +163,6 @@ impl DiagnosticsProvider {
                 format!("Memory error: {}", context.message),
                 default_range,
             ),
-            CompilerError::Testing { context } => (
-                DiagnosticSeverity::WARNING,
-                format!("Testing: {}", context.message),
-                default_range,
-            ),
             CompilerError::LexError(_) => (
                 DiagnosticSeverity::ERROR,
                 "Lexical analysis error".to_string(),

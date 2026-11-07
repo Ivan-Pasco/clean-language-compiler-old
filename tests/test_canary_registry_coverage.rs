@@ -189,7 +189,6 @@ fn compile_canary(cln: &Path, rel: &str) -> Result<Vec<u8>, String> {
         .arg("--opt-level")
         .arg("2")
         .arg("--strict-hosts")
-        .arg("--plugins")
         .output()
         .map_err(|e| format!("spawn cln: {e}"))?;
     if !out.status.success() {

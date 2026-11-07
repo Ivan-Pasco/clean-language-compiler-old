@@ -3,24 +3,10 @@ use std::fmt;
 
 use crate::ast::SourceLocation;
 
+pub mod catalog;
 pub mod reporter;
 
 pub use reporter::*;
-
-#[derive(Debug, Clone)]
-pub struct StackFrame {
-    pub function_name: String,
-    pub location: Option<SourceLocation>,
-}
-
-impl StackFrame {
-    pub fn new<T: Into<String>>(function_name: T, location: Option<SourceLocation>) -> Self {
-        Self {
-            function_name: function_name.into(),
-            location,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ErrorContext {
@@ -30,7 +16,6 @@ pub struct ErrorContext {
     pub location: Option<SourceLocation>,
     pub suggestions: Vec<String>,
     pub source_snippet: Option<String>,
-    pub stack_trace: Vec<StackFrame>,
     pub severity: ErrorSeverity,
     pub error_code: Option<String>,
     pub related_errors: Vec<String>,
@@ -59,20 +44,6 @@ pub enum ErrorSeverity {
     Hint,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WarningType {
-    UnusedVariable,
-    UnusedFunction,
-    UnusedImport,
-    DeadCode,
-    TypeInference,
-    Performance,
-    Style,
-    Deprecation,
-    Shadowing,
-    UnreachableCode,
-}
-
 impl ErrorContext {
     pub fn new<T: Into<String>>(
         message: T,
@@ -87,7 +58,6 @@ impl ErrorContext {
             location,
             suggestions: Vec::new(),
             source_snippet: None,
-            stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
             error_code: None,
             related_errors: Vec::new(),
@@ -116,11 +86,6 @@ impl ErrorContext {
         self
     }
 
-    pub fn with_source_snippet<T: Into<String>>(mut self, snippet: T) -> Self {
-        self.source_snippet = Some(snippet.into());
-        self
-    }
-
     pub fn with_severity(mut self, severity: ErrorSeverity) -> Self {
         self.severity = severity;
         self
@@ -145,130 +110,8 @@ impl ErrorContext {
             location,
             suggestions,
             source_snippet,
-            stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
             error_code: Some("SYN001".to_string()),
-            related_errors: Vec::new(),
-        }
-    }
-
-    /// Create an enhanced type error with detailed type information
-    pub fn enhanced_type_error<T: Into<String>>(
-        message: T,
-        expected_type: Option<String>,
-        actual_type: Option<String>,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        let mut help_text = String::new();
-        if let (Some(expected), Some(actual)) = (expected_type, actual_type) {
-            help_text = format!("Expected type '{expected}', but found '{actual}'");
-        }
-
-        Self {
-            message: message.into(),
-            help: if help_text.is_empty() {
-                None
-            } else {
-                Some(help_text)
-            },
-            error_type: ErrorType::Type,
-            location,
-            suggestions: Vec::new(),
-            source_snippet: None,
-            stack_trace: Vec::new(),
-            severity: ErrorSeverity::Error,
-            error_code: Some("SEM001".to_string()),
-            related_errors: Vec::new(),
-        }
-    }
-
-    /// Create a method suggestion error for when traditional function syntax is used
-    pub fn method_suggestion_error<T: Into<String>>(
-        function_name: T,
-        location: Option<SourceLocation>,
-        source_snippet: Option<String>,
-    ) -> Self {
-        let func_name = function_name.into();
-        let message = format!("Function '{func_name}' is only available as a method");
-        let suggestion = match func_name.as_str() {
-            "length" => "Use 'object.length()' instead of 'length(object)'".to_string(),
-            "isEmpty" => "Use 'object.isEmpty()' instead of 'isEmpty(object)'".to_string(),
-            "isNotEmpty" => "Use 'object.isNotEmpty()' instead of 'isNotEmpty(object)'".to_string(),
-            "isDefined" => "Use 'object.isDefined()' instead of 'isDefined(object)'".to_string(),
-            "isNotDefined" => {
-                "Use 'object.isNotDefined()' instead of 'isNotDefined(object)'".to_string()
-            }
-            "keepBetween" => {
-                "Use 'value.keepBetween(min, max)' instead of 'keepBetween(value, min, max)'"
-                    .to_string()
-            }
-            _ => format!("Use 'object.{func_name}()' method syntax instead"),
-        };
-
-        Self {
-            message,
-            help: Some("Clean Language uses method-style syntax for object operations".to_string()),
-            error_type: ErrorType::Syntax,
-            location,
-            suggestions: vec![suggestion],
-            source_snippet,
-            stack_trace: Vec::new(),
-            severity: ErrorSeverity::Error,
-            error_code: Some("SEM002".to_string()),
-            related_errors: Vec::new(),
-        }
-    }
-
-    /// Create an indentation error with helpful suggestions
-    pub fn indentation_error<T: Into<String>>(
-        message: T,
-        location: Option<SourceLocation>,
-        expected_indent: usize,
-        actual_indent: usize,
-    ) -> Self {
-        let help = format!(
-            "Expected {expected_indent} spaces of indentation, but found {actual_indent}. Clean Language uses consistent indentation to define code blocks."
-        );
-
-        Self {
-            message: message.into(),
-            help: Some(help),
-            error_type: ErrorType::Syntax,
-            location,
-            suggestions: vec![
-                "Use tabs or consistent spaces for indentation".to_string(),
-                "Make sure all statements in a block have the same indentation level".to_string(),
-            ],
-            source_snippet: None,
-            stack_trace: Vec::new(),
-            severity: ErrorSeverity::Error,
-            error_code: Some("SYN006".to_string()),
-            related_errors: Vec::new(),
-        }
-    }
-
-    /// Create a missing block error with indentation help
-    pub fn missing_block_error<T: Into<String>>(
-        block_type: T,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        let block = block_type.into();
-        Self {
-            message: format!("Expected {block} block"),
-            help: Some(
-                "Clean Language uses indentation to define code blocks. Use tabs for indentation"
-                    .to_string(),
-            ),
-            error_type: ErrorType::Syntax,
-            location,
-            suggestions: vec![
-                format!("Add an indented block after the {block} declaration"),
-                "Make sure to use consistent indentation (tabs or spaces)".to_string(),
-            ],
-            source_snippet: None,
-            stack_trace: Vec::new(),
-            severity: ErrorSeverity::Error,
-            error_code: Some("SYN003".to_string()),
             related_errors: Vec::new(),
         }
     }
@@ -362,7 +205,6 @@ impl Default for ErrorContext {
             location: None,
             suggestions: Vec::new(),
             source_snippet: None,
-            stack_trace: Vec::new(),
             severity: ErrorSeverity::Error,
             error_code: None,
             related_errors: Vec::new(),
@@ -394,9 +236,6 @@ pub enum CompilerError {
         context: Box<ErrorContext>,
     },
     Module {
-        context: Box<ErrorContext>,
-    },
-    Testing {
         context: Box<ErrorContext>,
     },
     LexError(crate::lexer::specification_lexer::LexError),
@@ -613,64 +452,6 @@ impl CompilerError {
         }
     }
 
-    /// Enhanced type error with detailed type information
-    pub fn enhanced_type_error<T: Into<String>>(
-        message: T,
-        expected_type: Option<String>,
-        actual_type: Option<String>,
-        location: Option<SourceLocation>,
-        suggestions: Vec<String>,
-    ) -> Self {
-        CompilerError::Type {
-            context: Box::new(
-                ErrorContext::enhanced_type_error(message, expected_type, actual_type, location)
-                    .with_suggestions(suggestions),
-            ),
-        }
-    }
-
-    /// Method suggestion error for traditional function syntax
-    pub fn method_suggestion_error<T: Into<String>>(
-        function_name: T,
-        location: Option<SourceLocation>,
-        source_snippet: Option<String>,
-    ) -> Self {
-        CompilerError::Syntax {
-            context: Box::new(ErrorContext::method_suggestion_error(
-                function_name,
-                location,
-                source_snippet,
-            )),
-        }
-    }
-
-    /// Indentation error with helpful guidance
-    pub fn indentation_error<T: Into<String>>(
-        message: T,
-        location: Option<SourceLocation>,
-        expected_indent: usize,
-        actual_indent: usize,
-    ) -> Self {
-        CompilerError::Syntax {
-            context: Box::new(ErrorContext::indentation_error(
-                message,
-                location,
-                expected_indent,
-                actual_indent,
-            )),
-        }
-    }
-
-    /// Missing block error (like missing function body)
-    pub fn missing_block_error<T: Into<String>>(
-        block_type: T,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        CompilerError::Syntax {
-            context: Box::new(ErrorContext::missing_block_error(block_type, location)),
-        }
-    }
-
     /// Module-related error
     pub fn module_error<T: Into<String>>(
         message: T,
@@ -703,37 +484,6 @@ impl CompilerError {
         }
     }
 
-    /// Memory allocation error
-    pub fn memory_allocation_error(
-        message: impl AsRef<str>,
-        size_requested: usize,
-        available_memory: Option<usize>,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        let mut full_message = format!(
-            "{}\nRequested allocation size: {} bytes",
-            message.as_ref(),
-            size_requested
-        );
-
-        if let Some(available) = available_memory {
-            full_message.push_str(&format!("\nAvailable memory: {available} bytes"));
-        }
-
-        let help = Some(
-            "Consider reducing the size of data structures or optimizing memory usage. \
-            Large allocations may require increasing the memory limit."
-                .to_string(),
-        );
-
-        CompilerError::Memory {
-            context: Box::new(
-                ErrorContext::new(full_message, help, ErrorType::Memory, location)
-                    .with_error_code("COM003"),
-            ),
-        }
-    }
-
     /// The structured context (message, location, code) carried by every
     /// variant except lexer and plugin errors.
     pub fn context(&self) -> Option<&ErrorContext> {
@@ -745,9 +495,24 @@ impl CompilerError {
             | CompilerError::IO { context }
             | CompilerError::Runtime { context }
             | CompilerError::Validation { context }
-            | CompilerError::Module { context }
-            | CompilerError::Testing { context } => Some(context),
+            | CompilerError::Module { context } => Some(context),
             CompilerError::LexError(_) | CompilerError::PluginError { .. } => None,
+        }
+    }
+
+    /// Mutable access to the source location of the error, when it has one.
+    pub fn location_mut(&mut self) -> Option<&mut SourceLocation> {
+        match self {
+            CompilerError::Syntax { context }
+            | CompilerError::Type { context }
+            | CompilerError::Memory { context }
+            | CompilerError::Codegen { context }
+            | CompilerError::IO { context }
+            | CompilerError::Runtime { context }
+            | CompilerError::Validation { context }
+            | CompilerError::Module { context } => context.location.as_mut(),
+            CompilerError::PluginError { location, .. } => location.as_mut(),
+            CompilerError::LexError(_) => None,
         }
     }
 
@@ -852,10 +617,6 @@ impl fmt::Display for CompilerError {
                         write!(f, "Module error: {}", context.message)?;
                         context
                     }
-                    CompilerError::Testing { context } => {
-                        write!(f, "Testing error: {}", context.message)?;
-                        context
-                    }
                     CompilerError::LexError(_) | CompilerError::PluginError { .. } => {
                         unreachable!()
                     }
@@ -893,74 +654,17 @@ impl From<wasmtime::MemoryAccessError> for CompilerError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CompilerWarning {
-    pub message: String,
-    pub warning_type: WarningType,
-    pub location: Option<SourceLocation>,
-    pub help: Option<String>,
-    pub suggestion: Option<String>,
-}
-
-impl CompilerWarning {
-    pub fn new<T: Into<String>>(
-        message: T,
-        warning_type: WarningType,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        Self {
-            message: message.into(),
-            warning_type,
-            location,
-            help: None,
-            suggestion: None,
-        }
+/// Shorten `text` to at most `max_chars` characters, ending in `...` when it
+/// had to be cut. Counts characters, not bytes, so text with multi-byte
+/// characters (`é`, `—`, emoji) is never split inside a character.
+pub fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
     }
-
-    pub fn with_help<T: Into<String>>(mut self, help: T) -> Self {
-        self.help = Some(help.into());
-        self
-    }
-
-    pub fn with_suggestion<T: Into<String>>(mut self, suggestion: T) -> Self {
-        self.suggestion = Some(suggestion.into());
-        self
-    }
-
-    pub fn dead_code(location: Option<SourceLocation>) -> Self {
-        Self::new("This code is unreachable", WarningType::DeadCode, location)
-            .with_help(
-                "Code after a return statement or in an impossible branch will never execute",
-            )
-            .with_suggestion("Remove the unreachable code or fix the control flow")
-    }
-}
-
-impl fmt::Display for CompilerWarning {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Warning: {}", self.message)?;
-
-        if let Some(location) = &self.location {
-            writeln!(f)?;
-            write!(
-                f,
-                "  --> {}:{}:{}",
-                location.file, location.line, location.column
-            )?;
-        }
-
-        if let Some(help) = &self.help {
-            writeln!(f)?;
-            write!(f, "  = help: {help}")?;
-        }
-
-        if let Some(suggestion) = &self.suggestion {
-            writeln!(f)?;
-            write!(f, "  = suggestion: {suggestion}")?;
-        }
-
-        Ok(())
-    }
+    let keep = max_chars.saturating_sub(3);
+    let mut out: String = text.chars().take(keep).collect();
+    out.push_str("...");
+    out
 }
 
 /// Utility functions for enhanced error reporting
@@ -1331,61 +1035,6 @@ impl ErrorUtils {
             format!("Error in: '{message}'")
         }
     }
-
-    /// Generate recovery-specific suggestions based on the error context
-    pub fn get_recovery_suggestions(
-        _pest_error: &pest::error::Error<crate::parser::Rule>,
-        source: &str,
-        error_span: (usize, usize),
-    ) -> Vec<String> {
-        let mut suggestions = Vec::new();
-
-        // Get the context around the error
-        let error_context = Self::context_window(source, error_span, 50);
-
-        // Add syntax-specific recovery suggestions based on context
-        if error_context.contains("func ") {
-            suggestions
-                .push("Use 'function' instead of 'func' for function declarations".to_string());
-        }
-
-        if error_context.contains("->") {
-            suggestions.push(
-                "Clean Language uses 'function returnType name()' syntax, not '->' arrows"
-                    .to_string(),
-            );
-        }
-
-        if error_context.contains("let ") {
-            suggestions.push(
-                "Use explicit types instead of 'let': 'integer x = 5' not 'let x = 5'".to_string(),
-            );
-        }
-
-        if error_context.contains(" + ") || error_context.contains(" - ") {
-            suggestions.push(
-                "Check if you have a complete expression on both sides of the operator".to_string(),
-            );
-        }
-
-        if error_context.contains("= ") {
-            suggestions.push("Make sure the assignment has a value after the '=' sign".to_string());
-        }
-
-        if error_context.contains("(") && !error_context.contains(")") {
-            suggestions.push("Missing closing parenthesis ')'".to_string());
-        }
-
-        if error_context.contains("[") && !error_context.contains("]") {
-            suggestions.push("Missing closing bracket ']'".to_string());
-        }
-
-        if error_context.contains("\"") && error_context.matches("\"").count() % 2 == 1 {
-            suggestions.push("Missing closing quote '\"' for string".to_string());
-        }
-
-        suggestions
-    }
 }
 
 #[cfg(test)]
@@ -1412,5 +1061,16 @@ mod tests {
 
         let string: String = context.into();
         assert!(string.contains("test error"));
+    }
+
+    #[test]
+    fn truncate_chars_cuts_on_character_boundaries() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        assert_eq!(truncate_chars("abcdefghij", 10), "abcdefghij");
+        assert_eq!(truncate_chars("abcdefghijk", 10), "abcdefg...");
+        // Every character here is multi-byte; byte slicing at 7 would panic.
+        let text = "ééééééééééééé";
+        assert_eq!(truncate_chars(text, 10), "ééééééé...");
+        assert_eq!(truncate_chars("——————————————", 5), "——...");
     }
 }

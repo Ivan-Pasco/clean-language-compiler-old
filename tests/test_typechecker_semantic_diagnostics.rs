@@ -59,8 +59,7 @@ fn context(e: &CompilerError) -> Option<&ErrorContext> {
         | CompilerError::IO { context }
         | CompilerError::Runtime { context }
         | CompilerError::Validation { context }
-        | CompilerError::Module { context }
-        | CompilerError::Testing { context } => Some(context),
+        | CompilerError::Module { context } => Some(context),
         _ => None,
     }
 }

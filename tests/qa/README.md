@@ -28,9 +28,6 @@ This QA directory complements:
 ```bash
 # Use existing infrastructure
 ./scripts/comprehensive_test_runner.sh
-
-# Or the CLI command
-cargo run --bin cln comprehensive-test
 ```
 
 ### QA-Specific Validation

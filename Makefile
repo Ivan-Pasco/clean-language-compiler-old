@@ -1,4 +1,4 @@
-.PHONY: build test run clean all-tests test-unit test-integration test-parser test-semantic test-compilation benchmark coverage quality-gate test-fuzz ci pre-commit dev
+.PHONY: build test run clean all-tests test-unit test-integration test-parser test-semantic test-compilation benchmark quality-gate test-fuzz ci pre-commit dev
 
 # Build the compiler
 build:
@@ -35,7 +35,7 @@ test-integration:
 # Parser-specific tests
 test-parser:
 	@echo "📝 Running Parser Tests..."
-	cargo run --bin test_runner
+	cargo test --lib parser:: --verbose
 
 # Semantic analysis tests (name resolution + type checking)
 test-semantic:
@@ -51,19 +51,11 @@ test-compilation:
 # Performance benchmarking
 benchmark:
 	@echo "🚀 Running Performance Benchmarks..."
-	cargo run --bin performance_benchmark
-
-# Code coverage analysis
-coverage:
-	@echo "📊 Analyzing Code Coverage..."
-	cargo run --bin coverage_report
+	cargo bench --bench compiler_benchmarks
 
 # Quality gate - runs all checks
-quality-gate: all-tests benchmark coverage
+quality-gate: all-tests benchmark
 	@echo "🎯 Quality Gate: All checks passed!"
-	@echo "✅ Tests: PASSED"
-	@echo "✅ Performance: NO REGRESSIONS"
-	@echo "✅ Coverage: THRESHOLD MET"
 
 # Fuzzing tests (requires cargo-fuzz and a nightly toolchain)
 test-fuzz:

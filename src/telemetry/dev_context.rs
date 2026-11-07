@@ -2,8 +2,8 @@
  * Dev-context detection for telemetry.
  *
  * When the platform authors are iterating on Clean Language itself, compile
- * failures against the component they are editing should never reach the
- * public error dashboard. Those failures are work-in-progress, not user bugs.
+ * failures against the component they are editing are work-in-progress, not
+ * user bugs: they go to the local dev queue instead of a bug report.
  *
  * Two signals classify a run as "dev mode":
  *  1. The compiler binary is not an installed release (runs from a `target/`
@@ -13,8 +13,8 @@
  *     `clean-framework/`, etc.).
  *
  * Either signal flips the run to dev mode; the failure is written to a local
- * dev queue instead of uploaded. An explicit override is available via the
- * `CLEEN_TELEMETRY_FORCE` env var (`publish` or `local`).
+ * dev queue instead of a bug report. An explicit override is available via the
+ * `CLEEN_TELEMETRY_FORCE` env var (`publish` = user run, `local` = dev work).
  */
 
 use std::path::PathBuf;
@@ -55,12 +55,12 @@ fn component_dirs_for(component: &str) -> &'static [&'static str] {
 }
 
 /// Outcome of dev-context detection with the reason attached so callers can
-/// log it (useful when someone wonders why a report never hit the dashboard).
+/// log it (useful when someone wonders why a failure went to the dev queue).
 #[derive(Debug, Clone)]
 pub enum DevContext {
-    /// Dev mode: telemetry upload is suppressed. Reason string is human-readable.
+    /// Dev mode: failures go to the local dev queue. Reason string is human-readable.
     Dev(String),
-    /// Release/user mode: upload proceeds normally.
+    /// Release/user mode: failures are answered with a bug-report command.
     Release,
 }
 
@@ -106,7 +106,7 @@ pub fn detect_for_component(component: &str) -> DevContext {
 
     // Binary-dev-build check: a `cargo build` binary means we are developing
     // the compiler itself. Suppress reports for the compiler and mcp components
-    // (both ship in the same `cln` binary) to avoid WIP noise on the dashboard.
+    // (both ship in the same `cln` binary) to keep WIP failures in the dev queue.
     // For cross-component bugs (framework, server, extension, etc.) the binary
     // build type is irrelevant — only the CWD check below should apply.
     let is_compiler_binary_component = matches!(component, "compiler" | "mcp");
@@ -200,18 +200,16 @@ pub fn describe(ctx: &DevContext) -> &str {
     }
 }
 
-/// Shared component list accessor for tests / tooling.
-pub fn component_dirs() -> &'static [&'static str] {
-    COMPONENT_DIRS
-}
+/// Serializes unit tests that set `CLEEN_TELEMETRY_FORCE` (env mutation is
+/// process-global).
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Env mutation is process-global; serialize tests that touch it.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use super::TEST_ENV_LOCK as ENV_LOCK;
 
     #[test]
     fn override_publish_forces_release() {
@@ -262,7 +260,7 @@ mod tests {
         // When reporting a framework/server/extension bug from within the
         // compiler source tree, the binary dev-build check must NOT fire.
         // Only the CWD check applies, and since CWD is not inside clean-framework/,
-        // the report must reach the dashboard (Release mode).
+        // the report is drafted as a GitHub issue (Release mode).
         // NOTE: binary_looks_like_dev_build() may still return Some when tests
         // run from target/. We verify via component_dirs_for logic only.
         let dirs = component_dirs_for("framework");
@@ -279,7 +277,7 @@ mod tests {
         });
         assert!(
             !cwd_in_framework,
-            "compiler CWD must not match framework dirs — cross-component reports must reach dashboard"
+            "compiler CWD must not match framework dirs — cross-component reports must not go to the dev queue"
         );
     }
 
