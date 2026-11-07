@@ -1260,13 +1260,22 @@ impl super::CodeGenerator {
     ///   ends (`ERROR_DEPTH_GLOBAL` counts the active ones).
     /// - `__err_raise(message)` — `error(message)`. Outside every region the
     ///   message is printed and execution traps (an unhandled error). Inside
-    ///   one, `ERROR_PENDING_GLOBAL` is set and the caller unwinds to the
-    ///   region (`MirOperation::ErrorCheck`).
+    ///   one, the message is kept and the pending bit of
+    ///   `ERROR_STATE_GLOBAL` is set; the caller unwinds to the region
+    ///   (`MirOperation::ErrorCheck`).
     /// - `__err_take() -> boolean` — whether an error reached the region
-    ///   that just ended; clears the pending flag.
+    ///   that just ended; clears the pending bit.
+    /// - `__err_message() -> string` — the last raised message: `error` in
+    ///   an `onError` handler.
     pub(crate) fn register_error_handling_operations(&mut self) -> Result<(), CompilerError> {
-        use native_stdlib::{ERROR_DEPTH_GLOBAL, ERROR_PENDING_GLOBAL};
+        use native_stdlib::{ERROR_DEPTH_GLOBAL, ERROR_STATE_GLOBAL};
         use wasm_encoder::{BlockType, Instruction, MemArg};
+
+        // The message address is stored shifted left by one bit.
+        const _: () = assert!(
+            crate::MemoryTier::Plugin.max_pages() * 65536 <= 1 << 31,
+            "ERROR_STATE_GLOBAL needs every address below 2^31"
+        );
 
         for (name, delta) in [("__err_enter", 1), ("__err_leave", -1)] {
             self.register_function(
@@ -1310,8 +1319,13 @@ impl super::CodeGenerator {
                 Instruction::Call(printl),
                 Instruction::Unreachable,
                 Instruction::End,
+                // state = (message << 1) | pending
+                Instruction::LocalGet(0),
                 Instruction::I32Const(1),
-                Instruction::GlobalSet(ERROR_PENDING_GLOBAL),
+                Instruction::I32Shl,
+                Instruction::I32Const(1),
+                Instruction::I32Or,
+                Instruction::GlobalSet(ERROR_STATE_GLOBAL),
             ],
         )?;
 
@@ -1320,9 +1334,24 @@ impl super::CodeGenerator {
             &[],
             Some(WasmType::I32),
             &[
-                Instruction::GlobalGet(ERROR_PENDING_GLOBAL),
-                Instruction::I32Const(0),
-                Instruction::GlobalSet(ERROR_PENDING_GLOBAL),
+                Instruction::GlobalGet(ERROR_STATE_GLOBAL),
+                Instruction::I32Const(1),
+                Instruction::I32And,
+                Instruction::GlobalGet(ERROR_STATE_GLOBAL),
+                Instruction::I32Const(!1),
+                Instruction::I32And,
+                Instruction::GlobalSet(ERROR_STATE_GLOBAL),
+            ],
+        )?;
+
+        self.register_function(
+            "__err_message",
+            &[],
+            Some(WasmType::I32),
+            &[
+                Instruction::GlobalGet(ERROR_STATE_GLOBAL),
+                Instruction::I32Const(1),
+                Instruction::I32ShrU,
             ],
         )?;
         // `register_function` appends each body's final `end`.

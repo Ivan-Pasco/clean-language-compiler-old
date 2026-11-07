@@ -162,6 +162,10 @@ pub struct HirBuilder {
     pending_functions: Vec<crate::hir::HirFunction>,
     /// Counter for generating unique continuation names.
     later_counter: usize,
+    /// The `onError` handlers being lowered, innermost last.
+    error_message_scopes: Vec<ErrorMessageScope>,
+    /// Counter for naming each handler's message variable.
+    error_handler_counter: usize,
     /// Name of the function currently being built (for naming continuations).
     current_function_name: String,
     /// Maps local variable names declared via `later varName = api.*` to their
@@ -203,6 +207,18 @@ pub struct HirBuilder {
 
 /// One `state:` declaration as `reset` needs it: name, initializer and the
 /// list behavior of its declared type.
+/// Where `error` (the raised message, 14-error-handling.md) is read from
+/// while an `onError` handler is lowered.
+#[derive(Debug)]
+enum ErrorMessageScope {
+    /// An `onError:` block: the message is copied into `variable` when the
+    /// handler starts (`used` once the body reads `error`), so an error
+    /// raised and handled inside the handler does not change it.
+    Handler { variable: String, used: bool },
+    /// The fallback of `expr onError fallback`: reads the message directly.
+    Fallback,
+}
+
 #[derive(Debug, Clone)]
 struct StateDeclInfo {
     name: String,
@@ -232,6 +248,8 @@ impl HirBuilder {
             named_arg_registry: std::collections::HashMap::new(),
             pending_functions: Vec::new(),
             later_counter: 0,
+            error_message_scopes: Vec::new(),
+            error_handler_counter: 0,
             current_function_name: String::new(),
             api_response_vars: std::collections::HashMap::new(),
             state_decls: Vec::new(),
@@ -1496,6 +1514,69 @@ impl HirBuilder {
         }
     }
 
+    /// Lower the body of an `onError:` handler. When the body reads
+    /// `error`, the handler starts by copying the raised message into a
+    /// variable of its own.
+    fn build_error_handler(
+        &mut self,
+        body: &[Statement],
+        location: &SourceLocation,
+    ) -> Result<HirBlock, CompilerError> {
+        let variable = format!("__onerror_message_{}", self.error_handler_counter);
+        self.error_handler_counter += 1;
+        self.error_message_scopes.push(ErrorMessageScope::Handler {
+            variable: variable.clone(),
+            used: false,
+        });
+        let handler = self.build_block(body);
+        let scope = self.error_message_scopes.pop();
+        let mut handler = handler?;
+        if let Some(ErrorMessageScope::Handler { used: true, .. }) = scope {
+            handler.statements.insert(
+                0,
+                HirStatement::VariableDeclaration {
+                    name: variable,
+                    var_type: HirType::String,
+                    initializer: Some(HirExpression::Call {
+                        function: "__err_message".to_string(),
+                        arguments: Vec::new(),
+                        location: location.clone(),
+                    }),
+                    is_mutable: false,
+                    location: location.clone(),
+                },
+            );
+        }
+        Ok(handler)
+    }
+
+    /// `error` in an `onError` handler: the raised message.
+    fn error_message(&mut self, location: &SourceLocation) -> Result<HirExpression, CompilerError> {
+        match self.error_message_scopes.last_mut() {
+            Some(ErrorMessageScope::Handler { variable, used }) => {
+                *used = true;
+                Ok(HirExpression::Variable {
+                    name: variable.clone(),
+                    location: location.clone(),
+                })
+            }
+            Some(ErrorMessageScope::Fallback) => Ok(HirExpression::Call {
+                function: "__err_message".to_string(),
+                arguments: Vec::new(),
+                location: location.clone(),
+            }),
+            None => Err(CompilerError::semantic_error_with_code(
+                "`error` is only available inside an onError handler".to_string(),
+                Some(
+                    "Read the raised message in the handler: `value = risky() onError \"failed: \" + error`"
+                        .to_string(),
+                ),
+                Some(location.clone()),
+                "SEM002",
+            )),
+        }
+    }
+
     /// `if __err_take(): <handler>` — runs an `onError` handler when an
     /// error reached the region that just ended.
     fn error_handler_if(handler: HirBlock, location: &SourceLocation) -> HirStatement {
@@ -1794,7 +1875,7 @@ impl HirBuilder {
                     Vec::new(),
                     &loc,
                 ));
-                let handler = self.build_block(body)?;
+                let handler = self.build_error_handler(body, &loc)?;
                 hir_statements.push(Self::error_handler_if(handler, &loc));
                 error_region_start = hir_statements.len();
             } else if let Statement::OnErrorBlock {
@@ -1821,7 +1902,7 @@ impl HirBuilder {
                     Vec::new(),
                     &loc,
                 ));
-                let handler = self.build_block(error_block)?;
+                let handler = self.build_error_handler(error_block, &loc)?;
                 hir_statements.push(Self::error_handler_if(handler, &loc));
             } else if let Statement::FunctionApplyBlock {
                 function_name,
@@ -2426,10 +2507,18 @@ impl HirBuilder {
                 }
             }
 
-            Expression::Variable(name) => Ok(HirExpression::Variable {
-                name: name.clone(),
-                location: self.enclosing_statement_location(),
-            }),
+            // `error` is a contextual keyword: a variable outside a handler,
+            // the raised message inside one.
+            Expression::Variable(name) => {
+                let location = self.enclosing_statement_location();
+                if name == "error" && !self.error_message_scopes.is_empty() {
+                    return self.error_message(&location);
+                }
+                Ok(HirExpression::Variable {
+                    name: name.clone(),
+                    location,
+                })
+            }
 
             Expression::Binary(left, op, right) => {
                 let hir_left = self.build_expression(left)?;
@@ -2701,7 +2790,10 @@ impl HirBuilder {
                 location,
             } => {
                 let hir_expression = self.build_expression(expression)?;
-                let hir_fallback = self.build_expression(fallback)?;
+                self.error_message_scopes.push(ErrorMessageScope::Fallback);
+                let hir_fallback = self.build_expression(fallback);
+                self.error_message_scopes.pop();
+                let hir_fallback = hir_fallback?;
 
                 Ok(HirExpression::OnError {
                     expression: Box::new(hir_expression),
@@ -2867,10 +2959,13 @@ impl HirBuilder {
                 "SEM001",
             )),
 
-            // `expr onError:` blocks and the `error` variable have statement
-            // forms that are lowered elsewhere; in expression position they
-            // have no lowering.
-            Expression::OnErrorBlock { location, .. } | Expression::ErrorVariable { location } => Err(CompilerError::syntax_error(
+            // `error` in an `onError` handler is the raised message
+            // (14-error-handling.md).
+            Expression::ErrorVariable { location } => self.error_message(location),
+
+            // An `expr onError:` block is a statement form, lowered in
+            // `build_block_inner`; in expression position it has no lowering.
+            Expression::OnErrorBlock { location, .. } => Err(CompilerError::syntax_error(
                 "This expression form is not supported here".to_string(),
                 None,
                 Some(location.clone()),

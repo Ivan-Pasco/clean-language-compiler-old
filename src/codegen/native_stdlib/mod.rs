@@ -79,10 +79,14 @@ pub const CARRYOVER_A_BASE_GLOBAL: u32 = 3;
 pub const CARRYOVER_B_BASE_GLOBAL: u32 = 4;
 /// 5-6: `onError` state (`codegen_registration.rs`,
 /// `register_error_handling_operations`). `ERROR_DEPTH_GLOBAL` counts the
-/// `onError` regions being evaluated; `ERROR_PENDING_GLOBAL` is 1 while an
-/// `error(...)` raised inside one is unwinding to its handler.
+/// `onError` regions being evaluated. `ERROR_STATE_GLOBAL` holds
+/// `(message << 1) | pending`: bit 0 is set while an `error(...)` raised
+/// inside a region is unwinding to its handler, and the other bits keep the
+/// address of the last raised message, which the handler reads as `error`.
+/// The shift is lossless because no memory tier exceeds 1 GB
+/// (`MemoryTier::max_pages`), so every address is below 2^31.
 pub const ERROR_DEPTH_GLOBAL: u32 = 5;
-pub const ERROR_PENDING_GLOBAL: u32 = 6;
+pub const ERROR_STATE_GLOBAL: u32 = 6;
 
 /// Number of reserved compiler-owned globals (heap ptr + transient arena +
 /// carryover pool bases + error state). User-level state globals are

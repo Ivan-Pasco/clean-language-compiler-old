@@ -4363,8 +4363,9 @@ impl NameResolver {
         // Error-handling runtime (14-error-handling.md): `error(msg)` lowers
         // to `__err_raise(msg)`; an `onError` handler's region is bracketed
         // by `__err_region_begin()` / `__err_region_end()` and the handler
-        // runs when `__err_take()` reports an error reached it. Inserted by
-        // the HIR builder; the MIR builder lowers the region markers.
+        // runs when `__err_take()` reports an error reached it, reading the
+        // message (`error`) with `__err_message()`. Inserted by the HIR
+        // builder; the MIR builder lowers the region markers.
         self.register_builtin_fn(
             "__err_raise",
             vec![HirType::String],
@@ -4383,6 +4384,13 @@ impl NameResolver {
             "__err_take",
             vec![],
             Some(HirType::Boolean),
+            builtin_location.clone(),
+        );
+        // The last raised message: `error` in an `onError` handler.
+        self.register_builtin_fn(
+            "__err_message",
+            vec![],
+            Some(HirType::String),
             builtin_location.clone(),
         );
 

@@ -878,11 +878,12 @@ impl MirCodeGenerator<'_> {
             // of this function (emitted as a loop, so the exit is a loop exit
             // label) or return the zero value of the function's type.
             MirOperation::ErrorCheck { region_exit } => {
-                self.current_instructions.push(Instruction::GlobalGet(
-                    crate::codegen::native_stdlib::ERROR_PENDING_GLOBAL,
-                ));
-                self.current_instructions
-                    .push(Instruction::If(BlockType::Empty));
+                self.current_instructions.extend([
+                    Instruction::GlobalGet(crate::codegen::native_stdlib::ERROR_STATE_GLOBAL),
+                    Instruction::I32Const(1),
+                    Instruction::I32And,
+                    Instruction::If(BlockType::Empty),
+                ]);
                 self.current_block_depth += 1;
                 match region_exit {
                     Some(exit) => {

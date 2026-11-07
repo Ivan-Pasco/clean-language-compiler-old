@@ -1050,7 +1050,7 @@ impl MirCodeGenerator<'_> {
         //   global 0 = __heap_ptr
         //   global 1-2 = transient arena (pool base, bump pointer)
         //   global 3-4 = carryover slot pools
-        //   global 5-6 = onError depth and pending flag
+        //   global 5-6 = onError depth and error state
         // See utilities.rs's global-section emission, transient_arena.rs
         // and carryover.rs for layout.
         let reserved = crate::codegen::native_stdlib::RESERVED_GLOBAL_COUNT;
