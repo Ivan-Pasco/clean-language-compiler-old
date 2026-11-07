@@ -8,9 +8,10 @@
 
 use wasm_encoder::{ConstExpr, DataSection};
 
-/// Maximum data-section size (1 MB).  All static data (string literals, globals)
-/// must fit within this region.  The runtime heap (`__heap_ptr`) starts
-/// immediately after at `native_stdlib::HEAP_START` (also 1 MB).
+/// End of the static data region (1 MB): every data segment (string
+/// literals) must end below it. The runtime heap does not start here; it
+/// starts after the string literals and the transient arena pool (see
+/// `codegen::DATA_SECTION_START`).
 const MAX_MEMORY_SIZE: usize = 1048576;
 
 /// Rejected data-segment placement. Fields carry diagnostic payload for the

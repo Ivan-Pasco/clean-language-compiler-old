@@ -29,15 +29,25 @@ use type_manager::TypeManager;
 /// Type id stored in a list's header (offset 8).
 pub const LIST_TYPE_ID: u32 = 4;
 
-/// Data-section layout offset: static data (string pool, globals) is placed
-/// starting at byte 1024 in WASM linear memory.  This is *not* the runtime
-/// heap start — see `native_stdlib::HEAP_START` (1 MB) for that.
+/// Lowest address a data segment may occupy: the first kilobyte is the
+/// null-pointer guard.
 ///
-/// Layout:
-///   [0 .. 1 KB]           Reserved (null-pointer guard, stack scratch)
-///   [1 KB .. ~1 MB]       Data section (string literals, static data)
-///   [1 MB .. top]         Runtime heap (bump allocator, `__heap_ptr` global)
+/// Linear memory layout:
+///   [0 .. 1 KB)            Reserved (null-pointer guard)
+///   [4 KB .. string end)    String literals (`STRING_POOL_START`), placed by
+///                           `get_or_create_string_offset`
+///   [string end .. +64 KB)  Transient arena pool (`TRANSIENT_POOL_SIZE`),
+///                           starting at the string end aligned to 8
+///   [pool end .. top)       Main bump heap: the initial `__heap_ptr`
+///
+/// The heap start depends on the program's string literals; it is computed
+/// in `MirCodeGenerator::finalize_module` and exported as `__heap_ptr`, the
+/// only place hosts take it from. Static data must end below
+/// `MAX_MEMORY_SIZE` (1 MB, `memory.rs`).
 pub const DATA_SECTION_START: usize = 1024;
+
+/// Address of the first string literal.
+pub const STRING_POOL_START: u32 = 4096;
 
 /// Code generator for Clean Language
 pub struct CodeGenerator {
@@ -127,7 +137,7 @@ impl CodeGenerator {
             http_import_indices: HashMap::new(),
 
             // String management for imports
-            string_offset_counter: 4096, // Start at 4KB to avoid conflicts
+            string_offset_counter: STRING_POOL_START,
             string_pool: HashMap::new(),
 
             // Configuration for runtime imports
