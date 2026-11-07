@@ -34,7 +34,6 @@ pub struct NameResolver {
     /// raised the standalone-function error.
     class_method_names: std::collections::HashMap<String, std::collections::HashSet<String>>,
     errors: Vec<CompilerError>,
-    warnings: Vec<CompilerError>,
     expression_recursion_depth: usize,
     /// Plugin bridge functions deferred until after `register_top_level_symbols` runs,
     /// so they are applied AFTER builtins and are never overwritten by them.
@@ -74,7 +73,6 @@ impl NameResolver {
             screen_names: Vec::new(),
             class_method_names: std::collections::HashMap::new(),
             errors: Vec::new(),
-            warnings: Vec::new(),
             expression_recursion_depth: 0,
             pending_bridge_functions: Vec::new(),
             pending_language_aliases: std::collections::HashMap::new(),
@@ -136,30 +134,24 @@ impl NameResolver {
         // in the global scope. Each body is resolved independently.
         let mut resolved_watch_blocks: Vec<crate::resolver::ResolvedHirWatchBlock> = Vec::new();
         for watch in &hir.watch_blocks {
-            // Resolve and validate each target name against the symbol table.
+            // Each target must name a `state:` variable (SCOPE004).
             let mut target_symbol_ids: Vec<SymbolId> = Vec::new();
-            let mut target_resolution_failed = false;
             for target_name in &watch.targets {
-                match self.symbol_table.lookup_symbol(target_name) {
+                let state_symbol = self.symbol_table.lookup_symbol(target_name).filter(|&id| {
+                    self.symbol_table
+                        .get_symbol(id)
+                        .is_some_and(|s| matches!(s.kind, SymbolKind::StateVariable { .. }))
+                });
+                match state_symbol {
                     Some(sid) => target_symbol_ids.push(sid),
-                    None => {
-                        tracing::warn!(
-                            name = %target_name,
-                            "Watch target '{}' not found in symbol table — \
-                             it may be defined later or come from a plugin",
-                            target_name
-                        );
-                        // Use a sentinel SymbolId(0) so that the rest of the pipeline
-                        // can still operate; the runtime will validate at execution time.
-                        target_symbol_ids.push(SymbolId(0));
-                        target_resolution_failed = true;
-                    }
+                    None => self.error_with_code(
+                        &format!("Watch target '{}' is not a state variable", target_name),
+                        "SCOPE004",
+                        watch.location.clone(),
+                    ),
                 }
             }
 
-            // Even when target resolution had warnings, still resolve the body so that
-            // type errors in the handler are caught at compile time.
-            let _ = target_resolution_failed; // informational only
             let resolved_body = self.resolve_block(&watch.body)?;
 
             resolved_watch_blocks.push(crate::resolver::ResolvedHirWatchBlock {
@@ -1756,12 +1748,19 @@ impl NameResolver {
 
         for decl in &state_block.declarations {
             // Look up symbol_id from symbol table
-            let symbol_id = self
+            let Some(symbol_id) = self
                 .symbol_table
                 .lookup_symbol_in_scope(&decl.name, ScopeId(0))
-                .ok_or_else(|| {
-                    tracing::error!("Undefined state variable: {}", decl.name);
-                })?;
+            else {
+                self.error(
+                    &format!(
+                        "State variable '{}' was not registered - this is an internal compiler error",
+                        decl.name
+                    ),
+                    decl.location.clone(),
+                );
+                return Err(());
+            };
 
             // Resolve the initializer expression
             let resolved_initializer = self.resolve_expression(&decl.initializer)?;
@@ -1818,12 +1817,19 @@ impl NameResolver {
             Vec::new();
         for comp in &state_block.computed {
             // The symbol was already registered in register_top_level_symbols; look it up.
-            let symbol_id = self
+            let Some(symbol_id) = self
                 .symbol_table
                 .lookup_symbol_in_scope(&comp.name, ScopeId(0))
-                .ok_or_else(|| {
-                    tracing::error!("Undefined computed state variable: {}", comp.name);
-                })?;
+            else {
+                self.error(
+                    &format!(
+                        "Computed state '{}' was not registered - this is an internal compiler error",
+                        comp.name
+                    ),
+                    comp.location.clone(),
+                );
+                return Err(());
+            };
 
             let resolved_body = self.resolve_block(&comp.body)?;
 
@@ -5465,12 +5471,13 @@ impl NameResolver {
         resolver.pending_language_helper_aliases = language_to_helper;
         resolver.pending_language_fn_defs = language_fn_defs;
 
+        // Every error recorded while resolving fails the resolution, also
+        // when the pass itself ran to the end: an error inside an `always:`
+        // invariant or a watch target must not compile into a program that
+        // silently lacks the invariant.
         match resolver.resolve_program(hir) {
-            Ok(resolved_hir) => Ok(ResolutionResult {
-                resolved_hir,
-                warnings: resolver.warnings,
-            }),
-            Err(_) => Err(resolver.errors),
+            Ok(resolved_hir) if resolver.errors.is_empty() => Ok(ResolutionResult { resolved_hir }),
+            _ => Err(resolver.errors),
         }
     }
 }

@@ -1,0 +1,19 @@
+// Test: bugfixes/always_block_undefined_name_rejected
+// Grammar: class_declaration (always: block)
+// Semantic: SCOPE001 — an invariant naming an undeclared variable is an error,
+//   not a silently dropped invariant
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   notAField
+
+start:
+	Account a = Account()
+	print(a.balance)
+
+class Account
+	public:
+		integer balance = 0
+
+	always:
+		notAField >= 0

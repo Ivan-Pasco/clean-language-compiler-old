@@ -92,7 +92,6 @@ fn pipeline_warnings(source: &str) -> Vec<CompilerError> {
     let mut warnings = hir_result.warnings.clone();
     warnings.extend(HirValidator::validate(&hir_result.hir).expect("validation"));
     let resolved = NameResolver::resolve(hir_result.hir).expect("resolve");
-    warnings.extend(resolved.warnings);
     let typed = TypeChecker::check(resolved.resolved_hir).expect("type check");
     warnings.extend(typed.warnings);
     warnings

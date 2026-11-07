@@ -918,7 +918,6 @@ fn run_single_source_frontend(
     let type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
 
     let mut warnings = validation_warnings;
-    warnings.extend(resolution_result.warnings);
     warnings.extend(type_result.warnings.iter().cloned());
 
     Ok(SingleSourceFrontend {
@@ -2882,7 +2881,6 @@ fn run_multi_file_frontend(
         .unwrap_or_default();
     let type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
     let mut warnings = validation_warnings;
-    warnings.extend(resolution_result.warnings);
     warnings.extend(type_result.warnings.iter().cloned());
 
     Ok(MultiFileFrontend {

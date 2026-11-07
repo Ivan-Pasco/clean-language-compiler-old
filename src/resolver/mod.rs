@@ -13,7 +13,6 @@
 //! - Error reporting for unresolved symbols
 
 use crate::ast::SourceLocation;
-use crate::error::CompilerError;
 use crate::hir::*;
 
 pub mod resolver_impl;
@@ -536,5 +535,4 @@ pub enum ResolvedHirLValue {
 #[derive(Debug)]
 pub struct ResolutionResult {
     pub resolved_hir: ResolvedHirProgram,
-    pub warnings: Vec<CompilerError>,
 }
