@@ -58,6 +58,13 @@ pub struct TypeInference<'a> {
 
     /// Recursion depth counter to prevent stack overflow
     recursion_depth: usize,
+
+    /// Location of the statement being inferred. Some expressions (operators,
+    /// literals) carry no position of their own; their diagnostics point at
+    /// the statement instead of `:0:0`.
+    statement_location: Option<SourceLocation>,
+}
+
 }
 
 /// Result of type inference
@@ -85,6 +92,7 @@ impl<'a> TypeInference<'a> {
             errors: Vec::new(),
             warnings: Vec::new(),
             recursion_depth: 0,
+            statement_location: None,
         }
     }
 
@@ -2383,7 +2391,53 @@ impl<'a> TypeInference<'a> {
         }
 
         self.recursion_depth += 1;
-        let result = match statement {
+        let saved_statement_location = self.statement_location.clone();
+        if let Some(location) = Self::statement_location_of(statement) {
+            if location.line != 0 {
+                self.statement_location = Some(location.clone());
+            }
+        }
+        let result = self.infer_statement_kind(statement);
+        self.statement_location = saved_statement_location;
+        self.recursion_depth -= 1;
+        result
+    }
+
+    /// The source location of a statement.
+    fn statement_location_of(statement: &ResolvedHirStatement) -> Option<&SourceLocation> {
+        match statement {
+            ResolvedHirStatement::VariableDeclaration { location, .. }
+            | ResolvedHirStatement::Assignment { location, .. }
+            | ResolvedHirStatement::Expression { location, .. }
+            | ResolvedHirStatement::Return { location, .. }
+            | ResolvedHirStatement::If { location, .. }
+            | ResolvedHirStatement::For { location, .. }
+            | ResolvedHirStatement::While { location, .. }
+            | ResolvedHirStatement::Break { location }
+            | ResolvedHirStatement::Continue { location }
+            | ResolvedHirStatement::Print { location, .. }
+            | ResolvedHirStatement::LaterAssignment { location, .. }
+            | ResolvedHirStatement::Background { location, .. }
+            | ResolvedHirStatement::Require { location, .. }
+            | ResolvedHirStatement::Ensure { location, .. } => Some(location),
+        }
+    }
+
+    /// `location`, or the enclosing statement's location when `location`
+    /// carries no position.
+    fn located(&self, location: &SourceLocation) -> SourceLocation {
+        match &self.statement_location {
+            Some(statement) if location.line == 0 => statement.clone(),
+            _ => location.clone(),
+        }
+    }
+
+    /// Infer one statement (see `infer_statement`).
+    fn infer_statement_kind(
+        &mut self,
+        statement: &ResolvedHirStatement,
+    ) -> Result<TastStatement, CompilerError> {
+        match statement {
             ResolvedHirStatement::Expression {
                 expression,
                 location,
@@ -3079,9 +3133,7 @@ impl<'a> TypeInference<'a> {
                     location: location.clone(),
                 })
             }
-        };
-        self.recursion_depth -= 1;
-        result
+        }
     }
 
     /// Walk a resolved expression and, for every `Variable { name: "result" }` node found,
@@ -3275,7 +3327,7 @@ impl<'a> TypeInference<'a> {
         Ok(TastExpression {
             kind,
             expr_type,
-            location,
+            location: self.located(&location),
         })
     }
 
@@ -3671,7 +3723,7 @@ impl<'a> TypeInference<'a> {
             message,
             Some(help.to_string()),
             crate::error::ErrorType::Validation,
-            Some(location.clone()),
+            Some(self.located(location)),
         )
         .with_error_code(code);
         if is_error {
@@ -4640,6 +4692,7 @@ impl<'a> TypeInference<'a> {
         right_type: &ConcreteType,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
+        let location = &self.located(location);
         // Optional guarded-use enforcement (spec Step 5):
         // When an Optional(T) value appears in a context that requires T, the compiler must
         // emit an error.  The following operators are "safe" contexts for Optional:
@@ -5937,6 +5990,7 @@ impl<'a> TypeInference<'a> {
         operand_type: &ConcreteType,
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
+        let location = &self.located(location);
         match operator {
             HirUnaryOp::Negate => match operand_type {
                 ConcreteType::Integer

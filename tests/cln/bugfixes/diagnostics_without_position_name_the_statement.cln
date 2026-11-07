@@ -1,0 +1,19 @@
+// Test: bugfixes/diagnostics_without_position_name_the_statement
+// Grammar: index_expression, binary_expression
+// Semantic: IDX001 — a list index is an integer. A diagnostic about an
+//   expression that carries no position of its own (an operator, an index)
+//   names the line of its statement.
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[IDX001]: List index must be integer, found string
+//   diagnostics_without_position_name_the_statement.cln:18:
+//
+// Regression: the diagnostic was reported at `:0:0`.
+
+start:
+	list<integer> xs = [1, 2]
+	string key = "a"
+	printl(key)
+	integer v = xs[key]
+	printl(v.toString())
