@@ -8,7 +8,6 @@ use crate::types::WasmType;
 use std::collections::{HashMap, HashSet};
 
 // Declare the modules
-pub mod bridge_generator;
 mod codegen_module_builder;
 mod codegen_registration;
 pub mod const_eval;
