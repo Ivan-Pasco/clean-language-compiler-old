@@ -752,6 +752,22 @@ impl CompilerError {
         }
     }
 
+    /// Mutable access to the source location of the error, when it has one.
+    pub fn location_mut(&mut self) -> Option<&mut SourceLocation> {
+        match self {
+            CompilerError::Syntax { context }
+            | CompilerError::Type { context }
+            | CompilerError::Memory { context }
+            | CompilerError::Codegen { context }
+            | CompilerError::IO { context }
+            | CompilerError::Runtime { context }
+            | CompilerError::Validation { context }
+            | CompilerError::Module { context } => context.location.as_mut(),
+            CompilerError::PluginError { location, .. } => location.as_mut(),
+            CompilerError::LexError(_) => None,
+        }
+    }
+
     /// Get the error message
     pub fn message(&self) -> &str {
         match self {
