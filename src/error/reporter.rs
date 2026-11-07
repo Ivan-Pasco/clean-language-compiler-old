@@ -442,7 +442,13 @@ impl ErrorReporter {
                         let underline_len = self.calculate_underline_length(line, col, context);
 
                         // Show error indicator with ^^^^ underline
-                        let spaces = " ".repeat(col);
+                        // Keep tabs from the source line so the caret lines up
+                        // under tab-indented code.
+                        let spaces: String = line
+                            .chars()
+                            .take(col)
+                            .map(|c| if c == '\t' { '\t' } else { ' ' })
+                            .collect();
                         let underline = "^".repeat(underline_len);
                         writeln!(
                             writer,
@@ -459,18 +465,8 @@ impl ErrorReporter {
 
                         // Show inline error message
                         if !context.message.is_empty() {
-                            // Truncate message if too long. Slice on a char
-                            // boundary — messages contain UTF-8 punctuation
-                            // like `—` that panic on raw byte indexing.
-                            let inline_msg = if context.message.chars().count() > 50 {
-                                let mut end = 47;
-                                while end > 0 && !context.message.is_char_boundary(end) {
-                                    end -= 1;
-                                }
-                                format!("{}...", &context.message[..end])
-                            } else {
-                                context.message.clone()
-                            };
+                            // Truncate long messages by characters, not bytes.
+                            let inline_msg = super::truncate_chars(&context.message, 50);
                             writeln!(
                                 writer,
                                 "{}{:>width$} |{} {}{}{}{}",
@@ -503,63 +499,40 @@ impl ErrorReporter {
         Ok(())
     }
 
-    /// Calculate the length of the underline based on context
+    /// Calculate the length of the underline based on context.
+    ///
+    /// `col` is a 0-based *character* column (source locations count
+    /// characters, not bytes), so all indexing here goes through `chars()`.
     fn calculate_underline_length(&self, line: &str, col: usize, context: &ErrorContext) -> usize {
-        // Try to extract a reasonable span from the error context
-        // Look for identifiers, keywords, or tokens at the error position
+        let chars: Vec<char> = line.chars().collect();
+        if col >= chars.len() {
+            return 1;
+        }
+        let remaining: String = chars[col..].iter().collect();
 
-        // If message mentions a specific identifier, try to find it
+        // If the message names an identifier that sits at the column, underline it.
         if let Some(identifier) = self.extract_identifier_from_message(&context.message) {
-            if col < line.len() {
-                // Check if the identifier is at the column position
-                let remaining = &line[col..];
-                if remaining.starts_with(&identifier) {
-                    return identifier.len().max(1);
-                }
+            if remaining.starts_with(&identifier) {
+                return identifier.chars().count().max(1);
             }
         }
 
-        // Try to find the extent of the current token at column position
-        if col < line.len() {
-            let chars: Vec<char> = line.chars().collect();
-            let mut len = 0;
-
-            // Skip to the character at col
-            let mut char_idx = 0;
-            let mut byte_idx = 0;
-            for (i, c) in chars.iter().enumerate() {
-                if byte_idx >= col {
-                    char_idx = i;
-                    break;
-                }
-                byte_idx += c.len_utf8();
-            }
-
-            // Extend to the end of the current token (identifier, keyword, or symbol)
-            let first_char = chars.get(char_idx).copied().unwrap_or(' ');
-            if first_char.is_alphanumeric() || first_char == '_' {
-                // Identifier or keyword
-                for c in chars[char_idx..].iter() {
-                    if c.is_alphanumeric() || *c == '_' {
-                        len += 1;
-                    } else {
-                        break;
-                    }
-                }
-            } else if !first_char.is_whitespace() {
-                // Operator or symbol - take 1-2 characters
-                len = 1;
-                if char_idx + 1 < chars.len()
-                    && !chars[char_idx + 1].is_alphanumeric()
-                    && !chars[char_idx + 1].is_whitespace()
-                {
-                    len = 2;
+        // Otherwise extend to the end of the token at the column position.
+        let first_char = chars[col];
+        if first_char.is_alphanumeric() || first_char == '_' {
+            return chars[col..]
+                .iter()
+                .take_while(|c| c.is_alphanumeric() || **c == '_')
+                .count();
+        }
+        if !first_char.is_whitespace() {
+            // Operator or symbol - take 1-2 characters
+            if let Some(next) = chars.get(col + 1) {
+                if !next.is_alphanumeric() && !next.is_whitespace() {
+                    return 2;
                 }
             }
-
-            if len > 0 {
-                return len;
-            }
+            return 1;
         }
 
         // Default: single caret

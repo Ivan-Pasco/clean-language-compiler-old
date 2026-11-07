@@ -3262,12 +3262,10 @@ fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Err
                 let msg = if full {
                     e.message.clone()
                 } else {
-                    let mut s = e.message.replace('\n', " ");
-                    if s.len() > 80 {
-                        s.truncate(77);
-                        s.push_str("...");
-                    }
-                    s
+                    clean_language_compiler::error::truncate_chars(
+                        &e.message.replace('\n', " "),
+                        80,
+                    )
                 };
                 let ts = e.last_seen_at.trim_end_matches('Z').replace('T', " ");
                 println!(

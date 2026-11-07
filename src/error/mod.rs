@@ -891,76 +891,30 @@ impl From<wasmtime::MemoryAccessError> for CompilerError {
             None,
         )
     }
-}
 
-#[derive(Debug, Clone)]
-pub struct CompilerWarning {
-    pub message: String,
-    pub warning_type: WarningType,
-    pub location: Option<SourceLocation>,
-    pub help: Option<String>,
-    pub suggestion: Option<String>,
-}
-
-impl CompilerWarning {
-    pub fn new<T: Into<String>>(
-        message: T,
-        warning_type: WarningType,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        Self {
-            message: message.into(),
-            warning_type,
-            location,
-            help: None,
-            suggestion: None,
-        }
-    }
-
-    pub fn with_help<T: Into<String>>(mut self, help: T) -> Self {
-        self.help = Some(help.into());
-        self
-    }
-
-    pub fn with_suggestion<T: Into<String>>(mut self, suggestion: T) -> Self {
-        self.suggestion = Some(suggestion.into());
-        self
-    }
-
-    pub fn dead_code(location: Option<SourceLocation>) -> Self {
-        Self::new("This code is unreachable", WarningType::DeadCode, location)
-            .with_help(
-                "Code after a return statement or in an impossible branch will never execute",
-            )
-            .with_suggestion("Remove the unreachable code or fix the control flow")
+    #[test]
+    fn truncate_chars_cuts_on_character_boundaries() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        assert_eq!(truncate_chars("abcdefghij", 10), "abcdefghij");
+        assert_eq!(truncate_chars("abcdefghijk", 10), "abcdefg...");
+        // Every character here is multi-byte; byte slicing at 7 would panic.
+        let text = "ééééééééééééé";
+        assert_eq!(truncate_chars(text, 10), "ééééééé...");
+        assert_eq!(truncate_chars("——————————————", 5), "——...");
     }
 }
 
-impl fmt::Display for CompilerWarning {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Warning: {}", self.message)?;
-
-        if let Some(location) = &self.location {
-            writeln!(f)?;
-            write!(
-                f,
-                "  --> {}:{}:{}",
-                location.file, location.line, location.column
-            )?;
-        }
-
-        if let Some(help) = &self.help {
-            writeln!(f)?;
-            write!(f, "  = help: {help}")?;
-        }
-
-        if let Some(suggestion) = &self.suggestion {
-            writeln!(f)?;
-            write!(f, "  = suggestion: {suggestion}")?;
-        }
-
-        Ok(())
+/// Shorten `text` to at most `max_chars` characters, ending in `...` when it
+/// had to be cut. Counts characters, not bytes, so text with multi-byte
+/// characters (`é`, `—`, emoji) is never split inside a character.
+pub fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
     }
+    let keep = max_chars.saturating_sub(3);
+    let mut out: String = text.chars().take(keep).collect();
+    out.push_str("...");
+    out
 }
 
 /// Utility functions for enhanced error reporting
