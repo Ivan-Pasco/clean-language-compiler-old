@@ -24,9 +24,8 @@ wasmparser = "0.121"
 wat = "1.0.71"
 wasmprinter = "0.251"
 
-# WebAssembly Runtimes (feature-gated)  
+# WebAssembly runtime (plugin sandbox and wasmtime_runner)
 wasmtime = { version = "46.0", optional = true }
-wasmer = { version = "7.2", optional = true, features = ["cranelift", "sys"] }
 
 # Error handling
 thiserror = "1.0"
@@ -185,13 +184,9 @@ path = "src/bin/wasmtime_runner.rs"
 name = "clean_language_compiler"
 path = "src/lib.rs"
 
-# Feature flags for WebAssembly runtime selection
 [features]
 default = ["wasmtime-runtime"]
 wasmtime-runtime = ["wasmtime"]
-# Temporarily disabled due to version conflicts - kept for config compatibility
-wasmer-runtime = ["wasmer"]
-both-runtimes = ["wasmtime-runtime", "wasmer-runtime"]
 
 # Benchmark configuration
 [[bench]]

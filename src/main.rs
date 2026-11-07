@@ -13,12 +13,13 @@
 #![allow(clippy::format_in_format_args)]
 #![allow(clippy::useless_asref)]
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use clean_language_compiler::codegen::bridge_generator::{BridgeGenerator, BridgeTarget};
+use clean_language_compiler::compile_with_file;
 use clean_language_compiler::debug::DebugUtils;
 use clean_language_compiler::error::{CompilerError, ErrorReporter};
-use clean_language_compiler::{compile_with_file, runtime::runtime_manager::RuntimeManager};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 mod cli;
@@ -27,13 +28,45 @@ use cli::options_export;
 /// Configuration for output formatting
 #[derive(Clone)]
 struct OutputConfig {
+    /// Color stdout output (allowed and stdout is a terminal).
     use_colors: bool,
+    /// Colors not switched off by `--no-color` / NO_COLOR. Stderr writers
+    /// check their own stream for a terminal.
+    colors_allowed: bool,
     json_mode: bool,
     quiet: bool,
 }
 
 impl OutputConfig {
-    /// Report compilation errors using the appropriate format
+    fn from_args(args: &Args) -> Self {
+        // Colors only when stdout is a terminal and the user has not opted
+        // out with `--no-color` or the NO_COLOR convention.
+        let colors_allowed = !args.no_color && std::env::var_os("NO_COLOR").is_none();
+        Self {
+            use_colors: colors_allowed && std::io::stdout().is_terminal(),
+            colors_allowed,
+            json_mode: args.json,
+            quiet: args.quiet,
+        }
+    }
+
+    /// The ANSI escape `code` when colors are on, otherwise an empty string.
+    fn paint(&self, code: &'static str) -> &'static str {
+        if self.use_colors {
+            code
+        } else {
+            ""
+        }
+    }
+
+    /// Progress and success messages are human text: hidden by `--quiet`
+    /// (errors only) and by `--json` (stdout carries only JSON).
+    fn shows_progress(&self) -> bool {
+        !self.quiet && !self.json_mode
+    }
+
+    /// Report compilation errors using the appropriate format. Errors are
+    /// always shown, including under `--quiet`.
     fn report_errors(&self, errors: &[CompilerError], source: Option<&str>) {
         if self.json_mode {
             // Output JSON diagnostics for IDE integration
@@ -43,9 +76,9 @@ impl OutputConfig {
                 "{}",
                 serde_json::to_string_pretty(&diagnostics).unwrap_or_default()
             );
-        } else if !self.quiet {
-            // Use the ErrorReporter for beautiful terminal output
-            let reporter = ErrorReporter::new(self.use_colors);
+        } else {
+            // ErrorReporter writes to stderr and only colors a terminal.
+            let reporter = ErrorReporter::new(self.colors_allowed);
             let _ = reporter.report_errors(errors, source);
         }
     }
@@ -136,16 +169,12 @@ enum Commands {
         lib_paths: Vec<PathBuf>,
 
         /// Optimization level (0-3)
-        #[arg(short = 'O', long, default_value_t = 2)]
+        #[arg(short = 'O', long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(0..=3))]
         opt_level: u8,
 
         /// Memory budget tier (embedded, minimal, standard, heavy, canvas)
         #[arg(long, default_value = None)]
         memory_tier: Option<String>,
-
-        /// Include debug information
-        #[arg(short, long)]
-        debug: bool,
     },
     /// Compile a Clean Language file to WebAssembly
     Compile {
@@ -157,25 +186,20 @@ enum Commands {
         output: String,
 
         /// Optimization level (0-3)
-        #[arg(short = 'l', long, default_value_t = 2)]
+        #[arg(short = 'l', long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(0..=3))]
         opt_level: u8,
 
-        /// Target platform for bridge generation (auto, browser, node, ios, android, server).
+        /// Target platform for bridge generation (auto, browser, node, ios, android, server, plugin).
         /// `auto` (default) infers the host class from the reachable bridge functions:
         /// if every reachable browser/server-restricted bridge accepts `browser`, that is chosen;
         /// otherwise the build defaults to `server`.
         /// Fixes 270f8fc643db (standalone client entries no longer misclassified as `server`).
-        #[arg(short, long, default_value = "auto")]
+        #[arg(short, long, default_value = "auto", value_parser = COMPILE_TARGETS)]
         target: String,
 
         /// Memory budget tier (embedded, minimal, standard, heavy, canvas)
         #[arg(long, default_value = None)]
         memory_tier: Option<String>,
-
-        /// Accepted for compatibility with existing build scripts; has no
-        /// effect. Plugins are always loaded from the source's `plugins:` block.
-        #[arg(long, hide = true)]
-        plugins: bool,
 
         /// Release mode: strip always: invariant checks for smaller, faster output
         #[arg(long)]
@@ -217,13 +241,6 @@ enum Commands {
         #[arg(long)]
         emit_bridge_probes: bool,
 
-        /// Contract 5 Phase B: accept `--no-lint` so scripts written for the
-        /// eventual Phase D flip already work. Lint is OFF by default in
-        /// `cln compile` throughout Phase B — this flag is a no-op until the
-        /// default flips. See `foundation/spec/framework/contracts/lint-extension.md` §9.
-        #[arg(long, hide = true)]
-        no_lint: bool,
-
         /// Override plugin resolution: `<name>=<path>`. Repeatable. Path may
         /// point at a directory containing `plugin.wasm` + `plugin.toml`, or
         /// at the `plugin.wasm` file itself (sibling `plugin.toml` must exist).
@@ -234,7 +251,7 @@ enum Commands {
         #[arg(long = "plugin-override", value_name = "NAME=PATH")]
         plugin_override: Vec<String>,
     },
-    /// Run tests defined in Clean Language source files (.cln) or the compiler test suite
+    /// Run the tests: blocks of Clean Language source files (.cln)
     Test {
         /// .cln files (or directories) containing tests: blocks to run
         #[arg(short, long)]
@@ -243,8 +260,6 @@ enum Commands {
         #[arg(value_name = "FILE")]
         files: Vec<String>,
     },
-    /// Run simple compilation tests
-    SimpleTest {},
     /// Debug a Clean Language file with enhanced error reporting
     Debug {
         /// Input file to debug
@@ -280,10 +295,6 @@ enum Commands {
         #[arg(long)]
         show_tree: bool,
 
-        /// Enable error recovery mode
-        #[arg(long)]
-        recover_errors: bool,
-
         /// Output AST as JSON
         #[arg(long)]
         ast_json: bool,
@@ -313,10 +324,6 @@ enum Commands {
         /// Enable debug output
         #[arg(short, long)]
         debug: bool,
-
-        /// Watch for file changes and auto-reload
-        #[arg(short, long)]
-        watch: bool,
     },
     /// Export compile options to JSON for IDE integration
     Options {
@@ -357,8 +364,8 @@ enum Commands {
     /// Generate MCP configuration JSON for AI agent integration
     #[command(name = "mcp-config")]
     McpConfig {
-        /// Output format: claude-desktop, vscode, generic (default: generic)
-        #[arg(short, long, default_value = "generic")]
+        /// Output format (default: generic)
+        #[arg(short, long, default_value = "generic", value_parser = ["generic", "claude-desktop", "claude", "claude-code", "vscode", "cursor"])]
         format: String,
     },
     /// Configure compiler settings (e.g., telemetry)
@@ -431,10 +438,31 @@ enum ConfigCommands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+/// Accepted `cln compile --target` values (see `target_to_host_class` and the
+/// bridge-generation match in `handle_compile`).
+const COMPILE_TARGETS: [&str; 13] = [
+    "auto", "server", "browser", "web", "node", "nodejs", "ios", "macos", "apple", "android",
+    "wasi", "native", "plugin",
+];
 
+#[tokio::main]
+async fn main() {
+    // Exit quietly when stdout is closed early (`cln ... | head`) instead of
+    // panicking inside `println!`: restore the default SIGPIPE action that
+    // the Rust runtime replaces with "ignore".
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
+    let args = Args::parse();
+    if let Err(e) = run(args).await {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging based on verbosity level
     let log_level = match (args.quiet, args.verbose) {
         (true, _) => "error", // --quiet: only errors
@@ -449,29 +477,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("RUST_LOG", log_level);
     }
 
-    // Initialize tracing subscriber
+    let output_config = OutputConfig::from_args(&args);
+
+    // Initialize tracing subscriber (logs go to stderr)
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_target(false)
-        .with_ansi(!args.no_color)
+        .with_writer(std::io::stderr)
+        .with_ansi(output_config.colors_allowed && std::io::stderr().is_terminal())
         .init();
-
-    // Store global output options for error reporting
-    let output_config = OutputConfig {
-        use_colors: !args.no_color,
-        json_mode: args.json,
-        quiet: args.quiet,
-    };
-
-    // Telemetry: first-run prompt + version change checks (interactive commands only)
-    if !args.quiet && !args.json {
-        if let Commands::Compile { .. } | Commands::Build { .. } | Commands::Run { .. } =
-            &args.command
-        {
-            clean_language_compiler::telemetry::maybe_prompt_telemetry();
-            clean_language_compiler::telemetry::check_version_change();
-        }
-    }
 
     match args.command {
         Commands::Build {
@@ -480,7 +494,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             lib_paths,
             opt_level,
             memory_tier,
-            debug,
         } => {
             handle_build(
                 input,
@@ -488,10 +501,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 lib_paths,
                 opt_level,
                 memory_tier,
-                debug,
                 &output_config,
             )
-            .await?
+            .await
         }
         Commands::Compile {
             input,
@@ -499,180 +511,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             opt_level,
             target,
             memory_tier,
-            plugins: _,
             release,
             strict_hosts,
             emit_heap_probes,
             emit_bridge_probes,
-            // Contract 5 Phase B: `no_lint` is accepted on the CLI but not
-            // yet plumbed to the compile pipeline — lint is OFF by default
-            // in Phase B, so the flag has nothing to disable. Wired
-            // through the dispatch site to keep the clap-derive struct and
-            // the handler call site in sync; wired to `handle_compile`
-            // when the default flips in Phase D.
-            no_lint: _,
             plugin_override,
         } => {
             handle_compile(
-                input,
-                output,
-                opt_level,
-                target,
-                memory_tier,
-                release,
-                strict_hosts,
-                emit_heap_probes,
-                emit_bridge_probes,
-                plugin_override,
+                CompileRequest {
+                    input,
+                    output,
+                    opt_level,
+                    target,
+                    memory_tier,
+                    release,
+                    strict_hosts,
+                    emit_heap_probes,
+                    emit_bridge_probes,
+                    plugin_override,
+                },
                 &output_config,
             )
-            .await?
+            .await
         }
-        Commands::Test { dirs, files } => handle_test(args.verbose > 0, dirs, files).await?,
-        Commands::SimpleTest {} => handle_simple_test(args.verbose > 0).await?,
+        Commands::Test { dirs, files } => handle_test(dirs, files, &output_config).await,
         Commands::Debug {
             input,
             show_ast,
             check_style,
-        } => handle_debug(input, show_ast, check_style, &output_config).await?,
+        } => handle_debug(input, show_ast, check_style, &output_config).await,
         Commands::Lint {
             input,
             errors_only,
             plugin_override,
-        } => handle_lint(input, errors_only, plugin_override, &output_config).await?,
+        } => handle_lint(input, errors_only, plugin_override, &output_config).await,
         Commands::Parse {
             input,
             show_tree,
-            recover_errors,
             ast_json,
         } => {
             if ast_json {
-                handle_ast_json(input, &output_config).await?
+                handle_ast_json(input, &output_config).await
             } else {
-                handle_parse(input, show_tree, recover_errors, &output_config).await?
+                handle_parse(input, show_tree, &output_config).await
             }
         }
-        Commands::Run { input, debug } => handle_run(input, debug, &output_config).await?,
+        Commands::Run { input, debug } => handle_run(input, debug, &output_config).await,
         Commands::Options {
             export_json,
             output,
         } => {
             if export_json {
                 let output_path = output.map(PathBuf::from);
-                options_export::export_compile_options(output_path)?;
+                options_export::export_compile_options(&Args::command(), output_path)
             } else {
-                eprintln!("Use --export-json to export compile options");
-                std::process::exit(1);
+                Err("Use --export-json to export compile options".into())
             }
         }
-        Commands::Explain { code } => handle_explain(&code, &output_config)?,
-        Commands::Runtime { detect, list } => handle_runtime(detect, list, &output_config)?,
+        Commands::Explain { code } => handle_explain(&code, &output_config),
         Commands::Serve {
             input,
             port,
             host,
             debug,
-            watch,
-        } => handle_serve(input, port, host, debug, watch, &output_config).await?,
+        } => handle_serve(input, port, host, debug, &output_config).await,
         Commands::Check {
             input,
             plugin_override,
-        } => handle_check(input, plugin_override, &output_config).await?,
+        } => handle_check(input, plugin_override, &output_config).await,
         Commands::Watch { path, json_stream } => {
-            handle_watch(path, json_stream, &output_config).await?
+            handle_watch(path, json_stream, &output_config).await
         }
-        Commands::McpServer {} => clean_language_compiler::mcp::run_mcp_server().await?,
-        Commands::McpConfig { format } => handle_mcp_config(&format)?,
-        Commands::Config(config_cmd) => handle_config(config_cmd, &output_config)?,
-        Commands::Fixes { since, pending } => handle_fixes(since, pending, &output_config)?,
+        Commands::McpServer {} => clean_language_compiler::mcp::run_mcp_server().await,
+        Commands::McpConfig { format } => handle_mcp_config(&format),
+        Commands::Config(config_cmd) => handle_config(config_cmd, &output_config),
         Commands::Report {
             error,
             code,
             description,
-        } => handle_report(error, code, description, &output_config)?,
-        Commands::Telemetry(cmd) => match cmd {
-            TelemetryCommands::Flush => {
-                clean_language_compiler::telemetry::flush_pending_telemetry(true);
-            }
-        },
-        Commands::DevQueue(cmd) => handle_dev_queue(cmd)?,
+            component,
+        } => handle_report(error, code, description, &component, &output_config),
+        Commands::DevQueue(cmd) => handle_dev_queue(cmd),
     }
-
-    Ok(())
 }
 
-fn handle_runtime(
-    detect: bool,
-    list: bool,
-    output_config: &OutputConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let green = if output_config.use_colors {
-        "\x1b[32m"
-    } else {
-        ""
-    };
-    let cyan = if output_config.use_colors {
-        "\x1b[36m"
-    } else {
-        ""
-    };
-    let yellow = if output_config.use_colors {
-        "\x1b[33m"
-    } else {
-        ""
-    };
-    let reset = if output_config.use_colors {
-        "\x1b[0m"
-    } else {
-        ""
-    };
-
-    if list || !detect {
-        println!("\n{}WebAssembly Runtimes{}", cyan, reset);
-        println!("{}", "=".repeat(50));
-
-        let runtimes = RuntimeManager::list_available_runtimes();
-        for runtime in &runtimes {
-            let status = if runtime.available {
-                format!("{}✓ Available{}", green, reset)
-            } else {
-                format!("{}✗ Not compiled{}", yellow, reset)
-            };
-
-            println!("\n{}{}{} ({})", cyan, runtime.name, reset, status);
-            println!("  Version: {}", runtime.version);
-            println!("  {}", runtime.description);
-            println!("  Features: {}", runtime.features.join(", "));
-        }
-        println!();
+/// Human description of a `-O`/`-l` optimization level (0-3, enforced by clap).
+fn opt_level_description(opt_level: u8) -> &'static str {
+    match opt_level {
+        0 => "none (fastest compilation)",
+        1 => "light",
+        2 => "standard",
+        _ => "aggressive (speed + size)",
     }
-
-    if detect {
-        use clean_language_compiler::runtime::runtime_trait::RuntimeConfig;
-
-        let config = RuntimeConfig::default();
-        match RuntimeManager::select_runtime(&config) {
-            Ok(selected) => {
-                println!("\n{}Selected Runtime{}", cyan, reset);
-                println!("{}", "=".repeat(50));
-                println!("  Runtime: {}{}{}", green, selected, reset);
-                println!("  Mode: Auto-detected based on configuration");
-
-                let recommendations = RuntimeManager::get_runtime_recommendations(selected);
-                println!("\n{}Recommendations:{}", cyan, reset);
-                for rec in recommendations {
-                    println!("  • {}", rec);
-                }
-                println!();
-            }
-            Err(e) => {
-                eprintln!("Error detecting runtime: {}", e);
-                return Err(e.into());
-            }
-        }
-    }
-
-    Ok(())
 }
 
 async fn handle_serve(
@@ -680,84 +610,52 @@ async fn handle_serve(
     port: u16,
     host: String,
     debug: bool,
-    _watch: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
+    let green = output_config.paint("\x1b[32m");
+    let cyan = output_config.paint("\x1b[36m");
+    let reset = output_config.paint("\x1b[0m");
 
-    let green = if output_config.use_colors {
-        "\x1b[32m"
-    } else {
-        ""
-    };
-    let cyan = if output_config.use_colors {
-        "\x1b[36m"
-    } else {
-        ""
-    };
-    let reset = if output_config.use_colors {
-        "\x1b[0m"
-    } else {
-        ""
-    };
+    // Locate the server before compiling so a missing install fails fast.
+    let server_path = find_clean_server()?;
 
-    // Step 1: Compile the input file to WASM
-    let wasm_output = format!("/tmp/cln-serve-{}.wasm", std::process::id());
+    // Step 1: Compile into a private build directory. It holds the WASM, the
+    // build manifest and any plugin artifacts, and is removed when this
+    // function returns on every path (success, compile failure, server exit).
+    let build_dir = tempfile::Builder::new().prefix("cln-serve-").tempdir()?;
+    let wasm_output = build_dir.path().join("app.wasm");
 
-    if !output_config.quiet {
+    if output_config.shows_progress() {
         println!("{}Compiling{} {} to WASM...", cyan, reset, input);
     }
 
     // Compile for the server target (plugins load from the source's `plugins:` block)
-    let compile_result = handle_compile(
-        input.clone(),
-        wasm_output.clone(),
-        2,                    // opt_level
-        "server".to_string(), // target - no bridge needed for serve
-        None,                 // memory_tier - use target default
-        false,                // release mode: off for serve
-        false,                // strict_hosts off for serve
-        false,                // emit_heap_probes off for serve
-        false,                // emit_bridge_probes off for serve
-        Vec::new(),           // plugin_override — none for serve
+    handle_compile(
+        CompileRequest {
+            input,
+            output: wasm_output.to_string_lossy().into_owned(),
+            opt_level: 2,
+            target: "server".to_string(),
+            memory_tier: None,
+            release: false,
+            strict_hosts: false,
+            emit_heap_probes: false,
+            emit_bridge_probes: false,
+            plugin_override: Vec::new(),
+        },
         output_config,
     )
-    .await;
+    .await?;
 
-    if let Err(e) = compile_result {
-        eprintln!("Compilation failed: {}", e);
-        return Err(e);
-    }
-
-    // Step 2: Find clean-server
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let server_paths = [
-        format!("{}/.cleen/server/1.0.0/clean-server", home),
-        "/usr/local/bin/clean-server".to_string(),
-    ];
-
-    let server_path = server_paths
-        .iter()
-        .find(|p| std::path::Path::new(p).exists());
-
-    let server_path = match server_path {
-        Some(p) => p.clone(),
-        None => {
-            eprintln!("Error: clean-server not found. Install it with:");
-            eprintln!("   cleen server install");
-            return Err("clean-server not found".into());
-        }
-    };
-
-    if !output_config.quiet {
+    if output_config.shows_progress() {
         println!(
             "{}Starting server{} on http://{}:{}",
             green, reset, host, port
         );
     }
 
-    // Step 3: Run clean-server with the compiled WASM
-    let mut cmd = Command::new(&server_path);
+    // Step 2: Run clean-server with the compiled WASM
+    let mut cmd = std::process::Command::new(&server_path);
     cmd.arg(&wasm_output)
         .arg("--port")
         .arg(port.to_string())
@@ -768,16 +666,58 @@ async fn handle_serve(
         cmd.arg("--verbose");
     }
 
-    let status = cmd.status()?;
-
-    // Clean up temp file
-    let _ = std::fs::remove_file(&wasm_output);
-
+    let status = cmd
+        .status()
+        .map_err(|e| format!("Failed to launch {}: {}", server_path.display(), e))?;
     if !status.success() {
         return Err(format!("Server exited with status: {}", status).into());
     }
 
     Ok(())
+}
+
+/// Locate the `clean-server` binary installed by `cleen`: `~/.cleen/bin/`
+/// first, then the newest version under `~/.cleen/server/<version>/`, then
+/// `/usr/local/bin`.
+fn find_clean_server() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(cleen) = dirs::home_dir().map(|h| h.join(".cleen")) {
+        let bin = cleen
+            .join("bin")
+            .join(format!("clean-server{}", std::env::consts::EXE_SUFFIX));
+        if bin.is_file() {
+            return Ok(bin);
+        }
+        if let Some(found) = newest_versioned_binary(&cleen.join("server"), "clean-server") {
+            return Ok(found);
+        }
+    }
+    let system = PathBuf::from("/usr/local/bin/clean-server");
+    if system.is_file() {
+        return Ok(system);
+    }
+    Err("clean-server not found in ~/.cleen/bin, ~/.cleen/server/<version>/ or /usr/local/bin. Install it with: cleen server install".into())
+}
+
+/// `<base>/<version>/<binary>` for the highest semver `<version>` directory
+/// that contains the binary.
+fn newest_versioned_binary(base: &Path, binary: &str) -> Option<PathBuf> {
+    let parse = |s: &str| -> (u32, u32, u32) {
+        let mut parts = s.trim_start_matches('v').split('.');
+        let mut next = || parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        (next(), next(), next())
+    };
+    let mut versions: Vec<String> = fs::read_dir(base)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    versions.sort_by_key(|v| std::cmp::Reverse(parse(v)));
+    let exe = format!("{binary}{}", std::env::consts::EXE_SUFFIX);
+    versions
+        .iter()
+        .map(|ver| base.join(ver).join(&exe))
+        .find(|p| p.is_file())
 }
 
 async fn handle_watch(
@@ -852,16 +792,13 @@ async fn handle_watch(
                             eprintln!("{text}");
                         }
                     }
-                    let green = if output_config.use_colors {
-                        "\x1b[32m"
-                    } else {
-                        ""
-                    };
-                    let reset = if output_config.use_colors {
-                        "\x1b[0m"
-                    } else {
-                        ""
-                    };
+                    // This status line goes to stderr, so color only a terminal there.
+                    let (green, reset) =
+                        if output_config.colors_allowed && std::io::stderr().is_terminal() {
+                            ("\x1b[32m", "\x1b[0m")
+                        } else {
+                            ("", "")
+                        };
                     eprintln!("{}OK{} {} ({}ms)", green, reset, file_str, duration_ms);
                 }
             }
@@ -944,7 +881,7 @@ struct ResolvedPluginOverride {
 fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     let Some((name, raw_path)) = arg.split_once('=') else {
         return Err(format!(
-            "error: --plugin-override expects `<name>=<path>`, got `{}`",
+            "--plugin-override expects `<name>=<path>`, got `{}`",
             arg
         ));
     };
@@ -952,7 +889,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     let raw_path = raw_path.trim();
     if name.is_empty() || raw_path.is_empty() {
         return Err(format!(
-            "error: --plugin-override expects `<name>=<path>`, got `{}`",
+            "--plugin-override expects `<name>=<path>`, got `{}`",
             arg
         ));
     }
@@ -968,14 +905,14 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
         (dir, path.clone())
     } else {
         return Err(format!(
-            "error: --plugin-override {}={} — path is neither a directory nor a .wasm file",
+            "--plugin-override {}={} — path is neither a directory nor a .wasm file",
             name, raw_path
         ));
     };
 
     if !wasm_path.exists() {
         return Err(format!(
-            "error: --plugin-override {}={} — plugin.wasm not found at {}",
+            "--plugin-override {}={} — plugin.wasm not found at {}",
             name,
             raw_path,
             wasm_path.display()
@@ -985,7 +922,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     let toml_path = dir.join("plugin.toml");
     if !toml_path.exists() {
         return Err(format!(
-            "error: --plugin-override {}={} — sibling plugin.toml not found at {}",
+            "--plugin-override {}={} — sibling plugin.toml not found at {}",
             name,
             raw_path,
             toml_path.display()
@@ -999,7 +936,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     // load error and we prefer the direct hard-error path there.
     let toml_text = std::fs::read_to_string(&toml_path).map_err(|e| {
         format!(
-            "error: --plugin-override {}={} — failed to read {}: {}",
+            "--plugin-override {}={} — failed to read {}: {}",
             name,
             raw_path,
             toml_path.display(),
@@ -1008,7 +945,7 @@ fn parse_plugin_override(arg: &str) -> Result<ResolvedPluginOverride, String> {
     })?;
     let parsed: toml::Value = toml::from_str(&toml_text).map_err(|e| {
         format!(
-            "error: --plugin-override {}={} — malformed plugin.toml at {}: {}",
+            "--plugin-override {}={} — malformed plugin.toml at {}: {}",
             name,
             raw_path,
             toml_path.display(),
@@ -1081,7 +1018,7 @@ fn apply_plugin_overrides(
                 loaded.iter().cloned().collect::<Vec<_>>().join(", ")
             };
             return Err(format!(
-                "error: --plugin-override {}=... but no file loads plugin '{}'. \
+                "--plugin-override {}=... but no file loads plugin '{}'. \
                  Plugins loaded by this project: {}.",
                 r.name, r.name, loaded_list
             ));
@@ -1144,14 +1081,11 @@ async fn handle_check(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = read_source(&input)?;
 
-    if let Err(msg) = apply_plugin_overrides(
+    apply_plugin_overrides(
         &plugin_override,
         &[(input.clone(), source.clone())],
-        output_config.quiet,
-    ) {
-        eprintln!("{}", msg);
-        return Err(msg.into());
-    }
+        !output_config.shows_progress(),
+    )?;
 
     let start_time = std::time::Instant::now();
 
@@ -1182,16 +1116,8 @@ async fn handle_check(
                         eprintln!("{text}");
                     }
                 }
-                let green = if output_config.use_colors {
-                    "\x1b[32m"
-                } else {
-                    ""
-                };
-                let reset = if output_config.use_colors {
-                    "\x1b[0m"
-                } else {
-                    ""
-                };
+                let green = output_config.paint("\x1b[32m");
+                let reset = output_config.paint("\x1b[0m");
                 println!(
                     "{}OK{} {} ({} functions, {} types, {}ms)",
                     green,
@@ -1247,7 +1173,6 @@ async fn handle_build(
     lib_paths: Vec<PathBuf>,
     opt_level: u8,
     memory_tier_str: Option<String>,
-    debug: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Determine output filename
@@ -1258,17 +1183,10 @@ async fn handle_build(
             .unwrap_or_else(|| "output.wasm".to_string())
     });
 
-    if !output_config.quiet {
-        let opt_desc = match opt_level {
-            0 => "none (fastest compilation)",
-            1 => "light",
-            2 => "standard",
-            3 => "aggressive (speed + size)",
-            _ => "unknown",
-        };
-        let debug_mode = if debug { " [debug]" } else { "" };
+    if output_config.shows_progress() {
         println!(
-            "Building {input} -> {output_file} (optimization: -O{opt_level} {opt_desc}){debug_mode}"
+            "Building {input} -> {output_file} (optimization: -O{opt_level} {})",
+            opt_level_description(opt_level)
         );
 
         if !lib_paths.is_empty() {
@@ -1276,77 +1194,143 @@ async fn handle_build(
         }
     }
 
-    // Parse explicit CLI tier (if any) and compute target default
     let explicit_tier = parse_memory_tier_flag(memory_tier_str.as_deref())?;
     let target_default = clean_language_compiler::MemoryTier::default_for_target("auto");
 
-    // Use the multi-file compiler with memory tier. The second tuple element is
-    // the build_state snapshot populated by plugin `_build_state_set` calls
-    // during `expand_block`; it's threaded into the artifact orchestrator and
-    // the build manifest below so `has_build_state.*` predicates and the
-    // manifest's `build_state` field reflect compile-time writes. Without
-    // this thread-through, both consumers see an empty map and predicate-gated
-    // artifacts (e.g. frame.ui's `frontend.wasm`) silently fail to emit
-    // (PLUGIN_BUILD_STATE_NOT_PERSISTED).
-    let (wasm_binary, build_state) = clean_language_compiler::compile_multi_file_with_memory_tier(
+    let (wasm_binary, build_state) = compile_entry(
         &input,
         lib_paths,
         opt_level,
         explicit_tier,
         target_default,
         false,
-    )
-    .map_err(|errors| {
-        let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-        output_config.report_errors(&errors, None);
-        format!(
-            "Build failed with {} error(s): {}",
-            errors.len(),
-            error_messages.join("; ")
-        )
-    })?;
+        output_config,
+    )?;
 
-    // Write output
-    fs::write(&output_file, &wasm_binary)?;
+    write_build_outputs(
+        &input,
+        &output_file,
+        &wasm_binary,
+        &build_state,
+        opt_level,
+        output_config,
+    )?;
 
-    if !output_config.quiet {
+    if output_config.json_mode {
+        print_success_json(&input, &output_file, &wasm_binary);
+    } else if output_config.shows_progress() {
         println!("Build successful! Generated {output_file}");
     }
 
-    // Collect extra artifacts produced by the build (e.g. frontend.wasm under
-    // BUILD_FRONTEND). They are emitted to disk in this block and recorded
-    // into the build-manifest.json at the end.
-    let mut extra_artifacts: Vec<(
-        String,
-        String,
-        &'static str,
-        bool,
-        &'static str,
-        Vec<u8>,
-        Option<String>,
-    )> = Vec::new();
-
-    // Plugin Contracts v2 — declarative artifact orchestration.
-    // Loaded plugins that declare `[[artifacts]]` entries in their plugin.toml
-    // drive the artifact pass. See contracts/artifacts.md §7.
-    extra_artifacts.extend(orchestrate_artifacts(
-        &input,
-        &output_file,
-        opt_level,
-        output_config.quiet,
-        &build_state,
-    )?);
-
-    write_build_manifest(
-        Path::new(&output_file),
-        &wasm_binary,
-        extra_artifacts,
-        Some(Path::new(&input)),
-        output_config.quiet,
-        &build_state,
-    );
-
     Ok(())
+}
+
+/// Plugin build state captured during compilation (`_build_state_set`).
+type BuildStateSnapshot = std::collections::BTreeMap<String, String>;
+
+/// Compile `input` through the multi-file pipeline shared by `build`,
+/// `compile` and `serve`. On failure the errors are reported once, with the
+/// entry source for context, and a short summary error is returned.
+///
+/// The second element of the result is the build_state snapshot populated by
+/// plugin `_build_state_set` calls during `expand_block`; it feeds the
+/// artifact orchestrator and the build manifest so `has_build_state.*`
+/// predicates and the manifest's `build_state` field reflect compile-time
+/// writes (PLUGIN_BUILD_STATE_NOT_PERSISTED).
+fn compile_entry(
+    input: &str,
+    search_paths: Vec<PathBuf>,
+    opt_level: u8,
+    explicit_tier: Option<clean_language_compiler::MemoryTier>,
+    target_default: clean_language_compiler::MemoryTier,
+    release: bool,
+    output_config: &OutputConfig,
+) -> Result<(Vec<u8>, BuildStateSnapshot), Box<dyn std::error::Error>> {
+    let result = if release {
+        clean_language_compiler::compile_multi_file_release(
+            input,
+            search_paths,
+            opt_level,
+            explicit_tier,
+            target_default,
+        )
+    } else {
+        clean_language_compiler::compile_multi_file_with_memory_tier(
+            input,
+            search_paths,
+            opt_level,
+            explicit_tier,
+            target_default,
+            false,
+        )
+    };
+    result.map_err(|errors| {
+        let source = fs::read_to_string(input).ok();
+        output_config.report_errors(&errors, source.as_deref());
+        clean_language_compiler::telemetry::report_compile_failure(
+            &errors,
+            input,
+            source.as_deref(),
+        );
+        format!(
+            "Compilation failed with {} error{}",
+            errors.len(),
+            if errors.len() == 1 { "" } else { "s" }
+        )
+        .into()
+    })
+}
+
+/// Write the main WASM, any plugin-declared `[[artifacts]]` and the build
+/// manifest next to `output`.
+fn write_build_outputs(
+    input: &str,
+    output: &str,
+    wasm_binary: &[u8],
+    build_state: &BuildStateSnapshot,
+    opt_level: u8,
+    output_config: &OutputConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = Path::new(output)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(output, wasm_binary)?;
+
+    let quiet = !output_config.shows_progress();
+    // Plugin Contracts v2 — declarative artifact orchestration. Loaded
+    // plugins that declare `[[artifacts]]` entries in their plugin.toml drive
+    // the artifact pass. See contracts/artifacts.md §7.
+    let extra_artifacts = orchestrate_artifacts(input, output, opt_level, quiet, build_state)?;
+
+    // Plugin Contracts v2 — emit build-manifest.json alongside the WASM so
+    // hosts can locate artifacts by purpose rather than path coincidence.
+    // See foundation/spec/plugins/contracts/artifacts.md §5.
+    write_build_manifest(
+        Path::new(output),
+        wasm_binary,
+        extra_artifacts,
+        Some(Path::new(input)),
+        quiet,
+        build_state,
+    );
+    Ok(())
+}
+
+/// `--json` success result for `build` and `compile`.
+fn print_success_json(input: &str, output: &str, wasm_binary: &[u8]) {
+    let json = serde_json::json!({
+        "success": true,
+        "file": input,
+        "output": output,
+        "bytes": wasm_binary.len(),
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    );
 }
 
 /// Plugin Contracts v2 — orchestrate `[[artifacts]]` emission for the build.
@@ -1553,19 +1537,37 @@ fn write_build_manifest(
     }
 }
 
-async fn handle_compile(
+/// Options of one `cln compile` invocation (also used by `cln serve`).
+struct CompileRequest {
     input: String,
     output: String,
     opt_level: u8,
     target: String,
-    memory_tier_str: Option<String>,
+    memory_tier: Option<String>,
     release: bool,
     strict_hosts: bool,
     emit_heap_probes: bool,
     emit_bridge_probes: bool,
     plugin_override: Vec<String>,
+}
+
+async fn handle_compile(
+    request: CompileRequest,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let CompileRequest {
+        input,
+        output,
+        opt_level,
+        target,
+        memory_tier: memory_tier_str,
+        release,
+        strict_hosts,
+        emit_heap_probes,
+        emit_bridge_probes,
+        plugin_override,
+    } = request;
+
     // --plugin-override validation runs before any codegen setup so a bad flag
     // fails fast without side effects on the compile pipeline overrides below.
     if !plugin_override.is_empty() {
@@ -1575,14 +1577,11 @@ async fn handle_compile(
                 input, e
             )
         })?;
-        if let Err(msg) = apply_plugin_overrides(
+        apply_plugin_overrides(
             &plugin_override,
             &[(input.clone(), source_for_check)],
-            output_config.quiet,
-        ) {
-            eprintln!("{}", msg);
-            return Err(msg.into());
-        }
+            !output_config.shows_progress(),
+        )?;
     } else {
         clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
     }
@@ -1593,11 +1592,9 @@ async fn handle_compile(
     // validator silently defaulted to "server" and replaced every
     // browser-only bridge call with a `0`-returning stub.
     // See bridge-host-classes.md §6 and `set_target_host_class_override`.
-    if let Some(hc) = clean_language_compiler::target_to_host_class(&target) {
-        clean_language_compiler::set_target_host_class_override(Some(hc.to_string()));
-    } else {
-        clean_language_compiler::set_target_host_class_override(None);
-    }
+    clean_language_compiler::set_target_host_class_override(
+        clean_language_compiler::target_to_host_class(&target).map(str::to_string),
+    );
     clean_language_compiler::set_strict_hosts_override(strict_hosts);
     // STATE-A heap-probe hunt — thread --emit-heap-probes and its
     // bridge-scoped superset --emit-bridge-probes. Both feed the same
@@ -1612,40 +1609,28 @@ async fn handle_compile(
     // section. Cleared for every other target so user-code builds carry no
     // stamp per foundation/spec/plugins/contracts/runtime-abi.md §4
     // ("user code doesn't get the stamp — it's plugin-specific").
-    if target.to_lowercase() == "plugin" {
+    if target == "plugin" {
         let abi = clean_language_compiler::resolve_plugin_abi_version_for_path(Path::new(&input));
         clean_language_compiler::set_plugin_abi_version_override(Some(abi));
     } else {
         clean_language_compiler::set_plugin_abi_version_override(None);
     }
-    if !output_config.quiet {
-        let opt_desc = match opt_level {
-            0 => "none (fastest compilation)",
-            1 => "light",
-            2 => "standard",
-            3 => "aggressive (speed + size)",
-            _ => "unknown",
-        };
+    if output_config.shows_progress() {
         let target_info = if target != "server" {
             format!(" [target: {}]", target)
         } else {
             String::new()
         };
         println!(
-            "Compiling {input} to {output} (optimization: -O{opt_level} {opt_desc}){target_info}"
+            "Compiling {input} to {output} (optimization: -O{opt_level} {}){target_info}",
+            opt_level_description(opt_level)
         );
     }
 
-    // Get the input file path and its directory for search paths
-    let input_path = Path::new(&input);
-    let search_paths = if let Some(parent) = input_path.parent() {
-        if parent.as_os_str().is_empty() {
-            vec![PathBuf::from(".")]
-        } else {
-            vec![parent.to_path_buf()]
-        }
-    } else {
-        vec![PathBuf::from(".")]
+    // The input file's directory is the module search path.
+    let search_paths = match Path::new(&input).parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => vec![parent.to_path_buf()],
+        _ => vec![PathBuf::from(".")],
     };
 
     tracing::debug!(
@@ -1660,54 +1645,36 @@ async fn handle_compile(
     let explicit_tier = parse_memory_tier_flag(memory_tier_str.as_deref())?;
     let target_default = clean_language_compiler::MemoryTier::default_for_target(&target);
 
-    // Use multi-file compilation to support file path imports
-    // This automatically handles `import "path/to/file.cln"` syntax
-    // as well as module imports like `import Math`
-    let wasm_binary_result = if release {
-        clean_language_compiler::compile_multi_file_release(
-            input_path,
-            search_paths,
-            opt_level,
-            explicit_tier,
-            target_default,
-        )
-    } else {
-        clean_language_compiler::compile_multi_file_with_memory_tier(
-            input_path,
-            search_paths,
-            opt_level,
-            explicit_tier,
-            target_default,
-            false,
-        )
-    };
-    let (wasm_binary, build_state) = match wasm_binary_result {
-        Ok(output) => output,
-        Err(errors) => {
-            let source = fs::read_to_string(&input).unwrap_or_default();
-            output_config.report_errors(&errors, Some(&source));
-            // Auto-report compile failure if telemetry is enabled
-            clean_language_compiler::telemetry::report_compile_failure(
-                &errors,
-                &input,
-                Some(&source),
-            );
-            return Err(format!("Compilation failed with {} errors", errors.len()).into());
-        }
-    };
+    // Multi-file compilation resolves `import "path/to/file.cln"` as well as
+    // module imports like `import Math`.
+    let (wasm_binary, build_state) = compile_entry(
+        &input,
+        search_paths,
+        opt_level,
+        explicit_tier,
+        target_default,
+        release,
+        output_config,
+    )?;
 
-    if let Some(parent) = Path::new(&output).parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::write(&output, &wasm_binary)?;
+    // Plugin Contracts v2 — the orchestrator runs for `cln compile` as well
+    // as `cln build`, so plugin-declared [[artifacts]] (e.g. frame.ui's
+    // frontend.wasm with required_when = "has_client_init") are produced and
+    // recorded in the build manifest.
+    write_build_outputs(
+        &input,
+        &output,
+        &wasm_binary,
+        &build_state,
+        opt_level,
+        output_config,
+    )?;
 
     // STATE-A heap-probe hunt — when `--emit-heap-probes` is on, drain the
     // callsite list captured during codegen and write it to a
     // `<output>.probes.json` sidecar. The sidecar maps `callsite_id` back to
     // caller + source location so node-server's `_probe_ptr_dump` output
-    // can be correlated with the source `.cln` that produced it. See ack
-    // in prompt 410a2312-836c-11f1-9d55-da25a95a496b.
+    // can be correlated with the source `.cln` that produced it.
     if emit_heap_probes || emit_bridge_probes {
         let callsites = clean_language_compiler::take_heap_probe_callsites();
         let module_name = Path::new(&output)
@@ -1720,50 +1687,21 @@ async fn handle_compile(
             "callsites": callsites,
         });
         let sidecar_path = format!("{}.probes.json", output);
-        match serde_json::to_vec_pretty(&sidecar) {
-            Ok(bytes) => {
-                fs::write(&sidecar_path, bytes)?;
-                if !output_config.quiet {
-                    println!(
-                        "Wrote heap-probe sidecar: {} ({} callsites)",
-                        sidecar_path,
-                        callsites.len()
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!("⚠️  Failed to serialize heap-probe sidecar: {}", e);
-            }
+        fs::write(&sidecar_path, serde_json::to_vec_pretty(&sidecar)?)?;
+        if output_config.shows_progress() {
+            println!(
+                "Wrote heap-probe sidecar: {} ({} callsites)",
+                sidecar_path,
+                callsites.len()
+            );
         }
     }
 
-    // Plugin Contracts v2 — orchestrate plugin-declared [[artifacts]] before
-    // writing the manifest. Previously only `cln build` ran the orchestrator
-    // and `cln compile` silently produced no side-channel artifacts (no
-    // frontend.wasm even when frame.ui's manifest declared it with
-    // required_when = "has_client_init"). See orchestrate_artifacts() and
-    // compiler-build-state-bridge-runtime-trap.md lead 2.
-    let extra_artifacts = orchestrate_artifacts(
-        &input,
-        &output,
-        opt_level,
-        output_config.quiet,
-        &build_state,
-    )?;
-
-    // Plugin Contracts v2 — emit build-manifest.json alongside the WASM so
-    // hosts can locate artifacts by purpose rather than path coincidence.
-    // See foundation/spec/plugins/contracts/artifacts.md §5.
-    write_build_manifest(
-        Path::new(&output),
-        &wasm_binary,
-        extra_artifacts,
-        Some(Path::new(&input)),
-        output_config.quiet,
-        &build_state,
-    );
-
-    println!("Successfully compiled to {output}");
+    if output_config.json_mode {
+        print_success_json(&input, &output, &wasm_binary);
+    } else if output_config.shows_progress() {
+        println!("Successfully compiled to {output}");
+    }
 
     // PLUGIN-BUILD-STAMP — stamp `built_with_compiler` into an adjacent
     // plugin.toml so wasm_loader's check_plugin_build_compatibility recognises
@@ -1777,24 +1715,15 @@ async fn handle_compile(
     // would silently skip half the plugins. The stamp itself is meta-info
     // that affects nothing except plugin loading — a false positive on a
     // non-plugin compile that happens to live next to a plugin.toml is harmless.
-    stamp_plugin_toml_if_present(&output);
+    stamp_plugin_toml_if_present(&output, output_config);
 
-    // Generate bridge files based on target
-    let bridge_target = match target.to_lowercase().as_str() {
+    // Generate bridge files based on target (values are restricted by clap).
+    let bridge_target = match target.as_str() {
         "browser" | "web" => Some(BridgeTarget::Browser),
         "node" | "nodejs" => Some(BridgeTarget::Node),
         "ios" | "macos" | "apple" => Some(BridgeTarget::iOS),
         "android" => Some(BridgeTarget::Android),
-        "server" | "wasi" | "native" | "plugin" | "auto" => None, // No bridge files for these targets
-        _ => {
-            if !output_config.quiet {
-                println!(
-                    "⚠️  Unknown target '{}', skipping bridge generation",
-                    target
-                );
-            }
-            None
-        }
+        _ => None, // server, wasi, native, plugin, auto: no bridge files
     };
 
     if let Some(bridge_target) = bridge_target {
@@ -1808,7 +1737,7 @@ async fn handle_compile(
         let generator = BridgeGenerator::new(bridge_target, output_dir, &wasm_filename);
         match generator.generate() {
             Ok(result) => {
-                if !output_config.quiet && !result.generated_files.is_empty() {
+                if output_config.shows_progress() && !result.generated_files.is_empty() {
                     println!("Generated {} bridge files:", bridge_target.name());
                     for file in &result.generated_files {
                         println!("  → {}", file.display());
@@ -1816,7 +1745,7 @@ async fn handle_compile(
                 }
             }
             Err(e) => {
-                eprintln!("⚠️  Failed to generate bridge files: {}", e);
+                eprintln!("warning: failed to generate bridge files: {}", e);
             }
         }
     }
@@ -1829,7 +1758,7 @@ async fn handle_compile(
 /// can recognise the build. Scans the output file's parent and grandparent
 /// for a plugin.toml — matches the cleen layout where build.sh writes the
 /// WASM alongside or one directory below the manifest.
-fn stamp_plugin_toml_if_present(output_file: &str) {
+fn stamp_plugin_toml_if_present(output_file: &str, output_config: &OutputConfig) {
     let out_path = Path::new(output_file);
     let candidates = [
         out_path.parent().map(|p| p.join("plugin.toml")),
@@ -1843,7 +1772,7 @@ fn stamp_plugin_toml_if_present(output_file: &str) {
         if candidate.exists() {
             if let Err(e) = write_build_stamp(candidate) {
                 eprintln!("warning: could not stamp {}: {}", candidate.display(), e);
-            } else {
+            } else if output_config.shows_progress() {
                 eprintln!(
                     "[Plugin Build] Stamped {} with compiler {}",
                     candidate.display(),
@@ -1859,38 +1788,66 @@ fn stamp_plugin_toml_if_present(output_file: &str) {
 /// section of a plugin.toml without disturbing other content or comments.
 fn write_build_stamp(toml_path: &Path) -> std::io::Result<()> {
     let content = fs::read_to_string(toml_path)?;
-    let version = env!("CARGO_PKG_VERSION");
-    let stamp_line = format!("built_with_compiler = \"{}\"", version);
+    fs::write(
+        toml_path,
+        stamp_build_section(&content, env!("CARGO_PKG_VERSION")),
+    )
+}
 
-    let updated = if content.contains("built_with_compiler") {
-        content
-            .lines()
-            .map(|l| {
-                if l.trim_start().starts_with("built_with_compiler") {
-                    stamp_line.clone()
-                } else {
-                    l.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else if content.contains("[build]") {
-        content
-            .lines()
-            .flat_map(|l| {
-                if l.trim() == "[build]" {
-                    vec![l.to_string(), stamp_line.clone()]
-                } else {
-                    vec![l.to_string()]
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        format!("{}\n\n[build]\n{}\n", content.trim_end(), stamp_line)
+/// `content` with `[build].built_with_compiler` set to `version`: the key's
+/// line is replaced when `[build]` already has it, inserted after the
+/// `[build]` header when it does not, and a `[build]` section is appended
+/// when there is none. Mentions of the key in comments or other sections are
+/// left alone, and a trailing newline is kept.
+fn stamp_build_section(content: &str, version: &str) -> String {
+    let stamp_line = format!("built_with_compiler = \"{}\"", version);
+    let is_stamp_key = |line: &str| {
+        line.trim_start()
+            .strip_prefix("built_with_compiler")
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    };
+    let section_of = |line: &str| {
+        let t = line.trim();
+        (t.starts_with('[') && !t.starts_with("[["))
+            .then(|| t.trim_matches(|c| c == '[' || c == ']').trim().to_string())
     };
 
-    fs::write(toml_path, updated)
+    let lines: Vec<&str> = content.lines().collect();
+    let mut section = String::new();
+    let mut build_header: Option<usize> = None;
+    let mut existing_key: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(name) = section_of(line) {
+            section = name;
+            if section == "build" && build_header.is_none() {
+                build_header = Some(i);
+            }
+        } else if section == "build" && existing_key.is_none() && is_stamp_key(line) {
+            existing_key = Some(i);
+        }
+    }
+
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    match (existing_key, build_header) {
+        (Some(i), _) => out[i] = stamp_line,
+        (None, Some(h)) => out.insert(h + 1, stamp_line),
+        (None, None) => {
+            while out.last().is_some_and(|l| l.trim().is_empty()) {
+                out.pop();
+            }
+            if !out.is_empty() {
+                out.push(String::new());
+            }
+            out.push("[build]".to_string());
+            out.push(stamp_line);
+            return out.join("\n") + "\n";
+        }
+    }
+    let mut joined = out.join("\n");
+    if content.ends_with('\n') {
+        joined.push('\n');
+    }
+    joined
 }
 
 /// Parse `--memory-tier` CLI flag value into `Option<MemoryTier>`.
@@ -1915,9 +1872,9 @@ fn parse_memory_tier_flag(
 }
 
 async fn handle_test(
-    verbose: bool,
     dirs: Vec<String>,
     files: Vec<String>,
+    output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Collect .cln files from positional args and --dirs flag
     let mut cln_files: Vec<String> = files;
@@ -1926,38 +1883,32 @@ async fn handle_test(
         if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("cln") {
             cln_files.push(dir.clone());
         } else if p.is_dir() {
-            if let Ok(entries) = fs::read_dir(p) {
-                for entry in entries.flatten() {
-                    let ep = entry.path();
-                    if ep.extension().and_then(|s| s.to_str()) == Some("cln") {
-                        if let Some(s) = ep.to_str() {
-                            cln_files.push(s.to_string());
-                        }
-                    }
-                }
-            }
+            let mut found: Vec<String> = fs::read_dir(p)?
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|ep| ep.extension().and_then(|s| s.to_str()) == Some("cln"))
+                .filter_map(|ep| ep.to_str().map(str::to_string))
+                .collect();
+            found.sort();
+            cln_files.extend(found);
+        } else {
+            return Err(format!("'{dir}' is not a .cln file or a directory").into());
         }
     }
 
     if cln_files.is_empty() {
-        // No .cln files given — fall back to compiler unit tests
-        println!("Running compiler test suite...");
-        let mut cmd = std::process::Command::new("cargo");
-        cmd.arg("test");
-        if verbose {
-            cmd.arg("--verbose");
-        }
-        let status = cmd.status()?;
-        if status.success() {
-            println!("All tests passed!");
-            return Ok(());
-        }
-        return Err("Some tests failed".into());
+        return Err(
+            "no test files given. Usage: cln test <FILE.cln>... or cln test --dirs <DIR>".into(),
+        );
     }
 
+    // Compiled test modules live in a private directory removed on return.
+    let work_dir = tempfile::Builder::new().prefix("cln-test-").tempdir()?;
     let mut any_failed = false;
-    for cln_path in &cln_files {
-        println!("Running tests in: {cln_path}");
+    for (index, cln_path) in cln_files.iter().enumerate() {
+        if output_config.shows_progress() {
+            println!("Running tests in: {cln_path}");
+        }
         let source = match fs::read_to_string(cln_path) {
             Ok(s) => s,
             Err(e) => {
@@ -1970,29 +1921,17 @@ async fn handle_test(
         let wasm_binary = match clean_language_compiler::compile_with_file(&source, cln_path) {
             Ok(b) => b,
             Err(errors) => {
-                eprintln!("  Compilation failed ({} errors):", errors.len());
-                for err in &errors {
-                    eprintln!("    {err}");
-                }
+                output_config.report_errors(&errors, Some(&source));
                 any_failed = true;
                 continue;
             }
         };
 
-        // Write to a temp file and execute via wasmtime_runner (which provides all
-        // required host imports including _state_reset_all) or fall back to clean-runner.
-        let stem = cln_path.trim_end_matches(".cln");
-        let temp_wasm = format!("{stem}.test.tmp.wasm");
-        if let Err(e) = fs::write(&temp_wasm, &wasm_binary) {
-            eprintln!("  Cannot write temp WASM: {e}");
-            any_failed = true;
-            continue;
-        }
-
-        let result = execute_via_local_runner(&temp_wasm, verbose);
-        let _ = fs::remove_file(&temp_wasm);
-
-        if let Err(e) = result {
+        // Execute via wasmtime_runner (which provides all required host
+        // imports including _state_reset_all) or fall back to clean-runner.
+        let temp_wasm = work_dir.path().join(format!("test_{index}.wasm"));
+        fs::write(&temp_wasm, &wasm_binary)?;
+        if let Err(e) = execute_via_local_runner(&temp_wasm.to_string_lossy()) {
             eprintln!("  {e}");
             any_failed = true;
         }
@@ -2002,32 +1941,6 @@ async fn handle_test(
         Err("One or more test files had failures".into())
     } else {
         Ok(())
-    }
-}
-
-async fn handle_simple_test(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Running simple compilation tests...");
-    if verbose {
-        println!("Verbose output enabled");
-    }
-
-    let test_source = "start:\n\tinteger x = 42\n\tprint(x)\n";
-
-    match compile_with_file(test_source, "simple_test.clean") {
-        Ok(wasm_binary) => {
-            println!(
-                "✓ Simple test passed: {} bytes of WASM generated",
-                wasm_binary.len()
-            );
-            Ok(())
-        }
-        Err(errors) => {
-            eprintln!("✗ Simple test failed with {} errors:", errors.len());
-            for (i, error) in errors.iter().enumerate() {
-                eprintln!("Error {}: {}", i + 1, error);
-            }
-            Err("Simple test failed".into())
-        }
     }
 }
 
@@ -2123,10 +2036,7 @@ async fn handle_lint(
                 (f.clone(), src)
             })
             .collect();
-        if let Err(msg) = apply_plugin_overrides(&plugin_override, &sources, output_config.quiet) {
-            eprintln!("{}", msg);
-            return Err(msg.into());
-        }
+        apply_plugin_overrides(&plugin_override, &sources, !output_config.shows_progress())?;
     } else {
         clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
     }
@@ -2329,46 +2239,41 @@ async fn handle_ast_json(
 async fn handle_parse(
     input: String,
     show_tree: bool,
-    recover_errors: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("📝 Parsing file: {input}");
-
     let source = read_source(&input)?;
 
-    if show_tree {
-        print_parsed_ast(&source, &input, output_config)?;
-    }
-
-    println!("🔄 Using 7-stage compilation pipeline for parsing...\n");
-
-    match compile_with_file(&source, &input) {
-        Ok(wasm_binary) => {
-            println!("✅ Parsing and compilation succeeded!");
-            println!("Generated {} bytes of WASM", wasm_binary.len());
-
-            if recover_errors {
-                println!("ℹ️  Error recovery mode not needed - compilation succeeded");
-            }
-            Ok(())
-        }
+    // Lexing and parsing only (stages 1-2): no type checking, no codegen.
+    let ast = match clean_language_compiler::parse_to_ast(&source, &input) {
+        Ok(ast) => ast,
         Err(errors) => {
-            println!(
-                "❌ Parsing/compilation failed with {} error(s):\n",
-                errors.len()
-            );
-
-            for (i, error) in errors.iter().enumerate() {
-                println!("Error {}: {}", i + 1, error);
-            }
-
-            println!("\n💡 Suggestions:");
-            println!("  • Check the Clean Language syntax documentation");
-            println!("  • Ensure proper indentation (tabs, not spaces)");
-            println!("  • Verify function and variable declarations follow specification");
-            Err(format!("Parsing failed with {} error(s)", errors.len()).into())
+            output_config.report_errors(&errors, Some(&source));
+            return Err(format!(
+                "Parsing failed with {} error{}",
+                errors.len(),
+                if errors.len() == 1 { "" } else { "s" }
+            )
+            .into());
         }
+    };
+
+    if show_tree {
+        DebugUtils::print_ast(&ast);
     }
+    if output_config.shows_progress() {
+        println!(
+            "Parsed {input}: {} imports, {} functions, {} classes{}",
+            ast.imports.len(),
+            ast.functions.len(),
+            ast.classes.len(),
+            if ast.start_function.is_some() {
+                ", start block"
+            } else {
+                ""
+            }
+        );
+    }
+    Ok(())
 }
 
 async fn handle_run(
@@ -2383,7 +2288,7 @@ async fn handle_run(
     let input_path = Path::new(&input);
     match input_path.extension().and_then(|s| s.to_str()) {
         Some("cln") => {
-            if !output_config.quiet {
+            if output_config.shows_progress() {
                 println!("🔧 Compiling Clean Language file: {input}");
             }
 
@@ -2398,22 +2303,21 @@ async fn handle_run(
                 }
             };
 
-            // Write to a temp file and hand off to clean-runner
-            let file_stem = input.trim_end_matches(".cln");
-            let temp_wasm = format!("{file_stem}.temp.wasm");
+            // Hand the module to clean-runner from a private directory that
+            // is removed when this function returns.
+            let work_dir = tempfile::Builder::new().prefix("cln-run-").tempdir()?;
+            let temp_wasm = work_dir.path().join("app.wasm");
             fs::write(&temp_wasm, &wasm_binary)?;
-            if !output_config.quiet {
+            if output_config.shows_progress() {
                 println!("🚀 Running compiled WebAssembly...");
             }
-            let result = execute_via_clean_runner(&temp_wasm, debug);
-            let _ = fs::remove_file(&temp_wasm);
-            result
+            execute_via_clean_runner(&temp_wasm.to_string_lossy())
         }
         Some("wasm") => {
             if debug {
                 println!("🚀 Running WebAssembly file: {input}");
             }
-            execute_via_clean_runner(&input, debug)
+            execute_via_clean_runner(&input)
         }
         Some(ext) => Err(format!(
             "Unsupported file extension '.{ext}'. Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
@@ -2469,10 +2373,7 @@ fn find_wasmtime_runner() -> Result<String, Box<dyn std::error::Error>> {
 ///
 /// wasmtime_runner is preferred because it ships with the compiler and provides all required
 /// host imports (including _state_reset_all) and natively supports the _run_tests export.
-fn execute_via_local_runner(
-    wasm_path: &str,
-    debug: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn execute_via_local_runner(wasm_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Prefer the bundled wasmtime_runner for standalone test execution.
     if let Ok(runner) = find_wasmtime_runner() {
         let status = std::process::Command::new(&runner)
@@ -2491,46 +2392,14 @@ fn execute_via_local_runner(
     }
 
     // Fall back to clean-runner if wasmtime_runner is not available.
-    execute_via_clean_runner(wasm_path, debug)
+    execute_via_clean_runner(wasm_path)
 }
 
 fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
     // 1. cleen-managed location: ~/.cleen/clean-runner/<version>/clean-runner (highest semver)
-    if let Some(home) = std::env::var_os("HOME") {
-        let base = std::path::Path::new(&home)
-            .join(".cleen")
-            .join("clean-runner");
-        if base.exists() {
-            if let Ok(entries) = std::fs::read_dir(&base) {
-                let mut versions: Vec<String> = entries
-                    .flatten()
-                    .filter(|e| e.path().is_dir())
-                    .filter_map(|e| e.file_name().into_string().ok())
-                    .collect();
-                versions.sort_by(|a, b| {
-                    let parse = |s: &str| -> (u32, u32, u32) {
-                        let mut parts = s.trim_start_matches('v').split('.');
-                        let major = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-                        let minor = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-                        let patch = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-                        (major, minor, patch)
-                    };
-                    parse(b).cmp(&parse(a))
-                });
-                for ver in &versions {
-                    let candidate = base.join(ver).join("clean-runner");
-                    if candidate.exists() {
-                        return Ok(candidate.to_string_lossy().into_owned());
-                    }
-                    #[cfg(windows)]
-                    {
-                        let win = base.join(ver).join("clean-runner.exe");
-                        if win.exists() {
-                            return Ok(win.to_string_lossy().into_owned());
-                        }
-                    }
-                }
-            }
+    if let Some(base) = dirs::home_dir().map(|h| h.join(".cleen").join("clean-runner")) {
+        if let Some(found) = newest_versioned_binary(&base, "clean-runner") {
+            return Ok(found.to_string_lossy().into_owned());
         }
     }
 
@@ -2545,13 +2414,10 @@ fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
         return Ok("clean-runner".to_string());
     }
 
-    Err("clean-runner not found. Install it with: cleen runner install latest".into())
+    Err("clean-runner not found under ~/.cleen/clean-runner/<version>/ or on PATH".into())
 }
 
-fn execute_via_clean_runner(
-    wasm_path: &str,
-    _debug: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn execute_via_clean_runner(wasm_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let runner = find_clean_runner()?;
     let status = std::process::Command::new(&runner)
         .arg(wasm_path)

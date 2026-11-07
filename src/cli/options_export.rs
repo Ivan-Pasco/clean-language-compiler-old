@@ -1,3 +1,7 @@
+//! `cln options --export-json`: describe the `cln compile` options for IDE
+//! integration. Everything is read from the clap definition of the `compile`
+//! subcommand, so the export can only list options that really exist.
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -28,220 +32,103 @@ pub struct CompileOptionsSchema {
     pub version: String,
     pub compiler_version: String,
     pub generated_at: String,
+    /// Values of `--target`.
     pub targets: Vec<CompileOption>,
+    /// Values of `--opt-level`.
     pub optimizations: Vec<CompileOption>,
+    /// The compiler selects no runtime; kept empty so the schema shape is
+    /// stable for existing readers.
     pub runtimes: Vec<CompileOption>,
+    /// Boolean switches of `cln compile` (plus the global ones).
     pub flags: Vec<CompileOption>,
     pub presets: Vec<CompilePreset>,
 }
 
 impl CompileOptionsSchema {
-    /// Create the compile options schema based on current compiler capabilities
-    pub fn generate() -> Self {
-        Self {
-            version: "1.0.0".to_string(),
-            compiler_version: env!("CARGO_PKG_VERSION").to_string(),
-            generated_at: Utc::now().to_rfc3339(),
-            targets: Self::get_available_targets(),
-            optimizations: Self::get_available_optimizations(),
-            runtimes: Self::get_available_runtimes(),
-            flags: Self::get_available_flags(),
-            presets: Self::get_available_presets(),
-        }
-    }
+    /// Build the schema from the `cln` clap command (`Args::command()`).
+    pub fn generate(cln: &clap::Command) -> Result<Self, String> {
+        let compile = cln
+            .find_subcommand("compile")
+            .ok_or("the cln command has no `compile` subcommand")?;
+        let arg = |id: &str| {
+            compile
+                .get_arguments()
+                .find(|a| a.get_id() == id)
+                .ok_or(format!("`cln compile` has no `{id}` argument"))
+        };
 
-    fn get_available_targets() -> Vec<CompileOption> {
-        vec![
-            CompileOption {
-                id: "web".to_string(),
-                label: "🌐 Web".to_string(),
-                description: "WebAssembly for web browsers".to_string(),
-                flag: Some("--target".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "nodejs".to_string(),
-                label: "🟢 Node.js".to_string(),
-                description: "WebAssembly for Node.js runtime".to_string(),
-                flag: Some("--target".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "native".to_string(),
-                label: "💻 Native".to_string(),
-                description: "Native desktop/server applications".to_string(),
-                flag: Some("--target".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "embedded".to_string(),
-                label: "🔧 Embedded".to_string(),
-                description: "Embedded systems with resource constraints".to_string(),
-                flag: Some("--target".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "wasi".to_string(),
-                label: "🌍 WASI".to_string(),
-                description: "WebAssembly System Interface for portable system integration"
-                    .to_string(),
-                flag: Some("--target".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "auto".to_string(),
-                label: "🤖 Auto".to_string(),
-                description: "Automatically detect best target".to_string(),
-                flag: None,
-                default: true,
-                available: true,
-                mutually_exclusive: None,
-            },
-        ]
-    }
+        let target = arg("target")?;
+        let targets = value_options(target);
 
-    fn get_available_optimizations() -> Vec<CompileOption> {
-        vec![
-            CompileOption {
-                id: "development".to_string(),
-                label: "🔧 Development".to_string(),
-                description: "Fast compilation, basic optimizations".to_string(),
-                flag: Some("--optimization".to_string()),
-                default: true,
+        let opt_level = arg("opt_level")?;
+        let default_level = default_value(opt_level);
+        let optimizations = (0..=3u8)
+            .map(|level| CompileOption {
+                id: level.to_string(),
+                label: format!("-O{level}"),
+                description: match level {
+                    0 => "No optimization (fastest compilation)",
+                    1 => "Light optimization",
+                    2 => "Standard optimization",
+                    _ => "Aggressive optimization (speed + size)",
+                }
+                .to_string(),
+                flag: long_flag(opt_level),
+                default: default_level.as_deref() == Some(level.to_string().as_str()),
                 available: true,
                 mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "production".to_string(),
-                label: "🚀 Production".to_string(),
-                description: "Full optimizations for release builds".to_string(),
-                flag: Some("--optimization".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "size".to_string(),
-                label: "📦 Size".to_string(),
-                description: "Optimize for smaller binary size".to_string(),
-                flag: Some("--optimization".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "speed".to_string(),
-                label: "⚡ Speed".to_string(),
-                description: "Optimize for runtime performance".to_string(),
-                flag: Some("--optimization".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "debug".to_string(),
-                label: "🐛 Debug".to_string(),
-                description: "No optimizations, maximum debug info".to_string(),
-                flag: Some("--optimization".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-        ]
-    }
+            })
+            .collect();
 
-    fn get_available_runtimes() -> Vec<CompileOption> {
-        vec![
-            CompileOption {
-                id: "auto".to_string(),
-                label: "🤖 Auto".to_string(),
-                description: "Automatically detect best runtime".to_string(),
-                flag: None,
-                default: true,
-                available: true,
-                mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "wasmtime".to_string(),
-                label: "⚡ Wasmtime".to_string(),
-                description: "Fast and secure WebAssembly runtime".to_string(),
-                flag: Some("--runtime".to_string()),
+        let mut flags: Vec<CompileOption> = compile
+            .get_arguments()
+            .chain(cln.get_arguments())
+            .filter(|a| !a.is_hide_set() && !a.get_action().takes_values())
+            .filter(|a| !matches!(a.get_id().as_str(), "help" | "version"))
+            .map(|a| CompileOption {
+                id: a.get_id().to_string(),
+                label: long_flag(a).unwrap_or_else(|| a.get_id().to_string()),
+                description: a.get_help().map(|h| h.to_string()).unwrap_or_default(),
+                flag: long_flag(a),
                 default: false,
                 available: true,
                 mutually_exclusive: None,
-            },
-            CompileOption {
-                id: "wasmer".to_string(),
-                label: "🦀 Wasmer".to_string(),
-                description: "Universal WebAssembly runtime".to_string(),
-                flag: Some("--runtime".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: None,
-            },
-        ]
-    }
+            })
+            .collect();
+        flags.dedup_by(|a, b| a.id == b.id);
 
-    fn get_available_flags() -> Vec<CompileOption> {
-        vec![
-            CompileOption {
-                id: "debug".to_string(),
-                label: "🐛 Include debug information".to_string(),
-                description: "Add debug symbols for debugging".to_string(),
-                flag: Some("--debug".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: Some(vec![]),
-            },
-            CompileOption {
-                id: "verbose".to_string(),
-                label: "💬 Verbose output".to_string(),
-                description: "Show detailed compilation information".to_string(),
-                flag: Some("--verbose".to_string()),
-                default: false,
-                available: true,
-                mutually_exclusive: Some(vec![]),
-            },
-        ]
-    }
-
-    fn get_available_presets() -> Vec<CompilePreset> {
-        vec![
+        let presets = vec![
             CompilePreset {
                 id: "standard".to_string(),
-                label: "📋 Standard compilation".to_string(),
+                label: "Standard compilation".to_string(),
                 description: "No additional options".to_string(),
                 flags: vec![],
             },
             CompilePreset {
-                id: "debug_only".to_string(),
-                label: "🐛 Include debug information".to_string(),
-                description: "Add debug symbols for debugging".to_string(),
-                flags: vec!["debug".to_string()],
+                id: "release".to_string(),
+                label: "Release".to_string(),
+                description: "Strip always: invariant checks".to_string(),
+                flags: vec!["release".to_string()],
             },
-            CompilePreset {
-                id: "verbose_only".to_string(),
-                label: "💬 Verbose output".to_string(),
-                description: "Show detailed compilation information".to_string(),
-                flags: vec!["verbose".to_string()],
-            },
-            CompilePreset {
-                id: "debug_verbose".to_string(),
-                label: "🐛💬 Debug + Verbose".to_string(),
-                description: "Include debug info and show verbose output".to_string(),
-                flags: vec!["debug".to_string(), "verbose".to_string()],
-            },
-        ]
+        ];
+        for preset in &presets {
+            for flag in &preset.flags {
+                if !flags.iter().any(|f| &f.id == flag) {
+                    return Err(format!("preset `{}` uses unknown flag `{flag}`", preset.id));
+                }
+            }
+        }
+
+        Ok(Self {
+            version: "1.0.0".to_string(),
+            compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+            generated_at: Utc::now().to_rfc3339(),
+            targets,
+            optimizations,
+            runtimes: Vec::new(),
+            flags,
+            presets,
+        })
     }
 
     /// Export the schema to a JSON file
@@ -258,15 +145,43 @@ impl CompileOptionsSchema {
     }
 }
 
+fn long_flag(arg: &clap::Arg) -> Option<String> {
+    arg.get_long().map(|l| format!("--{l}"))
+}
+
+fn default_value(arg: &clap::Arg) -> Option<String> {
+    arg.get_default_values()
+        .first()
+        .map(|v| v.to_string_lossy().into_owned())
+}
+
+/// One option per possible value of `arg`.
+fn value_options(arg: &clap::Arg) -> Vec<CompileOption> {
+    let default = default_value(arg);
+    arg.get_possible_values()
+        .iter()
+        .map(|v| CompileOption {
+            id: v.get_name().to_string(),
+            label: v.get_name().to_string(),
+            description: v.get_help().map(|h| h.to_string()).unwrap_or_default(),
+            flag: long_flag(arg),
+            default: default.as_deref() == Some(v.get_name()),
+            available: true,
+            mutually_exclusive: None,
+        })
+        .collect()
+}
+
 /// Export compile options as JSON
 pub fn export_compile_options(
+    cln: &clap::Command,
     output_path: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let schema = CompileOptionsSchema::generate();
+    let schema = CompileOptionsSchema::generate(cln)?;
     let path = output_path.unwrap_or_else(CompileOptionsSchema::get_default_install_path);
 
     // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
 

@@ -17,7 +17,7 @@ Execute verifier agent with all checks:
 ./scripts/test_qa_validation.sh
 
 # Comprehensive tests
-cargo run --bin cln comprehensive-test
+./scripts/comprehensive_test_runner.sh
 
 # Build release binary
 cargo build --release

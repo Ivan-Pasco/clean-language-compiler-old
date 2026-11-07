@@ -1,13 +1,9 @@
-// Runtime metadata and target configuration.
+// Wasmtime support for the hosts inside this crate.
 //
-// This module holds compile-time runtime metadata (target capability
-// descriptors, runtime selection). Actual WASM execution is the
-// responsibility of clean-server (Layer 2) and clean-runner — never the
-// compiler crate. See foundation/management/ARCHITECTURE_BOUNDARIES.md
-// and foundation/platform-architecture/EXECUTION_LAYERS.md.
-
-pub mod runtime_manager;
-pub mod runtime_trait;
+// Actual WASM execution of user programs is the responsibility of
+// clean-server (Layer 2) and clean-runner — never the compiler crate. See
+// foundation/management/ARCHITECTURE_BOUNDARIES.md and
+// foundation/platform-architecture/EXECUTION_LAYERS.md.
 
 // Wasmtime engine construction for the standalone `wasmtime_runner`
 // dev binary.

@@ -218,8 +218,8 @@ Development, debugging, and iteration files.
 # Compile a specific test - ALWAYS use tests/output/ directory
 cargo run --bin clean-language-compiler compile -i tests/cln/core/basics/01_hello_world.cln -o tests/output/01_hello_world.wasm
 
-# Parse with error recovery
-cargo run --bin clean-language-compiler parse -i tests/cln/language/classes/14_classes_basic.cln --recover-errors
+# Parse only (lexer + parser) and show the parse tree
+cargo run --bin cln -- parse tests/cln/language/classes/14_classes_basic.cln --show-tree
 
 # Debug with AST display
 cargo run --bin clean-language-compiler debug -i tests/cln/examples/28_complex_example.cln --show-ast
@@ -233,8 +233,8 @@ for file in tests/cln/core/**/*.cln; do
     cargo run --bin clean-language-compiler compile -i "$file" -o tests/output/$(basename "$file" .cln).wasm
 done
 
-# Test specific category
-cargo run --bin clean-language-compiler comprehensive-test --category language/functions
+# Test all categories (compiles every file under tests/cln/)
+./scripts/comprehensive_test_runner.sh
 ```
 
 ### **🎯 Comprehensive QA Testing Methodology**

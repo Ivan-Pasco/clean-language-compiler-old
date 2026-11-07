@@ -20,7 +20,7 @@ git checkout -b fix/session-$DATE
 
 # Capture initial state
 mkdir -p logs/sessions/$DATE
-cargo run --bin cln comprehensive-test > logs/sessions/$DATE/initial.log
+./scripts/comprehensive_test_runner.sh > logs/sessions/$DATE/initial.log
 ```
 
 ### 2. Discovery Phase

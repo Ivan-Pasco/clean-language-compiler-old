@@ -65,7 +65,9 @@ fn parse_missing_file_fails() {
 #[test]
 fn parse_invalid_source_fails_and_valid_source_succeeds() {
     let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("bad.cln"), TYPE_ERROR_SOURCE).unwrap();
+    // `cln parse` runs lexing and parsing only (it used to run a full
+    // compile), so the invalid input is a syntax error, not a type error.
+    std::fs::write(tmp.path().join("bad.cln"), "start:\n\tinteger x = (1 +\n").unwrap();
     std::fs::write(tmp.path().join("good.cln"), VALID_SOURCE).unwrap();
     assert_fails(&cln(&["parse", "bad.cln"], tmp.path()), "parse <bad>");
     assert_succeeds(&cln(&["parse", "good.cln"], tmp.path()), "parse <good>");
