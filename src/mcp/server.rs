@@ -11,642 +11,45 @@ use crate::resolver::symbol_table::{GlobalSymbolTable, SymbolKind};
 use crate::{
     compile_source_with_detected_plugins, parse_to_ast, type_check_with_external_plugins, VERSION,
 };
-use lazy_static::lazy_static;
 use serde_json::json;
-use std::sync::Mutex;
 use std::time::SystemTime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 // ============================================================================
-// Specification Cache
+// Specification
 // ============================================================================
+
+/// The specification chapters (`foundation/docs/specification/NN-*.md`),
+/// embedded at build time from the vendored copies in src/mcp/specification/
+/// so `get_specification` works wherever `cln` is installed.
+const SPEC_CHAPTERS: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/spec_chapters.rs"));
 
 #[derive(Debug)]
 struct SpecSection {
+    /// Chapter title, e.g. `06. Expressions`.
     title: String,
-    content: String,
-    line_start: usize,
+    /// Source file of the chapter.
+    file: &'static str,
+    content: &'static str,
 }
 
-struct SpecificationCache {
-    sections: Vec<SpecSection>,
-    last_modified: SystemTime,
-    file_path: String,
-}
-
-impl SpecificationCache {
-    fn load(file_path: &str) -> Option<Self> {
-        use std::fs;
-        use std::io::BufRead;
-
-        let metadata = fs::metadata(file_path).ok()?;
-        let last_modified = metadata.modified().ok()?;
-        let file = fs::File::open(file_path).ok()?;
-        let reader = std::io::BufReader::new(file);
-
-        let mut sections = Vec::new();
-        let mut current_title = String::new();
-        let mut current_content = String::new();
-        let mut current_line_start = 0;
-        let mut line_number = 0;
-
-        for line in reader.lines() {
-            line_number += 1;
-            let line = line.ok()?;
-
-            if let Some(heading) = line.strip_prefix("## ") {
-                // Save previous section if exists
-                if !current_title.is_empty() {
-                    sections.push(SpecSection {
-                        title: current_title.clone(),
-                        content: current_content.clone(),
-                        line_start: current_line_start,
-                    });
-                }
-
-                // Start new section
-                current_title = heading.trim().to_string();
-                current_content = String::new();
-                current_line_start = line_number;
-            } else if !current_title.is_empty() {
-                current_content.push_str(&line);
-                current_content.push('\n');
-            }
-        }
-
-        // Save final section
-        if !current_title.is_empty() {
-            sections.push(SpecSection {
-                title: current_title,
-                content: current_content,
-                line_start: current_line_start,
-            });
-        }
-
-        Some(SpecificationCache {
-            sections,
-            last_modified,
-            file_path: file_path.to_string(),
-        })
-    }
-
-    fn get_or_reload(&mut self) -> &[SpecSection] {
-        use std::fs;
-
-        // Check if file has been modified
-        if let Ok(metadata) = fs::metadata(&self.file_path) {
-            if let Ok(modified) = metadata.modified() {
-                if modified > self.last_modified {
-                    // Reload the file
-                    if let Some(new_cache) = Self::load(&self.file_path) {
-                        *self = new_cache;
-                    }
-                }
-            }
-        }
-
-        &self.sections
-    }
-}
-
-lazy_static! {
-    static ref SPEC_CACHE: Mutex<Option<SpecificationCache>> = Mutex::new(None);
-}
-
-fn get_spec_path() -> Option<String> {
-    // Try environment variable first
-    if let Ok(path) = std::env::var("CLN_SPEC_PATH") {
-        if std::path::Path::new(&path).exists() {
-            return Some(path);
-        }
-    }
-
-    // Try relative to CWD
-    let paths = [
-        "documentation/Clean_Language_Specification.md",
-        "../documentation/Clean_Language_Specification.md",
-        "docs/language/Clean_Language_Specification.md",
-        // Foundation is the single source of truth as of the 2026 doc consolidation.
-        "foundation/docs/Clean Language Specification.md",
-        "../foundation/docs/Clean Language Specification.md",
-        "../../foundation/docs/Clean Language Specification.md",
-    ];
-
-    for path in &paths {
-        if std::path::Path::new(path).exists() {
-            return Some(path.to_string());
-        }
-    }
-
-    // Try relative to binary location
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let spec = dir.join("../../documentation/Clean_Language_Specification.md");
-            if spec.exists() {
-                return spec.to_str().map(|s| s.to_string());
-            }
-        }
-    }
-
-    // Try home directory
-    if let Ok(home) = std::env::var("HOME") {
-        let cleen_spec = format!(
-            "{}/.cleen/specification/Clean_Language_Specification.md",
-            home
-        );
-        if std::path::Path::new(&cleen_spec).exists() {
-            return Some(cleen_spec);
-        }
-    }
-
-    None
-}
-
-// ============================================================================
-// Error Code Catalog
-// ============================================================================
-
-struct ErrorCodeEntry {
-    code: &'static str,
-    category: &'static str,
-    title: &'static str,
-    description: &'static str,
-    example: &'static str,
-    fix: &'static str,
-}
-
-fn get_error_catalog() -> Vec<ErrorCodeEntry> {
-    vec![
-        // Syntax Errors (SYN)
-        ErrorCodeEntry {
-            code: "SYN001",
-            category: "syntax",
-            title: "Invalid token",
-            description: "Lexer encountered an invalid token or character that doesn't match any valid syntax.",
-            example: "start:\n\tinteger x = @invalid",
-            fix: "Remove or replace the invalid character with valid Clean Language syntax.",
-        },
-        ErrorCodeEntry {
-            code: "SYN002",
-            category: "syntax",
-            title: "Unexpected token",
-            description: "Parser found a token that doesn't fit the expected syntax at this position.",
-            example: "start:\n\tinteger x = // missing value",
-            fix: "Check for missing values, typos in keywords, or missing operators.",
-        },
-        ErrorCodeEntry {
-            code: "SYN003",
-            category: "syntax",
-            title: "Missing element",
-            description: "Required syntax element is missing (e.g., closing bracket, semicolon, parameter).",
-            example: "start:\n\tif (x > 0\n\t\tprint(\"positive\")",
-            fix: "Add the missing syntax element (closing parenthesis, bracket, etc.).",
-        },
-        ErrorCodeEntry {
-            code: "SYN004",
-            category: "syntax",
-            title: "Unterminated construct",
-            description: "String literal, comment, or code block was not properly closed.",
-            example: "start:\n\tstring s = \"unterminated",
-            fix: "Add the closing delimiter (quote, comment marker, or closing brace).",
-        },
-        ErrorCodeEntry {
-            code: "SYN005",
-            category: "syntax",
-            title: "Malformed construct",
-            description: "Syntax structure is malformed or doesn't follow the language grammar.",
-            example: "start:\n\tfunction = (x) => x + 1",
-            fix: "Review the language specification for the correct syntax of this construct.",
-        },
-        ErrorCodeEntry {
-            code: "SYN006",
-            category: "syntax",
-            title: "Indentation error",
-            description: "Invalid indentation or inconsistent code block structure.",
-            example: "start:\n\tif (x > 0)\nprint(\"positive\")",
-            fix: "Ensure proper indentation (tabs) for nested blocks.",
-        },
-
-        // Semantic Errors (SEM)
-        ErrorCodeEntry {
-            code: "SEM001",
-            category: "semantic",
-            title: "Type mismatch",
-            description: "Expression type doesn't match the expected type in this context.",
-            example: "start:\n\tinteger x = \"hello\"",
-            fix: "Ensure types match or use explicit type conversion functions.",
-        },
-        ErrorCodeEntry {
-            code: "SEM002",
-            category: "semantic",
-            title: "Undefined symbol",
-            description: "Variable, function, or type referenced but not defined in current scope.",
-            example: "start:\n\tinteger x = unknownVariable",
-            fix: "Define the symbol before use or check for typos in the name.",
-        },
-        ErrorCodeEntry {
-            code: "SEM003",
-            category: "semantic",
-            title: "Symbol redefinition",
-            description: "Variable or function name already declared in the current scope.",
-            example: "start:\n\tinteger x = 5\n\tinteger x = 10",
-            fix: "Use a different name or remove the duplicate declaration.",
-        },
-        ErrorCodeEntry {
-            code: "SEM004",
-            category: "semantic",
-            title: "Invalid operation",
-            description: "Operation is not valid for the given type(s).",
-            example: "start:\n\tstring s = \"hello\"\n\tinteger x = s * 2",
-            fix: "Use operations that are valid for the type or convert to an appropriate type.",
-        },
-        ErrorCodeEntry {
-            code: "SEM005",
-            category: "semantic",
-            title: "Access violation",
-            description: "Attempting to access a private member or violating visibility rules.",
-            example: "// Accessing private field from outside class",
-            fix: "Use public interfaces or accessor methods instead of accessing private members.",
-        },
-        ErrorCodeEntry {
-            code: "SEM006",
-            category: "semantic",
-            title: "Inheritance error",
-            description: "Problem with class inheritance (e.g., invalid base class, missing base constructor call).",
-            example: "class Derived extends NonExistent:\n\tstart:",
-            fix: "Ensure base class exists and is properly imported. Call base() in constructor if needed.",
-        },
-        ErrorCodeEntry {
-            code: "SEM007",
-            category: "semantic",
-            title: "Generic error",
-            description: "Generic type constraint or parameter error.",
-            example: "// Invalid generic type parameter usage",
-            fix: "Check generic type constraints and ensure type parameters are used correctly.",
-        },
-        ErrorCodeEntry {
-            code: "SEM008",
-            category: "semantic",
-            title: "Inheritance cycle",
-            description: "Circular inheritance detected (class inheriting from itself directly or indirectly).",
-            example: "class A extends B:\nclass B extends A:",
-            fix: "Remove the circular dependency in the inheritance chain.",
-        },
-        ErrorCodeEntry {
-            code: "SEM009",
-            category: "semantic",
-            title: "Invalid type",
-            description: "Type specification is invalid or malformed.",
-            example: "start:\n\tUnknownType x = 5",
-            fix: "Use a valid type name (integer, string, boolean, number, or defined class).",
-        },
-        ErrorCodeEntry {
-            code: "SEM011",
-            category: "semantic",
-            title: "Missing capability method",
-            description: "A class claims a capability via `can Name` but does not implement one of the capability's required (non-default) methods.",
-            example: "can Draw:\n\tdraw()\n\nclass Circle can Draw\n\t// ERROR: draw() not implemented",
-            fix: "Add the missing method to the class's `functions: public:` block, or remove the capability from the `can` clause.",
-        },
-        ErrorCodeEntry {
-            code: "SEM012",
-            category: "semantic",
-            title: "Undefined capability",
-            description: "A `can` clause on a class, or a type reference in a parameter or return position, names a capability that has not been declared.",
-            example: "class Circle can Fly    // ERROR: capability Fly not defined",
-            fix: "Declare the capability with a `can Fly:` block, or correct the spelling.",
-        },
-        ErrorCodeEntry {
-            code: "SEM013",
-            category: "semantic",
-            title: "Capability method signature mismatch",
-            description: "A class implements a capability method whose parameter types or return type do not match the capability's declared signature.",
-            example: "can Save:\n\tsave(string path)\n\nclass File can Save\n\tfunctions:\n\t\tpublic:\n\t\t\tsave(integer path)    // ERROR: expected string, got integer",
-            fix: "Change the class's method signature to match the capability's exactly.",
-        },
-        ErrorCodeEntry {
-            code: "SEM014",
-            category: "semantic",
-            title: "Capability default calls undefined method",
-            description: "A default method body inside a `can:` block calls `this.otherMethod()`, but `otherMethod` is not declared in the same capability, so it is not guaranteed to exist on every claiming class.",
-            example: "can Describe:\n\ttag() -> string\n\t\treturn this.color    // ERROR: color is not part of Describe",
-            fix: "Default bodies may only call methods declared in the same capability.",
-        },
-
-        // Compilation Errors (COM)
-        ErrorCodeEntry {
-            code: "COM001",
-            category: "compilation",
-            title: "WASM generation error",
-            description: "Failed to generate WebAssembly code from the program.",
-            example: "// Internal compiler error during WASM generation",
-            fix: "Report this as a compiler bug with a minimal reproduction case.",
-        },
-        ErrorCodeEntry {
-            code: "COM002",
-            category: "compilation",
-            title: "Optimization error",
-            description: "Error occurred during WebAssembly optimization pass.",
-            example: "// wasm-opt failed with error",
-            fix: "Try compiling with a lower optimization level (--opt 0 or --opt 1).",
-        },
-        ErrorCodeEntry {
-            code: "COM003",
-            category: "compilation",
-            title: "Memory layout error",
-            description: "Problem with memory allocation or layout calculation.",
-            example: "// Memory alignment or allocation issue",
-            fix: "Check for excessively large allocations or report as compiler bug.",
-        },
-        ErrorCodeEntry {
-            code: "COM004",
-            category: "compilation",
-            title: "Module resolution error",
-            description: "Failed to resolve imported module or dependency.",
-            example: "plugins:\n\t- nonexistent_plugin",
-            fix: "Ensure the plugin or module exists and is properly installed.",
-        },
-        ErrorCodeEntry {
-            code: "COM005",
-            category: "compilation",
-            title: "Target error",
-            description: "Target-specific compilation issue (e.g., WASM target constraints).",
-            example: "// Feature not supported in WASM target",
-            fix: "Avoid features that are not supported in the WebAssembly target.",
-        },
-        ErrorCodeEntry {
-            code: "COM006",
-            category: "compilation",
-            title: "Function not found",
-            description: "Function referenced during code generation but definition not found.",
-            example: "start:\n\tcall_to_undefined_function()",
-            fix: "Define the function or check for typos in the function name.",
-        },
-
-        // Runtime Errors (RUN)
-        ErrorCodeEntry {
-            code: "RUN001",
-            category: "runtime",
-            title: "Memory violation",
-            description: "Out-of-bounds memory access during program execution.",
-            example: "// Accessing array element beyond bounds",
-            fix: "Add bounds checking or ensure indices are within valid range.",
-        },
-        ErrorCodeEntry {
-            code: "RUN002",
-            category: "runtime",
-            title: "Stack error",
-            description: "Stack overflow or underflow during execution.",
-            example: "// Infinite recursion without base case",
-            fix: "Add proper base case to recursive functions or reduce recursion depth.",
-        },
-        ErrorCodeEntry {
-            code: "RUN003",
-            category: "runtime",
-            title: "Arithmetic error",
-            description: "Division by zero or arithmetic overflow/underflow.",
-            example: "start:\n\tinteger x = 10 / 0",
-            fix: "Add checks to prevent division by zero or handle overflow conditions.",
-        },
-        ErrorCodeEntry {
-            code: "RUN004",
-            category: "runtime",
-            title: "Reference error",
-            description: "Null or invalid reference accessed during execution.",
-            example: "// Accessing null object reference",
-            fix: "Check for null before accessing object members.",
-        },
-        ErrorCodeEntry {
-            code: "RUN005",
-            category: "runtime",
-            title: "Assertion failure",
-            description: "Runtime assertion failed during program execution.",
-            example: "// assert(condition) failed",
-            fix: "Fix the condition that caused the assertion to fail.",
-        },
-
-        // System Errors (SYS)
-        ErrorCodeEntry {
-            code: "SYS001",
-            category: "system",
-            title: "File system error",
-            description: "Cannot read or write file (permissions, file not found, etc.).",
-            example: "// Cannot open input.cln: No such file or directory",
-            fix: "Check file path, permissions, and ensure the file exists.",
-        },
-        ErrorCodeEntry {
-            code: "SYS002",
-            category: "system",
-            title: "Network error",
-            description: "HTTP or network operation failed.",
-            example: "// Connection refused or timeout",
-            fix: "Check network connectivity and ensure the target service is accessible.",
-        },
-        ErrorCodeEntry {
-            code: "SYS003",
-            category: "system",
-            title: "External tool error",
-            description: "External tool (like wasm-opt) execution failed.",
-            example: "// wasm-opt not found in PATH",
-            fix: "Install the required tool or ensure it's in your PATH environment variable.",
-        },
-        ErrorCodeEntry {
-            code: "SYS004",
-            category: "system",
-            title: "Resource exhaustion",
-            description: "Out of memory or other system resource.",
-            example: "// Cannot allocate memory",
-            fix: "Reduce program memory usage or increase available system resources.",
-        },
-
-        // User Errors (USR)
-        ErrorCodeEntry {
-            code: "USR001",
-            category: "user",
-            title: "Invalid arguments",
-            description: "Command-line arguments are invalid or malformed.",
-            example: "// cln compile --invalid-flag",
-            fix: "Check CLI usage with 'cln help' and use valid arguments.",
-        },
-        ErrorCodeEntry {
-            code: "USR002",
-            category: "user",
-            title: "Configuration error",
-            description: "Invalid project configuration (package.clean.toml issues).",
-            example: "// Missing required field in package.clean.toml",
-            fix: "Review the package configuration format and add missing required fields.",
-        },
-        ErrorCodeEntry {
-            code: "USR003",
-            category: "user",
-            title: "Missing input",
-            description: "Required input file not provided to compiler.",
-            example: "// cln compile -o output.wasm (missing input file)",
-            fix: "Provide the input .cln file: 'cln compile input.cln -o output.wasm'",
-        },
-        ErrorCodeEntry {
-            code: "USR004",
-            category: "user",
-            title: "Invalid project structure",
-            description: "Project directory structure is incorrect or incomplete.",
-            example: "// Missing src/ directory in project",
-            fix: "Follow the standard Clean Language project structure with src/ directory.",
-        },
-
-        // Legacy E-codes
-        ErrorCodeEntry {
-            code: "E001",
-            category: "syntax",
-            title: "General syntax error",
-            description: "Legacy code for general syntax errors.",
-            example: "Various syntax errors",
-            fix: "Check syntax against language specification.",
-        },
-        ErrorCodeEntry {
-            code: "E002",
-            category: "semantic",
-            title: "Type error",
-            description: "Legacy code for type errors.",
-            example: "Type mismatch or invalid type usage",
-            fix: "Ensure types are used correctly.",
-        },
-        ErrorCodeEntry {
-            code: "E003",
-            category: "semantic",
-            title: "Method suggestion",
-            description: "Suggested method name when method not found.",
-            example: "Did you mean 'method_name'?",
-            fix: "Use the suggested method name or define the method.",
-        },
-        ErrorCodeEntry {
-            code: "E004",
-            category: "syntax",
-            title: "Indentation error",
-            description: "Legacy indentation error code.",
-            example: "Inconsistent indentation",
-            fix: "Use consistent tab indentation.",
-        },
-        ErrorCodeEntry {
-            code: "E005",
-            category: "syntax",
-            title: "Missing block",
-            description: "Expected code block but none found.",
-            example: "Function or control structure missing body",
-            fix: "Add the required code block with proper indentation.",
-        },
-        ErrorCodeEntry {
-            code: "E006",
-            category: "runtime",
-            title: "Memory error",
-            description: "Legacy memory-related error code.",
-            example: "Memory allocation or access issue",
-            fix: "Check memory operations and bounds.",
-        },
-        ErrorCodeEntry {
-            code: "E007",
-            category: "compilation",
-            title: "Codegen error",
-            description: "Legacy code generation error.",
-            example: "Failed to generate code",
-            fix: "Report as compiler bug.",
-        },
-        ErrorCodeEntry {
-            code: "E008",
-            category: "system",
-            title: "I/O error",
-            description: "Legacy I/O operation error.",
-            example: "File read/write failed",
-            fix: "Check file permissions and paths.",
-        },
-        ErrorCodeEntry {
-            code: "E009",
-            category: "runtime",
-            title: "Runtime error",
-            description: "Legacy runtime error code.",
-            example: "Error during program execution",
-            fix: "Debug the runtime condition causing the error.",
-        },
-        ErrorCodeEntry {
-            code: "E010",
-            category: "semantic",
-            title: "Validation error",
-            description: "Legacy validation error.",
-            example: "Invalid program structure",
-            fix: "Ensure program structure follows language rules.",
-        },
-        ErrorCodeEntry {
-            code: "E011",
-            category: "compilation",
-            title: "Function not found",
-            description: "Legacy function not found error.",
-            example: "Call to undefined function",
-            fix: "Define the function or check for typos.",
-        },
-        ErrorCodeEntry {
-            code: "E012",
-            category: "semantic",
-            title: "Variable not found",
-            description: "Legacy variable not found error.",
-            example: "Reference to undefined variable",
-            fix: "Define the variable before use.",
-        },
-        ErrorCodeEntry {
-            code: "E013",
-            category: "compilation",
-            title: "Module error",
-            description: "Legacy module-related error.",
-            example: "Module loading or resolution failed",
-            fix: "Check module paths and dependencies.",
-        },
-        ErrorCodeEntry {
-            code: "E014",
-            category: "compilation",
-            title: "Import error",
-            description: "Legacy import error.",
-            example: "Failed to import module",
-            fix: "Ensure imported modules exist and are accessible.",
-        },
-        ErrorCodeEntry {
-            code: "E015",
-            category: "semantic",
-            title: "Symbol error",
-            description: "Legacy symbol-related error.",
-            example: "Symbol resolution failed",
-            fix: "Check symbol names and scopes.",
-        },
-        ErrorCodeEntry {
-            code: "E016",
-            category: "compilation",
-            title: "Memory allocation error",
-            description: "Legacy memory allocation error.",
-            example: "Failed to allocate memory",
-            fix: "Reduce memory usage or report as bug.",
-        },
-        ErrorCodeEntry {
-            code: "E017",
-            category: "semantic",
-            title: "Detailed type error",
-            description: "Legacy detailed type error.",
-            example: "Specific type mismatch details",
-            fix: "Fix the type mismatch described in the error.",
-        },
-        ErrorCodeEntry {
-            code: "E018",
-            category: "runtime",
-            title: "Division by zero",
-            description: "Legacy division by zero error.",
-            example: "x / 0",
-            fix: "Add check to prevent division by zero.",
-        },
-        ErrorCodeEntry {
-            code: "E019",
-            category: "semantic",
-            title: "Testing error",
-            description: "Legacy testing-related error.",
-            example: "Test execution failed",
-            fix: "Fix the test or the code being tested.",
-        },
-    ]
+/// One section per chapter, titled by the chapter's top-level heading.
+fn spec_sections() -> &'static [SpecSection] {
+    static SECTIONS: std::sync::OnceLock<Vec<SpecSection>> = std::sync::OnceLock::new();
+    SECTIONS.get_or_init(|| {
+        SPEC_CHAPTERS
+            .iter()
+            .map(|(file, content)| SpecSection {
+                title: content
+                    .lines()
+                    .find_map(|l| l.strip_prefix("# "))
+                    .map(|t| t.trim().to_string())
+                    .unwrap_or_else(|| file.trim_end_matches(".md").to_string()),
+                file,
+                content,
+            })
+            .collect()
+    })
 }
 
 /// Run the MCP server main loop
@@ -738,6 +141,19 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+        if request.jsonrpc != "2.0" {
+            let error_response = JsonRpcResponse::error(
+                request.id.unwrap_or(json!(null)),
+                error_codes::INVALID_REQUEST,
+                format!(
+                    "Invalid request: jsonrpc must be \"2.0\", got \"{}\"",
+                    request.jsonrpc
+                ),
+            );
+            write_response(&mut stdout, &error_response, framed).await?;
+            continue;
+        }
+
         // Check if this is a notification (no id field) — per JSON-RPC 2.0, no response
         let is_notification = request.id.is_none();
 
@@ -797,6 +213,7 @@ async fn handle_request(request: JsonRpcRequest) -> JsonRpcResponse {
     let id = request.id.unwrap_or(json!(null));
     match request.method.as_str() {
         "initialize" => handle_initialize(id, request.params.as_ref()),
+        "ping" => JsonRpcResponse::success(id, json!({})),
         "tools/list" => handle_tools_list(id),
         "tools/call" => handle_tools_call(id, request.params),
         _ => JsonRpcResponse::error(
@@ -1093,13 +510,13 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "list_ecosystem".to_string(),
-            description: "List ALL plugins available in the Clean Language ecosystem, whether installed or not. Returns the full catalog with descriptions, blocks, bridge functions, and install status. Use this to discover what plugins exist.".to_string(),
+            description: "List the plugins installed for this toolchain, read from their plugin.toml manifests: name, version, description, blocks and bridge functions.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
                     "category": {
                         "type": "string",
-                        "description": "Filter by category: 'server', 'data', 'auth', 'ui', 'canvas', or 'all' (default)"
+                        "description": "Filter by category, the last part of the plugin name ('server' for frame.server, 'data', 'auth', 'ui', 'canvas', ...), or 'all' (default)"
                     }
                 }),
                 required: vec![],
@@ -1342,13 +759,13 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "get_changelog".to_string(),
-            description: "Get recent changes to the Clean Language compiler. Returns the last N version changes from git history.".to_string(),
+            description: "Get recent changes to the Clean Language compiler: its last N commits, embedded when this compiler was built.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
                     "count": {
                         "type": "number",
-                        "description": "Number of recent versions to return. Default: 10."
+                        "description": "Number of recent commits to return (max 50). Default: 10."
                     }
                 }),
                 required: vec![],
@@ -1409,7 +826,7 @@ fn get_available_tools() -> Vec<Tool> {
                     },
                     "path": {
                         "type": "string",
-                        "description": "Direct file path to a feature spec Markdown file"
+                        "description": "Path to a feature spec .md file inside docs/features"
                     }
                 }),
                 required: vec![],
@@ -1443,13 +860,17 @@ fn handle_tools_call(id: serde_json::Value, params: Option<serde_json::Value>) -
         }
     };
 
+    // `arguments` is optional in MCP: a tool without required parameters
+    // may be called without it.
+    let no_arguments = json!({});
     let arguments = match params.get("arguments") {
-        Some(args) => args,
-        None => {
+        None | Some(serde_json::Value::Null) => &no_arguments,
+        Some(args) if args.is_object() => args,
+        Some(_) => {
             return JsonRpcResponse::error(
                 id,
                 error_codes::INVALID_PARAMS,
-                "Missing tool arguments".to_string(),
+                "Tool arguments must be an object".to_string(),
             )
         }
     };
@@ -2196,364 +1617,103 @@ fn find_plugin_dir(name: &str, project_dir: Option<&str>) -> Option<std::path::P
     None
 }
 
-/// Tool: list_ecosystem - List all plugins in the Clean Language ecosystem
+/// Tool: list_ecosystem - List the plugins installed for this toolchain
 ///
-/// MAINTENANCE: When a new plugin is added to the Clean Language ecosystem,
-/// add it to the `get_ecosystem_catalog()` function below. Each entry needs:
-/// name, version, category, description, blocks, key_features, bridge_function_count,
-/// install command, and status.
+/// Built at call time from the installed plugin manifests
+/// (`~/.cleen/plugins/*/plugin.toml`, read by `PluginDiscovery`), so names,
+/// versions, blocks and bridge functions always match what the compiler
+/// loads.
 fn tool_list_ecosystem(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
-    let category_filter = args.get("category").and_then(|v| v.as_str());
+    let category_filter = args
+        .get("category")
+        .and_then(|v| v.as_str())
+        .filter(|c| !c.eq_ignore_ascii_case("all"));
 
-    let catalog = get_ecosystem_catalog();
-
-    let mut plugins: Vec<serde_json::Value> = Vec::new();
-    for entry in &catalog {
-        if let Some(cat) = category_filter {
-            if !cat.eq_ignore_ascii_case("all") && !entry.category.eq_ignore_ascii_case(cat) {
-                continue;
-            }
+    let discovery = PluginDiscovery::new();
+    let installed = match discovery.discover_all() {
+        Ok(found) => found,
+        Err(e) => {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": format!("Failed to read the installed plugin manifests: {}", e),
+                }),
+            )
         }
+    };
 
-        plugins.push(json!({
-            "name": entry.name,
-            "version": entry.version,
-            "category": entry.category,
-            "description": entry.description,
-            "blocks": entry.blocks,
-            "key_features": entry.key_features,
-            "bridge_function_count": entry.bridge_function_count,
-            "install": entry.install,
-            "status": entry.status,
-            "auto_detect_paths": entry.auto_detect_paths,
-            "replaces": entry.replaces,
-            "permissions": entry.permissions,
-        }));
+    if installed.is_empty() {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": true,
+                "ecosystem": [],
+                "total": 0,
+                "note": "No plugins are installed. Install the Frame plugins with `cleen frame install`, or one plugin with `cleen plugin install <name>` (e.g. frame.server), then call list_ecosystem again."
+            }),
+        );
     }
 
-    // Check which ones are actually installed
-    let discovery = PluginDiscovery::new();
-    let installed = discovery.discover_all().unwrap_or_default();
-    let installed_names: Vec<String> = installed.keys().cloned().collect();
-
-    // Mark catalog entries as installed/not
-    let catalog_names: Vec<String> = plugins
-        .iter()
-        .filter_map(|p| {
-            p.get("name")
-                .and_then(|n| n.as_str())
-                .map(|s| s.to_string())
+    let mut names: Vec<&String> = installed.keys().collect();
+    names.sort();
+    let plugins: Vec<serde_json::Value> = names
+        .into_iter()
+        .filter_map(|name| {
+            let manifest = &installed[name];
+            // `frame.server` -> category `server`
+            let category = name.rsplit('.').next().unwrap_or(name);
+            if let Some(cat) = category_filter {
+                if !category.eq_ignore_ascii_case(cat) {
+                    return None;
+                }
+            }
+            let bridge_functions: Vec<&str> = manifest
+                .bridge
+                .functions
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect();
+            Some(json!({
+                "name": name,
+                "version": manifest.plugin.version,
+                "category": category,
+                "description": manifest
+                    .ai
+                    .description
+                    .as_deref()
+                    .unwrap_or(&manifest.plugin.description),
+                "blocks": manifest.handles.blocks,
+                "bridge_function_count": bridge_functions.len(),
+                "bridge_functions": bridge_functions,
+                "owned_paths": manifest.paths.owns,
+                "installed": true,
+            }))
         })
         .collect();
-
-    for plugin in plugins.iter_mut() {
-        let name = plugin["name"].as_str().unwrap_or("");
-        plugin["installed"] = json!(installed_names.iter().any(|n| n == name));
-    }
-
-    // Auto-discover plugins installed but not in the hardcoded catalog
-    for (name, manifest) in &installed {
-        if !catalog_names.iter().any(|n| n == name) {
-            let should_include = if let Some(cat) = category_filter {
-                cat.eq_ignore_ascii_case("all")
-            } else {
-                true
-            };
-            if should_include {
-                let bridge_count = manifest.bridge.functions.len();
-                let blocks: Vec<&str> =
-                    manifest.handles.blocks.iter().map(|s| s.as_str()).collect();
-                plugins.push(json!({
-                    "name": name,
-                    "version": manifest.plugin.version,
-                    "category": "discovered",
-                    "description": manifest.plugin.description,
-                    "blocks": blocks,
-                    "key_features": [],
-                    "bridge_function_count": bridge_count,
-                    "install": format!("cleen plugin add {}", name),
-                    "status": "installed",
-                    "installed": true,
-                    "auto_detect_paths": [],
-                    "replaces": "",
-                    "permissions": manifest.bridge.functions.iter()
-                        .map(|f| f.name.as_str())
-                        .collect::<Vec<_>>(),
-                    "source": "auto-discovered"
-                }));
-            }
-        }
-    }
-
-    let total = plugins.len();
 
     JsonRpcResponse::success(
         id,
         json!({
             "success": true,
+            "total": plugins.len(),
             "ecosystem": plugins,
-            "total": total,
-            "installed_count": installed_names.len(),
             "note": "Use 'list_plugins' with project_dir to see installed plugins with full DSL details. Use 'get_plugin_examples' to read example code."
         }),
     )
-}
-
-struct EcosystemPlugin {
-    name: &'static str,
-    version: &'static str,
-    category: &'static str,
-    description: &'static str,
-    blocks: &'static [&'static str],
-    key_features: &'static [&'static str],
-    bridge_function_count: usize,
-    install: &'static str,
-    status: &'static str,
-    auto_detect_paths: &'static [&'static str],
-    replaces: &'static str,
-    /// Bridge function names this plugin declares in its [bridge] section.
-    /// These are the only functions the plugin is permitted to call at runtime.
-    permissions: &'static [&'static str],
-}
-
-/// ECOSYSTEM CATALOG — Add new plugins here
-///
-/// When a new plugin is created in the Clean Language ecosystem:
-/// 1. Add an EcosystemPlugin entry to this function
-/// 2. Include accurate block names, feature list, and bridge function count
-/// 3. Set status to "stable", "beta", or "planned"
-/// 4. Run `cargo test` to verify compilation
-fn get_ecosystem_catalog() -> Vec<EcosystemPlugin> {
-    vec![
-        EcosystemPlugin {
-            name: "frame.server",
-            version: "2.8.0",
-            category: "server",
-            description: "HTTP server plugin — routing, request context, response helpers, authentication guards, database migrations, and multi-tenant support. Define REST APIs with endpoints: blocks.",
-            blocks: &["server", "endpoints", "migrate"],
-            key_features: &[
-                "HTTP route registration (GET, POST, PUT, PATCH, DELETE)",
-                "Protected routes with role requirements",
-                "Request context (params, query, headers, body, cookies)",
-                "Response helpers (JSON, HTML, redirect, error)",
-                "Response headers and caching control",
-                "Authentication guard integration",
-                "Database migration blocks (migrate:)",
-                "Multi-tenant request routing",
-                "Plugin lifecycle slot (module_helpers)",
-                "Permission enforcement — only declared bridge functions may be called",
-            ],
-            bridge_function_count: 52,
-            install: "cleen plugin add frame.server",
-            status: "stable",
-            auto_detect_paths: &["/api/", "/backend/api/", "/server/api/", "/endpoints/"],
-            replaces: "Express.js, Fastify, Koa, or any Node.js HTTP framework. Use frame.server for all server-side HTTP handling.",
-            permissions: &[
-                "_http_route", "_http_get_param", "_http_get_query", "_http_get_header",
-                "_http_get_body", "_http_get_cookie", "_http_set_cookie", "_http_respond_json",
-                "_http_respond_html", "_http_respond_redirect", "_http_respond_error",
-                "_http_set_header", "_http_set_cache", "_http_require_auth",
-                "_http_tenant_id", "_http_tenant_config",
-                "_migrate_run", "_migrate_rollback", "_migrate_status",
-            ],
-        },
-        EcosystemPlugin {
-            name: "frame.data",
-            version: "2.8.0",
-            category: "data",
-            description: "ORM and database plugin — data models, CRUD operations, query builder, transactions, raw SQL, migrations, and validation constraints. Define models with data: blocks.",
-            blocks: &["data", "migrate"],
-            key_features: &[
-                "Model definition with typed fields",
-                "Query builder (find, first, count, insert, update, delete)",
-                "Filtering, sorting, and pagination",
-                "Transaction support (Data.tx:)",
-                "Raw SQL queries (db.query:, db.queryAs)",
-                "Database migrations (migrate: block)",
-                "Field validation constraints (required, min, max, pattern, unique)",
-                "Plugin lifecycle slot (module_helpers)",
-                "Permission enforcement — only declared bridge functions may be called",
-            ],
-            bridge_function_count: 8,
-            install: "cleen plugin add frame.data",
-            status: "stable",
-            auto_detect_paths: &["/data/", "/models/", "/server/models/"],
-            replaces: "Sequelize, Prisma, Knex, or any JS/TS ORM. Use frame.data for all database operations.",
-            permissions: &[
-                "_db_query", "_db_execute",
-                "_db_migrate_run", "_db_migrate_rollback", "_db_migrate_status",
-                "_db_transaction_begin", "_db_transaction_commit", "_db_transaction_rollback",
-            ],
-        },
-        EcosystemPlugin {
-            name: "frame.auth",
-            version: "2.8.0",
-            category: "auth",
-            description: "Authentication and authorization plugin — sessions, JWT tokens, password hashing, roles/permissions, CSRF protection, and multi-tenant support. Configure with auth: blocks.",
-            blocks: &["auth", "protected", "login", "roles", "tenant"],
-            key_features: &[
-                "Session management (store, get, delete)",
-                "JWT token operations (sign, verify, decode)",
-                "Password hashing (Argon2id)",
-                "CSRF token management",
-                "Role-based access control (RBAC)",
-                "Permission checking",
-                "Cookie management",
-                "Environment variable access for secrets",
-                "Multi-tenant auth (tenant: sub-block)",
-                "Tenant isolation and per-tenant role configuration",
-                "Plugin lifecycle slot (module_helpers)",
-                "Permission enforcement — only declared bridge functions may be called",
-            ],
-            bridge_function_count: 24,
-            install: "cleen plugin add frame.auth",
-            status: "stable",
-            auto_detect_paths: &["/auth/", "/config/auth/"],
-            replaces: "Passport.js, Auth0 SDK, or any JS authentication library. Use frame.auth for all authentication and authorization.",
-            permissions: &[
-                "_session_store", "_session_get", "_session_delete",
-                "_jwt_sign", "_jwt_verify", "_jwt_decode",
-                "_crypto_hash_password", "_crypto_verify_password",
-                "_csrf_token_generate", "_csrf_token_verify",
-                "_auth_check_role", "_auth_check_permission",
-                "_cookie_set", "_cookie_get", "_cookie_delete",
-                "_env_get",
-                "_tenant_get_id", "_tenant_get_config",
-                "_tenant_check_role", "_tenant_check_permission",
-            ],
-        },
-        EcosystemPlugin {
-            name: "frame.ui",
-            version: "2.8.0",
-            category: "ui",
-            description: "HTML-first UI framework — components, screens, theming, event handling, two-way binding, and hydration. Define components with component: blocks and HTML templates.",
-            blocks: &["component", "screen", "page", "styles", "ui"],
-            key_features: &[
-                "Component definitions with properties and slots",
-                "HTML directives (cl-if, cl-else, cl-each, cl-bind, cl-show, cl-validate, cl-slot)",
-                "Event handling (onclick, oninput, onsubmit, etc.)",
-                "Event modifiers (prevent, stop, once, enter, escape)",
-                "Interpolation ({{escaped}} and {{{raw}}})",
-                "Hydration modes (off, on, visible, idle, only)",
-                "Two-way data binding",
-                "State management for components",
-                "Global UI theming (ui: block)",
-                "Plugin lifecycle slots (module_helpers, client_init)",
-                "Permission enforcement — only declared bridge functions may be called",
-            ],
-            bridge_function_count: 14,
-            install: "cleen plugin add frame.ui",
-            status: "stable",
-            auto_detect_paths: &["/ui/", "/components/", "/screens/"],
-            replaces: "JavaScript DOM manipulation, jQuery, vanilla JS event handlers, JS form validation, JS state management. Use frame.ui instead of writing any .js files for client-side interactivity.",
-            permissions: &[
-                "_ui_render", "_ui_hydrate", "_ui_bind", "_ui_emit_event",
-                "_ui_get_state", "_ui_set_state",
-                "_dom_get_element", "_dom_set_attribute", "_dom_add_class", "_dom_remove_class",
-                "_ui_theme_get", "_ui_theme_set",
-                "_ui_validate_field", "_ui_slot_render",
-            ],
-        },
-        EcosystemPlugin {
-            name: "frame.canvas",
-            version: "2.8.0",
-            category: "canvas",
-            description: "Canvas rendering and game development plugin — drawing, animation, audio, sprites, pointer/keyboard input, collision detection, and easing functions. Define scenes with canvasScene: blocks.",
-            blocks: &["canvasScene", "draw", "onFrame", "onPointerDown", "onPointerMove", "onKeyDown"],
-            key_features: &[
-                "Drawing primitives (circles, rectangles, lines, polygons)",
-                "Text and image rendering",
-                "Transform operations (translate, rotate, scale)",
-                "Animation frame management",
-                "Audio (sound effects and music with volume/pan control)",
-                "Sprite sheet support",
-                "Input handling (mouse, keyboard, touch, gamepad)",
-                "Pointer event blocks (onPointerDown, onPointerMove)",
-                "Keyboard event blocks (onKeyDown)",
-                "Collision detection (7 types including raycasting)",
-                "Camera and viewport control",
-                "20 easing functions",
-                "Scene management",
-                "Plugin lifecycle slot (module_helpers)",
-                "Permission enforcement — only declared bridge functions may be called",
-            ],
-            bridge_function_count: 134,
-            install: "cleen plugin add frame.canvas",
-            status: "stable",
-            auto_detect_paths: &["/canvas/"],
-            replaces: "JavaScript Canvas API, JS game libraries (Phaser, PixiJS). Use frame.canvas instead of writing JS for any canvas/graphics work.",
-            permissions: &[
-                "_canvas_clear", "_canvas_fill_rect", "_canvas_stroke_rect",
-                "_canvas_fill_circle", "_canvas_stroke_circle",
-                "_canvas_fill_text", "_canvas_draw_image",
-                "_canvas_translate", "_canvas_rotate", "_canvas_scale",
-                "_canvas_save", "_canvas_restore",
-                "_canvas_set_fill_color", "_canvas_set_stroke_color", "_canvas_set_line_width",
-                "_canvas_request_frame", "_canvas_get_time",
-                "_audio_play", "_audio_stop", "_audio_set_volume",
-                "_input_mouse_x", "_input_mouse_y", "_input_mouse_button",
-                "_input_key_pressed", "_input_key_held",
-                "_input_pointer_x", "_input_pointer_y", "_input_pointer_down",
-                "_input_key_down", "_input_key_code",
-                "_sprite_draw", "_sprite_set_frame",
-                "_collision_check_rect", "_collision_check_circle",
-                "_collision_raycast",
-                "_camera_set_position", "_camera_set_zoom",
-                "_scene_push", "_scene_pop",
-            ],
-        },
-    ]
 }
 
 /// Tool: get_specification - Query the Clean Language Specification
 fn tool_get_specification(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     let section_query = args.get("section").and_then(|v| v.as_str());
     let search_query = args.get("query").and_then(|v| v.as_str());
-
-    // Get or initialize the specification cache
-    let spec_path = match get_spec_path() {
-        Some(path) => path,
-        None => {
-            return JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": false,
-                    "error": "Specification file not found. Set CLN_SPEC_PATH or ensure documentation/Clean_Language_Specification.md exists."
-                }),
-            );
-        }
-    };
-
-    let mut cache = SPEC_CACHE.lock().unwrap();
-    if cache.is_none() {
-        *cache = SpecificationCache::load(&spec_path);
-    }
-
-    let cache_ref = match cache.as_mut() {
-        Some(c) => c,
-        None => {
-            return JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": false,
-                    "error": "Failed to load specification file."
-                }),
-            );
-        }
-    };
-
-    let sections = cache_ref.get_or_reload();
+    let sections = spec_sections();
 
     // If no parameters, return table of contents
     if section_query.is_none() && search_query.is_none() {
         let toc: Vec<serde_json::Value> = sections
             .iter()
-            .map(|s| {
-                json!({
-                    "title": s.title,
-                    "line": s.line_start
-                })
-            })
+            .map(|s| json!({ "title": s.title, "file": s.file }))
             .collect();
 
         return JsonRpcResponse::success(
@@ -2566,7 +1726,6 @@ fn tool_get_specification(id: serde_json::Value, args: &serde_json::Value) -> Js
         );
     }
 
-    // Filter by section name
     let mut results: Vec<&SpecSection> = sections.iter().collect();
 
     if let Some(section) = section_query {
@@ -2574,7 +1733,6 @@ fn tool_get_specification(id: serde_json::Value, args: &serde_json::Value) -> Js
         results.retain(|s| s.title.to_lowercase().contains(&section_lower));
     }
 
-    // Filter by search query
     if let Some(query) = search_query {
         let query_lower = query.to_lowercase();
         results.retain(|s| s.content.to_lowercase().contains(&query_lower));
@@ -2582,13 +1740,7 @@ fn tool_get_specification(id: serde_json::Value, args: &serde_json::Value) -> Js
 
     let result_json: Vec<serde_json::Value> = results
         .iter()
-        .map(|s| {
-            json!({
-                "title": s.title,
-                "content": s.content,
-                "line": s.line_start
-            })
-        })
+        .map(|s| json!({ "title": s.title, "file": s.file, "content": s.content }))
         .collect();
 
     JsonRpcResponse::success(
@@ -3210,7 +2362,7 @@ tests:
 	math.abs(-42) = 42
 ```
 
-### Endpoint tests (HTTP — requires live server via `cleen serve`)
+### Endpoint tests (HTTP — requires live server via `cln serve <file.cln>`)
 Each `test "name"` block declares one HTTP test case.
 First line: METHOD "path" with optional `json(...)` body and `header(...)`.
 Subsequent lines: assertions against the response.
@@ -3275,7 +2427,7 @@ Tests: 2 passed, 1 failed
 
 ### Endpoint tests (requires live server)
 ```
-cleen serve                    # start the dev server in one terminal
+cln serve app/api/main.cln     # start the dev server in one terminal
 cln test file.cln              # run endpoint tests against it
 ```
 
@@ -3369,7 +2521,7 @@ functions:
 ## Workflow
 1. Call `get_quick_reference` (this tool) to learn base syntax
 2. Call `get_stack_recommendation` with your project type (web-app, api, game, cli) — includes best practices for web apps
-3. Call `list_ecosystem` to see ALL available plugins in the ecosystem
+3. Call `list_ecosystem` to see the installed plugins
 4. Call `list_plugins` to see installed plugins with full DSL details
 5. Call `get_plugin_examples` to see plugin usage patterns
 6. Write .cln code following the patterns above — spec-correct code ONLY
@@ -4256,7 +3408,7 @@ fn tool_get_stack_recommendation(
 
     let install_commands: Vec<String> = plugins
         .iter()
-        .map(|p| format!("cleen plugin add {}", p))
+        .map(|p| format!("cleen plugin install {}", p))
         .collect();
 
     let mut response_value = json!({
@@ -4684,38 +3836,23 @@ fn tool_validate(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResp
 
     match detected_type {
         "plugin" => {
-            // Validate plugin.toml
-            if let Some(plugin) = parsed.get("plugin") {
-                if plugin.get("name").is_none() {
-                    errors.push("[plugin] missing required field: name".to_string());
-                }
-                if plugin.get("version").is_none() {
-                    errors.push("[plugin] missing required field: version".to_string());
-                }
-            } else {
-                errors.push("Missing [plugin] section".to_string());
-            }
-
-            // Check bridge section
-            if let Some(bridge) = parsed.get("bridge") {
-                if let Some(functions) = bridge.get("functions") {
-                    if let Some(table) = functions.as_table() {
-                        for (name, func) in table {
-                            if func.get("params").is_none() {
-                                warnings.push(format!(
-                                    "bridge.functions.{}: missing 'params' field",
-                                    name
-                                ));
-                            }
-                            if func.get("returns").is_none() {
-                                warnings.push(format!(
-                                    "bridge.functions.{}: missing 'returns' field",
-                                    name
-                                ));
-                            }
+            // Validate plugin.toml against the manifest schema the plugin
+            // loader uses (`[bridge] functions = [ { name, params, returns } ]`).
+            match toml::from_str::<crate::plugins::plugin_abi::PluginManifest>(content) {
+                Ok(manifest) => {
+                    for func in &manifest.bridge.functions {
+                        if func.hosts.is_none() {
+                            warnings.push(format!(
+                                "bridge function {}: no 'hosts' field (treated as [\"all\"])",
+                                func.name
+                            ));
                         }
                     }
                 }
+                Err(e) => errors.push(format!(
+                    "plugin.toml does not match the plugin manifest schema: {}",
+                    e
+                )),
             }
 
             // Check ai section
@@ -4908,52 +4045,39 @@ fn tool_list_examples(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
 
 /// Tool: get_changelog - Get recent compiler changes from git history
 fn tool_get_changelog(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
+    // The compiler's own commits, embedded at build time (see build.rs).
+    const HISTORY: &str = include_str!(concat!(env!("OUT_DIR"), "/changelog.txt"));
     let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
-    // Try to get git log
-    let output = std::process::Command::new("git")
-        .args([
-            "log",
-            "--oneline",
-            "--no-decorate",
-            &format!("-{}", count.min(50)),
-        ])
-        .output();
+    let entries: Vec<serde_json::Value> = HISTORY
+        .lines()
+        .filter(|l| !l.is_empty())
+        .take(count.min(50))
+        .map(|line| {
+            let (hash, message) = line.split_once(' ').unwrap_or((line, ""));
+            json!({ "hash": hash, "message": message })
+        })
+        .collect();
 
-    match output {
-        Ok(out) if out.status.success() => {
-            let log = String::from_utf8_lossy(&out.stdout);
-            let entries: Vec<serde_json::Value> = log
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|line| {
-                    let (hash, message) = line.split_at(line.find(' ').unwrap_or(line.len()));
-                    json!({
-                        "hash": hash.trim(),
-                        "message": message.trim()
-                    })
-                })
-                .collect();
-
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": true,
-                    "current_version": crate::VERSION,
-                    "entries": entries,
-                    "count": entries.len()
-                }),
-            )
-        }
-        _ => JsonRpcResponse::success(
+    if entries.is_empty() {
+        return JsonRpcResponse::success(
             id,
             json!({
                 "success": false,
-                "error": "Git history not available. Not running from a git repository.",
+                "error": "This compiler was built without its git history, so no changes are available.",
                 "current_version": crate::VERSION
             }),
-        ),
+        );
     }
+    JsonRpcResponse::success(
+        id,
+        json!({
+            "success": true,
+            "current_version": crate::VERSION,
+            "count": entries.len(),
+            "entries": entries
+        }),
+    )
 }
 
 /// Convert a CompilerError to JSON for MCP responses
@@ -5877,9 +5001,41 @@ fn tool_get_feature_spec(id: serde_json::Value, args: &serde_json::Value) -> Jso
         );
     }
 
-    // Direct path lookup
+    // Feature specs live in the project's docs/features directory.
+    let candidate_dirs = [
+        std::path::PathBuf::from("docs/features"),
+        std::path::PathBuf::from("../docs/features"),
+    ];
+
+    let docs_dir = candidate_dirs
+        .iter()
+        .find(|d| d.exists() && d.is_dir())
+        .cloned()
+        .unwrap_or_else(|| std::path::PathBuf::from("docs/features"));
+
+    // Direct path lookup: only Markdown files inside the feature spec
+    // directory can be read (no `..`, absolute or symlinked escapes).
     if let Some(path_str) = path_arg {
         let path = std::path::PathBuf::from(path_str);
+        let inside_docs = match (path.canonicalize(), docs_dir.canonicalize()) {
+            (Ok(file), Ok(root)) => {
+                file.starts_with(&root) && file.extension().and_then(|e| e.to_str()) == Some("md")
+            }
+            _ => false,
+        };
+        if !inside_docs {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "success": false,
+                    "error": format!(
+                        "'{}' is not a feature spec: only .md files under {} can be read",
+                        path_str,
+                        docs_dir.display()
+                    )
+                }),
+            );
+        }
         return match std::fs::read_to_string(&path) {
             Ok(content) => JsonRpcResponse::success(
                 id,
@@ -5899,20 +5055,8 @@ fn tool_get_feature_spec(id: serde_json::Value, args: &serde_json::Value) -> Jso
         };
     }
 
-    // Ref-based lookup: scan a docs directory
+    // Ref-based lookup: scan the docs directory
     let ref_str = ref_arg.unwrap(); // safe: we checked above
-
-    // Try to find a docs/features directory from the current working directory
-    let candidate_dirs = [
-        std::path::PathBuf::from("docs/features"),
-        std::path::PathBuf::from("../docs/features"),
-    ];
-
-    let docs_dir = candidate_dirs
-        .iter()
-        .find(|d| d.exists() && d.is_dir())
-        .cloned()
-        .unwrap_or_else(|| std::path::PathBuf::from("docs/features"));
 
     let engine = DocSyncEngine::new(docs_dir);
     let specs = engine.scan_specs();
@@ -6313,5 +5457,85 @@ mod report_error_schema_tests {
             msg.contains("minimal_repro"),
             "handler must reject whitespace-only minimal_repro; got: {msg}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tool_fix_tests {
+    use super::*;
+
+    #[test]
+    fn format_keeps_nesting_of_two_and_four_space_files() {
+        let two = "start:\n  if x\n    print(1)\n  print(2)\n";
+        let four = "start:\n    if x\n        print(1)\n    print(2)\n";
+        let expected = "start:\n\tif x\n\t\tprint(1)\n\tprint(2)\n";
+        assert_eq!(format_clean_source(two), expected);
+        assert_eq!(format_clean_source(four), expected);
+        // Tabs are kept; blank-line runs collapse.
+        assert_eq!(
+            format_clean_source("start:\n\tprint(1)\n\n\n\tprint(2)"),
+            "start:\n\tprint(1)\n\n\tprint(2)\n"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_bridge_function_arrays() {
+        let toml = r#"
+[plugin]
+name = "frame.demo"
+version = "1.0.0"
+
+[handles]
+blocks = []
+
+[bridge]
+functions = [
+  { name = "_demo_call", params = ["string"], returns = "string", hosts = ["server"] },
+  { name = "_demo_ping", params = [], returns = "i32" },
+]
+
+[ai]
+description = "demo"
+"#;
+        let resp = tool_validate(json!(1), &json!({ "content": toml }));
+        let result = resp.result.unwrap();
+        assert_eq!(result["valid"], json!(true), "{result}");
+        let warnings = result["warnings"].to_string();
+        assert!(warnings.contains("_demo_ping"), "{warnings}");
+        assert!(!warnings.contains("_demo_call"), "{warnings}");
+
+        let broken = toml.replace("returns = \"i32\"", "");
+        let resp = tool_validate(json!(1), &json!({ "content": broken }));
+        assert_eq!(resp.result.unwrap()["valid"], json!(false));
+    }
+
+    #[test]
+    fn feature_spec_path_is_restricted_to_the_spec_directory() {
+        for path in ["/etc/hosts", "../../Cargo.toml", "Cargo.toml"] {
+            let resp = tool_get_feature_spec(json!(1), &json!({ "path": path }));
+            let result = resp.result.unwrap();
+            assert_eq!(result["success"], json!(false), "{path}: {result}");
+            assert!(result.get("content").is_none(), "{path} was read");
+        }
+    }
+
+    #[test]
+    fn specification_is_embedded() {
+        assert!(!spec_sections().is_empty());
+        assert!(spec_sections()
+            .iter()
+            .any(|s| s.title.contains("Expressions")));
+    }
+
+    #[test]
+    fn changelog_is_this_compilers_history() {
+        let resp = tool_get_changelog(json!(1), &json!({ "count": 3 }));
+        let result = resp.result.unwrap();
+        // Built from a git checkout: the compiler's own commits.
+        if result["success"] == json!(true) {
+            assert!(result["entries"].as_array().unwrap().len() <= 3);
+        } else {
+            assert!(result["error"].as_str().unwrap().contains("git history"));
+        }
     }
 }

@@ -10,12 +10,23 @@ use serde::{Deserialize, Serialize};
 /// Per JSON-RPC 2.0 spec, notifications omit the `id` field.
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
+    /// Must be "2.0"; checked before the request is handled.
     pub jsonrpc: String,
-    #[serde(default)]
+    /// `None` only when the `id` member is absent (a notification). A
+    /// request with `"id": null` is still a request and gets a response, so
+    /// a present `null` deserializes to `Some(Value::Null)`.
+    #[serde(default, deserialize_with = "deserialize_present_id")]
     pub id: Option<serde_json::Value>,
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
+}
+
+fn deserialize_present_id<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 /// JSON-RPC 2.0 response message
@@ -61,6 +72,7 @@ pub struct JsonRpcError {
 /// Standard JSON-RPC error codes
 pub mod error_codes {
     pub const PARSE_ERROR: i32 = -32700;
+    pub const INVALID_REQUEST: i32 = -32600;
     pub const METHOD_NOT_FOUND: i32 = -32601;
     pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;

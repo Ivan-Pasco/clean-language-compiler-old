@@ -324,21 +324,51 @@ pub fn extract_symbols_from_source(source: &str) -> AvailableSymbols {
     }
 }
 
+/// Words that start statements; a line beginning with one of them is never a
+/// function declaration (`return helper(2)`, `print(x)`, `if ready(x)`).
+const STATEMENT_KEYWORDS: &[&str] = &[
+    "return", "print", "printl", "input", "if", "else", "while", "for", "iterate", "in", "break",
+    "continue", "later", "test", "start", "require", "onError", "error", "and", "or", "not",
+];
+
+/// Parse one line as a Clean Language function declaration,
+/// `ReturnType name(Type param, ...)`. Returns `(name, signature)`.
+///
+/// Statements that merely contain a call (`return helper(2)`,
+/// `integer x = add(1, 2)`) are rejected: the first word must be a type,
+/// nothing may follow the closing parenthesis except a comment, and every
+/// parameter must be `Type name` (optionally with a default).
+fn parse_signature_line(line: &str) -> Option<(String, String)> {
+    let code = line.split("//").next().unwrap_or(line).trim();
+    let decl = Regex::new(r"^([A-Za-z_][\w<>\[\]:, ]*?)\s+([A-Za-z_]\w*)\s*\(([^()]*)\)$")
+        .expect("valid regex");
+    let caps = decl.captures(code)?;
+    let return_type = caps[1].trim();
+    let first_word = return_type.split(['<', ' ', ':']).next().unwrap_or("");
+    if STATEMENT_KEYWORDS.contains(&first_word) || return_type.contains('=') {
+        return None;
+    }
+    let param = Regex::new(r"^[A-Za-z_][\w<>\[\]:]*(\s*<[^>]*>)?\s+[A-Za-z_]\w*(\s*=.+)?$")
+        .expect("valid regex");
+    let params = caps[3].trim();
+    if !params.is_empty() && !params.split(',').all(|p| param.is_match(p.trim())) {
+        return None;
+    }
+    Some((caps[2].to_string(), code.to_string()))
+}
+
 /// Extract function definitions.
 ///
-/// Matches lines of the form:
-/// `    ReturnType functionName(params...)` or
-/// `ReturnType functionName(params...)`
-/// inside a `functions:` block.
+/// Matches declarations of the form `ReturnType functionName(Type param, ...)`
+/// inside a `functions:` block, and at the top level of the file.
 fn extract_functions(source: &str) -> Vec<FunctionSig> {
-    // Match indented function declarations: optional whitespace, return type, name, ( params )
-    let re = Regex::new(
-        r"(?m)^[ \t]*(?:void|integer|number|string|boolean|[\w<>\[\],\s]+?)\s+(\w+)\s*\(([^)]*)\)",
-    )
-    .expect("valid regex");
-
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let mut push = |name: String, signature: String| {
+        if seen.insert(name.clone()) {
+            results.push(FunctionSig { name, signature });
+        }
+    };
 
     // Walk through functions: block
     let mut in_functions_block = false;
@@ -354,58 +384,25 @@ fn extract_functions(source: &str) -> Vec<FunctionSig> {
             && !line.starts_with("    ")
             && !trimmed.is_empty()
             && !trimmed.starts_with('#')
+            && !trimmed.starts_with("//")
         {
             in_functions_block = false;
         }
-        if !in_functions_block {
-            continue;
-        }
-
-        // Only consider lines that look like function signatures (not bodies)
-        if let Some(cap) = re.find(trimmed) {
-            let sig_line = cap.as_str().trim().to_string();
-            // Extract function name from the capture
-            if let Some(name_cap) = Regex::new(r"(\w+)\s*\(")
-                .expect("valid regex")
-                .captures(&sig_line)
-            {
-                let name = name_cap[1].to_string();
-                // Skip common control-flow keywords that look like calls
-                let reserved = ["if", "while", "for", "return", "print", "printl", "input"];
-                if reserved.contains(&name.as_str()) {
-                    continue;
-                }
-                if seen.insert(name.clone()) {
-                    results.push(FunctionSig {
-                        name,
-                        signature: sig_line,
-                    });
-                }
+        if in_functions_block {
+            if let Some((name, signature)) = parse_signature_line(trimmed) {
+                push(name, signature);
             }
         }
     }
 
     // Also scan outside functions: block for top-level function declarations
     // (some files declare functions at the top level without a block header)
-    let re2 = Regex::new(
-        r"(?m)^(?:void|integer|number|string|boolean|[\w<>]+)\s+(\w+)\s*\(([^)]*)\)\s*$",
-    )
-    .expect("valid regex");
-
-    for cap in re2.captures_iter(source) {
-        let name = cap[1].to_string();
-        let reserved = [
-            "if", "while", "for", "return", "print", "printl", "input", "start",
-        ];
-        if reserved.contains(&name.as_str()) {
+    for line in source.lines() {
+        if line.starts_with([' ', '\t']) {
             continue;
         }
-        if seen.insert(name.clone()) {
-            let sig_line = cap[0].trim().to_string();
-            results.push(FunctionSig {
-                name,
-                signature: sig_line,
-            });
+        if let Some((name, signature)) = parse_signature_line(line) {
+            push(name, signature);
         }
     }
 
@@ -634,6 +631,32 @@ fn rewrite_signatures_block(content: &str, signatures: &HashMap<String, String>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn statements_with_calls_are_not_signatures() {
+        let source = "functions:\n\tinteger double(integer x)\n\t\treturn helper(2)\n\
+                      \tvoid show(string label, integer n = 1)\n\t\tprint(label)\n\
+                      \t\tinteger y = add(1, 2)\n\t\tif ready(y)\n\t\t\tprint(y)\n";
+        let names: Vec<String> = extract_functions(source)
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(names, vec!["double".to_string(), "show".to_string()]);
+    }
+
+    #[test]
+    fn signature_lines_keep_generic_types_and_drop_comments() {
+        assert_eq!(
+            parse_signature_line("list<integer> evens(list<integer> xs) // filter"),
+            Some((
+                "evens".to_string(),
+                "list<integer> evens(list<integer> xs)".to_string()
+            ))
+        );
+        assert_eq!(parse_signature_line("return helper(2)"), None);
+        assert_eq!(parse_signature_line("helper(2)"), None);
+        assert_eq!(parse_signature_line("integer total = sum(a, b)"), None);
+    }
 
     #[test]
     fn test_extract_frontmatter_present() {
