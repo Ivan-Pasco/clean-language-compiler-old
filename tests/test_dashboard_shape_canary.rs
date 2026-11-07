@@ -199,6 +199,49 @@ fn export_index(wat: &str, export_name: &str) -> Option<u32> {
     rest[..end].trim().parse().ok()
 }
 
+/// Index of an imported function, from its `(import "module" "name" (func (;N;)` line.
+fn import_index(wat: &str, module: &str, name: &str) -> Option<u32> {
+    let needle = format!("(import \"{}\" \"{}\" (func (;", module, name);
+    let line = wat.lines().find(|l| l.contains(&needle))?;
+    let start = line.find(&needle)? + needle.len();
+    let rest = &line[start..];
+    rest[..rest.find(';')?].trim().parse().ok()
+}
+
+/// The function a language call such as `db.query(...)` compiles to: the
+/// `expand_strings` wrapper defined around the bridge import (the one
+/// defined function whose body calls the import), or the import itself when
+/// the bridge takes its arguments as they are (`json.get`).
+///
+/// Fixed: these were found by export name (`db.query`, `json.get`,
+/// `mem_alloc`). The module now exports only what hosts look up
+/// (src/codegen/mir_codegen/exports.rs), so imports and wrappers are found
+/// by the bridge import they call instead.
+fn bridge_call_target(wat: &str, bridge_import: &str) -> Option<u32> {
+    let import = import_index(wat, "env", bridge_import)?;
+    let call = format!("call {}", import);
+    let dashboard = export_index(wat, "dashboard_page")?;
+    let mut current: Option<u32> = None;
+    let mut callers = std::collections::BTreeSet::new();
+    for line in wat.lines() {
+        if let Some(rest) = line.strip_prefix("  (func (;") {
+            current = rest.split(';').next().and_then(|n| n.parse().ok());
+        } else if line.trim() == call {
+            if let Some(f) = current {
+                callers.insert(f);
+            }
+        }
+    }
+    if callers.contains(&dashboard) {
+        return Some(import);
+    }
+    let mut wrappers = callers.into_iter();
+    match (wrappers.next(), wrappers.next()) {
+        (Some(wrapper), None) => Some(wrapper),
+        _ => None,
+    }
+}
+
 /// Slice out the body of a specific function (identified by its WASM
 /// function index) from the WAT.
 ///
@@ -295,8 +338,10 @@ fn dashboard_page_does_not_box_expand_strings_wrapper_args() {
 
     let dashboard_idx =
         export_index(&wat, "dashboard_page").expect("dashboard_page must be exported");
-    let mem_alloc_idx = export_index(&wat, "mem_alloc").expect("mem_alloc must be exported");
-    let db_query_idx = export_index(&wat, "db.query").expect("db.query must be exported");
+    let mem_alloc_idx =
+        import_index(&wat, "memory_runtime", "mem_alloc").expect("mem_alloc must be imported");
+    let db_query_idx =
+        bridge_call_target(&wat, "_db_query").expect("db.query must compile to a call");
 
     let body = function_body_by_index(&wat, dashboard_idx);
     let box_count = count_boxes_feeding(&body, mem_alloc_idx, db_query_idx);
@@ -325,17 +370,17 @@ fn dashboard_page_calls_json_get_and_db_query_via_plugin_wrappers() {
     };
     // Positive-shape assertion: the canary IS supposed to route through
     // the plugin wrappers, so the emitted WAT must contain calls to
-    // BOTH json.get and db.query. If either export is missing, the
+    // BOTH json.get and db.query. If either target is missing, the
     // plugin bridge registration broke — that would silently make the
     // "no boxing" assertion above pass by producing an empty function.
     let wat = wasm_to_wat(&wasm);
 
     let dashboard_idx =
         export_index(&wat, "dashboard_page").expect("dashboard_page must be exported");
-    let json_get_idx = export_index(&wat, "json.get")
-        .expect("json.get must be exported (plugin bridge wrapper registration failed?)");
-    let db_query_idx = export_index(&wat, "db.query")
-        .expect("db.query must be exported (plugin bridge wrapper registration failed?)");
+    let json_get_idx = bridge_call_target(&wat, "_json_get")
+        .expect("json.get must compile to a call (plugin bridge registration failed?)");
+    let db_query_idx = bridge_call_target(&wat, "_db_query")
+        .expect("db.query must compile to a call (plugin bridge registration failed?)");
 
     let body = function_body_by_index(&wat, dashboard_idx);
     let json_get_calls = count_calls(&body, json_get_idx);
