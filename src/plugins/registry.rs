@@ -626,6 +626,21 @@ impl PluginRegistry {
         slot_name: &str,
         context: &super::BuildContext,
     ) -> Result<Vec<super::PluginExpansion>, PluginError> {
+        Ok(self
+            .invoke_lifecycle_slot_by_plugin(slot_name, context)?
+            .into_iter()
+            .map(|(_, expansion)| expansion)
+            .collect())
+    }
+
+    /// `invoke_lifecycle_slot`, with each contribution paired with the name
+    /// of the plugin that produced it (so its output can be checked against
+    /// that plugin's declared bridge functions).
+    pub fn invoke_lifecycle_slot_by_plugin(
+        &self,
+        slot_name: &str,
+        context: &super::BuildContext,
+    ) -> Result<Vec<(String, super::PluginExpansion)>, PluginError> {
         // Take a fresh snapshot of the build state into a per-dispatch
         // context clone. Without this, `context.build_state` stays as
         // whatever the caller passed in (typically an empty map from
@@ -648,7 +663,10 @@ impl PluginRegistry {
             if !declared {
                 continue;
             }
-            results.push(plugin.invoke_lifecycle_slot(slot_name, &snapshotted)?);
+            results.push((
+                plugin.name().to_string(),
+                plugin.invoke_lifecycle_slot(slot_name, &snapshotted)?,
+            ));
         }
         Ok(results)
     }

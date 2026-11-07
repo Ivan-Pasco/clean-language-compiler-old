@@ -614,7 +614,7 @@ impl<'a> PluginExpander<'a> {
         expansion: super::PluginExpansion,
     ) {
         let mut statements =
-            self.absorb_expansion(expansion, Some(plugin_name), StartPlacement::Program);
+            self.absorb_expansion(expansion, Some(plugin_name), StartPlacement::Program, None);
         statements.append(&mut program.statements);
         program.statements = statements;
     }
@@ -736,12 +736,16 @@ impl<'a> PluginExpander<'a> {
     /// the v1 preamble merge semantics. Statements the slot emits (top-level
     /// and start-function body) are returned so the caller places them at the
     /// head of the start prelude.
-    fn merge_module_helpers(&self, program: &mut Program) -> Result<Vec<Statement>, PluginError> {
+    fn merge_module_helpers(
+        &mut self,
+        program: &mut Program,
+    ) -> Result<Vec<Statement>, PluginError> {
         let mut statements = Vec::new();
-        for expansion in self
+        for (plugin_name, expansion) in self
             .registry
-            .invoke_lifecycle_slot("module_helpers", &self.build_context)?
+            .invoke_lifecycle_slot_by_plugin("module_helpers", &self.build_context)?
         {
+            self.check_expansion_permissions(&plugin_name, &expansion, None);
             for mut func in expansion.functions {
                 if !program.functions.iter().any(|f| f.name == func.name) {
                     // Typed-emission helpers arrive without a source file.
@@ -805,14 +809,15 @@ impl<'a> PluginExpander<'a> {
     /// before splicing the assembled prelude into the start function.
     /// See `lifecycle.md` §3.
     fn collect_slot_statements(
-        &self,
+        &mut self,
         accumulator: &mut Vec<Statement>,
         slot: &str,
     ) -> Result<(), PluginError> {
-        for expansion in self
+        for (plugin_name, expansion) in self
             .registry
-            .invoke_lifecycle_slot(slot, &self.build_context)?
+            .invoke_lifecycle_slot_by_plugin(slot, &self.build_context)?
         {
+            self.check_expansion_permissions(&plugin_name, &expansion, None);
             let mut stmts = expansion.into_inline_statements();
             tag_lifecycle_output(&mut stmts);
             accumulator.extend(stmts);
@@ -1228,7 +1233,12 @@ impl<'a> PluginExpander<'a> {
             .get_handler(&block.name)
             .map(|h| h.name().to_string());
         tracing::trace!(block_name = %block.name, "Expanded framework block");
-        Ok(self.absorb_expansion(expansion, plugin_name.as_deref(), placement))
+        Ok(self.absorb_expansion(
+            expansion,
+            plugin_name.as_deref(),
+            placement,
+            Some(&block.content),
+        ))
     }
 
     /// The bare query form `<Model>.<verb>` with no body (frame-data.ebnf
@@ -1317,8 +1327,12 @@ impl<'a> PluginExpander<'a> {
         let plugin_name = self.plugin_name_for_block(&block.name);
         // Statements a v3 plugin emits via `_emit_statement_into_start` land
         // at the ORM block's splice point (e.g. `n = __Model_count(...)`).
-        let expanded =
-            self.absorb_expansion(expansion, plugin_name.as_deref(), StartPlacement::Inline);
+        let expanded = self.absorb_expansion(
+            expansion,
+            plugin_name.as_deref(),
+            StartPlacement::Inline,
+            Some(&block.content),
+        );
         tracing::trace!(
             block_name = %block.name,
             expanded_count = expanded.len(),
@@ -1349,9 +1363,17 @@ impl<'a> PluginExpander<'a> {
         mut expansion: super::PluginExpansion,
         plugin_name: Option<&str>,
         placement: StartPlacement,
+        user_source: Option<&str>,
     ) -> Vec<Statement> {
         if let Some(plugin_name) = plugin_name {
             stamp_plugin_origin_expansion(&mut expansion, plugin_name);
+        }
+
+        // Everything the plugin emitted — inline statements, the start
+        // function, functions, classes, capabilities, externals and state —
+        // must stay within the plugin's declared bridge functions.
+        if let Some(plugin_name) = plugin_name {
+            self.check_expansion_permissions(plugin_name, &expansion, user_source);
         }
 
         let mut inline = std::mem::take(&mut expansion.statements);
@@ -1362,18 +1384,6 @@ impl<'a> PluginExpander<'a> {
                     Some(ref mut existing) => existing.body.extend(start_fn.body),
                     None => self.pending_start = Some(start_fn),
                 },
-            }
-        }
-
-        if let Some(plugin_name) = plugin_name {
-            let violations = validate_plugin_permissions(self.registry, plugin_name, &inline);
-            if !violations.is_empty() {
-                tracing::warn!(
-                    plugin = %plugin_name,
-                    violation_count = violations.len(),
-                    "Plugin permission violations detected in expanded code"
-                );
-                self.permission_errors.extend(violations);
             }
         }
 
@@ -1389,6 +1399,27 @@ impl<'a> PluginExpander<'a> {
         self.blocks_expanded += 1;
         self.statements_generated += inline.len();
         inline
+    }
+
+    /// Collect the permission violations in `expansion`: calls to (or
+    /// `external:` imports of) bridge functions that `plugin_name` does not
+    /// declare in its `[bridge]` section.
+    fn check_expansion_permissions(
+        &mut self,
+        plugin_name: &str,
+        expansion: &super::PluginExpansion,
+        user_source: Option<&str>,
+    ) {
+        let violations =
+            validate_plugin_permissions(self.registry, plugin_name, expansion, user_source);
+        if !violations.is_empty() {
+            tracing::warn!(
+                plugin = %plugin_name,
+                violation_count = violations.len(),
+                "Plugin permission violations detected in expanded code"
+            );
+            self.permission_errors.extend(violations);
+        }
     }
 
     /// Expand framework blocks in functions
