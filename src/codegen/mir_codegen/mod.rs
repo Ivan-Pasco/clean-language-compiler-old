@@ -23,12 +23,15 @@ use std::collections::{HashMap, HashSet};
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 // Submodules
+mod any_unbox;
 mod blocks;
 mod class_json;
 mod control_flow;
 mod instructions;
 mod operands;
 mod utilities;
+
+use any_unbox::AnyUnboxTarget;
 
 // ---------------------------------------------------------------------------
 // Debug macro (must be in mod.rs so `use super::*` imports it in submodules)

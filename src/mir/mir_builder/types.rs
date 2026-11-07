@@ -628,28 +628,6 @@ impl MirBuilder {
         target_type: &ConcreteType,
         location: &SourceLocation,
     ) -> ValueId {
-        // `integer:64` is boxed as a `number` (see `emit_box_value`): unbox
-        // the f64 and convert it to the 64-bit target.
-        if matches!(target_type, ConcreteType::IntegerSized { bits: 64, .. }) {
-            let number_id = self.emit_unbox_any(context, value_id, &ConcreteType::Number, location);
-            let result_id = ValueId(context.function.next_value_id);
-            context.function.next_value_id += 1;
-            let target_type = self.convert_concrete_type(target_type);
-            self.register_temp_local(context, result_id, target_type.clone(), location.clone());
-            self.add_instruction(
-                context,
-                MirInstruction {
-                    dest: Some(result_id),
-                    operation: MirOperation::Cast {
-                        value: MirOperand::Value(number_id),
-                        target_type,
-                    },
-                    location: location.clone(),
-                },
-            );
-            return result_id;
-        }
-
         // A class target: the instance the box holds (the header tells an
         // instance from a JSON object), or null.
         if matches!(
@@ -681,6 +659,12 @@ impl MirBuilder {
             ConcreteType::Number => MirOperation::UnboxAnyToF64 {
                 value: MirOperand::Value(value_id),
             },
+            ConcreteType::IntegerSized { bits: 64, .. } => MirOperation::UnboxAnyToI64 {
+                value: MirOperand::Value(value_id),
+            },
+            ConcreteType::Boolean => MirOperation::UnboxAnyToBoolean {
+                value: MirOperand::Value(value_id),
+            },
             // For String targets, dispatch on the actual type tag so an Any
             // containing an Integer/Boolean/Number gets `int_to_string` /
             // `bool_to_string` / `float_to_string`, an Any containing a
@@ -695,7 +679,8 @@ impl MirBuilder {
             ConcreteType::String => MirOperation::AnyToString {
                 value: MirOperand::Value(value_id),
             },
-            // For Integer, Boolean, and most other types, use i32 unboxing
+            // Integer and every pointer-represented type (lists, pairs,
+            // instances without a JSON runtime): i32 unboxing
             _ => MirOperation::UnboxAnyToI32 {
                 value: MirOperand::Value(value_id),
             },

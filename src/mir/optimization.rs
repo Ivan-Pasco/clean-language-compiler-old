@@ -505,6 +505,9 @@ impl DeadCodeEliminationPass {
             MirOperation::UnboxAnyToI32 { value } => {
                 self.mark_operand_live(value, function);
             }
+            MirOperation::UnboxAnyToI64 { value } => {
+                self.mark_operand_live(value, function);
+            }
             MirOperation::UnboxAnyToF64 { value } => {
                 self.mark_operand_live(value, function);
             }

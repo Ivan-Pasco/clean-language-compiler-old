@@ -354,14 +354,20 @@ pub enum MirOperation {
         value: MirOperand,
     },
 
+    /// Unbox an `any` value to an `integer:64` (i64)
+    UnboxAnyToI64 {
+        /// The boxed any value
+        value: MirOperand,
+    },
+
     /// Unbox an `any` value to its f64 representation
     UnboxAnyToF64 {
         /// The boxed any value
         value: MirOperand,
     },
 
-    /// Unbox an `any` value to its boolean (i32 0/1) representation
-    /// Reads the type tag: tag 1 = false, tag 2 = true, tag 3 = number != 0.0
+    /// Unbox an `any` value to a boolean (i32 0/1): a boolean as is, a
+    /// number or integer when non-zero, a string when "true" or "1"
     UnboxAnyToBoolean {
         /// The boxed any value
         value: MirOperand,
