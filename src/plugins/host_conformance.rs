@@ -511,6 +511,16 @@ fn rust_type_to_wasm(t: &str) -> &'static str {
     }
     // Strip trailing punctuation noise and outer references.
     let t = t.trim_end_matches([',', ';']).trim();
+    // A host closure may return `Result<T>` to trap; its WASM result is `T`.
+    let unqualified = t
+        .trim_start_matches("wasmtime::")
+        .trim_start_matches("anyhow::");
+    if let Some(inner) = unqualified
+        .strip_prefix("Result<")
+        .and_then(|rest| rest.strip_suffix('>'))
+    {
+        return rust_type_to_wasm(inner);
+    }
     match t {
         "i32" | "u32" => "i32",
         "i64" | "u64" => "i64",
@@ -587,6 +597,14 @@ pub fn format_issues(issues: &[Issue], host_label: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trapping_result_returns_have_the_inner_wasm_type() {
+        assert_eq!(rust_type_to_wasm("Result<i32>"), "i32");
+        assert_eq!(rust_type_to_wasm("wasmtime::Result<f64>"), "f64");
+        assert_eq!(rust_type_to_wasm("Result<()>"), "void");
+        assert_eq!(rust_type_to_wasm("Result<String>"), "unknown");
+    }
 
     #[test]
     fn parses_simple_registration() {

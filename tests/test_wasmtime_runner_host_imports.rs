@@ -66,7 +66,11 @@ fn host_only_functions_trap_instead_of_returning_zero() {
                 call $get
                 drop))"#,
     );
-    assert!(!out.status.success(), "calling http_get must fail the run");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "calling http_get must fail the run"
+    );
     let all = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

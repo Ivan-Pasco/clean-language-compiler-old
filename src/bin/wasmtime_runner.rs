@@ -99,6 +99,16 @@ fn read_utf8(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> Result<String> 
     String::from_utf8(bytes.to_vec()).map_err(|e| wasmtime::Error::msg(e.to_string()))
 }
 
+/// Call an exported function; on a trap print the whole error chain (the
+/// trap message, e.g. an unavailable host function, sits under the WASM
+/// backtrace) and exit 1.
+fn call_or_exit(func: &wasmtime::Func, store: &mut Store<()>, results: &mut [wasmtime::Val]) {
+    if let Err(e) = func.call(&mut *store, &[], results) {
+        eprintln!("Error: {e:?}");
+        std::process::exit(1);
+    }
+}
+
 /// Trap raised when a program calls a host function this runner cannot
 /// provide.
 fn unavailable(name: &str) -> wasmtime::Error {
@@ -2021,7 +2031,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => wasmtime::Val::I32(0),
             })
             .collect();
-        func.call(&mut store, &[], &mut results)?;
+        call_or_exit(&func, &mut store, &mut results);
         println!("--- End Output ---");
         // Post-run heap footprint report — opt-in via CLN_WASMTIME_HEAP_REPORT=1.
         // Handy for SSR-style leak investigations where you want to compare
@@ -2055,7 +2065,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("🧪 Running tests (_run_tests)...");
         println!("--- Test Output ---");
         let mut results = vec![wasmtime::Val::I32(0)];
-        func.call(&mut store, &[], &mut results)?;
+        call_or_exit(&func, &mut store, &mut results);
         println!("--- End Test Output ---");
         if let Some(wasmtime::Val::I32(failures)) = results.first() {
             if *failures == 0 {
