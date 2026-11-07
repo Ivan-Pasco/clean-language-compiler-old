@@ -667,7 +667,14 @@ impl TokenParser {
                 loop {
                     let starts_parenthesized = matches!(self.current_kind(), TokenKind::LeftParen);
                     let element_location = self.current().location.clone();
-                    let element = Self::fold_signed_literal(self.parse_expression()?);
+                    let element = self.parse_expression()?;
+                    // Only a bare `-2` is a signed literal; `(-2)` stays the
+                    // parenthesized expression it was written as.
+                    let element = if starts_parenthesized {
+                        element
+                    } else {
+                        Self::fold_signed_literal(element)
+                    };
                     if !starts_parenthesized
                         && !matches!(element, Expression::Literal(_) | Expression::Variable(_))
                     {
