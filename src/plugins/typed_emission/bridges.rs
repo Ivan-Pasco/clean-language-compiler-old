@@ -102,16 +102,19 @@ macro_rules! arena {
 /// a second diagnostic." `HandleConsumed` remains routed through PLUGIN008.
 macro_rules! take_or_return {
     ($arena:expr, $result:expr) => {
+        take_or_return!($arena, $result, 0)
+    };
+    ($arena:expr, $result:expr, $err_return:expr) => {
         match $result {
             Ok(v) => v,
             Err(EmitError::StickyErrorActive) => {
                 // Already tripped — silent short-circuit.
-                return 0;
+                return $err_return;
             }
             Err(EmitError::HandleConsumed { handle }) => {
                 $arena.emit_plugin008(handle);
                 $arena.trip("take", format!("consumed handle {}", handle));
-                return 0;
+                return $err_return;
             }
             Err(e) => {
                 $arena.emit_diagnostic(EmitDiagnostic {
@@ -121,10 +124,23 @@ macro_rules! take_or_return {
                     span_json: String::new(),
                 });
                 $arena.trip("take", format!("{:?}", e));
-                return 0;
+                return $err_return;
             }
         }
     };
+}
+
+/// Fail the current bridge call: trip the sticky-error flag with a
+/// PLUGIN014 diagnostic naming `$bridge` and `$reason` (silent when the
+/// flag is already set) and return `$err_return` — 0 for handle-returning
+/// bridges, 1 for status-returning ones. Every early return of a bridge
+/// goes through here so a failed call is never mistaken for a quiet 0
+/// (typed-emission.md §3.15).
+macro_rules! fail_bridge {
+    ($caller:expr, $bridge:expr, $err_return:expr, $reason:expr) => {{
+        arena!($caller).trip($bridge, $reason);
+        return $err_return;
+    }};
 }
 
 /// PLUGIN018 gate: refuse the current structural bridge when the arena is
@@ -141,33 +157,6 @@ macro_rules! refuse_if_assemble_typed {
             return a.refuse_in_assemble_typed($bridge, $err_return);
         }
     }};
-}
-
-/// Same as `take_or_return!` but the result is `Option<T>` (nullable handle).
-macro_rules! take_opt_or_return {
-    ($arena:expr, $result:expr) => {
-        match $result {
-            Ok(v) => v,
-            Err(EmitError::StickyErrorActive) => {
-                return 0;
-            }
-            Err(EmitError::HandleConsumed { handle }) => {
-                $arena.emit_plugin008(handle);
-                $arena.trip("take", format!("consumed handle {}", handle));
-                return 0;
-            }
-            Err(e) => {
-                $arena.emit_diagnostic(EmitDiagnostic {
-                    severity: 2,
-                    code: e.error_code().to_string(),
-                    message: format!("typed-emission bridge error: {:?}", e),
-                    span_json: String::new(),
-                });
-                $arena.trip("take", format!("{:?}", e));
-                return 0;
-            }
-        }
-    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -413,20 +402,28 @@ fn register_expr_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         |mut caller: Caller<'_, PluginState>, ctx: i32, callee_lp: i32, args_json_lp: i32| -> i32 {
             let callee = match read_clean_string(&mut caller, callee_lp) {
                 Some(s) if !s.is_empty() => s,
-                _ => return 0,
+                _ => fail_bridge!(
+                    caller,
+                    "_expr_call",
+                    0,
+                    "callee name is empty or unreadable"
+                ),
             };
             let args_json = match read_clean_string(&mut caller, args_json_lp) {
                 Some(s) => s,
-                None => return 0,
+                None => fail_bridge!(caller, "_expr_call", 0, "argument list is unreadable"),
             };
             let handles = match decode_handle_array(&args_json) {
                 Ok(h) => h,
-                Err(_) => return 0,
+                Err(e) => fail_bridge!(
+                    caller,
+                    "_expr_call",
+                    0,
+                    format!("argument list is not a JSON array of handles: {:?}", e)
+                ),
             };
             let a = arena!(caller);
-            if a.check_ctx(ctx).is_err() {
-                return 0;
-            }
+            take_or_return!(a, a.check_ctx(ctx));
             let mut args = Vec::with_capacity(handles.len());
             for h in handles {
                 let e = take_or_return!(a, a.take_expr(ctx, h));
@@ -720,20 +717,28 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         |mut caller: Caller<'_, PluginState>, ctx: i32, callee_lp: i32, args_json_lp: i32| -> i32 {
             let callee = match read_clean_string(&mut caller, callee_lp) {
                 Some(s) if !s.is_empty() => s,
-                _ => return 0,
+                _ => fail_bridge!(
+                    caller,
+                    "_stmt_call",
+                    0,
+                    "callee name is empty or unreadable"
+                ),
             };
             let args_json = match read_clean_string(&mut caller, args_json_lp) {
                 Some(s) => s,
-                None => return 0,
+                None => fail_bridge!(caller, "_stmt_call", 0, "argument list is unreadable"),
             };
             let handles = match decode_handle_array(&args_json) {
                 Ok(h) => h,
-                Err(_) => return 0,
+                Err(e) => fail_bridge!(
+                    caller,
+                    "_stmt_call",
+                    0,
+                    format!("argument list is not a JSON array of handles: {:?}", e)
+                ),
             };
             let a = arena!(caller);
-            if a.check_ctx(ctx).is_err() {
-                return 0;
-            }
+            take_or_return!(a, a.check_ctx(ctx));
             let mut args = Vec::with_capacity(handles.len());
             for h in handles {
                 let e = take_or_return!(a, a.take_expr(ctx, h));
@@ -807,7 +812,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
                 Err(_) => return 0,
             };
             let a = arena!(caller);
-            let initializer = take_opt_or_return!(a, a.take_expr_opt(ctx, expr_handle));
+            let initializer = take_or_return!(a, a.take_expr_opt(ctx, expr_handle));
             let stmt = Statement::VariableDecl {
                 name,
                 type_,
@@ -832,7 +837,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
             let a = arena!(caller);
             let cond = take_or_return!(a, a.take_expr(ctx, cond_handle));
             let then_stmt = take_or_return!(a, a.take_stmt(ctx, then_handle));
-            let else_stmt = take_opt_or_return!(a, a.take_stmt_opt(ctx, else_handle));
+            let else_stmt = take_or_return!(a, a.take_stmt_opt(ctx, else_handle));
             // Flatten block into vec<Statement> for the AST If node.
             let then_branch = flatten_block(then_stmt);
             let else_branch = else_stmt.map(flatten_block);
@@ -902,7 +907,7 @@ fn register_stmt_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         "_stmt_return",
         |mut caller: Caller<'_, PluginState>, ctx: i32, expr_handle: i32| -> i32 {
             let a = arena!(caller);
-            let value = take_opt_or_return!(a, a.take_expr_opt(ctx, expr_handle));
+            let value = take_or_return!(a, a.take_expr_opt(ctx, expr_handle));
             let stmt = Statement::Return {
                 value,
                 location: None,
@@ -1494,43 +1499,37 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
             refuse_if_assemble_typed!(caller, "_emit_class", 1);
             let name = match read_clean_string(&mut caller, name_lp) {
                 Some(s) if !s.is_empty() => s,
-                _ => return 1,
+                _ => fail_bridge!(
+                    caller,
+                    "_emit_class",
+                    1,
+                    "class name is empty or unreadable"
+                ),
             };
             let class_json = match read_clean_string(&mut caller, class_json_lp) {
                 Some(s) => s,
-                None => return 1,
+                None => fail_bridge!(caller, "_emit_class", 1, "class description is unreadable"),
             };
             let desc = match decode_class_desc(&class_json) {
                 Ok(d) => d,
-                Err(_) => return 1,
+                Err(e) => fail_bridge!(
+                    caller,
+                    "_emit_class",
+                    1,
+                    format!("class description for `{}` is malformed: {:?}", name, e)
+                ),
             };
 
             let a = arena!(caller);
-            if a.check_ctx(ctx).is_err() {
-                return 1;
-            }
+            take_or_return!(a, a.check_ctx(ctx), 1);
 
             let mut class = Class::new(name, None);
             class.base_class = desc.parent;
 
             for fd in desc.fields {
-                let field_type = match a.take_type(ctx, fd.type_handle) {
-                    Ok(t) => t,
-                    Err(EmitError::HandleConsumed { handle }) => {
-                        a.emit_plugin008(handle);
-                        return 1;
-                    }
-                    Err(_) => return 1,
-                };
+                let field_type = take_or_return!(a, a.take_type(ctx, fd.type_handle), 1);
                 let field = if fd.default_expr_handle != 0 {
-                    let dv = match a.take_expr(ctx, fd.default_expr_handle) {
-                        Ok(e) => e,
-                        Err(EmitError::HandleConsumed { handle }) => {
-                            a.emit_plugin008(handle);
-                            return 1;
-                        }
-                        Err(_) => return 1,
-                    };
+                    let dv = take_or_return!(a, a.take_expr(ctx, fd.default_expr_handle), 1);
                     Field::new_with_default(fd.name, field_type, dv)
                 } else {
                     Field::new(fd.name, field_type)
@@ -1539,14 +1538,7 @@ fn register_declaration_emitters(linker: &mut Linker<PluginState>) -> Result<()>
             }
 
             for md in desc.methods {
-                let func = match a.take_pending_function(ctx, md.function_handle) {
-                    Ok(f) => f,
-                    Err(EmitError::HandleConsumed { handle }) => {
-                        a.emit_plugin008(handle);
-                        return 1;
-                    }
-                    Err(_) => return 1,
-                };
+                let func = take_or_return!(a, a.take_pending_function(ctx, md.function_handle), 1);
                 class.methods.push(func);
             }
 
