@@ -86,7 +86,8 @@ pub struct CodeGenerator {
     string_offset_counter: u32,
     string_pool: HashMap<String, u32>,
 
-    // Configuration for runtime imports
+    // False only for the unit-test generator (`new_minimal`): no runtime
+    // imports or helpers are registered.
     include_runtime_imports: bool,
 
     // Reachability-based tree-shaking for Layer 2/3 external-I/O imports.
@@ -117,7 +118,9 @@ impl CodeGenerator {
         Self::new_with_config(true)
     }
 
-    /// Create a new code generator for testing without runtime imports
+    /// Create a code generator without runtime imports or helpers, for unit
+    /// tests of individual code generation steps.
+    #[cfg(test)]
     pub fn new_minimal() -> Self {
         Self::new_with_config(false)
     }

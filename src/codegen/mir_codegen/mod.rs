@@ -408,106 +408,30 @@ pub struct MirCodeGenerator<'a> {
 // ---------------------------------------------------------------------------
 
 impl MirCodeGenerator<'_> {
-    /// Create a new MIR code generator with default (Server) target.
+    /// Create a MIR code generator for the Server target (used by tests and
+    /// `Default`; the compile pipeline picks its target with `with_target`).
     pub fn new() -> Self {
-        Self {
-            wasm_generator: CodeGenerator::new(),
-            value_to_local: HashMap::new(),
-            block_labels: HashMap::new(),
-            next_local_index: 0,
-            next_block_label: 0,
-            current_instructions: Vec::new(),
-            current_function: None,
-            string_pool: None,
-            value_to_string_index: HashMap::new(),
-            function_symbol_map: HashMap::new(),
-            symbol_to_function_index: HashMap::new(),
-            capability_dispatch: std::collections::BTreeMap::new(),
-            class_json_trees: std::collections::BTreeMap::new(),
-            function_signatures: HashMap::new(),
-            function_return_types: HashMap::new(),
-            value_to_type: HashMap::new(),
-            temp_local_types: HashMap::new(),
-            bridge_functions: Vec::new(),
-            used_bridge_function_names: HashSet::new(),
-            pending_bridge_wrappers: Vec::new(),
-            pending_host_mismatched_stubs: Vec::new(),
-            loop_context_stack: Vec::new(),
-            current_block_depth: 0,
-            outer_if_continuations: Vec::new(),
-            state_global_indices: HashMap::new(),
-            state_globals: Vec::new(),
-            target: crate::CompilationTarget::Server,
-            external_function_indices: HashMap::new(),
-            language_to_bridge_map: HashMap::new(),
-            language_to_helper_map: HashMap::new(),
-            handler_indices: HashMap::new(),
-            next_handler_index: 0,
-            bridge_param_types: HashMap::new(),
-            expand_strings_wrapper_names: HashSet::new(),
-            memory_tier: crate::MemoryTier::Standard,
-            referenced_function_indices: HashSet::new(),
-            user_defined_function_names: HashSet::new(),
-            host_class: None,
-            strict_hosts: false,
-            client_mode: false,
-            abi_version: None,
-            probe_callsites: Vec::new(),
-        }
+        Self::with_target(crate::CompilationTarget::Server)
     }
 
-    /// Create a new MIR code generator for testing (without runtime imports).
+    /// Create a MIR code generator without runtime imports or helpers, for
+    /// unit tests of individual code generation steps.
+    #[cfg(test)]
     pub fn new_minimal() -> Self {
-        Self {
-            wasm_generator: CodeGenerator::new_minimal(),
-            value_to_local: HashMap::new(),
-            block_labels: HashMap::new(),
-            next_local_index: 0,
-            next_block_label: 0,
-            current_instructions: Vec::new(),
-            current_function: None,
-            string_pool: None,
-            value_to_string_index: HashMap::new(),
-            function_symbol_map: HashMap::new(),
-            symbol_to_function_index: HashMap::new(),
-            capability_dispatch: std::collections::BTreeMap::new(),
-            class_json_trees: std::collections::BTreeMap::new(),
-            function_signatures: HashMap::new(),
-            function_return_types: HashMap::new(),
-            value_to_type: HashMap::new(),
-            temp_local_types: HashMap::new(),
-            bridge_functions: Vec::new(),
-            used_bridge_function_names: HashSet::new(),
-            pending_bridge_wrappers: Vec::new(),
-            pending_host_mismatched_stubs: Vec::new(),
-            loop_context_stack: Vec::new(),
-            current_block_depth: 0,
-            outer_if_continuations: Vec::new(),
-            state_global_indices: HashMap::new(),
-            state_globals: Vec::new(),
-            target: crate::CompilationTarget::Standalone,
-            external_function_indices: HashMap::new(),
-            language_to_bridge_map: HashMap::new(),
-            language_to_helper_map: HashMap::new(),
-            handler_indices: HashMap::new(),
-            next_handler_index: 0,
-            bridge_param_types: HashMap::new(),
-            expand_strings_wrapper_names: HashSet::new(),
-            memory_tier: crate::MemoryTier::Standard,
-            referenced_function_indices: HashSet::new(),
-            user_defined_function_names: HashSet::new(),
-            host_class: None,
-            strict_hosts: false,
-            client_mode: false,
-            abi_version: None,
-            probe_callsites: Vec::new(),
-        }
+        Self::with_generator(
+            CodeGenerator::new_minimal(),
+            crate::CompilationTarget::Standalone,
+        )
     }
 
     /// Create a new MIR code generator with a specific compilation target.
     pub fn with_target(target: crate::CompilationTarget) -> Self {
+        Self::with_generator(CodeGenerator::new(), target)
+    }
+
+    fn with_generator(wasm_generator: CodeGenerator, target: crate::CompilationTarget) -> Self {
         Self {
-            wasm_generator: CodeGenerator::new(),
+            wasm_generator,
             value_to_local: HashMap::new(),
             block_labels: HashMap::new(),
             next_local_index: 0,
