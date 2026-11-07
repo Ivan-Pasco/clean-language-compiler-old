@@ -649,8 +649,7 @@ fn extract_location_snippet(error: &crate::error::CompilerError, source: &str) -
         | crate::error::CompilerError::Memory { context }
         | crate::error::CompilerError::IO { context }
         | crate::error::CompilerError::Validation { context }
-        | crate::error::CompilerError::Module { context }
-        | crate::error::CompilerError::Testing { context } => {
+        | crate::error::CompilerError::Module { context } => {
             // Use pre-attached snippet if already present
             if let Some(ref s) = context.source_snippet {
                 return Some(s.clone());
@@ -861,17 +860,6 @@ fn extract_error_info(error: &crate::error::CompilerError) -> ErrorInfo {
             subsystem: Some("module".to_string()),
             message: context.message.clone(),
         },
-        crate::error::CompilerError::Testing { context } => ErrorInfo {
-            code: context
-                .error_code
-                .as_deref()
-                .unwrap_or("TST000")
-                .to_string(),
-            category: "testing".to_string(),
-            component: "compiler".to_string(),
-            subsystem: Some("testing".to_string()),
-            message: context.message.clone(),
-        },
         crate::error::CompilerError::LexError(lex_err) => {
             use crate::lexer::specification_lexer::LexError;
             let code = match lex_err {
@@ -925,8 +913,7 @@ fn location_of(error: &crate::error::CompilerError) -> Option<&crate::ast::Sourc
         | E::Memory { context }
         | E::IO { context }
         | E::Validation { context }
-        | E::Module { context }
-        | E::Testing { context } => context.location.as_ref(),
+        | E::Module { context } => context.location.as_ref(),
         E::LexError(_) => None,
         E::PluginError { location, .. } => location.as_ref(),
     }

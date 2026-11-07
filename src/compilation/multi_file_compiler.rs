@@ -141,11 +141,6 @@ impl MultiFileCompilerConfig {
         self
     }
 
-    /// Add a search path
-    pub fn add_search_path<P: AsRef<Path>>(&mut self, path: P) {
-        self.search_paths.push(path.as_ref().to_path_buf());
-    }
-
     /// Set the optimization level
     pub fn with_opt_level(mut self, level: u8) -> Self {
         self.opt_level = level;

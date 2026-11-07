@@ -200,10 +200,10 @@ pub fn describe(ctx: &DevContext) -> &str {
     }
 }
 
-/// Shared component list accessor for tests / tooling.
-pub fn component_dirs() -> &'static [&'static str] {
-    COMPONENT_DIRS
-}
+/// Serializes unit tests that set `CLEEN_TELEMETRY_FORCE` (env mutation is
+/// process-global).
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {

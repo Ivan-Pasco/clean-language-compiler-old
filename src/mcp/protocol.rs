@@ -46,11 +46,7 @@ impl JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id,
             result: None,
-            error: Some(JsonRpcError {
-                code,
-                message,
-                data: None,
-            }),
+            error: Some(JsonRpcError { code, message }),
         }
     }
 }
@@ -60,8 +56,6 @@ impl JsonRpcResponse {
 pub struct JsonRpcError {
     pub code: i32,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
 }
 
 /// Standard JSON-RPC error codes

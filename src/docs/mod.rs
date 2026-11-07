@@ -76,13 +76,6 @@ impl DocRef {
             DocRef::State(n) => format!("state/{}", n),
         }
     }
-
-    /// Returns the symbol name component (without the kind prefix).
-    pub fn name(&self) -> &str {
-        match self {
-            DocRef::Function(n) | DocRef::Class(n) | DocRef::State(n) => n.as_str(),
-        }
-    }
 }
 
 /// A `doc:` reference that could not be resolved against available symbols.
@@ -108,10 +101,6 @@ pub struct StaleRef {
 /// The outcome of validating one feature spec against a set of available symbols.
 #[derive(Debug)]
 pub struct ValidationResult {
-    /// Path to the feature spec file that was validated.
-    pub spec_path: PathBuf,
-    /// Value of the `feature:` frontmatter key.
-    pub feature_name: String,
     /// References in `doc:` that could not be resolved.
     pub broken_refs: Vec<BrokenRef>,
     /// References whose stored signatures are outdated.
@@ -296,8 +285,6 @@ impl DocSyncEngine {
         }
 
         ValidationResult {
-            spec_path: spec.path.clone(),
-            feature_name: spec.feature.clone(),
             broken_refs,
             stale_refs,
         }

@@ -469,8 +469,7 @@ impl TokenParser {
                     | CompilerError::IO { context }
                     | CompilerError::Runtime { context }
                     | CompilerError::Validation { context }
-                    | CompilerError::Module { context }
-                    | CompilerError::Testing { context } => {
+                    | CompilerError::Module { context } => {
                         for error in &self.errors[1..] {
                             context.related_errors.push(error.to_string());
                         }

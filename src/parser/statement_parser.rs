@@ -523,7 +523,6 @@ fn parse_standalone_on_error_statement(
                 error_type: crate::error::ErrorType::Syntax,
                 suggestions: vec!["Add indented statements after onError:".to_string()],
                 source_snippet: None,
-                stack_trace: Vec::new(),
                 severity: crate::error::ErrorSeverity::Error,
                 error_code: Some("P001".to_string()),
                 related_errors: Vec::new(),
