@@ -93,7 +93,6 @@ pub struct ResolvedHirFunction {
     pub return_type: Option<HirType>,
     pub body: ResolvedHirBlock,
     pub is_start: bool,
-    pub is_background: bool,
     pub location: SourceLocation,
 }
 
@@ -104,7 +103,6 @@ pub struct ResolvedHirParameter {
     pub symbol_id: SymbolId,
     pub param_type: HirType,
     pub default_value: Option<ResolvedHirExpression>,
-    pub is_variadic: bool,
     pub location: SourceLocation,
 }
 

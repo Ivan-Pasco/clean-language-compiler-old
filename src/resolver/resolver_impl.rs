@@ -618,7 +618,6 @@ impl NameResolver {
                 symbol_id: param_symbol_id,
                 param_type: cap_param.param_type.clone(),
                 default_value: None,
-                is_variadic: false,
                 location: cap_param.location.clone(),
             });
             argument_exprs.push(ResolvedHirExpression::Variable {
@@ -1248,34 +1247,8 @@ impl NameResolver {
         let previous_return_type = self.current_function_return_type.clone();
         self.current_function_return_type = function.return_type.clone();
 
-        // Resolve parameters
-        let mut resolved_parameters = Vec::new();
-        for param in &function.parameters {
-            let param_symbol_id = self.symbol_table.create_symbol(
-                param.name.clone(),
-                SymbolKind::Parameter {
-                    param_type: param.param_type.clone(),
-                },
-                function_scope,
-                param.location.clone(),
-            );
-
-            // Resolve default value expression if present
-            let default_value = if let Some(default_expr) = &param.default_value {
-                Some(self.resolve_expression(default_expr)?)
-            } else {
-                None
-            };
-
-            resolved_parameters.push(ResolvedHirParameter {
-                name: param.name.clone(),
-                symbol_id: param_symbol_id,
-                param_type: param.param_type.clone(),
-                default_value,
-                is_variadic: false, // Variadic not yet in language spec
-                location: param.location.clone(),
-            });
-        }
+        let resolved_parameters =
+            self.resolve_parameters(&function.parameters, function_scope, &function.location)?;
 
         // If this function belongs to a screen (owner_screen is set), temporarily
         // set current_screen so that SCOPE005 allows access to that screen's state.
@@ -1300,9 +1273,50 @@ impl NameResolver {
             return_type: function.return_type,
             body: resolved_body,
             is_start: function.is_start,
-            is_background: false, // Async detection handled by runtime analysis
             location: function.location,
         })
+    }
+
+    /// Declare `parameters` in `scope` and resolve their default values.
+    /// Two parameters of one function sharing a name is SEM003; the error
+    /// points at `owner` (the function), parameters carry no position.
+    fn resolve_parameters(
+        &mut self,
+        parameters: &[HirParameter],
+        scope: ScopeId,
+        owner: &SourceLocation,
+    ) -> Result<Vec<ResolvedHirParameter>, ()> {
+        let mut resolved = Vec::with_capacity(parameters.len());
+        for (index, param) in parameters.iter().enumerate() {
+            if parameters[..index].iter().any(|p| p.name == param.name) {
+                self.error_with_code(
+                    &format!("Parameter '{}' is declared more than once", param.name),
+                    "SEM003",
+                    owner.clone(),
+                );
+                return Err(());
+            }
+            let symbol_id = self.symbol_table.create_symbol(
+                param.name.clone(),
+                SymbolKind::Parameter {
+                    param_type: param.param_type.clone(),
+                },
+                scope,
+                param.location.clone(),
+            );
+            let default_value = match &param.default_value {
+                Some(default_expr) => Some(self.resolve_expression(default_expr)?),
+                None => None,
+            };
+            resolved.push(ResolvedHirParameter {
+                name: param.name.clone(),
+                symbol_id,
+                param_type: param.param_type.clone(),
+                default_value,
+                location: param.location.clone(),
+            });
+        }
+        Ok(resolved)
     }
 
     /// Resolve all classes
@@ -1564,34 +1578,11 @@ impl NameResolver {
         let previous_class = self.current_class;
         self.current_class = Some(class_id);
 
-        // Resolve parameters
-        let mut resolved_parameters = Vec::new();
-        for param in &constructor.parameters {
-            let param_symbol_id = self.symbol_table.create_symbol(
-                param.name.clone(),
-                SymbolKind::Parameter {
-                    param_type: param.param_type.clone(),
-                },
-                constructor_scope,
-                param.location.clone(),
-            );
-
-            // Resolve default value expression if present
-            let default_value = if let Some(default_expr) = &param.default_value {
-                Some(self.resolve_expression(default_expr)?)
-            } else {
-                None
-            };
-
-            resolved_parameters.push(ResolvedHirParameter {
-                name: param.name.clone(),
-                symbol_id: param_symbol_id,
-                param_type: param.param_type.clone(),
-                default_value,
-                is_variadic: false, // Variadic not yet in language spec
-                location: param.location.clone(),
-            });
-        }
+        let resolved_parameters = self.resolve_parameters(
+            &constructor.parameters,
+            constructor_scope,
+            &constructor.location,
+        )?;
 
         // Resolve body
         let resolved_body = self.resolve_block(&constructor.body)?;
@@ -1632,34 +1623,8 @@ impl NameResolver {
         let previous_return_type = self.current_function_return_type.clone();
         self.current_function_return_type = Some(method.return_type.clone());
 
-        // Resolve parameters
-        let mut resolved_parameters = Vec::new();
-        for param in &method.parameters {
-            let param_symbol_id = self.symbol_table.create_symbol(
-                param.name.clone(),
-                SymbolKind::Parameter {
-                    param_type: param.param_type.clone(),
-                },
-                method_scope,
-                param.location.clone(),
-            );
-
-            // Resolve default value expression if present
-            let default_value = if let Some(default_expr) = &param.default_value {
-                Some(self.resolve_expression(default_expr)?)
-            } else {
-                None
-            };
-
-            resolved_parameters.push(ResolvedHirParameter {
-                name: param.name.clone(),
-                symbol_id: param_symbol_id,
-                param_type: param.param_type.clone(),
-                default_value,
-                is_variadic: false, // Variadic not yet in language spec
-                location: param.location.clone(),
-            });
-        }
+        let resolved_parameters =
+            self.resolve_parameters(&method.parameters, method_scope, &method.location)?;
 
         // Resolve body
         let resolved_body = self.resolve_block(&method.body)?;
@@ -1722,7 +1687,6 @@ impl NameResolver {
                     symbol_id: SymbolId(10000 + idx), // Synthetic ID for external params
                     param_type: p.param_type.clone(),
                     default_value: None,
-                    is_variadic: false,
                     location: p.location.clone(),
                 })
                 .collect();
