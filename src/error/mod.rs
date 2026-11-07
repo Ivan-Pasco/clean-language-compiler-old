@@ -3,6 +3,7 @@ use std::fmt;
 
 use crate::ast::SourceLocation;
 
+pub mod catalog;
 pub mod reporter;
 
 pub use reporter::*;

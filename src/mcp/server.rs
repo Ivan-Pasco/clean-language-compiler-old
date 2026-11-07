@@ -1045,13 +1045,13 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "list_error_codes".to_string(),
-            description: "List all compiler error codes with descriptions. Covers syntax (SYN), semantic (SEM), compilation (COM), runtime (RUN), system (SYS), and user (USR) errors.".to_string(),
+            description: "List the error codes of the error-code registry (foundation/spec/error-codes.md) with their rule details.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
                     "category": {
                         "type": "string",
-                        "description": "Filter by category (syntax, semantic, compilation, runtime, system, user)"
+                        "description": "Filter by category (Syntax, Semantic, Scope, Function, Class, Index Access, State, Import, Plugin, Compilation, Build, Runtime)"
                     }
                 }),
                 required: vec![],
@@ -1802,10 +1802,23 @@ fn tool_diagnostics(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcR
     )
 }
 
-/// Tool: explain_error - Explain an error code
+/// JSON form of one error-catalog entry.
+fn error_code_json(entry: &crate::error::catalog::ErrorCodeInfo) -> serde_json::Value {
+    json!({
+        "code": entry.code,
+        "name": entry.name,
+        "category": entry.category,
+        "severity": entry.severity,
+        "summary": entry.summary,
+        "title": entry.title,
+        "details": entry.details,
+    })
+}
+
+/// Tool: explain_error - Explain an error code from the error-code registry
 fn tool_explain_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     let code = match args.get("code").and_then(|v| v.as_str()) {
-        Some(c) => c.to_uppercase(),
+        Some(c) => c.trim().to_uppercase(),
         None => {
             return JsonRpcResponse::error(
                 id,
@@ -1815,20 +1828,21 @@ fn tool_explain_error(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
         }
     };
 
-    let explanation = get_error_explanation(&code);
+    let Some(entry) = crate::error::catalog::lookup(&code) else {
+        return JsonRpcResponse::success(
+            id,
+            json!({
+                "success": false,
+                "code": code,
+                "error": "This error code is not in the error-code registry. Use `list_error_codes` to see all codes.",
+            }),
+        );
+    };
 
-    JsonRpcResponse::success(
-        id,
-        json!({
-            "code": code,
-            "title": explanation.title,
-            "description": explanation.description,
-            "example": explanation.example,
-            "fix": explanation.fix,
-            "spec_guidance": "If your code follows the specification exactly and still produces this error, it may be a compiler bug. Call `report_error` to report it. Do NOT work around the error by using alternative syntax, underscore bridge names, or non-spec patterns.",
-            "workaround": null
-        }),
-    )
+    let mut result = error_code_json(entry);
+    result["success"] = json!(true);
+    result["spec_guidance"] = json!("If your code follows the specification exactly and still produces this error, it may be a compiler bug. Call `report_error` to draft a GitHub issue for it. Do NOT work around the error by using alternative syntax, underscore bridge names, or non-spec patterns.");
+    JsonRpcResponse::success(id, result)
 }
 
 /// Tool: list_functions - List all functions in source
@@ -2800,46 +2814,31 @@ fn tool_list_builtins(id: serde_json::Value, args: &serde_json::Value) -> JsonRp
 /// Tool: list_error_codes - List all compiler error codes
 fn tool_list_error_codes(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     let category_filter = args.get("category").and_then(|v| v.as_str());
+    let catalog = crate::error::catalog::all();
 
-    let catalog = get_error_catalog();
-
-    let mut filtered_codes = Vec::new();
-    for entry in catalog.iter() {
-        // Filter by category if specified
-        if let Some(cat) = category_filter {
-            if !entry.category.eq_ignore_ascii_case(cat) {
-                continue;
-            }
-        }
-
-        filtered_codes.push(json!({
-            "code": entry.code,
-            "category": entry.category,
-            "title": entry.title,
-            "description": entry.description,
-            "example": entry.example,
-            "fix": entry.fix
-        }));
-    }
+    let filtered_codes: Vec<serde_json::Value> = catalog
+        .iter()
+        .filter(|entry| category_filter.is_none_or(|cat| entry.category.eq_ignore_ascii_case(cat)))
+        .map(error_code_json)
+        .collect();
 
     // Count by category
-    let mut category_counts = std::collections::HashMap::new();
-    for entry in catalog.iter() {
-        *category_counts.entry(entry.category).or_insert(0) += 1;
+    let mut category_counts: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for entry in catalog {
+        *category_counts.entry(entry.category.as_str()).or_insert(0) += 1;
     }
-
-    let summary = json!({
-        "total_codes": catalog.len(),
-        "by_category": category_counts
-    });
 
     JsonRpcResponse::success(
         id,
         json!({
             "success": true,
-            "summary": summary,
+            "summary": {
+                "total_codes": catalog.len(),
+                "by_category": category_counts
+            },
+            "count": filtered_codes.len(),
             "error_codes": filtered_codes,
-            "count": filtered_codes.len()
         }),
     )
 }
@@ -5727,37 +5726,6 @@ fn diagnostic_to_json(error: &crate::error::CompilerError, severity: &str) -> se
 fn base64_encode(bytes: &[u8]) -> String {
     use base64::{engine::general_purpose, Engine as _};
     general_purpose::STANDARD.encode(bytes)
-}
-
-/// Get error explanation (reused from main.rs)
-struct ErrorExplanation {
-    title: &'static str,
-    description: &'static str,
-    example: &'static str,
-    fix: &'static str,
-}
-
-fn get_error_explanation(code: &str) -> ErrorExplanation {
-    let catalog = get_error_catalog();
-
-    for entry in catalog.iter() {
-        if entry.code == code {
-            return ErrorExplanation {
-                title: entry.title,
-                description: entry.description,
-                example: entry.example,
-                fix: entry.fix,
-            };
-        }
-    }
-
-    // Default for unknown codes
-    ErrorExplanation {
-        title: "Unknown Error Code",
-        description: "This error code is not recognized.",
-        example: "",
-        fix: "Please check the error code or use 'list_error_codes' to see all available codes.",
-    }
 }
 
 // ============================================================================
