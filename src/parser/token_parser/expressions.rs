@@ -667,7 +667,7 @@ impl TokenParser {
                 loop {
                     let starts_parenthesized = matches!(self.current_kind(), TokenKind::LeftParen);
                     let element_location = self.current().location.clone();
-                    let element = self.parse_expression()?;
+                    let element = Self::fold_signed_literal(self.parse_expression()?);
                     if !starts_parenthesized
                         && !matches!(element, Expression::Literal(_) | Expression::Variable(_))
                     {
@@ -834,6 +834,22 @@ impl TokenParser {
                     None,
                 ))
             }
+        }
+    }
+
+    /// A minus sign directly applied to a numeric literal is part of the
+    /// literal (grammar.ebnf `decimal_integer = [ "-" ] , DIGIT , ...`), so
+    /// `[1, -2, 3]` is a list of literals.
+    fn fold_signed_literal(expr: Expression) -> Expression {
+        match expr {
+            Expression::Unary(crate::ast::UnaryOperator::Negate, operand) => match *operand {
+                Expression::Literal(Value::Integer(n)) => {
+                    Expression::Literal(Value::Integer(n.wrapping_neg()))
+                }
+                Expression::Literal(Value::Number(n)) => Expression::Literal(Value::Number(-n)),
+                other => Expression::Unary(crate::ast::UnaryOperator::Negate, Box::new(other)),
+            },
+            other => other,
         }
     }
 

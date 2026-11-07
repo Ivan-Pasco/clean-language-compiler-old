@@ -70,3 +70,24 @@ fn i64_min_literal() {
     let error = parse_err("start:\n\tinteger x = -9223372036854775809\n");
     assert!(error.to_string().contains("Invalid number"), "{}", error);
 }
+
+/// Negative numeric literals are list elements (grammar.ebnf
+/// `list_element = ... | number_literal`, which carries the sign).
+#[test]
+fn negative_numbers_in_list_literals() {
+    use clean_language_compiler::ast::{Expression, Value};
+    assert_eq!(
+        first_statement_value("start:\n\tlist<integer> xs = [1, -2, 3]\n"),
+        Expression::Literal(Value::List(vec![
+            Value::Integer(1),
+            Value::Integer(-2),
+            Value::Integer(3)
+        ]))
+    );
+    assert_eq!(
+        first_statement_value("start:\n\tlist<number> xs = [-1.5]\n"),
+        Expression::Literal(Value::List(vec![Value::Number(-1.5)]))
+    );
+    // Other unary expressions still need parentheses.
+    parse_err("start:\n\tinteger a = 1\n\tlist<integer> xs = [-a]\n");
+}
