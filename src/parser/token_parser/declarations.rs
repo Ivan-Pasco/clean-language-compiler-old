@@ -2036,9 +2036,15 @@ impl TokenParser {
                 Ok(stmt) => {
                     statements.push(stmt);
                     // One statement per line (grammar.ebnf `simple_indented_block`
-                    // separates statements with NEWLINE).
+                    // separates statements with NEWLINE). A declaration keyword
+                    // glued to the line gets its own "must start on its own
+                    // line" error from the check at the top of the loop.
+                    let declaration_follows = matches!(
+                        self.current_kind(),
+                        TokenKind::Function | TokenKind::Class | TokenKind::Functions
+                    );
                     if let Some(line) = self.previous_significant_line() {
-                        if !self.statement_ends_after(line) {
+                        if !declaration_follows && !self.statement_ends_after(line) {
                             let token = self.current();
                             self.errors.push(CompilerError::parse_error(
                                 format!(
