@@ -2167,12 +2167,15 @@ impl NameResolver {
         &mut self,
         expression: &HirExpression,
     ) -> Result<ResolvedHirExpression, ()> {
-        // Check recursion depth to prevent stack overflow
-        const MAX_EXPRESSION_RECURSION: usize = 50; // Increased from 5 to allow more complex expressions
+        // Bound the recursion so a pathologically nested expression is an
+        // error, not a stack overflow. The bound matches the type checker's
+        // (`infer_expression`); a 1000-term `+` chain resolves well within
+        // the main thread's stack.
+        const MAX_EXPRESSION_RECURSION: usize = 1000;
         if self.expression_recursion_depth >= MAX_EXPRESSION_RECURSION {
             self.error(
                 &format!(
-                    "Maximum expression recursion depth exceeded ({})",
+                    "Expression is nested too deeply (more than {} levels); split it into intermediate variables",
                     MAX_EXPRESSION_RECURSION
                 ),
                 expression.location().clone(),

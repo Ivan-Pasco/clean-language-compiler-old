@@ -1,0 +1,10 @@
+// Test: bugfixes/long_string_concat_chain
+// Grammar: additive_expression (left-associative chain)
+// Semantic: a long `+` chain is not rejected by an expression depth limit
+// Fixed in: compiler 0.33.174
+// Expected output:
+//   0123456789012345678901234567890123456789012345678901234
+
+start:
+	string s = "0" + "1" + "2" + "3" + "4" + "5" + "6" + "7" + "8" + "9" + "0" + "1" + "2" + "3" + "4" + "5" + "6" + "7" + "8" + "9" + "0" + "1" + "2" + "3" + "4" + "5" + "6" + "7" + "8" + "9" + "0" + "1" + "2" + "3" + "4" + "5" + "6" + "7" + "8" + "9" + "0" + "1" + "2" + "3" + "4" + "5" + "6" + "7" + "8" + "9" + "0" + "1" + "2" + "3" + "4"
+	print(s)
