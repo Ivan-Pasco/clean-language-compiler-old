@@ -85,6 +85,7 @@ fn make_block() -> FrameworkBlock {
             byte_start: None,
             byte_end: None,
         }),
+        body_location: None,
     }
 }
 

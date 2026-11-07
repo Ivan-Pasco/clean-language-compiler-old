@@ -78,6 +78,7 @@ fn build_block() -> clean_language_compiler::ast::FrameworkBlock {
             byte_start: None,
             byte_end: None,
         }),
+        body_location: None,
     }
 }
 

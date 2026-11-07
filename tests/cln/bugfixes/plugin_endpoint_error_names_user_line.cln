@@ -1,0 +1,26 @@
+// Test: bugfixes/plugin_endpoint_error_names_user_line
+// Grammar: frame-server.ebnf endpoint_block
+// Semantic: SEM002 undefined symbol (reported as SEM007) inside an endpoint
+//   handler names the handler line in this file, not a plugin fragment
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[SEM007]: Function 'noSuchHandlerHelper' not found
+//   plugin_endpoint_error_names_user_line.cln:22:
+//   integer b = noSuchHandlerHelper(a)
+
+plugins:
+	frame.server
+
+endpoints:
+	GET "/first":
+		integer a = 1
+		return json({ok: true, value: a})
+
+	GET "/second":
+		integer a = 1
+		integer b = noSuchHandlerHelper(a)
+		return json({ok: true, value: b})
+
+start:
+	printl("boot")

@@ -8373,6 +8373,7 @@ mod tests {
             content: String::new(),
             attributes: Vec::<FrameworkAttribute>::new(),
             location: None,
+            body_location: None,
         }
     }
 

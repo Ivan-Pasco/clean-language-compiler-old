@@ -303,6 +303,13 @@ pub struct EmitArena {
     /// then applies them in `multi_file_compiler.rs` before HIR/semantic
     /// analysis. See `foundation/spec/plugins/contracts/assemble.md` §6.1.
     pub transformed_sources: Vec<crate::plugins::plugin_abi::TransformedSource>,
+
+    /// Where code parsed by `_emit_stmt_from_source` / `_emit_expr_from_source`
+    /// came from: the user's block being expanded, so that code gets the
+    /// user's file and lines, or only the plugin (code it wrote itself).
+    /// Installed by the adapter before the call; `None` leaves the parser's
+    /// fragment locations as they are.
+    pub(crate) fragment_origin: Option<super::FragmentOrigin>,
 }
 
 /// Which plugin lifecycle slot an `EmitArena` is servicing.
@@ -352,6 +359,7 @@ impl EmitArena {
             slot,
             injected_sources: Vec::new(),
             transformed_sources: Vec::new(),
+            fragment_origin: None,
         }
     }
 

@@ -16,9 +16,11 @@ pub(crate) mod batch_builders;
 pub mod batch_schema;
 pub(crate) mod bridges;
 pub(crate) mod error;
+pub(crate) mod fragment_origin;
 pub(crate) mod json;
 pub mod ops;
 
 /// Re-export the public types used by `wasm_adapter.rs`.
 pub(crate) use arena::EmitArena;
 pub(crate) use bridges::register_typed_emission_bridges;
+pub(crate) use fragment_origin::FragmentOrigin;

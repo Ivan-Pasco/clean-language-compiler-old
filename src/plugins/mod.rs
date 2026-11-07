@@ -575,6 +575,7 @@ impl FrameworkBlockBuilder {
             content: self.content,
             attributes: self.attributes,
             location: self.location,
+            body_location: None,
         }
     }
 }

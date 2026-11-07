@@ -1513,6 +1513,7 @@ mod tests {
             content: "content".to_string(),
             attributes: vec![],
             location: None,
+            body_location: None,
         };
 
         let result = registry.expand(&block);

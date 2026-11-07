@@ -82,6 +82,7 @@ fn orm_block(content: &str) -> FrameworkBlock {
         content: content.to_string(),
         attributes: Vec::new(),
         location: None,
+        body_location: None,
     }
 }
 
@@ -140,6 +141,7 @@ fn v1_negative_result_pointer_is_an_error_not_a_panic() {
         content: "body".to_string(),
         attributes: Vec::new(),
         location: None,
+        body_location: None,
     };
     let result =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plugin.expand_full(&block)));

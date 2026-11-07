@@ -1,0 +1,33 @@
+// Test: bugfixes/plugin_orm_query_type_error_names_user_line
+// Grammar: frame-data.ebnf query_expression
+// Semantic: SEM004 type annotation contradicts the initializer; for a
+//   `Model.find:` block in a class method the error names the declaration
+//   line in this file, not a plugin fragment
+// Fixed in: compiler 0.33.174
+// Expected output:
+// Expected error:
+//   error[SEM004]: Type annotation 'string' contradicts
+//   plugin_orm_query_type_error_names_user_line.cln:29:
+//   string result = Note.find:
+
+plugins:
+	frame.data
+	frame.server
+
+data Note:
+	fields:
+		integer id primary generated
+		string title required
+		integer priority
+
+start:
+	printl("boot")
+
+class Notes
+	functions:
+		string urgent()
+			string result = Note.find:
+				where:
+					priority == 1
+			return result
+

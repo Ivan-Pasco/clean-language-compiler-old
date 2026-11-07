@@ -101,6 +101,7 @@ fn build_block(content: &str) -> FrameworkBlock {
             byte_start: None,
             byte_end: None,
         }),
+        body_location: None,
     }
 }
 

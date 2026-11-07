@@ -568,13 +568,18 @@ impl WasmPluginAdapter {
     fn call_expand_typed(
         &self,
         export_name: &str,
+        block: &FrameworkBlock,
         block_name: &str,
         attributes: &str,
         body: &str,
     ) -> Result<PluginExpansion> {
         let what = format!("typed emission of block `{}`", block_name);
         let ctx = self.next_ctx_handle();
-        let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
+        let mut arena = crate::plugins::typed_emission::EmitArena::new(ctx);
+        arena.fragment_origin = Some(crate::plugins::typed_emission::FragmentOrigin::new(
+            &self.name,
+            Some(block),
+        ));
         let (arena, status) = self.run_typed_call(&what, arena, |store, instance, memory| {
             let block_name_ptr = self.find_or_write_string(store, instance, memory, block_name)?;
             let attributes_ptr = self.find_or_write_string(store, instance, memory, attributes)?;
@@ -712,6 +717,13 @@ impl WasmPluginAdapter {
             &Memory,
         ) -> Result<wasmtime::Result<i32>>,
     ) -> Result<(crate::plugins::typed_emission::EmitArena, i32)> {
+        let mut arena = arena;
+        if arena.fragment_origin.is_none() {
+            // No user block: code parsed from fragments is the plugin's.
+            arena.fragment_origin = Some(crate::plugins::typed_emission::FragmentOrigin::new(
+                &self.name, None,
+            ));
+        }
         let mut state = PluginState::new();
         state.emit_arena = Some(arena);
         let mut store = self.create_store_with_state(state);
@@ -3159,6 +3171,7 @@ impl WasmPluginAdapter {
             let attributes_str = build_attributes_json(&block.attributes, extra_attrs);
             return self.call_expand_typed(
                 &dispatch.export,
+                block,
                 block_name,
                 &attributes_str,
                 &actual_body,
@@ -5399,6 +5412,7 @@ mod tests {
             content: "print(\"hello from the input\")".to_string(),
             attributes: Vec::new(),
             location: None,
+            body_location: None,
         };
         let statements = adapter
             .call_expand(&block)
@@ -5712,6 +5726,7 @@ mod tests {
                 byte_start: None,
                 byte_end: None,
             }),
+            body_location: None,
         };
 
         let stmts = registry.expand(&block).expect("expand_block must not fail");
@@ -5771,6 +5786,7 @@ mod tests {
                 byte_start: None,
                 byte_end: None,
             }),
+            body_location: None,
         };
 
         // expand_full routes through call_expand_full which calls html_block_to_code
