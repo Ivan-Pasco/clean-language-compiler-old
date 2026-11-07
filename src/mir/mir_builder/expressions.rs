@@ -995,43 +995,13 @@ impl MirBuilder {
                 {
                     let arg_id = self.build_expression(context, &arguments[0])?;
 
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    return self.emit_builtin_call(
                         context,
-                        result_id,
+                        "float_to_string",
+                        vec![MirOperand::Value(arg_id)],
                         MirType::Ptr(Box::new(MirType::U8)),
-                        expression.location.clone(),
+                        &expression.location,
                     );
-
-                    let symbol_id = self
-                        .symbol_table
-                        .lookup_symbol("float_to_string")
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "float_to_string not found in symbol table for toString(number) early dispatch"
-                            );
-                            SymbolId(0)
-                        });
-
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Call {
-                            function: if symbol_id.0 == 0 {
-                                MirOperand::NamedFunction {
-                                    name: "float_to_string".to_string(),
-                                    symbol_id: SymbolId(0),
-                                }
-                            } else {
-                                MirOperand::Function(symbol_id)
-                            },
-                            arguments: vec![MirOperand::Value(arg_id)],
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // JSON calls lower to the Layer 2 host bridges
@@ -1718,43 +1688,13 @@ impl MirBuilder {
                 if matches!(&receiver_actual_type, ConcreteType::Integer)
                     && method_name == "toString"
                 {
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    return self.emit_builtin_call(
                         context,
-                        result_id,
+                        "int_to_string",
+                        vec![MirOperand::Value(receiver_id)],
                         MirType::Ptr(Box::new(MirType::U8)),
-                        expression.location.clone(),
+                        &expression.location,
                     );
-
-                    let symbol_id = self
-                        .symbol_table
-                        .lookup_symbol("int_to_string")
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "int_to_string not found in symbol table for Integer.toString() early dispatch"
-                            );
-                            SymbolId(0)
-                        });
-
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Call {
-                            function: if symbol_id.0 == 0 {
-                                MirOperand::NamedFunction {
-                                    name: "int_to_string".to_string(),
-                                    symbol_id: SymbolId(0),
-                                }
-                            } else {
-                                MirOperand::Function(symbol_id)
-                            },
-                            arguments: vec![MirOperand::Value(receiver_id)],
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // NOTE: Handle Number.toString() EARLY — same rationale as the
@@ -1772,43 +1712,13 @@ impl MirBuilder {
                 if matches!(&receiver_actual_type, ConcreteType::Number)
                     && method_name == "toString"
                 {
-                    let result_id = ValueId(context.function.next_value_id);
-                    context.function.next_value_id += 1;
-
-                    self.register_temp_local(
+                    return self.emit_builtin_call(
                         context,
-                        result_id,
+                        "float_to_string",
+                        vec![MirOperand::Value(receiver_id)],
                         MirType::Ptr(Box::new(MirType::U8)),
-                        expression.location.clone(),
+                        &expression.location,
                     );
-
-                    let symbol_id = self
-                        .symbol_table
-                        .lookup_symbol("float_to_string")
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "float_to_string not found in symbol table for Number.toString() early dispatch"
-                            );
-                            SymbolId(0)
-                        });
-
-                    let instruction = MirInstruction {
-                        dest: Some(result_id),
-                        operation: MirOperation::Call {
-                            function: if symbol_id.0 == 0 {
-                                MirOperand::NamedFunction {
-                                    name: "float_to_string".to_string(),
-                                    symbol_id: SymbolId(0),
-                                }
-                            } else {
-                                MirOperand::Function(symbol_id)
-                            },
-                            arguments: vec![MirOperand::Value(receiver_id)],
-                        },
-                        location: expression.location.clone(),
-                    };
-                    self.add_instruction(context, instruction);
-                    return Ok(result_id);
                 }
 
                 // NOTE: Handle Any.toInteger() EARLY for chained calls
@@ -2440,105 +2350,33 @@ impl MirBuilder {
                     match (receiver_type, method_name.as_str()) {
                         // Integer to String conversion - call int_to_string
                         (ConcreteType::Integer, "toString") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-
-                            // Register the result as Ptr(U8) to distinguish string pointers from integers
-                            self.register_temp_local(
+                            return self.emit_builtin_call(
                                 context,
-                                result_id,
+                                "int_to_string",
+                                vec![MirOperand::Value(receiver_id)],
                                 MirType::Ptr(Box::new(MirType::U8)),
-                                expression.location.clone(),
+                                &expression.location,
                             );
-
-                            let symbol_id = self
-                                .symbol_table
-                                .lookup_symbol("int_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("int_to_string not found in symbol table, using SymbolId(166)");
-                                    SymbolId(166)
-                                });
-
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::Function(symbol_id),
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
-                            };
-
-                            self.add_instruction(context, instruction);
-
-                            return Ok(result_id);
                         }
                         // Number to String conversion - call float_to_string
                         (ConcreteType::Number, "toString") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-
-                            // Register the result as Ptr(U8) to distinguish string pointers from numbers
-                            self.register_temp_local(
+                            return self.emit_builtin_call(
                                 context,
-                                result_id,
+                                "float_to_string",
+                                vec![MirOperand::Value(receiver_id)],
                                 MirType::Ptr(Box::new(MirType::U8)),
-                                expression.location.clone(),
+                                &expression.location,
                             );
-
-                            let symbol_id = self
-                                .symbol_table
-                                .lookup_symbol("float_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                                    SymbolId(167)
-                                });
-
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::Function(symbol_id),
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
-                            };
-
-                            self.add_instruction(context, instruction);
-
-                            return Ok(result_id);
                         }
                         // Boolean to String conversion - call bool_to_string
                         (ConcreteType::Boolean, "toString") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-
-                            // Register the result as Ptr(U8) to distinguish string pointers from booleans
-                            self.register_temp_local(
+                            return self.emit_builtin_call(
                                 context,
-                                result_id,
+                                "bool_to_string",
+                                vec![MirOperand::Value(receiver_id)],
                                 MirType::Ptr(Box::new(MirType::U8)),
-                                expression.location.clone(),
+                                &expression.location,
                             );
-
-                            let symbol_id = self
-                                .symbol_table
-                                .lookup_symbol("bool_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("bool_to_string not found in symbol table, using SymbolId(165)");
-                                    SymbolId(165)
-                                });
-
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Call {
-                                    function: MirOperand::Function(symbol_id),
-                                    arguments: vec![MirOperand::Value(receiver_id)],
-                                },
-                                location: expression.location.clone(),
-                            };
-
-                            self.add_instruction(context, instruction);
-
-                            return Ok(result_id);
                         }
                         // Any to String conversion with proper type dispatch
                         // Uses the boxed any value's type tag to call the correct toString function
@@ -2779,29 +2617,20 @@ impl MirBuilder {
                         // Type conversion methods - look up correct SymbolIds from symbol table
                         (ConcreteType::Integer, "toString") => {
                             // Call int_to_string with the integer value
-                            let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("int_to_string not found in symbol table, using SymbolId(166)");
-                                    SymbolId(166)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("int_to_string", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Number, "toString") => {
                             // Call float_to_string with the float value
-                            let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                                    SymbolId(167)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("float_to_string", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::Boolean, "toString") => {
                             // Call bool_to_string with the boolean value
-                            let symbol_id = self.symbol_table.lookup_symbol("bool_to_string")
-                                .unwrap_or_else(|| {
-                                    warn!("bool_to_string not found in symbol table, using SymbolId(165)");
-                                    SymbolId(165)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("bool_to_string", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         // Generic type with toString() - infer from MIR type
@@ -2823,20 +2652,14 @@ impl MirBuilder {
                             match mir_type {
                                 MirType::I32 => {
                                     // Call int_to_string
-                                    let symbol_id = self.symbol_table.lookup_symbol("int_to_string")
-                                        .unwrap_or_else(|| {
-                                            warn!("int_to_string not found in symbol table, using SymbolId(166)");
-                                            SymbolId(166)
-                                        });
+                                    let symbol_id =
+                                        self.builtin_symbol("int_to_string", &expression.location)?;
                                     (symbol_id, vec![MirOperand::Value(receiver_id)])
                                 }
                                 MirType::F64 => {
                                     // Call float_to_string
-                                    let symbol_id = self.symbol_table.lookup_symbol("float_to_string")
-                                        .unwrap_or_else(|| {
-                                            warn!("float_to_string not found in symbol table, using SymbolId(167)");
-                                            SymbolId(167)
-                                        });
+                                    let symbol_id = self
+                                        .builtin_symbol("float_to_string", &expression.location)?;
                                     (symbol_id, vec![MirOperand::Value(receiver_id)])
                                 }
                                 _ => {
@@ -2849,48 +2672,43 @@ impl MirBuilder {
                         // String methods - look up correct SymbolIds from symbol table
                         (ConcreteType::String, "length") => {
                             // Call string.length with the string value
-                            let symbol_id = self.symbol_table.lookup_symbol("string.length")
-                                .unwrap_or_else(|| {
-                                    warn!("string.length not found in symbol table, using SymbolId(67)");
-                                    SymbolId(67)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("string.length", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "toUpperCase") => {
                             // Call string.toUpperCase
-                            let symbol_id = self.symbol_table.lookup_symbol("string.toUpperCase")
-                                .unwrap_or_else(|| {
-                                    warn!("string.toUpperCase not found in symbol table, using SymbolId(74)");
-                                    SymbolId(74)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("string.toUpperCase", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "toLowerCase") => {
                             // Call string.toLowerCase
-                            let symbol_id = self.symbol_table.lookup_symbol("string.toLowerCase")
-                                .unwrap_or_else(|| {
-                                    warn!("string.toLowerCase not found in symbol table, using SymbolId(75)");
-                                    SymbolId(75)
-                                });
+                            let symbol_id =
+                                self.builtin_symbol("string.toLowerCase", &expression.location)?;
                             (symbol_id, vec![MirOperand::Value(receiver_id)])
                         }
                         (ConcreteType::String, "substring") => {
-                            // Call string_substring (SymbolId 49)
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
                                 args.push(MirOperand::Value(arg_id));
                             }
-                            (SymbolId(49), args)
+                            (
+                                self.builtin_symbol("string.substring", &expression.location)?,
+                                args,
+                            )
                         }
                         (ConcreteType::String, "contains") => {
-                            // Call string_contains (SymbolId 52)
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
                                 args.push(MirOperand::Value(arg_id));
                             }
-                            (SymbolId(52), args)
+                            (
+                                self.builtin_symbol("string.contains", &expression.location)?,
+                                args,
+                            )
                         }
                         (ConcreteType::String, "indexOf") => {
                             // indexOf has two variants:
@@ -3017,15 +2835,8 @@ impl MirBuilder {
                         }
                         (ConcreteType::Array(_), "setFlags") => {
                             // Store compile-time-known behavior flags at offset 12.
-                            let set_flags_symbol = self
-                                .symbol_table
-                                .lookup_symbol("list.setFlags")
-                                .unwrap_or_else(|| {
-                                    warn!(
-                                        "list.setFlags not found in symbol table, using fallback"
-                                    );
-                                    *method_symbol
-                                });
+                            let set_flags_symbol =
+                                self.builtin_symbol("list.setFlags", &expression.location)?;
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
@@ -3034,14 +2845,8 @@ impl MirBuilder {
                             (set_flags_symbol, args)
                         }
                         (ConcreteType::Array(_), "get") => {
-                            // Call list_get - look up from symbol table
-                            let list_get_symbol = self
-                                .symbol_table
-                                .lookup_symbol("list_get")
-                                .unwrap_or_else(|| {
-                                    warn!("list_get not found in symbol table, using fallback");
-                                    *method_symbol
-                                });
+                            let list_get_symbol =
+                                self.builtin_symbol("list_get", &expression.location)?;
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;
@@ -3064,15 +2869,7 @@ impl MirBuilder {
                             } else {
                                 "list.indexOf.string"
                             };
-                            let str_symbol =
-                                self.symbol_table.lookup_symbol(alias).unwrap_or_else(|| {
-                                    warn!(
-                                        "{} not found in symbol table, falling back to \
-                                         pointer-equality variant (bug baf3ccc5 may surface)",
-                                        alias
-                                    );
-                                    *method_symbol
-                                });
+                            let str_symbol = self.builtin_symbol(alias, &expression.location)?;
                             let mut args = vec![MirOperand::Value(receiver_id)];
                             for arg in arguments {
                                 let arg_id = self.build_expression(context, arg)?;

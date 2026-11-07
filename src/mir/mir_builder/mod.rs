@@ -33,37 +33,6 @@ mod helpers;
 mod statements;
 mod types;
 
-/// Result of MIR building process
-#[derive(Debug)]
-pub struct MirBuildResult {
-    /// The generated MIR program
-    pub program: MirProgram,
-
-    /// Warnings generated during lowering
-    pub warnings: Vec<CompilerError>,
-
-    /// Statistics about the lowering process
-    pub stats: MirBuildStats,
-}
-
-/// Statistics about the MIR building process
-#[derive(Debug, Default)]
-pub struct MirBuildStats {
-    /// Number of functions lowered
-    pub functions_lowered: usize,
-
-    /// Number of basic blocks created
-    pub basic_blocks_created: usize,
-
-    /// Number of SSA values created
-    pub ssa_values_created: usize,
-
-    /// Number of phi nodes inserted
-    pub phi_nodes_inserted: usize,
-
-    /// Build time in microseconds
-    pub build_time_us: u64,
-}
 use helpers::BranchArm;
 
 /// MIR builder - converts TAST to MIR
@@ -80,12 +49,6 @@ pub struct MirBuilder {
 
     /// Symbol table for looking up constructors, methods, etc.
     pub(super) symbol_table: std::sync::Arc<crate::resolver::GlobalSymbolTable>,
-
-    /// Collected warnings
-    pub(super) warnings: Vec<CompilerError>,
-
-    /// Build statistics
-    pub(super) stats: MirBuildStats,
 
     /// All classes in the program for inheritance lookups
     pub(super) all_classes: Vec<TastClass>,
@@ -273,8 +236,6 @@ impl MirBuilder {
             string_pool: Vec::new(),
             string_indices: HashMap::new(),
             symbol_table,
-            warnings: Vec::new(),
-            stats: MirBuildStats::default(),
             all_classes: Vec::new(),
             all_functions: Vec::new(),
             state_variables,
@@ -302,9 +263,7 @@ impl MirBuilder {
     }
 
     /// Build MIR from TAST program
-    pub fn build(&mut self, tast: TastProgram) -> Result<MirBuildResult, Vec<CompilerError>> {
-        let start_time = std::time::Instant::now();
-
+    pub fn build(&mut self, tast: TastProgram) -> Result<MirProgram, Vec<CompilerError>> {
         // Store all classes for inheritance lookups
         self.all_classes = tast.classes.clone();
 
@@ -620,6 +579,10 @@ impl MirBuilder {
             "MIR symbol_name_map ready (includes synthetic SymbolIds for builtins, list ops, and serializers)"
         );
 
+        // Every function that fails to lower makes the whole build fail; the
+        // errors of all functions are reported together.
+        let mut lowering_errors: Vec<CompilerError> = Vec::new();
+
         // Lower all functions
         for function in tast.functions {
             let symbol_id = function.symbol_id;
@@ -635,10 +598,9 @@ impl MirBuilder {
                     mir_program
                         .functions
                         .insert(mir_function.symbol_id, mir_function);
-                    self.stats.functions_lowered += 1;
                 }
                 Err(errors) => {
-                    self.warnings.extend(errors);
+                    lowering_errors.extend(errors);
                 }
             }
         }
@@ -657,10 +619,9 @@ impl MirBuilder {
                     mir_program
                         .functions
                         .insert(mir_function.symbol_id, mir_function);
-                    self.stats.functions_lowered += 1;
                 }
                 Err(errors) => {
-                    self.warnings.extend(errors);
+                    lowering_errors.extend(errors);
                 }
             }
         }
@@ -677,7 +638,6 @@ impl MirBuilder {
                             .symbol_name_map
                             .insert(function.symbol_id, function.name.clone());
                         mir_program.functions.insert(function.symbol_id, function);
-                        self.stats.functions_lowered += 1;
                     }
                 }
                 Err(errors) => {
@@ -694,7 +654,8 @@ impl MirBuilder {
             }
         }
         if !class_errors.is_empty() {
-            return Err(class_errors);
+            lowering_errors.extend(class_errors);
+            return Err(lowering_errors);
         }
 
         // Generate the JSON object builder of every class.
@@ -715,7 +676,6 @@ impl MirBuilder {
                     .symbol_name_map
                     .insert(sym_id, mir_fn.name.clone());
                 mir_program.functions.insert(sym_id, mir_fn);
-                self.stats.functions_lowered += 1;
                 if let Some(&class_id) = self.class_ids.get(&class.symbol_id) {
                     mir_program.class_json_trees.insert(class_id, sym_id);
                 }
@@ -725,7 +685,6 @@ impl MirBuilder {
                         .symbol_name_map
                         .insert(list_sym_id, list_fn.name.clone());
                     mir_program.functions.insert(list_sym_id, list_fn);
-                    self.stats.functions_lowered += 1;
                 }
             }
         }
@@ -765,7 +724,6 @@ impl MirBuilder {
                         .symbol_name_map
                         .insert(*symbol_id, fn_name.clone());
                     mir_program.functions.insert(*symbol_id, mir_function);
-                    self.stats.functions_lowered += 1;
                     debug!(
                         target = %target_name,
                         symbol_id = symbol_id.0,
@@ -778,7 +736,7 @@ impl MirBuilder {
                         error_count = errors.len(),
                         "Failed to lower watch block body"
                     );
-                    self.warnings.extend(errors);
+                    lowering_errors.extend(errors);
                 }
             }
         }
@@ -825,7 +783,6 @@ impl MirBuilder {
                             .symbol_name_map
                             .insert(*symbol_id, fn_name.clone());
                         mir_program.functions.insert(*symbol_id, mir_function);
-                        self.stats.functions_lowered += 1;
 
                         debug!(
                             computed_name = %comp_name,
@@ -839,7 +796,7 @@ impl MirBuilder {
                             error_count = errors.len(),
                             "Failed to lower computed property body"
                         );
-                        self.warnings.extend(errors);
+                        lowering_errors.extend(errors);
                     }
                 }
             }
@@ -900,7 +857,6 @@ impl MirBuilder {
                         .insert(symbol_id, fn_name.clone());
                     mir_program.functions.insert(symbol_id, mir_function);
                     test_symbol_ids.push((symbol_id, test.name.clone()));
-                    self.stats.functions_lowered += 1;
                     debug!(
                         test_name = %test.name,
                         symbol_id = symbol_id.0,
@@ -913,7 +869,7 @@ impl MirBuilder {
                         error_count = errors.len(),
                         "Failed to lower test function"
                     );
-                    self.warnings.extend(errors);
+                    lowering_errors.extend(errors);
                 }
             }
         }
@@ -1022,24 +978,8 @@ impl MirBuilder {
         // initializers are interned above).
         mir_program.string_pool = self.string_pool.clone();
 
-        // Record build time
-        self.stats.build_time_us = start_time.elapsed().as_micros() as u64;
-
-        // Return early if there are critical errors
-        let critical_errors: Vec<_> = self
-            .warnings
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e,
-                    CompilerError::Type { .. } | CompilerError::Validation { .. }
-                )
-            })
-            .cloned()
-            .collect();
-
-        if !critical_errors.is_empty() {
-            return Err(critical_errors);
+        if !lowering_errors.is_empty() {
+            return Err(lowering_errors);
         }
 
         // Convert external functions (WASM imports)
@@ -1068,11 +1008,7 @@ impl MirBuilder {
             )
             .collect();
 
-        Ok(MirBuildResult {
-            program: mir_program,
-            warnings: std::mem::take(&mut self.warnings),
-            stats: std::mem::take(&mut self.stats),
-        })
+        Ok(mir_program)
     }
 }
 

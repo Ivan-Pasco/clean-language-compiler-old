@@ -17,7 +17,7 @@ pub mod mir_builder;
 pub mod mir_types;
 pub mod optimization;
 
-pub use mir_builder::{MirBuildResult, MirBuilder};
+pub use mir_builder::MirBuilder;
 pub use mir_types::{
     class_header_word, BasicBlockId, MirBasicBlock, MirFunction, MirInstruction, MirOperand,
     MirProgram, MirType, ValueId,
@@ -108,18 +108,18 @@ impl MirPipeline {
         self.builder.release_mode = preserved_release_mode;
 
         // Phase 1: Lower TAST to unoptimized MIR
-        let build_result = self.builder.build(tast)?;
+        let built = self.builder.build(tast)?;
 
         tracing::debug!(
-            function_count = build_result.program.functions.len(),
+            function_count = built.functions.len(),
             "MIR build completed"
         );
 
         // Phase 2: Apply optimization passes if enabled
         let program = if self.config.optimize {
-            self.optimizer.optimize(build_result.program)?
+            self.optimizer.optimize(built)?
         } else {
-            build_result.program
+            built
         };
 
         Ok(MirResult { program })

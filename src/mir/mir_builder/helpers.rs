@@ -9,15 +9,6 @@ impl MirBuilder {
         context: &mut FunctionBuildContext,
         instruction: MirInstruction,
     ) {
-        if matches!(instruction.operation, MirOperation::GetElementPtr { .. }) {
-            trace!(current_block = ?self.current_block, "Adding GetElementPtr");
-        }
-        if matches!(instruction.operation, MirOperation::Load { .. })
-            && self.current_block == Some(BasicBlockId(2))
-        {
-            trace!(current_block = ?self.current_block, "Adding Load to body block");
-        }
-
         // A call to a Clean function (or `error(...)`) may raise: follow it
         // with the `onError` unwinding check (removed again when the program
         // has no `onError` region).
@@ -231,13 +222,6 @@ impl MirBuilder {
     ) {
         if let Some(block_id) = self.current_block {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
-                if block_id == BasicBlockId(3) && context.function.name == "test" {
-                    trace!(
-                        old_terminator = ?block.terminator,
-                        new_terminator = ?terminator,
-                        "Setting terminator for BasicBlockId(3)"
-                    );
-                }
                 block.terminator = terminator;
             }
         }
@@ -1349,6 +1333,51 @@ impl MirBuilder {
         let same_tag = binary(self, MirBinaryOp::Eq, left_tag, right_tag);
         let same_text = binary(self, MirBinaryOp::Eq, left_text, right_text);
         binary(self, MirBinaryOp::And, same_tag, same_text)
+    }
+}
+
+impl MirBuilder {
+    /// SymbolId of a compiler built-in (`int_to_string`, `string.length`, ...)
+    /// as registered in the symbol table.
+    pub(super) fn builtin_symbol(
+        &self,
+        name: &str,
+        location: &SourceLocation,
+    ) -> Result<SymbolId, Vec<CompilerError>> {
+        self.symbol_table.lookup_symbol(name).ok_or_else(|| {
+            vec![CompilerError::validation_error(
+                format!("Built-in function '{}' is not registered", name),
+                location.clone(),
+            )]
+        })
+    }
+
+    /// Emit `result = name(arguments)` for the built-in `name`, whose result
+    /// has type `result_type`.
+    pub(super) fn emit_builtin_call(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        name: &str,
+        arguments: Vec<MirOperand>,
+        result_type: MirType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        let function = MirOperand::Function(self.builtin_symbol(name, location)?);
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, result_type, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Call {
+                    function,
+                    arguments,
+                },
+                location: location.clone(),
+            },
+        );
+        Ok(result_id)
     }
 }
 

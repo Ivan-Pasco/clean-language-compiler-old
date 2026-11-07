@@ -712,12 +712,10 @@ impl MirBuilder {
                         }
                     }
                     _ => {
-                        // Handle any other complex assignment targets
-                        tracing::warn!(
-                            target_kind = ?target.kind,
-                            "Complex assignment target not implemented"
-                        );
-                        // Don't error out, just ignore the assignment for now
+                        return Err(vec![CompilerError::validation_error(
+                            "Only a variable, a field or an indexed element can be assigned to",
+                            target.location.clone(),
+                        )]);
                     }
                 }
             }

@@ -193,20 +193,6 @@ impl MirBuilder {
         // Resolve pending phi nodes
         self.resolve_phi_nodes(&mut context)?;
 
-        self.stats.basic_blocks_created += context.function.blocks.len();
-        self.stats.ssa_values_created += context.function.next_value_id;
-
-        if context.function.name == "test" {
-            trace!(
-                function_name = %context.function.name,
-                block_count = context.function.blocks.len(),
-                "Final MIR function blocks"
-            );
-            for (block_id, block) in &context.function.blocks {
-                trace!(block_id = ?block_id, terminator = ?block.terminator, "Block terminator");
-            }
-        }
-
         Ok(context.function)
     }
 
