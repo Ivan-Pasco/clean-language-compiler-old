@@ -652,17 +652,6 @@ impl From<wasmtime::MemoryAccessError> for CompilerError {
             None,
         )
     }
-
-    #[test]
-    fn truncate_chars_cuts_on_character_boundaries() {
-        assert_eq!(truncate_chars("short", 10), "short");
-        assert_eq!(truncate_chars("abcdefghij", 10), "abcdefghij");
-        assert_eq!(truncate_chars("abcdefghijk", 10), "abcdefg...");
-        // Every character here is multi-byte; byte slicing at 7 would panic.
-        let text = "ééééééééééééé";
-        assert_eq!(truncate_chars(text, 10), "ééééééé...");
-        assert_eq!(truncate_chars("——————————————", 5), "——...");
-    }
 }
 
 /// Shorten `text` to at most `max_chars` characters, ending in `...` when it
@@ -1072,5 +1061,16 @@ mod tests {
 
         let string: String = context.into();
         assert!(string.contains("test error"));
+    }
+
+    #[test]
+    fn truncate_chars_cuts_on_character_boundaries() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        assert_eq!(truncate_chars("abcdefghij", 10), "abcdefghij");
+        assert_eq!(truncate_chars("abcdefghijk", 10), "abcdefg...");
+        // Every character here is multi-byte; byte slicing at 7 would panic.
+        let text = "ééééééééééééé";
+        assert_eq!(truncate_chars(text, 10), "ééééééé...");
+        assert_eq!(truncate_chars("——————————————", 5), "——...");
     }
 }
