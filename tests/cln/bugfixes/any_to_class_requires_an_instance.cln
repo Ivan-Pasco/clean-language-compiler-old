@@ -1,0 +1,53 @@
+// Test: bugfixes/any_to_class_requires_an_instance
+// Grammar: variable_declaration, function_call, on_error_expression
+// Semantic: type-system.md §9 (an `any` can hold a class instance; no rule decodes JSON into a class)
+// Fixed in: compiler 0.33.176
+// Expected output:
+//   instance=Ada
+//   list=Bo
+//   null=true
+//   object=-1
+//   number=-2
+//   listOfObjects=-3
+//
+// Regression: an `any` holding something other than a class instance (a
+// JSON object, a number) assigned to a class variable silently became
+// null, so the program went on with no instance and no error. The spec
+// lets an `any` hold an instance but defines no decoding of JSON into a
+// class: the instance an `any` holds still converts back to its class,
+// null stays null, and any other value now raises an error that `onError`
+// catches.
+
+start:
+	any boxed = Person("Ada")
+	Person back = boxed
+	printl("instance=" + back.name)
+	list<any> people = []
+	people.add(Person("Bo"))
+	any group = people
+	list<Person> typed = group
+	printl("list=" + typed.get(0).name)
+	any nothing = null
+	Person nobody = nothing
+	printl("null=" + (nobody == null).toString())
+	any data = json.textToData("{\"name\": \"Cy\", \"n\": 3, \"rows\": [{\"name\": \"Di\"}]}")
+	integer fromObject = nameLength(data) onError -1
+	printl("object=" + fromObject.toString())
+	integer fromNumber = nameLength(data.n) onError -2
+	printl("number=" + fromNumber.toString())
+	integer fromRows = countPeople(data.rows) onError -3
+	printl("listOfObjects=" + fromRows.toString())
+
+class Person
+	public:
+		string name
+
+	constructor(string personName)
+		name = personName
+
+functions:
+	integer nameLength(Person p)
+		return p.name.length()
+
+	integer countPeople(list<Person> ps)
+		return ps.length()

@@ -12,7 +12,7 @@
 //! |---|---|---|
 //! | `__json_tree_instance` | `(instance) -> any` | the JSON object of the instance's own class (switch over the header calling `__json_tree_ClassName`), or a null box for a null instance |
 //! | `__json_normalize` | `(any) -> any` | the same value with every boxed instance inside it replaced by its object; containers are copied only when something in them changed, so the caller's value is never modified |
-//! | `__any_to_instance` | `(any) -> instance` | the instance an `any` holds, or 0 (null) when it holds anything else |
+//! | `__any_to_instance` | `(any) -> instance` | the instance an `any` holds, 0 (null) for null; any other value raises an error |
 //!
 //! The functions exist only in programs that declare classes; MIR bodies call
 //! them by name, so `preregister_class_json_runtime` reserves their indices
@@ -26,6 +26,10 @@ use wasm_encoder::MemArg;
 const TREE_INSTANCE: &str = "__json_tree_instance";
 const NORMALIZE: &str = "__json_normalize";
 const ANY_TO_INSTANCE: &str = "__any_to_instance";
+/// The error `__any_to_instance` raises for a value that is not an instance
+/// (a JSON object, a list, a string, a number): no conversion decodes one
+/// into a class (type-system.md §9 only lets an `any` hold an instance).
+const NOT_AN_INSTANCE_MESSAGE: &str = "value is not a class instance";
 
 /// The runtime functions in emission order.
 pub(super) const RUNTIME_FUNCTIONS: [&str; 3] = [TREE_INSTANCE, NORMALIZE, ANY_TO_INSTANCE];
@@ -89,6 +93,10 @@ impl MirCodeGenerator<'_> {
         }
         let malloc = self.runtime_function_index("__malloc")?;
         let memcpy = self.runtime_function_index("__memcpy")?;
+        let err_raise = self.runtime_function_index("__err_raise")?;
+        let not_an_instance = self
+            .wasm_generator
+            .get_or_create_string_offset(NOT_AN_INSTANCE_MESSAGE)?;
         let tree_instance = base;
         let normalize = base + 1;
 
@@ -124,7 +132,7 @@ impl MirCodeGenerator<'_> {
             (
                 ANY_TO_INSTANCE,
                 vec![WasmType::I32],
-                Self::any_to_instance_body(),
+                Self::any_to_instance_body(err_raise, not_an_instance),
             ),
         ];
         for (offset, (name, locals, body)) in bodies.into_iter().enumerate() {
@@ -352,8 +360,15 @@ impl MirCodeGenerator<'_> {
     }
 
     /// `__any_to_instance(box)`. Locals: 0 box, 1 payload.
-    fn any_to_instance_body() -> Vec<Instruction<'static>> {
+    fn any_to_instance_body(err_raise: u32, not_an_instance: u32) -> Vec<Instruction<'static>> {
         use Instruction::*;
+        let raise = [
+            I32Const(not_an_instance as i32),
+            Call(err_raise),
+            I32Const(0),
+            Return,
+        ];
+        // A null pointer, a null box and a null instance are null.
         let mut code = vec![
             LocalGet(0),
             I32Eqz,
@@ -363,11 +378,20 @@ impl MirCodeGenerator<'_> {
             End,
             LocalGet(0),
             I32Load(mem(0)),
-            I32Const(AnyTypeTag::Object.as_i32()),
-            I32Ne,
+            I32Eqz,
             If(BlockType::Empty),
             I32Const(0),
             Return,
+            End,
+            // Not an object: raise.
+            LocalGet(0),
+            I32Load(mem(0)),
+            I32Const(AnyTypeTag::Object.as_i32()),
+            I32Ne,
+            If(BlockType::Empty),
+        ];
+        code.extend(raise.clone());
+        code.extend([
             End,
             LocalGet(0),
             I32Load(mem(4)),
@@ -377,15 +401,12 @@ impl MirCodeGenerator<'_> {
             I32Const(0),
             Return,
             End,
-        ];
-        code.extend(is_instance(1));
-        code.extend([
-            If(BlockType::Result(ValType::I32)),
-            LocalGet(1),
-            Else,
-            I32Const(0),
-            End,
         ]);
+        // An object without an object header is a JSON object: raise.
+        code.extend(is_instance(1));
+        code.extend([I32Eqz, If(BlockType::Empty)]);
+        code.extend(raise);
+        code.extend([End, LocalGet(1)]);
         code
     }
 }

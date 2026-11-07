@@ -25,6 +25,7 @@ impl MirBuilder {
                 name.as_str(),
                 "__err_raise"
                     | "__json_decode_v2_or_raise"
+                    | "__any_to_instance"
                     | crate::stdlib::json_class::JSON_TO_CLN_LIST
                     | crate::stdlib::json_class::ANY_LENGTH
                     | crate::stdlib::json_class::ANY_CONVERT
