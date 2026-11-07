@@ -33,6 +33,11 @@ pub struct NameResolver {
     /// receiver-type-first lookup couldn't find the matching method and
     /// raised the standalone-function error.
     class_method_names: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// class name → (class scope, field symbols in declaration order).
+    /// Created by `register_class_fields` before any body is resolved, so a
+    /// class sees the fields it inherits whatever order the classes are
+    /// declared in.
+    class_members: std::collections::HashMap<String, (ScopeId, Vec<SymbolId>)>,
     errors: Vec<CompilerError>,
     expression_recursion_depth: usize,
     /// Plugin bridge functions deferred until after `register_top_level_symbols` runs,
@@ -72,6 +77,7 @@ impl NameResolver {
             current_screen: None,
             screen_names: Vec::new(),
             class_method_names: std::collections::HashMap::new(),
+            class_members: std::collections::HashMap::new(),
             errors: Vec::new(),
             expression_recursion_depth: 0,
             pending_bridge_functions: Vec::new(),
@@ -85,7 +91,13 @@ impl NameResolver {
 
     /// Resolve names in a HIR program
     pub fn resolve(hir: HirProgram) -> Result<ResolutionResult, Vec<CompilerError>> {
-        Self::resolve_with_bridge_functions(hir, &[])
+        Self::resolve_with_bridge_aliases_fn_defs_and_helpers(
+            hir,
+            &[],
+            &std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        )
     }
 
     /// Resolve the entire HIR program
@@ -954,6 +966,8 @@ impl NameResolver {
             }
         }
 
+        self.register_class_fields(&hir.classes);
+
         // Register top-level capability declarations (`can Name:`).
         // Clean Language Specification §Capabilities · grammar.ebnf §6.4a.
         // Registered after classes so that a class body's method-name map is
@@ -1208,6 +1222,52 @@ impl NameResolver {
         }
     }
 
+    /// Create each class's scope and field symbols, and link it to its
+    /// parent, before any class body is resolved: a class declared before
+    /// its parent still sees the fields it inherits. An unknown parent is
+    /// left unlinked; `resolve_class` reports it.
+    fn register_class_fields(&mut self, classes: &[HirClass]) {
+        for class in classes {
+            if self.class_members.contains_key(&class.name) {
+                continue;
+            }
+            let Some(class_symbol_id) = self.symbol_table.lookup_symbol(&class.name) else {
+                continue;
+            };
+            let parent_symbol_id = class
+                .parent
+                .as_ref()
+                .and_then(|parent| self.symbol_table.lookup_symbol(parent));
+            let class_scope = self.symbol_table.create_scope(None);
+            let mut field_symbol_ids = Vec::with_capacity(class.fields.len());
+            for field in &class.fields {
+                let field_symbol_id = self.symbol_table.create_symbol(
+                    field.name.clone(),
+                    SymbolKind::Field {
+                        class_id: class_symbol_id,
+                        field_type: field.field_type.clone(),
+                    },
+                    class_scope,
+                    field.location.clone(),
+                );
+                // Propagate inline private: visibility (SEM005).
+                if field.is_private {
+                    self.symbol_table
+                        .mark_as_private(field_symbol_id, class.name.clone());
+                }
+                field_symbol_ids.push(field_symbol_id);
+            }
+            if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
+                if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
+                    *fields = field_symbol_ids.clone();
+                    *parent = parent_symbol_id;
+                }
+            }
+            self.class_members
+                .insert(class.name.clone(), (class_scope, field_symbol_ids));
+        }
+    }
+
     /// Resolve all functions
     fn resolve_functions(
         &mut self,
@@ -1236,12 +1296,7 @@ impl NameResolver {
                 })?;
 
         // Create function scope
-        let function_scope = self.symbol_table.create_scope(
-            None,
-            ScopeType::Function {
-                function_id: function_symbol_id,
-            },
-        );
+        let function_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(function_scope);
         self.current_function = Some(function_symbol_id);
         let previous_return_type = self.current_function_return_type.clone();
@@ -1372,38 +1427,26 @@ impl NameResolver {
                 );
             })?;
 
-        // Create class scope
-        let class_scope = self.symbol_table.create_scope(
-            None,
-            ScopeType::Class {
-                class_id: class_symbol_id,
-            },
-        );
+        // The class scope and field symbols were created by
+        // `register_class_fields`.
+        let Some((class_scope, field_symbol_ids)) = self.class_members.get(&class.name).cloned()
+        else {
+            self.error(
+                &format!(
+                    "Fields of class '{}' were not registered - this is an internal compiler error",
+                    class.name
+                ),
+                class.location.clone(),
+            );
+            return Err(());
+        };
         self.symbol_table.enter_scope(class_scope);
         self.current_class = Some(class_symbol_id);
 
-        // Resolve fields
+        // Resolve field initializers
         let mut resolved_fields = Vec::new();
-        let mut field_symbol_ids = Vec::new();
 
-        for field in &class.fields {
-            let field_symbol_id = self.symbol_table.create_symbol(
-                field.name.clone(),
-                SymbolKind::Field {
-                    class_id: class_symbol_id,
-                    field_type: field.field_type.clone(),
-                },
-                class_scope,
-                field.location.clone(),
-            );
-            // Propagate inline private: visibility (SEM005).
-            if field.is_private {
-                self.symbol_table
-                    .mark_as_private(field_symbol_id, class.name.clone());
-            }
-
-            field_symbol_ids.push(field_symbol_id);
-
+        for (field, &field_symbol_id) in class.fields.iter().zip(field_symbol_ids.iter()) {
             let resolved_initializer = if let Some(init) = &field.initializer {
                 Some(self.resolve_expression(init)?)
             } else {
@@ -1417,14 +1460,6 @@ impl NameResolver {
                 initializer: resolved_initializer,
                 location: field.location.clone(),
             });
-        }
-
-        // Update class symbol with fields and parent immediately after creating them
-        if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
-            if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
-                *fields = field_symbol_ids.clone();
-                *parent = parent_symbol_id;
-            }
         }
 
         // Resolve constructor (symbol was already created in global scope)
@@ -1485,14 +1520,6 @@ impl NameResolver {
             let resolved_method =
                 self.resolve_method(method.clone(), class_symbol_id, method_symbol_id)?;
             resolved_methods.push(resolved_method);
-        }
-
-        // Update class symbol with fields and parent (methods were set in pass 1 above).
-        if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
-            if let SymbolKind::Class { fields, parent, .. } = &mut class_symbol.kind {
-                *fields = field_symbol_ids.clone();
-                *parent = parent_symbol_id;
-            }
         }
 
         // Resolve always: block expressions in class scope (fields are visible here)
@@ -1569,9 +1596,7 @@ impl NameResolver {
         constructor_symbol_id: SymbolId,
     ) -> Result<ResolvedHirConstructor, ()> {
         // Create constructor scope
-        let constructor_scope = self
-            .symbol_table
-            .create_scope(None, ScopeType::Constructor { class_id });
+        let constructor_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(constructor_scope);
 
         // Set current class for implicit field access
@@ -1607,13 +1632,7 @@ impl NameResolver {
         method_id: SymbolId,
     ) -> Result<ResolvedHirMethod, ()> {
         // Create method scope
-        let method_scope = self.symbol_table.create_scope(
-            None,
-            ScopeType::Method {
-                method_id,
-                class_id,
-            },
-        );
+        let method_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(method_scope);
         self.current_function = Some(method_id);
 
@@ -1651,7 +1670,7 @@ impl NameResolver {
 
         for test in tests {
             // Create test scope
-            let test_scope = self.symbol_table.create_scope(None, ScopeType::Test);
+            let test_scope = self.symbol_table.create_scope(None);
             self.symbol_table.enter_scope(test_scope);
 
             let resolved_body = self.resolve_block(&test.body)?;
@@ -1735,7 +1754,7 @@ impl NameResolver {
                 // Create a temporary scope for the guard context
                 let guard_scope = self
                     .symbol_table
-                    .create_scope(Some(self.symbol_table.current_scope_id()), ScopeType::Block);
+                    .create_scope(Some(self.symbol_table.current_scope_id()));
                 self.symbol_table.enter_scope(guard_scope);
 
                 // Add 'value' as a parameter in the guard scope with the state variable's type
@@ -1825,7 +1844,7 @@ impl NameResolver {
     /// Resolve a block of statements
     fn resolve_block(&mut self, block: &HirBlock) -> Result<ResolvedHirBlock, ()> {
         // Create block scope
-        let block_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+        let block_scope = self.symbol_table.create_scope(None);
         self.symbol_table.enter_scope(block_scope);
 
         let mut resolved_statements = Vec::new();
@@ -1962,7 +1981,7 @@ impl NameResolver {
                 let resolved_iterable = self.resolve_expression(iterable)?;
 
                 // Create new scope for loop variable
-                let loop_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                let loop_scope = self.symbol_table.create_scope(None);
                 self.symbol_table.enter_scope(loop_scope);
 
                 let var_symbol_id = self.symbol_table.create_symbol(
@@ -1999,7 +2018,7 @@ impl NameResolver {
                 let resolved_condition = self.resolve_expression(condition)?;
 
                 // Create new scope for while body
-                let loop_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                let loop_scope = self.symbol_table.create_scope(None);
                 self.symbol_table.enter_scope(loop_scope);
 
                 let resolved_body = self.resolve_block(body)?;
@@ -2096,7 +2115,7 @@ impl NameResolver {
                 // temporary block scope and inject a `result` symbol with the enclosing
                 // function's return type. The scope is exited immediately after the condition
                 // is resolved, so `result` does not leak into the surrounding function scope.
-                let ensure_scope = self.symbol_table.create_scope(None, ScopeType::Block);
+                let ensure_scope = self.symbol_table.create_scope(None);
                 self.symbol_table.enter_scope(ensure_scope);
 
                 if let Some(return_type) = &self.current_function_return_type.clone() {
@@ -4613,44 +4632,6 @@ impl NameResolver {
         );
         // Mark the symbol as builtin so it gets registered in the type environment
         self.symbol_table.mark_as_builtin(symbol_id);
-    }
-
-    /// Resolve names in a HIR program with plugin bridge functions
-    ///
-    /// This allows plugins to declare bridge functions in their plugin.toml
-    /// that will be recognized by the compiler during name resolution.
-    /// Bridge functions are applied AFTER builtin registration (inside
-    /// `resolve_program`) so their signatures are never overwritten.
-    pub fn resolve_with_bridge_functions(
-        hir: HirProgram,
-        bridge_functions: &[crate::plugins::BridgeFunction],
-    ) -> Result<ResolutionResult, Vec<CompilerError>> {
-        Self::resolve_with_bridge_and_language_aliases(
-            hir,
-            bridge_functions,
-            &std::collections::HashMap::new(),
-        )
-    }
-
-    /// Resolve with both bridge functions and language-name aliases.
-    ///
-    /// Extends `resolve_with_bridge_functions` by also registering dot-notation
-    /// language API names (e.g. `"db.query"`) as builtin functions with the same
-    /// signature as the underlying bridge function they map to.
-    /// Both bridge functions and aliases are applied AFTER builtin registration
-    /// (inside `resolve_program`) so plugin signatures are never overwritten.
-    pub fn resolve_with_bridge_and_language_aliases(
-        hir: crate::hir::HirProgram,
-        bridge_functions: &[crate::plugins::BridgeFunction],
-        language_to_bridge: &std::collections::HashMap<String, String>,
-    ) -> Result<ResolutionResult, Vec<CompilerError>> {
-        Self::resolve_with_bridge_aliases_fn_defs_and_helpers(
-            hir,
-            bridge_functions,
-            language_to_bridge,
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-        )
     }
 
     /// Register language-name aliases (dot-notation API names) as builtins.

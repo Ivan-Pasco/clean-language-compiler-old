@@ -103,8 +103,6 @@ pub enum HirType {
     String,
     Boolean,
     Void,
-    // BOOK: null-support - Null type for representing absence of value
-    Null,
 
     /// Precision types (from lexer precision modifiers)
     Integer8,

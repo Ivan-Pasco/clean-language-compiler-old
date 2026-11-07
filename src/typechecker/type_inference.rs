@@ -6233,8 +6233,6 @@ impl<'a> TypeInference<'a> {
             HirType::String => ConcreteType::String,
             HirType::Boolean => ConcreteType::Boolean,
             HirType::Void => ConcreteType::Null,
-            // BOOK: null-support - HirType::Null maps to ConcreteType::Null
-            HirType::Null => ConcreteType::Null,
             // 8/16/32-bit integers collapse to `Integer` (i32 in WASM) — no precision loss.
             // 64-bit integers preserve their precision modifier so the MIR builder can route
             // literals to `MirConstant::Integer64` and codegen can emit i64 ops; otherwise
