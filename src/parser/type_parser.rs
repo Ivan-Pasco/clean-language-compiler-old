@@ -184,11 +184,25 @@ fn parse_sized_type(pair: Pair<Rule>) -> Result<Type, CompilerError> {
 
     // Parse size specifier like "8" or "8u"
     let size_str = size_spec.trim();
-    let (bits, unsigned) = if size_str.ends_with('u') {
-        let bits_str = size_str.strip_suffix('u').unwrap();
-        (bits_str.parse::<u8>().unwrap_or(32), true)
-    } else {
-        (size_str.parse::<u8>().unwrap_or(32), false)
+    let (bits_str, unsigned) = match size_str.strip_suffix('u') {
+        Some(bits_str) => (bits_str, true),
+        None => (size_str, false),
+    };
+    // Widths from foundation/spec/type-system.md §2 "Precision Modifiers".
+    let bits = match (&base_type, bits_str.parse::<u8>()) {
+        (Type::Integer, Ok(bits @ (8 | 16 | 32 | 64))) => bits,
+        (Type::Number, Ok(bits @ (32 | 64))) if !unsigned => bits,
+        (Type::Integer | Type::Number, _) => {
+            return Err(CompilerError::parse_error(
+                format!("Invalid precision '{}'", full_string),
+                None,
+                Some(
+                    "integer supports :8, :16, :32 and :64 (optionally followed by u); number supports :32 and :64"
+                        .to_string(),
+                ),
+            ))
+        }
+        _ => 0,
     };
 
     match base_type {

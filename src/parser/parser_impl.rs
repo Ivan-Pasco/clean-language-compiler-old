@@ -324,19 +324,13 @@ pub fn parse_functions_block_traditional(
             for func_item in item.into_inner() {
                 match func_item.as_rule() {
                     Rule::function_in_block => {
-                        match parse_function_in_block(func_item) {
-                            Ok(func) => functions.push(func),
-                            Err(_) => continue, // Recovery: skip failed function
-                        }
+                        functions.push(parse_function_in_block(func_item)?);
                     }
                     Rule::class_function_line => {
                         // Handle the new class_function_line rule
                         for inner in func_item.into_inner() {
                             if inner.as_rule() == Rule::function_in_block {
-                                match parse_function_in_block(inner) {
-                                    Ok(func) => functions.push(func),
-                                    Err(_) => continue, // Recovery: skip failed function
-                                }
+                                functions.push(parse_function_in_block(inner)?);
                             }
                         }
                     }
@@ -988,11 +982,17 @@ fn parse_type_from_str(type_str: &str) -> Result<crate::ast::Type, CompilerError
         "any" => Ok(Type::Any),
         "void" => Ok(Type::Void),
         "none" => Ok(Type::None),
-        _other => {
-            // Could be a class type or complex type
-            // For now, treat unknown types as any (generic external types)
-            Ok(Type::Any)
-        }
+        other => Err(CompilerError::parse_error(
+            format!(
+                "Unsupported type '{}' in an external function declaration",
+                other
+            ),
+            None,
+            Some(
+                "External functions take integer, number, string, boolean, any, void or none."
+                    .to_string(),
+            ),
+        )),
     }
 }
 

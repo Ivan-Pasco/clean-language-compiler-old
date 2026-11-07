@@ -893,34 +893,9 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                                 .expect("invariant: string_interpolation grammar child")
                                 .as_str();
 
-                            // Parse the interpolation expression properly
-                            // Instead of treating as simple variable, parse as full expression
-                            match parse_interpolation_expression(expr_str) {
-                                Ok(expr) => {
-                                    parts.push(StringPart::Interpolation(expr));
-                                }
-                                Err(_) => {
-                                    // Fallback to simple variable parsing if expression parsing fails
-                                    if expr_str.contains('.') {
-                                        let parts_split: Vec<&str> = expr_str.split('.').collect();
-                                        let object =
-                                            Expression::Variable(parts_split[0].to_string());
-                                        let property = parts_split[1].to_string();
-
-                                        let location = crate::ast::SourceLocation::default();
-                                        let property_access = Expression::PropertyAccess {
-                                            object: Box::new(object),
-                                            property,
-                                            location,
-                                        };
-                                        parts.push(StringPart::Interpolation(property_access));
-                                    } else {
-                                        // Simple variable
-                                        let variable = Expression::Variable(expr_str.to_string());
-                                        parts.push(StringPart::Interpolation(variable));
-                                    }
-                                }
-                            }
+                            parts.push(StringPart::Interpolation(parse_interpolation_expression(
+                                expr_str,
+                            )?));
                         }
                         Rule::escaped_char => {
                             // Handle escaped characters like \", \\, \{, \}, \n, \r, \t
@@ -953,32 +928,9 @@ pub fn parse_string(pair: Pair<Rule>) -> Result<Expression, CompilerError> {
                     .expect("invariant: string_interpolation grammar child")
                     .as_str();
 
-                // Parse the interpolation expression properly
-                match parse_interpolation_expression(expr_str) {
-                    Ok(expr) => {
-                        parts.push(StringPart::Interpolation(expr));
-                    }
-                    Err(_) => {
-                        // Fallback to simple parsing if expression parsing fails
-                        if expr_str.contains('.') {
-                            let parts_split: Vec<&str> = expr_str.split('.').collect();
-                            let object = Expression::Variable(parts_split[0].to_string());
-                            let property = parts_split[1].to_string();
-
-                            let location = crate::ast::SourceLocation::default();
-                            let property_access = Expression::PropertyAccess {
-                                object: Box::new(object),
-                                property,
-                                location,
-                            };
-                            parts.push(StringPart::Interpolation(property_access));
-                        } else {
-                            // Simple variable
-                            let variable = Expression::Variable(expr_str.to_string());
-                            parts.push(StringPart::Interpolation(variable));
-                        }
-                    }
-                }
+                parts.push(StringPart::Interpolation(parse_interpolation_expression(
+                    expr_str,
+                )?));
             }
             _ => {}
         }
