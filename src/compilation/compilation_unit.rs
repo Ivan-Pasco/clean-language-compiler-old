@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Unique identifier for a module within a compilation unit
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CompilationModuleId(pub usize);
 
 /// AST emitted by a plugin for a whole module, together with the plugin
