@@ -3871,7 +3871,29 @@ impl NameResolver {
     fn resolve_lvalue(&mut self, lvalue: &HirLValue) -> Result<ResolvedHirLValue, ()> {
         match lvalue {
             HirLValue::Variable { name, location } => {
-                // If we're in a class method, check for class fields first (implicit field access)
+                // A local variable shadows a field of the same name, for
+                // writes exactly as for reads (see
+                // `resolve_variable_expression`). A parameter named like a
+                // field is outside the specification (15-classes-and-objects:
+                // "Parameter names cannot match field names"); constructors
+                // written `name = name` rely on such a write reaching the
+                // field, so parameters do not shadow fields here.
+                if let Some(symbol_id) = self.symbol_table.lookup_symbol(name) {
+                    if self
+                        .symbol_table
+                        .get_symbol(symbol_id)
+                        .is_some_and(|s| matches!(s.kind, SymbolKind::Variable { .. }))
+                    {
+                        return Ok(ResolvedHirLValue::Variable {
+                            name: name.clone(),
+                            symbol_id,
+                            location: location.clone(),
+                        });
+                    }
+                }
+
+                // Otherwise, inside a class method, a field name is an
+                // implicit field access.
                 if let Some(current_class_id) = self.current_class {
                     if let Some((field_id, _)) =
                         self.symbol_table.lookup_class_field(current_class_id, name)
@@ -3926,8 +3948,18 @@ impl NameResolver {
             } => {
                 let resolved_object = self.resolve_expression(object)?;
 
-                // Field resolution depends on object type - for now use placeholder
-                let field_symbol_id = SymbolId(0);
+                // A field of `this` is known here; any other object's field
+                // is bound by the type checker from the object's type.
+                let field_symbol_id = match &resolved_object {
+                    ResolvedHirExpression::This {
+                        class_symbol_id, ..
+                    } => self
+                        .symbol_table
+                        .lookup_class_field(*class_symbol_id, field)
+                        .map(|(id, _)| id)
+                        .unwrap_or(SymbolId(0)),
+                    _ => SymbolId(0),
+                };
 
                 Ok(ResolvedHirLValue::FieldAccess {
                     object: Box::new(resolved_object),

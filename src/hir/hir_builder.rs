@@ -1215,10 +1215,15 @@ impl HirBuilder {
             for param in &ctor.parameters {
                 // Check if there's a field with matching name
                 if let Some(_field) = class_fields.iter().find(|f| f.name == param.name) {
-                    // Generate: field = parameter
+                    // Generate: this.field = parameter (the parameter shadows
+                    // the field by name)
                     let assignment = HirStatement::Assignment {
-                        target: HirLValue::Variable {
-                            name: param.name.clone(),
+                        target: HirLValue::FieldAccess {
+                            object: Box::new(HirExpression::Variable {
+                                name: "this".to_string(),
+                                location: SourceLocation::default(),
+                            }),
+                            field: param.name.clone(),
                             location: SourceLocation::default(),
                         },
                         value: HirExpression::Variable {
