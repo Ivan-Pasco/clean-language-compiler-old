@@ -675,6 +675,11 @@ impl<'a> SpecificationLexer<'a> {
         let mut sub_depth: u32 = 1;
         let mut paren_depth: u32 = 0;
         let mut bracket_depth: u32 = 0;
+        // Last non-whitespace character and the identifier/keyword ending
+        // there, to tell a nested string literal (`{f("q")}`) from the
+        // closing quote of the outer string (`"a {b" + "c}"`).
+        let mut prev = '{';
+        let mut word = String::new();
         while let Some(&c) = ahead.peek() {
             match c {
                 '{' => sub_depth += 1,
@@ -688,6 +693,32 @@ impl<'a> SpecificationLexer<'a> {
                 ')' => paren_depth = paren_depth.saturating_sub(1),
                 '[' => bracket_depth += 1,
                 ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                // A quote where an operand is expected opens a nested string
+                // literal (grammar.ebnf `string_interpolation` holds a full
+                // expression): skip it so its quotes and braces are not taken
+                // for the outer string's.
+                '"' if Self::operand_expected(prev, &word) => {
+                    ahead.next();
+                    scanned += 1;
+                    loop {
+                        match ahead.next() {
+                            Some('"') => break,
+                            Some('\\') => {
+                                if ahead.next().is_none() {
+                                    return (false, scanned);
+                                }
+                                scanned += 1;
+                            }
+                            Some('\n') | None => return (false, scanned),
+                            Some(_) => {}
+                        }
+                        scanned += 1;
+                    }
+                    scanned += 1;
+                    prev = '"';
+                    word.clear();
+                    continue;
+                }
                 // End-of-string or newline before the matching brace — the user
                 // did not close the interpolation, treat as literal.
                 '"' | '\n' => return (false, scanned),
@@ -705,6 +736,16 @@ impl<'a> SpecificationLexer<'a> {
                 ',' if paren_depth == 0 && bracket_depth == 0 => return (false, scanned),
                 _ => {}
             }
+            if c.is_alphanumeric() || c == '_' {
+                if !(prev.is_alphanumeric() || prev == '_') {
+                    word.clear();
+                }
+                word.push(c);
+                prev = c;
+            } else if !c.is_whitespace() {
+                prev = c;
+                word.clear();
+            }
             ahead.next();
             scanned += 1;
         }
@@ -712,6 +753,19 @@ impl<'a> SpecificationLexer<'a> {
         // Ran off the end of the input: the string itself is unterminated and
         // the interpolated-string reader reports it.
         (true, scanned)
+    }
+
+    /// Whether an operand (here: a nested string literal) may follow the
+    /// interpolation text seen so far, given its last non-whitespace
+    /// character and the word ending there.
+    fn operand_expected(prev: char, word: &str) -> bool {
+        matches!(
+            prev,
+            '{' | '(' | '[' | ',' | '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '^'
+        ) || matches!(
+            word,
+            "and" | "or" | "not" | "is" | "default" | "onError" | "then" | "else"
+        )
     }
 
     /// Read expression tokens inside interpolation {}.
@@ -1696,6 +1750,42 @@ mod regression_tests {
         }
         // Code after the comment keeps its indentation.
         assert!(kinds("start:\n\t/* c */ print(1)\n").contains(&TokenKind::Indent(1)));
+    }
+
+    /// Regression: a string literal inside an interpolation (`{f("q")}`)
+    /// ended the outer string at its first quote.
+    #[test]
+    fn string_literal_inside_interpolation() {
+        let k = kinds("\"v={f(\"q\")} w={a + \"}\"}\"");
+        assert!(
+            k.contains(&TokenKind::StringLiteral("q".to_string())),
+            "{:?}",
+            k
+        );
+        assert!(
+            k.contains(&TokenKind::StringLiteral("}".to_string())),
+            "{:?}",
+            k
+        );
+        assert_eq!(
+            k.iter()
+                .filter(|k| matches!(k, TokenKind::InterpolationEnd))
+                .count(),
+            1,
+            "{:?}",
+            k
+        );
+        // A quote after an operand still closes the outer string: the brace
+        // stays literal text.
+        let k = kinds("\"a {b\" + \"c}\"");
+        assert_eq!(
+            k[..3],
+            [
+                TokenKind::StringLiteral("a {b".to_string()),
+                TokenKind::Plus,
+                TokenKind::StringLiteral("c}".to_string()),
+            ]
+        );
     }
 
     /// Real exponents and base-prefixed integers keep working.
