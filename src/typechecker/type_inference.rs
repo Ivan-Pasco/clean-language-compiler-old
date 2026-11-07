@@ -2946,9 +2946,16 @@ impl<'a> TypeInference<'a> {
                         // object's type; bind it here the same way field reads
                         // are bound.
                         let (target_type, field_symbol_id) = if *field_symbol_id == SymbolId(0) {
-                            match self.infer_field_type_and_symbol(&tast_object.expr_type, field) {
+                            match self.infer_field_type_and_symbol(
+                                &tast_object.expr_type,
+                                field,
+                                field_location,
+                            ) {
                                 Ok(found) => found,
-                                Err(_) => (target_type, *field_symbol_id),
+                                Err(error) => {
+                                    self.errors.push(error);
+                                    (ConcreteType::Unknown, *field_symbol_id)
+                                }
                             }
                         } else {
                             (target_type, *field_symbol_id)
@@ -4215,7 +4222,7 @@ impl<'a> TypeInference<'a> {
         // NOTE: Resolve the field type AND symbol ID based on the object's actual type
         // This enables inherited field access - we look up the field in the object's class hierarchy
         let (field_type, resolved_field_symbol_id) =
-            self.infer_field_type_and_symbol(&tast_object.expr_type, field)?;
+            self.infer_field_type_and_symbol(&tast_object.expr_type, field, location)?;
 
         // SEM005: Private field access check.
         if resolved_field_symbol_id.0 != 0 {
@@ -4803,7 +4810,7 @@ impl<'a> TypeInference<'a> {
             | HirBinaryOp::Divide
             | HirBinaryOp::Modulo
             | HirBinaryOp::Power => {
-                // SEM006: Incompatible operand types in binary expression.
+                // SEM004: arithmetic on a non-numeric operand.
                 // Emit up-front when both operands are concrete and non-numeric.
                 let is_concrete_non_numeric = |t: &ConcreteType| -> bool {
                     matches!(t, ConcreteType::String | ConcreteType::Boolean)
@@ -4820,7 +4827,7 @@ impl<'a> TypeInference<'a> {
                                 crate::error::ErrorType::Validation,
                                 Some(location.clone()),
                             )
-                            .with_error_code("SEM006"),
+                            .with_error_code("SEM004"),
                         ),
                     });
                     return Ok(ConcreteType::Unknown);
@@ -6011,9 +6018,21 @@ impl<'a> TypeInference<'a> {
                 )),
                 _ => Ok(ConcreteType::Unknown),
             },
+            // SEM004: `not` is defined for booleans only (an `any` holding
+            // a boolean is checked at runtime).
             HirUnaryOp::Not => match operand_type {
-                ConcreteType::Boolean => Ok(ConcreteType::Boolean),
-                _ => Ok(ConcreteType::Unknown),
+                ConcreteType::Boolean | ConcreteType::Any | ConcreteType::Unknown => {
+                    Ok(ConcreteType::Boolean)
+                }
+                _ => Err(CompilerError::semantic_error_with_code(
+                    format!("'not' cannot be applied to a value of type {operand_type}"),
+                    Some(
+                        "`not` takes a boolean; compare the value to get one, e.g. `x == 0`"
+                            .to_string(),
+                    ),
+                    Some(location.clone()),
+                    "SEM004",
+                )),
             },
             // BOOK: required-operator - Postfix ! assertion for null check
             // Required operator returns the same type, just adds runtime null check
@@ -6034,70 +6053,65 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// Infer the type of a field access based on the object type and field name
-    /// Infer field type and symbol ID from object type
-    /// Returns (field_type, field_symbol_id)
+    /// The type and symbol of field `field_name` on a value of `object_type`.
+    ///
+    /// A class field is declared by the class or one of its ancestors
+    /// (SEM002 when it is not); an `any` value accepts every field name (its
+    /// fields are read at runtime). Lists and strings have no fields: their
+    /// length is the `length()` method.
     fn infer_field_type_and_symbol(
         &self,
         object_type: &ConcreteType,
         field_name: &str,
+        location: &SourceLocation,
     ) -> Result<(ConcreteType, SymbolId), CompilerError> {
         match object_type {
-            // Array fields - use placeholder symbol for built-in fields
-            ConcreteType::Array(_element_type) if field_name == "length" => {
-                Ok((ConcreteType::Integer, SymbolId(0)))
-            }
-
-            // String fields - use placeholder symbol for built-in fields
-            ConcreteType::String if field_name == "length" => {
-                Ok((ConcreteType::Integer, SymbolId(0)))
-            }
-
-            // A class field is declared by the class or any of its ancestors.
-            ConcreteType::Class {
-                symbol_id,
-                type_args: _,
-            } => {
-                let Some(class_symbol) = self.symbol_table.get_symbol(*symbol_id) else {
-                    return Err(CompilerError::type_error(
-                        format!(
-                            "Cannot resolve class type for field access '{}'",
-                            field_name
-                        ),
-                        None,
-                        None,
-                    ));
-                };
+            ConcreteType::Class { symbol_id, .. } => {
+                let class_name = self
+                    .symbol_table
+                    .get_symbol(*symbol_id)
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| format!("#{}", symbol_id.0));
                 if let Some((field_id, field_type)) =
                     self.symbol_table.lookup_class_field(*symbol_id, field_name)
                 {
                     return Ok((self.hir_type_to_concrete(field_type), field_id));
                 }
-                Err(CompilerError::type_error(
-                    format!(
-                        "Field '{}' not found in class '{}'",
-                        field_name, class_symbol.name
-                    ),
-                    None,
-                    None,
+                Err(CompilerError::semantic_error(
+                    format!("Field '{}' not found in class '{}'", field_name, class_name),
+                    Some(format!(
+                        "Declare `{}` in `{}` or one of its parent classes",
+                        field_name, class_name
+                    )),
+                    Some(location.clone()),
                 ))
             }
 
-            // BOOK: safe-access - Any type supports arbitrary field access
-            // Any type (dynamic/JSON objects) allows access to any field name
-            // The result is also Any type since we don't know the actual field type at compile time
-            ConcreteType::Any => {
-                // Use a placeholder symbol ID for dynamic field access
-                Ok((ConcreteType::Any, SymbolId(0)))
+            ConcreteType::Any => Ok((ConcreteType::Any, SymbolId(0))),
+
+            ConcreteType::Array(_) | ConcreteType::String if field_name == "length" => {
+                Err(CompilerError::semantic_error_with_code(
+                    format!("A {} has no field 'length'", object_type),
+                    Some("Use the method: `length()`".to_string()),
+                    Some(location.clone()),
+                    "SEM004",
+                ))
             }
 
-            _ => Err(CompilerError::type_error(
+            // Unresolved types were reported where they arose.
+            ConcreteType::Unknown => Ok((ConcreteType::Unknown, SymbolId(0))),
+
+            _ => Err(CompilerError::semantic_error_with_code(
                 format!(
-                    "Type {:?} does not have field '{}'",
+                    "A value of type {} has no field '{}'",
                     object_type, field_name
                 ),
-                None,
-                None,
+                Some(
+                    "Fields belong to class instances; `any` values (decoded JSON) accept any field name"
+                        .to_string(),
+                ),
+                Some(location.clone()),
+                "SEM004",
             )),
         }
     }
