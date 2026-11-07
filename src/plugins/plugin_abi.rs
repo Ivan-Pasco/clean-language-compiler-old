@@ -499,24 +499,21 @@ pub struct PluginPattern {
     pub example: String,
 }
 
-/// Path ownership for manifest-driven plugin detection
+/// Path ownership for manifest-driven plugin detection.
 ///
-/// When `implicit_import` is true, the compiler will automatically activate
-/// this plugin for files located in any of the `owns` directories.
+/// Files under an `owns` directory that match `patterns` are compiled with
+/// the project whenever the plugin is loaded. plugin.toml `[paths]` may also
+/// carry `auto_create` (directory scaffolding, done by project tooling) and
+/// `implicit_import` (plugin-contract.md §1.1); the compiler scans owned
+/// paths regardless of `implicit_import`, so neither field is parsed here.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginPaths {
     /// Directories this plugin owns (e.g., ["app/backend/", "app/backend/api/"])
     #[serde(default)]
     pub owns: Vec<String>,
-    /// Whether to auto-create owned directories when compiling
-    #[serde(default)]
-    pub auto_create: bool,
     /// File patterns this plugin applies to (e.g., ["*.cln"])
     #[serde(default)]
     pub patterns: Vec<String>,
-    /// Whether files in owned paths should implicitly import this plugin
-    #[serde(default)]
-    pub implicit_import: bool,
 }
 
 /// Enforcement rules for project structure conventions
@@ -1020,10 +1017,12 @@ impl BuildContext {
         self.entry_path = entry.into();
         self
     }
+    #[cfg(test)]
     pub fn with_output_dir(mut self, dir: impl Into<String>) -> Self {
         self.output_dir = dir.into();
         self
     }
+    #[cfg(test)]
     pub fn with_main_wasm(mut self, path: impl Into<String>) -> Self {
         self.main_wasm = path.into();
         self

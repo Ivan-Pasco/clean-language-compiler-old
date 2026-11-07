@@ -73,7 +73,6 @@
  * ```
  */
 
-mod app_config;
 mod bridge_stubs;
 pub mod builtin_assemblers;
 mod discovery;
@@ -90,7 +89,6 @@ pub mod typed_emission;
 pub(crate) mod wasm_adapter;
 mod wasm_loader;
 
-pub use app_config::AppConfig;
 pub use discovery::{DiscoveryError, PluginDiscovery};
 pub use expander::PluginExpander;
 pub use language_registry::{

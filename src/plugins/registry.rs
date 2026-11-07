@@ -500,7 +500,8 @@ impl PluginRegistry {
         self.bridge_functions.iter().any(|f| f.name == name)
     }
 
-    /// Get a bridge function by name
+    /// Get a bridge function by name (unit-test seam)
+    #[cfg(test)]
     pub fn get_bridge_function(&self, name: &str) -> Option<&BridgeFunction> {
         self.bridge_functions.iter().find(|f| f.name == name)
     }
@@ -697,9 +698,6 @@ impl PluginRegistry {
         out
     }
 
-    /// Every loaded plugin manifest keyed by plugin name, in plugin-load
-    /// order (the order of the `plugins:` declaration). Order-sensitive
-    /// consumers such as artifact orchestration rely on this.
     /// Generic shorthand table (plugin-contract.md §4.5): type name →
     /// `instance_class` template for every loaded plugin type that declares
     /// one. `Name<Arg>` resolves to the template with `{T}` set to `Arg`.
@@ -715,6 +713,9 @@ impl PluginRegistry {
             .collect()
     }
 
+    /// Every loaded plugin manifest keyed by plugin name, in plugin-load
+    /// order (the order of the `plugins:` declaration). Order-sensitive
+    /// consumers such as artifact orchestration rely on this.
     pub fn loaded_manifests(&self) -> &IndexMap<String, PluginManifest> {
         &self.manifests
     }

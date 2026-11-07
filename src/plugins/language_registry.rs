@@ -94,11 +94,6 @@ pub struct CompletionSnippet {
 ///
 /// // Get completions matching a prefix
 /// let completions = registry.get_completions("dat");
-///
-/// // Check which plugin owns a file path
-/// if let Some(plugin) = registry.plugin_for_path("app/data/User.cln") {
-///     println!("File is owned by: {}", plugin);
-/// }
 /// ```
 pub struct LanguageRegistry {
     /// Block definitions by name
@@ -113,8 +108,6 @@ pub struct LanguageRegistry {
     functions: HashMap<String, FunctionInfo>,
     /// All completion snippets
     completions: Vec<CompletionSnippet>,
-    /// Path ownership patterns: (glob_pattern, plugin_name)
-    path_ownership: Vec<(String, String)>,
 }
 
 impl LanguageRegistry {
@@ -127,7 +120,6 @@ impl LanguageRegistry {
             types: HashMap::new(),
             functions: HashMap::new(),
             completions: Vec::new(),
-            path_ownership: Vec::new(),
         }
     }
 
@@ -196,12 +188,6 @@ impl LanguageRegistry {
         // Add completions
         for completion in &language.completions {
             self.add_completion(plugin_name, completion);
-        }
-
-        // Add path ownership
-        for path_pattern in &language.owns_paths {
-            self.path_ownership
-                .push((path_pattern.clone(), plugin_name.to_string()));
         }
     }
 
@@ -334,23 +320,6 @@ impl LanguageRegistry {
             .iter()
             .filter(|c| c.trigger.starts_with(prefix) || prefix.starts_with(&c.trigger))
             .collect()
-    }
-
-    /// Find the plugin that "owns" a file path
-    ///
-    /// # Arguments
-    /// * `path` - The file path to check
-    ///
-    /// # Returns
-    /// The name of the plugin that owns this path, or None
-    pub fn plugin_for_path(&self, path: &str) -> Option<&str> {
-        for (pattern, plugin) in &self.path_ownership {
-            // Simple prefix matching (could be extended to proper glob matching)
-            if path.starts_with(pattern) || path.contains(pattern) {
-                return Some(plugin.as_str());
-            }
-        }
-        None
     }
 
     /// Get all keyword names (for syntax highlighting)
@@ -525,24 +494,6 @@ mod tests {
         let completions = registry.get_completions("data");
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].trigger, "data ");
-    }
-
-    #[test]
-    fn test_path_ownership() {
-        let manifest = create_test_manifest();
-        let mut manifests = HashMap::new();
-        manifests.insert("test.plugin".to_string(), manifest);
-
-        let registry = LanguageRegistry::from_manifests(&manifests);
-
-        // File in owned path
-        assert_eq!(
-            registry.plugin_for_path("app/data/User.cln"),
-            Some("test.plugin")
-        );
-
-        // File not in owned path
-        assert_eq!(registry.plugin_for_path("app/other/File.cln"), None);
     }
 
     #[test]

@@ -1867,9 +1867,7 @@ start:
                 ai: Default::default(),
                 paths: PluginPaths {
                     owns: owns.iter().map(|s| (*s).to_string()).collect(),
-                    auto_create: false,
                     patterns: patterns.iter().map(|s| (*s).to_string()).collect(),
-                    implicit_import: false,
                 },
                 enforcement: Default::default(),
                 memory: Default::default(),
