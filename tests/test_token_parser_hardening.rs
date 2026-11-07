@@ -148,3 +148,32 @@ fn bare_return_followed_by_a_statement() {
         Statement::Return { value: Some(_), .. }
     ));
 }
+
+/// A block header with no deeper-indented body used to take the following
+/// lines at its own level as its body (grammar.ebnf `indented_block`).
+#[test]
+fn block_header_without_indented_body_is_rejected() {
+    for src in [
+        "start:\n\tinteger x = 1\n\tif x > 0\n\tprint(\"in\")\n",
+        "start:\n\tinteger x = 1\n\twhile x > 0\n\tx = x - 1\n",
+        "start:\n\tlist<integer> xs = [1]\n\titerate v in xs\n\tprint(v)\n",
+        "start:\n\titerate i in 1 to 3\n\tprint(i)\n",
+        "start:\n\tf()\n\nfunctions:\n\tvoid f()\n\tprint(1)\n",
+    ] {
+        let error = parse_err(src);
+        assert!(
+            error.to_string().contains("Expected an indented block"),
+            "{}: {}",
+            src.escape_debug(),
+            error
+        );
+    }
+    // An unindented line after `start:` is not its body.
+    parse_err("start:\nprint(1)\n");
+    // A header with nothing under it before the next section is empty.
+    parse("start:\n\t// nothing yet\n\nfunctions:\n\tvoid f()\n\t\tprint(1)\n")
+        .unwrap_or_else(|e| panic!("must parse: {:?}", e));
+    // Nested bodies still work, including an else branch.
+    parse("start:\n\tinteger x = 1\n\tif x > 0\n\t\tprint(1)\n\telse\n\t\tprint(2)\n\tprint(3)\n")
+        .unwrap_or_else(|e| panic!("must parse: {:?}", e));
+}

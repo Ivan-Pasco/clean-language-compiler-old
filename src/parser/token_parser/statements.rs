@@ -679,7 +679,7 @@ impl TokenParser {
         let condition = self.parse_expression()?;
         self.skip_whitespace();
 
-        let then_branch = self.parse_block()?;
+        let then_branch = self.parse_block(if_indent_level)?;
 
         self.skip_whitespace();
 
@@ -704,8 +704,6 @@ impl TokenParser {
         // Check for else or else if at the same level as the if statement
         let else_branch = if self.eat(&TokenKind::Else) {
             self.skip_whitespace();
-            // DON'T skip indentation - let parse_block() handle it
-
             // Check for "else if" pattern - recursively parse as nested if
             if self.check(&TokenKind::If) {
                 // Parse the nested if as a single-statement block
@@ -713,7 +711,7 @@ impl TokenParser {
                 Some(vec![nested_if])
             } else {
                 // Regular else block
-                Some(self.parse_block()?)
+                Some(self.parse_block(if_indent_level)?)
             }
         } else {
             None
@@ -739,7 +737,7 @@ impl TokenParser {
         let condition = self.parse_expression()?;
         self.skip_whitespace();
 
-        let body = self.parse_block()?;
+        let body = self.parse_block(while_indent_level)?;
 
         self.skip_whitespace();
 
@@ -770,6 +768,7 @@ impl TokenParser {
 
     pub(super) fn parse_for(&mut self) -> Result<Statement, CompilerError> {
         // For is represented as Iterate in Clean Language
+        let header_level = self.get_current_indent_level();
         let for_token = self.expect(&TokenKind::For)?;
         self.skip_whitespace();
 
@@ -782,9 +781,7 @@ impl TokenParser {
 
         let collection = self.parse_expression()?;
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Statement::Iterate {
             iterator,
@@ -796,6 +793,7 @@ impl TokenParser {
 
     /// Parse iterate statement: iterate item in collection or iterate i in start..end
     pub(super) fn parse_iterate(&mut self) -> Result<Statement, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let iterate_token = self.expect(&TokenKind::Iterate)?;
         self.skip_whitespace();
 
@@ -850,7 +848,7 @@ impl TokenParser {
             };
 
             self.skip_whitespace();
-            let body = self.parse_block()?;
+            let body = self.parse_block(header_level)?;
 
             Ok(Statement::RangeIterate {
                 iterator,
@@ -873,7 +871,7 @@ impl TokenParser {
             };
 
             self.skip_whitespace();
-            let body = self.parse_block()?;
+            let body = self.parse_block(header_level)?;
 
             Ok(Statement::Iterate {
                 iterator,
@@ -1055,6 +1053,7 @@ impl TokenParser {
     pub(super) fn try_parse_on_error_block(
         &mut self,
     ) -> Result<Option<(Vec<Statement>, crate::ast::SourceLocation)>, CompilerError> {
+        let header_level = self.get_current_indent_level();
         self.skip_whitespace();
 
         // Check for onError keyword
@@ -1080,10 +1079,7 @@ impl TokenParser {
         self.bump(); // consume :
         self.skip_whitespace();
 
-        // Use parse_block() to handle all the indentation logic properly
-        // parse_block() will consume the Indent token, parse all statements,
-        // and handle Dedent tokens correctly
-        let error_block = self.parse_block()?;
+        let error_block = self.parse_block(header_level)?;
 
         Ok(Some((error_block, error_location)))
     }

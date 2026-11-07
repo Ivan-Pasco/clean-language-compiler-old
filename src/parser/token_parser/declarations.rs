@@ -21,6 +21,7 @@ use tracing::warn;
 
 impl TokenParser {
     pub(super) fn parse_function(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         self.expect(&TokenKind::Function)?;
         self.skip_whitespace();
 
@@ -48,10 +49,7 @@ impl TokenParser {
         };
 
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name,
@@ -75,6 +73,7 @@ impl TokenParser {
     /// Example: start:
     ///             print("Hello")
     pub(super) fn parse_start_function(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let start_token = self.expect(&TokenKind::Start)?;
         let location = start_token.location.clone();
 
@@ -84,10 +83,7 @@ impl TokenParser {
         self.expect(&TokenKind::Colon)?;
 
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name: "start".to_string(),
@@ -364,6 +360,7 @@ impl TokenParser {
     /// Parse a single function within a functions: block
     /// Functions in a block have the format: [return_type] name(params)
     pub(super) fn parse_function_in_block(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let start_location = self.current().location.clone();
 
         // Save position in case we need to backtrack
@@ -475,10 +472,7 @@ impl TokenParser {
 
         self.expect(&TokenKind::RightParen)?;
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Parse function body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name: func_name,
@@ -519,6 +513,7 @@ impl TokenParser {
     /// with "Unsupported statement type: Colon" because the trailing colon
     /// in `onMount():` had no place in the standard method grammar.
     pub(super) fn parse_event_handler_in_block(&mut self) -> Result<Function, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let start_location = self.current().location.clone();
 
         // Method name.
@@ -569,7 +564,7 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Body — same indented-block handling as functions: methods.
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Function {
             name: func_name,
@@ -1386,7 +1381,7 @@ impl TokenParser {
                     if matches!(next_indent_level, Some(level) if level > body_indent_level) {
                         // Consume the newline; parse_block will consume the Indent.
                         self.bump(); // consume Newline
-                        Some(self.parse_block()?)
+                        Some(self.parse_block(body_indent_level)?)
                     } else {
                         // No default body — consume just the newline to advance.
                         self.bump();
@@ -1491,6 +1486,7 @@ impl TokenParser {
     }
 
     pub(super) fn parse_constructor(&mut self) -> Result<Constructor, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let constructor_token = self.expect(&TokenKind::Constructor)?;
         let location = constructor_token.location.clone();
 
@@ -1538,10 +1534,7 @@ impl TokenParser {
 
         self.expect(&TokenKind::RightParen)?;
         self.skip_whitespace();
-        // DON'T skip indentation - let parse_block() handle it
-
-        // Parse constructor body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         Ok(Constructor {
             parameters,
@@ -1961,23 +1954,53 @@ impl TokenParser {
         }
     }
 
-    /// Parse a block of statements at the current indentation level
-    /// Returns when it encounters a Dedent that exits this block level
-    pub(super) fn parse_block(&mut self) -> Result<Vec<Statement>, CompilerError> {
+    /// Parse an indented block (grammar.ebnf `indented_block`): the body of
+    /// a construct whose header line sits at indentation `header_level`.
+    /// The body must start on a following line indented deeper than the
+    /// header. Returns at the Dedent that leaves the block.
+    pub(super) fn parse_block(
+        &mut self,
+        header_level: usize,
+    ) -> Result<Vec<Statement>, CompilerError> {
         let mut statements = Vec::new();
 
-        // Consume the leading Indent token to determine our indentation level
-        // If there's no Indent, we're at level 0 (top level of a function)
-        let block_indent_level = if matches!(self.current_kind(), TokenKind::Indent(_)) {
-            if let TokenKind::Indent(level) = self.current_kind() {
-                let level_value = *level;
-                self.bump(); // Consume the Indent token
-                level_value
-            } else {
-                0
+        let block_indent_level = match self.current_kind() {
+            TokenKind::Indent(level) if *level > header_level => {
+                let level = *level;
+                self.bump();
+                level
             }
-        } else {
-            0
+            // A header with nothing under it (`start:` holding only a
+            // comment, before the next top-level section or the end of the
+            // file) has an empty body: no following line could be mistaken
+            // for its body.
+            TokenKind::Eof => return Ok(statements),
+            TokenKind::Dedent(level) if *level <= header_level => return Ok(statements),
+            kind if header_level == 0
+                && !matches!(kind, TokenKind::Indent(_))
+                && self.current().location.column == 1 =>
+            {
+                return Ok(statements)
+            }
+            _ => {
+                let token = self.current();
+                return Err(CompilerError::parse_error(
+                    match token.kind {
+                        TokenKind::Indent(_) | TokenKind::Dedent(_) | TokenKind::Eof => {
+                            "Expected an indented block: the next line must be indented deeper than the line that opens the block".to_string()
+                        }
+                        _ => format!(
+                            "Expected an indented block on the next line, found {:?}",
+                            token.kind
+                        ),
+                    },
+                    Some(token.location.clone()),
+                    Some(
+                        "Put the body on the next line, indented one tab deeper than the line that opens it."
+                            .to_string(),
+                    ),
+                ));
+            }
         };
 
         while !self.is_at_end() {

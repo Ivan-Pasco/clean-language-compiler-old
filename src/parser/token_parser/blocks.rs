@@ -2389,6 +2389,7 @@ impl TokenParser {
             }
 
             // Parse the type name: integer | string | number | boolean | <Identifier>
+            let header_level = self.get_current_indent_level();
             let decl_location = self.current().location.clone();
             let type_str = match self.current_kind() {
                 TokenKind::Identifier(name) => {
@@ -2437,8 +2438,7 @@ impl TokenParser {
                 self.bump();
             }
 
-            // Parse the indented body using parse_block()
-            let body = self.parse_block()?;
+            let body = self.parse_block(header_level)?;
 
             if body.is_empty() {
                 return Err(CompilerError::parse_error(
@@ -2489,6 +2489,7 @@ impl TokenParser {
     /// then a colon. The indented body is executed whenever any of the named
     /// state variables change.
     pub(super) fn parse_watch_block(&mut self) -> Result<crate::ast::WatchBlock, CompilerError> {
+        let header_level = self.get_current_indent_level();
         let location = Some(self.current().location.clone());
 
         // Consume "watch" keyword
@@ -2541,8 +2542,7 @@ impl TokenParser {
             self.bump();
         }
 
-        // Parse the indented body
-        let body = self.parse_block()?;
+        let body = self.parse_block(header_level)?;
 
         if body.is_empty() {
             return Err(CompilerError::parse_error(
@@ -3408,6 +3408,7 @@ impl TokenParser {
             self.bump();
             self.skip_whitespace();
         }
+        let header_level = self.get_current_indent_level();
 
         // Expect the branch label identifier ("ok" or "error").
         // "error" lexes as TokenKind::Error (a keyword), so accept both Identifier and Error tokens.
@@ -3450,7 +3451,7 @@ impl TokenParser {
         // If the next token is a Newline, this is a block-style branch (body on subsequent lines)
         if matches!(self.current_kind(), TokenKind::Newline) {
             self.bump(); // consume the newline
-            body = self.parse_block()?;
+            body = self.parse_block(header_level)?;
         } else {
             // Inline style: parse statements until end of line
             while !self.is_at_end()
