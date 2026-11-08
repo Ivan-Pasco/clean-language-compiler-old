@@ -1,0 +1,9 @@
+// _i18n_configure applies a frame.locale `locale:` block at startup: default
+// and fallback locales, detection strategy, and the translations folder whose
+// <tag>.json files are all loaded. It reads the disk, so function-registry.toml
+// declares it hosts = ["server"]; locale.current is the grammar's name for
+// _i18n_locale (frame-locale.ebnf §3).
+
+start:
+	_i18n_configure("en", "fr", "header", "app/i18n")
+	printl(locale.current())

@@ -2286,7 +2286,7 @@ hosts       = ["server"]
 description = "Cancel a cron schedule by name or by the registration ID returned from _schedule_cron; returns true if cancelled, false if not found"
 
 # ============================================================
-# LAYER 2 - I18N / LOCALE (8 functions — translations, formatting)
+# LAYER 2 - I18N / LOCALE (9 functions — translations, formatting, locale: setup)
 # Implemented in clean-server commit e50176c (2026-06-15).
 # Browser-side equivalents for the 7 hosts=["all"] entries are tracked
 # separately in locale-server-and-browser-implementation.md.
@@ -2321,7 +2321,7 @@ category    = "locale"
 module      = "env"
 params      = []
 returns     = "ptr"
-aliases     = ["i18n.locale", "locale.get"]
+aliases     = ["i18n.locale", "locale.current", "locale.get"]
 hosts       = ["all"]
 description = "Get the currently active locale code (e.g. 'en', 'fr-CA', 'ar')"
 
@@ -2378,7 +2378,18 @@ params      = ["string", "string"]
 returns     = "void"
 aliases     = ["i18n.load"]
 hosts       = ["server"]
-description = "Load translations for a locale at startup: locale code, JSON object of key→value mappings. Called by locale: blocks during preamble."
+description = "Load translations for a locale at startup: locale code, path of its JSON translation file (read relative to the working directory)."
+
+[[functions]]
+name        = "_i18n_configure"
+layer       = 2
+category    = "locale"
+module      = "env"
+params      = ["string", "string", "string", "string"]
+returns     = "void"
+aliases     = []
+hosts       = ["server"]
+description = "Apply a locale: block at startup: default locale, fallback locale (empty = the default), detection (header|cookie|query|manual), translations path. Loads every <tag>.json file in the path (relative to the working directory)."
 
 # ============================================================
 # LAYER 3 - SESSION MANAGEMENT (7 functions)
