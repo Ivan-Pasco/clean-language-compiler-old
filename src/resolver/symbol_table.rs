@@ -45,6 +45,7 @@ pub const SYNTHETIC_BUILTIN_BASE: usize = 0x4000_0000;
 
 pub const SYM_BUILTIN_STRING_CONCAT: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE);
 pub const SYM_BUILTIN_MATH_POW_F64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 1);
+/// `integer ^ integer`: exact integer power (`math.pow.i32`).
 pub const SYM_BUILTIN_MATH_POW_I32: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 2);
 pub const SYM_BUILTIN_LIST_ALLOCATE: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 3);
 pub const SYM_BUILTIN_LIST_PUSH: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 4);
@@ -71,6 +72,8 @@ pub const SYM_BUILTIN_STRING_CONCAT_TRANSIENT: SymbolId = SymbolId(SYNTHETIC_BUI
 pub const SYM_BUILTIN_LIST_ADD_I64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 13);
 /// `list.add` for `list<string>` (a `.unique` list compares strings by bytes).
 pub const SYM_BUILTIN_LIST_ADD_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 14);
+/// `integer:64 ^ integer`: exact integer power on i64 (`math.pow.i64`).
+pub const SYM_BUILTIN_MATH_POW_I64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 15);
 
 /// Base for MIR-synthesized watch handler IDs (one per watch block target).
 pub const SYM_WATCH_HANDLER_BASE: usize = 0x4001_0000;

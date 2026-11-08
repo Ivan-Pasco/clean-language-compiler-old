@@ -504,9 +504,13 @@ impl MirCodeGenerator<'_> {
                 .insert(name.to_string(), MirType::F64);
         }
 
+        self.function_return_types
+            .insert("math.pow.i64".to_string(), MirType::I64);
+
         // Functions returning I32
         for name in &[
             "math.abs.i32",
+            "math.pow.i32",
             "string.toInteger",
             "number.toInteger",
             "boolean.toInteger",

@@ -341,39 +341,38 @@ impl MirBuilder {
                     );
                 }
 
-                // NOTE: Handle Power operator as runtime function call
+                // `a ^ b` is a runtime call. Its type is the one the type
+                // checker gave the expression (`integer:64 ^ integer` is an
+                // `integer:64`). `number` powers use the host `math.pow`;
+                // integer powers are exact (`math.pow.i32` / `math.pow.i64`
+                // multiply in a loop) instead of rounding through an f64,
+                // which loses precision above 2^53 and traps when the f64
+                // result does not fit an i32.
                 if matches!(operator, BinaryOperator::Power) {
-                    // Power operation requires runtime pow function
-                    // For integers: pow_i32(base, exponent) -> i32
-                    // For floats: pow_f64(base, exponent) -> f64
                     let left_id = self.build_expression(context, left)?;
                     let right_id = self.build_expression(context, right)?;
+                    let (result_type, pow_function) =
+                        match self.convert_concrete_type(&expression.expr_type) {
+                            MirType::I64 | MirType::U64 => (MirType::I64, SYM_BUILTIN_MATH_POW_I64),
+                            MirType::I8
+                            | MirType::I16
+                            | MirType::I32
+                            | MirType::U8
+                            | MirType::U16
+                            | MirType::U32 => (MirType::I32, SYM_BUILTIN_MATH_POW_I32),
+                            _ => (MirType::F64, SYM_BUILTIN_MATH_POW_F64),
+                        };
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
-
-                    // Determine result type based on operand types
-                    let result_type = if matches!(left.expr_type, ConcreteType::Number)
-                        || matches!(right.expr_type, ConcreteType::Number)
-                    {
-                        MirType::F64 // Float power
-                    } else {
-                        MirType::I32 // Integer power
-                    };
-
                     self.register_temp_local(
                         context,
                         result_id,
-                        result_type.clone(),
+                        result_type,
                         expression.location.clone(),
                     );
 
-                    // Pick the math.pow variant whose calling convention matches the result type.
-                    let pow_function = if matches!(result_type, MirType::F64) {
-                        SYM_BUILTIN_MATH_POW_F64
-                    } else {
-                        SYM_BUILTIN_MATH_POW_I32
-                    };
-
+                    // The call converts each operand to the parameter type
+                    // the function is registered with.
                     let instruction = MirInstruction {
                         dest: Some(result_id),
                         operation: MirOperation::Call {
