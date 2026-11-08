@@ -72,12 +72,13 @@ Reserved keywords in Clean Language:
 ```
 and        class       computed     constructor  default     else
 error      false       for          from         function    guard
-if         import      in           intent       iterate     not         null
+if         import      in           intent       iterate     not         none
 onError    or          print        reset        return
 screen     source      spec         start        state       step         test        tests
 this       to          true         watch        is          returns
 description while      input        unit         private     constant
 functions  rules       build        break        continue    require
+null
 ```
 
 #### Contextual Keywords
@@ -210,23 +211,23 @@ true
 false
 ```
 
-#### Null Literal
+#### None Literal
 
-The `null` value represents the absence of a value. It is distinct from `0`, `false`, or empty string `""`.
+The `none` value represents the absence of a value. It is distinct from `0`, `false`, or empty string `""`.
 
 ```clean
-null        // The null value
-none        // Same value, other spelling
+none        // The empty value (standard spelling)
+null        // Same value, accepted alias
 ```
 
-Write `null` for no value. `none` also works and means exactly the same thing. The next Clean Language version uses `none`, so code written with `none` carries over unchanged.
+Write `none` for no value. `null` is an accepted alias and means exactly the same thing, so code written with `null` keeps working.
 
-**Null Semantics:**
-- `null` is its own type that is compatible with any nullable context
-- `null == null` is `true`
-- `null == anything_else` is `false` (except for another null)
-- Use the `default` operator to provide fallback values for null
-- Use the `!` operator to assert a value is not null
+**None Semantics:**
+- `none` has its own type, also named `none`; it can be stored only in a `T?` (or an `any`) — every plain type rejects it (see Type System, Nullable Types)
+- `none == none` is `true`
+- `none == anything_else` is `false` (except for another none)
+- Use the `default` operator to provide a fallback value for none
+- Use the `!` operator to assert a value is not none
 
 #### List Literals
 ```clean

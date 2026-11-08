@@ -203,7 +203,7 @@ Not emitted by the compiler. Raised during WASM execution by the host runtime.
 | RUN001 | `MemoryViolation` | WASM execution accessed memory outside allocated bounds | Runtime | semantic-rules.md §RUN001 |
 | RUN002 | `StackError` | WASM stack overflow or underflow during execution | Runtime | semantic-rules.md §RUN002 |
 | RUN003 | `ArithmeticError` | Division by zero or other invalid arithmetic at runtime | Runtime | semantic-rules.md §RUN003 |
-| RUN004 | `ReferenceError` | Null or invalid reference accessed at runtime (raised by `expr!` on null) | Runtime | semantic-rules.md §RUN004 |
+| RUN004 | `ReferenceError` | None or invalid reference accessed at runtime (raised by `expr!` on none) | Runtime | semantic-rules.md §RUN004 |
 | RUN005 | `AssertionFailure` | A `require` statement evaluated to false at runtime | Runtime | semantic-rules.md §RUN005 |
 
 ---

@@ -354,7 +354,7 @@ json.tryTextToData(text), json.prettyDataToText(data)
 | Call | Returns | Description |
 |------|---------|-------------|
 | `json.textToData(text)` | any | Parse a JSON string into a Clean value. Throws on invalid JSON. |
-| `json.tryTextToData(text)` | any | Parse a JSON string; returns `null` on invalid JSON instead of throwing. |
+| `json.tryTextToData(text)` | any | Parse a JSON string; returns `none` on invalid JSON instead of throwing. |
 
 JSON types map to Clean types:
 - JSON object → `pairs<string, any>`
@@ -362,7 +362,7 @@ JSON types map to Clean types:
 - JSON string → `string`
 - JSON number → `number`
 - JSON boolean → `boolean`
-- JSON null → `null`
+- JSON null → `none`
 
 Both functions support nested structures with unlimited depth.
 
@@ -404,7 +404,7 @@ any city = data["user"]["address"]["city"]  // Bracket notation
 - **String keys** (`data["key"]`): Use for dynamic/computed keys, returns `any`
 - **Integer indices** (`data[0]`): Use for array element access, returns `any`
 - **Mixed access**: Combine dot and bracket notation as needed (`data.items[0].name`)
-- **Missing fields**: Returns `null` when field doesn't exist or index is out of bounds
+- **Missing fields**: Returns `none` when field doesn't exist or index is out of bounds
 
 ```clean
 start:
@@ -414,12 +414,12 @@ start:
     // Preferred: Dot notation for object fields
     any name = data.name              // Returns "Alice"
     any city = data.profile.city      // Returns "NYC"
-    any missing = data.unknown        // Returns null
+    any missing = data.unknown        // Returns none
 
     // Bracket notation for array access
     any scores = data.scores
     any first = scores[0]             // Returns 85
-    any outOfBounds = scores[100]     // Returns null
+    any outOfBounds = scores[100]     // Returns none
 
     // Mixed notation for complex structures
     any firstScore = data.scores[0]   // Returns 85
@@ -451,7 +451,7 @@ start:
     // Safe parsing with tryTextToData
     string maybeJson = getUserInput()
     any parsed = json.tryTextToData(maybeJson)
-    if parsed == null
+    if parsed == none
         print("Invalid JSON provided")
     else
         print("Successfully parsed JSON")
@@ -503,7 +503,7 @@ start:
     // }
 
     // Working with JSON arrays
-    list<any> items = [1, 2, 3, "four", true, null]
+    list<any> items = [1, 2, 3, "four", true, none]
     string arrayJson = json.dataToText(items)
     // Result: [1,2,3,"four",true,null]
 
@@ -526,7 +526,7 @@ start:
 | string | `string` | `"hello"` → `"hello"` |
 | number | `number` | `3.14` → `3.14` |
 | boolean | `boolean` | `true` → `true` |
-| null | `null` | `null` → `null` |
+| null | `none` | `null` → `none` |
 
 **Note on Nested Structures**: The JSON parser fully supports nested objects and arrays. When parsing nested structures, inner objects and arrays are recursively parsed and stored as `any` values within the parent structure.
 
@@ -590,11 +590,11 @@ string tag = response.data.users[0].profile.tags[0]  // Returns "admin"
 start:
     // textToData throws on invalid JSON
     string badJson = "{ invalid json }"
-    any data = json.textToData(badJson) onError null
+    any data = json.textToData(badJson) onError none
 
-    // Or use tryTextToData for null-based error handling
+    // Or use tryTextToData for none-based error handling
     any safeData = json.tryTextToData(badJson)
-    if safeData == null
+    if safeData == none
         print("JSON parsing failed")
 
     // Use default operator for fallback values

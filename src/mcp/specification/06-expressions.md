@@ -10,7 +10,7 @@
 From highest to lowest precedence:
 
 1. **Primary** — `()`, function calls, method calls, property access
-2. **Postfix** — `!` (required non-null assertion)
+2. **Postfix** — `!` (required not-none assertion)
 3. **Unary** — `not`, `-` (unary minus)
 4. **Exponentiation** — `^` (**right-associative**: `2^3^2` evaluates as `2^(3^2)` = 512, not `(2^3)^2` = 64)
 5. **Multiplicative** — `*`, `/`, `%`
@@ -19,7 +19,7 @@ From highest to lowest precedence:
 8. **Equality** — `==`, `!=`, `is`
 9. **Logical AND** — `and`
 10. **Logical OR** — `or`
-11. **Null-Coalescing** — `default`
+11. **None-Coalescing** — `default`
 12. **Assignment** — `=`
 
 All binary operators at levels 5–11 are **left-associative**: `a - b - c` evaluates as `(a - b) - c`.
@@ -126,29 +126,29 @@ a or b      // Logical OR
 not a       // Logical NOT (unary prefix)
 ```
 
-### Null-Handling Operators
+### None-Handling Operators
 
-Clean Language provides two operators for working with potentially null values:
+Clean Language provides two operators for working with values that may be `none` (a `T?`):
 
 #### Default Operator (`default`)
 
-The `default` operator provides a fallback value when the left operand is `null`. This is also known as null-coalescing.
+The `default` operator provides a fallback value when the left operand is `none`. This is also known as none-coalescing (null-coalescing).
 
 ```clean
-value default fallback    // Returns value if not null, otherwise fallback
+value default fallback    // Returns value if not none, otherwise fallback
 ```
 
-**Important:** The `default` operator only checks for `null`, not for "falsy" values like `0`, `false`, or `""`.
+**Important:** The `default` operator only checks for `none`, not for "falsy" values like `0`, `false`, or `""`.
 
 ```clean
-// Null-coalescing with 'default':
-null default "x"           // Returns "x" (left is null)
-"y" default "x"            // Returns "y" (left is not null)
+// None-coalescing with 'default':
+none default "x"           // Returns "x" (left is none)
+"y" default "x"            // Returns "y" (left is not none)
 
-// 'default' only coalesces null, NOT falsy values:
-false default true         // Returns false (false is NOT null)
-0 default 10               // Returns 0 (0 is NOT null)
-"" default "fallback"      // Returns "" (empty string is NOT null)
+// 'default' only coalesces none, NOT falsy values:
+false default true         // Returns false (false is NOT none)
+0 default 10               // Returns 0 (0 is NOT none)
+"" default "fallback"      // Returns "" (empty string is NOT none)
 
 // Boolean logic with 'or' remains unchanged:
 false or true              // Returns true (traditional boolean OR)
@@ -168,7 +168,7 @@ string value = primary default secondary default "final fallback"
 
 #### Required Assertion Operator (`!`)
 
-**`!` is a postfix operator that asserts a value is non-null at runtime, and narrows its type at compile time.**
+**`!` is a postfix operator that asserts a value is not none at runtime, and narrows its type at compile time.**
 
 The `!` operator is written immediately after the expression it applies to — it comes after the value, never before:
 
@@ -177,28 +177,28 @@ value!    // ✅ Correct postfix form
 !value    // ❌ Not valid — ! is not a prefix here
 ```
 
-**Runtime behavior:** If the value is `null` at the point of evaluation, execution halts with a runtime reference error (RUN004). If the value is not null, it is returned unchanged.
+**Runtime behavior:** If the value is `none` at the point of evaluation, execution halts with a runtime reference error (RUN004). If the value is not none, it is returned unchanged.
 
-**Compile-time behavior:** After `!`, the compiler treats the result as a guaranteed non-null value for subsequent type checking. Null checks and `default` branches that follow are not required.
+**Compile-time behavior:** After `!`, the compiler treats the result as the underlying `T` of the `T?` for subsequent type checking. None checks and `default` branches that follow are not required.
 
 ```clean
-// maybeNull has type string (nullable)
-string? maybeNull = getUser()
+// maybeNone has type string? (it may be none)
+string? maybeNone = getUser()
 
-// After !, the compiler treats the result as string (non-null)
-string name = maybeNull!    // Runtime check: halts if null; compile-time: treated as string
+// After !, the compiler treats the result as string (not none)
+string name = maybeNone!    // Runtime check: halts if none; compile-time: treated as string
 
 // Chaining with method calls
-string upper = getText()!.toUpperCase()    // getText() is checked for null before .toUpperCase()
+string upper = getText()!.toUpperCase()    // getText() is checked for none before .toUpperCase()
 
-// Use when you're certain a value is not null
+// Use when you're certain a value is not none
 integer count = list.find(item)!
 ```
 
 **When to Use:**
-- Use `!` when you are certain a value is not null and want to express that intent explicitly
+- Use `!` when you are certain a value is not none and want to express that intent explicitly
 - Use `default` when you want to provide a fallback value instead of halting
-- Prefer `default` for user-facing code; use `!` for internal assertions where null would indicate a programming error
+- Prefer `default` for user-facing code; use `!` for internal assertions where none would indicate a programming error
 
 ### Matrix Operations
 

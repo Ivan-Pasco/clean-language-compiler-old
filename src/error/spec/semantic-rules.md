@@ -166,16 +166,22 @@ The type of an expression does not match what the context requires.
 - Function argument: argument type must match parameter type
 - State variable initializer: initializer type must match declared state type
 - Computed state body: computed body must return the declared type
+- Class field initializer: initializer type must match the field type
+- `none` (alias `null`) stored into a plain type: only a `T?` or an `any` holds none (type-system.md §8) — at all the sites above and as an element of a list or pairs literal stored into a typed list or pairs
+- A `T?` used as a `T`: stored into a plain `T`, or its field read, method called or element indexed without `!` / `default`
+- The result of a call to a `void` function used as a value ("returns nothing (void)")
 
 **Example (passes):**
 ```clean
 integer x = 42
 string name = "Alice"
+string? nickname = none
 ```
 
 **Example (fails — SEM001):**
 ```clean
 integer x = "hello"     // string is not assignable to integer
+string title = none     // none cannot be used as string: a plain string is never none
 ```
 
 ### SEM002 — Undefined Symbol
@@ -871,7 +877,7 @@ WASM stack overflow or underflow during execution.
 Division by zero or other invalid arithmetic operation at runtime.
 
 ### RUN004 — Reference Error
-A null or invalid reference was accessed at runtime.
+A none or invalid reference was accessed at runtime (e.g. `value!` when `value` is none).
 
 ### RUN005 — Assertion Failure
 A `require` statement evaluated to false at runtime.

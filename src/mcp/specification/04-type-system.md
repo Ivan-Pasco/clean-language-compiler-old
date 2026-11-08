@@ -12,7 +12,7 @@
 | `number`    | Decimal numbers | 64-bit | `3.14`, `6.02e23` |
 | `string`   | UTF-8 text, dynamically sized | — | `"Hello"` |
 | `void`     | No value / empty return type | 0 bytes | *(function return only)* |
-| `none`     | The type of the `null` literal | — | `null` |
+| `none`     | The type of the `none` value (alias `null`) | — | `none` |
 
 **Type System Philosophy:**
 Clean Language uses platform-optimal defaults for all numeric types. The `integer` type is 32-bit and the `number` type is 64-bit, providing the best balance of performance and precision for most applications.
@@ -322,23 +322,26 @@ start:
 
 ### Nullable Types
 
-Any type `T` can be made nullable by appending `?`. The resulting type `T?` means "either a `T` or `null`".
+Any type `T` can be made nullable by appending `?`. The resulting type `T?` means "either a `T` or `none`".
 
 ```clean
-string? maybe = "hello"     // holds a string OR null
-string? empty = null        // OK
-string plain = null         // ERROR: plain `string` rejects null
+string? maybe = "hello"     // holds a string OR none
+string? empty = none        // OK
+string plain = none         // ERROR: plain `string` rejects none
 ```
+
+Only a `T?` holds `none`. Every plain type rejects it — `integer`, `number`, `boolean`, `string`, `list<T>`, `pairs<K, V>`, `matrix<T>` and class types alike. `any` is the exception: it holds any value, `none` included. `null` is an accepted alias of `none` everywhere below.
 
 **Rules:**
 
-- **Assignment.** `null` is assignable to any `T?`. `T` is assignable to `T?` (widening). A `T?` value is NOT assignable to plain `T` without the `!` assertion operator.
-- **`!` (required assertion).** `value!` traps at runtime if `value` is null; otherwise returns the underlying `T`. Use to move from `T?` to `T`.
-- **`default` (null-coalescing).** `nullable default fallback` returns `nullable` when non-null, otherwise `fallback`. The result type is the common type of the two operands.
-- **Equality.** `x == null` and `x != null` are the canonical null tests. After a successful `x != null` check, `x` is not narrowed automatically — use `!` if you need the underlying `T`.
-- **Function parameters and return types.** Both may be declared nullable: `void greet(string? name)`, `Page? findPage(integer id)`.
-- **Class fields.** Fields typed `T?` default to `null` when uninitialized. Fields typed `T` MUST be initialized before use.
-- **`none`.** `none` is the type of the `null` literal itself. It exists mainly so that `null` can be reasoned about in generic and inference contexts. `none` is assignable to every `T?`. As a value, `none` is another spelling of `null` (see Lexical Structure, Null Literal).
+- **Assignment.** `none` is assignable to any `T?`, never to a plain `T`: at a declaration, an assignment, an argument, a return, a field initializer, or an element of a typed list or pairs literal. `T` is assignable to `T?` (widening). A `T?` value is NOT assignable to plain `T` without the `!` assertion operator (or a `default` fallback).
+- **Members.** A `T?` may be none, so its fields, methods and elements are reached through `!`: `page!.title`, `names!.length()`, `scores!["a"]`.
+- **`!` (required assertion).** `value!` traps at runtime if `value` is none; otherwise returns the underlying `T`. Use to move from `T?` to `T`.
+- **`default` (none-coalescing).** `nullable default fallback` returns `nullable` when it is not none, otherwise `fallback`. The result has the type of `fallback` (without the `?` of `nullable`), so `integer n = maybe default 0` is a plain integer.
+- **Equality.** `x == none`, `x != none` and `x is none` are the canonical none tests. After a successful `x != none` check, `x` is not narrowed automatically — use `!` if you need the underlying `T`.
+- **Function parameters and return types.** Both may be declared nullable: `void greet(string? name)`, `Page? findPage(integer id)`. A function that returns `none` on some path declares a `T?` return type; `return none` from a plain `T` is an error.
+- **Class fields.** Fields typed `T?` default to `none` when uninitialized. Fields typed `T` MUST be initialized before use.
+- **`none` as a type.** `none` is also the type of the `none` value itself. It exists mainly so that `none` can be reasoned about in generic and inference contexts. It is assignable to every `T?`.
 
 **Examples:**
 
@@ -349,9 +352,10 @@ functions:
 
 start:
 	Page? p = findPage(42)
-	if p != null
+	if p != none
 		printl(p!.title)               // ! moves T? → T
-	string title = p default "untitled"    // null-coalescing to a plain string
+	string? subtitle = none
+	string shown = subtitle default "untitled"    // none-coalescing to a plain string
 ```
 
 ### Type Annotations and Variable Declaration

@@ -90,7 +90,7 @@ start:
 
 An error in a task stops that task only. A `later` variable whose call
 failed reads the zero value of its type (`0`, `0.0`, `false`, `""`, or
-`null`), unless an `onError` on the call gives a value:
+`none`), unless an `onError` on the call gives a value:
 
 ```clean
 	later count = start countUsers() onError 0
