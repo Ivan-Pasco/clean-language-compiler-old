@@ -83,6 +83,19 @@ fn render(errors: &[CompilerError]) -> String {
         .join("\n")
 }
 
+/// Runs parse → HIR → validation → resolution → type check and returns the
+/// errors the type checker reports.
+fn type_check_errors(source: &str) -> Vec<CompilerError> {
+    let ast = parse_to_ast(source, "err_test.cln").expect("parse");
+    let hir_result = HirBuilder::new().build_hir(ast).expect("hir");
+    HirValidator::validate(&hir_result.hir).expect("validation");
+    let resolved = NameResolver::resolve(hir_result.hir).expect("resolve");
+    match TypeChecker::check(resolved.resolved_hir) {
+        Ok(_) => panic!("expected the type check to fail; source:\n{source}"),
+        Err(errors) => errors,
+    }
+}
+
 /// Runs parse → HIR → validation → resolution → type check and returns every
 /// warning reported along the way.
 fn pipeline_warnings(source: &str) -> Vec<CompilerError> {
@@ -222,8 +235,10 @@ start:
     }
 }
 
+// Fixed: expected FUNC004 to be a warning; a missing return is an error now
+// (semantic-rules.md §FUNC004). It is still reported once.
 #[test]
-fn stage_warnings_are_returned_and_func004_is_reported_once() {
+fn func004_is_reported_once_as_an_error() {
     let source = "\
 start:
 \tprintl(pick(1).toString())
@@ -233,27 +248,53 @@ functions:
 \t\tif a > 0
 \t\t\treturn 1
 ";
-    let warnings = pipeline_warnings(source);
-    let func004: Vec<_> = warnings
+    let errors = type_check_errors(source);
+    let func004: Vec<_> = errors
         .iter()
-        .filter(|w| code(w) == Some("FUNC004"))
+        .filter(|e| code(e) == Some("FUNC004"))
         .collect();
     assert_eq!(
         func004.len(),
         1,
-        "expected exactly one FUNC004 warning, got:\n{}",
-        render(&warnings)
+        "expected exactly one FUNC004 error, got:\n{}",
+        render(&errors)
     );
     assert!(
         func004
             .iter()
-            .all(|w| context(w).map(|c| c.severity == ErrorSeverity::Warning) == Some(true)),
-        "FUNC004 must be a warning"
+            .all(|e| context(e).map(|c| c.severity == ErrorSeverity::Error) == Some(true)),
+        "FUNC004 must be an error"
     );
 }
 
 #[test]
-fn method_missing_return_is_func004_warning() {
+fn stage_warnings_are_returned() {
+    let source = "\
+start:
+\tprintl(pick(1).toString())
+
+functions:
+\tinteger pick(integer a)
+\t\tif a > 0
+\t\t\treturn 1
+\t\treturn
+";
+    let warnings = pipeline_warnings(source);
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| code(w) == Some("FUNC005"))
+            .count(),
+        1,
+        "expected exactly one FUNC005 warning, got:\n{}",
+        render(&warnings)
+    );
+}
+
+// Fixed: expected a FUNC004 warning; a missing return is an error now
+// (semantic-rules.md §FUNC004).
+#[test]
+fn method_missing_return_is_func004_error() {
     let source = "\
 start:
 \tCounter c = Counter()
@@ -271,19 +312,18 @@ class Counter
 \t\t\t\tif step > 0
 \t\t\t\t\treturn n + step
 ";
-    let warnings = pipeline_warnings(source);
-    let func004 = warnings
-        .iter()
-        .filter(|w| code(w) == Some("FUNC004"))
-        .count();
+    let errors = type_check_errors(source);
+    let func004 = errors.iter().filter(|e| code(e) == Some("FUNC004")).count();
     assert_eq!(
         func004,
         1,
-        "expected exactly one FUNC004 warning for the method, got:\n{}",
-        render(&warnings)
+        "expected exactly one FUNC004 error for the method, got:\n{}",
+        render(&errors)
     );
 }
 
+// Fixed: used a missing return (FUNC004) as the warning; FUNC004 is an
+// error now, so the warning is FUNC005 (a bare `return`).
 #[test]
 fn warnings_do_not_fail_compilation() {
     let source = "\
@@ -294,11 +334,12 @@ functions:
 \tinteger pick(integer a)
 \t\tif a > 0
 \t\t\treturn 1
+\t\treturn
 ";
     let warnings = pipeline_warnings(source);
     assert!(
-        warnings.iter().any(|w| code(w) == Some("FUNC004")),
-        "expected a FUNC004 warning, got:\n{}",
+        warnings.iter().any(|w| code(w) == Some("FUNC005")),
+        "expected a FUNC005 warning, got:\n{}",
         render(&warnings)
     );
     if let Err(errors) = compile(source) {

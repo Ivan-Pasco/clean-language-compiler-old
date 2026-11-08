@@ -222,6 +222,20 @@ start:
     printMessage()
 ```
 
+### Every Path Returns a Value
+
+A function with a return type must return a value on every path through its body. A path may also end by raising an error (`error("...")`) or in a loop it never leaves. A path that reaches the end of the body without a value is a compile error (FUNC004):
+
+```clean
+functions:
+    integer sign(integer n)
+        if n > 0
+            return 1
+        else if n < 0
+            return -1
+        return 0       // without this line: error FUNC004
+```
+
 ### Automatic Return
 
 If a function doesn't use explicit `return`, Clean automatically returns the value of the last expression:

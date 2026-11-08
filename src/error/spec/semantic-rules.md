@@ -503,7 +503,23 @@ start:
 Only function-typed symbols can be invoked with parentheses.
 
 ### FUNC004 — Missing Return in Non-Void Function
-A function with a non-void return type must have a return statement on all execution paths. (Warning)
+A function or method with a non-void return type must return a value on every execution path. This is an error (developer decision 2026-11-08).
+
+A path ends properly when it reaches a `return` with a value, an `error(...)` call, or a loop it never leaves (`while true` with no `break` for that loop). Also accepted:
+- a body whose last statement is an expression (automatic return, specification §10);
+- an `if` whose `then` and `else` branches both end properly, and `if true` whose body does;
+- an `onError` region whose protected statements and handler both end properly.
+
+**Example (fails — FUNC004):**
+```clean
+functions:
+    integer sign(integer n)
+        if n > 0
+            return 1
+        else if n < 0
+            return -1
+        // n == 0 falls through without a value
+```
 
 ### FUNC005 — Empty Return in Non-Void Function
 A return statement in a function with a non-void return type must provide a value. (Warning)

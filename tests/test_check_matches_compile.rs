@@ -52,6 +52,9 @@ fn check_accepts_a_multi_file_project_that_compiles() {
     );
 }
 
+// Fixed: used a missing return (FUNC004) as the warning; FUNC004 is an
+// error now (semantic-rules.md §FUNC004), so the warning is FUNC005 (a bare
+// `return` in a non-void function).
 #[test]
 fn check_reports_type_check_warnings() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -64,6 +67,7 @@ functions:
 \tinteger pick(integer a)
 \t\tif a > 0
 \t\t\treturn 1
+\t\treturn
 ";
     std::fs::write(&entry, source).expect("write source");
 
@@ -75,14 +79,14 @@ functions:
         .filter_map(|w| w.context().and_then(|c| c.error_code.clone()))
         .collect();
     assert!(
-        codes.iter().any(|c| c == "FUNC004"),
-        "expected a FUNC004 warning, got {codes:?}"
+        codes.iter().any(|c| c == "FUNC005"),
+        "expected a FUNC005 warning, got {codes:?}"
     );
 
     let check = run_cln(&["check", entry.to_str().unwrap()]);
     assert!(check.status.success(), "warnings must not fail cln check");
     assert!(
-        String::from_utf8_lossy(&check.stderr).contains("warning[FUNC004]"),
+        String::from_utf8_lossy(&check.stderr).contains("warning[FUNC005]"),
         "cln check must print the warning:\n{}",
         String::from_utf8_lossy(&check.stderr)
     );
@@ -94,7 +98,7 @@ functions:
     assert!(
         diagnostics
             .iter()
-            .any(|d| d["code"] == "FUNC004" && d["severity"] == "warning"),
+            .any(|d| d["code"] == "FUNC005" && d["severity"] == "warning"),
         "JSON diagnostics must list the warning: {report}"
     );
 }

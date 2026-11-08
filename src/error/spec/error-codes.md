@@ -94,7 +94,7 @@ Emitted during HIR validation of function definitions and call sites.
 | FUNC001 | `FunctionNotDefined` | Function called before it is defined | Error | semantic-rules.md §FUNC001 |
 | FUNC002 | `ArgumentCountMismatch` | Argument count does not match parameter count | Error | semantic-rules.md §FUNC002 |
 | FUNC003 | `CallOnNonFunction` | Parenthesis-invocation of a non-function symbol | Error | semantic-rules.md §FUNC003 |
-| FUNC004 | `MissingReturn` | Non-void function has no return on some execution path | Warning | semantic-rules.md §FUNC004 |
+| FUNC004 | `MissingReturn` | Non-void function has no return on some execution path | Error | semantic-rules.md §FUNC004 |
 | FUNC005 | `EmptyReturnInNonVoid` | `return` with no value in a non-void function | Warning | semantic-rules.md §FUNC005 |
 | FUNC006 | `StartBlockHasParameters` | The `start:` entry point block declares parameters | Error | semantic-rules.md §FUNC006 |
 | FUNC007 | `StartBlockReturnsValue` | The `start:` entry point returns a value | Warning | semantic-rules.md §FUNC007 |
