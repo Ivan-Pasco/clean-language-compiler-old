@@ -8,7 +8,7 @@ use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
     TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
-    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
+    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, LIST_WIDEN_F64,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -1367,6 +1367,7 @@ impl<'a> TypeInference<'a> {
         location: &SourceLocation,
     ) {
         Self::widen_literal_to_declared_type(value, target);
+        Self::widen_integer_list_to_number_list(value, target);
         self.add_constraint(TypeConstraint::Subtype {
             subtype: value.expr_type.clone(),
             supertype: target.clone(),
@@ -4589,6 +4590,47 @@ impl<'a> TypeInference<'a> {
                 tast_init.expr_type = declared_type.clone();
             }
         }
+    }
+
+    /// A `list<integer>` value stored where a `list<number>` is expected
+    /// becomes a new list of numbers (type-system.md §5): the elements are
+    /// stored in 4-byte slots in the one and 8-byte slots in the other, so
+    /// the value is copied element by element (`__list_widen_f64`). The copy
+    /// is a separate list; changing one does not change the other.
+    fn widen_integer_list_to_number_list(value: &mut TastExpression, target: &ConcreteType) {
+        let is_list_of = |t: &ConcreteType, element: &ConcreteType| matches!(t, ConcreteType::Array(e) if **e == *element);
+        if !is_list_of(&value.expr_type, &ConcreteType::Integer)
+            || !is_list_of(target, &ConcreteType::Number)
+        {
+            return;
+        }
+        let location = value.location.clone();
+        let list = std::mem::replace(
+            value,
+            TastExpression {
+                kind: TastExpressionKind::Literal {
+                    value: TastLiteral::Null,
+                },
+                expr_type: ConcreteType::Null,
+                location: location.clone(),
+            },
+        );
+        *value = TastExpression {
+            kind: TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: SymbolId(0),
+                        name: LIST_WIDEN_F64.to_string(),
+                    },
+                    expr_type: ConcreteType::Unknown,
+                    location: location.clone(),
+                }),
+                arguments: vec![list],
+                type_args: Vec::new(),
+            },
+            expr_type: target.clone(),
+            location,
+        };
     }
 
     /// Infer type for a literal

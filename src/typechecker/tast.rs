@@ -41,6 +41,12 @@ pub fn string_match_pattern_error(name: &str) -> String {
     format!("Unknown pattern name '{}'. Valid patterns: {}", name, valid)
 }
 
+/// The native runtime function that copies a `list<integer>` into a new
+/// `list<number>` (`src/stdlib/list_class.rs`). The type checker wraps a
+/// `list<integer>` value stored where a `list<number>` is expected in a call
+/// to it.
+pub const LIST_WIDEN_F64: &str = "__list_widen_f64";
+
 /// Type-checked program representation
 #[derive(Debug, Clone)]
 pub struct TastProgram {
