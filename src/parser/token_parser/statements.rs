@@ -91,8 +91,8 @@ impl TokenParser {
                 let location = self.current().location.clone();
                 let expr = self.parse_expression()?;
 
-                // Check for onError: block
-                if let Some((error_block, _error_loc)) = self.try_parse_on_error_block()? {
+                // Check for onError: block / onError <statement>
+                if let Some((error_block, _error_loc)) = self.try_parse_on_error_handler()? {
                     return Ok(Statement::OnErrorBlock {
                         expression: expr,
                         error_block,
@@ -461,7 +461,7 @@ impl TokenParser {
         location: crate::ast::SourceLocation,
     ) -> Result<Statement, CompilerError> {
         if self.check(&TokenKind::OnError) {
-            if let Some((error_block, _)) = self.try_parse_on_error_block()? {
+            if let Some((error_block, _)) = self.try_parse_on_error_handler()? {
                 return Ok(Statement::OnErrorBlock {
                     expression: expr,
                     error_block,
@@ -485,7 +485,7 @@ impl TokenParser {
         if !self.check(&TokenKind::OnError) {
             return Ok(expression);
         }
-        match self.try_parse_on_error_block()? {
+        match self.try_parse_on_error_handler()? {
             Some((error_handler, _)) => Ok(Expression::OnErrorBlock {
                 expression: Box::new(expression),
                 error_handler,
@@ -905,6 +905,23 @@ impl TokenParser {
     pub(super) fn try_parse_on_error_block(
         &mut self,
     ) -> Result<Option<(Vec<Statement>, crate::ast::SourceLocation)>, CompilerError> {
+        self.parse_on_error_handler(false)
+    }
+
+    /// `onError:` + block, or — after an expression (`allow_statement`) —
+    /// `onError <statement>` (grammar.ebnf `on_error_statement`): a print,
+    /// return, break, continue or error(...) on the same line, which becomes
+    /// a one-statement handler.
+    fn try_parse_on_error_handler(
+        &mut self,
+    ) -> Result<Option<(Vec<Statement>, crate::ast::SourceLocation)>, CompilerError> {
+        self.parse_on_error_handler(true)
+    }
+
+    fn parse_on_error_handler(
+        &mut self,
+        allow_statement: bool,
+    ) -> Result<Option<(Vec<Statement>, crate::ast::SourceLocation)>, CompilerError> {
         let header_level = self.get_current_indent_level();
         self.skip_whitespace();
 
@@ -916,6 +933,11 @@ impl TokenParser {
         let error_location = self.current().location.clone();
         self.bump(); // consume onError
         self.skip_whitespace();
+
+        if allow_statement && self.at_on_error_handler_statement() {
+            let handler = self.parse_statement()?;
+            return Ok(Some((vec![handler], error_location)));
+        }
 
         // Expect colon for block syntax
         if !self.check(&TokenKind::Colon) {

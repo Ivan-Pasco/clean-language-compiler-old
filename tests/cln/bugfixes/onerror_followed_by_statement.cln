@@ -1,0 +1,44 @@
+// Test: bugfixes/onerror_followed_by_statement
+// Grammar: on_error_statement, on_error_handler_statement
+// Semantic: 14-error-handling.md — `x onError <statement>`: the statement
+//   runs when x raises an error, and the variable keeps its zero value.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   bad input
+//   0
+//   []
+//   ok 7
+//   stopped at 2
+//   -1
+
+start:
+	integer value = parseNumber("x") onError print(error)
+	print(value)
+	string data = ""
+	data = load("missing") onError print("[]")
+	print(data + "ok " + parseNumber("7").toString())
+	integer i = 0
+	while i < 5
+		integer n = check(i) onError break
+		i = i + n
+	print("stopped at " + i.toString())
+	print(safe("x"))
+
+functions:
+	integer parseNumber(string text)
+		if text == "x"
+			error("bad input")
+		return text.toInteger()
+
+	string load(string name)
+		error("no file " + name)
+		return ""
+
+	integer check(integer n)
+		if n == 2
+			error("two")
+		return 1
+
+	integer safe(string text)
+		integer result = parseNumber(text) onError return -1
+		return result
