@@ -1,0 +1,25 @@
+// Test: bugfixes/string_matches_host_pattern_ids
+// Grammar: method_call
+// Semantic: SEM010 — `.matches()` takes the pattern names the hosts
+//   implement, each resolved to the host's pattern_id: email=0 url=1 uuid=2
+//   phone=3 date=4 integer=5 number=6 alphanumeric=7.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   true
+//   false
+//   true
+//   false
+//   true
+//   false
+//   true
+//   true
+
+start:
+	print("2026-11-08".matches("date"))
+	print("08/11/2026".matches("date"))
+	print("-42".matches("integer"))
+	print("4.2".matches("integer"))
+	print("4.25".matches("number"))
+	print("four".matches("number"))
+	print("abc123".matches("alphanumeric"))
+	print("+1 555 123 4567".matches("phone"))

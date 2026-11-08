@@ -332,7 +332,7 @@ The string literal passed to `.matches()` does not refer to a built-in pattern n
 
 **Condition:** The argument to `.matches()` must be a string literal (not a variable), and its value must be a known pattern name. This is validated at compile time; no runtime lookup is performed.
 
-**Built-in names:** `"email"`, `"url"`, `"uuid"`, `"slug"`, `"numeric"`, `"alpha"`, `"phone"`, `"date"`.
+**Built-in names:** `"email"`, `"url"`, `"uuid"`, `"phone"`, `"date"`, `"integer"`, `"number"`, `"alphanumeric"`.
 
 **Extended names:** available after importing a pattern pack, e.g. `import: validate.patterns.financial` unlocks `"iban"`, `"ssn"`, `"creditCard"`.
 
