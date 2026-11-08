@@ -76,14 +76,24 @@ impl MirCodeGenerator<'_> {
     /// Reserve the runtime's function indices, starting at `base` (the index
     /// right after the last MIR function).
     pub(super) fn preregister_class_json_runtime(&mut self, base: u32) {
-        if self.class_json_trees.is_empty() {
-            return;
-        }
-        for (offset, name) in RUNTIME_FUNCTIONS.iter().enumerate() {
+        for (offset, name) in self.class_json_runtime_names().into_iter().enumerate() {
             self.wasm_generator
                 .function_map
-                .insert((*name).to_string(), base + offset as u32);
+                .insert(name, base + offset as u32);
         }
+    }
+
+    /// The runtime's functions in emission order: [`RUNTIME_FUNCTIONS`],
+    /// then the `any` → class conversions. None without classes.
+    pub(super) fn class_json_runtime_names(&self) -> Vec<String> {
+        if self.class_json_trees.is_empty() {
+            return Vec::new();
+        }
+        RUNTIME_FUNCTIONS
+            .iter()
+            .map(|name| (*name).to_string())
+            .chain(self.instance_conversions.keys().cloned())
+            .collect()
     }
 
     /// Emit the runtime at the indices reserved from `base`.
@@ -99,6 +109,7 @@ impl MirCodeGenerator<'_> {
             .get_or_create_string_offset(NOT_AN_INSTANCE_MESSAGE)?;
         let tree_instance = base;
         let normalize = base + 1;
+        let any_to_instance = base + 2;
 
         let mut dispatch = Vec::new();
         for (class_id, tree_symbol) in &self.class_json_trees {
@@ -118,26 +129,41 @@ impl MirCodeGenerator<'_> {
             dispatch.push((crate::mir::class_header_word(*class_id), tree_index));
         }
 
-        let bodies = [
+        let mut bodies = vec![
             (
-                TREE_INSTANCE,
+                TREE_INSTANCE.to_string(),
                 vec![WasmType::I32; 2],
                 Self::tree_instance_body(malloc, &dispatch),
             ),
             (
-                NORMALIZE,
+                NORMALIZE.to_string(),
                 vec![WasmType::I32; 12],
                 Self::normalize_body(malloc, memcpy, tree_instance, normalize),
             ),
             (
-                ANY_TO_INSTANCE,
+                ANY_TO_INSTANCE.to_string(),
                 vec![WasmType::I32],
                 Self::any_to_instance_body(err_raise, not_an_instance),
             ),
         ];
+        for (name, conversion) in self.instance_conversions.clone() {
+            let message = self
+                .wasm_generator
+                .get_or_create_string_offset(&conversion.message)?;
+            let headers: Vec<i32> = conversion
+                .class_ids
+                .iter()
+                .map(|id| crate::mir::class_header_word(*id))
+                .collect();
+            bodies.push((
+                name,
+                vec![WasmType::I32],
+                Self::instance_conversion_body(any_to_instance, err_raise, message, &headers),
+            ));
+        }
         for (offset, (name, locals, body)) in bodies.into_iter().enumerate() {
             let index = self.wasm_generator.register_function_with_locals(
-                name,
+                &name,
                 &[WasmType::I32],
                 Some(WasmType::I32),
                 &locals,
@@ -355,6 +381,48 @@ impl MirCodeGenerator<'_> {
             I32Const(0),
             I32Store(mem(8)),
             LocalGet(10),
+        ]);
+        code
+    }
+
+    /// `__any_to_instance_Name(box)`: `__any_to_instance(box)`, then an
+    /// error unless the instance's header is one of `headers` (the classes
+    /// the target accepts). Null stays null. Locals: 0 box, 1 instance.
+    fn instance_conversion_body(
+        any_to_instance: u32,
+        err_raise: u32,
+        message: u32,
+        headers: &[i32],
+    ) -> Vec<Instruction<'static>> {
+        use Instruction::*;
+        // A null value, or an error `__any_to_instance` raised: 0.
+        let mut code = vec![
+            LocalGet(0),
+            Call(any_to_instance),
+            LocalTee(1),
+            I32Eqz,
+            If(BlockType::Empty),
+            I32Const(0),
+            Return,
+            End,
+            Block(BlockType::Empty),
+        ];
+        for header in headers {
+            code.extend([
+                LocalGet(1),
+                I32Load(mem(0)),
+                I32Const(*header),
+                I32Eq,
+                BrIf(0),
+            ]);
+        }
+        code.extend([
+            I32Const(message as i32),
+            Call(err_raise),
+            I32Const(0),
+            Return,
+            End,
+            LocalGet(1),
         ]);
         code
     }

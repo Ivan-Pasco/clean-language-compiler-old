@@ -21,15 +21,16 @@ impl MirBuilder {
             MirOperation::Call {
                 function: MirOperand::NamedFunction { name, .. },
                 ..
-            } => matches!(
-                name.as_str(),
-                "__err_raise"
-                    | "__json_decode_v2_or_raise"
-                    | "__any_to_instance"
-                    | crate::stdlib::json_class::JSON_TO_CLN_LIST
-                    | crate::stdlib::json_class::ANY_LENGTH
-                    | crate::stdlib::json_class::ANY_CONVERT
-            ),
+            } => {
+                matches!(
+                    name.as_str(),
+                    "__err_raise"
+                        | "__json_decode_v2_or_raise"
+                        | crate::stdlib::json_class::JSON_TO_CLN_LIST
+                        | crate::stdlib::json_class::ANY_LENGTH
+                        | crate::stdlib::json_class::ANY_CONVERT
+                ) || name.starts_with("__any_to_instance")
+            }
             _ => false,
         };
         if let Some(block_id) = self.current_block {

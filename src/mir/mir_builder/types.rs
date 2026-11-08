@@ -625,15 +625,17 @@ impl MirBuilder {
         location: &SourceLocation,
     ) -> ValueId {
         // A class target: the instance the box holds (the header tells an
-        // instance from a JSON object), or null.
+        // instance from a JSON object), or null. An instance of a class the
+        // target does not accept raises an error.
         if matches!(
             target_type,
             ConcreteType::Class { .. } | ConcreteType::Interface { .. }
         ) && !self.class_json_tree_ids.is_empty()
         {
+            let conversion = self.instance_conversion(target_type);
             return self.emit_named_call(
                 context,
-                "__any_to_instance",
+                &conversion,
                 vec![MirOperand::Value(value_id)],
                 MirType::I32,
                 location,
@@ -742,6 +744,74 @@ impl MirBuilder {
 
         self.add_instruction(context, instruction);
         result_id
+    }
+
+    /// The runtime function converting an `any` to the class or capability
+    /// `target_type` (`MirProgram::instance_conversions`), registered on
+    /// first use: `__any_to_instance_Name`. A target the program declares no
+    /// class for converts with the bare `__any_to_instance`.
+    fn instance_conversion(&mut self, target_type: &ConcreteType) -> String {
+        let (name, accepted): (String, Vec<SymbolId>) = match target_type {
+            // The class and every class that inherits from it.
+            ConcreteType::Class { symbol_id, .. } => {
+                let accepted = self
+                    .all_classes
+                    .iter()
+                    .filter(|class| {
+                        let mut current = Some(class.symbol_id);
+                        while let Some(sym) = current {
+                            if sym == *symbol_id {
+                                return true;
+                            }
+                            current = self
+                                .all_classes
+                                .iter()
+                                .find(|c| c.symbol_id == sym)
+                                .and_then(|c| c.parent_class);
+                        }
+                        false
+                    })
+                    .map(|class| class.symbol_id)
+                    .collect();
+                let Some(class) = self.all_classes.iter().find(|c| c.symbol_id == *symbol_id)
+                else {
+                    return "__any_to_instance".to_string();
+                };
+                (class.name.clone(), accepted)
+            }
+            ConcreteType::Interface { symbol_id, .. } => {
+                match self.capability_classes.get(symbol_id) {
+                    Some((name, classes)) if !name.is_empty() => (name.clone(), classes.clone()),
+                    _ => return "__any_to_instance".to_string(),
+                }
+            }
+            _ => return "__any_to_instance".to_string(),
+        };
+        let mut class_ids: Vec<u32> = accepted
+            .iter()
+            .filter_map(|sym| self.class_ids.get(sym).copied())
+            .collect();
+        if class_ids.is_empty() {
+            return "__any_to_instance".to_string();
+        }
+        class_ids.sort_unstable();
+        let function: String = format!("__any_to_instance_{}", name)
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        self.instance_conversions
+            .entry(function.clone())
+            .or_insert_with(|| crate::mir::mir_types::InstanceConversion {
+                message: format!("value is not a {}", name),
+                class_ids,
+            });
+        function
     }
 
     /// A type an `any` value is converted to where one is returned or

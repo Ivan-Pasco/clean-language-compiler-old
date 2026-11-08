@@ -240,6 +240,11 @@ pub struct MirCodeGenerator<'a> {
     /// (`class_json.rs`).
     pub(super) class_json_trees: std::collections::BTreeMap<u32, SymbolId>,
 
+    /// `any` → class conversions copied from MirProgram, emitted after the
+    /// class JSON runtime (`class_json.rs`).
+    pub(super) instance_conversions:
+        std::collections::BTreeMap<String, crate::mir::InstanceConversion>,
+
     /// Function signature map for parameter/return type handling.
     pub(super) function_signatures: HashMap<SymbolId, MirFunction>,
 
@@ -444,6 +449,7 @@ impl MirCodeGenerator<'_> {
             symbol_to_function_index: HashMap::new(),
             capability_dispatch: std::collections::BTreeMap::new(),
             class_json_trees: std::collections::BTreeMap::new(),
+            instance_conversions: std::collections::BTreeMap::new(),
             function_signatures: HashMap::new(),
             function_return_types: HashMap::new(),
             value_to_type: HashMap::new(),
@@ -588,6 +594,7 @@ impl MirCodeGenerator<'_> {
         // when lowering `MirOperation::CallCapability`.
         self.capability_dispatch = mir_program.capability_dispatch.clone();
         self.class_json_trees = mir_program.class_json_trees.clone();
+        self.instance_conversions = mir_program.instance_conversions.clone();
         for (symbol_id, function) in &mir_program.functions {
             tracing::debug!(
                 symbol_id = symbol_id.0,
@@ -1223,12 +1230,9 @@ impl MirCodeGenerator<'_> {
         }
 
         // The class JSON runtime is registered after the program functions.
-        let registered_later: &[&str] = if self.class_json_trees.is_empty() {
-            &[]
-        } else {
-            &class_json::RUNTIME_FUNCTIONS
-        };
-        self.check_function_names(&sorted_functions, registered_later)
+        let registered_later = self.class_json_runtime_names();
+        let registered_later: Vec<&str> = registered_later.iter().map(String::as_str).collect();
+        self.check_function_names(&sorted_functions, &registered_later)
             .map_err(|e| vec![e])?;
 
         for (i, (symbol_id, function)) in sorted_functions.iter().enumerate() {

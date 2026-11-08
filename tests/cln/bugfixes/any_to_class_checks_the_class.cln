@@ -1,0 +1,69 @@
+// Test: bugfixes/any_to_class_checks_the_class
+// Grammar: variable_declaration, on_error_block, class_definition
+// Semantic: an `any` converts to a class only when it holds an instance of that class or a subclass
+// Fixed in: compiler 0.33.177
+// Expected output:
+//   value is not a Dog
+//   true
+//   rex
+//   4
+//   animal ok
+//   circle
+//   value is not a Draw
+//
+// An `any` holding an instance of another class converted to the target
+// class unchecked, so `Dog d = anyHoldingACat` read the Cat as a Dog.
+
+start:
+	any a = Cat(1)
+	Dog d = a onError:
+		printl(error)
+	printl(d == null)
+	any p = Puppy("rex")
+	Dog e = p
+	printl(e.name)
+	Animal x = Cat(4)
+	any ax = x
+	Cat back = ax
+	printl(back.c.toString())
+	Animal y = ax
+	printl("animal ok")
+	any shape = Circle()
+	Draw drawable = shape
+	drawable.draw()
+	Draw notDrawable = ax onError:
+		printl(error)
+
+can Draw:
+	draw()
+
+class Animal
+	public:
+		integer legs
+
+	constructor()
+		legs = 4
+
+class Cat is Animal
+	public:
+		integer c
+
+	constructor(integer cParam)
+		c = cParam
+
+class Dog
+	public:
+		string name
+
+	constructor(string nameParam)
+		name = nameParam
+
+class Puppy is Dog
+	constructor(string n)
+		base(n)
+
+class Circle can Draw
+	functions:
+		public:
+			draw()
+				printl("circle")

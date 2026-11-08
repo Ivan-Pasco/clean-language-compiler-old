@@ -74,6 +74,22 @@ pub struct MirProgram {
     /// Codegen emits `__json_tree_instance` from it: the runtime switch over
     /// an instance's header that builds the JSON object of its own class.
     pub class_json_trees: BTreeMap<u32, crate::resolver::SymbolId>,
+
+    /// `any` → class conversions, by the name of the runtime function MIR
+    /// calls for each (`__any_to_instance_ClassName`). Codegen emits each
+    /// as `__any_to_instance` followed by a check that the instance's class
+    /// is one of `class_ids`, raising `message` otherwise.
+    pub instance_conversions: BTreeMap<String, InstanceConversion>,
+}
+
+/// One `any` → class conversion of [`MirProgram::instance_conversions`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceConversion {
+    /// The error raised when the instance has another class.
+    pub message: String,
+    /// The class-ids an instance of the target type can have: the class and
+    /// its subclasses, or the classes that conform to a capability.
+    pub class_ids: Vec<u32>,
 }
 
 /// MIR External Function - a function provided by the WASM host (imported)
