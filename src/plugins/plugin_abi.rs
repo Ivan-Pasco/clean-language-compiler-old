@@ -380,25 +380,6 @@ pub struct BridgeFunction {
     /// Absent is treated as `["all"]` with a deprecation warning at plugin load.
     #[serde(default)]
     pub hosts: Option<Vec<String>>,
-    /// Whether the server host provides a real implementation or a stub.
-    /// v2 §3. None defaults to BridgeImpl::Real on hosts listed in `hosts`.
-    #[serde(default)]
-    pub server_impl: Option<BridgeImpl>,
-    /// Whether the browser host provides a real implementation or a stub. v2 §3.
-    #[serde(default)]
-    pub browser_impl: Option<BridgeImpl>,
-    /// Whether the native host provides a real implementation or a stub. v2 §3.
-    #[serde(default)]
-    pub native_impl: Option<BridgeImpl>,
-    /// Stub behavior when server_impl = Stub. v2 §3.
-    #[serde(default)]
-    pub server_stub: Option<BridgeStub>,
-    /// Stub behavior when browser_impl = Stub. v2 §3.
-    #[serde(default)]
-    pub browser_stub: Option<BridgeStub>,
-    /// Stub behavior when native_impl = Stub. v2 §3.
-    #[serde(default)]
-    pub native_stub: Option<BridgeStub>,
     /// Module-callback contract for bridges that dispatch back into the WASM module.
     /// v2 §4 — closes SRV001 by giving _ui_render_page a documented purpose.
     #[serde(default)]
@@ -436,12 +417,6 @@ impl Default for BridgeFunction {
             description: None,
             expand_strings: false,
             hosts: None,
-            server_impl: None,
-            browser_impl: None,
-            native_impl: None,
-            server_stub: None,
-            browser_stub: None,
-            native_stub: None,
             callback: None,
             registers_handler_at_arg: None,
         }
@@ -970,7 +945,7 @@ pub fn new_build_state() -> BuildState {
 }
 
 /// Plugin Contracts v2 — JSON build context passed to every lifecycle slot
-/// call (and every `artifact_emitters` callback).
+/// call.
 /// See `foundation/spec/plugins/contracts/lifecycle.md` §2.1.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuildContext {
@@ -1084,18 +1059,6 @@ pub struct PluginLifecycle {
     /// WASM export contributing server bootstrap body (server builds only).
     #[serde(default)]
     pub server_init: Option<String>,
-    /// WASM export contributing per-request handler prelude.
-    #[serde(default)]
-    pub per_request: Option<String>,
-    /// Entry-point shapes per_request applies to.
-    /// Default ["http"] when per_request is set. Other values: "sse", "ws".
-    #[serde(default)]
-    pub per_request_targets: Vec<String>,
-    /// WASM export returning dynamic [[artifacts]] entries at build time.
-    /// Most plugins declare artifacts statically; this slot is for plugins
-    /// that need to compute the set from the build context.
-    #[serde(default)]
-    pub artifact_emitters: Option<String>,
 }
 
 impl PluginLifecycle {
@@ -1107,8 +1070,6 @@ impl PluginLifecycle {
             "program_init" => self.program_init.as_deref(),
             "client_init" => self.client_init.as_deref(),
             "server_init" => self.server_init.as_deref(),
-            "per_request" => self.per_request.as_deref(),
-            "artifact_emitters" => self.artifact_emitters.as_deref(),
             _ => None,
         }
     }
@@ -1120,8 +1081,6 @@ impl PluginLifecycle {
             || self.program_init.is_some()
             || self.client_init.is_some()
             || self.server_init.is_some()
-            || self.per_request.is_some()
-            || self.artifact_emitters.is_some()
     }
 
     /// Returns true if the plugin.toml declared a `[lifecycle]` section
@@ -1180,31 +1139,6 @@ pub enum ArtifactSource {
     /// Compiler performs a named build operation to produce the bytes.
     /// Documented values: "client_only_build", "server_only_build", "manifest".
     Module { from_module: String },
-}
-
-/// Whether a host class is expected to provide a real implementation or a stub.
-/// See contracts/bridge-host-classes.md §3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BridgeImpl {
-    /// Host MUST provide the real implementation.
-    Real,
-    /// Host registers a stub. The stub's behavior is declared in the
-    /// matching `*_stub` block.
-    Stub,
-}
-
-/// Stub behavior for a bridge function on hosts that don't provide a real impl.
-/// See contracts/bridge-host-classes.md §3.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct BridgeStub {
-    /// Literal return value as a string ("0", "false", "\"\"", "null").
-    /// Mutually exclusive with `no_op`.
-    #[serde(default)]
-    pub returns: Option<String>,
-    /// If true, the stub is void-equivalent (returns nothing).
-    #[serde(default)]
-    pub no_op: bool,
 }
 
 /// Module-callback contract for bridges that dispatch back into the WASM module.
@@ -1667,7 +1601,6 @@ mod tests {
             module_helpers = "emit_ui_helpers"
             module_helpers_are_roots = true
             client_init = "emit_ui_client_init"
-            artifact_emitters = "emit_ui_artifacts"
         "#;
 
         let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
@@ -1683,14 +1616,9 @@ mod tests {
             manifest.lifecycle.client_init.as_deref(),
             Some("emit_ui_client_init")
         );
-        assert_eq!(
-            manifest.lifecycle.artifact_emitters.as_deref(),
-            Some("emit_ui_artifacts")
-        );
         // Slots not declared default to None
         assert!(manifest.lifecycle.program_init.is_none());
         assert!(manifest.lifecycle.server_init.is_none());
-        assert!(manifest.lifecycle.per_request.is_none());
     }
 
     #[test]
@@ -1784,9 +1712,6 @@ mod tests {
             returns = "string"
             expand_strings = true
             hosts = ["browser", "server"]
-            browser_impl = "real"
-            server_impl = "stub"
-            server_stub = { returns = "\"\"" }
         "#;
 
         let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
@@ -1806,11 +1731,6 @@ mod tests {
             bounds.hosts.as_ref().unwrap(),
             &vec!["browser".to_string(), "server".to_string()]
         );
-        assert_eq!(bounds.browser_impl, Some(BridgeImpl::Real));
-        assert_eq!(bounds.server_impl, Some(BridgeImpl::Stub));
-        let stub = bounds.server_stub.as_ref().expect("server_stub parses");
-        assert_eq!(stub.returns.as_deref(), Some("\"\""));
-        assert!(!stub.no_op);
     }
 
     #[test]
@@ -1834,8 +1754,6 @@ mod tests {
         let manifest: PluginManifest = toml::from_str(toml_str).unwrap();
         let f = &manifest.bridge.functions[0];
         assert!(f.hosts.is_none());
-        assert!(f.server_impl.is_none());
-        assert!(f.browser_impl.is_none());
         assert!(f.callback.is_none());
     }
 

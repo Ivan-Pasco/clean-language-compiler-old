@@ -336,7 +336,7 @@ pub trait FrameworkPlugin: Send + Sync {
     /// code. See `foundation/spec/plugins/contracts/lifecycle.md` §2, §3.
     ///
     /// `slot_name` is one of: `"module_helpers"`, `"program_init"`,
-    /// `"client_init"`, `"server_init"`, `"per_request"`, `"artifact_emitters"`.
+    /// `"client_init"`, `"server_init"`.
     /// `context` is the build context JSON (lifecycle.md §2.1) passed to the
     /// plugin export — target, paths, prior artifacts, and a snapshot of the
     /// per-build state populated through the `_build_state_set` bridge.

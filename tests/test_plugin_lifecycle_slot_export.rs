@@ -11,8 +11,6 @@ fn slot_export_maps_every_declared_slot() {
         program_init: Some("emit_program".to_string()),
         client_init: Some("emit_client".to_string()),
         server_init: Some("emit_server".to_string()),
-        per_request: Some("emit_request".to_string()),
-        artifact_emitters: Some("emit_artifacts".to_string()),
         ..Default::default()
     };
     assert_eq!(
@@ -22,11 +20,6 @@ fn slot_export_maps_every_declared_slot() {
     assert_eq!(lifecycle.slot_export("program_init"), Some("emit_program"));
     assert_eq!(lifecycle.slot_export("client_init"), Some("emit_client"));
     assert_eq!(lifecycle.slot_export("server_init"), Some("emit_server"));
-    assert_eq!(lifecycle.slot_export("per_request"), Some("emit_request"));
-    assert_eq!(
-        lifecycle.slot_export("artifact_emitters"),
-        Some("emit_artifacts")
-    );
 }
 
 #[test]
@@ -34,4 +27,8 @@ fn slot_export_is_none_for_undeclared_or_unknown_slots() {
     let lifecycle = PluginLifecycle::default();
     assert_eq!(lifecycle.slot_export("program_init"), None);
     assert_eq!(lifecycle.slot_export("not_a_slot"), None);
+    // The `per_request` and `artifact_emitters` slots were removed from the
+    // plugin contract (lifecycle.md §3): a plugin naming them gets no export.
+    assert_eq!(lifecycle.slot_export("per_request"), None);
+    assert_eq!(lifecycle.slot_export("artifact_emitters"), None);
 }
