@@ -183,7 +183,7 @@ impl TokenParser {
         self.skip_whitespace();
         let initializer = if self.eat(&TokenKind::Assign) {
             self.skip_whitespace();
-            Some(self.parse_expression()?)
+            Some(self.parse_assigned_value()?)
         } else {
             None
         };
@@ -343,7 +343,7 @@ impl TokenParser {
             // This is a simple assignment: VAR = EXPR
             self.bump(); // consume =
             self.skip_whitespace();
-            let value = self.parse_expression()?;
+            let value = self.parse_assigned_value()?;
 
             Ok(Statement::Assignment {
                 target: AssignmentTarget::Variable(first_name),
@@ -376,7 +376,7 @@ impl TokenParser {
                 // Property-chain assignment.
                 self.bump(); // consume =
                 self.skip_whitespace();
-                let value = self.parse_expression()?;
+                let value = self.parse_assigned_value()?;
                 Ok(Statement::Assignment {
                     target: AssignmentTarget::Property {
                         object: first_name,
@@ -400,10 +400,7 @@ impl TokenParser {
                 // facing a bare `.`, which causes "Unexpected token: Dot".
                 self.cursor = first_cursor;
                 let expr = self.parse_expression()?;
-                Ok(Statement::Expression {
-                    expr,
-                    location: Some(first_location),
-                })
+                self.expression_statement(expr, first_location)
             }
         } else if self.check(&TokenKind::LeftBracket) {
             // This could be an indexed assignment: VAR[index] = value
@@ -418,7 +415,7 @@ impl TokenParser {
             if self.check(&TokenKind::Assign) {
                 self.bump(); // consume =
                 self.skip_whitespace();
-                let value = self.parse_expression()?;
+                let value = self.parse_assigned_value()?;
 
                 // grammar.ebnf `assignment_target`: identifier [ index ].
                 // Any other indexed receiver (`m[0][1]`, `f()[0]`) is not
@@ -442,10 +439,7 @@ impl TokenParser {
                 ))
             } else {
                 // Not an assignment, just an expression statement
-                Ok(Statement::Expression {
-                    expr: lhs_expr,
-                    location: Some(first_location),
-                })
+                self.expression_statement(lhs_expr, first_location)
             }
         } else {
             // This could be an expression statement with operators: x + 1, x * y, etc.
@@ -454,20 +448,50 @@ impl TokenParser {
             self.cursor = first_cursor; // Go back to the identifier
 
             let expr = self.parse_expression()?;
+            self.expression_statement(expr, first_location)
+        }
+    }
 
-            // Check for onError: block
-            if let Some((error_block, _error_loc)) = self.try_parse_on_error_block()? {
+    /// An expression statement, or `expression onError:` + block
+    /// (grammar.ebnf `on_error_block`) when the handler starts on the same
+    /// line.
+    fn expression_statement(
+        &mut self,
+        expr: Expression,
+        location: crate::ast::SourceLocation,
+    ) -> Result<Statement, CompilerError> {
+        if self.check(&TokenKind::OnError) {
+            if let Some((error_block, _)) = self.try_parse_on_error_block()? {
                 return Ok(Statement::OnErrorBlock {
                     expression: expr,
                     error_block,
-                    location: Some(first_location),
+                    location: Some(location),
                 });
             }
+        }
+        Ok(Statement::Expression {
+            expr,
+            location: Some(location),
+        })
+    }
 
-            Ok(Statement::Expression {
-                expr,
-                location: Some(first_location),
-            })
+    /// The value of a declaration or assignment: an expression, or
+    /// `expression onError:` + block (grammar.ebnf `expression` includes
+    /// `on_error_block`). The HIR builder assigns the value inside an error
+    /// region whose handler is the block.
+    fn parse_assigned_value(&mut self) -> Result<Expression, CompilerError> {
+        let location = self.current().location.clone();
+        let expression = self.parse_expression()?;
+        if !self.check(&TokenKind::OnError) {
+            return Ok(expression);
+        }
+        match self.try_parse_on_error_block()? {
+            Some((error_handler, _)) => Ok(Expression::OnErrorBlock {
+                expression: Box::new(expression),
+                error_handler,
+                location,
+            }),
+            None => Ok(expression),
         }
     }
 
