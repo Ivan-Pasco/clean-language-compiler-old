@@ -1359,6 +1359,34 @@ impl HirBuilder {
     }
 
     /// Convert AST type to HIR type
+    /// Parse a type written as Clean source (`"string"`, `"integer:64"`,
+    /// `"list<Item>"`, `"RequestAuth"`) into a `HirType`, with the same rules
+    /// as a type annotation in a source file. Plugin manifests declare the
+    /// field types of their `types` this way.
+    pub fn type_from_source(source: &str) -> Result<HirType, CompilerError> {
+        use crate::parser::grammar::Rule;
+        use crate::parser::CleanParser;
+        use pest::Parser;
+
+        let source = source.trim();
+        let invalid = || {
+            CompilerError::syntax_error(
+                format!("'{source}' is not a valid type"),
+                Some("Write the type as it appears in a Clean declaration, such as `string`, `integer:64`, `list<Item>` or a class name".to_string()),
+                None,
+            )
+        };
+        let pair = CleanParser::parse(Rule::type_, source)
+            .map_err(|_| invalid())?
+            .next()
+            .ok_or_else(invalid)?;
+        if pair.as_str().len() != source.len() {
+            return Err(invalid());
+        }
+        let ast_type = crate::parser::type_parser::parse_type(pair)?;
+        HirBuilder::new().build_type(&ast_type)
+    }
+
     fn build_type(&mut self, ast_type: &Type) -> Result<HirType, CompilerError> {
         match ast_type {
             Type::Boolean => Ok(HirType::Boolean),

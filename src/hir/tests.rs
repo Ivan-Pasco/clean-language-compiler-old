@@ -590,3 +590,50 @@ mod integration_tests {
         assert_eq!(dog.fields.len(), 1);
     }
 }
+
+/// Plugin manifests declare the field types of their `types` as Clean type
+/// spellings; a class name must stay a class type (not `any`), or chained
+/// field access through it (`req.auth.userId`) reads nothing.
+mod type_from_source {
+    use super::*;
+
+    fn parsed(source: &str) -> HirType {
+        HirBuilder::type_from_source(source)
+            .unwrap_or_else(|e| panic!("'{source}' should parse: {}", e.message()))
+    }
+
+    #[test]
+    fn class_name_is_a_named_type() {
+        assert!(matches!(
+            parsed("RequestAuth"),
+            HirType::Named { ref name, .. } if name == "RequestAuth"
+        ));
+    }
+
+    #[test]
+    fn core_and_sized_types() {
+        assert_eq!(parsed("string"), HirType::String);
+        assert_eq!(parsed("boolean"), HirType::Boolean);
+        assert_eq!(parsed("any"), HirType::Any);
+        assert_eq!(parsed(" integer:64 "), HirType::Integer64);
+    }
+
+    #[test]
+    fn generic_collections_keep_element_types() {
+        assert!(matches!(
+            parsed("list<Item>"),
+            HirType::List(inner) if matches!(*inner, HirType::Named { ref name, .. } if name == "Item")
+        ));
+        assert_eq!(
+            parsed("pairs<string, integer>"),
+            HirType::Pairs(Box::new(HirType::String), Box::new(HirType::Integer))
+        );
+    }
+
+    #[test]
+    fn invalid_spelling_is_an_error() {
+        assert!(HirBuilder::type_from_source("list<").is_err());
+        assert!(HirBuilder::type_from_source("string extra").is_err());
+        assert!(HirBuilder::type_from_source("").is_err());
+    }
+}

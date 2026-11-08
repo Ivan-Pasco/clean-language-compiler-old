@@ -1,0 +1,41 @@
+// Test: bugfixes/plugin_type_class_field_chain
+// Grammar: property_access, assignment (field target), class_type
+// Semantic: a field of a plugin-declared type keeps its declared class type, so chained reads and writes reach the inner instance
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   u42
+//   true
+//   3
+//   u42
+//   true
+//   u7
+//   false
+//   admin
+//
+// frame.server declares `Request { RequestAuth auth }` in plugin.toml. The
+// compiler built the plugin type stubs with every non-primitive field type
+// mapped to `any`, so `r.auth` was an `any` and `r.auth.userId` became a
+// dynamic lookup on a class instance: it read "" and `r.auth.loggedIn` read
+// false. Copying `r.auth` into a `RequestAuth` variable first worked.
+
+plugins:
+	frame.server
+
+start:
+	RequestAuth a = RequestAuth()
+	a.userId = "u42"
+	a.loggedIn = true
+	Request r = Request()
+	r.auth = a
+	printl(r.auth.userId)
+	printl(r.auth.loggedIn)
+	printl(r.auth.userId.length())
+	RequestAuth b = r.auth
+	printl(b.userId)
+	printl(b.loggedIn)
+	r.auth.userId = "u7"
+	r.auth.loggedIn = false
+	r.auth.role = "admin"
+	printl(a.userId)
+	printl(r.auth.loggedIn)
+	printl(r.auth.role)

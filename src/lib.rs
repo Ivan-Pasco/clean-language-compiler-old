@@ -2295,18 +2295,16 @@ fn run_multi_file_frontend(
     // Inject phantom HIR class stubs for every type declared in loaded plugin manifests.
     // Without this, HirValidator rejects named types like `Request` as "Undefined type"
     // because they are not present in any source file — they are provided by the plugin.
+    //
+    // Field types are Clean type spellings (`string`, `integer:64`,
+    // `list<Item>`, or another class such as `RequestAuth`) and are parsed
+    // like a type annotation. Mapping every non-primitive spelling to `any`
+    // made a class-typed field (`Request.auth`) an `any`, so a chained read
+    // (`req.auth.userId`) became a dynamic lookup on a class instance and
+    // returned an empty value.
     if let Some(ref reg) = registry {
-        use crate::hir::{HirClass, HirField, HirType as HT};
-        let parse_hir_type = |s: &str| -> HT {
-            match s.to_lowercase().as_str() {
-                "string" => HT::String,
-                "integer" | "int" | "i32" | "i64" => HT::Integer,
-                "number" | "float" | "f64" => HT::Number,
-                "boolean" | "bool" => HT::Boolean,
-                "void" | "()" => HT::Void,
-                _ => HT::Any,
-            }
-        };
+        use crate::hir::hir_builder::HirBuilder;
+        use crate::hir::{HirClass, HirField};
         for manifest in reg.loaded_manifests().values() {
             for type_def in &manifest.language.types {
                 if merged_hir.classes.iter().any(|c| c.name == type_def.name) {
@@ -2315,15 +2313,27 @@ fn run_multi_file_frontend(
                 let fields: Vec<HirField> = type_def
                     .fields
                     .iter()
-                    .map(|f| HirField {
-                        name: f.name.clone(),
-                        field_type: parse_hir_type(&f.type_),
-                        initializer: None,
-                        is_private: false,
-                        list_behavior: crate::ast::ListBehavior::Default,
-                        location: Default::default(),
+                    .map(|f| {
+                        let field_type = HirBuilder::type_from_source(&f.type_).map_err(|e| {
+                            let message = format!(
+                                "Plugin '{}' declares field '{}.{}' with an invalid type: {}",
+                                manifest.plugin.name,
+                                type_def.name,
+                                f.name,
+                                e.message()
+                            );
+                            vec![CompilerError::validation_error(message, Default::default())]
+                        })?;
+                        Ok(HirField {
+                            name: f.name.clone(),
+                            field_type,
+                            initializer: None,
+                            is_private: false,
+                            list_behavior: crate::ast::ListBehavior::Default,
+                            location: Default::default(),
+                        })
                     })
-                    .collect();
+                    .collect::<Result<_, Vec<CompilerError>>>()?;
                 merged_hir.classes.push(HirClass {
                     name: type_def.name.clone(),
                     type_parameters: Vec::new(),
