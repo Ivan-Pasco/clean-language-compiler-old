@@ -18,16 +18,28 @@
 #   5. runs the framework's unit/integration/e2e suites
 #      (scripts/run-framework-tests.sh), the plugin helper tests
 #      (scripts/test-plugins.sh --no-unit, the suites above already ran the
-#      unit tests) and the example smoke tests (scripts/smoke-examples.sh).
+#      unit tests) and the example smoke tests (scripts/smoke-examples.sh);
+#   6. builds the Clean Language website as a canary, when its checkout is
+#      found (--website DIR; default: "Web Site Clean" next to this repo).
+#      Example apps are small; a real site is not, and 0.33.17x shipped a
+#      frame.ui that ran out of plugin memory only on a project that size.
+#      The site is copied into the scratch folder, built with its own
+#      scripts/build.sh against the toolchain installed above, started in
+#      clean-server (no database) and its home page must answer 200.
+#      Nothing from the site is stored in this repository.
 #
 # Usage:
 #   scripts/framework_gate.sh --framework DIR --cln PATH --server PATH
-#                             [--runner PATH] [--keep]
+#                             [--runner PATH] [--website DIR | --no-website]
+#                             [--keep]
 #
 #   --framework  a cleen-framework-old checkout
 #   --cln        compiler under test (e.g. target/release/cln)
 #   --server     clean-server binary (old toolchain)
 #   --runner     wasmtime_runner built from this repo (enables step 4)
+#   --website    website checkout for step 6 (a missing default is skipped
+#                with a note; a missing --website DIR is an error)
+#   --no-website skip step 6
 #   --keep       keep the scratch folder (printed at the end) for debugging
 #
 # Needs: bash, python3, curl, openssl, wasm-tools (plugin build.sh scripts
@@ -40,14 +52,18 @@ SERVER=""
 RUNNER=""
 KEEP=0
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WEBSITE="$REPO_ROOT/../Web Site Clean"
+WEBSITE_GIVEN=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --framework) FRAMEWORK="$2"; shift 2 ;;
         --cln) CLN="$2"; shift 2 ;;
         --server) SERVER="$2"; shift 2 ;;
         --runner) RUNNER="$2"; shift 2 ;;
+        --website) WEBSITE="$2"; WEBSITE_GIVEN=1; shift 2 ;;
+        --no-website) WEBSITE=""; shift ;;
         --keep) KEEP=1; shift ;;
-        -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
         *) echo "framework_gate: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -64,6 +80,14 @@ done
 if [ -n "$RUNNER" ]; then
     [ -x "$RUNNER" ] || { echo "framework_gate: runner not executable: $RUNNER" >&2; exit 2; }
     RUNNER="$(cd "$(dirname "$RUNNER")" && pwd)/$(basename "$RUNNER")"
+fi
+if [ -n "$WEBSITE" ] && [ ! -f "$WEBSITE/scripts/build.sh" ]; then
+    if [ "$WEBSITE_GIVEN" = 1 ]; then
+        echo "framework_gate: no scripts/build.sh in website checkout: $WEBSITE" >&2
+        exit 2
+    fi
+    echo "framework_gate: website checkout not found ($WEBSITE); skipping the website canary"
+    WEBSITE=""
 fi
 command -v wasm-tools >/dev/null || { echo "framework_gate: wasm-tools is required" >&2; exit 2; }
 
@@ -90,6 +114,32 @@ echo "framework_gate: compiler $("$CLEEN_CLN" --version)"
 echo "framework_gate: server   $("$CLEEN_SERVER" --version 2>/dev/null | head -1)"
 echo "framework_gate: scratch  $WORK"
 
+# Step 6: build the website copy with its own build script and boot it.
+website_canary() {
+    local site="$WORK/website" port log pid i code
+    rsync -a --exclude .git --exclude _backup --exclude dist --exclude '*.wasm' \
+        "$WEBSITE/" "$site/" || return 1
+    (cd "$site" && CLN_COMPILER="$CLEEN_CLN" bash scripts/build.sh) || return 1
+    port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    log="$WORK/website-server.log"
+    (cd "$site" && exec "$CLEEN_SERVER" dist/server.wasm --port "$port" --host 127.0.0.1) > "$log" 2>&1 &
+    pid=$!
+    for i in $(seq 1 100); do
+        grep -qi 'listening' "$log" && break
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' "http://127.0.0.1:$port/")"
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    if [ "$code" != 200 ]; then
+        echo "website: GET / -> $code (want 200); server log:"
+        tail -20 "$log"
+        return 1
+    fi
+    echo "website: built and served GET / -> 200"
+}
+
 FAILED=()
 step() {
     local name="$1"; shift
@@ -107,8 +157,10 @@ step() {
 # Every later step depends on freshly built plugins; stop early when the
 # build or install fails instead of testing whatever plugin.wasm is left.
 step "rebuild plugins" bash "$FW/scripts/build-all-plugins.sh"
+INSTALLED=0
 if [ ${#FAILED[@]} -eq 0 ]; then
     step "install plugins" bash "$FW/scripts/install-plugins.sh"
+    [ ${#FAILED[@]} -eq 0 ] && INSTALLED=1
 fi
 if [ ${#FAILED[@]} -eq 0 ] && [ -n "$RUNNER" ]; then
     step "regression pins (with plugins)" \
@@ -119,6 +171,10 @@ if [ ${#FAILED[@]} -eq 0 ]; then
     step "framework suites" bash scripts/run-framework-tests.sh
     step "plugin helper tests" bash scripts/test-plugins.sh --no-unit
     step "example smoke tests" bash scripts/smoke-examples.sh
+fi
+# The canary needs the installed plugins, not the earlier suites' results.
+if [ "$INSTALLED" = 1 ] && [ -n "$WEBSITE" ]; then
+    step "website canary" website_canary
 fi
 
 echo
