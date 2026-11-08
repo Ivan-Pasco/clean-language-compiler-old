@@ -4955,15 +4955,31 @@ impl<'a> TypeInference<'a> {
             // Returns left if not null, otherwise returns right
             // Both sides should have compatible types
             HirBinaryOp::NullCoalesce => {
-                // Both operands should have the same type
+                // `value default fallback` is `value` when it is not null,
+                // otherwise `fallback` (04-type-system.md): the result has the
+                // operands' common type without the `?` of `value`, so
+                // `integer n = maybe default 0` is a plain integer. A `null`
+                // operand gives the other operand's type.
+                let value_type = match left_type {
+                    ConcreteType::Optional(inner) => (**inner).clone(),
+                    other => other.clone(),
+                };
+                if value_type == ConcreteType::Null {
+                    return Ok(right_type.clone());
+                }
+                if *right_type == ConcreteType::Null {
+                    return Ok(left_type.clone());
+                }
                 self.add_constraint(TypeConstraint::Equality {
-                    left: left_type.clone(),
+                    left: value_type.clone(),
                     right: right_type.clone(),
                     location: location.clone(),
                 });
-
-                // Result type is the same as the operands
-                Ok(left_type.clone())
+                if matches!(right_type, ConcreteType::Optional(_)) {
+                    Ok(right_type.clone())
+                } else {
+                    Ok(value_type)
+                }
             }
 
             HirBinaryOp::StringConcat => {
@@ -6221,10 +6237,12 @@ impl<'a> TypeInference<'a> {
             },
             // BOOK: required-operator - Postfix ! assertion for null check
             // Required operator returns the same type, just adds runtime null check
-            HirUnaryOp::Required => {
-                // The required assertion returns the same type as the operand
-                Ok(operand_type.clone())
-            }
+            // `value!` traps when the value is null and otherwise is the
+            // underlying T of a T? (04-type-system.md, Nullable Types).
+            HirUnaryOp::Required => match operand_type {
+                ConcreteType::Optional(inner) => Ok((**inner).clone()),
+                other => Ok(other.clone()),
+            },
         }
     }
 
@@ -6378,6 +6396,9 @@ impl<'a> TypeInference<'a> {
             },
             HirType::Number32 => ConcreteType::Number,
             HirType::Number64 => ConcreteType::Number,
+            HirType::Optional(inner) => {
+                ConcreteType::Optional(Box::new(self.hir_type_to_concrete(inner)))
+            }
             HirType::List(element_type) => {
                 ConcreteType::Array(Box::new(self.hir_type_to_concrete(element_type)))
             }

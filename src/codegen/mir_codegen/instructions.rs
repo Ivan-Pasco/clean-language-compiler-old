@@ -140,47 +140,28 @@ impl MirCodeGenerator<'_> {
                 // BOOK: required-operator - Special handling for Required operator
                 // Required needs to check if value is null and trap if so
                 if matches!(op, MirUnaryOp::Required) {
-                    // Required assertion: value! traps if value is null
+                    // Required assertion: value! traps if value is null (the
+                    // zero of its WASM type: `number?` is an f64,
+                    // `integer:64?` an i64).
+                    let operand_type = self.get_operand_mir_type(operand);
+                    let is_null: Vec<Instruction<'static>> = match operand_type {
+                        Some(MirType::F64) => vec![Instruction::F64Const(0.0), Instruction::F64Eq],
+                        Some(MirType::I64 | MirType::U64) => vec![Instruction::I64Eqz],
+                        _ => vec![Instruction::I32Eqz],
+                    };
                     self.load_operand(operand)?;
-
-                    if let Some(dest) = instruction.dest {
-                        // Use dest local to store value and perform null check
-                        if let Some(&local_index) = self.value_to_local.get(&dest) {
-                            // Store to local and keep on stack with tee
-                            self.current_instructions
-                                .push(Instruction::LocalTee(local_index));
-                            // Check if null (0)
-                            self.current_instructions.push(Instruction::I32Eqz);
-                            // If null, trap
-                            self.current_instructions
-                                .push(Instruction::If(wasm_encoder::BlockType::Empty));
-                            self.current_instructions.push(Instruction::Unreachable);
-                            self.current_instructions.push(Instruction::End);
-                            // Value is still in local, load it back for the result
-                            self.current_instructions
-                                .push(Instruction::LocalGet(local_index));
-                            // Store to dest (which is the same local)
-                            self.current_instructions
-                                .push(Instruction::LocalSet(local_index));
-                        } else {
-                            // No local mapping - just do the check and drop
-                            self.current_instructions.push(Instruction::I32Eqz);
-                            self.current_instructions
-                                .push(Instruction::If(wasm_encoder::BlockType::Empty));
-                            self.current_instructions.push(Instruction::Unreachable);
-                            self.current_instructions.push(Instruction::End);
-                        }
-                    } else {
-                        // No destination - just check and drop
-                        // Stack: [value]
-                        // Check if null
-                        self.current_instructions.push(Instruction::I32Eqz);
+                    let local_index = instruction
+                        .dest
+                        .and_then(|dest| self.value_to_local.get(&dest).copied());
+                    if let Some(local_index) = local_index {
                         self.current_instructions
-                            .push(Instruction::If(wasm_encoder::BlockType::Empty));
-                        self.current_instructions.push(Instruction::Unreachable);
-                        self.current_instructions.push(Instruction::End);
-                        // Value was consumed by the check, nothing to drop
+                            .push(Instruction::LocalTee(local_index));
                     }
+                    self.current_instructions.extend(is_null);
+                    self.current_instructions
+                        .push(Instruction::If(wasm_encoder::BlockType::Empty));
+                    self.current_instructions.push(Instruction::Unreachable);
+                    self.current_instructions.push(Instruction::End);
                 } else {
                     // Normal unary operation — need the operand MIR type so we
                     // can emit the correct i32/f64 instructions (E0Xx avoids

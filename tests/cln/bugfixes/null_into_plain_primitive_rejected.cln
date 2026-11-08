@@ -1,0 +1,32 @@
+// Test: bugfixes/null_into_plain_primitive_rejected
+// Grammar: variable_declaration, assignment, return_statement, function_call
+// Semantic: type-system.md §8 — plain integer, number and boolean are not
+//   nullable; only `integer?`, `number?`, `boolean?` accept null. The rule
+//   covers declarations, assignments, arguments and return values.
+// Fixed in: compiler 0.33.178
+// Expected output:
+// Expected error:
+//   null cannot be used as integer
+//   null_into_plain_primitive_rejected.cln:19:
+//   null cannot be used as number
+//   null_into_plain_primitive_rejected.cln:21:
+//   null_into_plain_primitive_rejected.cln:23:
+//   null_into_plain_primitive_rejected.cln:24:
+//   null cannot be used as boolean
+//   null_into_plain_primitive_rejected.cln:29:
+
+start:
+	integer count = null
+	integer? maybe = null
+	number ratio = null
+	ratio = 1.5
+	ratio = null
+	print(half(null))
+	print(maybe == null)
+
+functions:
+	boolean flag(boolean on)
+		return null
+
+	number half(number value)
+		return value / 2.0

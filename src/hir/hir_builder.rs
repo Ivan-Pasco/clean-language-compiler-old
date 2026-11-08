@@ -1428,7 +1428,16 @@ impl HirBuilder {
                 // aspect is enforced by the type checker at assignment
                 // sites, and the runtime null-check is emitted by the
                 // existing RequiredAssert operator.
-                self.build_type(inner)
+                //
+                // `integer?`, `number?` and `boolean?` stay optional: their
+                // plain forms reject null, so the type checker must tell
+                // them apart (type-system.md §8).
+                let inner = self.build_type(inner)?;
+                if inner.is_non_nullable_primitive() {
+                    Ok(HirType::Optional(Box::new(inner)))
+                } else {
+                    Ok(inner)
+                }
             }
             Type::None => {
                 // `none` is the type of the `null` literal. It shares

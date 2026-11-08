@@ -15,7 +15,9 @@ start:
 
 	// Test 3: Required with default fallback
 	// First use default to get non-null, then assert it
-	integer maybeNull = null
+	// Fixed: was `integer maybeNull = null`; a plain integer is never null
+	// (type-system.md §8), so the nullable variable is `integer?`.
+	integer? maybeNull = null
 	integer safeValue = maybeNull default 100
 	integer result3 = safeValue!  // Safe because default gives non-null
 	print(result3)  // Should print 100

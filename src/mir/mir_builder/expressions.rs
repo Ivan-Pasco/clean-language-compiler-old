@@ -1158,7 +1158,7 @@ impl MirBuilder {
                             if !parameters.is_empty() {
                                 let types: Vec<ConcreteType> = parameters
                                     .iter()
-                                    .map(|hir_type| match hir_type {
+                                    .map(|hir_type| match hir_type.without_optional() {
                                         crate::hir::HirType::Any => ConcreteType::Any,
                                         crate::hir::HirType::String => ConcreteType::String,
                                         crate::hir::HirType::Integer => ConcreteType::Integer,
@@ -1539,7 +1539,7 @@ impl MirBuilder {
                                     // Concrete detour via TAST — for our purposes
                                     // (Interface method dispatch), map the HirType
                                     // directly to a MirType via existing helpers.
-                                    let mir_ty = match &m.return_type {
+                                    let mir_ty = match m.return_type.without_optional() {
                                         crate::hir::HirType::Integer => MirType::I32,
                                         crate::hir::HirType::Number => MirType::F64,
                                         crate::hir::HirType::Boolean => MirType::I32,

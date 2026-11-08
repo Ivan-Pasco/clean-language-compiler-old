@@ -1,0 +1,41 @@
+// Test: bugfixes/null_into_optional_primitive_allowed
+// Grammar: variable_declaration, assignment, return_statement, function_call
+// Semantic: type-system.md §8 — `integer?`, `number?` and `boolean?` accept
+//   null at a declaration, an assignment, an argument and a return, and
+//   hold ordinary values too; a plain string still accepts null.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   true
+//   false
+//   6
+//   2.5
+//   false
+//   true
+//   true
+//   true
+//   7
+
+start:
+	integer? maybe = null
+	print(maybe == null)
+	maybe = 5
+	print(maybe == null)
+	print(maybe! + 1)
+	number? ratio = 2.5
+	print(ratio!)
+	print(ratio == null)
+	boolean? flag = null
+	print(flag == null)
+	print(lookup(0) == null)
+	string text = null
+	print(text == null)
+	print(orZero(7))
+
+functions:
+	integer? lookup(integer key)
+		if key == 0
+			return null
+		return key
+
+	integer orZero(integer? value)
+		return value default 0
