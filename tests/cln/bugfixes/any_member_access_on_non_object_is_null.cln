@@ -1,0 +1,37 @@
+// Test: bugfixes/any_member_access_on_non_object_is_null
+// Grammar: method_call, member_access, index_access
+// Semantic: `.get`, `.key` and `[...]` on an `any` that holds no object or list find nothing
+// Fixed in: compiler 0.33.177
+// Expected output:
+//   null
+//   null
+//   null
+//   null
+//   null
+//   3
+//   5
+//   null
+//
+// `any.get("key")` on an `any` holding a string read the string as a JSON
+// object and trapped with an out-of-bounds memory access.
+
+start:
+	any s = "hello"
+	any v = s.get("key")
+	printl(describe(v))
+	any d = json.decode("\"text\"")
+	printl(describe(d.get("key")))
+	printl(describe(d["key"]))
+	printl(describe(d[0]))
+	any n = 42
+	printl(describe(n.get("key")))
+	any o = json.decode("{\"key\": 3, \"xs\": [4, 5]}")
+	printl(describe(o.get("key")))
+	printl(describe(o.xs[1]))
+	printl(describe(o.key[0]))
+
+functions:
+	string describe(any value)
+		if value == null
+			return "null"
+		return value.toString()

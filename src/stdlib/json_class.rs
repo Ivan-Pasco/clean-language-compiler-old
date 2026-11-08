@@ -346,13 +346,14 @@ impl JsonClass {
             .get_function_index("__memcmp_bytes")
             .expect("__memcmp_bytes must be registered before __json_get_field");
 
-        // __json_get_field(object_ptr: i32, key_ptr: i32, key_len: i32) -> i32
-        // Access a member of a JSON object by key. Returns the member's boxed
-        // value, or null (0) if the key is absent.
+        // __json_get_field(any_ptr: i32, key_ptr: i32, key_len: i32) -> i32
+        // Access a member of a boxed JSON object by key. Returns the member's
+        // boxed value, or null (0) if the key is absent or the value is not
+        // a JSON object (a string, a list, a class instance, null).
         register_stdlib_function_with_locals(
             codegen,
             "__json_get_field",
-            &[WasmType::I32, WasmType::I32, WasmType::I32], // object_ptr, key_ptr, key_len
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // any_ptr, key_ptr, key_len
             Some(WasmType::I32),                            // returns any pointer
             &[
                 WasmType::I32, // Local 3: count
@@ -366,13 +367,14 @@ impl JsonClass {
             self.generate_get_field_instructions(memcmp_index),
         )?;
 
-        // __json_get_index(array_ptr: i32, index: i32) -> i32
-        // Access an element of a JSON array by index. Returns the element's
-        // boxed value, or null (0) if the index is out of bounds.
+        // __json_get_index(any_ptr: i32, index: i32) -> i32
+        // Access an element of a boxed JSON array by index. Returns the
+        // element's boxed value, or null (0) if the index is out of bounds or
+        // the value is not a JSON array.
         register_stdlib_function_with_locals(
             codegen,
             "__json_get_index",
-            &[WasmType::I32, WasmType::I32], // array_ptr, index
+            &[WasmType::I32, WasmType::I32], // any_ptr, index
             Some(WasmType::I32),             // returns any pointer
             &[
                 WasmType::I32, // Local 2: count
@@ -457,6 +459,38 @@ impl JsonClass {
             Instruction::End, // End if
         ]
     }
+    /// Replace the boxed `any` in local 0 with its payload when the box
+    /// has tag `tag`, and with 0 (no value) otherwise: `.get` and member or
+    /// element access on an `any` that holds a string, a number or null
+    /// find nothing instead of reading the payload as an object or array.
+    fn payload_of_tag(tag: i32) -> Vec<Instruction<'static>> {
+        use wasm_encoder::{BlockType, ValType};
+        let word = |offset| {
+            Instruction::I32Load(MemArg {
+                offset,
+                align: 2,
+                memory_index: 0,
+            })
+        };
+        vec![
+            Instruction::LocalGet(0),
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::LocalGet(0),
+            word(0),
+            Instruction::I32Const(tag),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Result(ValType::I32)),
+            Instruction::LocalGet(0),
+            word(4),
+            Instruction::Else,
+            Instruction::I32Const(0),
+            Instruction::End,
+            Instruction::Else,
+            Instruction::I32Const(0),
+            Instruction::End,
+            Instruction::LocalSet(0),
+        ]
+    }
 
     /// Generate WASM instructions for __json_get_field
     /// Accesses a field on a JSON object by string key and returns the
@@ -480,7 +514,8 @@ impl JsonClass {
         // Object Memory Layout: [i32 count][i32 key0_ptr][i32 val0_ptr][i32 key1_ptr][i32 val1_ptr]...
         // String Memory Layout: [i32 length][bytes...]
 
-        vec![
+        let mut v = Self::payload_of_tag(JSON_TAG_OBJECT);
+        v.extend([
             // Check if object_ptr is null
             Instruction::LocalGet(0),
             Instruction::I32Eqz,
@@ -505,7 +540,9 @@ impl JsonClass {
             // Check if i >= count (loop exit condition)
             Instruction::LocalGet(4), // i
             Instruction::LocalGet(3), // count
-            Instruction::I32GeU,
+            // Signed: a boxed class instance (tag 6) starts with its
+            // negative header word instead of a count, and has no members.
+            Instruction::I32GeS,
             Instruction::If(wasm_encoder::BlockType::Empty),
             // No match found - return null (0)
             Instruction::I32Const(0),
@@ -584,7 +621,8 @@ impl JsonClass {
             Instruction::I32Const(0),
             Instruction::End, // End block
             Instruction::End, // End if
-        ]
+        ]);
+        v
     }
 
     /// Generate WASM instructions for __json_get_index
@@ -602,7 +640,8 @@ impl JsonClass {
         //
         // Returns: Pointer to element at index, or null (0) if out of bounds
 
-        vec![
+        let mut v = Self::payload_of_tag(JSON_TAG_ARRAY);
+        v.extend([
             // Check if array_ptr is null
             Instruction::LocalGet(0),
             Instruction::I32Eqz,
@@ -652,7 +691,8 @@ impl JsonClass {
             Instruction::I32Const(0),
             Instruction::End,
             Instruction::End,
-        ]
+        ]);
+        v
     }
 
     /// Generate WASM body for `__json_from_cln_list(list_ptr: i32, elem_tag: i32) -> i32`.

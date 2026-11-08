@@ -517,24 +517,13 @@ impl MirCodeGenerator<'_> {
             MirOperation::AnyGetField { object, key } => {
                 debug_mir!(?object, ?key, "Processing AnyGetField (JSON object access)");
 
-                // Load the JSON object pointer (Any type)
+                // The boxed `any` (`__json_get_field` checks its tag).
                 self.load_operand(object)?;
 
-                // NOTE: Objects are now boxed as [tag][raw_ptr][0]
-                // We need to unbox by reading the raw object pointer at offset 4
-                // This extracts the actual object structure pointer from the boxed any value
-                self.current_instructions
-                    .push(Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 4,
-                        align: 2,
-                        memory_index: 0,
-                    }));
-
                 // Load the key string and expand to (content_ptr, len) format
-                // __json_get_field expects: (raw_object_ptr: i32, key_ptr: i32, key_len: i32)
                 self.load_string_argument_for_print(key)?;
 
-                // Call __json_get_field(raw_object_ptr: i32, key_ptr: i32, key_len: i32) -> i32
+                // Call __json_get_field(any_ptr: i32, key_ptr: i32, key_len: i32) -> i32
                 let json_get_field_idx = self.get_or_register_json_get_field()?;
                 self.current_instructions
                     .push(Instruction::Call(json_get_field_idx));
@@ -553,23 +542,13 @@ impl MirCodeGenerator<'_> {
             MirOperation::AnyGetIndex { array, index } => {
                 debug_mir!(?array, ?index, "Processing AnyGetIndex (JSON array access)");
 
-                // Load the JSON array pointer (Any type)
+                // The boxed `any` (`__json_get_index` checks its tag).
                 self.load_operand(array)?;
-
-                // NOTE: Arrays are now boxed as [tag][raw_ptr][0]
-                // We need to unbox by reading the raw array pointer at offset 4
-                // This extracts the actual array structure pointer from the boxed any value
-                self.current_instructions
-                    .push(Instruction::I32Load(wasm_encoder::MemArg {
-                        offset: 4,
-                        align: 2,
-                        memory_index: 0,
-                    }));
 
                 // Load the integer index
                 self.load_operand(index)?;
 
-                // Call __json_get_index(raw_array_ptr: i32, index: i32) -> i32
+                // Call __json_get_index(any_ptr: i32, index: i32) -> i32
                 let json_get_index_idx = self.get_or_register_json_get_index()?;
                 self.current_instructions
                     .push(Instruction::Call(json_get_index_idx));
