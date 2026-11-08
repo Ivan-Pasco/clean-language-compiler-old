@@ -612,15 +612,20 @@ impl OptimizationPass for DeadCodeEliminationPass {
 /// Whether executing `operation` can have an effect beyond producing its
 /// destination value, so it must stay even when that value is unused: memory
 /// and global writes, every kind of call (including dynamic capability
-/// dispatch), and a short-circuit `and`/`or` whose
-/// right-hand side contains one of those.
+/// dispatch), the `!` check (it halts on none even when its value is not
+/// used), and a short-circuit `and`/`or` whose right-hand side contains one
+/// of those.
 fn has_side_effects(operation: &MirOperation) -> bool {
     match operation {
         MirOperation::Store { .. }
         | MirOperation::GlobalStore { .. }
         | MirOperation::Call { .. }
         | MirOperation::CallCapability { .. }
-        | MirOperation::ErrorCheck { .. } => true,
+        | MirOperation::ErrorCheck { .. }
+        | MirOperation::UnaryOp {
+            op: MirUnaryOp::Required,
+            ..
+        } => true,
         MirOperation::LogicalShortCircuit {
             rhs_instructions, ..
         } => rhs_instructions
