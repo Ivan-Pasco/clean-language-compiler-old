@@ -8,7 +8,6 @@ Clean uses `start`, `later`, and `background` for simple background execution:
 - `later` declares that the result will be available in the future
 - The value blocks only when accessed
 - Use `background` to run a task without keeping the result
-- Mark a function as `background` to always run it in the background
 
 ### Two Uses of the `start` Keyword
 
@@ -35,23 +34,9 @@ start:
     background logAction("login")    // runs and ignores result
 ```
 
-- `later T name = start f()` — begins `f()` in the background and binds a future of type `T` to `name`. The current thread continues.
+- `later name = start f()` — begins `f()` in the background and binds a future of its result to `name`. The current thread continues.
 - Reading `name` blocks until the background task completes.
 - `background f()` runs `f()` and discards the result — no future is created.
-
-### Background Functions
-
-**Mark a function as `background` so every call to it runs in the background automatically.**
-
-```clean
-functions:
-	void syncCache() background
-		sendUpdateToServer()
-		clearLocalTemp()
-
-start:
-	syncCache()    // runs in background automatically
-```
 
 ### Background Task Error Handling
 
@@ -61,13 +46,16 @@ The `loading` pattern — setting a flag before an async operation and clearing 
 
 ```clean
 functions:
-	void fetchUser(integer id) background
+	void fetchUser(integer id)
 		loading = true
 		any user = start api.getUser(id) onError:
 			loading = false
 			error("Failed to fetch user")
 		username = user.name
 		loading = false
+
+start:
+	background fetchUser(42)
 ```
 
 Without the `onError` block, if `api.getUser(id)` fails, `loading` would stay `true` and the UI would be stuck in a loading state.
@@ -114,7 +102,6 @@ failed reads the zero value of its type (`0`, `0.0`, `false`, `""`, or
 - Accessing a `later` binding blocks the current task until the underlying computation finishes.
 - Background tasks run on the runtime's scheduler and are independent of the calling task.
 - Errors in background tasks do not propagate — attach `onError` at the point where `start` is used, not at the read site.
-- Marking a function `background` is equivalent to prefixing every call to it with `background`.
 
 ---
 

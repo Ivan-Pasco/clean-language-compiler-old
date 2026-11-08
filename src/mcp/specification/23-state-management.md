@@ -231,9 +231,9 @@ functions:
 
 ### State with Background Tasks
 
-**Background functions can update state when they complete. Updates remain sequential, preventing race conditions.**
+**Functions run with `background` can update state when they complete. Updates remain sequential, preventing race conditions.**
 
-Errors in background tasks do not propagate to the caller — always attach an `onError` handler when updating state in a background function, so cleanup happens even on failure:
+Errors in background tasks do not propagate to the caller — always attach an `onError` handler when a function run with `background` updates state, so cleanup happens even on failure:
 
 ```clean
 state:
@@ -242,7 +242,7 @@ state:
 	boolean loading = false
 
 functions:
-	void fetchUser(integer id) background
+	void fetchUser(integer id)
 		loading = true
 		any user = start api.getUser(id) onError:
 			loading = false
@@ -309,7 +309,7 @@ functions:
     void setTheme(string newTheme)
         theme = newTheme
 
-    void loadProfile() background
+    void loadProfile()
         any profile = start fetchProfile()
         user = profile.name
 
