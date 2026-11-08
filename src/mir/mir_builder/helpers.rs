@@ -680,7 +680,9 @@ impl MirBuilder {
                     .rev()
                     .find_map(|scope| scope.get(name).copied())
                 {
-                    if orig_id != new_list_id {
+                    if let Some(binding) = Self::later_binding(context, orig_id) {
+                        self.emit_later_write(context, orig_id, &binding, new_list_id, location);
+                    } else if orig_id != new_list_id {
                         self.add_instruction(
                             context,
                             MirInstruction {
@@ -983,11 +985,9 @@ impl MirBuilder {
                     }
                     _ => {}
                 },
-                TastStatement::LaterAssignment { symbol_id, .. } => {
-                    if !inner.contains(symbol_id) {
-                        return true;
-                    }
-                }
+                // A `later` task can run after the iteration, so the values
+                // it captured must outlive the per-iteration pop.
+                TastStatement::LaterAssignment { .. } => return true,
                 // A call statement (`outer_list.push(inner)`, `Foo.bar(x)`, etc.)
                 // can mutate any receiver or pass arguments to outer-scope
                 // state without going through a TastStatement::Assignment.
@@ -1006,8 +1006,8 @@ impl MirBuilder {
                         return true;
                     }
                 }
-                // `background` fires off a closure that retains body-local
-                // pointers across the pop.
+                // `background` hands the host a task that keeps body-local
+                // pointers past the pop.
                 TastStatement::Background { .. } => return true,
                 TastStatement::If {
                     then_block,

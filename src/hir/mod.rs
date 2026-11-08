@@ -375,7 +375,7 @@ pub enum HirStatement {
     },
 
     /// Background statement (fire-and-forget async call)
-    /// Lowers to a call to the `_async_fire` host bridge function.
+    /// Its call is deferred to a task (`mir_builder/async_tasks.rs`).
     Background {
         expression: HirExpression,
         location: SourceLocation,

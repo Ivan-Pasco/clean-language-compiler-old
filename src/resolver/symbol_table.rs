@@ -84,6 +84,10 @@ pub const SYM_COMPUTED_GETTER_BASE: usize = 0x4002_0000;
 /// Base for MIR-synthesized class JSON serializer IDs.
 pub const SYM_CLASS_SERIALIZER_BASE: usize = 0x4003_0000;
 
+/// Base for MIR-synthesized async task functions (one per `background` /
+/// `later` call site, `mir_builder/async_tasks.rs`).
+pub const SYM_ASYNC_TASK_BASE: usize = 0x4004_0000;
+
 /// Unique identifier for scopes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(pub usize);

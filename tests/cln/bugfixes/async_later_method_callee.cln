@@ -1,0 +1,50 @@
+// Test: bugfixes/async_later_method_callee
+// Grammar: later_assignment, start_expression (§4.9)
+// Semantic: 19-async.md — `later name = start obj.method()` binds a future; the
+//   call runs at the latest when `name` is first read (and once only), the
+//   current task continues meanwhile, and a binding that is never read still
+//   runs once the start body has returned.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   working
+//   greeting Bo
+//   Ana greets Bo
+//   Ana greets Bo
+//   doubling 21
+//   42
+//   half 3.5
+//   start ends
+//   greeting nobody
+
+start:
+	Greeter g = Greeter("Ana")
+	later message = start g.greet("Bo")
+	print("working")
+	print(message)
+	print(message)
+	later doubled = start g.twice(21)
+	print(doubled.toString())
+	later halved = g.half(7.0)
+	print("half " + halved.toString())
+	later unused = start g.greet("nobody")
+	print("start ends")
+
+class Greeter
+	public:
+		string name
+
+	constructor(string nameParam)
+		name = nameParam
+
+	functions:
+		public:
+			string greet(string who)
+				print("greeting " + who)
+				return name + " greets " + who
+
+			integer twice(integer x)
+				print("doubling " + x.toString())
+				return x * 2
+
+			number half(number x)
+				return x / 2.0

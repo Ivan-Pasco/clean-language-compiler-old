@@ -2950,26 +2950,26 @@ description = "Extract a value from a JSON object (any-boxed; typically a raw SQ
 # ============================================================
 
 [[functions]]
-name        = "_async_fire"
+name        = "_async_fire_slot"
 layer       = 3
 category    = "async"
 module      = "env"
-params      = ["string", "string"]
+params      = ["i32", "i32"]
 returns     = "void"
-aliases     = ["async.fire"]
+aliases     = []
 hosts       = ["all"]
-description = "Fire-and-forget async call. fn_name is the Clean function name; args is a JSON array of serialised arguments (currently always '[]')."
+description = "Hand the host a task started by `background f(...)` or `later x = f(...)`: slot is the __indirect_function_table index of the compiler-generated task function (env: i32) -> i32, env its environment block. The host runs queued tasks in order once the entry point that started them (start:, a request or event handler) has returned; the result is discarded."
 
 [[functions]]
-name        = "_async_await"
+name        = "_async_await_slot"
 layer       = 3
 category    = "async"
 module      = "env"
-params      = ["string", "string"]
-returns     = "ptr"
-aliases     = ["async.await"]
+params      = ["i32", "i32"]
+returns     = "i32"
+aliases     = []
 hosts       = ["all"]
-description = "Async call that blocks until the result is available. fn_name is the Clean function name; args is a JSON array. Returns a length-prefixed string pointer."
+description = "Read a later variable: run the task (slot, env) now if it has not run yet and return what the task function returns, the address of its result cell. A task runs once; calling it again returns the same cell."
 
 [[functions]]
 name        = "_server_sleep"

@@ -19,6 +19,12 @@ static NEXT_ALLOCATION_OFFSET: Mutex<usize> = Mutex::new(HEAP_START);
 // When exiting scope, pop and reset - instant deallocation of all scope allocations
 static SCOPE_MARKS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
+/// Tasks handed over by `_async_fire_slot` (`background` / `later`), as
+/// `(slot, env)`: run in order once `start` has returned (HOST_BRIDGE.md
+/// §Async).
+static ASYNC_TASKS: Mutex<std::collections::VecDeque<(i32, i32)>> =
+    Mutex::new(std::collections::VecDeque::new());
+
 // Helper function to allocate memory for a string in WASM memory
 // CRITICAL: This must keep WASM global 0 (__heap_ptr) in sync with the host-side
 // allocation offset so that WASM-side malloc doesn't return addresses that overlap
@@ -106,6 +112,54 @@ fn call_or_exit(func: &wasmtime::Func, store: &mut Store<()>, results: &mut [was
     if let Err(e) = func.call(&mut *store, &[], results) {
         eprintln!("Error: {e:?}");
         std::process::exit(1);
+    }
+}
+
+/// The task function a `background` / `later` slot names: entry `slot` of
+/// the module's `__indirect_function_table`, `(env: i32) -> i32`.
+fn async_task_function(
+    caller: &mut Caller<'_, ()>,
+    slot: i32,
+) -> Result<wasmtime::TypedFunc<i32, i32>> {
+    let table = caller
+        .get_export("__indirect_function_table")
+        .and_then(Extern::into_table)
+        .ok_or_else(|| wasmtime::Error::msg("module exports no __indirect_function_table"))?;
+    let func = u64::try_from(slot)
+        .ok()
+        .and_then(|index| table.get(&mut *caller, index))
+        .and_then(|entry| entry.as_func().flatten().copied())
+        .ok_or_else(|| wasmtime::Error::msg(format!("async task slot {slot} holds no function")))?;
+    func.typed::<i32, i32>(&*caller)
+}
+
+/// Run the tasks `start` handed over, in order, including those the tasks
+/// themselves start. A task that traps is reported on stderr and the others
+/// still run: its failure does not reach the code that started it.
+fn run_async_tasks(instance: &wasmtime::Instance, store: &mut Store<()>) {
+    loop {
+        let next = ASYNC_TASKS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front();
+        let Some((slot, env)) = next else {
+            break;
+        };
+        let task = instance
+            .get_table(&mut *store, "__indirect_function_table")
+            .and_then(|table| {
+                u64::try_from(slot)
+                    .ok()
+                    .and_then(|i| table.get(&mut *store, i))
+            })
+            .and_then(|entry| entry.as_func().flatten().copied())
+            .ok_or_else(|| {
+                wasmtime::Error::msg(format!("async task slot {slot} holds no function"))
+            })
+            .and_then(|func| func.typed::<i32, i32>(&*store));
+        if let Err(e) = task.and_then(|task| task.call(&mut *store, env)) {
+            eprintln!("Error: background task failed: {e:?}");
+        }
     }
 }
 
@@ -472,15 +526,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(std::time::Duration::from_millis(ms.max(0) as u64));
     })?;
 
+    // background / later (HOST_BRIDGE.md §Async): a task is queued and run
+    // after `start` returns; awaiting it runs it now (a task runs once — the
+    // task function itself returns the stored result on a second call).
+    linker.func_wrap("env", "_async_fire_slot", |slot: i32, env: i32| {
+        ASYNC_TASKS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back((slot, env));
+    })?;
     linker.func_wrap(
         "env",
-        "_async_fire",
-        |_: i32, _: i32, _: i32, _: i32| -> Result<()> { Err(unavailable("_async_fire")) },
-    )?;
-    linker.func_wrap(
-        "env",
-        "_async_await",
-        |_: i32, _: i32, _: i32, _: i32| -> Result<i32> { Err(unavailable("_async_await")) },
+        "_async_await_slot",
+        |mut caller: Caller<'_, ()>, slot: i32, env: i32| -> Result<i32> {
+            let task = async_task_function(&mut caller, slot)?;
+            task.call(&mut caller, env)
+        },
     )?;
 
     linker.func_wrap("env", "_req_param", |_: i32, _: i32| -> Result<i32> {
@@ -2032,6 +2093,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
         call_or_exit(&func, &mut store, &mut results);
+        run_async_tasks(&instance, &mut store);
         println!("--- End Output ---");
         // Post-run heap footprint report — opt-in via CLN_WASMTIME_HEAP_REPORT=1.
         // Handy for SSR-style leak investigations where you want to compare

@@ -13,7 +13,7 @@ use crate::mir::mir_types::{
     MirParameter, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::symbol_table::{
-    SYM_BUILTIN_LIST_ADD, SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ADD_I64,
+    SYM_ASYNC_TASK_BASE, SYM_BUILTIN_LIST_ADD, SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ADD_I64,
     SYM_BUILTIN_LIST_ADD_STRING, SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH,
     SYM_BUILTIN_LIST_PUSH_F64, SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64,
     SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_MATH_POW_I64, SYM_BUILTIN_STRING_CONCAT,
@@ -28,6 +28,7 @@ use crate::typechecker::tast::{
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, trace, warn};
 
+mod async_tasks;
 mod expressions;
 mod functions;
 mod helpers;
@@ -146,6 +147,13 @@ pub struct MirBuilder {
     /// (`MirProgram::instance_conversions`).
     pub(super) instance_conversions:
         std::collections::BTreeMap<String, crate::mir::mir_types::InstanceConversion>,
+
+    /// Task functions of `background` / `later` call sites, built once the
+    /// functions that contain them are done (`async_tasks.rs`).
+    pub(super) pending_async_tasks: Vec<async_tasks::AsyncTaskSpec>,
+
+    /// Counter for the synthetic SymbolIds of async task functions.
+    pub(super) next_async_task_symbol_id: usize,
 }
 
 /// Context for building a single function
@@ -184,6 +192,11 @@ pub(super) struct FunctionBuildContext {
 
     /// The declared return type: what a returned `any` is converted to.
     pub(super) return_type: ConcreteType,
+
+    /// `later` bindings of this function: the local holding the task's
+    /// environment block → the task. Reading the variable awaits the task
+    /// (`async_tasks.rs`).
+    pub(super) later_bindings: HashMap<ValueId, async_tasks::LaterBinding>,
 }
 
 /// An `onError` region of the function being built: the protected
@@ -274,6 +287,8 @@ impl MirBuilder {
             any_conversion_errors: Vec::new(),
             capability_classes: HashMap::new(),
             instance_conversions: std::collections::BTreeMap::new(),
+            pending_async_tasks: Vec::new(),
+            next_async_task_symbol_id: SYM_ASYNC_TASK_BASE,
         }
     }
 
@@ -992,6 +1007,23 @@ impl MirBuilder {
                     mir_type = ?mir_type,
                     "Added state variable to MirProgram.globals (legacy path)"
                 );
+            }
+        }
+
+        // Build the task functions of the `background` / `later` call sites
+        // lowered above. They are built after every other function (their
+        // call sites are in those functions) and before the `onError` checks
+        // are removed below: a task runs its call inside an error region.
+        while let Some(spec) = self.pending_async_tasks.pop() {
+            let symbol_id = spec.symbol_id;
+            match self.build_async_task_function(spec) {
+                Ok(function) => {
+                    mir_program
+                        .symbol_name_map
+                        .insert(symbol_id, function.name.clone());
+                    mir_program.functions.insert(symbol_id, function);
+                }
+                Err(errors) => lowering_errors.extend(errors),
             }
         }
 

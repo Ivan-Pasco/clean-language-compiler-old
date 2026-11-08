@@ -1,0 +1,41 @@
+// Test: bugfixes/async_background_runs_after_start
+// Grammar: background_statement (§4.9)
+// Semantic: 19-async.md — `background f()` runs f in the background and discards
+//   its result. The receiver and arguments are evaluated where the statement
+//   runs; the call itself runs once the start body has returned.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   start begins
+//   start ends
+//   log: first 1
+//   counter at 1 (bump)
+//   log: second 2
+//   counter at 2 (bump again)
+
+start:
+	print("start begins")
+	integer n = 1
+	Counter c = Counter()
+	background log("first", n)
+	background c.bump("bump")
+	n = 2
+	background log("second", n)
+	background c.bump("bump again")
+	print("start ends")
+
+class Counter
+	public:
+		integer count
+
+	constructor()
+		count = 0
+
+	functions:
+		public:
+			void bump(string label)
+				count = count + 1
+				print("counter at " + count.toString() + " (" + label + ")")
+
+functions:
+	void log(string label, integer value)
+		print("log: " + label + " " + value.toString())

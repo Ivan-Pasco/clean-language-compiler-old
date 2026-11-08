@@ -72,6 +72,42 @@ functions:
 
 Without the `onError` block, if `api.getUser(id)` fails, `loading` would stay `true` and the UI would be stuck in a loading state.
 
+### When the Work Happens
+
+A program runs one task at a time. "In the background" means *later*, not
+*at the same time*:
+
+- `background f(a, b)` and `later x = start f(a, b)` evaluate the receiver
+  and the arguments right away, where the statement stands. The call itself
+  does not run yet.
+- A `later` call runs the first time its variable is read. Each later read
+  gets the same value. Assigning to the variable first waits for the call,
+  then replaces the value.
+- Every call not yet run, `background` or unread `later`, runs in order once
+  the current entry point returns. The entry point is `start:`, a request
+  handler, or an event handler. A request's response is sent without
+  waiting for them.
+- Only a call is deferred: a function call, a method call or a static call,
+  optionally followed by `onError`. Any other expression after `later` or
+  `background` is evaluated where it stands.
+
+```clean
+start:
+	later data = start fetchData("url")    // "url" evaluated now
+	print("Working...")                    // runs first
+	print(data)                            // fetchData runs here
+	background logAction("login")          // runs after start: returns
+	print("done")                          // printed before logAction runs
+```
+
+An error in a task stops that task only. A `later` variable whose call
+failed reads the zero value of its type (`0`, `0.0`, `false`, `""`, or
+`null`), unless an `onError` on the call gives a value:
+
+```clean
+	later count = start countUsers() onError 0
+```
+
 ### Semantics Summary
 
 - A `later` binding is a future — a placeholder for a value that will exist later.
