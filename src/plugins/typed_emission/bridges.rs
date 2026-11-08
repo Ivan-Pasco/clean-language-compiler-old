@@ -273,6 +273,18 @@ fn register_type_constructors(linker: &mut Linker<PluginState>) -> Result<()> {
         },
     )?;
 
+    // _type_optional(ctx, inner_type_handle) -> handle: `T?`, the only form
+    // of a type that holds none (type-system.md §8).
+    linker.func_wrap(
+        "env",
+        "_type_optional",
+        |mut caller: Caller<'_, PluginState>, ctx: i32, inner_handle: i32| -> i32 {
+            let a = arena!(caller);
+            let inner = take_or_return!(a, a.take_type(ctx, inner_handle));
+            a.alloc_type(Type::Nullable(Box::new(inner)))
+        },
+    )?;
+
     // _type_class_ref(ctx, name_lp) -> handle
     linker.func_wrap(
         "env",

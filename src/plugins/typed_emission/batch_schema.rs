@@ -877,6 +877,11 @@ pub fn resolve_type(name: &str) -> Result<Type, BatchSchemaError> {
         "boolean" => Ok(Type::Boolean),
         "void" => Ok(Type::Void),
         "any" => Ok(Type::Any),
+        // `T?` — the nullable form (grammar.ebnf `type`), the only one that
+        // holds none (type-system.md §8).
+        _ if name.len() > 1 && name.ends_with('?') => Ok(Type::Nullable(Box::new(resolve_type(
+            &name[..name.len() - 1],
+        )?))),
         _ => {
             // Array<T> and list<T> both → List(resolve(T)).
             //
@@ -1369,6 +1374,22 @@ mod tests {
     fn resolve_class_ref() {
         let t = resolve_type("User").unwrap();
         assert!(matches!(t, Type::Object(ref n) if n == "User"));
+    }
+
+    #[test]
+    fn resolve_nullable_type() {
+        // A trailing `?` is the nullable form (grammar.ebnf `type`): a
+        // plugin-emitted `first` query returns `Item?` (frame-data DAT-Q001).
+        let t = resolve_type("Item?").unwrap();
+        assert!(
+            matches!(t, Type::Nullable(ref inner) if matches!(**inner, Type::Object(ref n) if n == "Item"))
+        );
+        let t = resolve_type("list<string>?").unwrap();
+        assert!(matches!(t, Type::Nullable(ref inner) if matches!(**inner, Type::List(_, _))));
+        assert!(matches!(
+            resolve_type("?"),
+            Err(BatchSchemaError::UnresolvableType(_))
+        ));
     }
 
     #[test]

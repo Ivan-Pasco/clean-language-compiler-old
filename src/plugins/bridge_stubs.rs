@@ -172,6 +172,7 @@ const TYPED_EMISSION_BRIDGES: &[(&str, usize)] = &[
     ("_type_void", 1),
     ("_type_array", 2),
     ("_type_class_ref", 2),
+    ("_type_optional", 2),
     // Expression constructors
     ("_expr_string_lit", 2),
     ("_expr_int_lit", 3),
