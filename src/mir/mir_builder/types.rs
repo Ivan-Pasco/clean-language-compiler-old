@@ -56,6 +56,25 @@ impl MirBuilder {
             return value_id;
         }
 
+        // A collection whose elements are collections, or a pairs map whose
+        // values are not plain scalars, is converted element by element at
+        // every level (`__cln_to_any`); the converters below only box one
+        // level of scalar elements.
+        if let Some(descriptor) = Self::nested_collection_descriptor(source_type) {
+            let descriptor_index = self.get_string_index(descriptor);
+            return self.emit_named_call(
+                context,
+                crate::stdlib::json_class::CLN_TO_ANY,
+                vec![
+                    MirOperand::Value(value_id),
+                    MirOperand::Constant(MirConstant::String(descriptor_index)),
+                    MirOperand::Constant(MirConstant::Integer(0)),
+                ],
+                MirType::Any,
+                location,
+            );
+        }
+
         let type_tag = Self::get_any_type_tag(source_type);
         let mir_source_type = self.convert_concrete_type(source_type);
 
@@ -125,6 +144,34 @@ impl MirBuilder {
 
         self.add_instruction(context, instruction);
         result_id
+    }
+
+    /// The `__cln_to_any` descriptor of a list of collections, or of a pairs
+    /// map whose values are collections, `any` values or instances; `None`
+    /// for the one-level collections `emit_box_any` converts directly.
+    pub(super) fn nested_collection_descriptor(source_type: &ConcreteType) -> Option<String> {
+        let nested = match source_type {
+            ConcreteType::Array(element) => {
+                matches!(
+                    **element,
+                    ConcreteType::Array(_) | ConcreteType::Pairs(_, _)
+                )
+            }
+            ConcreteType::Pairs(_, value) => matches!(
+                **value,
+                ConcreteType::Array(_)
+                    | ConcreteType::Pairs(_, _)
+                    | ConcreteType::Any
+                    | ConcreteType::Class { .. }
+                    | ConcreteType::Interface { .. }
+            ),
+            _ => false,
+        };
+        if nested {
+            Self::cln_to_any_descriptor(source_type)
+        } else {
+            None
+        }
     }
 
     /// Emit a Call to one of the Clean-collection→JSON-tree converters
@@ -876,8 +923,24 @@ impl MirBuilder {
     /// (`json_class::any_descriptor`), or `None` when the type holds an
     /// element no `any` converts to.
     fn any_conversion_descriptor(target_type: &ConcreteType) -> Option<String> {
+        Self::collection_descriptor(target_type, false)
+    }
+
+    /// The `__cln_to_any` descriptor of a list or pairs value
+    /// (`json_class::CLN_TO_ANY`): the `__any_convert` format, where a pairs
+    /// map may have keys of any type (they are stored as text).
+    pub(super) fn cln_to_any_descriptor(source_type: &ConcreteType) -> Option<String> {
+        Self::collection_descriptor(source_type, true)
+    }
+
+    fn collection_descriptor(target_type: &ConcreteType, any_key: bool) -> Option<String> {
         use crate::stdlib::json_class::any_descriptor as code;
-        fn element(target: &ConcreteType, out: &mut Vec<u8>, in_pairs: bool) -> Option<()> {
+        fn element(
+            target: &ConcreteType,
+            out: &mut Vec<u8>,
+            in_pairs: bool,
+            any_key: bool,
+        ) -> Option<()> {
             let byte = match target {
                 ConcreteType::Any => code::ANY,
                 ConcreteType::Integer
@@ -895,11 +958,13 @@ impl MirBuilder {
                 ConcreteType::Class { .. } | ConcreteType::Interface { .. } => code::INSTANCE,
                 ConcreteType::Array(inner) => {
                     out.push(code::LIST);
-                    return element(inner, out, false);
+                    return element(inner, out, false, any_key);
                 }
-                ConcreteType::Pairs(key, value) if matches!(**key, ConcreteType::String) => {
+                ConcreteType::Pairs(key, value)
+                    if any_key || matches!(**key, ConcreteType::String) =>
+                {
                     out.push(code::PAIRS);
-                    return element(value, out, true);
+                    return element(value, out, true, any_key);
                 }
                 _ => return None,
             };
@@ -907,7 +972,7 @@ impl MirBuilder {
             Some(())
         }
         let mut out = Vec::new();
-        element(target_type, &mut out, false)?;
+        element(target_type, &mut out, false, any_key)?;
         String::from_utf8(out).ok()
     }
 

@@ -1,0 +1,53 @@
+// Test: bugfixes/json_encode_nested_typed_lists
+// Grammar: list_literal, method_call
+// Semantic: a typed list boxed into `any` keeps the elements of nested lists
+// Fixed in: compiler 0.33.177
+// Expected output:
+//   [[1,2],[3]]
+//   [["a"],["b","c"]]
+//   [[1.5],[2.25,3.0]]
+//   [[[1],[2,3]]]
+//   [[{"v":7}],[1]]
+//   [[{"v":5}]]
+//   {"rows":[[1,2],[3]],"cells":[[{"v":5}]]}
+//   3
+//
+// json.encode(list<list<integer>>) gave [[null,null],[null]]: the inner
+// lists were boxed as raw Clean lists, not as JSON arrays.
+
+start:
+	list<list<integer>> xs = [[1, 2], [3]]
+	printl(json.encode(xs))
+	list<list<string>> ys = [["a"], ["b", "c"]]
+	printl(json.encode(ys))
+	list<list<number>> zs = [[1.5], [2.25, 3.0]]
+	printl(json.encode(zs))
+	list<list<list<integer>>> deep = [[[1], [2, 3]]]
+	printl(json.encode(deep))
+	Cell seven = Cell(7)
+	list<list<any>> mixed = [([seven]), ([1])]
+	printl(json.encode(mixed))
+	Grid g = Grid()
+	printl(json.encode(g.cells))
+	printl(json.encode(g))
+	any boxed = xs
+	list<list<integer>> back = boxed
+	printl(back[1][0].toString())
+
+class Cell
+	public:
+		integer v
+
+	constructor(integer vParam)
+		v = vParam
+
+class Grid
+	public:
+		list<list<integer>> rows
+		list<list<Cell>> cells
+
+	constructor()
+		rows = [[1, 2], [3]]
+		Cell c = Cell(5)
+		list<Cell> inner = [c]
+		cells = [inner]

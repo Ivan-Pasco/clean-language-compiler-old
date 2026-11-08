@@ -64,6 +64,14 @@ const JSON_PARSE_FAILURE_MESSAGE: &str = "JSON parse failure";
 /// code to convert to.
 pub const ANY_CONVERT: &str = "__any_convert";
 
+/// The helper boxing a typed Clean value into `any`:
+/// `__cln_to_any(value, descriptor, position) -> any`. The descriptor has the
+/// format of [`ANY_CONVERT`]'s and names the value's type. `value` is the
+/// value itself for the 4-byte types (an integer, a boolean, a string, an
+/// instance, an `any`, a list or pairs pointer) and the address of the value
+/// for `number` and `integer:64`.
+pub const CLN_TO_ANY: &str = "__cln_to_any";
+
 /// Descriptor codes of [`ANY_CONVERT`].
 pub mod any_descriptor {
     /// `any`: the box itself.
@@ -305,6 +313,24 @@ impl JsonClass {
             runtime.instructions(),
         )?;
         debug_assert_eq!(any_convert_index, runtime.self_index);
+
+        // __cln_to_any(value: i32, descriptor: i32, position: i32) -> i32
+        // The boxed `any` of a typed Clean value (see `CLN_TO_ANY`): a list
+        // or pairs map becomes a JSON array or object, converted element by
+        // element, so nested collections keep their elements.
+        let to_any = ClnToAnyRuntime {
+            self_index: codegen.next_function_index(),
+            malloc: malloc_index,
+        };
+        let to_any_index = register_stdlib_function_with_locals(
+            codegen,
+            CLN_TO_ANY,
+            &[WasmType::I32, WasmType::I32, WasmType::I32], // value, descriptor, position
+            Some(WasmType::I32),
+            &[WasmType::I32; 10], // 3..=12, see `ClnToAnyRuntime`
+            to_any.instructions(),
+        )?;
+        debug_assert_eq!(to_any_index, to_any.self_index);
 
         // __json_decode_v2_or_raise(raw: i32) -> i32
         // Post-check wrapper around a `_json_decode_v2` bridge return value.
@@ -1362,6 +1388,341 @@ impl JsonClass {
 /// Locals: 0 any_ptr, 1 descriptor, 2 position (parameters); 3 code,
 /// 4 tag, 5 payload, 6 count, 7 result, 8 i, 9 element code, 10 element,
 /// 11 element tag, 12 slot address.
+/// The body of [`CLN_TO_ANY`].
+///
+/// Locals: 0 value, 1 descriptor, 2 position (parameters); 3 code, 4 box,
+/// 5 count, 6 i, 7 tree (the JSON array or object), 8 element code,
+/// 9 element address, 10 element stride, 11 element argument, 12 entry.
+struct ClnToAnyRuntime {
+    self_index: u32,
+    malloc: u32,
+}
+
+impl ClnToAnyRuntime {
+    const VALUE: u32 = 0;
+    const DESCRIPTOR: u32 = 1;
+    const POSITION: u32 = 2;
+    const CODE: u32 = 3;
+    const BOX: u32 = 4;
+    const COUNT: u32 = 5;
+    const I: u32 = 6;
+    const TREE: u32 = 7;
+    const ELEMENT_CODE: u32 = 8;
+    const ADDRESS: u32 = 9;
+    const STRIDE: u32 = 10;
+    const ARGUMENT: u32 = 11;
+    const ENTRY: u32 = 12;
+
+    /// Offset of a list's first element (after len, cap, type_id, pad).
+    const LIST_DATA_OFFSET: i32 = 16;
+    /// Offset of a pairs map's first entry (after count, capacity).
+    const PAIRS_ENTRIES_OFFSET: i32 = 8;
+
+    fn word(offset: u64) -> MemArg {
+        AnyConvertRuntime::word(offset)
+    }
+
+    /// An 8-byte access at `offset` of an address that is only 4-aligned.
+    fn unaligned_double(offset: u64) -> MemArg {
+        MemArg {
+            offset,
+            align: 2,
+            memory_index: 0,
+        }
+    }
+
+    /// The descriptor code at `position + offset` into local `into`.
+    fn load_code(offset: u64, into: u32) -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::LocalGet(Self::DESCRIPTOR),
+            Instruction::LocalGet(Self::POSITION),
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 4 + offset,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(into),
+        ]
+    }
+
+    /// Return a new box with `tag`; `payload` stores bytes 4..12 of the box
+    /// in local BOX.
+    fn boxed(&self, tag: i32, payload: Vec<Instruction<'static>>) -> Vec<Instruction<'static>> {
+        let mut v = vec![
+            Instruction::I32Const(12),
+            Instruction::Call(self.malloc),
+            Instruction::LocalSet(Self::BOX),
+            Instruction::LocalGet(Self::BOX),
+            Instruction::I32Const(tag),
+            Instruction::I32Store(Self::word(0)),
+        ];
+        v.extend(payload);
+        v.extend([Instruction::LocalGet(Self::BOX), Instruction::Return]);
+        v
+    }
+
+    /// A box whose payload is the i32 `value` and a zero high word.
+    fn boxed_word(&self, tag: i32) -> Vec<Instruction<'static>> {
+        self.boxed(
+            tag,
+            vec![
+                Instruction::LocalGet(Self::BOX),
+                Instruction::LocalGet(Self::VALUE),
+                Instruction::I32Store(Self::word(4)),
+                Instruction::LocalGet(Self::BOX),
+                Instruction::I32Const(0),
+                Instruction::I32Store(Self::word(8)),
+            ],
+        )
+    }
+
+    /// `if value == 0 { return a null box }`.
+    fn null_when_zero(&self) -> Vec<Instruction<'static>> {
+        let mut v = vec![
+            Instruction::LocalGet(Self::VALUE),
+            Instruction::I32Eqz,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ];
+        v.extend(self.boxed(
+            JSON_TAG_NULL,
+            vec![
+                Instruction::LocalGet(Self::BOX),
+                Instruction::I64Const(0),
+                Instruction::I64Store(Self::unaligned_double(4)),
+            ],
+        ));
+        v.push(Instruction::End);
+        v
+    }
+
+    /// The loop over `count` elements: `body` runs with local I as index.
+    fn each(body: Vec<Instruction<'static>>) -> Vec<Instruction<'static>> {
+        use wasm_encoder::BlockType;
+        let mut v = vec![
+            Instruction::I32Const(0),
+            Instruction::LocalSet(Self::I),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(Self::I),
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32GeS,
+            Instruction::BrIf(1),
+        ];
+        v.extend(body);
+        v.extend([
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(Self::I),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+        ]);
+        v
+    }
+
+    /// `__cln_to_any(argument, descriptor, position + 1)`.
+    fn convert_element(&self) -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::LocalGet(Self::ARGUMENT),
+            Instruction::LocalGet(Self::DESCRIPTOR),
+            Instruction::LocalGet(Self::POSITION),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::Call(self.self_index),
+        ]
+    }
+
+    /// Allocate the JSON tree: `count` slots of `slot_size` bytes after the
+    /// count word, which is written.
+    fn allocate_tree(&self, slot_size: i32) -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32Const(slot_size),
+            Instruction::I32Mul,
+            Instruction::I32Const(4),
+            Instruction::I32Add,
+            Instruction::Call(self.malloc),
+            Instruction::LocalTee(Self::TREE),
+            Instruction::LocalGet(Self::COUNT),
+            Instruction::I32Store(Self::word(0)),
+        ]
+    }
+
+    /// Box the tree in local TREE with `tag` and return it.
+    fn boxed_tree(&self, tag: i32) -> Vec<Instruction<'static>> {
+        self.boxed(
+            tag,
+            vec![
+                Instruction::LocalGet(Self::BOX),
+                Instruction::LocalGet(Self::TREE),
+                Instruction::I32Store(Self::word(4)),
+                Instruction::LocalGet(Self::BOX),
+                Instruction::I32Const(0),
+                Instruction::I32Store(Self::word(8)),
+            ],
+        )
+    }
+
+    fn list(&self) -> Vec<Instruction<'static>> {
+        use any_descriptor::*;
+        let mut v = self.null_when_zero();
+        v.extend(Self::load_code(1, Self::ELEMENT_CODE));
+        // 8-byte elements are passed by address.
+        v.extend([
+            Instruction::LocalGet(Self::ELEMENT_CODE),
+            Instruction::I32Const(NUMBER as i32),
+            Instruction::I32Eq,
+            Instruction::LocalGet(Self::ELEMENT_CODE),
+            Instruction::I32Const(INTEGER_64 as i32),
+            Instruction::I32Eq,
+            Instruction::I32Or,
+            Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
+            Instruction::I32Const(8),
+            Instruction::Else,
+            Instruction::I32Const(4),
+            Instruction::End,
+            Instruction::LocalSet(Self::STRIDE),
+            Instruction::LocalGet(Self::VALUE),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::LocalSet(Self::COUNT),
+        ]);
+        v.extend(self.allocate_tree(4));
+        let mut body = vec![
+            // address = list + 16 + i * stride
+            Instruction::LocalGet(Self::VALUE),
+            Instruction::I32Const(Self::LIST_DATA_OFFSET),
+            Instruction::I32Add,
+            Instruction::LocalGet(Self::I),
+            Instruction::LocalGet(Self::STRIDE),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalTee(Self::ADDRESS),
+            // argument = stride == 8 ? address : mem[address]
+            Instruction::LocalGet(Self::ADDRESS),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::LocalGet(Self::STRIDE),
+            Instruction::I32Const(8),
+            Instruction::I32Eq,
+            Instruction::Select,
+            Instruction::LocalSet(Self::ARGUMENT),
+            // tree[4 + 4i] = element box
+            Instruction::LocalGet(Self::TREE),
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+        ];
+        body.extend(self.convert_element());
+        body.push(Instruction::I32Store(Self::word(4)));
+        v.extend(Self::each(body));
+        v.extend(self.boxed_tree(JSON_TAG_ARRAY));
+        v
+    }
+
+    fn pairs(&self) -> Vec<Instruction<'static>> {
+        let mut v = self.null_when_zero();
+        v.extend([
+            Instruction::LocalGet(Self::VALUE),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::LocalSet(Self::COUNT),
+        ]);
+        v.extend(self.allocate_tree(8));
+        let mut body = vec![
+            // entry = pairs + 8 + i * 8: [key_ptr][value]
+            Instruction::LocalGet(Self::VALUE),
+            Instruction::I32Const(Self::PAIRS_ENTRIES_OFFSET),
+            Instruction::I32Add,
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalTee(Self::ENTRY),
+            Instruction::I32Load(Self::word(4)),
+            Instruction::LocalSet(Self::ARGUMENT),
+            // slot = tree + 4 + i * 8: [key_ptr][boxed value]
+            Instruction::LocalGet(Self::TREE),
+            Instruction::LocalGet(Self::I),
+            Instruction::I32Const(8),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalTee(Self::ADDRESS),
+            Instruction::LocalGet(Self::ENTRY),
+            Instruction::I32Load(Self::word(0)),
+            Instruction::I32Store(Self::word(4)),
+            Instruction::LocalGet(Self::ADDRESS),
+        ];
+        body.extend(self.convert_element());
+        body.push(Instruction::I32Store(Self::word(8)));
+        v.extend(Self::each(body));
+        v.extend(self.boxed_tree(JSON_TAG_OBJECT));
+        v
+    }
+
+    fn instructions(&self) -> Vec<Instruction<'static>> {
+        use any_descriptor::*;
+        let when = AnyConvertRuntime::when_code;
+        let mut v = Self::load_code(0, Self::CODE);
+        // `any`: the box itself (0 is null).
+        let mut any = self.null_when_zero();
+        any.extend([Instruction::LocalGet(Self::VALUE), Instruction::Return]);
+        v.extend(when(Self::CODE, ANY, any));
+        // integer: the i64 sign extension of the value.
+        v.extend(when(
+            Self::CODE,
+            INTEGER,
+            self.boxed(
+                JSON_TAG_INTEGER,
+                vec![
+                    Instruction::LocalGet(Self::BOX),
+                    Instruction::LocalGet(Self::VALUE),
+                    Instruction::I64ExtendI32S,
+                    Instruction::I64Store(Self::unaligned_double(4)),
+                ],
+            ),
+        ));
+        // integer:64 (by address): the exact value.
+        let mut integer_64 = self.null_when_zero();
+        integer_64.extend(self.boxed(
+            JSON_TAG_INTEGER,
+            vec![
+                Instruction::LocalGet(Self::BOX),
+                Instruction::LocalGet(Self::VALUE),
+                Instruction::I64Load(Self::unaligned_double(0)),
+                Instruction::I64Store(Self::unaligned_double(4)),
+            ],
+        ));
+        v.extend(when(Self::CODE, INTEGER_64, integer_64));
+        // number (by address).
+        let mut number = self.null_when_zero();
+        number.extend(self.boxed(
+            JSON_TAG_NUMBER,
+            vec![
+                Instruction::LocalGet(Self::BOX),
+                Instruction::LocalGet(Self::VALUE),
+                Instruction::F64Load(Self::unaligned_double(0)),
+                Instruction::F64Store(Self::unaligned_double(4)),
+            ],
+        ));
+        v.extend(when(Self::CODE, NUMBER, number));
+        v.extend(when(Self::CODE, BOOLEAN, self.boxed_word(JSON_TAG_BOOLEAN)));
+        let mut string = self.null_when_zero();
+        string.extend(self.boxed_word(JSON_TAG_STRING));
+        v.extend(when(Self::CODE, STRING, string));
+        // A class instance is boxed as itself (tag 6, class_json.rs);
+        // `json_value_of` turns it into its object at the JSON boundary.
+        let mut instance = self.null_when_zero();
+        instance.extend(self.boxed_word(JSON_TAG_OBJECT));
+        v.extend(when(Self::CODE, INSTANCE, instance));
+        v.extend(when(Self::CODE, LIST, self.list()));
+        v.extend(when(Self::CODE, PAIRS, self.pairs()));
+        // The descriptor is a compiler constant with no other code.
+        v.push(Instruction::Unreachable);
+        v
+    }
+}
+
 struct AnyConvertRuntime {
     self_index: u32,
     list_allocate: u32,
