@@ -1,0 +1,29 @@
+// Test: bugfixes/nullable_class_variable_declaration
+// Grammar: variable_type = ( ... | identifier ) , [ "?" ]
+// Semantic: 04-type-system.md Nullable Types — `ClassName? name = ...`
+//   declares a variable of a nullable class type inside a function body
+// Fixed in: compiler 0.33.179
+// Expected output:
+//   true
+//   false
+//   made
+
+start:
+	Box? found = find(0)
+	print(found == none)
+	found = find(1)
+	print(found == none)
+	print(found!.label)
+
+class Box
+	public:
+		string label = "x"
+
+	constructor()
+		label = "made"
+
+functions:
+	Box? find(integer key)
+		if key == 0
+			return none
+		return Box()

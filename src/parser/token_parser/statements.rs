@@ -325,8 +325,19 @@ impl TokenParser {
 
         // Check if next token is an Identifier or keyword that can be used as a variable name
         // (e.g., "Test test" where "test" is a keyword but can be used as a variable name)
-        let next_could_be_var_name =
-            self.try_extract_var_name().is_some() || self.at_generic_type_declaration();
+        // `ClassName? varName ...` declares a nullable class-typed variable
+        // (grammar.ebnf `variable_type = ( ... | identifier ) , [ "?" ]`).
+        let nullable_class_declaration = self.check(&TokenKind::Question) && {
+            let saved_cursor = self.cursor;
+            self.bump(); // consume ?
+            self.skip_whitespace();
+            let followed_by_name = self.try_extract_var_name().is_some();
+            self.cursor = saved_cursor;
+            followed_by_name
+        };
+        let next_could_be_var_name = nullable_class_declaration
+            || self.try_extract_var_name().is_some()
+            || self.at_generic_type_declaration();
 
         if next_could_be_var_name {
             // Next token is an Identifier - this could be a variable declaration
