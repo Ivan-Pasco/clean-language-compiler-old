@@ -6657,7 +6657,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "integer"
 aliases     = []
-hosts       = ["browser"]
+hosts       = ["browser", "server"]
 description = "Add class to elements when they become visible (one-shot)"
 
 [[functions]]
@@ -6833,7 +6833,7 @@ module      = "env"
 params      = ["string", "integer"]
 returns     = "integer"
 aliases     = []
-hosts       = ["browser"]
+hosts       = ["browser", "server"]
 description = "Call exported handler function by name after delay ms: handler name, delay_ms"
 
 [[functions]]
