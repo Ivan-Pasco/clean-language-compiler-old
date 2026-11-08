@@ -6,7 +6,7 @@
 use crate::ast::SourceLocation;
 use crate::hir::HirProgram;
 use crate::resolver::{GlobalSymbolTable, ResolvedHirProgram, SymbolId};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 /// Unique identifier for a module within a compilation unit
@@ -104,8 +104,10 @@ impl CompiledModule {
 /// the unified symbol table after resolution.
 #[derive(Debug)]
 pub struct CompilationUnit {
-    /// All modules in the compilation unit, indexed by their ID
-    pub modules: HashMap<CompilationModuleId, CompiledModule>,
+    /// All modules in the compilation unit, indexed by their ID. Ordered:
+    /// passes that walk every module (the source files handed to plugin
+    /// `assemble` hooks) see them in discovery order on every build.
+    pub modules: BTreeMap<CompilationModuleId, CompiledModule>,
 
     /// Module name to ID mapping for quick lookup
     pub module_by_name: HashMap<String, CompilationModuleId>,
@@ -125,7 +127,7 @@ pub struct CompilationUnit {
     pub global_symbols: Option<GlobalSymbolTable>,
 
     /// Resolved HIR for all modules (populated after Stage 4)
-    pub resolved_programs: HashMap<CompilationModuleId, ResolvedHirProgram>,
+    pub resolved_programs: BTreeMap<CompilationModuleId, ResolvedHirProgram>,
 
     /// Counter for generating unique module IDs
     next_module_id: usize,
@@ -146,7 +148,7 @@ impl CompilationUnit {
             true,
         );
 
-        let mut modules = HashMap::new();
+        let mut modules = BTreeMap::new();
         modules.insert(entry_id, entry_module);
 
         let mut module_by_name = HashMap::new();
@@ -162,7 +164,7 @@ impl CompilationUnit {
             entry_module: entry_id,
             compilation_order: vec![entry_id],
             global_symbols: None,
-            resolved_programs: HashMap::new(),
+            resolved_programs: BTreeMap::new(),
             next_module_id: 1,
         }
     }
@@ -270,13 +272,13 @@ impl CompilationUnit {
 impl Default for CompilationUnit {
     fn default() -> Self {
         Self {
-            modules: HashMap::new(),
+            modules: BTreeMap::new(),
             module_by_name: HashMap::new(),
             module_by_path: HashMap::new(),
             entry_module: CompilationModuleId(0),
             compilation_order: Vec::new(),
             global_symbols: None,
-            resolved_programs: HashMap::new(),
+            resolved_programs: BTreeMap::new(),
             next_module_id: 0,
         }
     }

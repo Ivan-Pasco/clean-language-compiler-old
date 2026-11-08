@@ -12,6 +12,13 @@ tests/cln/core/basics/01_hello_world.cln
 tests/cln/control/conditionals/08_stmt_after_nested_if_else.cln
 tests/cln/control/loops/else_break_inside_while.cln
 
+# Multi-file programs: the modules an entry imports are merged into one
+# module, and the merge must not depend on hash-map order (#28).
+tests/cln/imports/main_multi_import.cln
+tests/cln/imports/main_deep.cln
+tests/cln/imports/start_scope_main.cln
+tests/cln/imports/screen_import_main.cln
+
 # Cross-component contract canaries — Layer 1 of the umbrella prompt
 # "Cross-Component Contract Canaries — Nightly Integration Tests"
 # (errors.cleanlanguage.dev/prompts umbrella 7fb425cb). One canary per bridge

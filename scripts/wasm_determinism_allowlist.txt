@@ -13,6 +13,3 @@
 # When you fix the underlying non-determinism for a file, REMOVE the line —
 # CI will keep the fix from regressing.
 
-# Uses async plugin state whose HashMap iteration order still leaks into
-# the emitted WASM's export section. Tracked separately.
-tests/cln/canaries/auth.cln
