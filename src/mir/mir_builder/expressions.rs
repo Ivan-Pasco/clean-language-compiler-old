@@ -341,39 +341,38 @@ impl MirBuilder {
                     );
                 }
 
-                // NOTE: Handle Power operator as runtime function call
+                // `a ^ b` is a runtime call. Its type is the one the type
+                // checker gave the expression (`integer:64 ^ integer` is an
+                // `integer:64`). `number` powers use the host `math.pow`;
+                // integer powers are exact (`math.pow.i32` / `math.pow.i64`
+                // multiply in a loop) instead of rounding through an f64,
+                // which loses precision above 2^53 and traps when the f64
+                // result does not fit an i32.
                 if matches!(operator, BinaryOperator::Power) {
-                    // Power operation requires runtime pow function
-                    // For integers: pow_i32(base, exponent) -> i32
-                    // For floats: pow_f64(base, exponent) -> f64
                     let left_id = self.build_expression(context, left)?;
                     let right_id = self.build_expression(context, right)?;
+                    let (result_type, pow_function) =
+                        match self.convert_concrete_type(&expression.expr_type) {
+                            MirType::I64 | MirType::U64 => (MirType::I64, SYM_BUILTIN_MATH_POW_I64),
+                            MirType::I8
+                            | MirType::I16
+                            | MirType::I32
+                            | MirType::U8
+                            | MirType::U16
+                            | MirType::U32 => (MirType::I32, SYM_BUILTIN_MATH_POW_I32),
+                            _ => (MirType::F64, SYM_BUILTIN_MATH_POW_F64),
+                        };
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
-
-                    // Determine result type based on operand types
-                    let result_type = if matches!(left.expr_type, ConcreteType::Number)
-                        || matches!(right.expr_type, ConcreteType::Number)
-                    {
-                        MirType::F64 // Float power
-                    } else {
-                        MirType::I32 // Integer power
-                    };
-
                     self.register_temp_local(
                         context,
                         result_id,
-                        result_type.clone(),
+                        result_type,
                         expression.location.clone(),
                     );
 
-                    // Pick the math.pow variant whose calling convention matches the result type.
-                    let pow_function = if matches!(result_type, MirType::F64) {
-                        SYM_BUILTIN_MATH_POW_F64
-                    } else {
-                        SYM_BUILTIN_MATH_POW_I32
-                    };
-
+                    // The call converts each operand to the parameter type
+                    // the function is registered with.
                     let instruction = MirInstruction {
                         dest: Some(result_id),
                         operation: MirOperation::Call {
@@ -2577,6 +2576,70 @@ impl MirBuilder {
                     }
                 }
 
+                // `map.get(key)` / `map.set(key, value)` on a map whose values
+                // are stored converted (`pairs_store_value`).
+                if let ConcreteType::Pairs(_, value_type) = &receiver_actual_type {
+                    let value_type = (**value_type).clone();
+                    let arity = match method_name.as_str() {
+                        "get" => 1,
+                        "set" => 2,
+                        _ => 0,
+                    };
+                    if arity > 0
+                        && arguments.len() == arity
+                        && self.pairs_value_converts(&value_type)
+                    {
+                        let key = &arguments[0];
+                        let key_id = self.build_expression(context, key)?;
+                        let key_id =
+                            self.pairs_key(context, key_id, &key.expr_type, &key.location)?;
+                        if arity == 1 {
+                            let raw_type = if matches!(value_type, ConcreteType::Any) {
+                                MirType::Any
+                            } else {
+                                MirType::I32
+                            };
+                            let raw_id = self.emit_named_call(
+                                context,
+                                "pairs.get",
+                                vec![MirOperand::Value(receiver_id), MirOperand::Value(key_id)],
+                                raw_type,
+                                &expression.location,
+                            );
+                            return Ok(self.pairs_load_value(
+                                context,
+                                raw_id,
+                                &value_type,
+                                &expression.location,
+                            ));
+                        }
+                        let value = &arguments[1];
+                        let value_id = self.build_expression(context, value)?;
+                        let value_id = self.unbox_any_argument(
+                            context,
+                            value_id,
+                            &value.expr_type,
+                            Some(&value_type),
+                            &value.location,
+                        );
+                        let value_id = self.pairs_store_value(
+                            context,
+                            value_id,
+                            &value.expr_type,
+                            &value_type,
+                            &value.location,
+                        );
+                        return self.emit_pairs_set(
+                            context,
+                            receiver,
+                            receiver_id,
+                            key_id,
+                            value_id,
+                            &expression.location,
+                        );
+                    }
+                }
+
                 // Check if this is a built-in method that should be mapped to a conversion function
                 // SymbolId(0) is used as a placeholder for built-in methods that don't have real symbols
                 let (function_symbol, mir_arguments) = if method_symbol.0 == 0 {
@@ -3733,7 +3796,17 @@ impl MirBuilder {
                             self.pairs_key(context, index_id, &index.expr_type, &index.location)?;
                         let result_id = ValueId(context.function.next_value_id);
                         context.function.next_value_id += 1;
-                        let result_type = self.convert_concrete_type(value_type);
+                        let value_type = (**value_type).clone();
+                        let result_type = if self.pairs_value_converts(&value_type) {
+                            MirType::I32
+                        } else {
+                            self.convert_concrete_type(&value_type)
+                        };
+                        let result_type = if matches!(value_type, ConcreteType::Any) {
+                            MirType::Any
+                        } else {
+                            result_type
+                        };
                         self.register_temp_local(
                             context,
                             result_id,
@@ -3757,7 +3830,12 @@ impl MirBuilder {
                                 location: expression.location.clone(),
                             },
                         );
-                        Ok(result_id)
+                        Ok(self.pairs_load_value(
+                            context,
+                            result_id,
+                            &value_type,
+                            &expression.location,
+                        ))
                     }
 
                     // Regular array/matrix access uses GetElementPtr
@@ -4286,11 +4364,23 @@ impl MirBuilder {
                         };
                         let key_id = self.build_expression(context, &key_str_expr)?;
                         let val_id = self.build_expression(context, &field.value)?;
+                        let val_id = match &expression.expr_type {
+                            ConcreteType::Pairs(_, value_type) => {
+                                let value_type = (**value_type).clone();
+                                self.pairs_store_value(
+                                    context,
+                                    val_id,
+                                    &field.value.expr_type,
+                                    &value_type,
+                                    &field.location,
+                                )
+                            }
+                            _ => val_id,
+                        };
 
-                        // pairs.set(map_ptr, key_ptr, val_ptr) — value is the raw V (i32
-                        // representation for the user's V type). No boxing — pairs.get
-                        // returns the raw V, and json.encode walks the pairs natively.
-                        // It returns the map's (possibly moved) address.
+                        // pairs.set(map_ptr, key_ptr, val) — the entry value of
+                        // `pairs_store_value`. It returns the map's (possibly
+                        // moved) address.
                         self.add_instruction(
                             context,
                             MirInstruction {

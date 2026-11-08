@@ -1,0 +1,61 @@
+// Test: bugfixes/pairs_number_integer64_and_any_values
+// Grammar: pairs_literal, index_access, method_call
+// Semantic: pairs values of every type survive set, get and json.encode
+// Fixed in: compiler 0.33.177
+// Expected output:
+//   1.5
+//   2.25
+//   4
+//   true
+//   {"a":1.5,"b":2.25,"c":4.0}
+//   9000000000123
+//   5
+//   {"x":9000000000123,"y":5}
+//   {"k":1,"s":"t","n":2.5}
+//   t
+//   {"a":1.5,"b":2.25,"c":4.0}
+//   {"totals":{"x":0.5}}
+//   2
+//   1.5
+//   12345678901234
+//
+// `pairs<string, number>` and `pairs<string, integer:64>` produced invalid
+// WASM ("expected i32, found f64/i64"): a pairs entry holds 4 bytes and the
+// 8-byte values were stored and read unconverted. `pairs<string, any>`
+// values were stored unboxed.
+
+start:
+	pairs<string, number> p = {"a": 1.5}
+	p["b"] = 2.25
+	p.set("c", 4)
+	printl(p["a"].toString())
+	printl(p["b"].toString())
+	printl(p.get("c").toString())
+	printl(p.has("b"))
+	printl(json.encode(p))
+	pairs<string, integer:64> q = {"x": 9000000000123}
+	q["y"] = 5
+	printl(q["x"].toString())
+	printl(q.get("y").toString())
+	printl(json.encode(q))
+	pairs<string, any> pa = {"k": 1}
+	pa["s"] = "t"
+	pa.set("n", 2.5)
+	printl(json.encode(pa))
+	printl(pa["s"].toString())
+	any boxed = p
+	printl(json.encode(boxed))
+	Report r = Report()
+	printl(json.encode(r))
+	pairs<string, number> decoded = json.decode("{\"a\": 2, \"b\": 1.5}")
+	printl(decoded["a"].toString())
+	printl(decoded["b"].toString())
+	pairs<string, integer:64> wide = json.decode("{\"n\": 12345678901234}")
+	printl(wide["n"].toString())
+
+class Report
+	public:
+		pairs<string, number> totals
+
+	constructor()
+		totals = {"x": 0.5}

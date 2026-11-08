@@ -585,7 +585,39 @@ impl MirBuilder {
                         | ConcreteType::NumberSized { .. }
                 )
             };
+            let nested_descriptor = Self::nested_collection_descriptor(&field.field_type);
             let member_op = match &field.field_type {
+                // A list of collections, or a pairs map of collections,
+                // `any` values or instances: boxed at every level, then the
+                // instances inside become their objects.
+                _ if nested_descriptor.is_some() => {
+                    let descriptor_index =
+                        self.get_string_index(nested_descriptor.unwrap_or_default());
+                    let boxed_vid =
+                        new_local(&mut locals, format!("boxed_{}", field.name), MirType::Any);
+                    push(
+                        &mut instructions,
+                        Some(boxed_vid),
+                        MirOperation::Call {
+                            function: MirOperand::NamedFunction {
+                                name: crate::stdlib::json_class::CLN_TO_ANY.to_string(),
+                                symbol_id: SymbolId(0),
+                            },
+                            arguments: vec![
+                                MirOperand::Value(val_vid),
+                                MirOperand::Constant(MirConstant::String(descriptor_index)),
+                                MirOperand::Constant(MirConstant::Integer(0)),
+                            ],
+                        },
+                    );
+                    MirOperation::Call {
+                        function: MirOperand::NamedFunction {
+                            name: "__json_normalize".to_string(),
+                            symbol_id: SymbolId(0),
+                        },
+                        arguments: vec![MirOperand::Value(boxed_vid)],
+                    }
+                }
                 // An `integer:64` field keeps its exact value: a tag-1 box
                 // holds a full i64 (BOXED_ANY_ABI §2).
                 ConcreteType::IntegerSized { bits: 64, .. } => MirOperation::BoxAny {

@@ -51,6 +51,7 @@ fn empty_start_program() -> MirProgram {
         class_ids: BTreeMap::new(),
         capability_dispatch: BTreeMap::new(),
         class_json_trees: BTreeMap::new(),
+        instance_conversions: BTreeMap::new(),
     }
 }
 

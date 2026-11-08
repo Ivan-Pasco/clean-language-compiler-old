@@ -1213,6 +1213,81 @@ impl super::CodeGenerator {
         )?;
         self.add_function_alias("pairs.set", pairs_set_idx);
 
+        // A pairs entry holds a 4-byte value. A `number` or `integer:64`
+        // value is stored in an 8-byte cell the entry points to:
+        // __pairs_cell_f64(value: f64) -> i32 / __pairs_cell_i64(value: i64)
+        // -> i32 allocate the cell, __pairs_cell_load_f64(cell: i32) -> f64 /
+        // __pairs_cell_load_i64(cell: i32) -> i64 read it (0 for no cell,
+        // the value of a missing key).
+        use wasm_encoder::{BlockType, Instruction, MemArg};
+        for (ty, store, load) in [
+            (WasmType::F64, "__pairs_cell_f64", "__pairs_cell_load_f64"),
+            (WasmType::I64, "__pairs_cell_i64", "__pairs_cell_load_i64"),
+        ] {
+            let (store_op, load_op, zero) = if ty == WasmType::F64 {
+                (
+                    Instruction::F64Store(MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }),
+                    Instruction::F64Load(MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }),
+                    Instruction::F64Const(0.0),
+                )
+            } else {
+                (
+                    Instruction::I64Store(MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }),
+                    Instruction::I64Load(MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }),
+                    Instruction::I64Const(0),
+                )
+            };
+            self.register_function_with_locals(
+                store,
+                &[ty],
+                Some(WasmType::I32),
+                &[WasmType::I32], // cell
+                &[
+                    Instruction::I32Const(8),
+                    Instruction::Call(malloc_idx),
+                    Instruction::LocalTee(1),
+                    Instruction::LocalGet(0),
+                    store_op,
+                    Instruction::LocalGet(1),
+                ],
+            )?;
+            let value_type = if ty == WasmType::F64 {
+                wasm_encoder::ValType::F64
+            } else {
+                wasm_encoder::ValType::I64
+            };
+            self.register_function(
+                load,
+                &[WasmType::I32],
+                Some(ty),
+                &[
+                    Instruction::LocalGet(0),
+                    Instruction::If(BlockType::Result(value_type)),
+                    Instruction::LocalGet(0),
+                    load_op,
+                    Instruction::Else,
+                    zero,
+                    Instruction::End,
+                ],
+            )?;
+        }
+
         // __pairs_get(map_ptr: i32, key_ptr: i32) -> i32
         // Returns the value pointer for the key, or 0 if not found.
         // Needs 3 extra locals: count, i, entry_ptr.

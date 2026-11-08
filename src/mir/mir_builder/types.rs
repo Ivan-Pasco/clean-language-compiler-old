@@ -56,6 +56,25 @@ impl MirBuilder {
             return value_id;
         }
 
+        // A collection whose elements are collections, or a pairs map whose
+        // values are not plain scalars, is converted element by element at
+        // every level (`__cln_to_any`); the converters below only box one
+        // level of scalar elements.
+        if let Some(descriptor) = Self::nested_collection_descriptor(source_type) {
+            let descriptor_index = self.get_string_index(descriptor);
+            return self.emit_named_call(
+                context,
+                crate::stdlib::json_class::CLN_TO_ANY,
+                vec![
+                    MirOperand::Value(value_id),
+                    MirOperand::Constant(MirConstant::String(descriptor_index)),
+                    MirOperand::Constant(MirConstant::Integer(0)),
+                ],
+                MirType::Any,
+                location,
+            );
+        }
+
         let type_tag = Self::get_any_type_tag(source_type);
         let mir_source_type = self.convert_concrete_type(source_type);
 
@@ -125,6 +144,37 @@ impl MirBuilder {
 
         self.add_instruction(context, instruction);
         result_id
+    }
+
+    /// The `__cln_to_any` descriptor of a list of collections, or of a pairs
+    /// map whose values are collections, `any` values or instances; `None`
+    /// for the one-level collections `emit_box_any` converts directly.
+    pub(super) fn nested_collection_descriptor(source_type: &ConcreteType) -> Option<String> {
+        let nested = match source_type {
+            ConcreteType::Array(element) => {
+                matches!(
+                    **element,
+                    ConcreteType::Array(_) | ConcreteType::Pairs(_, _)
+                )
+            }
+            ConcreteType::Pairs(_, value) => matches!(
+                **value,
+                ConcreteType::Array(_)
+                    | ConcreteType::Pairs(_, _)
+                    | ConcreteType::Any
+                    | ConcreteType::Class { .. }
+                    | ConcreteType::Interface { .. }
+                    | ConcreteType::Number
+                    | ConcreteType::NumberSized { bits: 64 }
+                    | ConcreteType::IntegerSized { bits: 64, .. }
+            ),
+            _ => false,
+        };
+        if nested {
+            Self::cln_to_any_descriptor(source_type)
+        } else {
+            None
+        }
     }
 
     /// Emit a Call to one of the Clean-collection→JSON-tree converters
@@ -625,15 +675,17 @@ impl MirBuilder {
         location: &SourceLocation,
     ) -> ValueId {
         // A class target: the instance the box holds (the header tells an
-        // instance from a JSON object), or null.
+        // instance from a JSON object), or null. An instance of a class the
+        // target does not accept raises an error.
         if matches!(
             target_type,
             ConcreteType::Class { .. } | ConcreteType::Interface { .. }
         ) && !self.class_json_tree_ids.is_empty()
         {
+            let conversion = self.instance_conversion(target_type);
             return self.emit_named_call(
                 context,
-                "__any_to_instance",
+                &conversion,
                 vec![MirOperand::Value(value_id)],
                 MirType::I32,
                 location,
@@ -670,8 +722,7 @@ impl MirBuilder {
                     format!("An `any` value cannot be converted to {}", target_type),
                     Some(
                         "An `any` converts to a list or `pairs<string, V>` of integer, number, \
-                         boolean, string, `any`, class, list or pairs elements \
-                         (`pairs` values cannot be `number` or `integer:64`)"
+                         boolean, string, `any`, class, list or pairs elements"
                             .to_string(),
                     ),
                     Some(location.clone()),
@@ -744,6 +795,116 @@ impl MirBuilder {
         result_id
     }
 
+    /// A list literal retyped as the list type `target` it is stored into,
+    /// when `target` holds `any` elements the literal's own type does not:
+    /// `list<any> xs = [instance]` is typed `list<Instance>` by the type
+    /// checker, and built as such its elements were not boxed. Nested list
+    /// literals are retyped as well (`list<list<any>>`).
+    pub(super) fn list_literal_as(
+        expression: &TastExpression,
+        target: &ConcreteType,
+    ) -> Option<TastExpression> {
+        fn holds_any(t: &ConcreteType) -> bool {
+            match t {
+                ConcreteType::Any => true,
+                ConcreteType::Array(inner) => holds_any(inner),
+                _ => false,
+            }
+        }
+        let (
+            TastExpressionKind::ArrayLiteral { elements, .. },
+            ConcreteType::Array(element_target),
+        ) = (&expression.kind, target)
+        else {
+            return None;
+        };
+        if expression.expr_type == *target || !holds_any(target) {
+            return None;
+        }
+        let elements = elements
+            .iter()
+            .map(|element| {
+                Self::list_literal_as(element, element_target).unwrap_or_else(|| element.clone())
+            })
+            .collect();
+        Some(TastExpression {
+            kind: TastExpressionKind::ArrayLiteral {
+                elements,
+                element_type: (**element_target).clone(),
+            },
+            expr_type: target.clone(),
+            location: expression.location.clone(),
+        })
+    }
+
+    /// The runtime function converting an `any` to the class or capability
+    /// `target_type` (`MirProgram::instance_conversions`), registered on
+    /// first use: `__any_to_instance_Name`. A target the program declares no
+    /// class for converts with the bare `__any_to_instance`.
+    fn instance_conversion(&mut self, target_type: &ConcreteType) -> String {
+        let (name, accepted): (String, Vec<SymbolId>) = match target_type {
+            // The class and every class that inherits from it.
+            ConcreteType::Class { symbol_id, .. } => {
+                let accepted = self
+                    .all_classes
+                    .iter()
+                    .filter(|class| {
+                        let mut current = Some(class.symbol_id);
+                        while let Some(sym) = current {
+                            if sym == *symbol_id {
+                                return true;
+                            }
+                            current = self
+                                .all_classes
+                                .iter()
+                                .find(|c| c.symbol_id == sym)
+                                .and_then(|c| c.parent_class);
+                        }
+                        false
+                    })
+                    .map(|class| class.symbol_id)
+                    .collect();
+                let Some(class) = self.all_classes.iter().find(|c| c.symbol_id == *symbol_id)
+                else {
+                    return "__any_to_instance".to_string();
+                };
+                (class.name.clone(), accepted)
+            }
+            ConcreteType::Interface { symbol_id, .. } => {
+                match self.capability_classes.get(symbol_id) {
+                    Some((name, classes)) if !name.is_empty() => (name.clone(), classes.clone()),
+                    _ => return "__any_to_instance".to_string(),
+                }
+            }
+            _ => return "__any_to_instance".to_string(),
+        };
+        let mut class_ids: Vec<u32> = accepted
+            .iter()
+            .filter_map(|sym| self.class_ids.get(sym).copied())
+            .collect();
+        if class_ids.is_empty() {
+            return "__any_to_instance".to_string();
+        }
+        class_ids.sort_unstable();
+        let function: String = format!("__any_to_instance_{}", name)
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        self.instance_conversions
+            .entry(function.clone())
+            .or_insert_with(|| crate::mir::mir_types::InstanceConversion {
+                message: format!("value is not a {}", name),
+                class_ids,
+            });
+        function
+    }
+
     /// A type an `any` value is converted to where one is returned or
     /// passed as an argument (`emit_unbox_any`).
     pub(super) fn is_any_conversion_target(target_type: &ConcreteType) -> bool {
@@ -764,30 +925,41 @@ impl MirBuilder {
     /// (`json_class::any_descriptor`), or `None` when the type holds an
     /// element no `any` converts to.
     fn any_conversion_descriptor(target_type: &ConcreteType) -> Option<String> {
+        Self::collection_descriptor(target_type, false)
+    }
+
+    /// The `__cln_to_any` descriptor of a list or pairs value
+    /// (`json_class::CLN_TO_ANY`): the `__any_convert` format, where a pairs
+    /// map may have keys of any type (they are stored as text).
+    pub(super) fn cln_to_any_descriptor(source_type: &ConcreteType) -> Option<String> {
+        Self::collection_descriptor(source_type, true)
+    }
+
+    fn collection_descriptor(target_type: &ConcreteType, any_key: bool) -> Option<String> {
         use crate::stdlib::json_class::any_descriptor as code;
-        fn element(target: &ConcreteType, out: &mut Vec<u8>, in_pairs: bool) -> Option<()> {
+        fn element(target: &ConcreteType, out: &mut Vec<u8>, any_key: bool) -> Option<()> {
             let byte = match target {
                 ConcreteType::Any => code::ANY,
                 ConcreteType::Integer
                 | ConcreteType::IntegerSized {
                     bits: 8 | 16 | 32, ..
                 } => code::INTEGER,
-                // 8-byte values: list elements only (a pairs entry holds
-                // 4 bytes).
-                ConcreteType::IntegerSized { bits: 64, .. } if !in_pairs => code::INTEGER_64,
-                ConcreteType::Number | ConcreteType::NumberSized { bits: 64 } if !in_pairs => {
-                    code::NUMBER
-                }
+                // 8-byte values: a list element holds the value, a pairs
+                // entry the address of its cell (`pairs_store_value`).
+                ConcreteType::IntegerSized { bits: 64, .. } => code::INTEGER_64,
+                ConcreteType::Number | ConcreteType::NumberSized { bits: 64 } => code::NUMBER,
                 ConcreteType::Boolean => code::BOOLEAN,
                 ConcreteType::String => code::STRING,
                 ConcreteType::Class { .. } | ConcreteType::Interface { .. } => code::INSTANCE,
                 ConcreteType::Array(inner) => {
                     out.push(code::LIST);
-                    return element(inner, out, false);
+                    return element(inner, out, any_key);
                 }
-                ConcreteType::Pairs(key, value) if matches!(**key, ConcreteType::String) => {
+                ConcreteType::Pairs(key, value)
+                    if any_key || matches!(**key, ConcreteType::String) =>
+                {
                     out.push(code::PAIRS);
-                    return element(value, out, true);
+                    return element(value, out, any_key);
                 }
                 _ => return None,
             };
@@ -795,7 +967,7 @@ impl MirBuilder {
             Some(())
         }
         let mut out = Vec::new();
-        element(target_type, &mut out, false)?;
+        element(target_type, &mut out, any_key)?;
         String::from_utf8(out).ok()
     }
 

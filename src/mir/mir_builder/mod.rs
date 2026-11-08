@@ -16,8 +16,9 @@ use crate::resolver::symbol_table::{
     SYM_BUILTIN_LIST_ADD, SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ADD_I64,
     SYM_BUILTIN_LIST_ADD_STRING, SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH,
     SYM_BUILTIN_LIST_PUSH_F64, SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64,
-    SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_STRING_CONCAT, SYM_BUILTIN_STRING_CONCAT_TRANSIENT,
-    SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE, SYM_WATCH_HANDLER_BASE,
+    SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_MATH_POW_I64, SYM_BUILTIN_STRING_CONCAT,
+    SYM_BUILTIN_STRING_CONCAT_TRANSIENT, SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE,
+    SYM_WATCH_HANDLER_BASE,
 };
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
@@ -135,6 +136,16 @@ pub struct MirBuilder {
     /// `any` values converted to a type no conversion exists for
     /// (`emit_unbox_any`), reported when the program is built.
     pub(super) any_conversion_errors: Vec<CompilerError>,
+
+    /// The name of each capability and the classes conforming to it (from
+    /// the type checker's vtable descriptors), for `any` → capability
+    /// conversions.
+    pub(super) capability_classes: HashMap<SymbolId, (String, Vec<SymbolId>)>,
+
+    /// The `any` → class conversions the program calls
+    /// (`MirProgram::instance_conversions`).
+    pub(super) instance_conversions:
+        std::collections::BTreeMap<String, crate::mir::mir_types::InstanceConversion>,
 }
 
 /// Context for building a single function
@@ -261,6 +272,8 @@ impl MirBuilder {
             release_mode: false,
             uses_error_regions: false,
             any_conversion_errors: Vec::new(),
+            capability_classes: HashMap::new(),
+            instance_conversions: std::collections::BTreeMap::new(),
         }
     }
 
@@ -268,6 +281,19 @@ impl MirBuilder {
     pub fn build(&mut self, tast: TastProgram) -> Result<MirProgram, Vec<CompilerError>> {
         // Store all classes for inheritance lookups
         self.all_classes = tast.classes.clone();
+        for (class_sym, cap_sym) in tast.vtable_descriptors.keys() {
+            let name = tast
+                .symbol_table
+                .all_symbols()
+                .get(cap_sym)
+                .map(|symbol| symbol.name.clone())
+                .unwrap_or_default();
+            self.capability_classes
+                .entry(*cap_sym)
+                .or_insert_with(|| (name, Vec::new()))
+                .1
+                .push(*class_sym);
+        }
 
         // Phase 0: Pre-register class serializer SymbolIds so forward references work when
         // a nested class field is serialized before its own serializer is built.
@@ -434,6 +460,7 @@ impl MirBuilder {
             capability_dispatch: BTreeMap::new(),
             // Filled once the class JSON builders exist (below).
             class_json_trees: BTreeMap::new(),
+            instance_conversions: BTreeMap::new(),
         };
 
         // Build the runtime capability dispatch table from the resolver's
@@ -515,13 +542,17 @@ impl MirBuilder {
             SYM_BUILTIN_STRING_CONCAT_TRANSIENT,
             "string_concat_transient".to_string(),
         );
-        // pow_f64 and pow_i32 should map to the existing math.pow function
+        // `^`: `number` operands use the host `math.pow`; integer operands
+        // the exact native integer powers.
         mir_program
             .symbol_name_map
             .insert(SYM_BUILTIN_MATH_POW_F64, "math.pow".to_string());
         mir_program
             .symbol_name_map
-            .insert(SYM_BUILTIN_MATH_POW_I32, "math.pow".to_string());
+            .insert(SYM_BUILTIN_MATH_POW_I32, "math.pow.i32".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SYM_BUILTIN_MATH_POW_I64, "math.pow.i64".to_string());
         // list.allocate and list.push for array literal creation
         mir_program
             .symbol_name_map
@@ -1011,6 +1042,7 @@ impl MirBuilder {
             )
             .collect();
 
+        mir_program.instance_conversions = std::mem::take(&mut self.instance_conversions);
         Ok(mir_program)
     }
 }

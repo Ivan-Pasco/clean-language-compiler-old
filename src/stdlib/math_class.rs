@@ -1,6 +1,6 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::register_stdlib_function;
+use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
 use wasm_encoder::Instruction;
 
@@ -79,6 +79,20 @@ impl MathClass {
                 Instruction::I32TruncF64S,   // convert f64 back to i32
             ],
         )?;
+
+        // `integer ^ integer` and `integer:64 ^ integer`: exact powers
+        // (the MIR builder calls these for `^` on integer operands).
+        for (name, wide) in [("math.pow.i32", false), ("math.pow.i64", true)] {
+            let ty = if wide { WasmType::I64 } else { WasmType::I32 };
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &[ty, ty],
+                Some(ty),
+                &[ty], // 2: result
+                Self::generate_integer_pow(wide),
+            )?;
+        }
 
         // Math.max(number a, number b) -> number
         let max_impl = vec![
@@ -336,6 +350,109 @@ impl MathClass {
             Instruction::End,
             Instruction::End,
             Instruction::End,
+        ]
+    }
+
+    /// `base ^ exponent` on i32 (`wide == false`) or i64 operands, by
+    /// repeated squaring. Multiplication wraps like `*` does. A negative
+    /// exponent gives the integer part of `1 / base^-exponent`: 1 for base
+    /// 1, ±1 for base -1, 0 otherwise, and a division-by-zero trap for
+    /// base 0, as `1 / 0` does.
+    ///
+    /// Locals: 0 base, 1 exponent (parameters), 2 result.
+    fn generate_integer_pow(wide: bool) -> Vec<Instruction<'static>> {
+        use wasm_encoder::BlockType;
+        let c = |v: i64| {
+            if wide {
+                Instruction::I64Const(v)
+            } else {
+                Instruction::I32Const(v as i32)
+            }
+        };
+        let pick = |narrow: Instruction<'static>, wide_op: Instruction<'static>| {
+            if wide {
+                wide_op
+            } else {
+                narrow
+            }
+        };
+        let lt_s = pick(Instruction::I32LtS, Instruction::I64LtS);
+        let eq = pick(Instruction::I32Eq, Instruction::I64Eq);
+        let eqz = pick(Instruction::I32Eqz, Instruction::I64Eqz);
+        let and = pick(Instruction::I32And, Instruction::I64And);
+        let mul = pick(Instruction::I32Mul, Instruction::I64Mul);
+        let shr_u = pick(Instruction::I32ShrU, Instruction::I64ShrU);
+        let div_s = pick(Instruction::I32DivS, Instruction::I64DivS);
+        vec![
+            // Negative exponent.
+            Instruction::LocalGet(1),
+            c(0),
+            lt_s,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(0),
+            c(1),
+            eq.clone(),
+            Instruction::If(BlockType::Empty),
+            c(1),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(0),
+            c(-1),
+            eq,
+            Instruction::If(BlockType::Empty),
+            // even exponent ? 1 : -1
+            c(1),
+            c(-1),
+            Instruction::LocalGet(1),
+            c(1),
+            and.clone(),
+            eqz.clone(),
+            Instruction::Select,
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(0),
+            eqz.clone(),
+            Instruction::If(BlockType::Empty),
+            // 0 ^ negative is a division by zero.
+            c(1),
+            Instruction::LocalGet(0),
+            div_s,
+            Instruction::Return,
+            Instruction::End,
+            c(0),
+            Instruction::Return,
+            Instruction::End,
+            // result = 1; while exponent != 0: square-and-multiply.
+            c(1),
+            Instruction::LocalSet(2),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(1),
+            eqz.clone(),
+            Instruction::BrIf(1),
+            Instruction::LocalGet(1),
+            c(1),
+            and,
+            eqz,
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(0),
+            mul.clone(),
+            Instruction::LocalSet(2),
+            Instruction::End,
+            Instruction::LocalGet(1),
+            c(1),
+            shr_u,
+            Instruction::LocalSet(1),
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(0),
+            mul,
+            Instruction::LocalSet(0),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(2),
         ]
     }
 }

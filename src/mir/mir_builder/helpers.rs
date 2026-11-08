@@ -21,15 +21,16 @@ impl MirBuilder {
             MirOperation::Call {
                 function: MirOperand::NamedFunction { name, .. },
                 ..
-            } => matches!(
-                name.as_str(),
-                "__err_raise"
-                    | "__json_decode_v2_or_raise"
-                    | "__any_to_instance"
-                    | crate::stdlib::json_class::JSON_TO_CLN_LIST
-                    | crate::stdlib::json_class::ANY_LENGTH
-                    | crate::stdlib::json_class::ANY_CONVERT
-            ),
+            } => {
+                matches!(
+                    name.as_str(),
+                    "__err_raise"
+                        | "__json_decode_v2_or_raise"
+                        | crate::stdlib::json_class::JSON_TO_CLN_LIST
+                        | crate::stdlib::json_class::ANY_LENGTH
+                        | crate::stdlib::json_class::ANY_CONVERT
+                ) || name.starts_with("__any_to_instance")
+            }
             _ => false,
         };
         if let Some(block_id) = self.current_block {
@@ -1390,6 +1391,80 @@ impl MirBuilder {
 }
 
 impl MirBuilder {
+    /// The 8-byte cell functions of a pairs value type that does not fit
+    /// the entry's 4 bytes: (store, load, value type).
+    fn pairs_value_cell(
+        &self,
+        value_type: &ConcreteType,
+    ) -> Option<(&'static str, &'static str, MirType)> {
+        match self.convert_concrete_type(value_type) {
+            MirType::F64 => Some(("__pairs_cell_f64", "__pairs_cell_load_f64", MirType::F64)),
+            MirType::I64 | MirType::U64 => {
+                Some(("__pairs_cell_i64", "__pairs_cell_load_i64", MirType::I64))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a value stored into a `pairs<K, V>` entry is converted
+    /// (`pairs_store_value`): `V` is `any`, `number` or `integer:64`.
+    pub(super) fn pairs_value_converts(&self, value_type: &ConcreteType) -> bool {
+        matches!(value_type, ConcreteType::Any) || self.pairs_value_cell(value_type).is_some()
+    }
+
+    /// The 4-byte entry value `pairs.set` stores for `value_id` (of type
+    /// `source_type`) in a pairs map of `value_type` values: an `any` value
+    /// is boxed, a `number` or `integer:64` value is stored in an 8-byte
+    /// cell the entry points to, and any other value is stored as is.
+    pub(super) fn pairs_store_value(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        source_type: &ConcreteType,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        if matches!(value_type, ConcreteType::Any) {
+            if matches!(source_type, ConcreteType::Any | ConcreteType::Null) {
+                return value_id;
+            }
+            return self.emit_box_any(context, value_id, source_type, location);
+        }
+        let Some((store, _, cell_type)) = self.pairs_value_cell(value_type) else {
+            return value_id;
+        };
+        let value_id = self.coerce_to_slot_type(context, value_id, &cell_type, location);
+        self.emit_named_call(
+            context,
+            store,
+            vec![MirOperand::Value(value_id)],
+            MirType::I32,
+            location,
+        )
+    }
+
+    /// The value of a pairs entry `pairs.get` returned (`raw_id`): the
+    /// value read from its cell for a `number` or `integer:64` map, the
+    /// entry itself otherwise.
+    pub(super) fn pairs_load_value(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        raw_id: ValueId,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        match self.pairs_value_cell(value_type) {
+            Some((_, load, cell_type)) => self.emit_named_call(
+                context,
+                load,
+                vec![MirOperand::Value(raw_id)],
+                cell_type,
+                location,
+            ),
+            None => raw_id,
+        }
+    }
+
     /// The key a pairs lookup or store passes to `pairs.get` / `pairs.set`.
     /// Pairs keys are stored as text — a literal `{1: "one"}` stores the
     /// key "1" — so a key of another type is converted to its text.

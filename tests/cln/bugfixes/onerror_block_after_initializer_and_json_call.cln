@@ -1,0 +1,37 @@
+// Test: bugfixes/onerror_block_after_initializer_and_json_call
+// Grammar: on_error_block, variable_declaration, assignment
+// Semantic: the block handles an error raised while computing the value
+// Fixed in: compiler 0.33.177
+// Expected output:
+//   caught declaration
+//   0
+//   5
+//   caught assignment
+//   5
+//   caught json
+//   end
+//
+// `T x = value onError:` + block, `x = value onError:` + block and
+// `json.decode(...) onError:` + block are on_error_block productions, but
+// the parser stopped at `onError` ("Expected a new line after the
+// statement").
+
+start:
+	integer x = risky(true) onError:
+		printl("caught declaration")
+	printl(x.toString())
+	integer y = risky(false) onError:
+		printl("not reached")
+	printl(y.toString())
+	y = risky(true) onError:
+		printl("caught assignment")
+	printl(y.toString())
+	json.decode("{") onError:
+		printl("caught json")
+	printl("end")
+
+functions:
+	integer risky(boolean fail)
+		if fail
+			error("boom")
+		return 5

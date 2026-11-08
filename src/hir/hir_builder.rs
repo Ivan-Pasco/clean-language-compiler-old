@@ -1904,6 +1904,30 @@ impl HirBuilder {
                 ));
                 let handler = self.build_error_handler(error_block, &loc)?;
                 hir_statements.push(Self::error_handler_if(handler, &loc));
+            } else if let Some((declaration, assignment, error_handler, loc)) =
+                Self::split_on_error_block_value(stmt)
+            {
+                // `T x = expression onError:` + block, `x = expression
+                // onError:` + block: the variable is declared first (with
+                // its zero value), then assigned inside an error region the
+                // block handles, so the variable keeps that value when the
+                // expression raises.
+                if let Some(declaration) = declaration {
+                    hir_statements.push(self.build_statement(&declaration)?);
+                }
+                hir_statements.push(Self::error_runtime_call(
+                    "__err_region_begin",
+                    Vec::new(),
+                    &loc,
+                ));
+                hir_statements.push(self.build_statement(&assignment)?);
+                hir_statements.push(Self::error_runtime_call(
+                    "__err_region_end",
+                    Vec::new(),
+                    &loc,
+                ));
+                let handler = self.build_error_handler(error_handler, &loc)?;
+                hir_statements.push(Self::error_handler_if(handler, &loc));
             } else if let Statement::FunctionApplyBlock {
                 function_name,
                 expressions,
@@ -2004,6 +2028,64 @@ impl HirBuilder {
             statements: hir_statements,
             location: SourceLocation::default(),
         })
+    }
+
+    /// A declaration or assignment whose value is `expression onError:` +
+    /// block, split into the declaration without its initializer (for a
+    /// declaration), the assignment of `expression`, and the handler block.
+    fn split_on_error_block_value(
+        stmt: &Statement,
+    ) -> Option<(Option<Statement>, Statement, &[Statement], SourceLocation)> {
+        match stmt {
+            Statement::VariableDecl {
+                name,
+                type_,
+                initializer:
+                    Some(Expression::OnErrorBlock {
+                        expression,
+                        error_handler,
+                        location: value_location,
+                    }),
+                location,
+            } => {
+                let loc = location.clone().unwrap_or_else(|| value_location.clone());
+                Some((
+                    Some(Statement::VariableDecl {
+                        name: name.clone(),
+                        type_: type_.clone(),
+                        initializer: None,
+                        location: location.clone(),
+                    }),
+                    Statement::Assignment {
+                        target: AssignmentTarget::Variable(name.clone()),
+                        value: (**expression).clone(),
+                        location: location.clone(),
+                    },
+                    error_handler,
+                    loc,
+                ))
+            }
+            Statement::Assignment {
+                target,
+                value:
+                    Expression::OnErrorBlock {
+                        expression,
+                        error_handler,
+                        location: value_location,
+                    },
+                location,
+            } => Some((
+                None,
+                Statement::Assignment {
+                    target: target.clone(),
+                    value: (**expression).clone(),
+                    location: location.clone(),
+                },
+                error_handler,
+                location.clone().unwrap_or_else(|| value_location.clone()),
+            )),
+            _ => None,
+        }
     }
 
     /// Convert AST statement to HIR statement
