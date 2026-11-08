@@ -796,6 +796,42 @@ impl HirValidator {
             Self::validate_field(context, field);
         }
 
+        // CLASS007: a parameter must not take the name of a field of the
+        // class (inherited ones included), except in a constructor without
+        // a body, whose parameters name the fields they set.
+        let all_fields = Self::field_names_with_inherited(&context.classes, class);
+        // Parameters carry no position of their own: report at the
+        // constructor or method.
+        let mut shadowing = Vec::new();
+        if let Some(constructor) = class.constructor.as_ref().filter(|c| !c.stores_parameters) {
+            shadowing.extend(
+                constructor
+                    .parameters
+                    .iter()
+                    .map(|p| ("constructor", p, &constructor.location)),
+            );
+        }
+        for method in &class.methods {
+            shadowing.extend(
+                method
+                    .parameters
+                    .iter()
+                    .map(|p| (method.name.as_str(), p, &method.location)),
+            );
+        }
+        for (owner, param, location) in shadowing {
+            if all_fields.contains(&param.name) {
+                context.error_with_code(
+                    &format!(
+                        "Parameter '{}' of '{}' has the name of a field of class '{}'",
+                        param.name, owner, class.name
+                    ),
+                    location.clone(),
+                    "CLASS007",
+                );
+            }
+        }
+
         // Validate constructor
         if let Some(constructor) = &class.constructor {
             Self::validate_constructor(context, constructor, &class.name);
@@ -832,6 +868,27 @@ impl HirValidator {
         }
 
         context.current_class = old_class;
+    }
+
+    /// The field names of `class` and of every class it inherits from.
+    fn field_names_with_inherited(
+        classes: &HashMap<String, HirClass>,
+        class: &HirClass,
+    ) -> HashSet<String> {
+        let mut names: HashSet<String> = class.fields.iter().map(|f| f.name.clone()).collect();
+        let mut visited: HashSet<&str> = HashSet::from([class.name.as_str()]);
+        let mut parent = class.parent.as_deref();
+        while let Some(parent_name) = parent {
+            if !visited.insert(parent_name) {
+                break;
+            }
+            let Some(parent_class) = classes.get(parent_name) else {
+                break;
+            };
+            names.extend(parent_class.fields.iter().map(|f| f.name.clone()));
+            parent = parent_class.parent.as_deref();
+        }
+        names
     }
 
     /// True when following the parent chain from `start_class`'s parent never

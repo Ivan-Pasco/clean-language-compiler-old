@@ -136,6 +136,44 @@ pub enum HirType {
     /// Dynamic type for JSON values and runtime-typed data
     /// Supports bracket notation with string keys (object access) or integer indices (array access)
     Any,
+
+    /// `integer?`, `number?`, `boolean?` (and their sized forms): the only
+    /// types the type checker distinguishes from their plain form, because
+    /// plain integer, number and boolean reject null (type-system.md §8).
+    /// Other `T?` types lower to `T`. Same WASM representation as the inner
+    /// type.
+    Optional(Box<HirType>),
+}
+
+impl HirType {
+    /// The type without an `Optional` wrapper (same WASM representation).
+    pub fn without_optional(&self) -> &HirType {
+        match self {
+            HirType::Optional(inner) => inner.without_optional(),
+            other => other,
+        }
+    }
+
+    /// `integer`, `number` (any width) or `boolean`: the types that reject
+    /// null unless written `T?`.
+    pub fn is_non_nullable_primitive(&self) -> bool {
+        matches!(
+            self,
+            HirType::Integer
+                | HirType::Number
+                | HirType::Boolean
+                | HirType::Integer8
+                | HirType::Integer8u
+                | HirType::Integer16
+                | HirType::Integer16u
+                | HirType::Integer32
+                | HirType::Integer32u
+                | HirType::Integer64
+                | HirType::Integer64u
+                | HirType::Number32
+                | HirType::Number64
+        )
+    }
 }
 
 /// HIR Class - normalized class representation
@@ -200,6 +238,11 @@ pub struct HirField {
 pub struct HirConstructor {
     pub parameters: Vec<HirParameter>,
     pub body: HirBlock,
+    /// The source constructor has no body, so its parameters name the
+    /// fields they are stored in (`constructor(integer x, integer y)`); the
+    /// HIR builder generated those stores as the body. Such parameters may
+    /// share a field's name (semantic-rules.md §CLASS007).
+    pub stores_parameters: bool,
     pub location: SourceLocation,
 }
 

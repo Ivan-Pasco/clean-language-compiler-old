@@ -1,0 +1,49 @@
+// Test: bugfixes/class007_constructor_without_body_names_fields
+// Grammar: class_declaration, constructor
+// Semantic: CLASS007 — a constructor without a body names the fields it
+//   sets, so its parameters take the fields' names; a constructor with a
+//   body assigns from differently named parameters. A constructor without
+//   a body may be followed by the class's functions: block.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   3
+//   4
+//   7
+//   red
+//   2.5
+
+start:
+	Point p = Point(3, 4)
+	print(p.x)
+	print(p.y)
+	print(p.sum())
+	Circle c = Circle("red", 2.5)
+	print(c.color)
+	print(c.radius)
+
+class Point
+	public:
+		integer x
+		integer y
+
+	constructor(integer x, integer y)
+
+	functions:
+		public:
+			integer sum()
+				return x + y
+
+class Shape
+	public:
+		string color
+
+	constructor(string colorParam)
+		color = colorParam
+
+class Circle is Shape
+	public:
+		number radius
+
+	constructor(string colorParam, number radiusParam)
+		base(colorParam)
+		radius = radiusParam

@@ -85,8 +85,7 @@ impl std::fmt::Display for ArtifactError {
 /// - `"never"` — skip.
 /// - `"has_client_init"` — any plugin declares the `client_init` lifecycle slot.
 /// - `"has_lifecycle.<slot>"` — any plugin declares the named slot
-///   (slots: `module_helpers`, `program_init`, `client_init`, `server_init`,
-///   `per_request`, `artifact_emitters`).
+///   (slots: `module_helpers`, `program_init`, `client_init`, `server_init`).
 /// - `"has_artifact.<name>"` — an artifact with the given `name` has already
 ///   been emitted earlier in the orchestration pass.
 /// - `"has_build_state.<key>"` — the build state map from the compile pass

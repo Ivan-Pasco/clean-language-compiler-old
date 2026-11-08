@@ -1457,7 +1457,16 @@ impl TokenParser {
 
         self.expect(&TokenKind::RightParen)?;
         self.skip_whitespace();
-        let body = self.parse_block(header_level)?;
+        // A constructor without a body (`constructor(integer x, integer y)`,
+        // grammar.ebnf `constructor` with no `constructor_block`) is
+        // followed by a line at its own indentation or less, e.g. the
+        // class's `functions:`.
+        let body = if matches!(self.current_kind(), TokenKind::Indent(level) if *level > header_level)
+        {
+            self.parse_block(header_level)?
+        } else {
+            Vec::new()
+        };
 
         Ok(Constructor {
             parameters,

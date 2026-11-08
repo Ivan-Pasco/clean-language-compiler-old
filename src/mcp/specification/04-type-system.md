@@ -375,6 +375,7 @@ string message
 **Implicit conversions (safe widening):**
 - `integer` → `number` (with precision loss warning)
 - Same-sign, wider types → OK
+- `list<integer>` → `list<number>`: the elements are copied into a new list of numbers, so later changes to one list do not affect the other
 
 **Explicit conversions (all require parentheses):**
 ```clean

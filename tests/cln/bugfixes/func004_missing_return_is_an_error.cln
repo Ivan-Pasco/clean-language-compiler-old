@@ -1,0 +1,34 @@
+// Test: bugfixes/func004_missing_return_is_an_error
+// Grammar: function_declaration, if_statement, return_statement
+// Semantic: FUNC004 — a non-void function or method must return a value on
+//   every path; a path that falls off the end is an error.
+// Fixed in: compiler 0.33.178
+// Expected output:
+// Expected error:
+//   error[FUNC004]: Function 'sign' does not return a value on every path
+//   func004_missing_return_is_an_error.cln:30:
+//   error[FUNC004]: Method 'label' does not return a value on every path
+//   func004_missing_return_is_an_error.cln:25:
+
+start:
+	print(sign(3))
+	Box b = Box(2)
+	print(b.label())
+
+class Box
+	integer size
+
+	constructor(integer size)
+
+	functions:
+		public:
+			string label()
+				iterate i in 0 to size
+					return "box"
+
+functions:
+	integer sign(integer n)
+		if n > 0
+			return 1
+		else if n < 0
+			return -1

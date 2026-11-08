@@ -94,7 +94,7 @@ Emitted during HIR validation of function definitions and call sites.
 | FUNC001 | `FunctionNotDefined` | Function called before it is defined | Error | semantic-rules.md §FUNC001 |
 | FUNC002 | `ArgumentCountMismatch` | Argument count does not match parameter count | Error | semantic-rules.md §FUNC002 |
 | FUNC003 | `CallOnNonFunction` | Parenthesis-invocation of a non-function symbol | Error | semantic-rules.md §FUNC003 |
-| FUNC004 | `MissingReturn` | Non-void function has no return on some execution path | Warning | semantic-rules.md §FUNC004 |
+| FUNC004 | `MissingReturn` | Non-void function has no return on some execution path | Error | semantic-rules.md §FUNC004 |
 | FUNC005 | `EmptyReturnInNonVoid` | `return` with no value in a non-void function | Warning | semantic-rules.md §FUNC005 |
 | FUNC006 | `StartBlockHasParameters` | The `start:` entry point block declares parameters | Error | semantic-rules.md §FUNC006 |
 | FUNC007 | `StartBlockReturnsValue` | The `start:` entry point returns a value | Warning | semantic-rules.md §FUNC007 |
@@ -116,6 +116,7 @@ Emitted during HIR validation of class definitions.
 | CLASS004 | `MissingConstructor` | Class is instantiated but has no constructor | Error | semantic-rules.md §CLASS004 |
 | CLASS005 | `EnsureAfterLogic` | `ensure` statement appears after non-contract logic in a function body | Error | semantic-rules.md §CLASS005 |
 | CLASS006 | `AlwaysConditionNotBoolean` | Expression inside an `always:` invariant block is not boolean | Error | semantic-rules.md §CLASS006 |
+| CLASS007 | `ParameterShadowsField` | A method parameter, or a parameter of a constructor with a body, has the name of a field of its class | Error | semantic-rules.md §CLASS007 |
 
 ### Index Access Codes (IDX)
 
@@ -235,7 +236,7 @@ The following code numbers are reserved for future use. Do not assign them witho
 | SEM011–SEM099 | Reserved |
 | SCOPE006–SCOPE099 | Reserved |
 | FUNC013–FUNC099 | Reserved |
-| CLASS007–CLASS099 | Reserved |
+| CLASS008–CLASS099 | Reserved |
 | IDX005–IDX099 | Reserved |
 | STATE006–STATE099 | Reserved |
 | IMPORT005–IMPORT099 | Reserved |

@@ -10,13 +10,14 @@ start:
 // Dependencies: none
 // Expected: PASS
 
+// Fixed: the constructor assigned `name = name` from parameters named like
+// the fields; CLASS007 forbids that (semantic-rules.md §CLASS007), and a
+// constructor without a body stores such parameters itself.
 class Animal
 	string name
 	integer age
 
 	constructor(string name, integer age)
-		name = name
-		age = age
 
 	functions:
 		public:

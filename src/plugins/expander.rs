@@ -726,8 +726,6 @@ impl<'a> PluginExpander<'a> {
         //   2. program_init    → program start: prelude (every build)
         //   3. server_init     → server bootstrap (server builds only)
         //   4. client_init     → client _start (client builds only)
-        //   5. per_request     → request handler prelude (§2 follow-up — depends
-        //                        on route-handler emission rework)
         //
         // Plugins that have not declared a slot in their manifest are skipped
         // at the registry level — no WASM instantiation cost for inactive
@@ -772,9 +770,6 @@ impl<'a> PluginExpander<'a> {
                 program.functions.retain(|f| !handlers.contains(&f.name));
             }
         }
-        // per_request lifecycle splicing into route handlers — follow-up
-        // commit. Touches route-handler emission which is more involved than
-        // the program-level slots above.
         if !slot_prelude.is_empty() {
             prepend_to_start(&mut program, slot_prelude);
         }
@@ -1781,8 +1776,6 @@ mod tests {
                 "program_init" => lifecycle.program_init = Some((*export).to_string()),
                 "client_init" => lifecycle.client_init = Some((*export).to_string()),
                 "server_init" => lifecycle.server_init = Some((*export).to_string()),
-                "per_request" => lifecycle.per_request = Some((*export).to_string()),
-                "artifact_emitters" => lifecycle.artifact_emitters = Some((*export).to_string()),
                 _ => {}
             }
         }

@@ -1,0 +1,44 @@
+// Test: bugfixes/list_integer_widens_to_list_number
+// Grammar: variable_declaration, assignment, return_statement, function_call
+// Semantic: type-system.md §5 — `list<integer>` is assignable to
+//   `list<number>`; the elements are copied into a new list of numbers at a
+//   declaration, an assignment, an argument and a return.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   2
+//   6
+//   1
+//   3
+//   3
+//   4
+//   7.5
+//   0
+
+start:
+	list<integer> ints = [1, 2, 3]
+	list<number> nums = ints
+	print(nums[1])
+	print(total(ints))
+	list<number> made = make()
+	print(made[0])
+	nums = ints
+	print(nums.size())
+	ints.add(4)
+	print(nums.size())
+	print(ints.size())
+	nums.add(1.5)
+	print(nums[3] + 6.0)
+	list<integer> nothing = []
+	list<number> empty = nothing
+	print(empty.size())
+
+functions:
+	number total(list<number> xs)
+		number sum = 0.0
+		iterate x in xs
+			sum = sum + x
+		return sum
+
+	list<number> make()
+		list<integer> values = [1, 2]
+		return values

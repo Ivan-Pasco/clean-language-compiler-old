@@ -4,13 +4,15 @@
 //   list<number> is never a list<integer>. A list<integer> stores 4-byte
 //   elements and a list<number> 8-byte ones, so the list itself cannot be
 //   reused as the other type; a list literal still widens.
+// Fixed: also expected `list<number> ys = ints` (line 26) to be rejected;
+//   list<integer> -> list<number> is now allowed and copies the elements
+//   (type-system.md §6, developer decision 2026-11-08), so only the
+//   number -> integer assignment is an error.
 // Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
 //   A value of type Array<number> cannot be used as Array<integer>
-//   A value of type Array<integer> cannot be used as Array<number>
-//   sem001_list_element_layout_mismatch.cln:23:
-//   sem001_list_element_layout_mismatch.cln:24:
+//   sem001_list_element_layout_mismatch.cln:25:
 //
 // Regression: list element types unified both ways and the element layouts
 // were never converted, so both assignments printed garbage.

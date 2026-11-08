@@ -244,7 +244,7 @@ impl MirBuilder {
         for symbol_id in all_symbols {
             if let Some(symbol) = symbol_table.get_symbol(symbol_id) {
                 if let crate::resolver::SymbolKind::StateVariable { var_type, .. } = &symbol.kind {
-                    let mir_type = match var_type {
+                    let mir_type = match var_type.without_optional() {
                         crate::hir::HirType::Integer => MirType::I32,
                         crate::hir::HirType::Number => MirType::F64,
                         crate::hir::HirType::String => MirType::I32, // String pointer

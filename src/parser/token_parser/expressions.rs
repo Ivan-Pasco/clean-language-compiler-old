@@ -29,9 +29,10 @@ impl TokenParser {
             self.bump(); // consume onError
             self.skip_whitespace();
 
-            // If we see a colon, this is onError: block syntax (handled at statement level)
-            // Back up and stop parsing onError at expression level
-            if self.check(&TokenKind::Colon) {
+            // `onError:` + block and `onError <statement>` are handled at
+            // statement level (grammar.ebnf on_error_block,
+            // on_error_statement): back up and stop here.
+            if self.check(&TokenKind::Colon) || self.at_on_error_handler_statement() {
                 self.cursor = saved_cursor; // restore cursor to before onError
                 break;
             }
@@ -48,6 +49,18 @@ impl TokenParser {
         }
 
         Ok(expr)
+    }
+
+    /// Whether the token after `onError` starts a handler statement
+    /// (grammar.ebnf `on_error_handler_statement`) rather than a fallback
+    /// value. `error(...)` raises; a bare `error` is the raised message,
+    /// a fallback value (`x onError error`).
+    pub(super) fn at_on_error_handler_statement(&self) -> bool {
+        match self.current_kind() {
+            TokenKind::Print | TokenKind::Return | TokenKind::Break | TokenKind::Continue => true,
+            TokenKind::Error => matches!(self.peek_kind(), Some(TokenKind::LeftParen)),
+            _ => false,
+        }
     }
 
     // Parse default (null-coalescing) expressions: lhs default rhs

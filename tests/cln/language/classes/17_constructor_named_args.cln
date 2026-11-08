@@ -15,13 +15,14 @@ start:
 	Animal a2 = Animal(age: 5, name: "Fluffy")
 	print("name: " + a2.getName() + " age: " + a2.getAge().toString())
 
+// Fixed: the constructor assigned `name = name` from parameters named like
+// the fields; CLASS007 forbids that (semantic-rules.md §CLASS007), and a
+// constructor without a body stores such parameters itself.
 class Animal
 	string name
 	integer age
 
 	constructor(string name, integer age)
-		name = name
-		age = age
 
 	functions:
 		public:

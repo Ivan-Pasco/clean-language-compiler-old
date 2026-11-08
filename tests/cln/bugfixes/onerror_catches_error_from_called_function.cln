@@ -95,6 +95,9 @@ functions:
 		return v
 		onError:
 			printl("not reached")
+			// Fixed: the handler fell off the end of an integer function,
+			// which FUNC004 now rejects (semantic-rules.md §FUNC004).
+			return -1
 
 	string breaker()
 		string out = ""

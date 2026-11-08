@@ -915,6 +915,52 @@ fn gen_fill(malloc: u32, elem: Elem) -> Vec<Instruction<'static>> {
     v
 }
 
+/// `__list_widen_f64(items)`: a new `list<number>` holding the elements of
+/// the `list<integer>` `items`, each converted to a number, with the same
+/// behavior flags. A null list stays null.
+///
+/// Locals: 0 items, 1 len, 2 result, 3 i.
+fn gen_widen_f64(malloc: u32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(1),
+    ];
+    v.extend(emit_alloc_like(malloc, 0, 1, 2, Elem::F64.stride()));
+    v.extend([
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+    ]);
+    v.extend(elem_addr(2, 3, Elem::F64));
+    v.extend(elem_addr(0, 3, Elem::I32));
+    v.extend([
+        Elem::I32.load(),
+        Instruction::F64ConvertI32S,
+        Elem::F64.store(),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(2),
+    ]);
+    v
+}
+
 /// Copy `len_local` bytes from `src_local` to `pos_local`, advancing
 /// `pos_local`; `k_local` is scratch.
 fn emit_copy_bytes(
@@ -1528,6 +1574,16 @@ impl ListClass {
                 gen_fill(malloc, elem),
             )?;
         }
+
+        // list<integer> → list<number> (type-system.md §5)
+        register_stdlib_function_with_locals(
+            codegen,
+            crate::typechecker::tast::LIST_WIDEN_F64,
+            &i32x(1),
+            Some(WasmType::I32),
+            &i32x(3),
+            gen_widen_f64(malloc),
+        )?;
 
         // join — `list.join(items, sep)` and `string.join(items, sep)` are
         // the same operation (stdlib-reference.md §5).

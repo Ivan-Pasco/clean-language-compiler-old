@@ -522,7 +522,25 @@ impl<'a> ConstraintSolver<'a> {
                 self.unify(&from, &to, location)
             }
 
-            // Error recovery, the dynamic type, and null (every slot is nullable).
+            // Plain `integer`, `number` and `boolean` are never null; only
+            // their explicitly optional forms (`integer?`) are
+            // (type-system.md §8).
+            (ConcreteType::Null, target) if Self::is_non_nullable_primitive(target) => {
+                Err(CompilerError::type_error(
+                    format!(
+                        "null cannot be used as {}: a plain {} is never null",
+                        target, target
+                    ),
+                    Some(format!(
+                        "Declare the type as `{}?` to allow null, or use a value",
+                        target
+                    )),
+                    Some(location.clone()),
+                ))
+            }
+
+            // Error recovery, the dynamic type, and null (other types accept
+            // null).
             (ConcreteType::Unknown | ConcreteType::Any | ConcreteType::Null, _)
             | (_, ConcreteType::Unknown | ConcreteType::Any) => Ok(()),
 
@@ -617,6 +635,19 @@ impl<'a> ConstraintSolver<'a> {
             // follows the unification rules.
             _ => self.unify(&from, &to, location),
         }
+    }
+
+    /// `integer`, `number` (any width) or `boolean` — the types that reject
+    /// null unless written as `T?`.
+    fn is_non_nullable_primitive(t: &ConcreteType) -> bool {
+        matches!(
+            t,
+            ConcreteType::Integer
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::Number
+                | ConcreteType::NumberSized { .. }
+                | ConcreteType::Boolean
+        )
     }
 
     /// A string, boolean, or number of any width.

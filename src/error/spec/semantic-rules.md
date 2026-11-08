@@ -332,7 +332,7 @@ The string literal passed to `.matches()` does not refer to a built-in pattern n
 
 **Condition:** The argument to `.matches()` must be a string literal (not a variable), and its value must be a known pattern name. This is validated at compile time; no runtime lookup is performed.
 
-**Built-in names:** `"email"`, `"url"`, `"uuid"`, `"slug"`, `"numeric"`, `"alpha"`, `"phone"`, `"date"`.
+**Built-in names:** `"email"`, `"url"`, `"uuid"`, `"phone"`, `"date"`, `"integer"`, `"number"`, `"alphanumeric"`.
 
 **Extended names:** available after importing a pattern pack, e.g. `import: validate.patterns.financial` unlocks `"iban"`, `"ssn"`, `"creditCard"`.
 
@@ -503,7 +503,23 @@ start:
 Only function-typed symbols can be invoked with parentheses.
 
 ### FUNC004 — Missing Return in Non-Void Function
-A function with a non-void return type must have a return statement on all execution paths. (Warning)
+A function or method with a non-void return type must return a value on every execution path. This is an error (developer decision 2026-11-08).
+
+A path ends properly when it reaches a `return` with a value, an `error(...)` call, or a loop it never leaves (`while true` with no `break` for that loop). Also accepted:
+- a body whose last statement is an expression (automatic return, specification §10);
+- an `if` whose `then` and `else` branches both end properly, and `if true` whose body does;
+- an `onError` region whose protected statements and handler both end properly.
+
+**Example (fails — FUNC004):**
+```clean
+functions:
+    integer sign(integer n)
+        if n > 0
+            return 1
+        else if n < 0
+            return -1
+        // n == 0 falls through without a value
+```
 
 ### FUNC005 — Empty Return in Non-Void Function
 A return statement in a function with a non-void return type must provide a value. (Warning)
@@ -587,6 +603,26 @@ functions:
 
 ### CLASS006 — `always:` Expressions Must Be Boolean
 Every expression inside an `always:` block must evaluate to `boolean`.
+
+### CLASS007 — Parameter Must Not Share a Field's Name
+A parameter of a method, or of a constructor with a body, must not have the same name as a field of its class, including fields inherited from a parent class. Inside the class a field is used by its plain name, so such a parameter would hide the field.
+
+A constructor **without a body** is the exception: its parameters name the fields they set. `constructor(integer x, integer y)` stores its two arguments in the fields `x` and `y`.
+
+**Example (fails — CLASS007):**
+```clean
+class Account
+    integer balance
+
+    constructor(integer balance)
+        print("opening")            // a body: `balance` would hide the field
+
+    functions:
+        void deposit(integer balance)   // a method parameter named like the field
+            print(balance)
+```
+
+**Fix:** give the parameter a different name (`constructor(integer startBalance)` + `balance = startBalance`), or drop the constructor body when it only stores its parameters.
 
 **Build modes:**
 - `ensure` and `always:` checks are included in debug builds and stripped in release builds (`--release` flag).

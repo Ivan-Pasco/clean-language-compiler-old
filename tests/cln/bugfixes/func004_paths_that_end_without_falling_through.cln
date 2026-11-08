@@ -1,0 +1,73 @@
+// Test: bugfixes/func004_paths_that_end_without_falling_through
+// Grammar: function_declaration, if_statement, while_statement,
+//   error_statement, on_error_block, standalone_on_error
+// Semantic: FUNC004 — a path also ends at error(...), in a `while true` loop
+//   no break leaves, at a final expression (automatic return), in an
+//   if/else whose branches all end, and in an onError region whose
+//   protected part and handler both end. None of these is FUNC004.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   1
+//   -1
+//   0
+//   12
+//   43
+//   5
+//   fallback
+//   3
+//   9
+
+start:
+	print(sign(4))
+	print(sign(-4))
+	print(sign(0))
+	print(firstOver(10))
+	print(answer() + 1)
+	print(checked(5))
+	print(guarded())
+	print(nested(3))
+	print(lastLine(4))
+
+functions:
+	integer sign(integer n)
+		if n > 0
+			return 1
+		else if n < 0
+			return -1
+		else
+			return 0
+
+	integer firstOver(integer limit)
+		integer i = 0
+		while true
+			i = i + 3
+			if i > limit
+				return i
+
+	integer answer()
+		return 42
+		print("unreachable")
+
+	integer checked(integer n)
+		if n > 0
+			return n
+		error("negative")
+
+	string guarded()
+		return risky()
+		onError:
+			return "fallback"
+
+	integer nested(integer n)
+		while true
+			iterate i in 0 to n
+				if i == 2
+					break
+			return n
+
+	integer lastLine(integer n)
+		n * 2 + 1
+
+	string risky()
+		error("boom")
+		return "never"

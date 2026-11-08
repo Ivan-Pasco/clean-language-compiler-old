@@ -8,7 +8,7 @@ use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
     TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
-    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility,
+    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, LIST_WIDEN_F64,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -1367,6 +1367,7 @@ impl<'a> TypeInference<'a> {
         location: &SourceLocation,
     ) {
         Self::widen_literal_to_declared_type(value, target);
+        Self::widen_integer_list_to_number_list(value, target);
         self.add_constraint(TypeConstraint::Subtype {
             subtype: value.expr_type.clone(),
             supertype: target.clone(),
@@ -1617,8 +1618,8 @@ impl<'a> TypeInference<'a> {
         })
     }
 
-    /// FUNC004: warn when a non-void function or method may not return a
-    /// value on all paths. A warning, never an error (error-codes.md).
+    /// FUNC004: a non-void function or method must return a value on every
+    /// path (semantic-rules.md §FUNC004, an error).
     fn check_missing_return(
         &mut self,
         kind: &str,
@@ -1631,18 +1632,20 @@ impl<'a> TypeInference<'a> {
             declared_return_type,
             ConcreteType::Null | ConcreteType::Undefined
         );
-        if is_void_return || Self::block_definitely_returns(body) {
+        if is_void_return || Self::body_always_returns(body) {
             return;
         }
-        self.warnings.push(CompilerError::Validation {
+        self.errors.push(CompilerError::Validation {
             context: Box::new(
                 crate::error::ErrorContext::new(
-                    format!("{kind} '{name}' may not return a value on all paths"),
-                    Some("Ensure every code path ends with a return statement".to_string()),
+                    format!("{kind} '{name}' does not return a value on every path"),
+                    Some(
+                        "End every path with a return statement (or a final expression), or raise an error with error(...)"
+                            .to_string(),
+                    ),
                     crate::error::ErrorType::Validation,
                     Some(location.clone()),
                 )
-                .with_severity(crate::error::ErrorSeverity::Warning)
                 .with_error_code("FUNC004"),
             ),
         });
@@ -4591,6 +4594,47 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// A `list<integer>` value stored where a `list<number>` is expected
+    /// becomes a new list of numbers (type-system.md §5): the elements are
+    /// stored in 4-byte slots in the one and 8-byte slots in the other, so
+    /// the value is copied element by element (`__list_widen_f64`). The copy
+    /// is a separate list; changing one does not change the other.
+    fn widen_integer_list_to_number_list(value: &mut TastExpression, target: &ConcreteType) {
+        let is_list_of = |t: &ConcreteType, element: &ConcreteType| matches!(t, ConcreteType::Array(e) if **e == *element);
+        if !is_list_of(&value.expr_type, &ConcreteType::Integer)
+            || !is_list_of(target, &ConcreteType::Number)
+        {
+            return;
+        }
+        let location = value.location.clone();
+        let list = std::mem::replace(
+            value,
+            TastExpression {
+                kind: TastExpressionKind::Literal {
+                    value: TastLiteral::Null,
+                },
+                expr_type: ConcreteType::Null,
+                location: location.clone(),
+            },
+        );
+        *value = TastExpression {
+            kind: TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: SymbolId(0),
+                        name: LIST_WIDEN_F64.to_string(),
+                    },
+                    expr_type: ConcreteType::Unknown,
+                    location: location.clone(),
+                }),
+                arguments: vec![list],
+                type_args: Vec::new(),
+            },
+            expr_type: target.clone(),
+            location,
+        };
+    }
+
     /// Infer type for a literal
     fn infer_literal(&self, literal: &crate::ast::Value) -> (TastLiteral, ConcreteType) {
         match literal {
@@ -4913,15 +4957,31 @@ impl<'a> TypeInference<'a> {
             // Returns left if not null, otherwise returns right
             // Both sides should have compatible types
             HirBinaryOp::NullCoalesce => {
-                // Both operands should have the same type
+                // `value default fallback` is `value` when it is not null,
+                // otherwise `fallback` (04-type-system.md): the result has the
+                // operands' common type without the `?` of `value`, so
+                // `integer n = maybe default 0` is a plain integer. A `null`
+                // operand gives the other operand's type.
+                let value_type = match left_type {
+                    ConcreteType::Optional(inner) => (**inner).clone(),
+                    other => other.clone(),
+                };
+                if value_type == ConcreteType::Null {
+                    return Ok(right_type.clone());
+                }
+                if *right_type == ConcreteType::Null {
+                    return Ok(left_type.clone());
+                }
                 self.add_constraint(TypeConstraint::Equality {
-                    left: left_type.clone(),
+                    left: value_type.clone(),
                     right: right_type.clone(),
                     location: location.clone(),
                 });
-
-                // Result type is the same as the operands
-                Ok(left_type.clone())
+                if matches!(right_type, ConcreteType::Optional(_)) {
+                    Ok(right_type.clone())
+                } else {
+                    Ok(value_type)
+                }
             }
 
             HirBinaryOp::StringConcat => {
@@ -6179,10 +6239,12 @@ impl<'a> TypeInference<'a> {
             },
             // BOOK: required-operator - Postfix ! assertion for null check
             // Required operator returns the same type, just adds runtime null check
-            HirUnaryOp::Required => {
-                // The required assertion returns the same type as the operand
-                Ok(operand_type.clone())
-            }
+            // `value!` traps when the value is null and otherwise is the
+            // underlying T of a T? (04-type-system.md, Nullable Types).
+            HirUnaryOp::Required => match operand_type {
+                ConcreteType::Optional(inner) => Ok((**inner).clone()),
+                other => Ok(other.clone()),
+            },
         }
     }
 
@@ -6336,6 +6398,9 @@ impl<'a> TypeInference<'a> {
             },
             HirType::Number32 => ConcreteType::Number,
             HirType::Number64 => ConcreteType::Number,
+            HirType::Optional(inner) => {
+                ConcreteType::Optional(Box::new(self.hir_type_to_concrete(inner)))
+            }
             HirType::List(element_type) => {
                 ConcreteType::Array(Box::new(self.hir_type_to_concrete(element_type)))
             }
@@ -6624,23 +6689,151 @@ impl<'a> TypeInference<'a> {
         false
     }
 
-    fn block_definitely_returns(block: &TastBlock) -> bool {
-        match block.statements.last() {
-            None => false,
-            Some(TastStatement::Return { .. }) => true,
-            Some(TastStatement::If {
-                then_block,
-                else_block: Some(else_b),
-                ..
-            }) => {
-                // Both branches must unconditionally return; if there is no else
-                // branch the function may fall through after the if.
-                Self::block_definitely_returns(then_block) && Self::block_definitely_returns(else_b)
+    /// FUNC004: a function body returns a value on every path. A body whose
+    /// last statement is an expression returns that expression's value
+    /// (automatic return, 10-functions.md), as the MIR builder lowers it.
+    fn body_always_returns(body: &TastBlock) -> bool {
+        Self::never_falls_through(&body.statements)
+            || matches!(
+                body.statements.last(),
+                Some(TastStatement::Expression { expression, .. })
+                    if !Self::is_runtime_call(expression, "__err_region_end")
+            )
+    }
+
+    /// Whether running `statements` can never reach the end of the block:
+    /// every path returns, raises an error (`error(...)` is a call to
+    /// `__err_raise`, which traps or unwinds to an `onError` handler), or
+    /// stays in a loop no `break` leaves.
+    ///
+    /// The HIR builder lowers an `onError` handler to a region —
+    /// `__err_region_begin()`, the protected statements, `__err_region_end()`
+    /// — followed by `if __err_take(): <handler>`. An error raised in the
+    /// protected statements continues in the handler, so the region ends the
+    /// block when both the protected statements and the handler do.
+    fn never_falls_through(statements: &[TastStatement]) -> bool {
+        let mut index = 0;
+        while index < statements.len() {
+            if Self::is_runtime_call_statement(&statements[index], "__err_region_begin") {
+                if let Some(end) = Self::error_region_end(statements, index) {
+                    let handler = statements.get(end + 1).and_then(Self::error_handler_body);
+                    if let Some(handler) = handler {
+                        if Self::never_falls_through(&statements[index + 1..end])
+                            && Self::never_falls_through(&handler.statements)
+                        {
+                            return true;
+                        }
+                        index = end + 2;
+                        continue;
+                    }
+                }
             }
-            Some(TastStatement::If {
-                else_block: None, ..
-            }) => false,
+            if Self::statement_never_falls_through(&statements[index]) {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn statement_never_falls_through(statement: &TastStatement) -> bool {
+        match statement {
+            TastStatement::Return { .. } => true,
+            TastStatement::Expression { expression, .. } => {
+                Self::is_runtime_call(expression, "__err_raise")
+            }
+            TastStatement::If {
+                condition,
+                then_block,
+                else_block,
+                ..
+            } => {
+                let then_ends = Self::never_falls_through(&then_block.statements);
+                match else_block {
+                    Some(else_block) => {
+                        then_ends && Self::never_falls_through(&else_block.statements)
+                    }
+                    // `if true` (plugin-expanded `html:` blocks) always runs
+                    // its body.
+                    None => then_ends && Self::is_literal_true(condition),
+                }
+            }
+            TastStatement::While {
+                condition, body, ..
+            } => Self::is_literal_true(condition) && !Self::breaks_out(&body.statements),
             _ => false,
+        }
+    }
+
+    /// Whether a `break` in `statements` leaves the loop whose body they are
+    /// (a `break` inside a nested loop leaves only that loop).
+    fn breaks_out(statements: &[TastStatement]) -> bool {
+        statements.iter().any(|statement| match statement {
+            TastStatement::Break { .. } => true,
+            TastStatement::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                Self::breaks_out(&then_block.statements)
+                    || else_block
+                        .as_ref()
+                        .is_some_and(|b| Self::breaks_out(&b.statements))
+            }
+            _ => false,
+        })
+    }
+
+    fn is_literal_true(expression: &TastExpression) -> bool {
+        matches!(
+            expression.kind,
+            TastExpressionKind::Literal {
+                value: TastLiteral::Boolean(true)
+            }
+        )
+    }
+
+    /// A call to the compiler's runtime function `name` (`__err_raise`,
+    /// `__err_region_begin`, ...).
+    fn is_runtime_call(expression: &TastExpression, name: &str) -> bool {
+        matches!(
+            &expression.kind,
+            TastExpressionKind::FunctionCall { function, .. }
+                if matches!(&function.kind, TastExpressionKind::Variable { name: n, .. } if n == name)
+        )
+    }
+
+    fn is_runtime_call_statement(statement: &TastStatement, name: &str) -> bool {
+        matches!(statement, TastStatement::Expression { expression, .. } if Self::is_runtime_call(expression, name))
+    }
+
+    /// Index of the `__err_region_end()` closing the region opened at
+    /// `begin` (regions nest).
+    fn error_region_end(statements: &[TastStatement], begin: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        for (offset, statement) in statements[begin + 1..].iter().enumerate() {
+            if Self::is_runtime_call_statement(statement, "__err_region_begin") {
+                depth += 1;
+            } else if Self::is_runtime_call_statement(statement, "__err_region_end") {
+                if depth == 0 {
+                    return Some(begin + 1 + offset);
+                }
+                depth -= 1;
+            }
+        }
+        None
+    }
+
+    /// The handler of `if __err_take(): <handler>`.
+    fn error_handler_body(statement: &TastStatement) -> Option<&TastBlock> {
+        match statement {
+            TastStatement::If {
+                condition,
+                then_block,
+                else_block: None,
+                ..
+            } if Self::is_runtime_call(condition, "__err_take") => Some(then_block),
+            _ => None,
         }
     }
 }

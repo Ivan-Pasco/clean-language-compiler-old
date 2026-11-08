@@ -27,7 +27,9 @@ start:
 	print(test5)
 
 	// Test 6: default with expression
-	integer x = null
+	// Fixed: was `integer x = null`; a plain integer is never null
+	// (type-system.md §8), so the nullable variable is `integer?`.
+	integer? x = null
 	integer test6 = x default 5 + 3
 	print(test6)
 

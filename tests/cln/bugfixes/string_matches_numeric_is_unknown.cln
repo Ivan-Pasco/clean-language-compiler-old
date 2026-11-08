@@ -1,0 +1,13 @@
+// Test: bugfixes/string_matches_numeric_is_unknown
+// Grammar: method_call
+// Semantic: SEM010 — `numeric` and `alpha` are not pattern names (the spec
+//   lists only the patterns the hosts implement).
+// Fixed in: compiler 0.33.178
+// Expected output:
+// Expected error:
+//   error[SEM010]: Unknown pattern name 'numeric'
+//   string_matches_numeric_is_unknown.cln:12:
+
+start:
+	boolean digits = "123".matches("numeric")
+	print(digits)

@@ -1246,10 +1246,11 @@ impl HirBuilder {
 
         let mut body = self.build_block(&ctor.body)?;
 
-        // NOTE: Auto-storing fields feature
-        // When constructor body is empty and parameter names match field names,
-        // automatically generate field assignments: field = parameter
-        if body.statements.is_empty() {
+        // A constructor without a body stores each parameter named like a
+        // field in that field (15-classes-and-objects.md:
+        // `constructor(integer x, integer y)`).
+        let stores_parameters = ctor.body.is_empty();
+        if stores_parameters {
             let mut auto_assignments = Vec::new();
 
             for param in &ctor.parameters {
@@ -1282,6 +1283,7 @@ impl HirBuilder {
         Ok(HirConstructor {
             parameters,
             body,
+            stores_parameters,
             location: ctor.location.clone().unwrap_or_default(),
         })
     }
@@ -1456,7 +1458,16 @@ impl HirBuilder {
                 // aspect is enforced by the type checker at assignment
                 // sites, and the runtime null-check is emitted by the
                 // existing RequiredAssert operator.
-                self.build_type(inner)
+                //
+                // `integer?`, `number?` and `boolean?` stay optional: their
+                // plain forms reject null, so the type checker must tell
+                // them apart (type-system.md §8).
+                let inner = self.build_type(inner)?;
+                if inner.is_non_nullable_primitive() {
+                    Ok(HirType::Optional(Box::new(inner)))
+                } else {
+                    Ok(inner)
+                }
             }
             Type::None => {
                 // `none` is the type of the `null` literal. It shares

@@ -874,6 +874,22 @@ impl MirBuilder {
                     }
                 }
 
+                // A `list<integer>` stored where a `list<number>` is
+                // expected: the type checker wrapped it in this call, which
+                // copies it into a new list of 8-byte elements.
+                if function_name_opt.as_deref() == Some(crate::typechecker::tast::LIST_WIDEN_F64)
+                    && arguments.len() == 1
+                {
+                    let list_id = self.build_expression(context, &arguments[0])?;
+                    return Ok(self.emit_named_call(
+                        context,
+                        crate::typechecker::tast::LIST_WIDEN_F64,
+                        vec![MirOperand::Value(list_id)],
+                        MirType::I32,
+                        &expression.location,
+                    ));
+                }
+
                 // `list.fill(size, value)` with a `number` or `integer:64`
                 // value builds a list of 8-byte elements
                 // (src/stdlib/list_class.rs).
@@ -1151,7 +1167,7 @@ impl MirBuilder {
                             if !parameters.is_empty() {
                                 let types: Vec<ConcreteType> = parameters
                                     .iter()
-                                    .map(|hir_type| match hir_type {
+                                    .map(|hir_type| match hir_type.without_optional() {
                                         crate::hir::HirType::Any => ConcreteType::Any,
                                         crate::hir::HirType::String => ConcreteType::String,
                                         crate::hir::HirType::Integer => ConcreteType::Integer,
@@ -1532,7 +1548,7 @@ impl MirBuilder {
                                     // Concrete detour via TAST — for our purposes
                                     // (Interface method dispatch), map the HirType
                                     // directly to a MirType via existing helpers.
-                                    let mir_ty = match &m.return_type {
+                                    let mir_ty = match m.return_type.without_optional() {
                                         crate::hir::HirType::Integer => MirType::I32,
                                         crate::hir::HirType::Number => MirType::F64,
                                         crate::hir::HirType::Boolean => MirType::I32,

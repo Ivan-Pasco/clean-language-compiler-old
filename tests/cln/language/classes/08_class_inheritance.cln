@@ -13,13 +13,15 @@ start:
 // Dependencies: none
 // Expected: PASS
 
+// Fixed: the constructors assigned `name = name` from parameters named like
+// the fields; CLASS007 forbids that (semantic-rules.md §CLASS007), and a
+// constructor without a body stores such parameters itself;
+// Dog's constructor calls base(), so its parameters are renamed.
 class Animal
 	string name
 	integer age
 
 	constructor(string name, integer age)
-		name = name
-		age = age
 
 	functions:
 		public:
@@ -32,9 +34,9 @@ class Animal
 class Dog is Animal
 	string breed
 
-	constructor(string name, integer age, string breed)
-		base(name, age)
-		breed = breed
+	constructor(string dogName, integer dogAge, string dogBreed)
+		base(dogName, dogAge)
+		breed = dogBreed
 
 	functions:
 		public:

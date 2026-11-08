@@ -3243,9 +3243,10 @@ fn tool_get_architecture(id: serde_json::Value, args: &serde_json::Value) -> Jso
 
 ### Linear Memory Layout
 ```
-[0 ...... 64KB]        Reserved / stack space
-[64KB .. HEAP_START]   Static data (string pool, globals)
-[HEAP_START .. top]    Dynamic heap (bump allocator)
+[0 .. 4KB]                 Unused (address 0 is the null pointer)
+[4KB .. string end]        String literals
+[pool base .. +64KB]       Transient arena pool (pool base = string end aligned to 8)
+[heap start .. top]        Dynamic heap (bump allocator); the exported __heap_ptr starts here
 ```
 
 ### String Format
