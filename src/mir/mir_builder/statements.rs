@@ -76,23 +76,27 @@ impl MirBuilder {
                     // would scan the wrong offsets. Materialize a re-typed copy of the
                     // initializer so the literal codegen takes the typed-collection path.
                     let propagated;
-                    let init_for_build = if matches!(var_type, ConcreteType::Pairs(_, _))
-                        && matches!(
-                            init_expr.kind,
-                            TastExpressionKind::ObjectLiteral { .. }
-                                | TastExpressionKind::ArrayLiteral { .. }
-                        )
-                        && !matches!(init_expr.expr_type, ConcreteType::Pairs(_, _))
-                    {
-                        propagated = TastExpression {
-                            kind: init_expr.kind.clone(),
-                            expr_type: var_type.clone(),
-                            location: init_expr.location.clone(),
+                    let init_for_build =
+                        if let Some(literal) = Self::list_literal_as(init_expr, var_type) {
+                            propagated = literal;
+                            &propagated
+                        } else if matches!(var_type, ConcreteType::Pairs(_, _))
+                            && matches!(
+                                init_expr.kind,
+                                TastExpressionKind::ObjectLiteral { .. }
+                                    | TastExpressionKind::ArrayLiteral { .. }
+                            )
+                            && !matches!(init_expr.expr_type, ConcreteType::Pairs(_, _))
+                        {
+                            propagated = TastExpression {
+                                kind: init_expr.kind.clone(),
+                                expr_type: var_type.clone(),
+                                location: init_expr.location.clone(),
+                            };
+                            &propagated
+                        } else {
+                            init_expr
                         };
-                        &propagated
-                    } else {
-                        init_expr
-                    };
 
                     // Build initializer expression
                     let init_value_id = self.build_expression(context, init_for_build)?;
@@ -356,6 +360,10 @@ impl MirBuilder {
                 value,
                 location,
             } => {
+                // A list literal is built as the list type of the target
+                // (`xs = [instance]` into a `list<any>` boxes the instance).
+                let retyped = Self::list_literal_as(value, &target.expr_type);
+                let value = retyped.as_ref().unwrap_or(value);
                 // Build value expression
                 let value_id = self.build_expression(context, value)?;
 

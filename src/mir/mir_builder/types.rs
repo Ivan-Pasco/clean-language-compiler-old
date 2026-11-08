@@ -746,6 +746,48 @@ impl MirBuilder {
         result_id
     }
 
+    /// A list literal retyped as the list type `target` it is stored into,
+    /// when `target` holds `any` elements the literal's own type does not:
+    /// `list<any> xs = [instance]` is typed `list<Instance>` by the type
+    /// checker, and built as such its elements were not boxed. Nested list
+    /// literals are retyped as well (`list<list<any>>`).
+    pub(super) fn list_literal_as(
+        expression: &TastExpression,
+        target: &ConcreteType,
+    ) -> Option<TastExpression> {
+        fn holds_any(t: &ConcreteType) -> bool {
+            match t {
+                ConcreteType::Any => true,
+                ConcreteType::Array(inner) => holds_any(inner),
+                _ => false,
+            }
+        }
+        let (
+            TastExpressionKind::ArrayLiteral { elements, .. },
+            ConcreteType::Array(element_target),
+        ) = (&expression.kind, target)
+        else {
+            return None;
+        };
+        if expression.expr_type == *target || !holds_any(target) {
+            return None;
+        }
+        let elements = elements
+            .iter()
+            .map(|element| {
+                Self::list_literal_as(element, element_target).unwrap_or_else(|| element.clone())
+            })
+            .collect();
+        Some(TastExpression {
+            kind: TastExpressionKind::ArrayLiteral {
+                elements,
+                element_type: (**element_target).clone(),
+            },
+            expr_type: target.clone(),
+            location: expression.location.clone(),
+        })
+    }
+
     /// The runtime function converting an `any` to the class or capability
     /// `target_type` (`MirProgram::instance_conversions`), registered on
     /// first use: `__any_to_instance_Name`. A target the program declares no

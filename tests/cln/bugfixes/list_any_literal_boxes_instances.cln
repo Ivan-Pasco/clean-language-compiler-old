@@ -1,0 +1,31 @@
+// Test: bugfixes/list_any_literal_boxes_instances
+// Grammar: list_literal, variable_declaration, assignment
+// Semantic: a list literal stored into a `list<any>` boxes its elements
+// Fixed in: compiler 0.33.177
+// Expected output:
+//   [{"v":7}]
+//   [{"v":7},3,"s"]
+//   [{"v":8}]
+//   7
+//
+// `list<any> xs = [instance]` kept the raw instance pointers (the literal
+// was built as a `list<Box>`), so `json.encode(xs)` failed with an
+// invalid boxed-Any tag; `xs.add(instance)` boxed correctly.
+
+start:
+	Box bo = Box(7)
+	list<any> xs = [bo]
+	printl(json.encode(xs))
+	list<any> ys = [bo, 3, "s"]
+	printl(json.encode(ys))
+	ys = [(Box(8))]
+	printl(json.encode(ys))
+	Box back = xs[0]
+	printl(back.v.toString())
+
+class Box
+	public:
+		integer v
+
+	constructor(integer vParam)
+		v = vParam
