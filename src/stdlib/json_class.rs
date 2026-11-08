@@ -59,9 +59,9 @@ const JSON_PARSE_FAILURE_MESSAGE: &str = "JSON parse failure";
 /// The helper converting a boxed `any` to a typed list or pairs map:
 /// `__any_convert(any_ptr, descriptor, position) -> value`. The descriptor
 /// is a string constant naming the target type, one code per level
-/// (`list<list<integer>>` is `[[i`, `pairs<string, number>` cannot be
-/// written: pairs values are 4 bytes wide); `position` is the index of the
-/// code to convert to.
+/// (`list<list<integer>>` is `[[i`, `pairs<string, number>` is `{n`: a
+/// pairs entry holds the address of an 8-byte cell for a `number` or
+/// `integer:64` value); `position` is the index of the code to convert to.
 pub const ANY_CONVERT: &str = "__any_convert";
 
 /// The helper boxing a typed Clean value into `any`:
@@ -297,6 +297,7 @@ impl JsonClass {
         }
         let runtime = AnyConvertRuntime {
             self_index: codegen.next_function_index(),
+            malloc: malloc_index,
             list_allocate: list_allocate_index,
             pairs_new: pairs_new_index,
             pairs_set: pairs_set_index,
@@ -309,7 +310,7 @@ impl JsonClass {
             ANY_CONVERT,
             &[WasmType::I32, WasmType::I32, WasmType::I32], // any_ptr, descriptor, position
             Some(WasmType::I32),
-            &[WasmType::I32; 10], // 3..=12, see `AnyConvertRuntime`
+            &[WasmType::I32; 11], // 3..=13, see `AnyConvertRuntime`
             runtime.instructions(),
         )?;
         debug_assert_eq!(any_convert_index, runtime.self_index);
@@ -1383,11 +1384,6 @@ impl JsonClass {
     }
 }
 
-/// What the body of [`ANY_CONVERT`] calls.
-///
-/// Locals: 0 any_ptr, 1 descriptor, 2 position (parameters); 3 code,
-/// 4 tag, 5 payload, 6 count, 7 result, 8 i, 9 element code, 10 element,
-/// 11 element tag, 12 slot address.
 /// The body of [`CLN_TO_ANY`].
 ///
 /// Locals: 0 value, 1 descriptor, 2 position (parameters); 3 code, 4 box,
@@ -1723,8 +1719,14 @@ impl ClnToAnyRuntime {
     }
 }
 
+/// What the body of [`ANY_CONVERT`] calls.
+///
+/// Locals: 0 any_ptr, 1 descriptor, 2 position (parameters); 3 code,
+/// 4 tag, 5 payload, 6 count, 7 result, 8 i, 9 element code, 10 element,
+/// 11 element tag, 12 slot address, 13 cell (a pairs entry's 8-byte value).
 struct AnyConvertRuntime {
     self_index: u32,
+    malloc: u32,
     list_allocate: u32,
     pairs_new: u32,
     pairs_set: u32,
@@ -1748,6 +1750,7 @@ impl AnyConvertRuntime {
     const ELEMENT: u32 = 10;
     const ELEMENT_TAG: u32 = 11;
     const SLOT: u32 = 12;
+    const CELL: u32 = 13;
 
     fn word(offset: u64) -> MemArg {
         MemArg {
@@ -2046,8 +2049,6 @@ impl AnyConvertRuntime {
     /// A number element takes a number or an integer (widened); an
     /// `integer:64` element an integer; both take null as 0.
     fn wide_element(&self) -> Vec<Instruction<'static>> {
-        use any_descriptor::*;
-        use wasm_encoder::BlockType;
         let mut v = vec![
             // slot = list + i*8 (the elements start at offset 16)
             Instruction::LocalGet(Self::RESULT),
@@ -2056,6 +2057,17 @@ impl AnyConvertRuntime {
             Instruction::I32Mul,
             Instruction::I32Add,
             Instruction::LocalSet(Self::SLOT),
+        ];
+        v.extend(self.wide_value(Self::SLOT, 16));
+        v
+    }
+
+    /// Store the element in local ELEMENT as the `number` or `integer:64`
+    /// of the element code at `local + offset`.
+    fn wide_value(&self, local: u32, offset: u64) -> Vec<Instruction<'static>> {
+        use any_descriptor::*;
+        use wasm_encoder::BlockType;
+        let mut v = vec![
             // element tag (a null pointer is null)
             Instruction::LocalGet(Self::ELEMENT),
             Instruction::I32Eqz,
@@ -2078,28 +2090,28 @@ impl AnyConvertRuntime {
         let mut number = tag_is(JSON_TAG_NUMBER);
         number.extend([
             Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(local),
             Instruction::LocalGet(Self::ELEMENT),
             Instruction::F64Load(Self::double(4)),
-            Instruction::F64Store(Self::double(16)),
+            Instruction::F64Store(Self::double(offset)),
             Instruction::Else,
         ]);
         number.extend(tag_is(JSON_TAG_INTEGER));
         number.extend([
             Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(local),
             Instruction::LocalGet(Self::ELEMENT),
             Instruction::I64Load(Self::double(4)),
             Instruction::F64ConvertI64S,
-            Instruction::F64Store(Self::double(16)),
+            Instruction::F64Store(Self::double(offset)),
             Instruction::Else,
         ]);
         number.extend(tag_is(JSON_TAG_NULL));
         number.extend([
             Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(local),
             Instruction::F64Const(0.0),
-            Instruction::F64Store(Self::double(16)),
+            Instruction::F64Store(Self::double(offset)),
             Instruction::Else,
         ]);
         number.extend(self.raise(NUMBER));
@@ -2109,18 +2121,18 @@ impl AnyConvertRuntime {
         let mut wide_integer = tag_is(JSON_TAG_INTEGER);
         wide_integer.extend([
             Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(local),
             Instruction::LocalGet(Self::ELEMENT),
             Instruction::I64Load(Self::double(4)),
-            Instruction::I64Store(Self::double(16)),
+            Instruction::I64Store(Self::double(offset)),
             Instruction::Else,
         ]);
         wide_integer.extend(tag_is(JSON_TAG_NULL));
         wide_integer.extend([
             Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(Self::SLOT),
+            Instruction::LocalGet(local),
             Instruction::I64Const(0),
-            Instruction::I64Store(Self::double(16)),
+            Instruction::I64Store(Self::double(offset)),
             Instruction::Else,
         ]);
         wide_integer.extend(self.raise(INTEGER_64));
@@ -2174,12 +2186,39 @@ impl AnyConvertRuntime {
             Instruction::I32Add,
             Instruction::LocalTee(Self::SLOT),
             Instruction::I32Load(Self::word(8)),
+            Instruction::LocalSet(Self::ELEMENT),
+            Instruction::LocalGet(Self::DESCRIPTOR),
+            Instruction::LocalGet(Self::POSITION),
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 5,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::LocalSet(Self::ELEMENT_CODE),
+        ]);
+        // A `number` or `integer:64` value is stored in an 8-byte cell the
+        // entry points to; any other through a nested conversion.
+        body.extend(Self::wide_element_test());
+        body.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(8),
+            Instruction::Call(self.malloc),
+            Instruction::LocalSet(Self::CELL),
+        ]);
+        body.extend(self.wide_value(Self::CELL, 0));
+        body.extend([
+            Instruction::LocalGet(Self::CELL),
+            Instruction::LocalSet(Self::ELEMENT),
+            Instruction::Else,
+            Instruction::LocalGet(Self::ELEMENT),
             Instruction::LocalGet(Self::DESCRIPTOR),
             Instruction::LocalGet(Self::POSITION),
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::Call(self.self_index),
             Instruction::LocalSet(Self::ELEMENT),
+            Instruction::End,
         ]);
         body.extend(Self::return_if_raised());
         body.extend([

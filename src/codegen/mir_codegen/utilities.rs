@@ -506,6 +506,10 @@ impl MirCodeGenerator<'_> {
 
         self.function_return_types
             .insert("math.pow.i64".to_string(), MirType::I64);
+        self.function_return_types
+            .insert("__pairs_cell_load_i64".to_string(), MirType::I64);
+        self.function_return_types
+            .insert("__pairs_cell_load_f64".to_string(), MirType::F64);
 
         // Functions returning I32
         for name in &[

@@ -164,6 +164,9 @@ impl MirBuilder {
                     | ConcreteType::Any
                     | ConcreteType::Class { .. }
                     | ConcreteType::Interface { .. }
+                    | ConcreteType::Number
+                    | ConcreteType::NumberSized { bits: 64 }
+                    | ConcreteType::IntegerSized { bits: 64, .. }
             ),
             _ => false,
         };
@@ -719,8 +722,7 @@ impl MirBuilder {
                     format!("An `any` value cannot be converted to {}", target_type),
                     Some(
                         "An `any` converts to a list or `pairs<string, V>` of integer, number, \
-                         boolean, string, `any`, class, list or pairs elements \
-                         (`pairs` values cannot be `number` or `integer:64`)"
+                         boolean, string, `any`, class, list or pairs elements"
                             .to_string(),
                     ),
                     Some(location.clone()),
@@ -935,36 +937,29 @@ impl MirBuilder {
 
     fn collection_descriptor(target_type: &ConcreteType, any_key: bool) -> Option<String> {
         use crate::stdlib::json_class::any_descriptor as code;
-        fn element(
-            target: &ConcreteType,
-            out: &mut Vec<u8>,
-            in_pairs: bool,
-            any_key: bool,
-        ) -> Option<()> {
+        fn element(target: &ConcreteType, out: &mut Vec<u8>, any_key: bool) -> Option<()> {
             let byte = match target {
                 ConcreteType::Any => code::ANY,
                 ConcreteType::Integer
                 | ConcreteType::IntegerSized {
                     bits: 8 | 16 | 32, ..
                 } => code::INTEGER,
-                // 8-byte values: list elements only (a pairs entry holds
-                // 4 bytes).
-                ConcreteType::IntegerSized { bits: 64, .. } if !in_pairs => code::INTEGER_64,
-                ConcreteType::Number | ConcreteType::NumberSized { bits: 64 } if !in_pairs => {
-                    code::NUMBER
-                }
+                // 8-byte values: a list element holds the value, a pairs
+                // entry the address of its cell (`pairs_store_value`).
+                ConcreteType::IntegerSized { bits: 64, .. } => code::INTEGER_64,
+                ConcreteType::Number | ConcreteType::NumberSized { bits: 64 } => code::NUMBER,
                 ConcreteType::Boolean => code::BOOLEAN,
                 ConcreteType::String => code::STRING,
                 ConcreteType::Class { .. } | ConcreteType::Interface { .. } => code::INSTANCE,
                 ConcreteType::Array(inner) => {
                     out.push(code::LIST);
-                    return element(inner, out, false, any_key);
+                    return element(inner, out, any_key);
                 }
                 ConcreteType::Pairs(key, value)
                     if any_key || matches!(**key, ConcreteType::String) =>
                 {
                     out.push(code::PAIRS);
-                    return element(value, out, true, any_key);
+                    return element(value, out, any_key);
                 }
                 _ => return None,
             };
@@ -972,7 +967,7 @@ impl MirBuilder {
             Some(())
         }
         let mut out = Vec::new();
-        element(target_type, &mut out, false, any_key)?;
+        element(target_type, &mut out, any_key)?;
         String::from_utf8(out).ok()
     }
 

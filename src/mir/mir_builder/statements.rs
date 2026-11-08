@@ -754,6 +754,13 @@ impl MirBuilder {
                                     Some(&value_type),
                                     location,
                                 );
+                                let value_id = self.pairs_store_value(
+                                    context,
+                                    value_id,
+                                    &value.expr_type,
+                                    &value_type,
+                                    location,
+                                );
                                 self.emit_pairs_set(
                                     context, array, array_id, index_id, value_id, location,
                                 )?;
