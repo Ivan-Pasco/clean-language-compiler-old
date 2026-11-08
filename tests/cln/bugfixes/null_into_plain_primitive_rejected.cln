@@ -6,13 +6,13 @@
 // Fixed in: compiler 0.33.178
 // Expected output:
 // Expected error:
-//   null cannot be used as integer
+//   none cannot be used as integer
 //   null_into_plain_primitive_rejected.cln:19:
-//   null cannot be used as number
+//   none cannot be used as number
 //   null_into_plain_primitive_rejected.cln:21:
 //   null_into_plain_primitive_rejected.cln:23:
 //   null_into_plain_primitive_rejected.cln:24:
-//   null cannot be used as boolean
+//   none cannot be used as boolean
 //   null_into_plain_primitive_rejected.cln:29:
 
 start:
@@ -30,3 +30,6 @@ functions:
 
 	number half(number value)
 		return value / 2.0
+
+// Fixed: the messages say `none`, the standard spelling of the empty value
+//   since 0.33.179 (`null` is its alias); the rule itself is unchanged.

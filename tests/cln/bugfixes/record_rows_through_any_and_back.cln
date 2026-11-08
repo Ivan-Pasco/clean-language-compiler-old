@@ -23,9 +23,11 @@ start:
 	string result = "{\"data\":{\"rows\":[{\"id\":3,\"title\":\"C\",\"viewCount\":20},{\"id\":2,\"title\":\"B\",\"viewCount\":5}]}}"
 	list<Post> rows = parseRows(result)
 	printl("rows=" + rows.length().toString())
-	Post last = firstRow(result)
+	// Fixed: firstRow returns a Post?; `!` gives the Post (type-system.md §8).
+	Post last = firstRow(result)!
 	printl("first=" + last.title + " " + last.viewCount.toString())
-	Post nothing = firstRow("{\"data\":{\"rows\":[]}}")
+	// Fixed: was `Post nothing`; only a `T?` holds the none firstRow returns.
+	Post? nothing = firstRow("{\"data\":{\"rows\":[]}}")
 	if nothing == null
 		printl("none=null")
 	printl("any=" + encode(last))

@@ -137,6 +137,10 @@ impl<'a> TypeInference<'a> {
         // Collect errors
         self.errors.extend(solver_result.errors);
 
+        // `T?` is checked; from here on it is stored as `T`.
+        let mut tast_program = tast_program;
+        super::erase_optional::erase_optional(&mut tast_program);
+
         InferenceResult {
             tast: tast_program,
             errors: self.errors,
@@ -1368,11 +1372,92 @@ impl<'a> TypeInference<'a> {
     ) {
         Self::widen_literal_to_declared_type(value, target);
         Self::widen_integer_list_to_number_list(value, target);
+        // The elements of a list literal and the values of a pairs literal
+        // are stored into the target's element slots: `["a", none]` is not a
+        // `list<string>` (type-system.md §8).
+        match (&mut value.kind, target) {
+            (TastExpressionKind::ArrayLiteral { elements, .. }, ConcreteType::Array(element)) => {
+                let element = (**element).clone();
+                for item in elements.iter_mut() {
+                    if item.expr_type == ConcreteType::Null {
+                        let location = item.location.clone();
+                        self.require_assignable(item, &element, &location);
+                    }
+                }
+            }
+            (TastExpressionKind::ObjectLiteral { fields }, ConcreteType::Pairs(_, value_type)) => {
+                let value_type = (**value_type).clone();
+                for field in fields.iter_mut() {
+                    if field.value.expr_type == ConcreteType::Null {
+                        let location = field.value.location.clone();
+                        self.require_assignable(&mut field.value, &value_type, &location);
+                    }
+                }
+            }
+            _ => {}
+        }
+        // The result of a call to a function that returns nothing (`void`)
+        // is none: say so rather than "none cannot be used as ...".
+        if value.expr_type == ConcreteType::Null && !ConstraintSolver::accepts_none(target) {
+            let callee = match &value.kind {
+                TastExpressionKind::FunctionCall { function, .. } => match &function.kind {
+                    TastExpressionKind::Variable { name, .. } => Some(name.clone()),
+                    _ => Some("the function".to_string()),
+                },
+                TastExpressionKind::MethodCall { method_name, .. }
+                | TastExpressionKind::StaticMethodCall { method_name, .. } => {
+                    Some(method_name.clone())
+                }
+                _ => None,
+            };
+            if let Some(callee) = callee {
+                self.errors.push(CompilerError::type_error(
+                    format!(
+                        "`{}` returns nothing (void), so its result cannot be used as {}",
+                        callee,
+                        target.source_name(Some(self.symbol_table))
+                    ),
+                    Some(format!(
+                        "Give `{}` a return type and return a value, or call it as a statement",
+                        callee
+                    )),
+                    Some(location.clone()),
+                ));
+                return;
+            }
+        }
         self.add_constraint(TypeConstraint::Subtype {
             subtype: value.expr_type.clone(),
             supertype: target.clone(),
             location: location.clone(),
         });
+    }
+
+    /// A `T?` may be none, so its members are only reachable through
+    /// `value!` (or a `default` fallback): reading a field, calling a method
+    /// or indexing it directly is an error (04-type-system.md, Nullable
+    /// Types).
+    fn reject_optional_receiver(
+        &self,
+        receiver_type: &ConcreteType,
+        what: &str,
+        location: &SourceLocation,
+    ) -> Result<(), CompilerError> {
+        if let ConcreteType::Optional(inner) = receiver_type {
+            let name = inner.source_name(Some(self.symbol_table));
+            return Err(CompilerError::type_error(
+                format!(
+                    "A value of type {}? may be none, so {} needs it unwrapped",
+                    name, what
+                ),
+                Some(format!(
+                    "Write `value!.…` when it cannot be none, or check `value == none` first and then use `value!`; `value default fallback` gives a {}",
+                    name
+                )),
+                Some(self.located(location)),
+            ));
+        }
+        Ok(())
     }
 
     /// Infer types for a function
@@ -1447,20 +1532,16 @@ impl<'a> TypeInference<'a> {
             );
         }
 
-        // Optional return type inference (spec Step 3):
-        // If the body has any `return none` path AND any non-none return path, the
-        // effective return type is Optional(T) — regardless of what was explicitly declared.
-        // If the function explicitly declared a non-null/non-void return type and the body
-        // has `return none` paths, we wrap in Optional.
-        let has_none_return = Self::block_has_none_return(&tast_body);
-        let has_non_none_return = Self::block_has_non_none_return(&tast_body);
-        let final_return_type = if has_none_return && has_non_none_return {
-            // Mixed paths: return type is Optional(T) where T is the non-none type
-
+        // A function without a declared return type that returns none on
+        // some paths and a value on others returns a `T?`. A declared return
+        // type is the function's type: `return none` from a plain `T` was
+        // reported where it stands (type-system.md §8).
+        let final_return_type = if function.return_type.is_none()
+            && Self::block_has_none_return(&tast_body)
+            && Self::block_has_non_none_return(&tast_body)
+        {
             match &declared_return_type {
-                // If already Optional, keep it
                 ConcreteType::Optional(_) => declared_return_type.clone(),
-                // If declared as Null/Undefined/Unknown, treat inner as Unknown
                 ConcreteType::Null | ConcreteType::Undefined | ConcreteType::Unknown => {
                     ConcreteType::Optional(Box::new(ConcreteType::Unknown))
                 }
@@ -1687,7 +1768,20 @@ impl<'a> TypeInference<'a> {
                         location: init_expr.location().clone(),
                     })
                 } else {
-                    Some(self.infer_expression(init_expr)?)
+                    // The initializer is stored into the field like an
+                    // assignment: none only into a `T?` field
+                    // (type-system.md §8).
+                    // An empty `[]` takes the field's element type.
+                    let mut value = self.infer_expression(init_expr)?;
+                    let empty_list = matches!(
+                        init_expr,
+                        ResolvedHirExpression::Array { elements, .. } if elements.is_empty()
+                    );
+                    if !empty_list {
+                        let location = field.location.clone();
+                        self.require_assignable(&mut value, &field_type, &location);
+                    }
+                    Some(value)
                 }
             } else {
                 None
@@ -1794,6 +1888,16 @@ impl<'a> TypeInference<'a> {
 
             // Type-check the initializer expression
             let initializer = self.infer_expression(&decl.initializer)?;
+
+            // none only initializes a `T?` state variable (type-system.md §8).
+            if initializer.expr_type == ConcreteType::Null
+                && !ConstraintSolver::accepts_none(&state_type)
+            {
+                return Err(ConstraintSolver::none_into_plain(
+                    &state_type.source_name(Some(self.symbol_table)),
+                    &decl.location,
+                ));
+            }
 
             // Verify initializer type matches declared type
             if !initializer.expr_type.is_assignable_to(&state_type) {
@@ -2458,10 +2562,9 @@ impl<'a> TypeInference<'a> {
                 }
 
                 let tast_initializer = if let Some(init_expr) = initializer {
-                    // NOTE: null/none is valid as a variable initializer per type-system.md §5
-                    // "Null can be assigned to any type (nullable types)" — type-system.md row 121
-                    // e.g., `any value = null`, `integer x = null`, `string s = null` are all valid.
-                    // The ConcreteType::Null produced by null literals is assignable to every type.
+                    // none (alias null) initializes only a `T?` or an `any`
+                    // (type-system.md §8); `require_assignable` below reports
+                    // `string s = none`.
 
                     // Special handling for empty literals with explicit type annotations
                     // Check if this is an empty array [] or empty pairs {} literal
@@ -2514,12 +2617,15 @@ impl<'a> TypeInference<'a> {
                         );
                         let init_ty = &tast_init.expr_type;
                         let declared_ty = &declared_type;
+                        // A `T?` initializer is reported by the assignability
+                        // check below (it may be none), not as SEM004.
                         let types_are_concrete = !matches!(
                             init_ty,
                             ConcreteType::Unknown
                                 | ConcreteType::Undefined
                                 | ConcreteType::Any
                                 | ConcreteType::Generic { .. }
+                                | ConcreteType::Optional(_)
                         ) && !matches!(
                             declared_ty,
                             ConcreteType::Unknown
@@ -2575,23 +2681,9 @@ impl<'a> TypeInference<'a> {
                     None
                 };
 
-                // Optional propagation (spec Step 4):
-                // If the initializer comes from a function that returns Optional(T), the
-                // variable must also be Optional(T) so that guarded-use enforcement works.
-                // We only upgrade when the declared type is NOT already Optional.
-                let effective_type = if let Some(ref init_expr) = tast_initializer {
-                    match (&init_expr.expr_type, &declared_type) {
-                        // Initializer is Optional(T) and declaration is a plain T — promote
-                        (ConcreteType::Optional(_), non_optional)
-                            if !matches!(non_optional, ConcreteType::Optional(_)) =>
-                        {
-                            init_expr.expr_type.clone()
-                        }
-                        _ => declared_type.clone(),
-                    }
-                } else {
-                    declared_type
-                };
+                // The variable has its declared type: a `T?` initializer
+                // stored into a plain `T` was reported above.
+                let effective_type = declared_type;
 
                 // Add variable to type environment
                 self.type_env.insert(*symbol_id, effective_type.clone());
@@ -3571,6 +3663,7 @@ impl<'a> TypeInference<'a> {
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
         let tast_array = self.infer_expression(array)?;
         let tast_index = self.infer_expression(index)?;
+        self.reject_optional_receiver(&tast_array.expr_type, "indexing it", location)?;
 
         let element_type =
             self.index_element_type(&tast_array.expr_type, &tast_index.expr_type, location);
@@ -3884,6 +3977,11 @@ impl<'a> TypeInference<'a> {
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
         let tast_receiver = self.infer_expression(receiver)?;
+        self.reject_optional_receiver(
+            &tast_receiver.expr_type,
+            &format!("calling its method '{}'", method),
+            location,
+        )?;
 
         let mut tast_arguments = Vec::new();
         for arg in arguments {
@@ -4196,6 +4294,11 @@ impl<'a> TypeInference<'a> {
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
         let tast_object = self.infer_expression(object)?;
+        self.reject_optional_receiver(
+            &tast_object.expr_type,
+            &format!("reading its field '{}'", field),
+            location,
+        )?;
 
         // NOTE: Resolve the field type AND symbol ID based on the object's actual type
         // This enables inherited field access - we look up the field in the object's class hierarchy
@@ -6305,6 +6408,22 @@ impl<'a> TypeInference<'a> {
 
             // Unresolved types were reported where they arose.
             ConcreteType::Unknown => Ok((ConcreteType::Unknown, SymbolId(0))),
+
+            // A `T?` may be none: its fields are reached through a `T`.
+            ConcreteType::Optional(inner) => {
+                let name = inner.source_name(Some(self.symbol_table));
+                Err(CompilerError::type_error(
+                    format!(
+                        "A value of type {}? may be none, so its field '{}' needs it unwrapped",
+                        name, field_name
+                    ),
+                    Some(format!(
+                        "Read it as `value!.{}`; to change it, unwrap first: `{} plain = value!`",
+                        field_name, name
+                    )),
+                    Some(location.clone()),
+                ))
+            }
 
             _ => Err(CompilerError::semantic_error_with_code(
                 format!(

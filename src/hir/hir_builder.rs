@@ -1451,22 +1451,16 @@ impl HirBuilder {
                 })
             }
             Type::Nullable(inner) => {
-                // Spec 04-type-system.md §"Nullable Types": T? shares the
-                // WASM representation of T (0 is the null sentinel — same
-                // convention `!` (RequiredAssert) already assumes). At the
-                // HIR level we lower to the inner type; the "or null"
-                // aspect is enforced by the type checker at assignment
-                // sites, and the runtime null-check is emitted by the
-                // existing RequiredAssert operator.
-                //
-                // `integer?`, `number?` and `boolean?` stay optional: their
-                // plain forms reject null, so the type checker must tell
-                // them apart (type-system.md §8).
+                // Spec 04-type-system.md §"Nullable Types": only `T?` holds
+                // none; every plain type rejects it (type-system.md §8). The
+                // type checker tells `T?` from `T` by this wrapper. `T?`
+                // shares the WASM representation of `T` (none is the zero
+                // value / null pointer, which `!`, `default` and `== none`
+                // test). `any` already holds none, so `any?` is `any`.
                 let inner = self.build_type(inner)?;
-                if inner.is_non_nullable_primitive() {
-                    Ok(HirType::Optional(Box::new(inner)))
-                } else {
-                    Ok(inner)
+                match inner {
+                    HirType::Any | HirType::Optional(_) | HirType::Inferred { .. } => Ok(inner),
+                    inner => Ok(HirType::Optional(Box::new(inner))),
                 }
             }
             Type::None => {

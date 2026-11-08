@@ -1,0 +1,60 @@
+// Test: bugfixes/none_into_plain_types_rejected
+// Grammar: variable_declaration, assignment, return_statement, function_call,
+//   list_literal, pairs_literal, class_field
+// Semantic: type-system.md §8 — only `T?` (and `any`) holds none: a plain
+//   string, list, pairs map or class type rejects it at a declaration, an
+//   assignment, an argument, a return, a field initializer and as an
+//   element of a typed list or pairs literal. A void call's result is none
+//   and the message says the function returns nothing.
+// Fixed in: compiler 0.33.179
+// Expected output:
+// Expected error:
+//   none cannot be used as string: a plain string is never none
+//   none_into_plain_types_rejected.cln:32:
+//   none cannot be used as list<integer>
+//   none_into_plain_types_rejected.cln:33:
+//   none cannot be used as pairs<string, integer>
+//   none_into_plain_types_rejected.cln:34:
+//   none cannot be used as Box
+//   none_into_plain_types_rejected.cln:35:
+//   none_into_plain_types_rejected.cln:36:
+//   none_into_plain_types_rejected.cln:37:
+//   none_into_plain_types_rejected.cln:38:
+//   none_into_plain_types_rejected.cln:39:
+//   `noop` returns nothing (void), so its result cannot be used as string
+//   none_into_plain_types_rejected.cln:40:
+//   none cannot be used as matrix<integer>
+//   none_into_plain_types_rejected.cln:41:
+//   none_into_plain_types_rejected.cln:46:
+//   none_into_plain_types_rejected.cln:54:
+
+start:
+	string s = none
+	list<integer> xs = null
+	pairs<string, integer> m = none
+	Box b = none
+	s = none
+	list<string> names = ["a", none]
+	pairs<string, string> labels = {"a": none}
+	print(take(none))
+	string r = noop()
+	matrix<integer> grid = none
+	string? fine = none
+	any alsoFine = none
+	list<string?> holes = ["a", none]
+
+class Box
+	string label = none
+
+	constructor()
+		label = "b"
+
+functions:
+	Box make()
+		return none
+
+	string take(string v)
+		return v
+
+	void noop()
+		print("x")

@@ -1,0 +1,78 @@
+// Test: bugfixes/none_in_optional_types
+// Grammar: type (nullable "?"), variable_type, default_expression,
+//   postfix_expression ("!")
+// Semantic: type-system.md §8 — every `T?` holds none: string, list, pairs
+//   and class types as well as integer/number/boolean. `x == none`,
+//   `x is none`, `x default y` and `x!` work on each of them, and a
+//   `ClassName? name = ...` declaration parses.
+// Fixed in: compiler 0.33.179
+// Expected output:
+//   true
+//   true
+//   fallback
+//   false
+//   true
+//   hello
+//   5
+//   true
+//   false
+//   3
+//   3
+//   true
+//   true
+//   made
+//   made
+//   true
+//   1
+//   true
+//   given
+
+start:
+	string? s = none
+	print(s == none)
+	print(s is none)
+	print(s default "fallback")
+	s = "hello"
+	print(s == none)
+	print(s != none)
+	print(s default "fallback")
+	print(s!.length())
+	list<integer>? xs = none
+	print(xs == none)
+	xs = [1, 2, 3]
+	print(xs == none)
+	print(xs!.length())
+	list<integer> plain = xs default []
+	print(plain.length())
+	Box? b = find(0)
+	print(b == none)
+	print(b is none)
+	b = find(1)
+	print(b!.label)
+	Box got = b default Box()
+	print(got.label)
+	pairs<string, integer>? m = none
+	print(m == none)
+	m = {"a": 1}
+	print(m!["a"])
+	string? named = nameOf(false)
+	print(named == none)
+	print(nameOf(true)!)
+
+class Box
+	public:
+		string label = "none-yet"
+
+	constructor()
+		label = "made"
+
+functions:
+	Box? find(integer key)
+		if key == 0
+			return none
+		return Box()
+
+	string? nameOf(boolean give)
+		if give
+			return "given"
+		return none

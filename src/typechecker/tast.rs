@@ -764,6 +764,52 @@ impl ConcreteType {
     }
 }
 
+impl ConcreteType {
+    /// The type as it is written in Clean source (`list<string>`, `User?`),
+    /// naming classes through `symbol_table`, for diagnostics.
+    pub fn source_name(&self, symbol_table: Option<&crate::resolver::GlobalSymbolTable>) -> String {
+        let name = |id: &SymbolId| {
+            symbol_table
+                .and_then(|st| st.get_symbol(*id).map(|s| s.name.clone()))
+                .unwrap_or_else(|| format!("#{}", id.0))
+        };
+        let args = |type_args: &[ConcreteType]| {
+            if type_args.is_empty() {
+                String::new()
+            } else {
+                let list = type_args
+                    .iter()
+                    .map(|t| t.source_name(symbol_table))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("<{}>", list)
+            }
+        };
+        match self {
+            ConcreteType::Null => "none".to_string(),
+            ConcreteType::Array(element) => format!("list<{}>", element.source_name(symbol_table)),
+            ConcreteType::Matrix(element) => {
+                format!("matrix<{}>", element.source_name(symbol_table))
+            }
+            ConcreteType::Pairs(key, value) => format!(
+                "pairs<{}, {}>",
+                key.source_name(symbol_table),
+                value.source_name(symbol_table)
+            ),
+            ConcreteType::Class {
+                symbol_id,
+                type_args,
+            }
+            | ConcreteType::Interface {
+                symbol_id,
+                type_args,
+            } => format!("{}{}", name(symbol_id), args(type_args)),
+            ConcreteType::Optional(inner) => format!("{}?", inner.source_name(symbol_table)),
+            other => other.to_string(),
+        }
+    }
+}
+
 impl std::fmt::Display for ConcreteType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -779,7 +825,7 @@ impl std::fmt::Display for ConcreteType {
             ConcreteType::NumberSized { bits } => write!(f, "number:{}", bits),
             ConcreteType::String => write!(f, "string"),
             ConcreteType::Boolean => write!(f, "boolean"),
-            ConcreteType::Null => write!(f, "null"),
+            ConcreteType::Null => write!(f, "none"),
             ConcreteType::Undefined => write!(f, "undefined"),
             ConcreteType::Array(element_type) => write!(f, "Array<{}>", element_type),
             ConcreteType::Matrix(element_type) => write!(f, "Matrix<{}>", element_type),

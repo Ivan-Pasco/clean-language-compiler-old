@@ -137,11 +137,10 @@ pub enum HirType {
     /// Supports bracket notation with string keys (object access) or integer indices (array access)
     Any,
 
-    /// `integer?`, `number?`, `boolean?` (and their sized forms): the only
-    /// types the type checker distinguishes from their plain form, because
-    /// plain integer, number and boolean reject null (type-system.md §8).
-    /// Other `T?` types lower to `T`. Same WASM representation as the inner
-    /// type.
+    /// `T?`: a `T` or none. Every plain type rejects none
+    /// (type-system.md §8), so the type checker keeps this wrapper to tell
+    /// `T?` from `T`. Same WASM representation as the inner type. `any?`
+    /// is `any`.
     Optional(Box<HirType>),
 }
 
@@ -152,27 +151,6 @@ impl HirType {
             HirType::Optional(inner) => inner.without_optional(),
             other => other,
         }
-    }
-
-    /// `integer`, `number` (any width) or `boolean`: the types that reject
-    /// null unless written `T?`.
-    pub fn is_non_nullable_primitive(&self) -> bool {
-        matches!(
-            self,
-            HirType::Integer
-                | HirType::Number
-                | HirType::Boolean
-                | HirType::Integer8
-                | HirType::Integer8u
-                | HirType::Integer16
-                | HirType::Integer16u
-                | HirType::Integer32
-                | HirType::Integer32u
-                | HirType::Integer64
-                | HirType::Integer64u
-                | HirType::Number32
-                | HirType::Number64
-        )
     }
 }
 

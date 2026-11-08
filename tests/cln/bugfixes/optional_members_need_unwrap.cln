@@ -1,0 +1,44 @@
+// Test: bugfixes/optional_members_need_unwrap
+// Grammar: postfix_expression ("!"), member_access, index_expression
+// Semantic: 04-type-system.md Nullable Types — a `T?` may be none, so it is
+//   not a plain `T`: storing it into a `T`, reading a field, calling a
+//   method or indexing it needs `value!` (or a `default` fallback).
+// Fixed in: compiler 0.33.179
+// Expected output:
+// Expected error:
+//   A value of type Box? may be none and cannot be used as Box
+//   optional_members_need_unwrap.cln:21:
+//   A value of type Box? may be none, so reading its field 'label' needs it unwrapped
+//   optional_members_need_unwrap.cln:38:
+//   A value of type string? may be none, so calling its method 'length' needs it unwrapped
+//   optional_members_need_unwrap.cln:41:
+//   A value of type list<integer>? may be none, so indexing it needs it unwrapped
+//   optional_members_need_unwrap.cln:44:
+
+start:
+	Box? maybe = find(1)
+	print(maybe!.label)
+	Box plain = maybe
+	print(plain.label)
+
+class Box
+	public:
+		string label = "x"
+
+	constructor()
+		label = "made"
+
+functions:
+	Box? find(integer key)
+		if key == 0
+			return none
+		return Box()
+
+	string fieldOf(Box? box)
+		return box.label
+
+	integer lengthOf(string? text)
+		return text.length()
+
+	integer firstOf(list<integer>? xs)
+		return xs[0]

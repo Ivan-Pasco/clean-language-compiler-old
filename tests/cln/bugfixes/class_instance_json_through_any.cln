@@ -37,7 +37,9 @@ start:
 	mixed.add(Tag("x"))
 	mixed.add(7)
 	mixed.add("s")
-	Post nothing = lookup(false)
+	// Fixed: was `Post nothing`; lookup returns a Post? and only a `T?` holds
+	// none (type-system.md §8).
+	Post? nothing = lookup(false)
 	mixed.add(nothing)
 	printl("mixed=" + json.encode(mixed))
 	Post s = Featured("S", 1, "gold")
@@ -51,13 +53,15 @@ start:
 	list<any> tags = []
 	tags.add(Tag("x"))
 	printl("literal=" + encode({ who: Tag("z"), list: tags }))
-	Post back = unwrap(wrap(p))
+	// Fixed: unwrap returns a Post?; `!` gives the Post it holds.
+	Post back = unwrap(wrap(p))!
 	printl("back=" + back.title + " " + back.views.toString())
 	printl("found=" + encode(lookup(true)))
 	printl("missing=" + encode(lookup(false)))
 	any boxedNull = lookup(false)
 	printl("isnull=" + (boxedNull == null).toString())
-	Post gone = unwrap(boxedNull)
+	// Fixed: was `Post gone`; the none unwrap returns needs a Post?.
+	Post? gone = unwrap(boxedNull)
 	if gone == null
 		printl("gone=null")
 	printl("after=" + json.encode(p))

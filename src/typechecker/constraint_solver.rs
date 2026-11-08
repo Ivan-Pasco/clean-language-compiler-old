@@ -454,9 +454,10 @@ impl<'a> ConstraintSolver<'a> {
             (ConcreteType::Null, ConcreteType::Undefined)
             | (ConcreteType::Undefined, ConcreteType::Null) => Ok(()),
 
-            // Null can unify with ANY type — per type-system.md §5 row 121:
-            // "Every type accepts null. There is no non-nullable type annotation."
-            // This includes Integer, Number, Boolean, String, Array, Class, etc.
+            // none unifies with any type here: unification relates the two
+            // sides of comparisons and branches (`x == none`). Whether a slot
+            // may *hold* none is directional and checked in `check_subtype`
+            // (only `T?` and `any` do, type-system.md §8).
             (ConcreteType::Null, _) | (_, ConcreteType::Null) => Ok(()),
 
             // Unknown type unifies with anything (error recovery)
@@ -522,25 +523,41 @@ impl<'a> ConstraintSolver<'a> {
                 self.unify(&from, &to, location)
             }
 
-            // Plain `integer`, `number` and `boolean` are never null; only
-            // their explicitly optional forms (`integer?`) are
+            // Only `T?` (and `any`) hold none; every plain type rejects it
             // (type-system.md §8).
-            (ConcreteType::Null, target) if Self::is_non_nullable_primitive(target) => {
+            (ConcreteType::Null, target) if !Self::accepts_none(target) => Err(
+                Self::none_into_plain(&target.source_name(self.symbol_table), location),
+            ),
+
+            // A `T?` may be none, so it is not a plain `T`: `value!` or
+            // `value default fallback` gives the `T` (04-type-system.md,
+            // Nullable Types).
+            (ConcreteType::Optional(inner), target)
+                if !matches!(
+                    target,
+                    ConcreteType::Optional(_)
+                        | ConcreteType::Unknown
+                        | ConcreteType::Any
+                        | ConcreteType::Undefined
+                        | ConcreteType::Union(_)
+                ) =>
+            {
                 Err(CompilerError::type_error(
                     format!(
-                        "null cannot be used as {}: a plain {} is never null",
-                        target, target
+                        "A value of type {}? may be none and cannot be used as {}",
+                        inner.source_name(self.symbol_table),
+                        target.source_name(self.symbol_table)
                     ),
-                    Some(format!(
-                        "Declare the type as `{}?` to allow null, or use a value",
-                        target
-                    )),
+                    Some(
+                        "Use `value!` when it cannot be none, `value default fallback` to \
+                         supply one, or declare the target as optional"
+                            .to_string(),
+                    ),
                     Some(location.clone()),
                 ))
             }
 
-            // Error recovery, the dynamic type, and null (other types accept
-            // null).
+            // Error recovery, the dynamic type, and none into a `T?`.
             (ConcreteType::Unknown | ConcreteType::Any | ConcreteType::Null, _)
             | (_, ConcreteType::Unknown | ConcreteType::Any) => Ok(()),
 
@@ -637,16 +654,33 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
-    /// `integer`, `number` (any width) or `boolean` — the types that reject
-    /// null unless written as `T?`.
-    fn is_non_nullable_primitive(t: &ConcreteType) -> bool {
-        matches!(
-            t,
-            ConcreteType::Integer
-                | ConcreteType::IntegerSized { .. }
-                | ConcreteType::Number
-                | ConcreteType::NumberSized { .. }
-                | ConcreteType::Boolean
+    /// Whether a slot of type `t` may hold none: `T?`, `any`, and types not
+    /// known yet. Every plain type rejects none (type-system.md §8).
+    pub(crate) fn accepts_none(t: &ConcreteType) -> bool {
+        match t {
+            ConcreteType::Optional(_)
+            | ConcreteType::Any
+            | ConcreteType::Unknown
+            | ConcreteType::Null
+            | ConcreteType::Undefined
+            | ConcreteType::Generic { .. } => true,
+            ConcreteType::Union(members) => members.iter().any(Self::accepts_none),
+            _ => false,
+        }
+    }
+
+    /// The error for none stored into a plain type.
+    pub(crate) fn none_into_plain(target: &str, location: &SourceLocation) -> CompilerError {
+        CompilerError::type_error(
+            format!(
+                "none cannot be used as {}: a plain {} is never none",
+                target, target
+            ),
+            Some(format!(
+                "Declare the type as `{}?` to allow none, or use a value",
+                target
+            )),
+            Some(location.clone()),
         )
     }
 
