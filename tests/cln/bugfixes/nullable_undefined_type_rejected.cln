@@ -1,0 +1,12 @@
+// Test: bugfixes/nullable_undefined_type_rejected
+// Grammar: type = base_type , [ "?" ]
+// Semantic: SEM007 — the class named in a `T?` type must exist, as it must
+//   in a plain `T`
+// Fixed in: compiler 0.33.179
+// Expected output:
+// Expected error:
+//   Undefined type 'Missing'
+
+start:
+	Missing? x = none
+	print(x == none)

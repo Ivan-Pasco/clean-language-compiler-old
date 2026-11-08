@@ -1589,7 +1589,9 @@ impl HirValidator {
             }
             HirType::Named { .. } => {}
 
-            HirType::List(element_type) | HirType::Matrix(element_type) => {
+            HirType::List(element_type)
+            | HirType::Matrix(element_type)
+            | HirType::Optional(element_type) => {
                 Self::validate_type(context, element_type, location);
             }
 
