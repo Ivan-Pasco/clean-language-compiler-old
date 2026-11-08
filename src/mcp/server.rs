@@ -2080,23 +2080,24 @@ repeat
 	print(line)
 ```
 
-## Null Handling
+## None Handling
 ```
-// Null-coalescing with 'default' operator
-string username = userData.name default "Guest"
-integer count = config.maxItems default 100
+// `none` is the empty value (`null` is an accepted alias). Only a `T?`
+// holds it; every plain type (integer, string, list, class...) rejects it.
+string? nickname = none
+User? found = findUser(42)
 
-// Chain defaults
+// Test for none
+if found == none
+	print("no user")
+
+// Fallback with 'default' (the result is a plain T)
+string username = nickname default "Guest"
 string value = primary default secondary default "fallback"
 
-// Required assertion — fails at runtime if null
-string name = maybeNull!
-
-// Safe navigation with ?.
-string city = user?.address?.city default "Unknown"
-
-// Null-coalescing operator ??
-string display = name ?? "Anonymous"
+// Required assertion — `!` traps at runtime if the value is none
+User user = found!
+print(found!.name)              // members of a T? are reached through !
 ```
 
 ## String Operations
@@ -2377,17 +2378,17 @@ tests:
 		POST "/api/users" json(name: "Alice", email: "alice@test.com")
 		status = 201
 		json.name = "Alice"
-		json.id != null
+		json.id != none
 
 	test "rejects missing email"
 		POST "/api/users" json(name: "Alice")
 		status = 400
-		json.error != null
+		json.error != none
 
 	test "with auth header"
 		GET "/api/profile" header("Authorization": "Bearer abc123")
 		status = 200
-		json.email != null
+		json.email != none
 
 	test "updates user"
 		PUT "/api/users/1" json(name: "Bob")
@@ -2406,7 +2407,7 @@ tests:
 
 **HTTP methods**: `GET` `POST` `PUT` `DELETE` `PATCH` (contextual — not global reserved words)
 **Assertion operators**: `=` `!=` `<` `>` `<=` `>=`
-**Special assertion**: `json.field != null` — field must be present and non-null
+**Special assertion**: `json.field != none` — field must be present and not none (`null` is an accepted alias)
 **Body syntax**: `json(key: value, key2: value2)` — inline JSON object
 **Header syntax**: `header("Key": "Value")` — single header per request
 
@@ -3108,11 +3109,11 @@ class Auth
 
             string? login(string email, string password)
                 User? candidate = User.data.byEmail(email)
-                if candidate == null
-                    return null
+                if candidate == none
+                    return none
                 User u = candidate!
                 if not u.verifiesPassword(password)
-                    return null
+                    return none
                 return Sessions.issue(u.id!)
 
             void logout(string sessionToken)
@@ -3128,7 +3129,7 @@ endpoints:
 
     POST /api/login
         string? token = Auth.login(req.body.email, req.body.password)
-        if token == null
+        if token == none
             return res.status(401).json({ error: "invalid credentials" })
         return json({ token: token! })
 ```

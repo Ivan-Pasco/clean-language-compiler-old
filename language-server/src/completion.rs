@@ -380,7 +380,7 @@ impl CompletionProvider {
                 kind: Some(CompletionItemKind::SNIPPET),
                 detail: Some("HTTP endpoint test case".to_string()),
                 documentation: Some(Documentation::String(
-                    "Declare an HTTP endpoint test. Requires a live server (`cleen serve`).\n\nAssertions: `status = 200`, `json.field = value`, `json.field != null`".to_string(),
+                    "Declare an HTTP endpoint test. Requires a live server (`cleen serve`).\n\nAssertions: `status = 200`, `json.field = value`, `json.field != none`".to_string(),
                 )),
                 insert_text: Some(
                     "test \"${1:test name}\"\n\t\t${2|GET,POST,PUT,DELETE,PATCH|} \"${3:/path}\"\n\t\tstatus = ${4:200}".to_string(),

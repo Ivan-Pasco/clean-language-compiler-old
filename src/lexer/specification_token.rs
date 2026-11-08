@@ -356,7 +356,7 @@ impl Keywords {
             "guard" => Some(TokenKind::Guard),
             "reset" => Some(TokenKind::Reset),
             "screen" => Some(TokenKind::Screen),
-            "none" | "null" => Some(TokenKind::None), // null-support — spec uses "null", implementation also accepts "none"
+            "none" | "null" => Some(TokenKind::None), // `none` is the standard spelling, `null` its alias (03-lexical-structure.md)
             "default" => Some(TokenKind::Default), // null-coalescing operator (spec grammar.ebnf line 232)
             "break" => Some(TokenKind::Break),
             "continue" => Some(TokenKind::Continue),
