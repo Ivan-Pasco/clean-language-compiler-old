@@ -1,0 +1,108 @@
+// Test: bugfixes/class_field_chain_reads_and_writes
+// Grammar: property_access, method_call, assignment (field target), class_type
+// Semantic: a chain of class-typed fields reads, writes and calls methods on the innermost instance at any depth
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   u42
+//   true
+//   7
+//   2.5
+//   123456789012
+//   2
+//   deep
+//   u42/7
+//   x
+//   9
+//   deep2
+//   5
+//   x
+//   u42 u42
+//   deep2
+//
+// Companion to plugin_type_class_field_chain: the same chained field
+// accesses on classes declared in source, covering every field type, writes
+// through the chain, method calls on the chained value, a three-level chain
+// and chains inside methods and functions.
+
+start:
+	Request r = Request()
+	printl(r.auth.userId)
+	printl(r.auth.loggedIn)
+	printl(r.auth.count)
+	printl(r.auth.score)
+	printl(r.auth.big)
+	printl(r.auth.tags.length())
+	printl(r.auth.inner.name)
+	printl(r.auth.describe())
+	r.auth.userId = "x"
+	r.auth.count = 9
+	r.auth.inner.name = "deep2"
+	printl(r.auth.userId)
+	printl(r.auth.count)
+	printl(r.auth.inner.name)
+	printl(r.auth.inner.depth())
+	printl(firstUser(r))
+	Request fresh = Request()
+	printl(fresh.who())
+	Holder h = Holder()
+	h.req = r
+	printl(h.req.auth.inner.name)
+
+class Inner
+	public:
+		string name
+
+	constructor()
+		name = "deep"
+
+	functions:
+		public:
+			integer depth()
+				return name.length()
+
+class RequestAuth
+	public:
+		string userId
+		boolean loggedIn
+		integer count
+		number score
+		integer:64 big
+		list<string> tags
+		Inner inner
+
+	constructor()
+		userId = "u42"
+		loggedIn = true
+		count = 7
+		score = 2.5
+		big = 123456789012
+		tags = ["a", "b"]
+		inner = Inner()
+
+	functions:
+		public:
+			string describe()
+				return userId + "/" + count.toString()
+
+class Request
+	public:
+		RequestAuth auth
+
+	constructor()
+		auth = RequestAuth()
+
+	functions:
+		public:
+			string who()
+				return auth.userId + " " + this.auth.userId
+
+class Holder
+	public:
+		Request req
+
+	constructor()
+		req = Request()
+
+functions:
+	string firstUser(Request q)
+		return q.auth.userId
