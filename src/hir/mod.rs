@@ -238,6 +238,11 @@ pub struct HirField {
 pub struct HirConstructor {
     pub parameters: Vec<HirParameter>,
     pub body: HirBlock,
+    /// The source constructor has no body, so its parameters name the
+    /// fields they are stored in (`constructor(integer x, integer y)`); the
+    /// HIR builder generated those stores as the body. Such parameters may
+    /// share a field's name (semantic-rules.md §CLASS007).
+    pub stores_parameters: bool,
     pub location: SourceLocation,
 }
 

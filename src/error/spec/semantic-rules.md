@@ -604,6 +604,26 @@ functions:
 ### CLASS006 — `always:` Expressions Must Be Boolean
 Every expression inside an `always:` block must evaluate to `boolean`.
 
+### CLASS007 — Parameter Must Not Share a Field's Name
+A parameter of a method, or of a constructor with a body, must not have the same name as a field of its class, including fields inherited from a parent class. Inside the class a field is used by its plain name, so such a parameter would hide the field.
+
+A constructor **without a body** is the exception: its parameters name the fields they set. `constructor(integer x, integer y)` stores its two arguments in the fields `x` and `y`.
+
+**Example (fails — CLASS007):**
+```clean
+class Account
+    integer balance
+
+    constructor(integer balance)
+        print("opening")            // a body: `balance` would hide the field
+
+    functions:
+        void deposit(integer balance)   // a method parameter named like the field
+            print(balance)
+```
+
+**Fix:** give the parameter a different name (`constructor(integer startBalance)` + `balance = startBalance`), or drop the constructor body when it only stores its parameters.
+
 **Build modes:**
 - `ensure` and `always:` checks are included in debug builds and stripped in release builds (`--release` flag).
 - Use `--contracts` to force contract checks in release builds.

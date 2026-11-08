@@ -1467,6 +1467,7 @@ impl NameResolver {
                 statements: Vec::new(),
                 location: class.location.clone(),
             },
+            stores_parameters: false,
             location: class.location.clone(),
         });
         prologue.append(&mut constructor.body.statements);

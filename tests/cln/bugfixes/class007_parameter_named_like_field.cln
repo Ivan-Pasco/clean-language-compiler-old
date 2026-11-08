@@ -1,0 +1,39 @@
+// Test: bugfixes/class007_parameter_named_like_field
+// Grammar: class_declaration, constructor, function_declaration
+// Semantic: CLASS007 — a method parameter, or a parameter of a constructor
+//   with a body, must not have the name of a field of the class, inherited
+//   fields included.
+// Fixed in: compiler 0.33.178
+// Expected output:
+// Expected error:
+//   error[CLASS007]: Parameter 'balance' of 'constructor' has the name of a field of class 'Account'
+//   class007_parameter_named_like_field.cln:24:
+//   error[CLASS007]: Parameter 'balance' of 'deposit' has the name of a field of class 'Account'
+//   class007_parameter_named_like_field.cln:29:
+//   error[CLASS007]: Parameter 'owner' of 'rename' has the name of a field of class 'Savings'
+//   class007_parameter_named_like_field.cln:38:
+
+start:
+	Account a = Account(5)
+	a.deposit(3)
+
+class Account
+	integer balance
+	string owner
+
+	constructor(integer balance)
+		print("opening")
+
+	functions:
+		public:
+			void deposit(integer balance)
+				print(balance)
+
+class Savings is Account
+	number rate
+
+	constructor(number rate)
+
+	functions:
+		void rename(string owner)
+			print(owner)

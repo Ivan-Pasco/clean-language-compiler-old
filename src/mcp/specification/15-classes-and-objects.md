@@ -98,7 +98,7 @@ Clean Language uses implicit context for accessing class fields:
 - ✅ `radius = radiusParam` (works in child classes too)
 - ✅ `this.render()` (explicit self-method call)
 - ✅ `this.name` (explicit field access — equivalent to just `name`)
-- ❌ Parameter names cannot match field names (compiler enforced)
+- ❌ Parameter names cannot match field names (compiler enforced, CLASS007) — except in a constructor without a body, whose parameters name the fields they set: `constructor(integer x, integer y)` stores both arguments
 
 Fields can be accessed directly by name (implicit `this`) or with explicit `this.field`. The `this` keyword is available inside all class methods and refers to the current instance. Explicit `this` is useful only for self-method calls.
 
@@ -246,8 +246,8 @@ class User
             return "User: {name}, Age: {age}"
         
         // Static method - no field access
-        boolean isValidAge(integer age)
-            return age >= 0 and age <= 150
+        boolean isValidAge(integer years)
+            return years >= 0 and years <= 150
 
 // Usage
 start:

@@ -35,11 +35,13 @@ start:
 // was glued to the end of the previous line. Spec requires methods called
 // from outside the class to sit in the class's `public:` block (SEM005,
 // semantic-rules.md §Visibility) and each top-level item on its own line.
+// Fixed: the constructor assigned `name = name` from parameters named like
+// the fields; CLASS007 forbids that (semantic-rules.md §CLASS007), and a
+// constructor without a body stores such parameters itself.
 class Calculator
 	string name
 
 	constructor(string name)
-		name = name
 
 	functions:
 		public:

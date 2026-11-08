@@ -116,6 +116,7 @@ Emitted during HIR validation of class definitions.
 | CLASS004 | `MissingConstructor` | Class is instantiated but has no constructor | Error | semantic-rules.md §CLASS004 |
 | CLASS005 | `EnsureAfterLogic` | `ensure` statement appears after non-contract logic in a function body | Error | semantic-rules.md §CLASS005 |
 | CLASS006 | `AlwaysConditionNotBoolean` | Expression inside an `always:` invariant block is not boolean | Error | semantic-rules.md §CLASS006 |
+| CLASS007 | `ParameterShadowsField` | A method parameter, or a parameter of a constructor with a body, has the name of a field of its class | Error | semantic-rules.md §CLASS007 |
 
 ### Index Access Codes (IDX)
 
@@ -235,7 +236,7 @@ The following code numbers are reserved for future use. Do not assign them witho
 | SEM011–SEM099 | Reserved |
 | SCOPE006–SCOPE099 | Reserved |
 | FUNC013–FUNC099 | Reserved |
-| CLASS007–CLASS099 | Reserved |
+| CLASS008–CLASS099 | Reserved |
 | IDX005–IDX099 | Reserved |
 | STATE006–STATE099 | Reserved |
 | IMPORT005–IMPORT099 | Reserved |
