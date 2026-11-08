@@ -543,7 +543,19 @@ impl MirBuilder {
                                 .rev()
                                 .find_map(|scope| scope.get(name).copied());
 
-                            if let Some(orig_id) = original_value_id {
+                            if let Some((orig_id, binding)) = original_value_id
+                                .and_then(|id| Self::later_binding(context, id).map(|b| (id, b)))
+                            {
+                                // A `later` variable: the value lives in its
+                                // task's result cell.
+                                self.emit_later_write(
+                                    context,
+                                    orig_id,
+                                    &binding,
+                                    final_value_id,
+                                    location,
+                                );
+                            } else if let Some(orig_id) = original_value_id {
                                 // This is a re-assignment - emit Copy instruction to update the variable
                                 // Only if the value IDs are different (avoid self-copy)
                                 if orig_id != final_value_id {
@@ -1949,82 +1961,40 @@ impl MirBuilder {
                 expression,
                 location,
             } => {
-                // Create a value ID for the result variable.
-                let variable_value_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
-                let mir_type = self.convert_concrete_type(&expression.expr_type);
-                self.register_temp_local(
-                    context,
-                    variable_value_id,
-                    mir_type.clone(),
-                    location.clone(),
-                );
-
-                // If the expression is a simple function call, emit AsyncAwaitCall.
-                // Otherwise fall back to synchronous AsyncAssign.
-                if let TastExpressionKind::FunctionCall {
-                    function: func_expr,
-                    arguments,
-                    ..
-                } = &expression.kind
-                {
-                    if let TastExpressionKind::Variable { name: fn_name, .. } = &func_expr.kind {
-                        let mut arg_values = Vec::new();
-                        for arg in arguments {
-                            let arg_id = self.build_expression(context, arg)?;
-                            // Auto-serialize class instances to JSON strings.
-                            // `later` calls target bridge functions which only accept primitives;
-                            // a class argument must become its JSON representation.
-                            let final_id = if matches!(arg.expr_type, ConcreteType::Class { .. }) {
-                                self.emit_class_json_text(
-                                    context,
-                                    arg_id,
-                                    &arg.expr_type,
-                                    &arg.location,
-                                )
-                            } else {
-                                arg_id
-                            };
-                            arg_values.push(MirOperand::Value(final_id));
-                        }
-                        let await_instruction = MirInstruction {
-                            dest: Some(variable_value_id),
-                            operation: MirOperation::AsyncAwaitCall {
-                                fn_name: fn_name.clone(),
-                                arguments: arg_values,
-                            },
-                            location: location.clone(),
-                        };
-                        self.add_instruction(context, await_instruction);
-                    } else {
-                        // Complex callee — synchronous fallback.
-                        tracing::warn!(
-                            "later: expression callee is not a simple function name — executing synchronously"
-                        );
-                        let value_id = self.build_expression(context, expression)?;
-                        let async_instruction = MirInstruction {
+                // `later name = start f(...)` (19-async.md): a call is
+                // deferred to a task and `name` is bound to its environment
+                // block; reading `name` awaits the task (`async_tasks.rs`).
+                // Any other expression has its value already, so the binding
+                // is a copy.
+                let variable_value_id = if Self::is_deferrable_call(expression) {
+                    let (env, binding) =
+                        self.emit_async_task(context, expression, true, location)?;
+                    context.later_bindings.insert(env, binding);
+                    env
+                } else {
+                    let variable_value_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    let mir_type = self.convert_concrete_type(&expression.expr_type);
+                    self.register_temp_local(
+                        context,
+                        variable_value_id,
+                        mir_type,
+                        location.clone(),
+                    );
+                    let value_id = self.build_expression(context, expression)?;
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
                             dest: Some(variable_value_id),
                             operation: MirOperation::AsyncAssign {
                                 source: MirOperand::Value(value_id),
                             },
                             location: location.clone(),
-                        };
-                        self.add_instruction(context, async_instruction);
-                    }
-                } else {
-                    // Not a function call — synchronous fallback.
-                    let value_id = self.build_expression(context, expression)?;
-                    let async_instruction = MirInstruction {
-                        dest: Some(variable_value_id),
-                        operation: MirOperation::AsyncAssign {
-                            source: MirOperand::Value(value_id),
                         },
-                        location: location.clone(),
-                    };
-                    self.add_instruction(context, async_instruction);
-                }
+                    );
+                    variable_value_id
+                };
 
-                // Add variable to current scope.
                 if let Some(current_scope) = context.scope_stack.last_mut() {
                     current_scope.insert(variable.clone(), variable_value_id);
                 }
@@ -2034,47 +2004,14 @@ impl MirBuilder {
                 expression,
                 location,
             } => {
-                // Attempt to extract a simple function call: background someFunc(a, b)
-                // If the expression is a function call with a known name, emit AsyncFireCall.
-                // Otherwise, fall back to evaluating the expression synchronously and discarding the result.
-                if let TastExpressionKind::FunctionCall {
-                    function: func_expr,
-                    arguments,
-                    ..
-                } = &expression.kind
-                {
-                    if let TastExpressionKind::Variable { name: fn_name, .. } = &func_expr.kind {
-                        // Simple named function call — emit _async_fire.
-                        let mut arg_values = Vec::new();
-                        for arg in arguments {
-                            let arg_id = self.build_expression(context, arg)?;
-                            arg_values.push(MirOperand::Value(arg_id));
-                        }
-                        let instruction = MirInstruction {
-                            dest: None,
-                            operation: MirOperation::AsyncFireCall {
-                                fn_name: fn_name.clone(),
-                                arguments: arg_values,
-                            },
-                            location: location.clone(),
-                        };
-                        self.add_instruction(context, instruction);
-                    } else {
-                        // Complex callee — synchronous fallback.
-                        tracing::warn!(
-                            "background: expression callee is not a simple function name — executing synchronously"
-                        );
-                        // Evaluate the expression; the MIR value is stored to a local.
-                        // Dead-code elimination will remove the unused local if it has no side effects.
-                        let _ = self.build_expression(context, expression)?;
-                    }
+                // `background f(...)` (19-async.md): a call is deferred to a
+                // task whose result is discarded (`async_tasks.rs`). Any
+                // other expression has no call to defer and is evaluated
+                // where it stands.
+                if Self::is_deferrable_call(expression) {
+                    self.emit_async_task(context, expression, false, location)?;
                 } else {
-                    // Not a function call — evaluate and drop result synchronously.
-                    tracing::warn!(
-                        "background: expression is not a function call — executing synchronously"
-                    );
-                    // Evaluate the expression; the MIR value is stored to a local.
-                    let _ = self.build_expression(context, expression)?;
+                    self.build_expression(context, expression)?;
                 }
             }
 

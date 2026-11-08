@@ -214,7 +214,7 @@ pub enum TastStatement {
         location: SourceLocation,
     },
     /// Background statement (fire-and-forget async call).
-    /// Lowers to a `_async_fire` host bridge call in codegen.
+    /// Its call is deferred to a task (`mir_builder/async_tasks.rs`).
     Background {
         expression: TastExpression,
         location: SourceLocation,

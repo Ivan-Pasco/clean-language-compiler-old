@@ -395,10 +395,10 @@ pub(crate) fn is_reachability_gated_import(field: &str) -> bool {
         return true;
     }
 
-    // Async host bridge: only emitted when the program contains
-    // `background` or `later` statements that lower to AsyncFireCall /
-    // AsyncAwaitCall MIR operations.
-    if field == "_async_fire" || field == "_async_await" {
+    // Async host bridge: only emitted when the program contains a
+    // `background` or `later` statement whose expression is a call
+    // (`mir_builder/async_tasks.rs`).
+    if field == "_async_fire_slot" || field == "_async_await_slot" {
         return true;
     }
 

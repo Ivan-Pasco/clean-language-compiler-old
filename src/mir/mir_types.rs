@@ -320,24 +320,10 @@ pub enum MirOperation {
         incoming: Vec<(BasicBlockId, MirOperand)>,
     },
 
-    /// Async assignment for later variables
+    /// A `later` binding whose expression is not a call: the value is
+    /// already computed, so the binding is a copy. (A call is deferred to a
+    /// task — `mir_builder/async_tasks.rs`.)
     AsyncAssign { source: MirOperand },
-
-    /// Fire-and-forget async call via `_async_fire` host bridge.
-    /// `fn_name` is the Clean Language function name string.
-    /// `arguments` are the WASM-level argument values to JSON-serialize.
-    AsyncFireCall {
-        fn_name: String,
-        arguments: Vec<MirOperand>,
-    },
-
-    /// Await-and-assign via `_async_await` host bridge.
-    /// `fn_name` is the Clean Language function name string.
-    /// `arguments` are the WASM-level argument values.
-    AsyncAwaitCall {
-        fn_name: String,
-        arguments: Vec<MirOperand>,
-    },
 
     /// After a call that may raise: when an `error(...)` raised inside an
     /// `onError` region is unwinding (the pending flag is set), leave the

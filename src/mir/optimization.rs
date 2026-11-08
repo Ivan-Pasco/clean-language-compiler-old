@@ -476,16 +476,6 @@ impl DeadCodeEliminationPass {
             MirOperation::AsyncAssign { source } => {
                 self.mark_operand_live(source, function);
             }
-            MirOperation::AsyncFireCall { arguments, .. } => {
-                for arg in arguments {
-                    self.mark_operand_live(arg, function);
-                }
-            }
-            MirOperation::AsyncAwaitCall { arguments, .. } => {
-                for arg in arguments {
-                    self.mark_operand_live(arg, function);
-                }
-            }
             MirOperation::BoxAny { value, .. } => {
                 self.mark_operand_live(value, function);
             }
@@ -622,7 +612,7 @@ impl OptimizationPass for DeadCodeEliminationPass {
 /// Whether executing `operation` can have an effect beyond producing its
 /// destination value, so it must stay even when that value is unused: memory
 /// and global writes, every kind of call (including dynamic capability
-/// dispatch and the async host calls), and a short-circuit `and`/`or` whose
+/// dispatch), and a short-circuit `and`/`or` whose
 /// right-hand side contains one of those.
 fn has_side_effects(operation: &MirOperation) -> bool {
     match operation {
@@ -630,8 +620,6 @@ fn has_side_effects(operation: &MirOperation) -> bool {
         | MirOperation::GlobalStore { .. }
         | MirOperation::Call { .. }
         | MirOperation::CallCapability { .. }
-        | MirOperation::AsyncFireCall { .. }
-        | MirOperation::AsyncAwaitCall { .. }
         | MirOperation::ErrorCheck { .. } => true,
         MirOperation::LogicalShortCircuit {
             rhs_instructions, ..

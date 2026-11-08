@@ -78,6 +78,15 @@ impl MirBuilder {
                 // Look up variable in scope stack
                 for scope in context.scope_stack.iter().rev() {
                     if let Some(&value_id) = scope.get(name) {
+                        // Reading a `later` variable awaits its task.
+                        if let Some(binding) = Self::later_binding(context, value_id) {
+                            return Ok(self.emit_later_read(
+                                context,
+                                value_id,
+                                &binding,
+                                &expression.location,
+                            ));
+                        }
                         return Ok(value_id);
                     }
                 }

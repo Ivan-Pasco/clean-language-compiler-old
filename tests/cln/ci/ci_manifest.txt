@@ -57,7 +57,7 @@ tier3|t3_math_functions.cln|PASS|PENDING_RUNTIME|active
 tier3|t3_nested_function_calls.cln|PASS|PENDING_RUNTIME|active
 #
 # Tier 4 — Known Incomplete (tracked, not blocking CI)
-# t4_async_basic: COMPILE_PASS — spec form `later name = start f()`; execution needs a host with _async_await
+# t4_async_basic: COMPILE_PASS — spec form `later name = start f()`; runs on any host with _async_fire_slot / _async_await_slot (wasmtime_runner included)
 # t4_import_module: COMPILE_FAIL — module resolution not implemented
 #   error: Module 'MathUtils' not found
 # t4_generic_list: COMPILE_PASS — iterate over list compiles; execution requires runtime

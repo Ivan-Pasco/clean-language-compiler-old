@@ -1718,22 +1718,6 @@ impl MirCodeGenerator<'_> {
                                 worklist.push(*callee_sym);
                             }
                         }
-                        MirOperation::AsyncFireCall { fn_name, .. } => {
-                            names.insert("_async_fire".to_string());
-                            if let Some(s) = name_to_symbol.get(fn_name.as_str()) {
-                                if visited.insert(*s) {
-                                    worklist.push(*s);
-                                }
-                            }
-                        }
-                        MirOperation::AsyncAwaitCall { fn_name, .. } => {
-                            names.insert("_async_await".to_string());
-                            if let Some(s) = name_to_symbol.get(fn_name.as_str()) {
-                                if visited.insert(*s) {
-                                    worklist.push(*s);
-                                }
-                            }
-                        }
                         MirOperation::BinaryOp {
                             op:
                                 MirBinaryOp::Eq
@@ -1906,8 +1890,6 @@ impl MirCodeGenerator<'_> {
                         MirOperation::Copy {
                             source: source @ MirOperand::Function(_),
                         } => push_operand(source, out),
-                        MirOperation::AsyncFireCall { fn_name, .. }
-                        | MirOperation::AsyncAwaitCall { fn_name, .. } => out.push(fn_name.clone()),
                         _ => {}
                     }
                 };

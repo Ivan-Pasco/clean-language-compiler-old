@@ -1,0 +1,40 @@
+// Test: bugfixes/async_background_error_does_not_propagate
+// Grammar: background_statement, later_assignment (§4.9)
+// Semantic: 19-async.md "Background Task Error Handling" — an error raised in a
+//   background task does not reach the code that started it; the task stops
+//   silently unless an onError is attached where the task is started. A
+//   `later` binding whose task failed reads the zero value of its type.
+// Fixed in: compiler 0.33.178
+// Expected output:
+//   start ends
+//   task a starts
+//   task b runs
+//   0
+//   7
+//   after failed later
+
+start:
+	background failing("a")
+	background report("b")
+	background checkLater()
+	print("start ends")
+
+functions:
+	void failing(string label)
+		print("task " + label + " starts")
+		error("boom")
+		print("not reached")
+
+	void report(string label)
+		print("task " + label + " runs")
+
+	integer risky(integer x)
+		error("risky failed")
+		return x
+
+	void checkLater()
+		later n = start risky(1)
+		print(n.toString())
+		later m = start risky(2) onError 7
+		print(m.toString())
+		print("after failed later")
