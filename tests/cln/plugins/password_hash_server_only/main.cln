@@ -1,0 +1,10 @@
+// Password hashing is server-only (function-registry.toml hosts = ["server"]
+// for _crypto_hash_password / _crypto_verify_password). The browser has no
+// bcrypt, so a browser build that calls either bridge must fail at compile
+// time with BRIDGE-HOST-MISMATCH instead of shipping a different hash format.
+
+start:
+	string hash = _crypto_hash_password("secret")
+	boolean ok = _crypto_verify_password("secret", hash)
+	printl(hash)
+	printl(ok.toString())

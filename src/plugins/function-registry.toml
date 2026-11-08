@@ -1421,7 +1421,7 @@ module      = "env"
 params      = ["string"]
 returns     = "ptr"
 aliases     = ["crypto.hash_password"]
-hosts       = ["all"]
+hosts       = ["server"]
 description = "Hash a plaintext password using bcrypt; returns hash string or empty on failure"
 
 [[functions]]
@@ -1432,7 +1432,7 @@ module      = "env"
 params      = ["string", "string"]
 returns     = "boolean"
 aliases     = ["crypto.verify_password"]
-hosts       = ["all"]
+hosts       = ["server"]
 description = "Verify plaintext password against bcrypt hash; returns 1 if valid, 0 if invalid"
 
 [[functions]]
