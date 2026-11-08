@@ -397,6 +397,18 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
+                // `==`, `!=` and `is` on an optional primitive compare its
+                // value, and none only equals none.
+                if let Some(result) = self.build_optional_comparison(
+                    context,
+                    operator,
+                    left,
+                    right,
+                    &expression.location,
+                )? {
+                    return Ok(result);
+                }
+
                 // `value default fallback` (06-expressions.md §Default Operator):
                 // the fallback is evaluated only when `value` is null. Only
                 // null coalesces — `0`, `false` and `""` are values.
@@ -779,6 +791,20 @@ impl MirBuilder {
             TastExpressionKind::UnaryOperation { operator, operand } => {
                 let operand_id = self.build_expression(context, operand)?;
 
+                // `value!` of an optional primitive halts on none and reads
+                // the boxed value.
+                if matches!(operator, UnaryOperator::Required) {
+                    if let Some(inner) = operand.expr_type.optional_primitive() {
+                        let inner = inner.clone();
+                        return Ok(self.build_optional_required(
+                            context,
+                            operand_id,
+                            &inner,
+                            &expression.location,
+                        ));
+                    }
+                }
+
                 // `value!` checks for null; a plain integer, number or boolean
                 // is never null, and `0` / `false` must pass the check.
                 if matches!(operator, UnaryOperator::Required)
@@ -872,6 +898,19 @@ impl MirBuilder {
                         };
                         return self.build_expression(context, &method_call);
                     }
+                }
+
+                // A value stored where an optional primitive is expected:
+                // the type checker wrapped it in this call, which boxes it.
+                if function_name_opt.as_deref() == Some(crate::typechecker::tast::OPTIONAL_BOX)
+                    && arguments.len() == 1
+                {
+                    return self.build_optional_box(
+                        context,
+                        &arguments[0],
+                        &expression.expr_type,
+                        &expression.location,
+                    );
                 }
 
                 // A `list<integer>` stored where a `list<number>` is
@@ -1168,6 +1207,11 @@ impl MirBuilder {
                                 let types: Vec<ConcreteType> = parameters
                                     .iter()
                                     .map(|hir_type| match hir_type.without_optional() {
+                                        // A boxed optional primitive is not
+                                        // unboxed into.
+                                        _ if hir_type.is_optional_primitive() => {
+                                            ConcreteType::Unknown
+                                        }
                                         crate::hir::HirType::Any => ConcreteType::Any,
                                         crate::hir::HirType::String => ConcreteType::String,
                                         crate::hir::HirType::Integer => ConcreteType::Integer,
@@ -1549,6 +1593,7 @@ impl MirBuilder {
                                     // (Interface method dispatch), map the HirType
                                     // directly to a MirType via existing helpers.
                                     let mir_ty = match m.return_type.without_optional() {
+                                        _ if m.return_type.is_optional_primitive() => MirType::Any,
                                         crate::hir::HirType::Integer => MirType::I32,
                                         crate::hir::HirType::Number => MirType::F64,
                                         crate::hir::HirType::Boolean => MirType::I32,
@@ -1945,12 +1990,15 @@ impl MirBuilder {
                         // short-circuit before the type-conversion match.
                         // Fixes prompt baf3ccc5.
                         "contains" | "indexOf"
-                            if matches!(**element_type, ConcreteType::String) =>
+                            if matches!(**element_type, ConcreteType::String)
+                                || element_type.optional_primitive().is_some() =>
                         {
-                            let alias = if method_name == "contains" {
-                                "list.contains.string"
-                            } else {
-                                "list.indexOf.string"
+                            let boxed = element_type.optional_primitive().is_some();
+                            let alias = match (method_name.as_str(), boxed) {
+                                ("contains", false) => "list.contains.string",
+                                ("contains", true) => "list.contains.boxed",
+                                (_, false) => "list.indexOf.string",
+                                (_, true) => "list.indexOf.boxed",
                             };
                             let str_symbol = match self.symbol_table.lookup_symbol(alias) {
                                 Some(sym) => sym,
@@ -2920,12 +2968,15 @@ impl MirBuilder {
                         // identical strings allocated at different offsets.
                         // Fixes prompt baf3ccc5.
                         (ConcreteType::Array(element_type), "contains" | "indexOf")
-                            if matches!(**element_type, ConcreteType::String) =>
+                            if matches!(**element_type, ConcreteType::String)
+                                || element_type.optional_primitive().is_some() =>
                         {
-                            let alias = if method_name == "contains" {
-                                "list.contains.string"
-                            } else {
-                                "list.indexOf.string"
+                            let boxed = element_type.optional_primitive().is_some();
+                            let alias = match (method_name.as_str(), boxed) {
+                                ("contains", false) => "list.contains.string",
+                                ("contains", true) => "list.contains.boxed",
+                                (_, false) => "list.indexOf.string",
+                                (_, true) => "list.indexOf.boxed",
                             };
                             let str_symbol = self.builtin_symbol(alias, &expression.location)?;
                             let mut args = vec![MirOperand::Value(receiver_id)];

@@ -44,6 +44,12 @@ impl MirBuilder {
         source_type: &ConcreteType,
         location: &SourceLocation,
     ) -> ValueId {
+        // An optional primitive is its box; none becomes a null box, so an
+        // `any` never holds a 0 pointer from one.
+        if source_type.optional_primitive().is_some() {
+            return self.emit_optional_json_value(context, value_id, location);
+        }
+
         // A value that is already a boxed `any` at the MIR level (a JSON
         // bridge result typed from its context by the checker) is not boxed
         // a second time.
@@ -85,7 +91,8 @@ impl MirBuilder {
             // Elements that are already boxed (`list<any>`) or that box
             // through their class's JSON builder.
             ConcreteType::Array(elem_type)
-                if matches!(**elem_type, ConcreteType::Any | ConcreteType::Class { .. }) =>
+                if matches!(**elem_type, ConcreteType::Any | ConcreteType::Class { .. })
+                    || elem_type.optional_primitive().is_some() =>
             {
                 let operation = self.json_list_tree_call(context, value_id, elem_type);
                 let result_id = ValueId(context.function.next_value_id);
@@ -157,17 +164,20 @@ impl MirBuilder {
                     ConcreteType::Array(_) | ConcreteType::Pairs(_, _)
                 )
             }
-            ConcreteType::Pairs(_, value) => matches!(
-                **value,
-                ConcreteType::Array(_)
-                    | ConcreteType::Pairs(_, _)
-                    | ConcreteType::Any
-                    | ConcreteType::Class { .. }
-                    | ConcreteType::Interface { .. }
-                    | ConcreteType::Number
-                    | ConcreteType::NumberSized { bits: 64 }
-                    | ConcreteType::IntegerSized { bits: 64, .. }
-            ),
+            ConcreteType::Pairs(_, value) => {
+                value.optional_primitive().is_some()
+                    || matches!(
+                        **value,
+                        ConcreteType::Array(_)
+                            | ConcreteType::Pairs(_, _)
+                            | ConcreteType::Any
+                            | ConcreteType::Class { .. }
+                            | ConcreteType::Interface { .. }
+                            | ConcreteType::Number
+                            | ConcreteType::NumberSized { bits: 64 }
+                            | ConcreteType::IntegerSized { bits: 64, .. }
+                    )
+            }
             _ => false,
         };
         if nested {
@@ -363,6 +373,9 @@ impl MirBuilder {
             ConcreteType::Any => value_id,
             other => self.emit_box_any(context, value_id, other, location),
         };
+        if value_type.optional_primitive().is_some() {
+            return boxed;
+        }
         let primitive = matches!(
             value_type,
             ConcreteType::String
@@ -429,6 +442,21 @@ impl MirBuilder {
                 return value_id;
             }
             return self.emit_box_any(context, value_id, &branch.expr_type, &branch.location);
+        }
+        // An optional primitive branch of a plain result (`n default 0`)
+        // gives its value; a plain branch of an optional primitive result
+        // is boxed.
+        if branch.expr_type.optional_primitive().is_some() && result_type.is_primitive_value() {
+            return self.emit_optional_unbox(context, value_id, result_type, &branch.location);
+        }
+        if result_type.optional_primitive().is_some() {
+            return self.convert_into_optional(
+                context,
+                value_id,
+                &branch.expr_type,
+                result_type,
+                &branch.location,
+            );
         }
         let target = self.convert_concrete_type(result_type);
         let source = context
@@ -674,6 +702,12 @@ impl MirBuilder {
         target_type: &ConcreteType,
         location: &SourceLocation,
     ) -> ValueId {
+        // An optional primitive target: the type checker wraps every value
+        // stored into one in `__optional_box`, which converted an `any`
+        // already (`convert_into_optional`).
+        if target_type.optional_primitive().is_some() {
+            return value_id;
+        }
         // A class target: the instance the box holds (the header tells an
         // instance from a JSON object), or null. An instance of a class the
         // target does not accept raises an error.
@@ -940,6 +974,17 @@ impl MirBuilder {
         fn element(target: &ConcreteType, out: &mut Vec<u8>, any_key: bool) -> Option<()> {
             let byte = match target {
                 ConcreteType::Any => code::ANY,
+                ConcreteType::Optional(inner) => match &**inner {
+                    ConcreteType::IntegerSized { bits: 64, .. } => code::OPTIONAL_INTEGER_64,
+                    ConcreteType::Integer | ConcreteType::IntegerSized { .. } => {
+                        code::OPTIONAL_INTEGER
+                    }
+                    ConcreteType::Number | ConcreteType::NumberSized { .. } => {
+                        code::OPTIONAL_NUMBER
+                    }
+                    ConcreteType::Boolean => code::OPTIONAL_BOOLEAN,
+                    _ => return None,
+                },
                 ConcreteType::Integer
                 | ConcreteType::IntegerSized {
                     bits: 8 | 16 | 32, ..

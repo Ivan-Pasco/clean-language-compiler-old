@@ -1,0 +1,71 @@
+// Test: bugfixes/optional_primitive_collections_and_any
+// Grammar: list_type, pairs_type, list_literal, object_literal,
+//   type (nullable "?")
+// Semantic: type-system.md §8 — the elements of `list<integer?>`,
+//   `list<number?>` and `pairs<string, integer?>` keep 0 apart from none;
+//   an `any` stored into an optional primitive converts (JSON null is
+//   none, `"12"` is 12), and an optional primitive stored into an `any`
+//   is its value or none (null). json.encode writes none as null.
+// Fixed in: compiler 0.33.180
+// Expected output:
+//   3
+//   true
+//   false
+//   0
+//   true
+//   9
+//   [1,null,0,null,9]
+//   [1.5,null]
+//   false
+//   true
+//   {"a":0,"b":null}
+//   3
+//   true
+//   false
+//   false
+//   true
+//   0
+//   12
+//   0
+//   null
+//   true
+//
+// Regression: list and pairs elements, `any` values and JSON nulls of an
+// optional primitive used 0 as none, so 0 and none were the same value.
+
+start:
+	list<integer?> xs = [1, none, 0]
+	print(xs.length())
+	print(xs.get(1) == none)
+	print(xs.get(2) == none)
+	print(xs.get(2)!)
+	xs.add(none)
+	xs.add(9)
+	print(xs.get(3) == none)
+	print(xs.get(4)!)
+	printl(json.encode(xs))
+	list<number?> ys = [1.5, none]
+	printl(json.encode(ys))
+	pairs<string, integer?> m = {"a": 0, "b": none}
+	print(m.get("a") == none)
+	print(m.get("b") == none)
+	printl(json.encode(m))
+	list<integer?> zs = json.textToData("[1,null,0]")
+	print(zs.length())
+	print(zs.get(1) == none)
+	print(zs.get(2) == none)
+	any row = json.textToData("{\"x\":0,\"y\":null,\"k\":\"12\"}")
+	integer? x = json.get(row, "x")
+	integer? y = json.get(row, "y")
+	integer? k = json.get(row, "k")
+	print(x == none)
+	print(y == none)
+	print(x!)
+	print(k!)
+	integer? zero = 0
+	any boxed = zero
+	printl(json.encode(boxed))
+	integer? nothing = none
+	any empty = nothing
+	printl(json.encode(empty))
+	print(empty == none)

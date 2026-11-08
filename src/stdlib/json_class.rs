@@ -92,6 +92,24 @@ pub mod any_descriptor {
     pub const LIST: u8 = b'[';
     /// `pairs<string, V>`, followed by the code of `V`: a JSON object.
     pub const PAIRS: u8 = b'{';
+    /// `integer?` (and the sized forms up to 32 bits): an optional primitive
+    /// is a pointer to a boxed value, 0 for none (type-system.md §8). In
+    /// `__any_convert` null converts to none and an integer to its box; in
+    /// `__cln_to_any` the box is the value (none becomes a null box).
+    pub const OPTIONAL_INTEGER: u8 = b'I';
+    /// `integer:64?`, as [`OPTIONAL_INTEGER`].
+    pub const OPTIONAL_INTEGER_64: u8 = b'L';
+    /// `number?` and `number:32?`: a number or an integer box.
+    pub const OPTIONAL_NUMBER: u8 = b'N';
+    /// `boolean?`: a boolean box.
+    pub const OPTIONAL_BOOLEAN: u8 = b'B';
+    /// The optional primitive codes.
+    pub const OPTIONALS: [u8; 4] = [
+        OPTIONAL_INTEGER,
+        OPTIONAL_INTEGER_64,
+        OPTIONAL_NUMBER,
+        OPTIONAL_BOOLEAN,
+    ];
 }
 
 /// The error `__any_convert` raises when the value does not have the
@@ -99,9 +117,9 @@ pub mod any_descriptor {
 fn conversion_message(code: u8) -> &'static str {
     use any_descriptor::*;
     match code {
-        INTEGER | INTEGER_64 => "value is not an integer",
-        NUMBER => "value is not a number",
-        BOOLEAN => "value is not a boolean",
+        INTEGER | INTEGER_64 | OPTIONAL_INTEGER | OPTIONAL_INTEGER_64 => "value is not an integer",
+        NUMBER | OPTIONAL_NUMBER => "value is not a number",
+        BOOLEAN | OPTIONAL_BOOLEAN => "value is not a boolean",
         STRING => "value is not a string",
         INSTANCE => "value is not a class instance",
         LIST => NOT_A_LIST_MESSAGE,
@@ -289,6 +307,10 @@ impl JsonClass {
             any_descriptor::INSTANCE,
             any_descriptor::LIST,
             any_descriptor::PAIRS,
+            any_descriptor::OPTIONAL_INTEGER,
+            any_descriptor::OPTIONAL_INTEGER_64,
+            any_descriptor::OPTIONAL_NUMBER,
+            any_descriptor::OPTIONAL_BOOLEAN,
         ] {
             messages.push((
                 code,
@@ -1663,6 +1685,10 @@ impl ClnToAnyRuntime {
         // `any`: the box itself (0 is null).
         let mut any = self.null_when_zero();
         any.extend([Instruction::LocalGet(Self::VALUE), Instruction::Return]);
+        // An optional primitive is its box, as an `any` is.
+        for code in OPTIONALS {
+            v.extend(when(Self::CODE, code, any.clone()));
+        }
         v.extend(when(Self::CODE, ANY, any));
         // integer: the i64 sign extension of the value.
         v.extend(when(
@@ -1828,6 +1854,24 @@ impl AnyConvertRuntime {
         ]
     }
 
+    /// `return any` (the box) when the tag is one of `tags`, otherwise raise.
+    fn optional_scalar(&self, code: u8, tags: &[i32]) -> Vec<Instruction<'static>> {
+        let mut body = Vec::new();
+        for tag in tags {
+            body.extend([
+                Instruction::LocalGet(Self::TAG),
+                Instruction::I32Const(*tag),
+                Instruction::I32Eq,
+                Instruction::If(wasm_encoder::BlockType::Empty),
+                Instruction::LocalGet(Self::ANY),
+                Instruction::Return,
+                Instruction::End,
+            ]);
+        }
+        body.extend(self.raise(code));
+        Self::when_code(Self::CODE, code, body)
+    }
+
     /// `return payload` when the tag is `tag`, otherwise raise.
     fn scalar(&self, code: u8, tag: i32) -> Vec<Instruction<'static>> {
         let mut body = vec![
@@ -1901,6 +1945,13 @@ impl AnyConvertRuntime {
         v.extend(self.scalar(INTEGER, JSON_TAG_INTEGER));
         v.extend(self.scalar(BOOLEAN, JSON_TAG_BOOLEAN));
         v.extend(self.scalar(STRING, JSON_TAG_STRING));
+        // An optional primitive is the box of a value of its type (null
+        // returned none above). A `number?` takes an integer box too: reading
+        // it converts the integer.
+        v.extend(self.optional_scalar(OPTIONAL_INTEGER, &[JSON_TAG_INTEGER]));
+        v.extend(self.optional_scalar(OPTIONAL_INTEGER_64, &[JSON_TAG_INTEGER]));
+        v.extend(self.optional_scalar(OPTIONAL_NUMBER, &[JSON_TAG_NUMBER, JSON_TAG_INTEGER]));
+        v.extend(self.optional_scalar(OPTIONAL_BOOLEAN, &[JSON_TAG_BOOLEAN]));
         // A class instance (an object whose payload has an object header).
         let mut instance = vec![
             Instruction::LocalGet(Self::TAG),

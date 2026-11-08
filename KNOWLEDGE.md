@@ -313,3 +313,25 @@ After `finalize_module` assembles the module, `codegen::module_dce` drops every 
 - A new AST node with a location must be visited by `Statement`/`Expression::for_each_location_mut`.
 
 **Regression:** `tests/test_plugin_block_diagnostic_locations.rs`, `tests/cln/bugfixes/plugin_*_names_user_line.cln` (#27).
+
+## 24. Optional Primitives Are Boxed
+
+**What:** `integer?`, `number?`, `boolean?` and their sized forms (`integer:8?` … `integer:64u?`, `number:32?`) are a pointer to an immutable 12-byte boxed-any block (tag 1 + i64 for every integer width, tag 3 + f64 for both number widths, tag 2 for booleans), `0` for none (`foundation/spec/type-system.md` §8 "Representation", `MEMORY_MODEL.md` "Optional primitive"). Their MIR type is `MirType::Any`. `erase_optional` keeps their `ConcreteType::Optional` wrapper so the MIR builder can tell them apart; every other `T?` is erased to `T` (none = null pointer).
+
+Design choice (#38): the alternatives were a sentinel bit pattern (i64::MIN for `integer?`, a NaN payload for `number?`, 2 for `boolean?`) and a hidden companion flag. A sentinel steals a value and has no room at all in `integer:8?` (every bit pattern is a value); a flag doubles every slot, parameter, return value, field and element and changes every function signature. The box costs one 12-byte allocation per store of a plain value, but holds every value, is 4 bytes everywhere, and is already the layout of `any`, so `T?` → `any` is the same pointer and a JSON `null` maps to none.
+
+Where it is handled:
+- **Into a `T?`:** `TypeInference::require_assignable` wraps every value stored into an optional primitive (declaration, assignment, argument, return, field, list/pairs literal element, both branches of a conditional) in `__optional_box` (`tast::OPTIONAL_BOX`); the subtype check uses the value's own type. `MirBuilder::convert_into_optional` (`mir_builder/optional.rs`) lowers it to `MirOperation::OptionalConvert`: `Box` for a plain value, `FromAny` for an `any` or an optional of another type (null pointer or null box → 0, otherwise the `any` conversion to `T`, then a box), nothing for none or a value of the same type. Codegen: `mir_codegen/optional.rs`.
+- **Out of a `T?`:** `!` (`build_optional_required`: tag test → `Required` trap → `Unbox`), `default` (`emit_non_null_test` reads the tag; `coerce_on_error_branch` unboxes the value arm into a plain result and boxes a plain arm into an optional result), `==` / `!=` / `is` (`build_optional_comparison`: none equals only none, values compare as values, two optionals compare presence, then value).
+- **Declarations:** an optional variable takes the box pointer with a Copy, never through `emit_unbox_any` (which returns optional targets unchanged) — otherwise `integer? d = c` shared `c`'s local.
+- **JSON / any:** `emit_box_any` turns an optional into its box or a fresh null box (`OptionalConversion::ToJson`), so hosts never get a 0 pointer. Class JSON trees treat an optional field like an `any` field (`__json_try_decode_v2`), and a list of optionals like `list<any>`. Descriptor codes `I`, `L`, `N`, `B` (`json_class::any_descriptor`) carry optional elements through `__cln_to_any` (the box is the value) and `__any_convert` (null → none, a value of the right tag → its box, otherwise the conversion error).
+- **Lists:** `contains`, `indexOf`, `lastIndexOf`, `sort` and a `.unique` `add` of `list<T?>` use the `list.*.boxed` variants (`list_class.rs`: `__list_box_eq`, `__list_box_cmp`; none orders first), which compare values, not box addresses.
+- **Escapes:** `is_arena_alloc_type` counts optional primitives as heap pointers, so a loop that assigns one to an outer variable gets no per-iteration scope pop.
+
+**Watch for:**
+- A new place that stores a value into a typed slot without `require_assignable` must call `convert_into_optional`, or a raw integer is stored where a pointer is expected.
+- Code that strips `Optional` with `HirType::without_optional` must check `is_optional_primitive` first: the inner type's MIR type (i32/f64) is not the box pointer.
+- Never write into a box: copies share it.
+- `x!` must stay in the program when its value is unused: `has_side_effects` keeps `Required`.
+
+**Regression:** `tests/cln/bugfixes/optional_primitive_zero_is_a_value.cln`, `optional_primitive_params_returns_fields.cln`, `optional_sized_primitive_holds_every_value.cln`, `optional_primitive_collections_and_any.cln`, `optional_primitive_list_search_sort_onerror.cln`; `tests/test_required_halts_on_none.rs` (`!` halts only on none).

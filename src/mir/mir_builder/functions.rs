@@ -640,16 +640,20 @@ impl MirBuilder {
                     },
                     arguments: vec![MirOperand::Value(val_vid)],
                 },
-                // An `any` field already holds a boxed value (0 → null).
-                ConcreteType::Any => MirOperation::Call {
-                    function: MirOperand::NamedFunction {
-                        name: "__json_try_decode_v2".to_string(),
-                        symbol_id: SymbolId(0),
-                    },
-                    arguments: vec![MirOperand::Value(val_vid)],
-                },
+                // An `any` field already holds a boxed value, and an
+                // optional primitive field its box (0 → null).
+                t if matches!(t, ConcreteType::Any) || t.optional_primitive().is_some() => {
+                    MirOperation::Call {
+                        function: MirOperand::NamedFunction {
+                            name: "__json_try_decode_v2".to_string(),
+                            symbol_id: SymbolId(0),
+                        },
+                        arguments: vec![MirOperand::Value(val_vid)],
+                    }
+                }
                 ConcreteType::Array(element)
-                    if matches!(**element, ConcreteType::Any | ConcreteType::Class { .. }) =>
+                    if matches!(**element, ConcreteType::Any | ConcreteType::Class { .. })
+                        || element.optional_primitive().is_some() =>
                 {
                     let class_list_fn = match &**element {
                         ConcreteType::Class {

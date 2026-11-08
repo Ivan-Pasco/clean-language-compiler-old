@@ -1,0 +1,79 @@
+// Test: bugfixes/optional_primitive_params_returns_fields
+// Grammar: function_declaration, parameter, return_statement, class_field,
+//   conditional_expression
+// Semantic: type-system.md §8 — an optional primitive passed as an
+//   argument, returned, or stored in a class field keeps 0 / false apart
+//   from none. An uninitialized `T?` field is none; json.encode writes a
+//   none field as null and a 0 field as 0.
+// Fixed in: compiler 0.33.180
+// Expected output:
+//   true
+//   false
+//   0
+//   0
+//   -1
+//   true
+//   false
+//   0
+//   true
+//   false
+//   0
+//   true
+//   {"count":0,"ratio":null,"flag":false,"preset":0}
+//   {"count":null,"ratio":2.5,"flag":null,"preset":0}
+//   true
+//   0
+//
+// Regression: an optional primitive used 0 as none, so a function
+// returning `integer?` could not return 0, a `T?` field set to 0 read as
+// none, and json.encode wrote it as null.
+
+start:
+	print(find(0) == none)
+	print(find(1) == none)
+	print(find(1)!)
+	print(orMinus(0))
+	print(orMinus(none))
+	Item it = Item()
+	print(it.count == none)
+	it.count = 0
+	print(it.count == none)
+	print(it.count!)
+	print(it.flag == none)
+	it.flag = false
+	print(it.flag == none)
+	print(it.preset!)
+	print(pick(false) == none)
+	printl(json.encode(it))
+	Item other = Item()
+	other.ratio = 2.5
+	printl(json.encode(other))
+	print(twice(none) == none)
+	print(twice(0)!)
+
+class Item
+	public:
+		integer? count
+		number? ratio
+		boolean? flag
+		integer? preset = 0
+
+	constructor()
+		count = none
+
+functions:
+	integer? find(integer key)
+		if key == 0
+			return none
+		return 0
+
+	integer orMinus(integer? value)
+		return value default -1
+
+	integer? pick(boolean yes)
+		return if yes then 0 else none
+
+	integer? twice(integer? value)
+		if value == none
+			return none
+		return value! * 2

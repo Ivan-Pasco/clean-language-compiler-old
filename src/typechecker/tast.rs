@@ -47,6 +47,13 @@ pub fn string_match_pattern_error(name: &str) -> String {
 /// to it.
 pub const LIST_WIDEN_F64: &str = "__list_widen_f64";
 
+/// The conversion the type checker wraps around a value stored into an
+/// optional primitive (`integer?`, `number?`, `boolean?` and their sized
+/// forms): a plain value is boxed, and an `any` or another optional
+/// primitive is converted (type-system.md §8, "Representation"). The call
+/// has the target `T?` as its type.
+pub const OPTIONAL_BOX: &str = "__optional_box";
+
 /// Type-checked program representation
 #[derive(Debug, Clone)]
 pub struct TastProgram {
@@ -760,6 +767,29 @@ impl ConcreteType {
             // Delegate into Optional so Optional(integer) is still numeric
             ConcreteType::Optional(inner) => inner.is_numeric(),
             _ => false,
+        }
+    }
+}
+
+impl ConcreteType {
+    /// An `integer`, `number` or `boolean` of any width.
+    pub fn is_primitive_value(&self) -> bool {
+        matches!(
+            self,
+            ConcreteType::Integer
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::Number
+                | ConcreteType::NumberSized { .. }
+                | ConcreteType::Boolean
+        )
+    }
+
+    /// The `T` of an optional primitive `T?`. Such a value is a pointer to a
+    /// boxed `T` (the boxed-any layout), `0` for none (type-system.md §8).
+    pub fn optional_primitive(&self) -> Option<&ConcreteType> {
+        match self {
+            ConcreteType::Optional(inner) if inner.is_primitive_value() => Some(inner),
+            _ => None,
         }
     }
 }

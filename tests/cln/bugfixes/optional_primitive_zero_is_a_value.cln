@@ -1,0 +1,71 @@
+// Test: bugfixes/optional_primitive_zero_is_a_value
+// Grammar: type (nullable "?"), variable_declaration, default_expression,
+//   postfix_expression ("!"), equality_expression
+// Semantic: type-system.md §8 — an `integer?`, `number?` or `boolean?`
+//   holding 0, 0.0 or false holds a value: `== none` and `is none` are
+//   false, `!` returns the value and `default` keeps it. none equals only
+//   none; two optionals compare by value; a copy of an optional is not
+//   changed by a later assignment to the original.
+// Fixed in: compiler 0.33.180
+// Expected output:
+//   false
+//   false
+//   true
+//   0
+//   0
+//   true
+//   7
+//   false
+//   0
+//   1.5
+//   false
+//   false
+//   false
+//   true
+//   true
+//   false
+//   true
+//   false
+//   true
+//   true
+//   false
+//   0
+//   4
+//
+// Regression: the three types used 0 / 0.0 / false as none, so
+// `integer? n = 0` made `n == none` true and `n!` halted.
+
+start:
+	integer? n = 0
+	print(n == none)
+	print(n is none)
+	print(n != none)
+	print(n!)
+	print(n default 7)
+	integer? missing = none
+	print(missing == none)
+	print(missing default 7)
+	number? ratio = 0.0
+	print(ratio == none)
+	print(ratio!)
+	ratio = 1.5
+	print(ratio default 9.0)
+	boolean? flag = false
+	print(flag == none)
+	print(flag!)
+	print(flag default true)
+	print(n == 0)
+	print(0 == n)
+	print(missing == 0)
+	integer? zero = 0
+	print(n == zero)
+	print(missing == zero)
+	number? same = 0
+	print(n == same)
+	integer? other = none
+	print(missing == other)
+	print(missing != other)
+	integer? copy = n
+	n = 4
+	print(copy!)
+	print(n!)

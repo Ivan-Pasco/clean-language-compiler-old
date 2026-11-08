@@ -8,7 +8,7 @@ use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
     TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
-    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, LIST_WIDEN_F64,
+    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, LIST_WIDEN_F64, OPTIONAL_BOX,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -1374,28 +1374,48 @@ impl<'a> TypeInference<'a> {
         Self::widen_integer_list_to_number_list(value, target);
         // The elements of a list literal and the values of a pairs literal
         // are stored into the target's element slots: `["a", none]` is not a
-        // `list<string>` (type-system.md §8).
+        // `list<string>` (type-system.md §8), and each element stored into
+        // an optional primitive slot is boxed.
         match (&mut value.kind, target) {
-            (TastExpressionKind::ArrayLiteral { elements, .. }, ConcreteType::Array(element)) => {
+            (
+                TastExpressionKind::ArrayLiteral {
+                    elements,
+                    element_type,
+                },
+                ConcreteType::Array(element),
+            ) => {
                 let element = (**element).clone();
+                let boxes = element.optional_primitive().is_some();
                 for item in elements.iter_mut() {
-                    if item.expr_type == ConcreteType::Null {
+                    if item.expr_type == ConcreteType::Null || boxes {
                         let location = item.location.clone();
                         self.require_assignable(item, &element, &location);
                     }
                 }
+                if boxes {
+                    *element_type = element;
+                    value.expr_type = target.clone();
+                }
             }
             (TastExpressionKind::ObjectLiteral { fields }, ConcreteType::Pairs(_, value_type)) => {
                 let value_type = (**value_type).clone();
+                let boxes = value_type.optional_primitive().is_some();
                 for field in fields.iter_mut() {
-                    if field.value.expr_type == ConcreteType::Null {
+                    if field.value.expr_type == ConcreteType::Null || boxes {
                         let location = field.value.location.clone();
                         self.require_assignable(&mut field.value, &value_type, &location);
                     }
                 }
+                if boxes {
+                    value.expr_type = target.clone();
+                }
             }
             _ => {}
         }
+        // The value's own type is checked against the target, not the type
+        // of the box it is wrapped in.
+        let value_type = value.expr_type.clone();
+        Self::box_into_optional_primitive(value, target);
         // The result of a call to a function that returns nothing (`void`)
         // is none: say so rather than "none cannot be used as ...".
         if value.expr_type == ConcreteType::Null && !ConstraintSolver::accepts_none(target) {
@@ -1427,7 +1447,7 @@ impl<'a> TypeInference<'a> {
             }
         }
         self.add_constraint(TypeConstraint::Subtype {
-            subtype: value.expr_type.clone(),
+            subtype: value_type,
             supertype: target.clone(),
             location: location.clone(),
         });
@@ -4695,6 +4715,82 @@ impl<'a> TypeInference<'a> {
                 tast_init.expr_type = declared_type.clone();
             }
         }
+    }
+
+    /// A value stored where an optional primitive `T?` is expected becomes
+    /// the boxed form of `T?` (type-system.md §8, "Representation"): it is
+    /// wrapped in `__optional_box`, which the MIR builder lowers to a box of
+    /// the plain value, or to a conversion of an `any` or of another
+    /// optional primitive (`integer?` into `number?`). `none` is already the
+    /// null pointer, and a value of the target type is already boxed. The
+    /// branches of a conditional expression, and the value and fallback of
+    /// `onError`, are wrapped one by one.
+    fn box_into_optional_primitive(value: &mut TastExpression, target: &ConcreteType) {
+        if target.optional_primitive().is_none()
+            || value.expr_type == *target
+            || matches!(value.expr_type, ConcreteType::Null)
+        {
+            return;
+        }
+        match &mut value.kind {
+            TastExpressionKind::Conditional {
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                Self::box_into_optional_primitive(then_expr, target);
+                Self::box_into_optional_primitive(else_expr, target);
+                value.expr_type = target.clone();
+                return;
+            }
+            // `risky() onError none`: the fallback is stored too.
+            TastExpressionKind::OnError {
+                expression,
+                fallback,
+            } => {
+                Self::box_into_optional_primitive(expression, target);
+                Self::box_into_optional_primitive(fallback, target);
+                value.expr_type = target.clone();
+                return;
+            }
+            _ => {}
+        }
+        let boxes = value.expr_type.is_primitive_value()
+            || value.expr_type.optional_primitive().is_some()
+            || matches!(
+                value.expr_type,
+                ConcreteType::Any | ConcreteType::Unknown | ConcreteType::Generic { .. }
+            );
+        if !boxes {
+            return;
+        }
+        let location = value.location.clone();
+        let inner = std::mem::replace(
+            value,
+            TastExpression {
+                kind: TastExpressionKind::Literal {
+                    value: TastLiteral::Null,
+                },
+                expr_type: ConcreteType::Null,
+                location: location.clone(),
+            },
+        );
+        *value = TastExpression {
+            kind: TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: SymbolId(0),
+                        name: OPTIONAL_BOX.to_string(),
+                    },
+                    expr_type: ConcreteType::Unknown,
+                    location: location.clone(),
+                }),
+                arguments: vec![inner],
+                type_args: Vec::new(),
+            },
+            expr_type: target.clone(),
+            location,
+        };
     }
 
     /// A `list<integer>` value stored where a `list<number>` is expected

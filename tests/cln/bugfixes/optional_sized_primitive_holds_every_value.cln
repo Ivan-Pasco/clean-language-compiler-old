@@ -1,0 +1,59 @@
+// Test: bugfixes/optional_sized_primitive_holds_every_value
+// Grammar: type (precision_type, nullable "?"), variable_declaration,
+//   class_field
+// Semantic: type-system.md §8 — a sized optional primitive holds every
+//   value of its type and none besides: `integer:8?` holds 0 and -128,
+//   `integer:8u?` 255, `integer:64?` its extreme values, `number:32?`
+//   its values; in a class field too.
+// Fixed in: compiler 0.33.180
+// Expected output:
+//   false
+//   0
+//   -128
+//   true
+//   255
+//   false
+//   -9223372036854775807
+//   9223372036854775807
+//   0.5
+//   pixel
+//   false
+//   0
+//   true
+//   7
+//
+// Regression: a sized optional had no room for an absent marker (every
+// bit pattern of an `integer:8` is a value), so 0 read as none.
+
+start:
+	integer:8? small = 0
+	print(small == none)
+	print(small!)
+	small = -128
+	print(small!)
+	integer:8u? byte = none
+	print(byte == none)
+	byte = 255
+	print(byte!)
+	integer:64? big = -9223372036854775807
+	print(big == none)
+	print(big!)
+	big = 9223372036854775807
+	print(big!)
+	number:32? half = 0.5
+	print(half!)
+	Pixel p = Pixel()
+	p.level = 0
+	print(p.level == none)
+	print(p.level!)
+	print(p.alpha == none)
+	p.alpha = 7
+	print(p.alpha!)
+
+class Pixel
+	public:
+		integer:8? level
+		integer:16? alpha
+
+	constructor()
+		print("pixel")

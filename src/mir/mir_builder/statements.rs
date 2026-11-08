@@ -117,9 +117,12 @@ impl MirBuilder {
                     // After propagation above, `init_for_build.expr_type` may now match `var_type`
                     // (e.g. typed-pairs literal path) — in that case we have a raw value, not a
                     // boxed Any, so skip unboxing.
+                    // An optional primitive variable holds the box itself:
+                    // `__optional_box` converted the value already.
                     let needs_unboxing = (matches!(init_for_build.expr_type, ConcreteType::Any)
                         || init_is_actually_any)
-                        && !matches!(var_type, ConcreteType::Any);
+                        && !matches!(var_type, ConcreteType::Any)
+                        && var_type.optional_primitive().is_none();
 
                     // Check if we need to box: variable type is Any but initializer is not Any
                     // NOTE: Also check actual MIR type - if already Any, no boxing needed

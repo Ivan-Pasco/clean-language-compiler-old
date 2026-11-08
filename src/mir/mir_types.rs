@@ -375,6 +375,15 @@ pub enum MirOperation {
         value: MirOperand,
     },
 
+    /// A conversion into, out of or between optional primitives
+    /// (`integer?`, `number?`, `boolean?` and their sized forms). Such a
+    /// value is a pointer to a boxed-any block holding the plain value, `0`
+    /// for none (type-system.md §8, "Representation").
+    OptionalConvert {
+        value: MirOperand,
+        conversion: OptionalConversion,
+    },
+
     /// Select instruction (ternary): result = condition ? true_value : false_value
     /// Maps to WASM's `select` instruction
     Select {
@@ -617,6 +626,25 @@ impl AnyTypeTag {
     }
 }
 
+/// The conversions of `MirOperation::OptionalConvert`. `target` is the MIR
+/// type of the plain `T` of the optional primitive `T?`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OptionalConversion {
+    /// A plain integer, number or boolean (any width) → `T?`: the value is
+    /// converted to `T` and boxed.
+    Box { target: MirType },
+    /// An `any` or another optional primitive → `T?`: none for a null
+    /// pointer or a null box, otherwise the value converted to `T` (as an
+    /// `any` converts to `T`) and boxed.
+    FromAny { target: MirType },
+    /// `T?` → `T`: the boxed value, `0` / `0.0` / `false` for none (callers
+    /// test for none first: `!`, `default`, `==`).
+    Unbox { target: MirType },
+    /// `T?` → a boxed-any for JSON code: the box itself, or a fresh null box
+    /// for none (hosts never read a 0 pointer as a box, BOXED_ANY_ABI §6).
+    ToJson,
+}
+
 /// Binary operations in MIR
 #[derive(Debug, Clone, PartialEq)]
 pub enum MirBinaryOp {
@@ -755,8 +783,12 @@ impl MirType {
                 }
             }
             ConcreteType::Any => MirType::Any, // Boxed any type with runtime type tag
-            // Optional<T> has identical WASM representation to T; none = 0/null.
-            // Strip the Optional wrapper and delegate to the inner type.
+            // An optional primitive (`integer?`, `number?`, `boolean?`) is a
+            // pointer to a boxed value, 0 for none (type-system.md §8): the
+            // boxed-any layout, so it is an `any` restricted to its type.
+            ConcreteType::Optional(inner) if inner.is_primitive_value() => MirType::Any,
+            // Every other `T?` has the representation of `T`; none is the
+            // null pointer.
             ConcreteType::Optional(inner) => Self::from_concrete_type(inner),
             _ => MirType::Any, // Fallback for complex types → Any (avoids Ptr(Void) ambiguity)
         }

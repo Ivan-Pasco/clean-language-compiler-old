@@ -1,8 +1,13 @@
 //! `value!` halts on none (type-system.md §8, RUN004).
 //!
-//! Regression: the MIR dead-code pass removed a `!` whose result was never
-//! read, together with its check, so `string unused = name!` did not halt.
-//! `has_side_effects` now keeps the `Required` check.
+//! Two regressions, both about a value that is none:
+//!
+//! - The MIR dead-code pass removed a `!` whose result was never read,
+//!   together with its check, so `string unused = name!` did not halt.
+//!   `has_side_effects` now keeps the `Required` check.
+//! - An optional primitive (`integer?`) used 0 as none, so `n!` halted on a
+//!   held 0 instead of returning it. It is now a pointer to a boxed value,
+//!   0 for none, and `!` tests the pointer.
 //!
 //! A halt is a WASM trap, which the `.cln` pins (stdout comparison) cannot
 //! express, so the test calls exported functions and checks for the trap.
@@ -13,7 +18,7 @@ use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use clean_language_compiler::{compile_multi_file_with_memory_tier, MemoryTier};
 
-const SOURCE: &str = "start:\n\tinteger ready = 1\n\nfunctions:\n\tinteger unwrapText(integer give)\n\t\tstring? name = none\n\t\tif give == 1\n\t\t\tname = \"x\"\n\t\tstring unused = name!\n\t\treturn 1\n";
+const SOURCE: &str = "start:\n\tinteger ready = 1\n\nfunctions:\n\tinteger unwrapText(integer give)\n\t\tstring? name = none\n\t\tif give == 1\n\t\t\tname = \"x\"\n\t\tstring unused = name!\n\t\treturn 1\n\n\tinteger unwrapCount(integer give)\n\t\tinteger? count = none\n\t\tif give == 1\n\t\t\tcount = 0\n\t\tinteger unused = count!\n\t\treturn 1\n\n\tinteger readCount(integer give)\n\t\tinteger? count = none\n\t\tif give == 1\n\t\t\tcount = 0\n\t\treturn count! + 5\n";
 
 fn instantiate() -> (Store<()>, Instance) {
     let tmp = TempDir::new().expect("tempdir");
@@ -67,4 +72,21 @@ fn required_with_unused_result_halts_on_none() {
         None,
         "`string unused = name!` must halt when name is none, though `unused` is never read"
     );
+}
+
+#[test]
+fn required_on_optional_primitive_halts_only_on_none() {
+    let (mut store, instance) = instantiate();
+    assert_eq!(
+        call(&mut store, &instance, "unwrapCount", 1),
+        Some(1),
+        "`count!` of a held 0 returns: 0 is a value, not none"
+    );
+    assert_eq!(
+        call(&mut store, &instance, "unwrapCount", 0),
+        None,
+        "`count!` must halt when count is none"
+    );
+    assert_eq!(call(&mut store, &instance, "readCount", 1), Some(5));
+    assert_eq!(call(&mut store, &instance, "readCount", 0), None);
 }

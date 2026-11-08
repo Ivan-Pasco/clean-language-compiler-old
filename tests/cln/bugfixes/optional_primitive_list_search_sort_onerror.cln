@@ -1,0 +1,43 @@
+// Test: bugfixes/optional_primitive_list_search_sort_onerror
+// Grammar: method_call, onerror_expression, type (nullable "?")
+// Semantic: type-system.md §8 — `contains`, `indexOf`, `lastIndexOf` and
+//   `sort` of a list of optional primitives compare the values (none
+//   orders first), and `expr onError none` stored into an `integer?` is
+//   none when the expression raises.
+// Fixed in: compiler 0.33.180
+// Expected output:
+//   true
+//   false
+//   true
+//   2
+//   0
+//   [null,0,3]
+//   [null,1.0,2.5]
+//   true
+//   true
+//   0
+//
+// Regression: the list searches compared the boxes' addresses, so
+// `xs.contains(0)` was false for a list holding 0, `sort` ordered by
+// address, and `risky() onError none` boxed the fallback as 0.
+
+start:
+	list<integer?> xs = [3, none, 0]
+	print(xs.contains(0))
+	print(xs.contains(5))
+	print(xs.contains(none))
+	print(xs.indexOf(0))
+	print(xs.lastIndexOf(3))
+	printl(json.encode(xs.sort()))
+	list<number?> ns = [2.5, none, 1]
+	printl(json.encode(ns.sort()))
+	print(ns.contains(1))
+	integer? failed = risky() onError none
+	print(failed == none)
+	integer? fallback = risky() onError 0
+	print(fallback!)
+
+functions:
+	integer risky()
+		error("boom")
+		return 1

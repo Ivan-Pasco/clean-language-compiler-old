@@ -139,13 +139,39 @@ pub enum HirType {
 
     /// `T?`: a `T` or none. Every plain type rejects none
     /// (type-system.md §8), so the type checker keeps this wrapper to tell
-    /// `T?` from `T`. Same WASM representation as the inner type. `any?`
-    /// is `any`.
+    /// `T?` from `T`. Same WASM representation as the inner type, except for
+    /// an integer, number or boolean `T`: that `T?` is a pointer to a boxed
+    /// value (`is_optional_primitive`). `any?` is `any`.
     Optional(Box<HirType>),
 }
 
 impl HirType {
-    /// The type without an `Optional` wrapper (same WASM representation).
+    /// `integer?`, `number?` or `boolean?` of any width: a pointer to a
+    /// boxed value, not the representation of the plain type.
+    pub fn is_optional_primitive(&self) -> bool {
+        matches!(
+            self,
+            HirType::Optional(inner) if matches!(
+                **inner,
+                HirType::Integer
+                    | HirType::Number
+                    | HirType::Boolean
+                    | HirType::Integer8
+                    | HirType::Integer8u
+                    | HirType::Integer16
+                    | HirType::Integer16u
+                    | HirType::Integer32
+                    | HirType::Integer32u
+                    | HirType::Integer64
+                    | HirType::Integer64u
+                    | HirType::Number32
+                    | HirType::Number64
+            )
+        )
+    }
+
+    /// The type without an `Optional` wrapper (same WASM representation
+    /// unless `is_optional_primitive`).
     pub fn without_optional(&self) -> &HirType {
         match self {
             HirType::Optional(inner) => inner.without_optional(),

@@ -74,6 +74,9 @@ pub const SYM_BUILTIN_LIST_ADD_I64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE +
 pub const SYM_BUILTIN_LIST_ADD_STRING: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 14);
 /// `integer:64 ^ integer`: exact integer power on i64 (`math.pow.i64`).
 pub const SYM_BUILTIN_MATH_POW_I64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 15);
+/// `list.add` for a list of optional primitives (a `.unique` list compares
+/// the values, not the boxes).
+pub const SYM_BUILTIN_LIST_ADD_BOXED: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 16);
 
 /// Base for MIR-synthesized watch handler IDs (one per watch block target).
 pub const SYM_WATCH_HANDLER_BASE: usize = 0x4001_0000;
@@ -919,6 +922,18 @@ impl GlobalSymbolTable {
             (
                 "list.indexOf.string",
                 vec![HirType::List(Box::new(HirType::String)), HirType::String],
+                HirType::Integer,
+            ),
+            // Value-comparing variants for a list of optional primitives
+            // (`list<integer?>`): the elements are boxes.
+            (
+                "list.contains.boxed",
+                vec![HirType::List(Box::new(HirType::Any)), HirType::Any],
+                HirType::Boolean,
+            ),
+            (
+                "list.indexOf.boxed",
+                vec![HirType::List(Box::new(HirType::Any)), HirType::Any],
                 HirType::Integer,
             ),
             (

@@ -25,6 +25,7 @@
 use crate::codegen::CodeGenerator;
 use crate::codegen::LIST_TYPE_ID;
 use crate::error::CompilerError;
+use crate::stdlib::json_class::JSON_TAG_NUMBER;
 use crate::stdlib::list_behavior::{BEHAVIOR_LINE, BEHAVIOR_UNIQUE};
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
@@ -52,13 +53,16 @@ pub(crate) enum Elem {
     I64,
     /// 4-byte pointer to a length-prefixed string, compared by bytes.
     Str,
+    /// 4-byte pointer to the box of an optional primitive (`integer?`,
+    /// `number?`, `boolean?`; 0 is none), compared by value.
+    Boxed,
 }
 
 impl Elem {
     fn stride(self) -> i32 {
         match self {
             Elem::F64 | Elem::I64 => 8,
-            Elem::I32 | Elem::Str => 4,
+            Elem::I32 | Elem::Str | Elem::Boxed => 4,
         }
     }
 
@@ -66,7 +70,7 @@ impl Elem {
         match self {
             Elem::F64 => WasmType::F64,
             Elem::I64 => WasmType::I64,
-            Elem::I32 | Elem::Str => WasmType::I32,
+            Elem::I32 | Elem::Str | Elem::Boxed => WasmType::I32,
         }
     }
 
@@ -74,7 +78,7 @@ impl Elem {
         match self {
             Elem::F64 => Instruction::F64Load(mem(DATA as u64, 3)),
             Elem::I64 => Instruction::I64Load(mem(DATA as u64, 3)),
-            Elem::I32 | Elem::Str => Instruction::I32Load(mem(DATA as u64, 2)),
+            Elem::I32 | Elem::Str | Elem::Boxed => Instruction::I32Load(mem(DATA as u64, 2)),
         }
     }
 
@@ -82,7 +86,7 @@ impl Elem {
         match self {
             Elem::F64 => Instruction::F64Store(mem(DATA as u64, 3)),
             Elem::I64 => Instruction::I64Store(mem(DATA as u64, 3)),
-            Elem::I32 | Elem::Str => Instruction::I32Store(mem(DATA as u64, 2)),
+            Elem::I32 | Elem::Str | Elem::Boxed => Instruction::I32Store(mem(DATA as u64, 2)),
         }
     }
 }
@@ -278,23 +282,79 @@ fn gen_peek_8byte(elem: Elem) -> Vec<Instruction<'static>> {
 }
 
 /// Push `1` when the element value on the stack equals the needle in local 1.
-/// Stack before: [element]. `str_cmp` is required for `Elem::Str`.
-fn emit_equals_needle(elem: Elem, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
+/// Stack before: [element]. `compare` is the string ordering helper for
+/// `Elem::Str` and the box equality helper for `Elem::Boxed`.
+fn emit_equals_needle(elem: Elem, compare: Option<u32>) -> Vec<Instruction<'static>> {
     match elem {
         Elem::I32 => vec![Instruction::LocalGet(1), Instruction::I32Eq],
         Elem::F64 => vec![Instruction::LocalGet(1), Instruction::F64Eq],
         Elem::I64 => vec![Instruction::LocalGet(1), Instruction::I64Eq],
         Elem::Str => vec![
             Instruction::LocalGet(1),
-            Instruction::Call(str_cmp.expect("string comparison helper registered")),
+            Instruction::Call(compare.expect("string comparison helper registered")),
             Instruction::I32Eqz,
+        ],
+        Elem::Boxed => vec![
+            Instruction::LocalGet(1),
+            Instruction::Call(compare.expect("box equality helper registered")),
         ],
     }
 }
 
+/// `__list_box_eq(a, b) -> i32`: 1 when two optional primitives are equal —
+/// both none (a null pointer or a null box), or both hold equal values: the
+/// same integer, boolean or number, an integer and a number by numeric
+/// value. Locals: 2 = tag of a, 3 = tag of b.
+fn gen_box_eq() -> Vec<Instruction<'static>> {
+    let mut v = box_tag(0, 2);
+    v.extend(box_tag(1, 3));
+    v.extend([
+        // Either is none: equal when both are.
+        Instruction::LocalGet(2),
+        Instruction::I32Eqz,
+        Instruction::LocalGet(3),
+        Instruction::I32Eqz,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32Or,
+        Instruction::I32Eqz,
+        Instruction::Return,
+        Instruction::End,
+        // A number on either side: compare as numbers.
+        Instruction::LocalGet(2),
+        Instruction::I32Const(JSON_TAG_NUMBER),
+        Instruction::I32Eq,
+        Instruction::LocalGet(3),
+        Instruction::I32Const(JSON_TAG_NUMBER),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(box_number(0, 2));
+    v.extend(box_number(1, 3));
+    v.extend([
+        Instruction::F64Eq,
+        Instruction::Return,
+        Instruction::End,
+        // Integers and booleans: the same tag and the same 8-byte payload.
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(3),
+        Instruction::I32Eq,
+        Instruction::LocalGet(0),
+        Instruction::I64Load(mem(4, 2)),
+        Instruction::LocalGet(1),
+        Instruction::I64Load(mem(4, 2)),
+        Instruction::I64Eq,
+        Instruction::I32And,
+    ]);
+    v
+}
+
 /// `indexOf` / `lastIndexOf`: params (list, needle); locals 2 = len, 3 = i.
 /// Returns the index of the first (or last) equal element, or -1.
-fn gen_search(elem: Elem, from_end: bool, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
+fn gen_search(elem: Elem, from_end: bool, compare: Option<u32>) -> Vec<Instruction<'static>> {
     let mut v = vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(0, 2)),
@@ -331,7 +391,7 @@ fn gen_search(elem: Elem, from_end: bool, str_cmp: Option<u32>) -> Vec<Instructi
     }
     v.extend(elem_addr(0, 3, elem));
     v.push(elem.load());
-    v.extend(emit_equals_needle(elem, str_cmp));
+    v.extend(emit_equals_needle(elem, compare));
     v.extend([
         Instruction::If(BlockType::Empty),
         Instruction::LocalGet(3),
@@ -483,17 +543,121 @@ fn gen_slice(malloc: u32, elem: Elem) -> Vec<Instruction<'static>> {
 }
 
 /// Push `1` when element `a` (below) is greater than element `b` (top).
-fn emit_greater(elem: Elem, str_cmp: Option<u32>) -> Vec<Instruction<'static>> {
+/// `compare` is the string ordering helper for `Elem::Str` and the box
+/// ordering helper for `Elem::Boxed`.
+fn emit_greater(elem: Elem, compare: Option<u32>) -> Vec<Instruction<'static>> {
     match elem {
         Elem::I32 => vec![Instruction::I32GtS],
         Elem::F64 => vec![Instruction::F64Gt],
         Elem::I64 => vec![Instruction::I64GtS],
         Elem::Str => vec![
-            Instruction::Call(str_cmp.expect("string comparison helper registered")),
+            Instruction::Call(compare.expect("string comparison helper registered")),
+            Instruction::I32Const(0),
+            Instruction::I32GtS,
+        ],
+        Elem::Boxed => vec![
+            Instruction::Call(compare.expect("box ordering helper registered")),
             Instruction::I32Const(0),
             Instruction::I32GtS,
         ],
     }
+}
+
+/// Instructions leaving the tag of the box in `param` (0 for a null
+/// pointer) in local `into`.
+fn box_tag(param: u32, into: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(param),
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::LocalGet(param),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::Else,
+        Instruction::I32Const(0),
+        Instruction::End,
+        Instruction::LocalSet(into),
+    ]
+}
+
+/// The value of the non-null box in `param` (tag in `tag_local`) as an f64:
+/// a number as is, an integer converted.
+fn box_number(param: u32, tag_local: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(tag_local),
+        Instruction::I32Const(JSON_TAG_NUMBER),
+        Instruction::I32Eq,
+        Instruction::If(BlockType::Result(ValType::F64)),
+        Instruction::LocalGet(param),
+        Instruction::F64Load(mem(4, 2)),
+        Instruction::Else,
+        Instruction::LocalGet(param),
+        Instruction::I64Load(mem(4, 2)),
+        Instruction::F64ConvertI64S,
+        Instruction::End,
+    ]
+}
+
+/// `__list_box_cmp(a, b) -> i32`: -1, 0 or 1 as optional primitive `a`
+/// orders before, with or after `b`. none orders first; numbers (an integer
+/// against a number included) compare numerically, integers and booleans
+/// by their signed 64-bit payload. Locals: 2 = tag of a, 3 = tag of b,
+/// 4 / 5 = the two numbers, 6 / 7 = the two integers.
+fn gen_box_cmp() -> Vec<Instruction<'static>> {
+    let mut v = box_tag(0, 2);
+    v.extend(box_tag(1, 3));
+    v.extend([
+        Instruction::LocalGet(2),
+        Instruction::I32Eqz,
+        Instruction::LocalGet(3),
+        Instruction::I32Eqz,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(0),
+        Instruction::I32Ne,
+        Instruction::LocalGet(3),
+        Instruction::I32Const(0),
+        Instruction::I32Ne,
+        Instruction::I32Sub,
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(2),
+        Instruction::I32Const(JSON_TAG_NUMBER),
+        Instruction::I32Eq,
+        Instruction::LocalGet(3),
+        Instruction::I32Const(JSON_TAG_NUMBER),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(box_number(0, 2));
+    v.push(Instruction::LocalSet(4));
+    v.extend(box_number(1, 3));
+    v.extend([
+        Instruction::LocalSet(5),
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(5),
+        Instruction::F64Gt,
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(5),
+        Instruction::F64Lt,
+        Instruction::I32Sub,
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(0),
+        Instruction::I64Load(mem(4, 2)),
+        Instruction::LocalSet(6),
+        Instruction::LocalGet(1),
+        Instruction::I64Load(mem(4, 2)),
+        Instruction::LocalSet(7),
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(7),
+        Instruction::I64GtS,
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(7),
+        Instruction::I64LtS,
+        Instruction::I32Sub,
+    ]);
+    v
 }
 
 /// `sort`: returns a new list sorted ascending (stable insertion sort).
@@ -691,7 +855,7 @@ fn gen_remove(elem: Elem, at: RemoveAt) -> Vec<Instruction<'static>> {
             v.push(match elem {
                 Elem::F64 => Instruction::F64Const(0.0),
                 Elem::I64 => Instruction::I64Const(0),
-                Elem::I32 | Elem::Str => Instruction::I32Const(0),
+                Elem::I32 | Elem::Str | Elem::Boxed => Instruction::I32Const(0),
             });
             v.extend([
                 Instruction::Return,
@@ -1189,7 +1353,7 @@ impl Default for ListClass {
 /// `list<string>.add`: params (list, value). On a `.unique` list holding a
 /// string equal to `value` the list is returned unchanged; otherwise the
 /// value is appended through `list.add`.
-fn gen_add_unique_string(contains_string: u32, list_add: u32) -> Vec<Instruction<'static>> {
+fn gen_add_unique_string(contains: u32, list_add: u32) -> Vec<Instruction<'static>> {
     vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(12, 2)),
@@ -1198,7 +1362,7 @@ fn gen_add_unique_string(contains_string: u32, list_add: u32) -> Vec<Instruction
         Instruction::If(BlockType::Empty),
         Instruction::LocalGet(0),
         Instruction::LocalGet(1),
-        Instruction::Call(contains_string),
+        Instruction::Call(contains),
         Instruction::If(BlockType::Empty),
         Instruction::LocalGet(0),
         Instruction::Return,
@@ -1293,25 +1457,39 @@ impl ListClass {
             codegen.record_wasm_return_type(name, Some(elem.wasm()));
         }
 
+        // Value equality of two optional primitives (their boxes).
+        let box_eq = register_stdlib_function_with_locals(
+            codegen,
+            "__list_box_eq",
+            &i32x(2),
+            Some(WasmType::I32),
+            &i32x(2),
+            gen_box_eq(),
+        )?;
+
         // indexOf / lastIndexOf / contains. Strings compare by bytes, so
-        // equal strings at different addresses match.
+        // equal strings at different addresses match, and optional
+        // primitives by value.
         for (name, elem, from_end) in [
             ("list.indexOf", Elem::I32, false),
             ("list.indexOf.string", Elem::Str, false),
             ("list.indexOf.f64", Elem::F64, false),
             ("list.indexOf.i64", Elem::I64, false),
+            ("list.indexOf.boxed", Elem::Boxed, false),
             ("list.lastIndexOf", Elem::I32, true),
             ("list.lastIndexOf.string", Elem::Str, true),
             ("list.lastIndexOf.f64", Elem::F64, true),
             ("list.lastIndexOf.i64", Elem::I64, true),
+            ("list.lastIndexOf.boxed", Elem::Boxed, true),
         ] {
+            let compare = if elem == Elem::Boxed { box_eq } else { str_cmp };
             register_stdlib_function_with_locals(
                 codegen,
                 name,
                 &[WasmType::I32, elem.wasm()],
                 Some(WasmType::I32),
                 &i32x(2),
-                gen_search(elem, from_end, Some(str_cmp)),
+                gen_search(elem, from_end, Some(compare)),
             )?;
         }
         for (name, index_of, elem) in [
@@ -1319,6 +1497,7 @@ impl ListClass {
             ("list.contains.string", "list.indexOf.string", Elem::Str),
             ("list.contains.f64", "list.indexOf.f64", Elem::F64),
             ("list.contains.i64", "list.indexOf.i64", Elem::I64),
+            ("list.contains.boxed", "list.indexOf.boxed", Elem::Boxed),
         ] {
             let index_of = codegen
                 .get_function_index(index_of)
@@ -1343,6 +1522,18 @@ impl ListClass {
             &i32x(2),
             Some(WasmType::I32),
             gen_add_unique_string(contains_string, list_add),
+        )?;
+        // `list<integer?>.add` (any optional primitive): a `.unique` list
+        // skips a value equal to one it holds, not only the same box.
+        let contains_boxed = codegen
+            .get_function_index("list.contains.boxed")
+            .ok_or_else(|| missing("list.contains.boxed"))?;
+        register_stdlib_function(
+            codegen,
+            "list.add.boxed",
+            &i32x(2),
+            Some(WasmType::I32),
+            gen_add_unique_string(contains_boxed, list_add),
         )?;
         for (alias, target) in [
             ("list_index_of", "list.indexOf"),
@@ -1393,13 +1584,36 @@ impl ListClass {
             codegen.add_function_alias(alias, idx);
         }
 
+        // Ordering of two optional primitives (their boxes), for `sort`.
+        let box_cmp = register_stdlib_function_with_locals(
+            codegen,
+            "__list_box_cmp",
+            &i32x(2),
+            Some(WasmType::I32),
+            &[
+                WasmType::I32,
+                WasmType::I32,
+                WasmType::F64,
+                WasmType::F64,
+                WasmType::I64,
+                WasmType::I64,
+            ],
+            gen_box_cmp(),
+        )?;
+
         // sort
         for (name, elem) in [
             ("list.sort", Elem::I32),
             ("list.sort.f64", Elem::F64),
             ("list.sort.i64", Elem::I64),
             ("list.sort.string", Elem::Str),
+            ("list.sort.boxed", Elem::Boxed),
         ] {
+            let compare = if elem == Elem::Boxed {
+                box_cmp
+            } else {
+                str_cmp
+            };
             let idx = register_stdlib_function_with_locals(
                 codegen,
                 name,
@@ -1413,7 +1627,7 @@ impl ListClass {
                     WasmType::I32,
                     elem.wasm(),
                 ],
-                gen_sort(malloc, elem, Some(str_cmp)),
+                gen_sort(malloc, elem, Some(compare)),
             )?;
             if elem == Elem::I32 {
                 codegen.add_function_alias("list_sort", idx);

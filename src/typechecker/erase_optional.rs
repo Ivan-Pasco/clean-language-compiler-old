@@ -1,9 +1,9 @@
 //! Drop the `T?` wrapper of strings, lists, pairs maps, matrices and class
 //! instances from a type-checked program.
 //!
-//! `T?` is a compile-time distinction: the type checker uses it to keep none
-//! out of plain types (type-system.md §8). At runtime a `T?` is stored
-//! exactly like a `T` (none is the zero value / null pointer), so the MIR
+//! For these types `T?` is a compile-time distinction: the type checker uses
+//! it to keep none out of plain types (type-system.md §8). At runtime such a
+//! `T?` is stored exactly like a `T` (none is the null pointer), so the MIR
 //! builder works on the plain type. Without this pass a `pairs<string,
 //! integer>?` declaration was not recognised as a pairs map and its literal
 //! was built as something else.
@@ -70,8 +70,8 @@ pub fn erase_optional(program: &mut TastProgram) {
 }
 
 /// `T?` → `T`, inside composite types too. `integer?`, `number?` and
-/// `boolean?` stay: the MIR builder tests them for none and skips the test
-/// for their plain forms, which never hold none.
+/// `boolean?` (of any width) stay: they are pointers to a boxed value, a
+/// different representation from their plain forms.
 pub fn ty(t: &mut ConcreteType) {
     while let ConcreteType::Optional(inner) = t {
         if is_primitive(inner) {

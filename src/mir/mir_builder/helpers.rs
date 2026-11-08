@@ -500,7 +500,9 @@ impl MirBuilder {
             ConcreteType::Unknown => 4,            // Default
             ConcreteType::Namespace => 4,          // Not really used in memory
             ConcreteType::Any => 12,               // Boxed: [tag:i32][value1:i32][value2:i32]
-            // Optional<T> has the same runtime representation as T (none = 0/null)
+            // An optional primitive is a pointer to its box; every other
+            // `T?` has the representation of `T` (none = null pointer).
+            ConcreteType::Optional(inner) if inner.is_primitive_value() => 4,
             ConcreteType::Optional(inner) => self.get_type_byte_size(inner),
         }
     }
@@ -556,6 +558,10 @@ impl MirBuilder {
                 "sort" | "lastIndexOf" if matches!(element, ConcreteType::String) => {
                     Some(format!("list.{}.string", method))
                 }
+                // Optional primitive elements are boxes, compared by value.
+                "sort" | "lastIndexOf" if element.optional_primitive().is_some() => {
+                    Some(format!("list.{}.boxed", method))
+                }
                 _ => Some(format!("list.{}", method)),
             },
         }
@@ -569,6 +575,7 @@ impl MirBuilder {
             ConcreteType::Number => SYM_BUILTIN_LIST_ADD_F64,
             ConcreteType::IntegerSized { bits: 64, .. } => SYM_BUILTIN_LIST_ADD_I64,
             ConcreteType::String => SYM_BUILTIN_LIST_ADD_STRING,
+            t if t.optional_primitive().is_some() => SYM_BUILTIN_LIST_ADD_BOXED,
             _ => SYM_BUILTIN_LIST_ADD,
         }
     }
@@ -580,6 +587,7 @@ impl MirBuilder {
             SYM_BUILTIN_LIST_ADD_F64,
             SYM_BUILTIN_LIST_ADD_I64,
             SYM_BUILTIN_LIST_ADD_STRING,
+            SYM_BUILTIN_LIST_ADD_BOXED,
         ]
         .contains(&symbol)
     }
@@ -1078,6 +1086,8 @@ impl MirBuilder {
             | ConcreteType::Class { .. }
             | ConcreteType::Interface { .. }
             | ConcreteType::Any => true,
+            // An optional primitive points to a heap box.
+            ConcreteType::Optional(inner) if inner.is_primitive_value() => true,
             ConcreteType::Optional(inner) => Self::is_arena_alloc_type(inner),
             ConcreteType::Union(parts) => parts.iter().any(Self::is_arena_alloc_type),
             _ => false,

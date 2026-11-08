@@ -13,12 +13,12 @@ use crate::mir::mir_types::{
     MirParameter, MirProgram, MirTerminator, MirType, MirUnaryOp, ValueId,
 };
 use crate::resolver::symbol_table::{
-    SYM_ASYNC_TASK_BASE, SYM_BUILTIN_LIST_ADD, SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ADD_I64,
-    SYM_BUILTIN_LIST_ADD_STRING, SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH,
-    SYM_BUILTIN_LIST_PUSH_F64, SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64,
-    SYM_BUILTIN_MATH_POW_I32, SYM_BUILTIN_MATH_POW_I64, SYM_BUILTIN_STRING_CONCAT,
-    SYM_BUILTIN_STRING_CONCAT_TRANSIENT, SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE,
-    SYM_WATCH_HANDLER_BASE,
+    SYM_ASYNC_TASK_BASE, SYM_BUILTIN_LIST_ADD, SYM_BUILTIN_LIST_ADD_BOXED,
+    SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ADD_I64, SYM_BUILTIN_LIST_ADD_STRING,
+    SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH, SYM_BUILTIN_LIST_PUSH_F64,
+    SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64, SYM_BUILTIN_MATH_POW_I32,
+    SYM_BUILTIN_MATH_POW_I64, SYM_BUILTIN_STRING_CONCAT, SYM_BUILTIN_STRING_CONCAT_TRANSIENT,
+    SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE, SYM_WATCH_HANDLER_BASE,
 };
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
@@ -32,6 +32,7 @@ mod async_tasks;
 mod expressions;
 mod functions;
 mod helpers;
+mod optional;
 mod statements;
 mod types;
 
@@ -245,6 +246,7 @@ impl MirBuilder {
             if let Some(symbol) = symbol_table.get_symbol(symbol_id) {
                 if let crate::resolver::SymbolKind::StateVariable { var_type, .. } = &symbol.kind {
                     let mir_type = match var_type.without_optional() {
+                        _ if var_type.is_optional_primitive() => MirType::Any,
                         crate::hir::HirType::Integer => MirType::I32,
                         crate::hir::HirType::Number => MirType::F64,
                         crate::hir::HirType::String => MirType::I32, // String pointer
@@ -597,6 +599,9 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SYM_BUILTIN_LIST_ADD_STRING, "list.add.string".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SYM_BUILTIN_LIST_ADD_BOXED, "list.add.boxed".to_string());
 
         // NOTE: Add common name variations for builtin functions
         // Check symbol_name_map for variations and add correct WASM names

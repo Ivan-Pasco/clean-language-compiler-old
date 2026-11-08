@@ -495,6 +495,9 @@ impl DeadCodeEliminationPass {
             MirOperation::UnboxAnyToBoolean { value } => {
                 self.mark_operand_live(value, function);
             }
+            MirOperation::OptionalConvert { value, .. } => {
+                self.mark_operand_live(value, function);
+            }
             MirOperation::Store { destination, value } => {
                 self.mark_operand_live(destination, function);
                 self.mark_operand_live(value, function);

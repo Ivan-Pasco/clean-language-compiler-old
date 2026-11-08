@@ -416,6 +416,10 @@ impl MirCodeGenerator<'_> {
                 }
             }
 
+            MirOperation::OptionalConvert { value, conversion } => {
+                self.emit_optional_convert(value, conversion, instruction.dest)?;
+            }
+
             MirOperation::AnyToString { value } => {
                 debug_mir!(?value, "Processing AnyToString with type dispatch");
 
@@ -2955,6 +2959,18 @@ impl MirCodeGenerator<'_> {
         tag: AnyTypeTag,
         source_type: &MirType,
     ) -> Result<(), CompilerError> {
+        self.emit_box_value_in(tag, source_type, BoxAllocator::Host)
+    }
+
+    /// `emit_box_value` with the allocator of the box: the host's
+    /// `mem_alloc` import, or the module's own `__malloc` (no host call;
+    /// `MEMORY_MODEL.md` "Allocation").
+    pub(super) fn emit_box_value_in(
+        &mut self,
+        tag: AnyTypeTag,
+        source_type: &MirType,
+        allocator: BoxAllocator,
+    ) -> Result<(), CompilerError> {
         debug_mir!(?tag, ?source_type, "Boxing value to any type");
 
         // The box payload is an i32, an i64 or an f64. `integer:64` and
@@ -2976,14 +2992,18 @@ impl MirCodeGenerator<'_> {
             None => (tag, source_type),
         };
 
-        // Get mem_alloc function index
+        // The allocator's function index.
+        let allocator_name = match allocator {
+            BoxAllocator::Host => "mem_alloc",
+            BoxAllocator::Native => "__malloc",
+        };
         let mem_alloc_idx = *self
             .wasm_generator
             .function_map
-            .get("mem_alloc")
+            .get(allocator_name)
             .ok_or_else(|| CompilerError::Codegen {
                 context: Box::new(crate::error::ErrorContext::new(
-                    "mem_alloc function not found in function_map for boxing".to_string(),
+                    format!("{allocator_name} function not found in function_map for boxing"),
                     None,
                     crate::error::ErrorType::Codegen,
                     None,
@@ -3002,9 +3022,11 @@ impl MirCodeGenerator<'_> {
         self.current_instructions
             .push(Instruction::LocalSet(temp_local));
 
-        // Allocate 12 bytes for the boxed structure
-        // mem_alloc(type_id=0, size=12)
-        self.current_instructions.push(Instruction::I32Const(0)); // type_id
+        // Allocate 12 bytes for the boxed structure:
+        // mem_alloc(type_id=0, size=12) or __malloc(12)
+        if allocator == BoxAllocator::Host {
+            self.current_instructions.push(Instruction::I32Const(0)); // type_id
+        }
         self.current_instructions.push(Instruction::I32Const(12)); // size
         self.current_instructions
             .push(Instruction::Call(mem_alloc_idx));

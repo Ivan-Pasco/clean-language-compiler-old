@@ -30,9 +30,19 @@ mod control_flow;
 mod exports;
 mod instructions;
 mod operands;
+mod optional;
 mod utilities;
 
 use any_unbox::AnyUnboxTarget;
+
+/// Where `emit_box_value_in` allocates a box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BoxAllocator {
+    /// The host's `memory_runtime.mem_alloc` import.
+    Host,
+    /// The module's own bump allocator, `__malloc`.
+    Native,
+}
 
 // ---------------------------------------------------------------------------
 // Debug macro (must be in mod.rs so `use super::*` imports it in submodules)
