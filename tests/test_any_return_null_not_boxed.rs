@@ -27,8 +27,14 @@
 //!
 //! This test compiles a minimal repro that returns `null` from an
 //! `any`-typed function and walks the emitted WASM. The function body
-//! must NOT contain a `Call` to `mem_alloc` — the presence of one is the
+//! must NOT contain a `Call` to `__malloc` — the presence of one is the
 //! signature of the box allocation that this fix removes for null.
+//!
+//! Fixed: this test looked for a call to the host's
+//! `memory_runtime.mem_alloc` import. Compiled code now allocates every box
+//! with the module's own `__malloc` (exported as `malloc`, MEMORY_MODEL.md
+//! "Allocation", #40), so the allocation is a call to that function. The
+//! behaviour checked is unchanged; only the allocator the rule names is.
 
 use std::fs;
 use tempfile::TempDir;
@@ -67,7 +73,7 @@ fn any_return_null_does_not_allocate_a_box() {
     });
 
     let mut make_any_null_idx: Option<u32> = None;
-    let mut mem_alloc_idx: Option<u32> = None;
+    let mut malloc_idx: Option<u32> = None;
     let mut imported_func_count: u32 = 0;
 
     for payload in WasmParser::new(0).parse_all(&wasm) {
@@ -76,9 +82,6 @@ fn any_return_null_does_not_allocate_a_box() {
                 for import in reader {
                     let Ok(import) = import else { continue };
                     if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                        if mem_alloc_idx.is_none() && import.name == "mem_alloc" {
-                            mem_alloc_idx = Some(imported_func_count);
-                        }
                         imported_func_count += 1;
                     }
                 }
@@ -91,10 +94,10 @@ fn any_return_null_does_not_allocate_a_box() {
                     {
                         make_any_null_idx = Some(export.index);
                     }
-                    if export.name == "mem_alloc"
+                    if export.name == "malloc"
                         && matches!(export.kind, wasmparser::ExternalKind::Func)
                     {
-                        mem_alloc_idx.get_or_insert(export.index);
+                        malloc_idx = Some(export.index);
                     }
                 }
             }
@@ -104,8 +107,8 @@ fn any_return_null_does_not_allocate_a_box() {
 
     let make_any_null_idx =
         make_any_null_idx.expect("test setup: makeAnyNull must be exported by the compiled module");
-    let mem_alloc_idx = mem_alloc_idx
-        .expect("test setup: mem_alloc must be either imported or exported by the module");
+    let malloc_idx =
+        malloc_idx.expect("test setup: the module must export its allocator as `malloc`");
 
     assert!(
         make_any_null_idx >= imported_func_count,
@@ -118,7 +121,7 @@ fn any_return_null_does_not_allocate_a_box() {
     let body_index = (make_any_null_idx - imported_func_count) as usize;
 
     let mut current_body: usize = 0;
-    let mut calls_mem_alloc_in_makeanynull = false;
+    let mut calls_malloc_in_makeanynull = false;
 
     for payload in WasmParser::new(0).parse_all(&wasm) {
         let Ok(Payload::CodeSectionEntry(body)) = payload else {
@@ -135,8 +138,8 @@ fn any_return_null_does_not_allocate_a_box() {
 
         loop {
             match reader.read() {
-                Ok(Operator::Call { function_index }) if function_index == mem_alloc_idx => {
-                    calls_mem_alloc_in_makeanynull = true;
+                Ok(Operator::Call { function_index }) if function_index == malloc_idx => {
+                    calls_malloc_in_makeanynull = true;
                     break;
                 }
                 Ok(_) => {}
@@ -147,8 +150,8 @@ fn any_return_null_does_not_allocate_a_box() {
     }
 
     assert!(
-        !calls_mem_alloc_in_makeanynull,
-        "`makeAnyNull` should NOT call `mem_alloc` — `return null` from an \
+        !calls_malloc_in_makeanynull,
+        "`makeAnyNull` should NOT call `__malloc` — `return null` from an \
          any-returning function must emit a raw `i32.const 0`, not a boxed \
          null. A box allocation here means the regression \
          CODEGEN-ANY-RETURN-NULL-BOXED-AS-NONZERO-BREAKS-GUARD-CHECK is \

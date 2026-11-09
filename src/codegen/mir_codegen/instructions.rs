@@ -551,35 +551,14 @@ impl MirCodeGenerator<'_> {
             }
 
             MirOperation::Alloca { size, alignment: _ } => {
-                debug_mir!(size = ?size, "Processing Alloca - converting to mem_alloc call");
+                debug_mir!(size = ?size, "Processing Alloca - converting to __malloc call");
 
-                // Allocate heap memory by calling mem_alloc
-                // mem_alloc signature: (type_id: i32, size: i32) -> i32 (pointer)
-                // For class instances, we use type_id = 0 (generic object)
-
-                // Push type_id argument (0 for generic allocation)
-                self.current_instructions.push(Instruction::I32Const(0));
-
-                // Push size argument
+                // Heap memory from the module's own allocator:
+                // __malloc(size: i32) -> i32 (MEMORY_MODEL.md "Allocation").
                 self.load_operand(size)?;
-
-                // Get mem_alloc function index from function_map
-                let mem_alloc_idx = *self
-                    .wasm_generator
-                    .function_map
-                    .get("mem_alloc")
-                    .ok_or_else(|| CompilerError::Codegen {
-                        context: Box::new(crate::error::ErrorContext::new(
-                            "mem_alloc function not found in function_map".to_string(),
-                            None,
-                            crate::error::ErrorType::Codegen,
-                            Some(instruction.location.clone()),
-                        )),
-                    })?;
-
-                // Call mem_alloc
+                let malloc_idx = self.malloc_index(Some(&instruction.location))?;
                 self.current_instructions
-                    .push(Instruction::Call(mem_alloc_idx));
+                    .push(Instruction::Call(malloc_idx));
 
                 // Store result if there's a destination
                 if let Some(dest) = instruction.dest {
@@ -2950,26 +2929,38 @@ impl MirCodeGenerator<'_> {
     // Boxing / unboxing helpers for `any` type
     // -----------------------------------------------------------------------
 
+    /// The function index of the module's allocator, `__malloc`. Compiled
+    /// code never allocates through the host's `memory_runtime.mem_alloc`:
+    /// two allocators on one heap stay apart only while every host keeps
+    /// `__heap_ptr` in sync (MEMORY_MODEL.md "Allocation").
+    fn malloc_index(
+        &self,
+        location: Option<&crate::parser::SourceLocation>,
+    ) -> Result<u32, CompilerError> {
+        self.wasm_generator
+            .function_map
+            .get("__malloc")
+            .copied()
+            .ok_or_else(|| CompilerError::Codegen {
+                context: Box::new(crate::error::ErrorContext::new(
+                    "__malloc function not found in function_map".to_string(),
+                    None,
+                    crate::error::ErrorType::Codegen,
+                    location.cloned(),
+                )),
+            })
+    }
+
     /// Emit code to box a value into an `any` type.
     ///
-    /// Boxing allocates 12 bytes: `[tag:i32][value1:i32][value2:i32]`
-    /// After this call, the boxed pointer is on the WASM stack.
+    /// Boxing allocates 12 bytes, `[tag:i32][value1:i32][value2:i32]`, with
+    /// the module's own allocator `__malloc` (`MEMORY_MODEL.md`
+    /// "Allocation"). After this call, the boxed pointer is on the WASM
+    /// stack.
     pub(super) fn emit_box_value(
         &mut self,
         tag: AnyTypeTag,
         source_type: &MirType,
-    ) -> Result<(), CompilerError> {
-        self.emit_box_value_in(tag, source_type, BoxAllocator::Host)
-    }
-
-    /// `emit_box_value` with the allocator of the box: the host's
-    /// `mem_alloc` import, or the module's own `__malloc` (no host call;
-    /// `MEMORY_MODEL.md` "Allocation").
-    pub(super) fn emit_box_value_in(
-        &mut self,
-        tag: AnyTypeTag,
-        source_type: &MirType,
-        allocator: BoxAllocator,
     ) -> Result<(), CompilerError> {
         debug_mir!(?tag, ?source_type, "Boxing value to any type");
 
@@ -2992,23 +2983,7 @@ impl MirCodeGenerator<'_> {
             None => (tag, source_type),
         };
 
-        // The allocator's function index.
-        let allocator_name = match allocator {
-            BoxAllocator::Host => "mem_alloc",
-            BoxAllocator::Native => "__malloc",
-        };
-        let mem_alloc_idx = *self
-            .wasm_generator
-            .function_map
-            .get(allocator_name)
-            .ok_or_else(|| CompilerError::Codegen {
-                context: Box::new(crate::error::ErrorContext::new(
-                    format!("{allocator_name} function not found in function_map for boxing"),
-                    None,
-                    crate::error::ErrorType::Codegen,
-                    None,
-                )),
-            })?;
+        let malloc_idx = self.malloc_index(None)?;
 
         // The value to box is already on the stack
         // We need to save it to a temporary local first
@@ -3022,14 +2997,10 @@ impl MirCodeGenerator<'_> {
         self.current_instructions
             .push(Instruction::LocalSet(temp_local));
 
-        // Allocate 12 bytes for the boxed structure:
-        // mem_alloc(type_id=0, size=12) or __malloc(12)
-        if allocator == BoxAllocator::Host {
-            self.current_instructions.push(Instruction::I32Const(0)); // type_id
-        }
-        self.current_instructions.push(Instruction::I32Const(12)); // size
+        // Allocate 12 bytes for the boxed structure: __malloc(12)
+        self.current_instructions.push(Instruction::I32Const(12));
         self.current_instructions
-            .push(Instruction::Call(mem_alloc_idx));
+            .push(Instruction::Call(malloc_idx));
 
         // Save the pointer to another temp local
         let ptr_local = self.alloc_temp_local(ValType::I32);

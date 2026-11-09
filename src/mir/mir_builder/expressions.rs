@@ -1120,7 +1120,7 @@ impl MirBuilder {
                     );
 
                     // Generate Alloca instruction to allocate instance memory
-                    // Note: For heap allocation, this should be converted to mem_alloc during codegen
+                    // Codegen lowers it to a `__malloc` call.
                     let alloc_result = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
 
@@ -4497,13 +4497,10 @@ impl MirBuilder {
                         dest: Some(raw_obj_id),
                         operation: MirOperation::Call {
                             function: MirOperand::NamedFunction {
-                                name: "mem_alloc".to_string(),
+                                name: "__malloc".to_string(),
                                 symbol_id: SymbolId(0),
                             },
-                            arguments: vec![
-                                MirOperand::Constant(MirConstant::Integer(0)),
-                                MirOperand::Constant(MirConstant::Integer(alloc_size)),
-                            ],
+                            arguments: vec![MirOperand::Constant(MirConstant::Integer(alloc_size))],
                         },
                         location: loc.clone(),
                     },

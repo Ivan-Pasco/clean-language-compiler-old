@@ -25,12 +25,16 @@ impl super::CodeGenerator {
     pub fn register_validator_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::validator::ValidatorManager;
 
-        // Resolve mem_alloc index dynamically so the validator is resilient to
-        // import ordering changes (e.g. when input_* imports are gated out).
-        let mem_alloc_idx = self
-            .get_function_index("mem_alloc")
-            .unwrap_or(crate::stdlib::validator::DEFAULT_MEM_ALLOC_CALL_INDEX);
-        let validator_manager = ValidatorManager::new_with_mem_alloc_idx(mem_alloc_idx);
+        // Validators allocate through the module's own `__malloc`, so they
+        // are registered after `register_memory_operations`.
+        let malloc_idx = self.get_function_index("__malloc").ok_or_else(|| {
+            CompilerError::codegen_error(
+                "register_validator_operations: __malloc is not registered yet",
+                None,
+                None,
+            )
+        })?;
+        let validator_manager = ValidatorManager::new_with_malloc_idx(malloc_idx);
         validator_manager.register_functions(self)?;
 
         Ok(())

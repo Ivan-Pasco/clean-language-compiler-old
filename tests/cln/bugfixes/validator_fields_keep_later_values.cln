@@ -1,0 +1,28 @@
+// Test: bugfixes/validator_fields_keep_later_values
+// Grammar: function_call (validator.create, validator.field)
+// Semantic: MEMORY_MODEL.md "Allocation" — compiled code allocates with the
+//   module's `__malloc(size)`
+// Fixed in: compiler 0.33.182
+// Expected output:
+//   before alpha
+//   beta
+//   3
+//
+// Regression (#40): the validator functions called the host's
+// `mem_alloc(type_id, size)` with the arguments swapped, so every block was
+// as big as the type id (21 or 20 bytes, rounded to 24): the 640-byte field
+// array of `validator.create()` got 24 bytes, and adding fields overwrote
+// the list allocated after it (the run trapped in `names.get`). They now
+// allocate with `__malloc(size)` like the rest of compiled code.
+
+start:
+	integer rules = validator.create()
+	list<string> names = ["alpha", "beta", "gamma"]
+	string label = "before " + names.get(0)
+	validator.field(rules, "email")
+	validator.required(rules, 1)
+	validator.field(rules, "age")
+	validator.minLength(rules, 3)
+	print(label)
+	print(names.get(1))
+	print(names.size())

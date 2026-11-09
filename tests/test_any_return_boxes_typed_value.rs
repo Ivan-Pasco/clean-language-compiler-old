@@ -21,9 +21,15 @@
 //!
 //! This test compiles a minimal repro that returns a string literal from
 //! an `any`-typed function and walks the emitted WASM. The function body
-//! must contain a Call to `mem_alloc` — the heap allocation that backs
+//! must contain a Call to `__malloc` — the heap allocation that backs
 //! the 12-byte tagged box. Pre-fix, the body had no allocation and
 //! simply pushed the raw string pointer before `return`.
+//!
+//! Fixed: this test looked for a call to the host's
+//! `memory_runtime.mem_alloc` import. Compiled code now allocates every box
+//! with the module's own `__malloc` (exported as `malloc`, MEMORY_MODEL.md
+//! "Allocation", #40), so the allocation is a call to that function. The
+//! behaviour checked is unchanged; only the allocator the rule names is.
 
 use std::fs;
 use tempfile::TempDir;
@@ -65,7 +71,7 @@ fn any_return_typed_string_routes_through_box_alloc() {
     // The MIR builder emits one user function per definition; we don't need
     // to introspect the export — but the export name is the cleanest hook.
     let mut make_any_str_idx: Option<u32> = None;
-    let mut mem_alloc_idx: Option<u32> = None;
+    let mut malloc_idx: Option<u32> = None;
     let mut imported_func_count: u32 = 0;
 
     for payload in WasmParser::new(0).parse_all(&wasm) {
@@ -74,9 +80,6 @@ fn any_return_typed_string_routes_through_box_alloc() {
                 for import in reader {
                     let Ok(import) = import else { continue };
                     if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                        if mem_alloc_idx.is_none() && import.name == "mem_alloc" {
-                            mem_alloc_idx = Some(imported_func_count);
-                        }
                         imported_func_count += 1;
                     }
                 }
@@ -89,10 +92,10 @@ fn any_return_typed_string_routes_through_box_alloc() {
                     {
                         make_any_str_idx = Some(export.index);
                     }
-                    if export.name == "mem_alloc"
+                    if export.name == "malloc"
                         && matches!(export.kind, wasmparser::ExternalKind::Func)
                     {
-                        mem_alloc_idx.get_or_insert(export.index);
+                        malloc_idx = Some(export.index);
                     }
                 }
             }
@@ -102,8 +105,8 @@ fn any_return_typed_string_routes_through_box_alloc() {
 
     let make_any_str_idx =
         make_any_str_idx.expect("test setup: makeAnyStr must be exported by the compiled module");
-    let mem_alloc_idx = mem_alloc_idx
-        .expect("test setup: mem_alloc must be either imported or exported by the module");
+    let malloc_idx =
+        malloc_idx.expect("test setup: the module must export its allocator as `malloc`");
 
     // The code section orders entries by *defined* function index, which is
     // `total_function_index - imported_function_count`. Use the export's
@@ -119,7 +122,7 @@ fn any_return_typed_string_routes_through_box_alloc() {
     let body_index = (make_any_str_idx - imported_func_count) as usize;
 
     let mut current_body: usize = 0;
-    let mut calls_mem_alloc_in_makeanystr = false;
+    let mut calls_malloc_in_makeanystr = false;
 
     for payload in WasmParser::new(0).parse_all(&wasm) {
         let Ok(Payload::CodeSectionEntry(body)) = payload else {
@@ -136,8 +139,8 @@ fn any_return_typed_string_routes_through_box_alloc() {
 
         loop {
             match reader.read() {
-                Ok(Operator::Call { function_index }) if function_index == mem_alloc_idx => {
-                    calls_mem_alloc_in_makeanystr = true;
+                Ok(Operator::Call { function_index }) if function_index == malloc_idx => {
+                    calls_malloc_in_makeanystr = true;
                     break;
                 }
                 Ok(_) => {}
@@ -148,8 +151,8 @@ fn any_return_typed_string_routes_through_box_alloc() {
     }
 
     assert!(
-        calls_mem_alloc_in_makeanystr,
-        "expected `makeAnyStr` to call `mem_alloc` for its any-box allocation, \
+        calls_malloc_in_makeanystr,
+        "expected `makeAnyStr` to call `__malloc` for its any-box allocation, \
          but the function body contains no such call. This is the \
          CODEGEN-ANY-RETURN-STRING-NOT-BOXED regression — the MIR builder \
          is no longer routing `return <typed-expr>` through `emit_box_any` \

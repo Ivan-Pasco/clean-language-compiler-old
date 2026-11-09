@@ -52,12 +52,6 @@ const _RESULT_SIZE: i32 = 24;
 ///  12:  name_ptr     (4 bytes, 0 if unnamed)
 const _RULES_HEADER_SIZE: i32 = 16;
 
-/// Fallback call index for mem_alloc when dynamic resolution is not available.
-/// In the standard layout: 0=print, 1=printl, 2=input, 3=input_integer,
-/// 4=input_float, 5=input_yesno, 6=input_range, 7=mem_alloc.
-/// Prefer dynamic resolution via ValidatorManager::mem_alloc_idx where possible.
-pub const DEFAULT_MEM_ALLOC_CALL_INDEX: u32 = 7;
-
 // Call index for pairs.get(pairs_ptr: i32, key_ptr: i32) -> i32.
 // pairs.get is registered as a WASM stdlib function by PairsTypeManager.
 // The exact index is determined at registration time; 2000 is used as a
@@ -85,17 +79,17 @@ pub const DEFAULT_MEM_ALLOC_CALL_INDEX: u32 = 7;
 ///     print result.firstError
 /// ```
 pub struct ValidatorManager {
-    /// Dynamically resolved index for mem_alloc in the current module's import table.
-    /// Set at registration time so the validator is resilient to import ordering changes.
-    mem_alloc_idx: u32,
+    /// Function index of the module's allocator, `__malloc(size) -> ptr`
+    /// (MEMORY_MODEL.md "Allocation").
+    malloc_idx: u32,
 }
 
 impl ValidatorManager {
-    /// Create a ValidatorManager with a specific mem_alloc call index.
-    /// Use this from `register_validator_operations` after mem_alloc has been
-    /// registered, so the index reflects the actual module layout.
-    pub fn new_with_mem_alloc_idx(mem_alloc_idx: u32) -> Self {
-        Self { mem_alloc_idx }
+    /// Create a ValidatorManager that allocates through the `__malloc` at
+    /// `malloc_idx`. `register_validator_operations` runs after
+    /// `register_memory_operations`, which defines it.
+    pub fn new_with_malloc_idx(malloc_idx: u32) -> Self {
+        Self { malloc_idx }
     }
 
     /// Register all validator functions as stdlib functions
@@ -570,8 +564,7 @@ impl ValidatorManager {
         vec![
             // Allocate ValidationRules header (16 bytes): field_count, capacity, fields_ptr, name_ptr
             Instruction::I32Const(16),
-            Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalTee(0), // rules_ptr
             // field_count = 0 at offset 0
             Instruction::I32Const(0),
@@ -598,8 +591,7 @@ impl ValidatorManager {
             }),
             // Allocate field array: INITIAL_FIELD_CAPACITY * FIELD_ENTRY_SIZE bytes
             Instruction::I32Const(INITIAL_FIELD_CAPACITY * FIELD_ENTRY_SIZE),
-            Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalSet(1), // fields_ptr — use Set (not Tee) to avoid leaving value on stack
             // Store fields_ptr at offset 8 of rules header
             Instruction::LocalGet(0),
@@ -623,8 +615,7 @@ impl ValidatorManager {
         vec![
             // Allocate 16-byte header
             Instruction::I32Const(16),
-            Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalTee(1), // rules_ptr (extra local 1, since param is 0)
             // field_count = 0
             Instruction::I32Const(0),
@@ -651,8 +642,7 @@ impl ValidatorManager {
             }),
             // Allocate field array
             Instruction::I32Const(INITIAL_FIELD_CAPACITY * FIELD_ENTRY_SIZE),
-            Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalSet(2), // fields_ptr (extra local 2) — use Set (not Tee) to avoid leaving value on stack
             // Store fields_ptr at offset 8
             Instruction::LocalGet(1),
@@ -694,8 +684,7 @@ impl ValidatorManager {
         // Allocate ValidationResult (24 bytes)
         instrs.extend([
             Instruction::I32Const(24),
-            Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalSet(2), // result_ptr
         ]);
 
@@ -1076,8 +1065,7 @@ impl ValidatorManager {
         // Allocate 24-byte ValidationResult
         instrs.extend([
             Instruction::I32Const(24),
-            Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalSet(3), // result_ptr
         ]);
 
@@ -1385,8 +1373,7 @@ impl ValidatorManager {
     fn generate_validator_ok(&self) -> Vec<Instruction<'static>> {
         vec![
             Instruction::I32Const(24),
-            Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalTee(1), // result_ptr
             // is_ok = 1
             Instruction::I32Const(1),
@@ -1447,8 +1434,7 @@ impl ValidatorManager {
     fn generate_validator_error(&self) -> Vec<Instruction<'static>> {
         vec![
             Instruction::I32Const(24),
-            Instruction::I32Const(VALIDATION_RESULT_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalTee(1), // result_ptr
             // is_ok = 0
             Instruction::I32Const(0),
@@ -1796,8 +1782,7 @@ impl ValidatorManager {
         // Allocate 8-byte range structure
         instrs.extend([
             Instruction::I32Const(8),
-            Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalTee(3), // range_rule_ptr
             Instruction::LocalGet(1), // min
             Instruction::I32Store(MemArg {
@@ -2165,8 +2150,7 @@ impl ValidatorManager {
         // Allocate new_rules header (16 bytes)
         instrs.extend([
             Instruction::I32Const(16),
-            Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalSet(2), // new_rules_ptr
         ]);
 
@@ -2208,8 +2192,7 @@ impl ValidatorManager {
             Instruction::LocalGet(5),
             Instruction::I32Const(FIELD_ENTRY_SIZE),
             Instruction::I32Mul,
-            Instruction::I32Const(VALIDATION_RULES_TYPE_ID as i32),
-            Instruction::Call(self.mem_alloc_idx),
+            Instruction::Call(self.malloc_idx),
             Instruction::LocalSet(6), // new_fields_ptr — use Set (not Tee) to avoid leaving value on stack
         ]);
 
@@ -2389,9 +2372,12 @@ impl ValidatorManager {
 mod tests {
     use super::*;
 
+    /// A function index for building instruction sequences outside a module.
+    const TEST_MALLOC_INDEX: u32 = 7;
+
     #[test]
     fn test_validator_manager_creation() {
-        let _manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let _manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
     }
 
     #[test]
@@ -2409,7 +2395,7 @@ mod tests {
 
     #[test]
     fn test_generate_validator_create_not_empty() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_create();
         // Must produce a non-trivial instruction sequence
         assert!(instrs.len() > 5);
@@ -2417,7 +2403,7 @@ mod tests {
 
     #[test]
     fn test_generate_validator_run_produces_loop() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_run();
         // The run function must contain loop and block instructions
         let has_loop = instrs.iter().any(|i| matches!(i, Instruction::Loop(_)));
@@ -2428,7 +2414,7 @@ mod tests {
 
     #[test]
     fn test_generate_validator_field_zeros_entry() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_field();
         // Must have exactly 20 zero-store instructions (one per word in 80-byte entry)
         let zero_stores = instrs
@@ -2444,7 +2430,7 @@ mod tests {
 
     #[test]
     fn test_min_length_stores_at_offset_16() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_min_length();
         // Must contain an I32Store with offset 16
         let has_offset_16 = instrs
@@ -2458,7 +2444,7 @@ mod tests {
 
     #[test]
     fn test_max_length_stores_at_offset_20() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_max_length();
         let has_offset_20 = instrs
             .iter()
@@ -2471,7 +2457,7 @@ mod tests {
 
     #[test]
     fn test_message_stores_at_offset_24() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_message();
         let has_offset_24 = instrs
             .iter()
@@ -2484,7 +2470,7 @@ mod tests {
 
     #[test]
     fn test_custom_stores_at_offset_28() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_custom();
         let has_offset_28 = instrs
             .iter()
@@ -2497,7 +2483,7 @@ mod tests {
 
     #[test]
     fn test_trim_stores_at_offset_36() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_trim();
         let has_offset_36 = instrs
             .iter()
@@ -2510,7 +2496,7 @@ mod tests {
 
     #[test]
     fn test_min_value_stores_at_offset_64_and_72() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_min_value();
         let has_offset_64 = instrs
             .iter()
@@ -2530,7 +2516,7 @@ mod tests {
 
     #[test]
     fn test_max_value_stores_at_offset_68_and_76() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_max_value();
         let has_offset_68 = instrs
             .iter()
@@ -2550,7 +2536,7 @@ mod tests {
 
     #[test]
     fn test_merge_produces_two_copy_loops() {
-        let manager = ValidatorManager::new_with_mem_alloc_idx(DEFAULT_MEM_ALLOC_CALL_INDEX);
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
         let instrs = manager.generate_validator_merge();
         let loop_count = instrs
             .iter()

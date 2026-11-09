@@ -93,7 +93,7 @@ impl MirCodeGenerator<'_> {
                     Instruction::Else,
                     Instruction::I32Const(0),
                 ]);
-                self.emit_box_value_in(AnyTypeTag::Null, &MirType::I32, BoxAllocator::Native)?;
+                self.emit_box_value(AnyTypeTag::Null, &MirType::I32)?;
                 self.current_instructions.push(Instruction::End);
             }
         }
@@ -114,7 +114,7 @@ impl MirCodeGenerator<'_> {
             MirType::I64 | MirType::U64 => (AnyTypeTag::Integer, MirType::I64),
             other => (AnyTypeTag::Integer, other.clone()),
         };
-        self.emit_box_value_in(tag, &source, BoxAllocator::Native)
+        self.emit_box_value(tag, &source)
     }
 
     /// Convert the primitive on the stack from `from` to `to`: integers

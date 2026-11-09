@@ -35,15 +35,6 @@ mod utilities;
 
 use any_unbox::AnyUnboxTarget;
 
-/// Where `emit_box_value_in` allocates a box.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BoxAllocator {
-    /// The host's `memory_runtime.mem_alloc` import.
-    Host,
-    /// The module's own bump allocator, `__malloc`.
-    Native,
-}
-
 // ---------------------------------------------------------------------------
 // Debug macro (must be in mod.rs so `use super::*` imports it in submodules)
 // ---------------------------------------------------------------------------
@@ -930,14 +921,15 @@ impl MirCodeGenerator<'_> {
                 .register_file_operations()
                 .map_err(|e| vec![e])?;
 
-            debug_mir!("DEBUG MIR: Registering validator operations");
-            self.wasm_generator
-                .register_validator_operations()
-                .map_err(|e| vec![e])?;
-
             debug_mir!("DEBUG MIR: Registering native memory operations");
             self.wasm_generator
                 .register_memory_operations()
+                .map_err(|e| vec![e])?;
+
+            // After `__malloc`, which the validators allocate with.
+            debug_mir!("DEBUG MIR: Registering validator operations");
+            self.wasm_generator
+                .register_validator_operations()
                 .map_err(|e| vec![e])?;
 
             debug_mir!("DEBUG MIR: Registering native string trim functions");

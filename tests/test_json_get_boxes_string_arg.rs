@@ -22,9 +22,15 @@
 //! rejected, preserving the compiler-stdlib signature.
 //!
 //! This test compiles a minimal repro that calls `json.get(rawStr, "x")`
-//! and walks the emitted WASM. The call site must contain a `mem_alloc(12)`
+//! and walks the emitted WASM. The call site must contain a `__malloc(12)`
 //! call — that is the BoxAny op. Pre-fix, the compiled body contained
 //! only a plain string load and the json.get call, no allocation.
+//!
+//! Fixed: this test looked for a call to the host's
+//! `memory_runtime.mem_alloc` import. Compiled code now allocates every box
+//! with the module's own `__malloc` (exported as `malloc`, MEMORY_MODEL.md
+//! "Allocation", #40), so the allocation is a call to that function. The
+//! behaviour checked is unchanged; only the allocator the rule names is.
 
 use std::fs;
 use tempfile::TempDir;
@@ -59,7 +65,7 @@ fn json_get_string_arg_is_boxed_before_call() {
         panic!("repro compile must succeed");
     });
 
-    let mut mem_alloc_idx: Option<u32> = None;
+    let mut malloc_idx: Option<u32> = None;
     let mut start_idx: Option<u32> = None;
     let mut imported_func_count: u32 = 0;
 
@@ -69,9 +75,6 @@ fn json_get_string_arg_is_boxed_before_call() {
                 for import in reader {
                     let Ok(import) = import else { continue };
                     if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                        if mem_alloc_idx.is_none() && import.name == "mem_alloc" {
-                            mem_alloc_idx = Some(imported_func_count);
-                        }
                         imported_func_count += 1;
                     }
                 }
@@ -84,10 +87,10 @@ fn json_get_string_arg_is_boxed_before_call() {
                     {
                         start_idx = Some(export.index);
                     }
-                    if export.name == "mem_alloc"
+                    if export.name == "malloc"
                         && matches!(export.kind, wasmparser::ExternalKind::Func)
                     {
-                        mem_alloc_idx.get_or_insert(export.index);
+                        malloc_idx = Some(export.index);
                     }
                 }
             }
@@ -96,7 +99,7 @@ fn json_get_string_arg_is_boxed_before_call() {
     }
 
     let start_idx = start_idx.expect("start must be exported");
-    let mem_alloc_idx = mem_alloc_idx.expect("mem_alloc must be imported or exported");
+    let malloc_idx = malloc_idx.expect("the module must export its allocator as `malloc`");
 
     assert!(
         start_idx >= imported_func_count,
@@ -107,7 +110,7 @@ fn json_get_string_arg_is_boxed_before_call() {
     let body_index = (start_idx - imported_func_count) as usize;
 
     let mut current_body: usize = 0;
-    let mut mem_alloc_call_count = 0u32;
+    let mut malloc_call_count = 0u32;
 
     for payload in WasmParser::new(0).parse_all(&wasm) {
         let Ok(Payload::CodeSectionEntry(body)) = payload else {
@@ -124,8 +127,8 @@ fn json_get_string_arg_is_boxed_before_call() {
 
         while let Ok(op) = reader.read() {
             if let Operator::Call { function_index } = op {
-                if function_index == mem_alloc_idx {
-                    mem_alloc_call_count += 1;
+                if function_index == malloc_idx {
+                    malloc_call_count += 1;
                 }
             }
         }
@@ -134,18 +137,18 @@ fn json_get_string_arg_is_boxed_before_call() {
 
     // `start` allocates for the string literal (`"{"x": 1}"`) via
     // `get_or_create_string_offset` — that's a data-section blob, not a
-    // mem_alloc call. Any additional mem_alloc call is the BoxAny op for
+    // __malloc call. Any additional __malloc call is the BoxAny op for
     // the json.get first argument, plus possibly one for the return-side
     // unbox scratch.
     //
     // Pre-fix (without the resolver guard, with a hypothetical plugin
-    // that narrowed json.get's first param to String): zero mem_alloc
+    // that narrowed json.get's first param to String): zero __malloc
     // calls in start, because BoxAny was skipped.
     //
-    // Post-fix: at least one mem_alloc call (the BoxAny for the receiver).
+    // Post-fix: at least one __malloc call (the BoxAny for the receiver).
     assert!(
-        mem_alloc_call_count >= 1,
-        "expected `start` to call `mem_alloc` at least once for the json.get \
+        malloc_call_count >= 1,
+        "expected `start` to call `__malloc` at least once for the json.get \
          first-arg BoxAny, but the function body contains no such call. \
          This is the CODEGEN-STRING-ARG-ALIAS-JSONGET regression — a plugin \
          narrowing json.get(any, string) to json.get(string, string) is \

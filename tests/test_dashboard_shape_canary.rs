@@ -275,16 +275,18 @@ fn count_calls(body: &str, target: u32) -> usize {
 /// Count BoxAny allocations whose boxed value is consumed by a call to
 /// `target`: for each box pattern, the next `call N` after the allocation
 /// decides which function receives it.
-fn count_boxes_feeding(body: &str, mem_alloc_idx: u32, target: u32) -> usize {
+///
+/// Fixed: a box was `i32.const 0; i32.const 12; call mem_alloc` (the host's
+/// `memory_runtime.mem_alloc(type_id, size)`). Compiled code now allocates
+/// with the module's own `__malloc(size)` (MEMORY_MODEL.md "Allocation",
+/// #40), so a box is `i32.const 12; call malloc`.
+fn count_boxes_feeding(body: &str, malloc_idx: u32, target: u32) -> usize {
     let compact: Vec<&str> = body.lines().map(str::trim).collect();
-    let alloc_call = format!("call {}", mem_alloc_idx);
+    let alloc_call = format!("call {}", malloc_idx);
     let target_call = format!("call {}", target);
     let mut count = 0;
-    for i in 2..compact.len() {
-        if compact[i] == alloc_call
-            && compact[i - 1] == "i32.const 12"
-            && compact[i - 2] == "i32.const 0"
-        {
+    for i in 1..compact.len() {
+        if compact[i] == alloc_call && compact[i - 1] == "i32.const 12" {
             if let Some(next) = compact[i + 1..].iter().find(|l| l.starts_with("call ")) {
                 if *next == target_call {
                     count += 1;
@@ -319,7 +321,7 @@ fn dashboard_page_does_not_box_expand_strings_wrapper_args() {
     // wrappers that expect raw length-prefixed Clean strings. A regression
     // that reintroduces spurious BoxAny before those calls will produce a
     // 12-byte malloc followed immediately by tag=4 / ptr / 0 stores and
-    // then the wrapper call. If the number of `mem_alloc(12)` allocations
+    // then the wrapper call. If the number of `__malloc(12)` allocations
     // inside `dashboard_page` is anywhere close to the number of
     // (json.get + db.query) calls, the regression is back.
     //
@@ -338,13 +340,12 @@ fn dashboard_page_does_not_box_expand_strings_wrapper_args() {
 
     let dashboard_idx =
         export_index(&wat, "dashboard_page").expect("dashboard_page must be exported");
-    let mem_alloc_idx =
-        import_index(&wat, "memory_runtime", "mem_alloc").expect("mem_alloc must be imported");
+    let malloc_idx = export_index(&wat, "malloc").expect("malloc must be exported");
     let db_query_idx =
         bridge_call_target(&wat, "_db_query").expect("db.query must compile to a call");
 
     let body = function_body_by_index(&wat, dashboard_idx);
-    let box_count = count_boxes_feeding(&body, mem_alloc_idx, db_query_idx);
+    let box_count = count_boxes_feeding(&body, malloc_idx, db_query_idx);
 
     assert_eq!(
         box_count, 0,

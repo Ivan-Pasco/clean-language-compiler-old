@@ -516,13 +516,12 @@ impl MirBuilder {
             Some(object_vid),
             MirOperation::Call {
                 function: MirOperand::NamedFunction {
-                    name: "mem_alloc".to_string(),
+                    name: "__malloc".to_string(),
                     symbol_id: SymbolId(0),
                 },
-                arguments: vec![
-                    MirOperand::Constant(MirConstant::Integer(0)),
-                    MirOperand::Constant(MirConstant::Integer((4 + 8 * fields.len()) as i64)),
-                ],
+                arguments: vec![MirOperand::Constant(MirConstant::Integer(
+                    (4 + 8 * fields.len()) as i64,
+                ))],
             },
         );
         push(
@@ -875,10 +874,10 @@ impl MirBuilder {
                 Some(array),
                 MirOperation::Call {
                     function: MirOperand::NamedFunction {
-                        name: "mem_alloc".to_string(),
+                        name: "__malloc".to_string(),
                         symbol_id: SymbolId(0),
                     },
-                    arguments: vec![int(0), value(bytes)],
+                    arguments: vec![value(bytes)],
                 },
             ),
             instruction(
