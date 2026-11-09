@@ -4887,20 +4887,32 @@ impl<'a> TypeInference<'a> {
         location: &SourceLocation,
     ) -> Result<ConcreteType, CompilerError> {
         let location = &self.located(location);
+        // SEM004: `and` and `or` take boolean operands (06-expressions.md
+        // §Logical Operators). `or` is not a fallback for a `T?` — that is
+        // `default`, which only replaces none.
+        if matches!(operator, HirBinaryOp::And | HirBinaryOp::Or) {
+            let keyword = if matches!(operator, HirBinaryOp::And) {
+                "and"
+            } else {
+                "or"
+            };
+            self.check_logical_operand(keyword, left_type, true, location)?;
+            self.check_logical_operand(keyword, right_type, false, location)?;
+            return Ok(ConcreteType::Boolean);
+        }
+
         // Optional guarded-use enforcement (spec Step 5):
         // When an Optional(T) value appears in a context that requires T, the compiler must
         // emit an error.  The following operators are "safe" contexts for Optional:
         //   - Equal / NotEqual / Is  →  comparison against none  (`x == none`)
-        //   - Or                             →  optional fallback         (`x or fallback`)
         //   - NullCoalesce                   →  null coalescing           (`x default fallback`)
-        // All other operators (arithmetic, string concatenation, logical AND, ordering)
+        // All other operators (arithmetic, string concatenation, ordering)
         // require the operand to be unwrapped first.
         let operator_allows_optional = matches!(
             operator,
             HirBinaryOp::Equal
                 | HirBinaryOp::NotEqual
                 | HirBinaryOp::Is
-                | HirBinaryOp::Or
                 | HirBinaryOp::NullCoalesce
         );
 
@@ -4909,12 +4921,13 @@ impl<'a> TypeInference<'a> {
             if let ConcreteType::Optional(inner) = left_type {
                 return Err(CompilerError::type_error(
                     format!(
-                        "value of type '{}?' might be none — use 'or' for a fallback or \
+                        "value of type '{}?' might be none — use 'default' for a fallback or \
                          'if' to check before using it",
                         inner
                     ),
                     Some(
-                        "Wrap with: value or defaultValue, or guard with: if value == none"
+                        "Use: value default fallback, value! when it cannot be none, or guard \
+                         with: if value == none"
                             .to_string(),
                     ),
                     Some(location.clone()),
@@ -4924,12 +4937,13 @@ impl<'a> TypeInference<'a> {
             if let ConcreteType::Optional(inner) = right_type {
                 return Err(CompilerError::type_error(
                     format!(
-                        "value of type '{}?' might be none — use 'or' for a fallback or \
+                        "value of type '{}?' might be none — use 'default' for a fallback or \
                          'if' to check before using it",
                         inner
                     ),
                     Some(
-                        "Wrap with: value or defaultValue, or guard with: if value == none"
+                        "Use: value default fallback, value! when it cannot be none, or guard \
+                         with: if value == none"
                             .to_string(),
                     ),
                     Some(location.clone()),
@@ -5082,75 +5096,8 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::Boolean)
             }
 
-            HirBinaryOp::And => {
-                // Logical AND requires boolean types on both sides
-                self.add_constraint(TypeConstraint::Equality {
-                    left: left_type.clone(),
-                    right: ConcreteType::Boolean,
-                    location: location.clone(),
-                });
-
-                self.add_constraint(TypeConstraint::Equality {
-                    left: right_type.clone(),
-                    right: ConcreteType::Boolean,
-                    location: location.clone(),
-                });
-
-                Ok(ConcreteType::Boolean)
-            }
-
-            HirBinaryOp::Or => {
-                // `or` is overloaded in Clean Language:
-                //
-                //   1. Optional fallback: `optionalVar or fallback`
-                //      — left is Optional(T), right is T → result is T (safe unwrap)
-                //
-                //   2. Boolean logical OR: `boolA or boolB`
-                //      — both sides are boolean → result is boolean
-                match (left_type, right_type) {
-                    // Optional<T> or T → T  (the safe-handling path)
-                    (ConcreteType::Optional(inner), right)
-                        if right == inner.as_ref()
-                            || right.is_assignable_to(inner)
-                            || inner.is_assignable_to(right) =>
-                    {
-                        Ok((**inner).clone())
-                    }
-
-                    // Optional<T> or Optional<T> → T  (two optionals coalesced)
-                    (ConcreteType::Optional(inner_l), ConcreteType::Optional(_inner_r)) => {
-                        Ok((**inner_l).clone())
-                    }
-
-                    // Optional<Unknown> or T → T  (type variable not yet resolved)
-                    (ConcreteType::Optional(_), right)
-                        if !matches!(right, ConcreteType::Optional(_)) =>
-                    {
-                        Ok(right.clone())
-                    }
-
-                    // boolean or boolean → boolean (plain logical OR)
-                    (ConcreteType::Boolean, ConcreteType::Boolean) => Ok(ConcreteType::Boolean),
-
-                    // Fallback: treat both sides as boolean (preserves existing behaviour for
-                    // boolean expressions involving Unknown / Generic types)
-                    _ => {
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: left_type.clone(),
-                            right: ConcreteType::Boolean,
-                            location: location.clone(),
-                        });
-
-                        self.add_constraint(TypeConstraint::Equality {
-                            left: right_type.clone(),
-                            right: ConcreteType::Boolean,
-                            location: location.clone(),
-                        });
-
-                        Ok(ConcreteType::Boolean)
-                    }
-                }
-            }
+            // Checked above.
+            HirBinaryOp::And | HirBinaryOp::Or => Ok(ConcreteType::Boolean),
 
             // BOOK: null-coalescing - NullCoalesce operator (a default b)
             // Returns left if not null, otherwise returns right
@@ -6392,6 +6339,78 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// SEM004: an operand of `and`, `or` or `not` must be a boolean
+    /// (06-expressions.md §Logical Operators). An `any` holding a boolean is
+    /// checked at run time; a `T?` is not a boolean, and the fallback for
+    /// one is `default`.
+    fn check_logical_operand(
+        &mut self,
+        keyword: &str,
+        operand_type: &ConcreteType,
+        is_left: bool,
+        location: &SourceLocation,
+    ) -> Result<(), CompilerError> {
+        match operand_type {
+            ConcreteType::Boolean | ConcreteType::Any | ConcreteType::Unknown => Ok(()),
+            // An unresolved type variable becomes a boolean.
+            ConcreteType::Generic { .. } => {
+                self.add_constraint(TypeConstraint::Equality {
+                    left: operand_type.clone(),
+                    right: ConcreteType::Boolean,
+                    location: location.clone(),
+                });
+                Ok(())
+            }
+            _ => Err(Self::logical_operand_error(
+                keyword,
+                operand_type,
+                is_left,
+                Some(self.symbol_table),
+                location,
+            )),
+        }
+    }
+
+    /// The SEM004 error for a non-boolean operand of `and`, `or` or `not`.
+    fn logical_operand_error(
+        keyword: &str,
+        operand_type: &ConcreteType,
+        is_left: bool,
+        symbol_table: Option<&crate::resolver::GlobalSymbolTable>,
+        location: &SourceLocation,
+    ) -> CompilerError {
+        let type_name = match operand_type {
+            ConcreteType::Optional(inner) => format!("{}?", inner.source_name(symbol_table)),
+            other => other.source_name(symbol_table),
+        };
+        let help = match operand_type {
+            ConcreteType::Optional(_) if is_left && keyword == "or" => {
+                "use `x default y` for a fallback value".to_string()
+            }
+            ConcreteType::Optional(inner) if **inner == ConcreteType::Boolean => {
+                "use `x!` when it cannot be none, or `x default false`".to_string()
+            }
+            ConcreteType::Optional(_) if keyword == "not" => {
+                "compare with none to get a boolean, e.g. `x == none`".to_string()
+            }
+            ConcreteType::Optional(_) => {
+                "compare with none to get a boolean, e.g. `x != none`".to_string()
+            }
+            _ if keyword == "not" => {
+                "`not` takes a boolean; compare the value to get one, e.g. `x == 0`".to_string()
+            }
+            _ => format!(
+                "`{keyword}` takes boolean operands; compare the value to get one, e.g. `x != 0`"
+            ),
+        };
+        CompilerError::semantic_error_with_code(
+            format!("'{keyword}' cannot be applied to a value of type {type_name}"),
+            Some(help),
+            Some(location.clone()),
+            "SEM004",
+        )
+    }
+
     /// Infer the result type of a unary operation
     fn infer_unary_operation(
         &self,
@@ -6426,14 +6445,12 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Boolean | ConcreteType::Any | ConcreteType::Unknown => {
                     Ok(ConcreteType::Boolean)
                 }
-                _ => Err(CompilerError::semantic_error_with_code(
-                    format!("'not' cannot be applied to a value of type {operand_type}"),
-                    Some(
-                        "`not` takes a boolean; compare the value to get one, e.g. `x == 0`"
-                            .to_string(),
-                    ),
-                    Some(location.clone()),
-                    "SEM004",
+                _ => Err(Self::logical_operand_error(
+                    "not",
+                    operand_type,
+                    false,
+                    Some(self.symbol_table),
+                    location,
                 )),
             },
             // BOOK: required-operator - Postfix ! assertion for null check

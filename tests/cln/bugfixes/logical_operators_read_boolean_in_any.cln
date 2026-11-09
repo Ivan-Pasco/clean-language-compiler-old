@@ -1,0 +1,23 @@
+// Test: bugfixes/logical_operators_read_boolean_in_any
+// Grammar: logical_op ("and", "or"), unary_expression ("not")
+// Semantic: SEM004 — an `any` operand of `and`, `or` or `not` is the boolean
+//   it holds, checked at run time
+// Fixed in: compiler 0.33.182
+// Expected output:
+//   true
+//   false
+//   true
+//   false
+//   true
+//
+// Regression (#39): the operators tested the box address of an `any`, which
+// is never 0, so an `any` holding false counted as true.
+
+start:
+	any yes = true
+	any no = false
+	print(no or true)
+	print(no and true)
+	print(not no)
+	print(not yes)
+	print(yes and not no)

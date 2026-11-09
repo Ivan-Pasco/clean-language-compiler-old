@@ -487,7 +487,7 @@ pub enum ConcreteType {
     /// non-none return paths.  At the WASM level the representation is identical to
     /// the inner type; `none` maps to 0/null pointer.  The wrapper is purely a
     /// compile-time safety annotation that forces the caller to guard the value with
-    /// `or` or `if … == none` before using it in a non-optional context.
+    /// `default`, `!` or `if … == none` before using it in a non-optional context.
     Optional(Box<ConcreteType>),
 }
 

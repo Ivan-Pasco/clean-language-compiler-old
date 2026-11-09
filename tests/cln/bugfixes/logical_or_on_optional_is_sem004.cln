@@ -1,0 +1,19 @@
+// Test: bugfixes/logical_or_on_optional_is_sem004
+// Grammar: logical_op ("or")
+// Semantic: SEM004 — `and` / `or` take boolean operands (06-expressions.md
+//   §Logical Operators); the fallback for a `T?` is `default`
+// Fixed in: compiler 0.33.182
+// Expected output:
+// Expected error:
+//   SEM004
+//   'or' cannot be applied to a value of type string?
+//   use `x default y` for a fallback value
+//
+// Regression (#39): the type checker accepted `x or fallback` on a `T?` as a
+// fallback, but it was lowered as a boolean `or`: `s or "fallback"` with s
+// none gave the integer 1, not "fallback".
+
+start:
+	string? s = none
+	string t = s or "fallback"
+	print(t)

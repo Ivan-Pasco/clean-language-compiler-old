@@ -1,0 +1,19 @@
+// Test: bugfixes/logical_or_on_optional_integer_is_sem004
+// Grammar: logical_op ("or")
+// Semantic: SEM004 — `and` / `or` take boolean operands (06-expressions.md
+//   §Logical Operators); the fallback for a `T?` is `default`
+// Fixed in: compiler 0.33.182
+// Expected output:
+// Expected error:
+//   SEM004
+//   'or' cannot be applied to a value of type integer?
+//   use `x default y` for a fallback value
+//
+// Regression (#39): `n or 5` with `integer? n = 0` type-checked as a
+// fallback giving an integer, but ran as a boolean `or` on the box pointer
+// and gave 1 instead of 0.
+
+start:
+	integer? n = 0
+	integer m = n or 5
+	print(m)

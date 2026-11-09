@@ -789,7 +789,11 @@ impl MirBuilder {
             }
 
             TastExpressionKind::UnaryOperation { operator, operand } => {
-                let operand_id = self.build_expression(context, operand)?;
+                let mut operand_id = self.build_expression(context, operand)?;
+                // `not` of an `any` reads the boolean it holds.
+                if matches!(operator, UnaryOperator::Not) {
+                    operand_id = self.logical_operand(context, operand_id, operand);
+                }
 
                 // `value!` of an optional primitive halts on none and reads
                 // the boxed value.
@@ -4954,6 +4958,22 @@ impl MirBuilder {
     /// `or`:
     ///   load lhs ; if (result i32) i32.const 1
     ///   else                       [emit rhs_instructions] load rhs_value end
+    /// An operand of `and`, `or` or `not`: an `any` gives the boolean it
+    /// holds (the type checker accepts only booleans and `any`), not its
+    /// box address.
+    fn logical_operand(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        operand: &TastExpression,
+    ) -> ValueId {
+        if matches!(operand.expr_type, ConcreteType::Any) {
+            self.emit_unbox_any(context, value_id, &ConcreteType::Boolean, &operand.location)
+        } else {
+            value_id
+        }
+    }
+
     fn build_short_circuit_logical(
         &mut self,
         context: &mut FunctionBuildContext,
@@ -4967,6 +4987,7 @@ impl MirBuilder {
 
         // Evaluate the left operand inline in the current block.
         let lhs_id = self.build_expression(context, left)?;
+        let lhs_id = self.logical_operand(context, lhs_id, left);
 
         // Capture the right-hand operand's MIR instructions without
         // leaving them in any reachable block. Use a temporary scratch
@@ -4994,6 +5015,7 @@ impl MirBuilder {
         );
         self.current_block = Some(scratch_block_id);
         let rhs_id = self.build_expression(context, right)?;
+        let rhs_id = self.logical_operand(context, rhs_id, right);
         // If the rhs evaluation itself opened new control-flow blocks
         // (nested short-circuit chains compose without issue because
         // each one nests recursively; here we just need a single linear
