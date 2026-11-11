@@ -11,7 +11,7 @@ use super::{
     FrameworkBlock, FrameworkPlugin, PluginCompletionItem, PluginDiagnostic, PluginHoverInfo,
     PluginLspContext,
 };
-use crate::ast::{SourceLocation, Statement};
+use crate::ast::SourceLocation;
 use crate::plugins::plugin_abi::{BridgeFunction, PluginManifest};
 
 /// Error type for plugin operations
@@ -237,57 +237,6 @@ impl PluginRegistry {
         PluginRegistryBuilder::new()
     }
 
-    /// Register a plugin with the registry
-    ///
-    /// **Deprecated**: Use the builder pattern instead.
-    ///
-    /// # Arguments
-    /// * `plugin` - The plugin to register
-    ///
-    /// # Returns
-    /// * `Ok(())` if registration succeeds
-    /// * `Err(PluginError::RegistrationConflict)` if a handler already exists
-    #[deprecated(
-        since = "0.13.1",
-        note = "Use PluginRegistry::builder().add(plugin).build()"
-    )]
-    pub fn register(&mut self, plugin: Arc<dyn FrameworkPlugin>) -> Result<(), PluginError> {
-        let plugin_name = plugin.name().to_string();
-
-        for block_name in plugin.handles() {
-            if let Some(existing) = self.handlers.get(*block_name) {
-                return Err(PluginError::RegistrationConflict {
-                    block_name: block_name.to_string(),
-                    existing_plugin: existing.name().to_string(),
-                    new_plugin: plugin_name,
-                });
-            }
-        }
-
-        for pattern in plugin.expression_patterns() {
-            if let Some(existing) = self.expression_handlers.get(pattern) {
-                return Err(PluginError::RegistrationConflict {
-                    block_name: pattern.clone(),
-                    existing_plugin: existing.name().to_string(),
-                    new_plugin: plugin_name,
-                });
-            }
-        }
-
-        for block_name in plugin.handles() {
-            self.handlers
-                .insert(block_name.to_string(), Arc::clone(&plugin));
-        }
-        for pattern in plugin.expression_patterns() {
-            self.expression_handlers
-                .insert(pattern.clone(), Arc::clone(&plugin));
-        }
-
-        self.registered_plugins.push(plugin_name);
-        self.plugins.push(plugin);
-        Ok(())
-    }
-
     /// Check if a block type is handled by a registered plugin.
     ///
     /// Extracts the block type (first word) from names like `"screen RegistrationForm"`
@@ -380,49 +329,6 @@ impl PluginRegistry {
         self.handlers.get(block_type)
     }
 
-    /// Expand a framework block using the appropriate plugin
-    ///
-    /// # Arguments
-    /// * `block` - The framework block to expand
-    ///
-    /// # Returns
-    /// * `Ok(Vec<Statement>)` - The expanded statements
-    /// * `Err(PluginError)` - If no handler exists or expansion fails
-    pub fn expand(&self, block: &FrameworkBlock) -> Result<Vec<Statement>, PluginError> {
-        // Extract block type (first word) from names like "screen RegistrationForm"
-        let block_type = block.name.split_whitespace().next().unwrap_or(&block.name);
-        // Look up by block handler first, then fall back to expression handlers (ORM queries).
-        let handler = self
-            .handlers
-            .get(block_type)
-            .or_else(|| self.get_expression_handler(&block.name))
-            .ok_or_else(|| PluginError::UnknownBlockType {
-                block_name: block.name.clone(),
-                location: block.location.clone(),
-            })?;
-
-        // Validate first
-        handler.validate(block).map_err(|e| match e {
-            // Already names the plugin and location.
-            PluginError::ValidationFailed { .. } => e,
-            other => PluginError::ValidationFailed {
-                plugin_name: handler.name().to_string(),
-                message: other.to_string(),
-                location: block.location.clone(),
-            },
-        })?;
-
-        // Then expand
-        handler
-            .expand(block)
-            .map_err(|e| PluginError::ExpansionFailed {
-                plugin_name: handler.name().to_string(),
-                block_name: block.name.clone(),
-                message: e.to_string(),
-                location: block.location.clone(),
-            })
-    }
-
     /// Expand a framework block using the appropriate plugin (full version)
     ///
     /// Returns a PluginExpansion that can include start functions and other definitions.
@@ -453,14 +359,16 @@ impl PluginRegistry {
         })?;
 
         // Then expand with full result
-        handler
-            .expand_full(block)
-            .map_err(|e| PluginError::ExpansionFailed {
+        handler.expand_full(block).map_err(|e| match e {
+            // Already names the plugin, block and location.
+            PluginError::ExpansionFailed { .. } => e,
+            other => PluginError::ExpansionFailed {
                 plugin_name: handler.name().to_string(),
                 block_name: block.name.clone(),
-                message: e.to_string(),
+                message: other.to_string(),
                 location: block.location.clone(),
-            })
+            },
+        })
     }
 
     /// Get list of registered plugin names
@@ -1422,6 +1330,7 @@ impl Default for PluginRegistryBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::Statement;
 
     /// A plugin declaring the expression `db.queryAs` handles the call form
     /// `db.queryAs(Item):` (frame-data.ebnf §8 `typed_raw_query`).
@@ -1465,33 +1374,30 @@ mod tests {
 
     #[test]
     fn test_register_plugin() {
-        let mut registry = PluginRegistry::new();
-        let plugin = Arc::new(TestPlugin {
-            name: "test.plugin",
-            handles: &["test"],
-        });
+        let registry = PluginRegistry::builder()
+            .add(TestPlugin {
+                name: "test.plugin",
+                handles: &["test"],
+            })
+            .build()
+            .expect("a single plugin registers");
 
-        assert!(registry.register(plugin).is_ok());
         assert!(registry.handles("test"));
         assert!(!registry.handles("unknown"));
     }
 
     #[test]
     fn test_registration_conflict() {
-        let mut registry = PluginRegistry::new();
-
-        let plugin1 = Arc::new(TestPlugin {
-            name: "plugin1",
-            handles: &["test"],
-        });
-        let plugin2 = Arc::new(TestPlugin {
-            name: "plugin2",
-            handles: &["test"],
-        });
-
-        assert!(registry.register(plugin1).is_ok());
-
-        let result = registry.register(plugin2);
+        let result = PluginRegistry::builder()
+            .add(TestPlugin {
+                name: "plugin1",
+                handles: &["test"],
+            })
+            .add(TestPlugin {
+                name: "plugin2",
+                handles: &["test"],
+            })
+            .build();
         assert!(matches!(
             result,
             Err(PluginError::RegistrationConflict { .. })
@@ -1500,7 +1406,7 @@ mod tests {
 
     #[test]
     fn test_expand_unknown_block() {
-        let registry = PluginRegistry::new();
+        let registry = PluginRegistry::builder().build().unwrap();
         let block = FrameworkBlock {
             name: "unknown".to_string(),
             content: "content".to_string(),
@@ -1509,8 +1415,47 @@ mod tests {
             body_location: None,
         };
 
-        let result = registry.expand(&block);
+        let result = registry.expand_full(&block);
         assert!(matches!(result, Err(PluginError::UnknownBlockType { .. })));
+    }
+
+    /// A plugin's expansion error already names the plugin, block and
+    /// location; the registry passes it on instead of wrapping it again.
+    #[test]
+    fn test_expansion_error_is_wrapped_once() {
+        struct FailingPlugin;
+        impl FrameworkPlugin for FailingPlugin {
+            fn name(&self) -> &'static str {
+                "test.failing"
+            }
+            fn handles(&self) -> &'static [&'static str] {
+                &["fail"]
+            }
+            fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+                Err(PluginError::ExpansionFailed {
+                    plugin_name: "test.failing".to_string(),
+                    block_name: block.name.clone(),
+                    message: "boom".to_string(),
+                    location: block.location.clone(),
+                })
+            }
+        }
+        let registry = PluginRegistry::builder()
+            .add(FailingPlugin)
+            .build()
+            .unwrap();
+        let block = FrameworkBlock {
+            name: "fail".to_string(),
+            content: String::new(),
+            attributes: vec![],
+            location: None,
+            body_location: None,
+        };
+        let message = registry.expand_full(&block).unwrap_err().to_string();
+        assert_eq!(
+            message,
+            "Plugin 'test.failing' failed to expand 'fail:': boom"
+        );
     }
 
     #[test]

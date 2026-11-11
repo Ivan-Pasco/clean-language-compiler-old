@@ -94,10 +94,9 @@ fn synthetic_module_start_block_is_merged_into_program_start() {
     )
     .expect("write entry");
 
-    let mut registry = PluginRegistry::new();
-    #[allow(deprecated)]
-    registry
-        .register(Arc::new(InjectingPlugin))
+    let registry = PluginRegistry::builder()
+        .add(InjectingPlugin)
+        .build()
         .expect("register mock plugin");
 
     let config = MultiFileCompilerConfig::default().with_plugin_registry(Arc::new(registry));
@@ -189,10 +188,9 @@ fn synthetic_module_start_block_appears_in_merged_start_function() {
     )
     .expect("write entry");
 
-    let mut registry = PluginRegistry::new();
-    #[allow(deprecated)]
-    registry
-        .register(Arc::new(InjectingPlugin))
+    let registry = PluginRegistry::builder()
+        .add(InjectingPlugin)
+        .build()
         .expect("register mock plugin");
 
     let config = MultiFileCompilerConfig::default().with_plugin_registry(Arc::new(registry));

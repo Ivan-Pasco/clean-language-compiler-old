@@ -57,6 +57,9 @@ pub struct WasmPluginAdapter {
     /// plugin cannot accidentally re-use a handle from a prior call even if
     /// it stored the old ctx in its `_build_state_set` keystore.
     next_ctx_counter: AtomicI32,
+    /// Keywords from the plugin's `[exports].get_keywords` export, read on
+    /// first use.
+    keywords_cache: std::sync::OnceLock<&'static [&'static str]>,
 }
 
 /// Strings interned for the process lifetime; see `intern_str`.
@@ -295,6 +298,7 @@ impl WasmPluginAdapter {
             lint_linker: std::sync::OnceLock::new(),
             build_state: crate::plugins::new_build_state(),
             next_ctx_counter: AtomicI32::new(1),
+            keywords_cache: std::sync::OnceLock::new(),
         })
     }
 
@@ -506,6 +510,13 @@ impl WasmPluginAdapter {
             })?;
 
         let output_ptr = lint_fn.call(&mut store, input_ptr).map_err(|e| {
+            if let Some(message) = plugin_raised_message(&e) {
+                return anyhow!(
+                    "LINT001: plugin `{}` raised an error during lint_project: {}",
+                    self.name,
+                    message
+                );
+            }
             let oom = store.data().oom_during_call.clone();
             anyhow!(
                 "LINT001: plugin `{}` trapped during lint_project: {}{}",
@@ -570,6 +581,17 @@ impl WasmPluginAdapter {
             let body_ptr = self.write_clean_string(store, instance, memory, body)?;
             let result = validate.call(&mut *store, (block_name_ptr, attributes_ptr, body_ptr));
             if let Ok(ptr) = result {
+                // A Clean string is never at address 0: a 0 result is the
+                // plugin's allocator failing, not an empty message.
+                if ptr == 0 {
+                    let oom = store.data().oom_during_call.clone();
+                    return Err(anyhow!(
+                        "plugin `{}` {} returned a null string pointer{}",
+                        self.name,
+                        what,
+                        oom.map(|s| format!(" [OOM: {}]", s)).unwrap_or_default()
+                    ));
+                }
                 let bytes = self.read_result(store, memory, ptr)?;
                 message = String::from_utf8_lossy(&bytes).trim().to_string();
             }
@@ -578,7 +600,17 @@ impl WasmPluginAdapter {
         if dispatch_version >= 3 {
             let ctx = self.next_ctx_handle();
             let arena = crate::plugins::typed_emission::EmitArena::new(ctx);
-            self.run_typed_call(&what, arena, run)?;
+            let (arena, _) = self.run_typed_call(&what, arena, run)?;
+            // Diagnostics the plugin emitted while validating (typed-emission
+            // §5) are routed like an expansion's; an error-severity one
+            // fails validation.
+            let (_, diagnostics, saw_error) = arena.finish();
+            let errors = self.route_typed_diagnostics(&what, &diagnostics);
+            if saw_error && message.is_empty() {
+                message = errors.unwrap_or_else(|| {
+                    format!("plugin `{}` reported an error during {}", self.name, what)
+                });
+            }
         } else {
             let mut store = self.create_store();
             let (instance, memory) = self.instantiate(&mut store, &self.linker, &what)?;
@@ -586,6 +618,56 @@ impl WasmPluginAdapter {
                 .map_err(|e| anyhow!("{}", describe_plugin_trap_with_oom(&e, &what, None)))?;
         }
         Ok((!message.is_empty()).then_some(message))
+    }
+
+    /// Call the plugin's `[exports].get_keywords` export, `() -> string`,
+    /// which returns a JSON array of keyword strings
+    /// (plugin-contract.md §1.1). Empty when the plugin declares none.
+    fn call_get_keywords(&self) -> Result<Vec<String>> {
+        let Some(export_name) = self.manifest.exports.get_keywords.as_deref() else {
+            return Ok(Vec::new());
+        };
+        let what = "get_keywords";
+        let mut json = String::new();
+        let mut run = |store: &mut Store<PluginState>,
+                       instance: &wasmtime::Instance,
+                       memory: &Memory|
+         -> Result<wasmtime::Result<i32>> {
+            let get_keywords: TypedFunc<(), i32> = instance
+                .get_typed_func(&mut *store, export_name)
+                .map_err(|e| {
+                    anyhow!(
+                        "plugin `{}` declares [exports].get_keywords = \"{}\" but does not \
+                         export it as () -> string: {}",
+                        self.name,
+                        export_name,
+                        e
+                    )
+                })?;
+            let result = get_keywords.call(&mut *store, ());
+            if let Ok(ptr) = result {
+                let bytes = self.read_result(store, memory, ptr)?;
+                json = String::from_utf8_lossy(&bytes).into_owned();
+            }
+            Ok(result.map(|_| 0))
+        };
+        if self.manifest.opts_into_typed_emission() {
+            let arena = crate::plugins::typed_emission::EmitArena::new(self.next_ctx_handle());
+            self.run_typed_call(what, arena, run)?;
+        } else {
+            let mut store = self.create_store();
+            let (instance, memory) = self.instantiate(&mut store, &self.linker, what)?;
+            run(&mut store, &instance, &memory)?
+                .map_err(|e| anyhow!("{}", describe_plugin_trap(&e, what)))?;
+        }
+        serde_json::from_str(&json).map_err(|e| {
+            anyhow!(
+                "plugin `{}` get_keywords did not return a JSON array of strings: {} — raw: {}",
+                self.name,
+                e,
+                diagnostic_prefix(&json)
+            )
+        })
     }
 
     /// Plugin Contracts v3 typed expansion. Called when
@@ -838,26 +920,20 @@ impl WasmPluginAdapter {
 
     /// Register all stdlib host functions that any plugin (v1 or v3) may import.
     ///
-    /// All `register_*` calls here are classified SHARED — none contain
-    /// v1-expansion-protocol-specific logic (no `parse_plugin_code`, no v1 scope push/pop).
-    /// Every entry is either a real I/O function or a zero-stub that prevents
-    /// "missing import" wasmtime rejections.
+    /// The same surface backs every linker (v1, typed emission, lint). Some
+    /// groups are real implementations a plugin can use while it expands a
+    /// block; the rest are stubs that only satisfy the import, because the
+    /// sandbox has no network, file system, server or request context:
     ///
-    /// Classification:
-    ///
-    /// - `register_env_core_functions` SHARED: print, string.concat, float_to_string, type conversions
-    /// - `register_string_dot_functions` SHARED: string.slice, string.substring, string.indexOf, etc.
-    /// - `register_string_underscore_functions` SHARED: string_compare, string_replaceAll, _str_eq
-    /// - `register_list_functions` SHARED: list.push_f64 and list operations
-    /// - `register_memory_runtime_functions` SHARED: allocator / memory growth primitives
-    /// - `register_http_client_functions` SHARED: http_get/post/put/patch/delete
-    /// - `register_http_server_functions` SHARED (stubs): _http_route/_http_listen, return 0
-    /// - `register_dev_capture_functions` SHARED (stub): _dev_snapshot, returns LP empty string
-    /// - `register_request_context_functions` SHARED (stubs): _req_param/_req_query, return 0
-    /// - `register_file_functions` SHARED: file I/O stubs for optional file-calling plugins
-    /// - `register_math_functions` SHARED: Math.sin/cos/sqrt/pow/random/etc.
-    /// - `register_http_auth_stubs` SHARED (stubs): _req_cookie/_http_redirect/_session_*, return 0
-    /// - `register_build_state_bridges` SHARED: _build_state_set/_build_state_get (Plugin Contracts v2+)
+    /// - real: `register_env_core_functions` (print, conversions, JSON,
+    ///   `error`), `register_string_dot_functions`,
+    ///   `register_string_underscore_functions`, `register_list_functions`,
+    ///   `register_memory_runtime_functions`, `register_math_functions`,
+    ///   `register_build_state_bridges` (Plugin Contracts v2+)
+    /// - stubs returning an empty string or 0: `register_http_client_functions`
+    ///   (http_get/post/...), `register_http_server_functions`,
+    ///   `register_dev_capture_functions`, `register_request_context_functions`,
+    ///   `register_file_functions`, `register_http_auth_stubs`
     fn register_plugin_stdlib_functions(linker: &mut Linker<PluginState>) -> Result<()> {
         // Core I/O and conversions (print, float_to_string, string.concat, etc.)
         Self::register_env_core_functions(linker)?;
@@ -1369,13 +1445,10 @@ impl WasmPluginAdapter {
              string_ptr: i32,
              search_ptr: i32,
              replace_ptr: i32|
-             -> i32 {
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 // Read all three strings first
                 let (string_val, search, replace) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1396,7 +1469,7 @@ impl WasmPluginAdapter {
 
                 // Allocate and write result
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -1405,23 +1478,22 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string_repeat",
-            |mut caller: Caller<'_, PluginState>, str_ptr: i32, _str_len: i32, count: i32| -> i32 {
-                let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
-                    let data = memory.data(&caller);
-                    let Some(bytes) = read_lp_from_data(data, str_ptr) else {
-                        return 0;
-                    };
-                    String::from_utf8_lossy(bytes).to_string()
+            |mut caller: Caller<'_, PluginState>,
+             str_ptr: i32,
+             _str_len: i32,
+             count: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
+                let Some(unit) =
+                    read_lp_from_data(memory.data(&caller), str_ptr).map(<[u8]>::to_vec)
+                else {
+                    return Ok(0);
                 };
-
-                let repeat_count = count.max(0) as usize;
-                let result = string_val.repeat(repeat_count);
-                let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_repeated_lp_string(
+                    &mut caller,
+                    &unit,
+                    count.max(0) as usize,
+                ))
             },
         )?;
 
@@ -1436,13 +1508,10 @@ impl WasmPluginAdapter {
              str_ptr: i32,
              _str_len: i32,
              pattern_id: i32|
-             -> i32 {
-                let memory = caller
-                    .get_export("memory")
-                    .and_then(|e| e.into_memory())
-                    .unwrap();
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let Some(bytes) = read_lp_from_data(memory.data(&caller), str_ptr) else {
-                    return 0;
+                    return Ok(0);
                 };
                 let s = String::from_utf8_lossy(bytes).to_string();
                 let matched = match pattern_id {
@@ -1483,11 +1552,7 @@ impl WasmPluginAdapter {
                     7 => !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()),
                     _ => false,
                 };
-                if matched {
-                    1
-                } else {
-                    0
-                }
+                Ok(if matched { 1 } else { 0 })
             },
         )?;
 
@@ -1543,15 +1608,16 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.substring",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, start: i32, end: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             ptr: i32,
+             start: i32,
+             end: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let Some(bytes) = read_lp_from_data(data, ptr) else {
-                        return 0;
+                        return Ok(0);
                     };
                     bytes.to_vec()
                 };
@@ -1562,7 +1628,10 @@ impl WasmPluginAdapter {
                 let str_len = string_val.len() as i32;
                 let actual_start = start.clamp(0, str_len) as usize;
                 let actual_end = (end.clamp(0, str_len) as usize).max(actual_start);
-                write_clean_string(&mut caller, &string_val[actual_start..actual_end])
+                Ok(write_clean_string(
+                    &mut caller,
+                    &string_val[actual_start..actual_end],
+                ))
             },
         )?;
 
@@ -1584,12 +1653,12 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.indexOf",
-            |mut caller: Caller<'_, PluginState>, string_ptr: i32, search_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             string_ptr: i32,
+             search_ptr: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let (string_val, search) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1600,11 +1669,10 @@ impl WasmPluginAdapter {
 
                     (s1, s2)
                 };
-
-                match string_val.find(&search) {
+                Ok(match string_val.find(&search) {
                     Some(idx) => idx as i32,
                     None => -1,
-                }
+                })
             },
         )?;
 
@@ -1612,12 +1680,12 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.lastIndexOf",
-            |mut caller: Caller<'_, PluginState>, string_ptr: i32, search_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             string_ptr: i32,
+             search_ptr: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let (string_val, search) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1628,11 +1696,10 @@ impl WasmPluginAdapter {
 
                     (s1, s2)
                 };
-
-                match string_val.rfind(&search) {
+                Ok(match string_val.rfind(&search) {
                     Some(idx) => idx as i32,
                     None => -1,
-                }
+                })
             },
         )?;
 
@@ -1640,12 +1707,9 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.charAt",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
@@ -1661,7 +1725,7 @@ impl WasmPluginAdapter {
                 };
 
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -1669,21 +1733,17 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.charCodeAt",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
-
-                if index >= 0 && (index as usize) < string_val.len() {
+                Ok(if index >= 0 && (index as usize) < string_val.len() {
                     string_val.chars().nth(index as usize).unwrap_or('\0') as i32
                 } else {
                     -1
-                }
+                })
             },
         )?;
 
@@ -1691,12 +1751,12 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.startsWith",
-            |mut caller: Caller<'_, PluginState>, string_ptr: i32, prefix_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             string_ptr: i32,
+             prefix_ptr: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let (string_val, prefix) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1707,12 +1767,11 @@ impl WasmPluginAdapter {
 
                     (s1, s2)
                 };
-
-                if string_val.starts_with(&prefix) {
+                Ok(if string_val.starts_with(&prefix) {
                     1
                 } else {
                     0
-                }
+                })
             },
         )?;
 
@@ -1720,12 +1779,12 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.endsWith",
-            |mut caller: Caller<'_, PluginState>, string_ptr: i32, suffix_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             string_ptr: i32,
+             suffix_ptr: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let (string_val, suffix) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1736,12 +1795,7 @@ impl WasmPluginAdapter {
 
                     (s1, s2)
                 };
-
-                if string_val.ends_with(&suffix) {
-                    1
-                } else {
-                    0
-                }
+                Ok(if string_val.ends_with(&suffix) { 1 } else { 0 })
             },
         )?;
 
@@ -1749,12 +1803,12 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.includes",
-            |mut caller: Caller<'_, PluginState>, string_ptr: i32, search_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             string_ptr: i32,
+             search_ptr: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let (string_val, search) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1765,12 +1819,7 @@ impl WasmPluginAdapter {
 
                     (s1, s2)
                 };
-
-                if string_val.contains(&search) {
-                    1
-                } else {
-                    0
-                }
+                Ok(if string_val.contains(&search) { 1 } else { 0 })
             },
         )?;
 
@@ -1778,19 +1827,16 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.toUpperCase",
-            |mut caller: Caller<'_, PluginState>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_uppercase();
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -1798,19 +1844,16 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.toLowerCase",
-            |mut caller: Caller<'_, PluginState>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_lowercase();
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -1822,12 +1865,9 @@ impl WasmPluginAdapter {
              string_ptr: i32,
              search_ptr: i32,
              replace_ptr: i32|
-             -> i32 {
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let (string_val, search, replace) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1845,7 +1885,7 @@ impl WasmPluginAdapter {
 
                 let result = string_val.replacen(&search, &replace, 1);
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -1858,12 +1898,13 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.repeat",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, _str_len: i32, count: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             ptr: i32,
+             _str_len: i32,
+             count: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
@@ -1871,7 +1912,7 @@ impl WasmPluginAdapter {
                 let count = count.max(0) as usize;
                 let result = string_val.repeat(count);
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -1879,19 +1920,16 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string.reverse",
-            |mut caller: Caller<'_, PluginState>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result: String = string_val.chars().rev().collect();
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -1907,15 +1945,16 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string_substring",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, start: i32, end: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             ptr: i32,
+             start: i32,
+             end: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let Some(bytes) = read_lp_from_data(data, ptr) else {
-                        return 0;
+                        return Ok(0);
                     };
                     bytes.to_vec()
                 };
@@ -1924,7 +1963,10 @@ impl WasmPluginAdapter {
                 let str_len = string_val.len() as i32;
                 let actual_start = start.clamp(0, str_len) as usize;
                 let actual_end = (end.clamp(0, str_len) as usize).max(actual_start);
-                write_clean_string(&mut caller, &string_val[actual_start..actual_end])
+                Ok(write_clean_string(
+                    &mut caller,
+                    &string_val[actual_start..actual_end],
+                ))
             },
         )?;
 
@@ -1946,12 +1988,12 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string_indexOf",
-            |mut caller: Caller<'_, PluginState>, string_ptr: i32, search_ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>,
+             string_ptr: i32,
+             search_ptr: i32|
+             -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let (string_val, search) = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     let s1 =
                         String::from_utf8_lossy(read_lp_from_data(data, string_ptr).unwrap_or(&[]))
@@ -1962,11 +2004,10 @@ impl WasmPluginAdapter {
 
                     (s1, s2)
                 };
-
-                match string_val.find(&search) {
+                Ok(match string_val.find(&search) {
                     Some(idx) => idx as i32,
                     None => -1,
-                }
+                })
             },
         )?;
 
@@ -1974,12 +2015,9 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string_charAt",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
@@ -1995,7 +2033,7 @@ impl WasmPluginAdapter {
                 };
 
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -2003,21 +2041,17 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string_charCodeAt",
-            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32, index: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
-
-                if index >= 0 && (index as usize) < string_val.len() {
+                Ok(if index >= 0 && (index as usize) < string_val.len() {
                     string_val.chars().nth(index as usize).unwrap_or('\0') as i32
                 } else {
                     -1
-                }
+                })
             },
         )?;
 
@@ -2025,19 +2059,16 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string_toUpperCase",
-            |mut caller: Caller<'_, PluginState>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_uppercase();
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -2045,19 +2076,16 @@ impl WasmPluginAdapter {
         linker.func_wrap(
             "env",
             "string_toLowerCase",
-            |mut caller: Caller<'_, PluginState>, ptr: i32| -> i32 {
+            |mut caller: Caller<'_, PluginState>, ptr: i32| -> wasmtime::Result<i32> {
+                let memory = caller_memory(&mut caller)?;
                 let string_val = {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
                     let data = memory.data(&caller);
                     String::from_utf8_lossy(read_lp_from_data(data, ptr).unwrap_or(&[])).to_string()
                 };
 
                 let result = string_val.to_lowercase();
                 let result_bytes = result.as_bytes();
-                write_clean_string(&mut caller, result_bytes)
+                Ok(write_clean_string(&mut caller, result_bytes))
             },
         )?;
 
@@ -3065,14 +3093,20 @@ impl WasmPluginAdapter {
             |_: Caller<'_, PluginState>, _: i32, _: i32| -> i32 { 0 },
         )?;
 
-        // error(ptr: i32) -> i32 — stub for plugin sandbox; plugins that call error()
-        // compile with this import but the sandbox only needs a no-op return.
+        // error(message: string) -> i32 — the codegen contract is "print and
+        // trap" (codegen_module_builder.rs, `register_console_imports`). In
+        // the sandbox the call traps with the message, so the plugin call
+        // fails with the plugin's own error (`describe_plugin_trap`).
         linker.func_wrap(
             "env",
             "error",
-            |_: Caller<'_, PluginState>, _: i32| -> i32 { 0 },
+            |mut caller: Caller<'_, PluginState>, ptr: i32| -> wasmtime::Result<i32> {
+                let message = read_clean_string(&mut caller, ptr)
+                    .unwrap_or_else(|| format!("<unreadable message at pointer {}>", ptr));
+                Err(wasmtime::Error::new(PluginRaisedError(message)))
+            },
         )?;
-        // console_error is the underlying host import that error() maps to in codegen.
+        // console_error(message) logs to stderr; the sandbox drops plugin log output.
         linker.func_wrap(
             "env",
             "console_error",
@@ -3126,6 +3160,29 @@ impl WasmPluginAdapter {
         parser
             .parse_program()
             .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))
+    }
+
+    /// Parse v1 plugin output: a Clean Language snippet that is either a
+    /// whole program (top-level sections such as `functions:` and `start:`,
+    /// in any order) or plain statements (plugin-contract.md §5.3,
+    /// lifecycle.md §2.1), which are parsed as the body of a `start:` block.
+    /// Output that is neither is the plugin's error; both parse errors are
+    /// reported with the start of the output.
+    fn parse_plugin_snippet(&self, source: &str) -> Result<crate::ast::Program> {
+        let as_program = match self.parse_plugin_code(source) {
+            Ok(program) => return Ok(program),
+            Err(e) => e,
+        };
+        self.parse_plugin_code(&wrap_slot_statements_as_start(source))
+            .map_err(|as_statements| {
+                anyhow!(
+                    "plugin output is neither a program ({}) nor statements ({}) — \
+                     plugin output: {}",
+                    as_program,
+                    as_statements,
+                    diagnostic_prefix(source)
+                )
+            })
     }
 
     /// Call the expand function in the WASM module and return the inline
@@ -3216,11 +3273,6 @@ impl WasmPluginAdapter {
                 )
             })?;
 
-        // Check for errors
-        if let Some(error) = store.data().last_error.clone() {
-            return Err(anyhow!("Plugin error: {}", error));
-        }
-
         // Read the result
         let result_bytes = self.read_result(&store, &memory, result_ptr)?;
         let generated_code = std::str::from_utf8(&result_bytes)
@@ -3259,141 +3311,7 @@ impl WasmPluginAdapter {
         };
         let generated_code: &str = &generated_code;
 
-        // Try parsing as a full program using the production parser pipeline.
-        // This preserves start functions, classes, and top-level functions.
-        // Using SpecificationLexer + SpecificationParser (not the legacy pest-based
-        // ErrorRecoveringParser) so all valid Clean Language constructs are accepted.
-        match self.parse_plugin_code(generated_code) {
-            Ok(program) => {
-                tracing::debug!(
-                    plugin = %self.name,
-                    classes = program.classes.len(),
-                    functions = program.functions.len(),
-                    statements = program.statements.len(),
-                    has_start = program.start_function.is_some(),
-                    "Plugin output parsed successfully"
-                );
-                return Ok(PluginExpansion {
-                    statements: program.statements,
-                    start_function: program.start_function,
-                    functions: program.functions,
-                    classes: program.classes,
-                    capabilities: program.capabilities,
-                    externals: program.externals,
-                    state: program.state,
-                });
-            }
-            Err(ref _e) => {
-                tracing::debug!(
-                    plugin = %self.name,
-                    error = %_e,
-                    "Direct parse failed, trying start: wrapper fallback"
-                );
-            }
-        }
-
-        // Fallback: the plugin may have returned only the body of a start: block.
-        // Wrap it in a start: header and try again.
-        //
-        // If the plugin output contains top-level section keywords such as
-        // `functions:` or `external:` (i.e. lines that are NOT indented and start with
-        // those keywords), we must NOT wrap the entire output in `start:\n\t...`.
-        //
-        // Wrapping structured output causes `parse_block` inside `parse_start_function`
-        // to stop at the `functions:` token, producing an empty start: body.  The actual
-        // `start:` block inside the wrapped content then becomes a second top-level start
-        // function that `parse_program` silently discards (it keeps only the first match
-        // returned by `functions.iter().find(|f| f.name == "start")`).
-        //
-        // Instead, when the output is structured, we re-order the sections so that
-        // `functions:` (and `external:`) come before `start:` and retry the parse.
-        let has_top_level_sections = {
-            let trimmed = generated_code.trim();
-            trimmed.lines().any(|line| {
-                let stripped = line.trim_start_matches('\t').trim_start_matches("    ");
-                let is_unindented = !line.starts_with('\t') && !line.starts_with("    ");
-                is_unindented
-                    && (stripped.starts_with("functions:") || stripped.starts_with("external:"))
-            })
-        };
-
-        let program = if has_top_level_sections {
-            // Split the output into logical sections delimited by unindented section headers.
-            let trimmed = generated_code.trim();
-            let mut start_section_lines: Vec<&str> = Vec::new();
-            let mut other_sections_lines: Vec<&str> = Vec::new();
-            let mut in_start_section = false;
-
-            for line in trimmed.lines() {
-                let is_unindented = !line.starts_with('\t') && !line.starts_with("    ");
-                if is_unindented && line.trim_start() == "start:" {
-                    in_start_section = true;
-                    start_section_lines.push(line);
-                } else if is_unindented
-                    && (line.trim_start().starts_with("functions:")
-                        || line.trim_start().starts_with("external:"))
-                {
-                    in_start_section = false;
-                    other_sections_lines.push(line);
-                } else if in_start_section {
-                    start_section_lines.push(line);
-                } else {
-                    other_sections_lines.push(line);
-                }
-            }
-
-            // Rebuild with functions/external sections before start:
-            let reordered = format!(
-                "{}\n{}",
-                other_sections_lines.join("\n"),
-                start_section_lines.join("\n")
-            );
-
-            tracing::debug!(
-                plugin = %self.name,
-                "Retrying parse with reordered sections (functions/external before start)"
-            );
-
-            self.parse_plugin_code(&reordered)
-                .map_err(|e| anyhow!("Failed to parse plugin output (structured): {}", e))?
-        } else {
-            // Simple fallback: the plugin returned only the body of a start: block
-            // (no top-level sections).  Wrap it in a start: header and retry.
-            let code_without_start = if generated_code.trim().starts_with("start:") {
-                generated_code
-                    .lines()
-                    .skip(1)
-                    .filter(|line| !line.trim().is_empty())
-                    .map(|line| {
-                        if let Some(stripped) = line.strip_prefix('\t') {
-                            stripped
-                        } else if let Some(stripped) = line.strip_prefix("    ") {
-                            stripped
-                        } else {
-                            line
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                generated_code.trim().to_string()
-            };
-
-            let wrapper = format!(
-                "start:\n\t{}",
-                code_without_start.trim().replace('\n', "\n\t")
-            );
-            self.parse_plugin_code(&wrapper).map_err(|e| {
-                anyhow!(
-                    "Failed to parse plugin output '{}' (wrapped: '{}'): {}",
-                    generated_code.chars().take(100).collect::<String>(),
-                    wrapper.chars().take(100).collect::<String>(),
-                    e
-                )
-            })?
-        };
-
-        // Telemetry: log host arena peak for this expand-block invocation.
+        let program = self.parse_plugin_snippet(generated_code)?;
         tracing::debug!(
             target: "compiler::plugins::arena",
             peak_bytes = store.data().peak_alloc_offset,
@@ -3403,7 +3321,7 @@ impl WasmPluginAdapter {
         );
 
         Ok(PluginExpansion {
-            statements: Vec::new(),
+            statements: program.statements,
             start_function: program.start_function,
             functions: program.functions,
             classes: program.classes,
@@ -3537,14 +3455,6 @@ impl WasmPluginAdapter {
             )
         })?;
 
-        if let Some(error) = store.data().last_error.clone() {
-            return Err(anyhow!(
-                "Plugin error in lifecycle slot `{}`: {}",
-                slot_name,
-                error
-            ));
-        }
-
         let result_bytes = self.read_result(&store, &memory, result_ptr)?;
         // Empty response → empty expansion (the plugin chose to contribute
         // nothing for this build context, e.g. no components to hydrate).
@@ -3590,32 +3500,9 @@ impl WasmPluginAdapter {
 
         // Re-parse the contributed Clean source so the statements integrate
         // into the program AST like any other plugin-produced code.
-        //
-        // The lifecycle-slot contract says the `statements` field carries
-        // statement-level code (no top-level `start:` / `functions:` wrapper),
-        // but the Clean parser only accepts whole programs. Wrap the slot
-        // output in a synthetic `start:` block — tab-indented so each line
-        // becomes part of the block body — parse, then lift the statements
-        // out of the resulting start_function.
-        //
-        // If the output happens to already contain top-level keywords
-        // (legacy plugins shipping a full `start:` block), fall back to
-        // parsing as-is so we don't break that shape.
-        let parsed = match self.parse_plugin_code(&response.statements) {
-            Ok(p) => p,
-            Err(_) => {
-                let wrapped = wrap_slot_statements_as_start(&response.statements);
-                self.parse_plugin_code(&wrapped).map_err(|e| {
-                    anyhow!(
-                        "Lifecycle slot `{}` returned statements that could not be parsed \
-                         even when wrapped in a `start:` block: {} — raw: {}",
-                        slot_name,
-                        e,
-                        diagnostic_prefix(&response.statements)
-                    )
-                })?
-            }
-        };
+        let parsed = self
+            .parse_plugin_snippet(&response.statements)
+            .map_err(|e| anyhow!("Lifecycle slot `{}`: {}", slot_name, e))?;
         // The slot is conceptually contributing statement-level code. Most
         // plugins will return just statements; for plugins that include a
         // start function (e.g. legacy compatibility shims), merge its body
@@ -3690,10 +3577,6 @@ impl WasmPluginAdapter {
                 )
             })?;
 
-        if let Some(error) = store.data().last_error.clone() {
-            return Err(anyhow!("Plugin error in process_html: {}", error));
-        }
-
         let result_bytes = self.read_result(&store, &memory, result_ptr)?;
         let generated = std::str::from_utf8(&result_bytes)
             .map_err(|e| anyhow!("Invalid UTF-8 in process_html response: {}", e))?;
@@ -3745,9 +3628,6 @@ impl WasmPluginAdapter {
             let status = assemble_typed
                 .call(&mut store, (ctx, input_ptr))
                 .map_err(|e| anyhow!("{}", describe_plugin_trap(&e, "assemble_typed")))?;
-            if let Some(error) = store.data().last_error.clone() {
-                return Err(anyhow!("Plugin error in assemble: {}", error));
-            }
 
             // Drain the arena and consume its `injected_sources` +
             // `transformed_sources`, populated by `_inject_source_file` and
@@ -3800,9 +3680,6 @@ impl WasmPluginAdapter {
         let result_ptr = assemble_fn
             .call(&mut store, input_ptr)
             .map_err(|e| anyhow!("{}", describe_plugin_trap(&e, "assemble")))?;
-        if let Some(error) = store.data().last_error.clone() {
-            return Err(anyhow!("Plugin error in assemble: {}", error));
-        }
 
         let result_bytes = self
             .read_result(&store, &memory, result_ptr)
@@ -3984,6 +3861,22 @@ impl FrameworkPlugin for WasmPluginAdapter {
         &self.expression_patterns_cache
     }
 
+    fn get_keywords(&self) -> &'static [&'static str] {
+        self.keywords_cache
+            .get_or_init(|| match self.call_get_keywords() {
+                Ok(keywords) => intern_str_list(&keywords),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "compiler::plugins",
+                        plugin = %self.name,
+                        error = %e,
+                        "plugin get_keywords failed; the plugin contributes no keywords"
+                    );
+                    &[]
+                }
+            })
+    }
+
     fn assemble(
         &self,
         input: &crate::plugins::plugin_abi::AssembleInput,
@@ -4038,8 +3931,6 @@ pub(crate) struct PluginState {
     /// sharing a stack risked one API popping a mark pushed by the other.
     /// PLG001 (fp 81ee7e44).
     mem_scope_marks: Vec<(usize, usize)>,
-    /// Last error reported by plugin
-    last_error: Option<String>,
     /// Pointer to a pre-allocated empty LP-string in plugin memory.
     /// Lazily initialized on first use by `write_clean_string` / the
     /// `_build_state_get` bridge so repeated empty returns reuse the same
@@ -4136,7 +4027,6 @@ impl PluginState {
             peak_alloc_offset: 524288,
             arena_marks: Vec::new(),
             mem_scope_marks: Vec::new(),
-            last_error: None,
             cached_empty_lp_ptr: None,
             oom_during_call: None,
             emit_arena: None,
@@ -4374,12 +4264,34 @@ fn diagnostic_prefix(s: &str) -> &str {
     &s[..end]
 }
 
+/// The trap a plugin's `error(message)` call raises (`env.error`).
+#[derive(Debug)]
+struct PluginRaisedError(String);
+
+impl std::fmt::Display for PluginRaisedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "plugin error: {}", self.0)
+    }
+}
+
+impl std::error::Error for PluginRaisedError {}
+
+/// The message of the `error(message)` call that made a plugin call trap.
+fn plugin_raised_message(err: &wasmtime::Error) -> Option<&str> {
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<PluginRaisedError>())
+        .map(|raised| raised.0.as_str())
+}
+
 /// Format a wasmtime `.call()` error with the trap kind (when available)
 /// prepended to the default backtrace. Lets the framework see, e.g.,
 /// "out of bounds memory access at wasm function 276" instead of the bare
 /// `<unknown>!<wasm function 276>`. See
 /// `compiler-build-state-bridge-runtime-trap.md`.
 fn describe_plugin_trap(err: &wasmtime::Error, context: &str) -> String {
+    if let Some(message) = plugin_raised_message(err) {
+        return format!("plugin raised an error in {}: {}", context, message);
+    }
     let mut prefix = format!("Plugin trap in {}", context);
     // Walk the error chain for the first wasmtime::Trap. wasmtime::Error
     // wraps a Trap in its cause chain when a wasm-level trap occurred.
@@ -4783,6 +4695,53 @@ fn write_lp_string(
     ptr as i32
 }
 
+/// The calling plugin's exported `memory`. A module without one cannot
+/// receive or return strings, so a bridge that needs it traps.
+fn caller_memory(caller: &mut Caller<'_, PluginState>) -> wasmtime::Result<Memory> {
+    caller
+        .get_export("memory")
+        .and_then(|e| e.into_memory())
+        .ok_or_else(|| wasmtime::Error::msg("plugin module does not export `memory`"))
+}
+
+/// Write `unit` repeated `count` times as an LP string. The result is built
+/// directly in plugin memory, so its size is bounded by what the plugin's
+/// heap can hold: a result past the allocator's limit is an out-of-memory
+/// failure (recorded in `oom_during_call`, 0 returned) like any other
+/// oversized bridge result.
+fn write_repeated_lp_string(
+    caller: &mut Caller<'_, PluginState>,
+    unit: &[u8],
+    count: usize,
+) -> i32 {
+    let total = unit
+        .len()
+        .checked_mul(count)
+        .filter(|&total| total <= i32::MAX as usize - 4);
+    let Some(total) = total else {
+        let state = caller.data_mut();
+        if state.oom_during_call.is_none() {
+            state.oom_during_call = Some(format!(
+                "host bridge result: string_repeat of a {}-byte string {} times exceeds \
+                 the plugin address space",
+                unit.len(),
+                count,
+            ));
+        }
+        return 0;
+    };
+    let Some((memory, ptr)) = host_allocate_in_memory(caller, 4 + total, PluginState::allocate)
+    else {
+        return 0;
+    };
+    let data = memory.data_mut(&mut *caller);
+    data[ptr..ptr + 4].copy_from_slice(&(total as u32).to_le_bytes());
+    for chunk in data[ptr + 4..ptr + 4 + total].chunks_mut(unit.len().max(1)) {
+        chunk.copy_from_slice(&unit[..chunk.len()]);
+    }
+    ptr as i32
+}
+
 /// Allocate `size` bytes on the shared heap with `allocate` and grow the
 /// module's linear memory to cover them. Returns the memory and the address,
 /// or `None` on failure — recording an allocation or growth failure in
@@ -4897,9 +4856,8 @@ fn json_bridge_alloc(caller: &mut Caller<'_, PluginState>, size: i32) -> Result<
         .ok_or_else(|| format!("plugin host allocator could not provide {size} bytes"))
 }
 
-/// Wrap statement-level slot output in a synthetic `start:` block so the
-/// program parser accepts it. Used by `call_lifecycle_slot_v2` when the
-/// plugin's slot returned raw statements without any top-level wrapper.
+/// Wrap statement-level plugin output in a synthetic `start:` block so the
+/// program parser accepts it (`parse_plugin_snippet`).
 ///
 /// Each input line is tab-indented so it becomes part of the start block
 /// body. Empty trailing lines are preserved to match the Clean grammar's
@@ -4982,18 +4940,19 @@ fn expand_inputs(block_name: &str, block: &FrameworkBlock, version: u32) -> Expa
 /// dotted blocks (`<type> <name> =` on the first line of `Model.<verb>:`
 /// content) from the block body.
 ///
-/// The first line is a binding header iff it contains `=` and the text
-/// before `=` has at least two whitespace-separated tokens (the type and the
-/// identifier — `list<User> rows`). Field assignments inside e.g. an
-/// `insert:` body (`name = "Alice"`) have only one token before `=`, so they
-/// don't trip this detector. Non-dotted blocks never carry a header.
+/// The expander writes the header as `<type> <name> =` alone on the first
+/// line, so the first line is a binding header iff it ends with its only
+/// `=` and the text before it has at least two whitespace-separated tokens
+/// (the type and the identifier — `list<User> rows`). A body line such as
+/// `where: x == 5` or a field assignment (`name = "Alice"`) is not one.
+/// Non-dotted blocks never carry a header.
 fn split_binding_header<'c>(block_name: &str, content: &'c str) -> (Option<String>, &'c str) {
     if !block_name.contains('.') {
         return (None, content);
     }
     let first_line = content.lines().next().unwrap_or("").trim();
-    let is_header = match first_line.find('=') {
-        Some(eq_pos) => first_line[..eq_pos].split_whitespace().count() >= 2,
+    let is_header = match first_line.strip_suffix('=') {
+        Some(before) => !before.contains('=') && before.split_whitespace().count() >= 2,
         None => false,
     };
     if !is_header {
@@ -5262,6 +5221,165 @@ mod tests {
             .to_vec()
     }
 
+    /// A v1 adapter for `wat` whose manifest is the given `[exports]` lines.
+    fn v1_adapter(name: &str, exports: &str, wat: &str) -> WasmPluginAdapter {
+        let engine = crate::plugins::wasm_loader::shared_engine().unwrap();
+        let module = Module::new(&engine, wat).unwrap();
+        let manifest: PluginManifest = toml::from_str(&format!(
+            "[plugin]\nname = \"{name}\"\nversion = \"1.0.0\"\n\
+             [handles]\nblocks = [\"probe\"]\n[exports]\n{exports}\n"
+        ))
+        .unwrap();
+        WasmPluginAdapter::new(name.to_string(), manifest, module, engine).unwrap()
+    }
+
+    fn probe_block() -> FrameworkBlock {
+        FrameworkBlock {
+            name: "probe".to_string(),
+            content: "body".to_string(),
+            attributes: Vec::new(),
+            location: None,
+            body_location: None,
+        }
+    }
+
+    /// A plugin's `error(message)` call fails the expansion with that
+    /// message (the codegen contract is "print and trap"); it used to be a
+    /// no-op that let the plugin carry on.
+    #[test]
+    fn plugin_error_call_fails_expansion_with_its_message() {
+        let wat = r#"
+            (module
+              (import "env" "error" (func $error (param i32) (result i32)))
+              (memory (export "memory") 1)
+              (data (i32.const 1024) "\0e\00\00\00bad block body")
+              (data (i32.const 2048) "\05\00\00\00x = 1")
+              (func (export "expand") (param i32 i32 i32) (result i32)
+                (drop (call $error (i32.const 1024)))
+                i32.const 2048))
+        "#;
+        let adapter = v1_adapter("err.probe", "expand = \"expand\"", wat);
+        let err = adapter.expand_full(&probe_block()).unwrap_err().to_string();
+        assert!(err.contains("bad block body"), "{}", err);
+        assert!(err.contains("plugin raised an error"), "{}", err);
+    }
+
+    /// v1 plugin output that does not parse is reported with the parser's
+    /// errors and the output itself; the compiler no longer rewrites it
+    /// (reordering sections, re-indenting a `start:` body) to make it parse.
+    #[test]
+    fn v1_unparseable_output_is_reported_not_rewritten() {
+        let wat = r#"
+            (module
+              (memory (export "memory") 1)
+              (data (i32.const 2048) "\02\00\00\00)(")
+              (func (export "expand") (param i32 i32 i32) (result i32)
+                i32.const 2048))
+        "#;
+        let adapter = v1_adapter("parse.probe", "expand = \"expand\"", wat);
+        let err = adapter.expand_full(&probe_block()).unwrap_err().to_string();
+        assert!(err.contains("neither a program"), "{}", err);
+        assert!(err.contains("plugin output: )("), "{}", err);
+    }
+
+    /// A `validate` export returning pointer 0 is an allocator failure, not
+    /// "valid" (the old code read an LP string at address 0).
+    #[test]
+    fn validate_null_result_is_an_error() {
+        let wat = r#"
+            (module
+              (memory (export "memory") 1)
+              (data (i32.const 2048) "\00\00\00\00")
+              (func (export "expand") (param i32 i32 i32) (result i32)
+                i32.const 2048)
+              (func (export "validate") (param i32 i32 i32) (result i32)
+                i32.const 0))
+        "#;
+        let adapter = v1_adapter(
+            "validate.probe",
+            "expand = \"expand\"\nvalidate = \"validate\"",
+            wat,
+        );
+        let err = adapter.validate(&probe_block()).unwrap_err().to_string();
+        assert!(err.contains("null string pointer"), "{}", err);
+    }
+
+    /// `[exports].get_keywords` reaches the plugin's export, which returns a
+    /// JSON array of keywords.
+    #[test]
+    fn get_keywords_reads_the_plugin_export() {
+        let wat = r#"
+            (module
+              (memory (export "memory") 1)
+              (data (i32.const 2048) "\0d\00\00\00[\22one\22,\22two\22]")
+              (func (export "expand") (param i32 i32 i32) (result i32)
+                i32.const 2048)
+              (func (export "get_keywords") (result i32)
+                i32.const 2048))
+        "#;
+        let adapter = v1_adapter(
+            "keywords.probe",
+            "expand = \"expand\"\nget_keywords = \"get_keywords\"",
+            wat,
+        );
+        assert_eq!(adapter.get_keywords(), &["one", "two"]);
+        let without = v1_adapter("keywords.none", "expand = \"expand\"", wat);
+        assert!(without.get_keywords().is_empty());
+    }
+
+    /// `string_repeat` builds its result in plugin memory; a result past the
+    /// plugin address space is an out-of-memory failure (0 and a recorded
+    /// cause), not a multi-gigabyte host allocation.
+    #[test]
+    fn string_repeat_is_bounded_by_plugin_memory() {
+        let wat = r#"
+            (module
+              (import "env" "string_repeat" (func $repeat (param i32 i32 i32) (result i32)))
+              (memory (export "memory") 1)
+              (data (i32.const 16) "\04\00\00\00abcd")
+              (func (export "small") (result i32)
+                (call $repeat (i32.const 16) (i32.const 4) (i32.const 3)))
+              (func (export "huge") (result i32)
+                (call $repeat (i32.const 16) (i32.const 4) (i32.const 2147483647))))
+        "#;
+        let (mut store, instance, memory) =
+            instantiate_with(wat, WasmPluginAdapter::register_string_dot_functions);
+        let small: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "small").unwrap();
+        let ptr = small.call(&mut store, ()).unwrap();
+        assert_eq!(
+            read_lp_from_data(memory.data(&store), ptr).unwrap(),
+            b"abcdabcdabcd"
+        );
+        let huge: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "huge").unwrap();
+        assert_eq!(huge.call(&mut store, ()).unwrap(), 0);
+        assert!(store.data().oom_during_call.is_some());
+    }
+
+    /// A string bridge called from a module without an exported `memory`
+    /// traps with an error instead of panicking the compiler.
+    #[test]
+    fn string_bridge_without_memory_traps() {
+        let wat = r#"
+            (module
+              (import "env" "string.indexOf" (func $index (param i32 i32) (result i32)))
+              (func (export "run") (result i32)
+                (call $index (i32.const 0) (i32.const 0))))
+        "#;
+        let engine = Engine::default();
+        let module = Module::new(&engine, wat).unwrap();
+        let mut linker: Linker<PluginState> = Linker::new(&engine);
+        WasmPluginAdapter::register_string_dot_functions(&mut linker).unwrap();
+        let mut store = Store::new(&engine, PluginState::new());
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        let run: TypedFunc<(), i32> = instance.get_typed_func(&mut store, "run").unwrap();
+        let err = run.call(&mut store, ()).unwrap_err();
+        assert!(
+            format!("{:?}", err).contains("does not export `memory`"),
+            "{:?}",
+            err
+        );
+    }
+
     /// `string.substring` takes byte offsets. An offset inside a multi-byte
     /// character used to panic the compiler (char-boundary slice).
     #[test]
@@ -5481,6 +5599,22 @@ mod tests {
         let v3 = expand_inputs("User.find", &block, 3);
         assert_eq!(v3.binding_header, None);
         assert_eq!(v3.body, block.content);
+    }
+
+    /// An ORM body without a binding (`return User.find:`) whose first line
+    /// is a comparison keeps that line: it is not a `<type> <name> =` header.
+    #[test]
+    fn v1_body_line_with_comparison_is_not_a_binding_header() {
+        let block = FrameworkBlock {
+            name: "User.find".to_string(),
+            content: "where: x == 5\n\tlimit: 1\n".to_string(),
+            attributes: Vec::new(),
+            location: None,
+            body_location: None,
+        };
+        let v1 = expand_inputs("User.find", &block, 1);
+        assert_eq!(v1.binding_header, None);
+        assert_eq!(v1.body, block.content);
     }
 
     /// A v1 `assemble` that returns an empty result (the out-of-memory
@@ -5919,7 +6053,10 @@ mod tests {
             body_location: None,
         };
 
-        let stmts = registry.expand(&block).expect("expand_block must not fail");
+        let stmts = registry
+            .expand_full(&block)
+            .map(PluginExpansion::into_inline_statements)
+            .expect("expand_block must not fail");
 
         // The result must be non-empty — if it's empty the complex-function bug is back
         assert!(!stmts.is_empty(), "expand_html_block returned 0 statements — complex-function empty-return bug is present");

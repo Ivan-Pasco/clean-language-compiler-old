@@ -116,10 +116,9 @@ fn assemble_transformed_sources_applied_to_entry_outside_shared_folders() {
     let entry_file = pages_dir.join("hello.cln");
     std::fs::write(&entry_file, original_source).expect("write entry");
 
-    let mut registry = PluginRegistry::new();
-    #[allow(deprecated)] // pre-builder API is the simplest path for mocking
-    registry
-        .register(Arc::new(PageRenamePlugin))
+    let registry = PluginRegistry::builder()
+        .add(PageRenamePlugin)
+        .build()
         .expect("register mock plugin");
 
     let config = MultiFileCompilerConfig::default().with_plugin_registry(Arc::new(registry));

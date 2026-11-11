@@ -23,8 +23,6 @@
 //! `AssembleOutput` and no error signal. Post-fix the call returns the
 //! errors vec carrying the failure.
 
-use std::sync::Arc;
-
 use clean_language_compiler::ast::Statement;
 use clean_language_compiler::plugins::plugin_abi::{AssembleInput, AssembleOutput};
 use clean_language_compiler::plugins::{
@@ -61,10 +59,9 @@ impl FrameworkPlugin for AlwaysFailingAssemblePlugin {
 
 #[test]
 fn run_assemble_hooks_surfaces_plugin_errors() {
-    let mut registry = PluginRegistry::new();
-    #[allow(deprecated)] // pre-builder API is the simplest path for mocking
-    registry
-        .register(Arc::new(AlwaysFailingAssemblePlugin))
+    let registry = PluginRegistry::builder()
+        .add(AlwaysFailingAssemblePlugin)
+        .build()
         .expect("register mock plugin");
 
     let input = AssembleInput {

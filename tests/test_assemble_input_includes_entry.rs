@@ -96,12 +96,11 @@ fn assemble_input_includes_entry_outside_shared_folders() {
 
     let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let mut registry = PluginRegistry::new();
-    #[allow(deprecated)] // pre-builder API is the simplest path for mocking
-    registry
-        .register(Arc::new(RecorderPlugin {
+    let registry = PluginRegistry::builder()
+        .add(RecorderPlugin {
             recorded: Arc::clone(&recorded),
-        }))
+        })
+        .build()
         .expect("register mock plugin");
 
     let config = MultiFileCompilerConfig::default().with_plugin_registry(Arc::new(registry));

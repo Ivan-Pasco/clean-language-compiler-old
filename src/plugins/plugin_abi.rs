@@ -157,9 +157,8 @@ pub struct PluginCompatibility {
     pub min_compiler_version: String,
     /// Clean Runtime ABI version the plugin's WASM was compiled against.
     /// Plugin Contracts v2 — see foundation/spec/plugins/contracts/runtime-abi.md.
-    /// Absent on plugins that predate the versioned ABI; the loader treats absent
-    /// as legacy ABI "0.0.0" and applies the hand-maintained stub set for
-    /// backwards compatibility.
+    /// Absent on plugins that predate the versioned ABI; such a plugin loads
+    /// against the same bridge surface as every other plugin.
     #[serde(default)]
     pub abi_version: Option<String>,
     /// Highest expansion ABI version the plugin is built against.
@@ -902,8 +901,8 @@ pub const PLUGIN_ABI_VERSION: u32 = 1;
 pub const PLUGIN_CONTRACT_VERSION: &str = "1.0.0";
 
 /// Clean Runtime ABI versions this compiler can load plugin WASM stamped against.
-/// See contracts/runtime-abi.md §5. Missing stamp ("0.0.0") falls back to the
-/// hand-maintained stub block in wasm_adapter.rs for backwards compatibility.
+/// See contracts/runtime-abi.md §5. A plugin.wasm without a stamp loads with a
+/// warning against `DEFAULT_RUNTIME_ABI_VERSION` (`AbiStampOutcome::Absent`).
 pub const SUPPORTED_RUNTIME_ABI_VERSIONS: &[&str] = &["1.0.0"];
 
 /// Clean Runtime ABI version emitted by `cln compile` when building a plugin.

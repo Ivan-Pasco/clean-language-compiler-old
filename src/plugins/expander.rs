@@ -1575,7 +1575,6 @@ mod tests {
     use super::*;
     use crate::ast::{Expression, Value};
     use crate::plugins::{FrameworkPlugin, PluginExpansion, PluginResult};
-    use std::sync::Arc;
 
     struct EchoPlugin;
 
@@ -1629,8 +1628,7 @@ mod tests {
 
     #[test]
     fn test_expand_framework_block() {
-        let mut registry = PluginRegistry::new();
-        registry.register(Arc::new(EchoPlugin)).unwrap();
+        let registry = PluginRegistry::builder().add(EchoPlugin).build().unwrap();
 
         let program = make_test_program(vec![Statement::FrameworkBlock {
             name: "echo".to_string(),
@@ -2128,11 +2126,11 @@ mod tests {
     /// regression — silently-dropped state — would leave program.state None.
     #[test]
     fn plugin_state_block_reaches_program_state() {
-        let mut registry = PluginRegistry::new();
-        registry
-            .register(Arc::new(StateEmittingPlugin {
+        let registry = PluginRegistry::builder()
+            .add(StateEmittingPlugin {
                 var_name: "instance_my_toolbar",
-            }))
+            })
+            .build()
             .unwrap();
 
         let program = make_test_program(vec![Statement::FrameworkBlock {
@@ -2159,11 +2157,11 @@ mod tests {
     /// initializers left-to-right.
     #[test]
     fn plugin_state_merges_with_user_state_plugin_first() {
-        let mut registry = PluginRegistry::new();
-        registry
-            .register(Arc::new(StateEmittingPlugin {
+        let registry = PluginRegistry::builder()
+            .add(StateEmittingPlugin {
                 var_name: "plugin_var",
-            }))
+            })
+            .build()
             .unwrap();
 
         let mut program = make_test_program(vec![Statement::FrameworkBlock {
@@ -2392,8 +2390,10 @@ mod tests {
 
     #[test]
     fn nested_block_in_function_keeps_helper_functions_and_start_body() {
-        let mut registry = PluginRegistry::new();
-        registry.register(Arc::new(HelperEmittingPlugin)).unwrap();
+        let registry = PluginRegistry::builder()
+            .add(HelperEmittingPlugin)
+            .build()
+            .unwrap();
 
         let mut program = make_test_program(vec![]);
         program.functions.push(Function::new(
@@ -2444,8 +2444,10 @@ mod tests {
 
     #[test]
     fn top_level_block_start_body_merges_into_program_start() {
-        let mut registry = PluginRegistry::new();
-        registry.register(Arc::new(HelperEmittingPlugin)).unwrap();
+        let registry = PluginRegistry::builder()
+            .add(HelperEmittingPlugin)
+            .build()
+            .unwrap();
 
         let program = make_test_program(vec![nested_block("with_helper")]);
         let mut expander = PluginExpander::new(&registry);
@@ -2465,8 +2467,7 @@ mod tests {
     /// among its statements are expanded.
     #[test]
     fn entry_expansion_is_merged_and_expanded() {
-        let mut registry = PluginRegistry::new();
-        registry.register(Arc::new(EchoPlugin)).unwrap();
+        let registry = PluginRegistry::builder().add(EchoPlugin).build().unwrap();
 
         let call = |name: &str| Statement::Expression {
             expr: Expression::Call(name.to_string(), Vec::new()),
@@ -2537,8 +2538,10 @@ mod tests {
 
     #[test]
     fn permission_violation_in_nested_block_is_reported() {
-        let mut registry = PluginRegistry::new();
-        registry.register(Arc::new(UndeclaredBridgePlugin)).unwrap();
+        let registry = PluginRegistry::builder()
+            .add(UndeclaredBridgePlugin)
+            .build()
+            .unwrap();
 
         let mut program = make_test_program(vec![]);
         program.functions.push(Function::new(
@@ -2565,8 +2568,10 @@ mod tests {
 
     #[test]
     fn no_permission_violations_is_ok() {
-        let mut registry = PluginRegistry::new();
-        registry.register(Arc::new(HelperEmittingPlugin)).unwrap();
+        let registry = PluginRegistry::builder()
+            .add(HelperEmittingPlugin)
+            .build()
+            .unwrap();
         let program = make_test_program(vec![nested_block("with_helper")]);
         let mut expander = PluginExpander::new(&registry);
         expander.expand_program(program).unwrap();
