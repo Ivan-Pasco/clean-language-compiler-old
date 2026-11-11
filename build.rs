@@ -257,6 +257,37 @@ fn main() {
     std::fs::write(out_dir.join("spec_chapters.rs"), generated).expect("write spec_chapters.rs");
     println!("cargo:rerun-if-changed={}", vendored_spec.display());
 
+    // ── 1d. Example programs for the MCP `list_examples` tool ───────────────
+    // The compiler's own examples/*.cln, embedded so an installed `cln`
+    // lists them instead of whatever examples/ folder the MCP client's
+    // working directory happens to have.
+    let examples_dir = manifest_dir.join("examples");
+    let mut examples: Vec<PathBuf> = std::fs::read_dir(&examples_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("cln"))
+                .collect()
+        })
+        .unwrap_or_default();
+    examples.sort();
+    let mut generated = String::from("&[\n");
+    for example in &examples {
+        generated.push_str(&format!(
+            "    ({:?}, include_str!({:?})),\n",
+            example
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default(),
+            example.display().to_string()
+        ));
+        println!("cargo:rerun-if-changed={}", example.display());
+    }
+    generated.push(']');
+    std::fs::write(out_dir.join("examples.rs"), generated).expect("write examples.rs");
+    println!("cargo:rerun-if-changed={}", examples_dir.display());
+
     // ── 1e. Release history for the MCP `get_changelog` tool ─────────────────
     // The compiler's own recent commits, captured at build time so an
     // installed `cln` reports its history instead of whatever repository the

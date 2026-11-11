@@ -9,7 +9,8 @@ use super::protocol::{error_codes, JsonRpcRequest, JsonRpcResponse, Tool, ToolIn
 use crate::plugins::PluginDiscovery;
 use crate::resolver::symbol_table::{GlobalSymbolTable, SymbolKind};
 use crate::{
-    compile_source_with_detected_plugins, parse_to_ast, type_check_with_external_plugins, VERSION,
+    compile_with_external_plugins_and_opt_level, parse_to_ast, type_check_with_external_plugins,
+    VERSION,
 };
 use serde_json::json;
 use std::time::SystemTime;
@@ -438,17 +439,13 @@ fn get_available_tools() -> Vec<Tool> {
         },
         Tool {
             name: "list_builtins".to_string(),
-            description: "List all built-in functions, classes, and namespaces. Includes print, Math.sqrt, string.length, etc.".to_string(),
+            description: "List the built-in global functions (print, ...), static classes (Integer.parse) and namespaces (math.sqrt, ...) the compiler resolves. Methods on values (text.length(), ...) are resolved per type and documented by get_quick_reference and get_specification.".to_string(),
             input_schema: ToolInputSchema {
                 type_: "object".to_string(),
                 properties: json!({
-                    "category": {
-                        "type": "string",
-                        "description": "Filter by category (io, math, string, list, type, json, compare, logical, conditional)"
-                    },
                     "namespace": {
                         "type": "string",
-                        "description": "Filter by namespace (math, string, list, compare, conditional, logical, json)"
+                        "description": "Only list this namespace's functions (e.g. math, string, list, json); global functions and classes are left out"
                     }
                 }),
                 required: vec![],
@@ -1022,9 +1019,21 @@ fn tool_compile(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcRespo
         .and_then(|v| v.as_str())
         .unwrap_or("<stdin>");
 
-    let opt_level = args.get("opt_level").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
+    let opt_level = match args.get("opt_level") {
+        None => 2,
+        Some(value) => match value.as_u64().filter(|level| *level <= 3) {
+            Some(level) => level as u8,
+            None => {
+                return JsonRpcResponse::error(
+                    id,
+                    error_codes::INVALID_PARAMS,
+                    format!("'opt_level' must be an integer from 0 to 3, got {value}"),
+                )
+            }
+        },
+    };
 
-    match compile_source_with_detected_plugins(source, file_path, opt_level) {
+    match compile_with_external_plugins_and_opt_level(source, file_path, opt_level) {
         Ok(wasm_bytes) => {
             let base64 = base64_encode(&wasm_bytes);
             JsonRpcResponse::success(
@@ -1753,132 +1762,92 @@ fn tool_get_specification(id: serde_json::Value, args: &serde_json::Value) -> Js
     )
 }
 
-/// Tool: list_builtins - List all built-in functions, classes, and namespaces.
+/// Tool: list_builtins - built-in global functions, static classes and
+/// namespaces, read from the resolver's `GlobalSymbolTable` so the list
+/// stays in lockstep with what actually compiles.
 ///
-/// Source of truth: a freshly-constructed `SymbolTable`. The compiler's
-/// resolver uses the same table when type-checking calls, so MCP introspection
-/// stays in lockstep with what actually compiles. Replaced the parallel
-/// `BuiltinRegistry` hardcoded list in 0.30.289 (BUILTIN-NAMESPACE-OVERREACH
-/// sub-finding D-MCP-1).
-///
-/// Accepted regressions vs. the old `BuiltinRegistry`:
-///   * No `BuiltinCategory` filter (Math/String/List/…). The `category` field
-///     in arguments is now ignored. The IDE rarely filters on this.
-///   * No `is_static` distinction on class methods. SymbolTable's
-///     `SymbolKind::Method` does not track static-vs-instance; the field is
-///     omitted from the response.
+/// Names starting with `_` are internal bridge imports (`_req_header`, ...)
+/// that programs must not call, so they are left out. Every list is sorted
+/// by name. `namespace` restricts the result to that namespace.
 fn tool_list_builtins(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     let namespace_filter = args.get("namespace").and_then(|v| v.as_str());
 
     let table = GlobalSymbolTable::new();
     let all_symbols = table.all_symbols();
+    let is_public = |name: &str| !name.starts_with('_');
 
-    // Resolve a SymbolId to (name, params_json, return_type_json) when the
-    // symbol is a Function or Method.
-    let function_json =
-        |sym_id: &crate::resolver::SymbolId| -> Option<(String, Vec<String>, String)> {
-            let sym = all_symbols.get(sym_id)?;
-            match &sym.kind {
-                SymbolKind::Function {
-                    parameters,
-                    return_type,
-                } => {
-                    let params = parameters
-                        .iter()
-                        .map(|p| format!("{p:?}"))
-                        .collect::<Vec<_>>();
-                    let ret = return_type
-                        .as_ref()
-                        .map(|t| format!("{t:?}"))
-                        .unwrap_or_else(|| "Void".to_string());
-                    Some((sym.name.clone(), params, ret))
-                }
-                SymbolKind::Method {
-                    parameters,
-                    return_type,
-                    ..
-                } => {
-                    let params = parameters
-                        .iter()
-                        .map(|p| format!("{p:?}"))
-                        .collect::<Vec<_>>();
-                    let ret = format!("{return_type:?}");
-                    Some((sym.name.clone(), params, ret))
-                }
-                _ => None,
-            }
+    // A Function or Method symbol as {name, parameters, return_type}.
+    let function_json = |sym_id: &crate::resolver::SymbolId| -> Option<serde_json::Value> {
+        let sym = all_symbols.get(sym_id)?;
+        if !is_public(&sym.name) {
+            return None;
+        }
+        let (parameters, ret) = match &sym.kind {
+            SymbolKind::Function {
+                parameters,
+                return_type,
+            } => (
+                parameters,
+                return_type
+                    .as_ref()
+                    .map(|t| format!("{t:?}"))
+                    .unwrap_or_else(|| "Void".to_string()),
+            ),
+            SymbolKind::Method {
+                parameters,
+                return_type,
+                ..
+            } => (parameters, format!("{return_type:?}")),
+            _ => return None,
         };
+        Some(json!({
+            "name": sym.name,
+            "parameters": parameters.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>(),
+            "return_type": ret,
+        }))
+    };
+    let sorted = |mut items: Vec<serde_json::Value>| {
+        items.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        items
+    };
 
     let mut global_functions: Vec<serde_json::Value> = Vec::new();
     let mut classes_json: Vec<serde_json::Value> = Vec::new();
     let mut namespaces_json: Vec<serde_json::Value> = Vec::new();
 
     for (sid, symbol) in all_symbols.iter() {
-        if !table.is_builtin(*sid) {
+        if !table.is_builtin(*sid) || !is_public(&symbol.name) {
             continue;
         }
         match &symbol.kind {
-            SymbolKind::Function {
-                parameters,
-                return_type,
-            } => {
-                // Filter out namespace-qualified names (e.g. "math.sin") —
-                // those are surfaced under the namespace section below to
-                // avoid double-listing.
-                if symbol.name.contains('.') {
-                    continue;
+            // Namespace-qualified names (e.g. "math.sin") are listed under
+            // their namespace.
+            SymbolKind::Function { .. } if namespace_filter.is_none() => {
+                if !symbol.name.contains('.') {
+                    global_functions.extend(function_json(sid));
                 }
-                let params: Vec<String> = parameters.iter().map(|p| format!("{p:?}")).collect();
-                let ret = return_type
-                    .as_ref()
-                    .map(|t| format!("{t:?}"))
-                    .unwrap_or_else(|| "Void".to_string());
-                global_functions.push(json!({
-                    "name": symbol.name,
-                    "parameters": params,
-                    "return_type": ret,
-                }));
             }
-            SymbolKind::Class { methods, .. } => {
-                let mut methods_arr: Vec<serde_json::Value> = Vec::new();
-                for m_id in methods {
-                    if let Some((m_name, m_params, m_ret)) = function_json(m_id) {
-                        methods_arr.push(json!({
-                            "name": m_name,
-                            "parameters": m_params,
-                            "return_type": m_ret,
-                        }));
-                    }
-                }
+            SymbolKind::Class { methods, .. } if namespace_filter.is_none() => {
                 classes_json.push(json!({
                     "name": symbol.name,
-                    "methods": methods_arr,
+                    "methods": sorted(methods.iter().filter_map(&function_json).collect()),
                 }));
             }
             SymbolKind::Namespace { functions } => {
-                if let Some(filter) = namespace_filter {
-                    if !symbol.name.eq_ignore_ascii_case(filter) {
-                        continue;
-                    }
-                }
-                let mut funcs_arr: Vec<serde_json::Value> = Vec::new();
-                for f_id in functions {
-                    if let Some((f_name, f_params, f_ret)) = function_json(f_id) {
-                        funcs_arr.push(json!({
-                            "name": f_name,
-                            "parameters": f_params,
-                            "return_type": f_ret,
-                        }));
-                    }
+                if namespace_filter.is_some_and(|f| !symbol.name.eq_ignore_ascii_case(f)) {
+                    continue;
                 }
                 namespaces_json.push(json!({
                     "name": symbol.name,
-                    "functions": funcs_arr,
+                    "functions": sorted(functions.iter().filter_map(&function_json).collect()),
                 }));
             }
             _ => {}
         }
     }
+    let global_functions = sorted(global_functions);
+    let classes_json = sorted(classes_json);
+    let namespaces_json = sorted(namespaces_json);
 
     let total_methods: usize = classes_json
         .iter()
@@ -3893,6 +3862,20 @@ fn tool_validate(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResp
     )
 }
 
+/// Whether a compiled module exports `start`, the function its `start:`
+/// block compiles to. Read from the module itself, so a `start:` that only
+/// appears in a comment or a string does not count.
+fn module_exports_start(wasm: &[u8]) -> bool {
+    wasmparser::Parser::new(0)
+        .parse_all(wasm)
+        .any(|payload| match payload {
+            Ok(wasmparser::Payload::ExportSection(reader)) => reader.into_iter().any(|export| {
+                export.is_ok_and(|e| e.name == "start" && e.kind == wasmparser::ExternalKind::Func)
+            }),
+            _ => false,
+        })
+}
+
 /// Tool: run - Compile and validate in one step
 fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     let source = match args.get("source").and_then(|v| v.as_str()) {
@@ -3922,13 +3905,13 @@ fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse 
     };
 
     // Step 2: Compile (even if type-check fails, to get all diagnostics)
-    let compile_result = compile_source_with_detected_plugins(source, file_path, 2);
+    let compile_result = compile_with_external_plugins_and_opt_level(source, file_path, 2);
 
     let duration = start.elapsed().map(|d| d.as_millis() as u64).unwrap_or(0);
 
     match compile_result {
         Ok(wasm) => {
-            let has_start = source.contains("start:");
+            let has_start = module_exports_start(&wasm);
             JsonRpcResponse::success(
                 id,
                 json!({
@@ -3964,76 +3947,28 @@ fn tool_run(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse 
     }
 }
 
-/// Tool: list_examples - List and read example .cln files
+/// The compiler's example programs (`examples/*.cln`, file name and
+/// content), embedded at build time so `list_examples` works wherever `cln`
+/// is installed.
+const EXAMPLES: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/examples.rs"));
+
+/// Tool: list_examples - List and read the compiler's example .cln files
 fn tool_list_examples(id: serde_json::Value, args: &serde_json::Value) -> JsonRpcResponse {
     let name_filter = args.get("name").and_then(|v| v.as_str());
 
-    // Find examples directory relative to working directory or binary
-    let examples_dirs = vec![
-        std::path::PathBuf::from("examples"),
-        std::path::PathBuf::from("../examples"),
-    ];
-
-    // Also try relative to binary location
-    let binary_examples = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.join("../../examples")));
-
-    let mut search_dirs = examples_dirs;
-    if let Some(dir) = binary_examples {
-        search_dirs.push(dir);
-    }
-
-    let examples_dir = search_dirs.iter().find(|d| d.exists() && d.is_dir());
-
-    let examples_dir = match examples_dir {
-        Some(dir) => dir,
-        None => {
-            return JsonRpcResponse::success(
-                id,
-                json!({
-                    "success": true,
-                    "examples": [],
-                    "note": "Examples directory not found. Run from the compiler project root."
-                }),
-            )
-        }
-    };
-
-    let mut examples: Vec<serde_json::Value> = Vec::new();
-
-    if let Ok(entries) = std::fs::read_dir(examples_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("cln") {
-                let file_name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                if let Some(filter) = name_filter {
-                    if !file_name.contains(filter) {
-                        continue;
-                    }
-                }
-
-                let content = std::fs::read_to_string(&path).unwrap_or_default();
-                examples.push(json!({
-                    "name": file_name,
-                    "path": path.display().to_string(),
-                    "content": content,
-                    "size_bytes": content.len()
-                }));
-            }
-        }
-    }
-
-    examples.sort_by(|a, b| {
-        a.get("name")
-            .and_then(|v| v.as_str())
-            .cmp(&b.get("name").and_then(|v| v.as_str()))
-    });
+    // EXAMPLES is sorted by file name.
+    let examples: Vec<serde_json::Value> = EXAMPLES
+        .iter()
+        .filter(|(name, _)| name_filter.is_none_or(|filter| name.contains(filter)))
+        .map(|(name, content)| {
+            json!({
+                "name": name,
+                "path": format!("examples/{name}"),
+                "content": content,
+                "size_bytes": content.len()
+            })
+        })
+        .collect();
 
     JsonRpcResponse::success(
         id,
@@ -5538,6 +5473,88 @@ description = "demo"
             assert!(result["entries"].as_array().unwrap().len() <= 3);
         } else {
             assert!(result["error"].as_str().unwrap().contains("git history"));
+        }
+    }
+
+    fn names(items: &serde_json::Value) -> Vec<String> {
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn list_builtins_is_sorted_public_and_filters_by_namespace() {
+        let all = tool_list_builtins(json!(1), &json!({})).result.unwrap();
+        for section in ["global_functions", "classes", "namespaces"] {
+            let listed = names(&all[section]);
+            assert!(!listed.is_empty(), "{section} is empty");
+            let mut sorted = listed.clone();
+            sorted.sort();
+            assert_eq!(listed, sorted, "{section} is not sorted");
+            assert!(
+                listed.iter().all(|n| !n.starts_with('_')),
+                "{section} lists internal names: {listed:?}"
+            );
+        }
+        for ns in all["namespaces"].as_array().unwrap() {
+            let functions = names(&ns["functions"]);
+            assert!(
+                functions.iter().all(|n| !n.starts_with('_')),
+                "{functions:?}"
+            );
+        }
+
+        let math = tool_list_builtins(json!(1), &json!({ "namespace": "math" }))
+            .result
+            .unwrap();
+        assert_eq!(names(&math["namespaces"]), vec!["math".to_string()]);
+        assert_eq!(math["global_functions"], json!([]));
+        assert_eq!(math["classes"], json!([]));
+    }
+
+    #[test]
+    fn run_reads_the_entry_point_from_the_compiled_module() {
+        let library = "functions:\n\tstring f()\n\t\treturn \"start:\"\n";
+        let result = tool_run(json!(1), &json!({ "source": library }))
+            .result
+            .unwrap();
+        assert_eq!(result["compiled"], json!(true), "{result}");
+        assert_eq!(result["has_entry_point"], json!(false), "{result}");
+
+        let program = "start:\n\tprint(\"hi\")\n";
+        let result = tool_run(json!(1), &json!({ "source": program }))
+            .result
+            .unwrap();
+        assert_eq!(result["has_entry_point"], json!(true), "{result}");
+    }
+
+    #[test]
+    fn list_examples_lists_the_compilers_own_examples() {
+        let result = tool_list_examples(json!(1), &json!({ "name": "hello" }))
+            .result
+            .unwrap();
+        let examples = result["examples"].as_array().unwrap();
+        assert!(!examples.is_empty(), "{result}");
+        assert_eq!(
+            examples[0]["content"].as_str().unwrap(),
+            include_str!("../../examples/hello.cln")
+        );
+    }
+
+    #[test]
+    fn compile_rejects_an_out_of_range_opt_level() {
+        for level in [json!(4), json!(256), json!(-1), json!("2")] {
+            let resp = tool_compile(
+                json!(1),
+                &json!({ "source": "start:\n\tprint(1)\n", "opt_level": level }),
+            );
+            let error = resp
+                .error
+                .unwrap_or_else(|| panic!("opt_level {level} accepted"));
+            assert_eq!(error.code, error_codes::INVALID_PARAMS);
         }
     }
 }
