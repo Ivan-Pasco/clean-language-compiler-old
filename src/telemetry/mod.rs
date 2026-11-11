@@ -324,19 +324,22 @@ fn infer_expected_behavior(error: &crate::error::CompilerError) -> &'static str 
 /// source code. Only the former is appropriate for the bug dashboard.
 ///
 /// Policy:
-/// - `Codegen` / `Validation` / `Memory` / `Module` — compiler-internal
-///   failures, always treated as bugs.
-/// - `PluginError` — bubbles up from plugin WASM execution; treated as a bug
-///   (either the plugin or the compiler that invoked it is at fault).
-/// - Everything else — syntax/type/lex errors are the compiler correctly
-///   rejecting bad user code; IO errors are the user's environment; runtime
-///   errors surface from executing user code.
+/// - `Codegen` / `Validation` / `Memory` — compiler-internal failures,
+///   always treated as bugs.
+/// - `PluginError` — a bug (in the plugin or the compiler that ran it),
+///   except PLUGIN001: a plugin named in `plugins:` that is not installed
+///   or cannot be loaded for this build is the project's configuration.
+/// - Everything else — `Module` errors are imports that name a missing
+///   module or form a cycle; syntax/type/lex errors are the compiler
+///   correctly rejecting bad user code; IO errors are the user's
+///   environment; runtime errors surface from executing user code.
 fn is_likely_compiler_bug(error: &crate::error::CompilerError) -> bool {
     use crate::error::CompilerError::*;
-    matches!(
-        error,
-        Codegen { .. } | Validation { .. } | Memory { .. } | Module { .. } | PluginError { .. }
-    )
+    match error {
+        Codegen { .. } | Validation { .. } | Memory { .. } => true,
+        PluginError { message, .. } => !message.contains("PLUGIN001"),
+        _ => false,
+    }
 }
 
 /// Structured fields extracted from a CompilerError for reporting.
@@ -567,6 +570,29 @@ mod tests {
             location: None,
         };
         assert!(is_likely_compiler_bug(&err));
+    }
+
+    #[test]
+    fn missing_or_circular_imports_are_not_bugs() {
+        let missing = CompilerError::module_error("Module 'NoSuchModule' not found", None, None);
+        assert!(!is_likely_compiler_bug(&missing));
+        let cycle = CompilerError::import_error(
+            "Circular dependency detected: A -> B -> A",
+            "import",
+            None,
+        );
+        assert!(!is_likely_compiler_bug(&cycle));
+    }
+
+    #[test]
+    fn plugin_that_cannot_be_loaded_is_not_a_bug() {
+        let err = CompilerError::PluginError {
+            message: "[PLUGIN001] Failed to load plugins: Plugin 'frame.nonexistent' not found. \
+                      Install with: cleen plugin add frame.nonexistent"
+                .to_string(),
+            location: None,
+        };
+        assert!(!is_likely_compiler_bug(&err));
     }
 
     #[test]

@@ -1958,7 +1958,7 @@ fn run_multi_file_frontend(
             .load_plugins_with_build_state(&plugin_names, Arc::clone(bs))
             .map_err(|e| {
                 vec![CompilerError::PluginError {
-                    message: format!("Failed to load plugins: {}", e),
+                    message: format!("[PLUGIN001] Failed to load plugins: {}", e),
                     location: None,
                 }]
             })?;
