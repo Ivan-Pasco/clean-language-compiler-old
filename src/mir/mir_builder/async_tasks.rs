@@ -463,7 +463,7 @@ impl MirBuilder {
     }
 
     /// The MIR type of a value: its local's or its parameter's.
-    fn value_type(context: &FunctionBuildContext, value: ValueId) -> Option<MirType> {
+    pub(super) fn value_type(context: &FunctionBuildContext, value: ValueId) -> Option<MirType> {
         context
             .function
             .locals

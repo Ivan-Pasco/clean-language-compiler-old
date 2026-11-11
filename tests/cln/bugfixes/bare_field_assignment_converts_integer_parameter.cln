@@ -1,0 +1,42 @@
+// Test: bugfixes/bare_field_assignment_converts_integer_parameter
+// Grammar: assignment_statement, class_declaration (constructor, functions:)
+// Semantic: type-system.md §5 — an `integer` assigned to a `number` or
+//   `integer:64` field is widened to the field's type
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   -3
+//   -3
+//   4
+//   5
+//
+// Regression: an `integer` parameter assigned to a `number` or `integer:64`
+// field (`x = v` in a constructor or method, `q.x = v` in a function) was
+// stored with the parameter's 4 bytes, so `x` read as a tiny float and `big`
+// as 4294967293. The store conversion looked up only locals, not parameters.
+
+start:
+	P p = P(-3)
+	print(p.x.toString())
+	print(p.big.toString())
+	p.setX(4)
+	print(p.x.toString())
+	setOn(p, 5)
+	print(p.x.toString())
+
+class P
+	public:
+		number x
+		integer:64 big
+
+	constructor(integer v)
+		x = v
+		big = v
+
+	functions:
+		public:
+			setX(integer v)
+				x = v
+
+functions:
+	void setOn(P q, integer v)
+		q.x = v

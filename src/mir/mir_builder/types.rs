@@ -627,12 +627,7 @@ impl MirBuilder {
                     | MirType::F64
             )
         };
-        let Some(value_type) = context
-            .function
-            .locals
-            .get(&value_id)
-            .map(|l| l.local_type.clone())
-        else {
+        let Some(value_type) = Self::value_type(context, value_id) else {
             return value_id;
         };
         // `number` only converts to and from `integer` and `integer:64`
